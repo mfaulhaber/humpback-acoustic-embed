@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Humpback Acoustic Embedding Platform</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #1a1a2e; }
+header { background: #1a1a2e; color: #fff; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+header h1 { font-size: 1.25rem; font-weight: 600; }
+.tabs { display: flex; gap: 0; border-bottom: 2px solid #ddd; background: #fff; padding: 0 2rem; }
+.tab-btn { padding: 0.75rem 1.5rem; border: none; background: none; cursor: pointer; font-size: 0.95rem; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.tab-btn.active { color: #1a1a2e; border-bottom-color: #3a86ff; font-weight: 600; }
+.tab-content { display: none; padding: 1.5rem 2rem; max-width: 1100px; }
+.tab-content.active { display: block; }
+.card { background: #fff; border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.card h3 { margin-bottom: 0.75rem; font-size: 1rem; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; }
+th { font-weight: 600; color: #555; font-size: 0.8rem; text-transform: uppercase; }
+tr:hover { background: #f9f9ff; }
+tr { cursor: pointer; }
+button, .btn { padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+.btn-primary { background: #3a86ff; color: #fff; }
+.btn-primary:hover { background: #2a76ef; }
+.btn-danger { background: #e63946; color: #fff; }
+.btn-danger:hover { background: #c5303c; }
+.btn-sm { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+input, select, textarea { padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
+textarea { resize: vertical; }
+label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.25rem; color: #444; }
+.form-group { margin-bottom: 0.75rem; }
+.form-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+.form-row .form-group { flex: 1; min-width: 180px; }
+.badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+.badge-queued { background: #ffeaa7; color: #856404; }
+.badge-running { background: #81ecec; color: #0c5460; }
+.badge-complete { background: #a8e6cf; color: #155724; }
+.badge-failed { background: #ff7675; color: #721c24; }
+.badge-canceled { background: #dfe6e9; color: #636e72; }
+.drop-zone { border: 2px dashed #ccc; border-radius: 8px; padding: 2rem; text-align: center; color: #888; transition: all 0.2s; }
+.drop-zone.over { border-color: #3a86ff; background: #f0f6ff; color: #3a86ff; }
+.drop-zone input[type="file"] { display: none; }
+.detail-panel { background: #fff; border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.detail-panel .back-link { cursor: pointer; color: #3a86ff; font-size: 0.85rem; margin-bottom: 0.75rem; display: inline-block; }
+.msg { padding: 0.75rem; border-radius: 4px; margin-bottom: 0.75rem; font-size: 0.9rem; }
+.msg-success { background: #d4edda; color: #155724; }
+.msg-error { background: #f8d7da; color: #721c24; }
+.hidden { display: none !important; }
+.empty { color: #999; font-style: italic; padding: 1rem 0; }
+.checkbox-list { max-height: 200px; overflow-y: auto; border: 1px solid #eee; border-radius: 4px; padding: 0.5rem; }
+.checkbox-list label { font-weight: normal; display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; cursor: pointer; }
+.upload-progress { margin-top: 0.75rem; }
+.upload-progress .bar-track { background: #eee; border-radius: 4px; height: 6px; overflow: hidden; }
+.upload-progress .bar-fill { background: #3a86ff; height: 100%; width: 0%; transition: width 0.3s; }
+.upload-progress .bar-label { font-size: 0.8rem; color: #666; margin-top: 0.25rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Humpback Acoustic Embedding Platform</h1>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="audio">Audio</button>
+  <button class="tab-btn" data-tab="processing">Processing</button>
+  <button class="tab-btn" data-tab="clustering">Clustering</button>
+</div>
+
+<!-- ==================== AUDIO TAB ==================== -->
+<div id="audio" class="tab-content active">
+  <div id="audio-list-view">
+    <div class="card">
+      <h3>Upload Audio</h3>
+      <div class="drop-zone" id="drop-zone">
+        <p>Drag &amp; drop audio files or a folder here, or <a href="#" id="browse-link">browse files</a> / <a href="#" id="browse-folder-link">browse folder</a></p>
+        <input type="file" id="audio-file-input" accept=".wav,.mp3" multiple>
+        <input type="file" id="audio-folder-input" accept=".wav,.mp3" webkitdirectory multiple>
+      </div>
+      <div id="upload-progress" class="upload-progress hidden">
+        <div class="bar-track"><div class="bar-fill" id="upload-bar"></div></div>
+        <div class="bar-label" id="upload-bar-label"></div>
+      </div>
+      <div id="upload-msg"></div>
+    </div>
+    <div class="card">
+      <h3>Audio Files</h3>
+      <table>
+        <thead><tr><th>Filename</th><th>Duration</th><th>Sample Rate</th><th>Created</th></tr></thead>
+        <tbody id="audio-table-body"></tbody>
+      </table>
+      <p id="audio-empty" class="empty hidden">No audio files uploaded yet.</p>
+    </div>
+  </div>
+
+  <div id="audio-detail-view" class="hidden">
+    <div class="detail-panel">
+      <span class="back-link" id="audio-back">&larr; Back to list</span>
+      <h3 id="audio-detail-title"></h3>
+      <table id="audio-detail-info"><tbody></tbody></table>
+    </div>
+    <div class="detail-panel">
+      <h3>Metadata</h3>
+      <div class="form-group">
+        <label>Tag Data (JSON)</label>
+        <textarea id="meta-tag-data" rows="2" style="width:100%">{}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Visual Observations (JSON)</label>
+        <textarea id="meta-visual" rows="2" style="width:100%">{}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Group Composition (JSON)</label>
+        <textarea id="meta-group" rows="2" style="width:100%">{}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Prey Density Proxy (JSON)</label>
+        <textarea id="meta-prey" rows="2" style="width:100%">{}</textarea>
+      </div>
+      <button class="btn btn-primary" id="save-meta-btn">Save Metadata</button>
+      <div id="meta-msg"></div>
+    </div>
+    <div class="detail-panel">
+      <h3>Processing History</h3>
+      <table>
+        <thead><tr><th>Job ID</th><th>Status</th><th>Model</th><th>Window</th><th>Created</th></tr></thead>
+        <tbody id="audio-proc-history"></tbody>
+      </table>
+      <p id="audio-proc-empty" class="empty hidden">No processing jobs for this file.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== PROCESSING TAB ==================== -->
+<div id="processing" class="tab-content">
+  <div class="card">
+    <h3>Queue Processing Job</h3>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Audio File</label>
+        <select id="proc-audio-select"><option value="">-- select --</option></select>
+      </div>
+      <div class="form-group">
+        <label>Model Version</label>
+        <input type="text" id="proc-model" value="perch_v1">
+      </div>
+      <div class="form-group">
+        <label>Window Size (s)</label>
+        <input type="number" id="proc-window" value="5" step="0.5" min="0.5">
+      </div>
+      <div class="form-group">
+        <label>Sample Rate</label>
+        <input type="number" id="proc-rate" value="32000" min="8000">
+      </div>
+    </div>
+    <button class="btn btn-primary" id="queue-proc-btn">Queue Job</button>
+    <button class="btn btn-primary" id="queue-all-proc-btn" style="margin-left:0.5rem">Queue All Unprocessed</button>
+    <div id="proc-msg"></div>
+    <div id="proc-batch-progress" class="upload-progress hidden">
+      <div class="bar-track"><div class="bar-fill" id="proc-batch-bar"></div></div>
+      <div class="bar-label" id="proc-batch-label"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Processing Jobs</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Audio</th><th>Status</th><th>Model</th><th>Window</th><th>Created</th><th></th></tr></thead>
+      <tbody id="proc-table-body"></tbody>
+    </table>
+    <p id="proc-empty" class="empty hidden">No processing jobs.</p>
+  </div>
+  <div class="card">
+    <h3>Embedding Sets</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Audio</th><th>Model</th><th>Dims</th><th>Created</th></tr></thead>
+      <tbody id="embed-table-body"></tbody>
+    </table>
+    <p id="embed-empty" class="empty hidden">No embedding sets.</p>
+  </div>
+</div>
+
+<!-- ==================== CLUSTERING TAB ==================== -->
+<div id="clustering" class="tab-content">
+  <div class="card">
+    <h3>Queue Clustering Job</h3>
+    <div class="form-group">
+      <label>Select Embedding Sets</label>
+      <button type="button" class="btn" id="cluster-toggle-all-btn" style="margin-bottom:0.5em;font-size:0.85em;padding:0.25em 0.75em;">Select All</button>
+      <div class="checkbox-list" id="cluster-embed-list"></div>
+      <p id="cluster-embed-empty" class="empty hidden">No embedding sets available.</p>
+    </div>
+    <div class="form-group">
+      <label>Parameters (JSON)</label>
+      <textarea id="cluster-params" rows="3" style="width:100%">{"min_cluster_size": 5}</textarea>
+    </div>
+    <button class="btn btn-primary" id="queue-cluster-btn">Queue Clustering Job</button>
+    <div id="cluster-msg"></div>
+  </div>
+  <div class="card">
+    <h3>Clustering Jobs</h3>
+    <div id="cluster-jobs-container"></div>
+    <p id="cluster-jobs-empty" class="empty hidden">No clustering jobs.</p>
+  </div>
+</div>
+
+<script>
+// ---- Helpers ----
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+  return res.json();
+};
+const shortId = (id) => id.slice(0, 8);
+const fmtDate = (d) => new Date(d).toLocaleString();
+const badgeHtml = (status) => `<span class="badge badge-${status}">${status}</span>`;
+const jsonPretty = (obj) => obj ? JSON.stringify(obj, null, 2) : '{}';
+
+function showMsg(elId, text, type = 'success') {
+  const el = document.getElementById(elId);
+  el.innerHTML = `<div class="msg msg-${type}">${text}</div>`;
+  setTimeout(() => el.innerHTML = '', 4000);
+}
+
+// ---- Tab switching ----
+$$('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('.tab-btn').forEach(b => b.classList.remove('active'));
+    $$('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    $('#' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'audio') loadAudioList();
+    if (btn.dataset.tab === 'processing') { loadAudioOptions(); loadProcJobs(); loadEmbeddingSets(); }
+    if (btn.dataset.tab === 'clustering') { loadClusterEmbedOptions(); loadClusterJobs(); }
+  });
+});
+
+// ---- Audio file name cache ----
+let audioNameMap = {};
+
+// ==================== AUDIO ====================
+async function loadAudioList() {
+  try {
+    const files = await api('/audio/');
+    audioNameMap = {};
+    files.forEach(f => audioNameMap[f.id] = f.filename);
+    const tbody = $('#audio-table-body');
+    if (files.length === 0) {
+      tbody.innerHTML = '';
+      $('#audio-empty').classList.remove('hidden');
+      return;
+    }
+    $('#audio-empty').classList.add('hidden');
+    tbody.innerHTML = files.map(f => `
+      <tr data-id="${f.id}">
+        <td>${f.filename}</td>
+        <td>${f.duration_seconds ? f.duration_seconds.toFixed(1) + 's' : '-'}</td>
+        <td>${f.sample_rate_original || '-'}</td>
+        <td>${fmtDate(f.created_at)}</td>
+      </tr>`).join('');
+    tbody.querySelectorAll('tr').forEach(tr => {
+      tr.addEventListener('click', () => showAudioDetail(tr.dataset.id));
+    });
+  } catch (e) { console.error(e); }
+}
+
+async function showAudioDetail(id) {
+  try {
+    const af = await api(`/audio/${id}`);
+    $('#audio-list-view').classList.add('hidden');
+    $('#audio-detail-view').classList.remove('hidden');
+    $('#audio-detail-title').textContent = af.filename;
+    $('#audio-detail-info tbody').innerHTML = `
+      <tr><td><strong>ID</strong></td><td>${af.id}</td></tr>
+      <tr><td><strong>SHA-256</strong></td><td style="word-break:break-all;font-size:0.8rem">${af.checksum_sha256}</td></tr>
+      <tr><td><strong>Duration</strong></td><td>${af.duration_seconds ? af.duration_seconds.toFixed(1) + 's' : '-'}</td></tr>
+      <tr><td><strong>Sample Rate</strong></td><td>${af.sample_rate_original || '-'}</td></tr>
+      <tr><td><strong>Created</strong></td><td>${fmtDate(af.created_at)}</td></tr>`;
+    const m = af.metadata;
+    $('#meta-tag-data').value = jsonPretty(m?.tag_data);
+    $('#meta-visual').value = jsonPretty(m?.visual_observations);
+    $('#meta-group').value = jsonPretty(m?.group_composition);
+    $('#meta-prey').value = jsonPretty(m?.prey_density_proxy);
+    $('#audio-detail-view').dataset.audioId = id;
+
+    // Load processing history for this audio
+    const jobs = await api('/processing/jobs');
+    const related = jobs.filter(j => j.audio_file_id === id);
+    const histTbody = $('#audio-proc-history');
+    if (related.length === 0) {
+      histTbody.innerHTML = '';
+      $('#audio-proc-empty').classList.remove('hidden');
+    } else {
+      $('#audio-proc-empty').classList.add('hidden');
+      histTbody.innerHTML = related.map(j => `
+        <tr>
+          <td>${shortId(j.id)}</td>
+          <td>${badgeHtml(j.status)}</td>
+          <td>${j.model_version}</td>
+          <td>${j.window_size_seconds}s</td>
+          <td>${fmtDate(j.created_at)}</td>
+        </tr>`).join('');
+    }
+  } catch (e) { console.error(e); }
+}
+
+$('#audio-back').addEventListener('click', () => {
+  $('#audio-detail-view').classList.add('hidden');
+  $('#audio-list-view').classList.remove('hidden');
+  loadAudioList();
+});
+
+// Upload
+const dropZone = $('#drop-zone');
+const fileInput = $('#audio-file-input');
+const folderInput = $('#audio-folder-input');
+const AUDIO_EXTENSIONS = ['.wav', '.mp3'];
+
+function isAudioFile(file) {
+  const name = file.name.toLowerCase();
+  return AUDIO_EXTENSIONS.some(ext => name.endsWith(ext));
+}
+
+$('#browse-link').addEventListener('click', (e) => { e.preventDefault(); fileInput.click(); });
+$('#browse-folder-link').addEventListener('click', (e) => { e.preventDefault(); folderInput.click(); });
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+
+dropZone.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('over');
+  const items = e.dataTransfer.items;
+  let files = [];
+  if (items) {
+    // Try to read directories via webkitGetAsEntry
+    const entries = [];
+    for (const item of items) {
+      const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+      if (entry) entries.push(entry);
+    }
+    if (entries.some(en => en.isDirectory)) {
+      files = await readEntriesRecursive(entries);
+    } else {
+      files = [...e.dataTransfer.files];
+    }
+  } else {
+    files = [...e.dataTransfer.files];
+  }
+  const audioFiles = files.filter(isAudioFile);
+  if (audioFiles.length > 0) uploadFiles(audioFiles);
+});
+
+function readEntriesRecursive(entries) {
+  return new Promise((resolve) => {
+    const files = [];
+    let pending = 0;
+    function readEntry(entry) {
+      if (entry.isFile) {
+        pending++;
+        entry.file(f => { files.push(f); if (--pending === 0) resolve(files); });
+      } else if (entry.isDirectory) {
+        pending++;
+        const reader = entry.createReader();
+        reader.readEntries(subEntries => {
+          for (const sub of subEntries) readEntry(sub);
+          if (--pending === 0) resolve(files);
+        });
+      }
+    }
+    for (const entry of entries) readEntry(entry);
+    if (pending === 0) resolve(files);
+  });
+}
+
+fileInput.addEventListener('change', () => {
+  const files = [...fileInput.files].filter(isAudioFile);
+  if (files.length > 0) uploadFiles(files);
+  fileInput.value = '';
+});
+folderInput.addEventListener('change', () => {
+  const files = [...folderInput.files].filter(isAudioFile);
+  if (files.length > 0) uploadFiles(files);
+  folderInput.value = '';
+});
+
+async function uploadFiles(files) {
+  const total = files.length;
+  if (total === 0) return;
+  const progressEl = $('#upload-progress');
+  const bar = $('#upload-bar');
+  const label = $('#upload-bar-label');
+  progressEl.classList.remove('hidden');
+  let done = 0, failed = 0;
+  for (const file of files) {
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      await api('/audio/upload', { method: 'POST', body: form });
+    } catch (e) {
+      failed++;
+    }
+    done++;
+    bar.style.width = Math.round((done / total) * 100) + '%';
+    label.textContent = `${done} / ${total}${failed ? ` (${failed} failed)` : ''}`;
+  }
+  const msg = failed
+    ? `Uploaded ${done - failed} of ${total} files (${failed} failed)`
+    : `Uploaded ${total} file${total > 1 ? 's' : ''}`;
+  showMsg('upload-msg', msg, failed ? 'error' : 'success');
+  setTimeout(() => progressEl.classList.add('hidden'), 2000);
+  loadAudioList();
+}
+
+// Save metadata
+$('#save-meta-btn').addEventListener('click', async () => {
+  const audioId = $('#audio-detail-view').dataset.audioId;
+  try {
+    const body = {
+      tag_data: JSON.parse($('#meta-tag-data').value || 'null'),
+      visual_observations: JSON.parse($('#meta-visual').value || 'null'),
+      group_composition: JSON.parse($('#meta-group').value || 'null'),
+      prey_density_proxy: JSON.parse($('#meta-prey').value || 'null'),
+    };
+    await api(`/audio/${audioId}/metadata`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    showMsg('meta-msg', 'Metadata saved');
+  } catch (e) {
+    showMsg('meta-msg', `Failed: ${e.message}`, 'error');
+  }
+});
+
+// ==================== PROCESSING ====================
+async function loadAudioOptions() {
+  try {
+    const files = await api('/audio/');
+    audioNameMap = {};
+    files.forEach(f => audioNameMap[f.id] = f.filename);
+    const sel = $('#proc-audio-select');
+    sel.innerHTML = '<option value="">-- select --</option>' +
+      files.map(f => `<option value="${f.id}">${f.filename}</option>`).join('');
+  } catch (e) { console.error(e); }
+}
+
+async function loadProcJobs() {
+  try {
+    const jobs = await api('/processing/jobs');
+    const tbody = $('#proc-table-body');
+    if (jobs.length === 0) {
+      tbody.innerHTML = '';
+      $('#proc-empty').classList.remove('hidden');
+      return;
+    }
+    $('#proc-empty').classList.add('hidden');
+    tbody.innerHTML = jobs.map(j => `
+      <tr>
+        <td>${shortId(j.id)}</td>
+        <td>${audioNameMap[j.audio_file_id] || shortId(j.audio_file_id)}</td>
+        <td>${badgeHtml(j.status)}</td>
+        <td>${j.model_version}</td>
+        <td>${j.window_size_seconds}s</td>
+        <td>${fmtDate(j.created_at)}</td>
+        <td>${(j.status === 'queued' || j.status === 'running') ? `<button class="btn btn-danger btn-sm cancel-proc" data-id="${j.id}">Cancel</button>` : ''}</td>
+      </tr>`).join('');
+    tbody.querySelectorAll('.cancel-proc').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await api(`/processing/jobs/${btn.dataset.id}/cancel`, { method: 'POST' });
+          loadProcJobs();
+        } catch (err) { console.error(err); }
+      });
+    });
+  } catch (e) { console.error(e); }
+}
+
+async function loadEmbeddingSets() {
+  try {
+    const sets = await api('/processing/embedding-sets');
+    const tbody = $('#embed-table-body');
+    if (sets.length === 0) {
+      tbody.innerHTML = '';
+      $('#embed-empty').classList.remove('hidden');
+      return;
+    }
+    $('#embed-empty').classList.add('hidden');
+    tbody.innerHTML = sets.map(s => `
+      <tr>
+        <td>${shortId(s.id)}</td>
+        <td>${audioNameMap[s.audio_file_id] || shortId(s.audio_file_id)}</td>
+        <td>${s.model_version}</td>
+        <td>${s.vector_dim}</td>
+        <td>${fmtDate(s.created_at)}</td>
+      </tr>`).join('');
+  } catch (e) { console.error(e); }
+}
+
+$('#queue-proc-btn').addEventListener('click', async () => {
+  const audioId = $('#proc-audio-select').value;
+  if (!audioId) { showMsg('proc-msg', 'Select an audio file', 'error'); return; }
+  try {
+    const body = {
+      audio_file_id: audioId,
+      model_version: $('#proc-model').value,
+      window_size_seconds: parseFloat($('#proc-window').value),
+      target_sample_rate: parseInt($('#proc-rate').value),
+    };
+    const result = await api('/processing/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    showMsg('proc-msg', result.skipped ? 'Job skipped (embeddings already exist)' : `Job queued: ${shortId(result.id)}`);
+    loadProcJobs();
+  } catch (e) {
+    showMsg('proc-msg', `Failed: ${e.message}`, 'error');
+  }
+});
+
+$('#queue-all-proc-btn').addEventListener('click', async () => {
+  try {
+    const files = await api('/audio/');
+    const jobs = await api('/processing/jobs');
+    const model = $('#proc-model').value;
+    const window = parseFloat($('#proc-window').value);
+    const rate = parseInt($('#proc-rate').value);
+
+    // Find audio files that don't already have a non-failed job with these settings
+    const existingAudioIds = new Set(
+      jobs.filter(j => j.model_version === model
+        && j.window_size_seconds === window
+        && j.target_sample_rate === rate
+        && j.status !== 'failed'
+      ).map(j => j.audio_file_id)
+    );
+    const toQueue = files.filter(f => !existingAudioIds.has(f.id));
+
+    if (toQueue.length === 0) {
+      showMsg('proc-msg', 'All audio files already have jobs queued or completed');
+      return;
+    }
+
+    const progressEl = $('#proc-batch-progress');
+    const bar = $('#proc-batch-bar');
+    const label = $('#proc-batch-label');
+    progressEl.classList.remove('hidden');
+    let done = 0, skipped = 0, failed = 0;
+
+    for (const file of toQueue) {
+      try {
+        const result = await api('/processing/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audio_file_id: file.id,
+            model_version: model,
+            window_size_seconds: window,
+            target_sample_rate: rate,
+          }),
+        });
+        if (result.skipped) skipped++;
+      } catch (e) {
+        failed++;
+      }
+      done++;
+      bar.style.width = Math.round((done / toQueue.length) * 100) + '%';
+      label.textContent = `Queued ${done} / ${toQueue.length}${skipped ? ` (${skipped} skipped)` : ''}${failed ? ` (${failed} failed)` : ''}`;
+    }
+
+    const queued = done - skipped - failed;
+    showMsg('proc-msg', `Queued ${queued} jobs, ${skipped} skipped, ${failed} failed`);
+    setTimeout(() => progressEl.classList.add('hidden'), 3000);
+    loadProcJobs();
+  } catch (e) {
+    showMsg('proc-msg', `Failed: ${e.message}`, 'error');
+  }
+});
+
+// ==================== CLUSTERING ====================
+async function loadClusterEmbedOptions() {
+  try {
+    const sets = await api('/processing/embedding-sets');
+    const container = $('#cluster-embed-list');
+    if (sets.length === 0) {
+      container.innerHTML = '';
+      $('#cluster-embed-empty').classList.remove('hidden');
+      return;
+    }
+    $('#cluster-embed-empty').classList.add('hidden');
+    container.innerHTML = sets.map(s => `
+      <label><input type="checkbox" value="${s.id}">
+        ${audioNameMap[s.audio_file_id] || shortId(s.audio_file_id)} &mdash; ${s.model_version} (${s.vector_dim}d)
+      </label>`).join('');
+  } catch (e) { console.error(e); }
+}
+
+$('#cluster-toggle-all-btn').addEventListener('click', () => {
+  const boxes = [...$('#cluster-embed-list').querySelectorAll('input[type="checkbox"]')];
+  if (boxes.length === 0) return;
+  const allChecked = boxes.every(cb => cb.checked);
+  boxes.forEach(cb => cb.checked = !allChecked);
+  $('#cluster-toggle-all-btn').textContent = allChecked ? 'Select All' : 'Unselect All';
+});
+
+// Track expanded cluster labels so they survive polling redraws
+const expandedClusters = new Map(); // cluster_id -> assignments HTML
+
+async function loadClusterJobs() {
+  try {
+    const container = $('#cluster-jobs-container');
+    if (clusterJobIds.length === 0) {
+      container.innerHTML = '';
+      $('#cluster-jobs-empty').classList.remove('hidden');
+      return;
+    }
+    $('#cluster-jobs-empty').classList.add('hidden');
+
+    // Pre-fetch embedding sets for audio name resolution
+    let embeddingSets = [];
+    try { embeddingSets = await api('/processing/embedding-sets'); } catch (_) {}
+    const esMap = {};
+    embeddingSets.forEach(s => { esMap[s.id] = s; });
+
+    let html = '';
+    let hasPending = false;
+    for (const jid of clusterJobIds) {
+      try {
+        const job = await api(`/clustering/jobs/${jid}`);
+        if (job.status === 'queued' || job.status === 'running') hasPending = true;
+        let clustersHtml = '';
+        if (job.status === 'complete') {
+          try {
+            const clusters = await api(`/clustering/jobs/${jid}/clusters`);
+            if (clusters.length > 0) {
+              clustersHtml = `<table><thead><tr><th>Label</th><th>Size</th><th>Summary</th></tr></thead><tbody>` +
+                clusters.map(c => {
+                  const expanded = expandedClusters.has(c.id);
+                  let rows = `<tr class="cluster-row" data-id="${c.id}" style="cursor:pointer">
+                    <td>${c.cluster_label}</td><td>${c.size}</td>
+                    <td style="font-size:0.8rem">${c.metadata_summary ? JSON.stringify(c.metadata_summary) : '-'}</td>
+                  </tr>`;
+                  if (expanded) {
+                    rows += `<tr class="assignment-row" data-cluster-id="${c.id}">
+                      <td colspan="3">${expandedClusters.get(c.id)}</td>
+                    </tr>`;
+                  }
+                  return rows;
+                }).join('') + `</tbody></table>`;
+            }
+          } catch (_) {}
+        }
+        html += `<div class="card" style="margin-top:0.5rem">
+          <strong>Job ${shortId(jid)}</strong> ${badgeHtml(job.status)}
+          ${job.error_message ? `<div class="msg msg-error" style="margin-top:0.5rem">${job.error_message}</div>` : ''}
+          ${clustersHtml}
+        </div>`;
+      } catch (_) {}
+    }
+    clusterJobsHavePending = hasPending;
+    container.innerHTML = html;
+    // Create audio elements programmatically (innerHTML can break media elements)
+    container.querySelectorAll('.audio-placeholder').forEach(span => {
+      const aid = span.dataset.audioId;
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.style.cssText = 'height:32px;max-width:260px';
+      audio.src = `/audio/${aid}/download`;
+      span.replaceWith(audio);
+    });
+
+    // Attach click handlers for cluster rows to toggle assignment details
+    container.querySelectorAll('.cluster-row').forEach(row => {
+      row.addEventListener('click', async () => {
+        const cid = row.dataset.id;
+        // Toggle off if already expanded
+        if (expandedClusters.has(cid)) {
+          expandedClusters.delete(cid);
+          const next = row.nextElementSibling;
+          if (next && next.classList.contains('assignment-row')) next.remove();
+          return;
+        }
+        try {
+          const assignments = await api(`/clustering/clusters/${cid}/assignments`);
+          // Group assignments by embedding_set_id
+          const byEs = {};
+          for (const a of assignments) {
+            if (!byEs[a.embedding_set_id]) byEs[a.embedding_set_id] = [];
+            byEs[a.embedding_set_id].push(a.embedding_row_index);
+          }
+          const audioIds = [];
+          let detailHtml = `<div style="font-size:0.85rem;padding:0.5rem">
+            <strong>Assignments (${assignments.length}):</strong>
+            <table style="margin-top:0.25rem;width:100%">
+              <thead><tr><th>Embedding Set</th><th>Audio File</th><th>Player</th><th>Rows</th></tr></thead><tbody>`;
+          for (const [esId, rowIndices] of Object.entries(byEs)) {
+            const es = esMap[esId];
+            const audioFileId = es ? es.audio_file_id : null;
+            const audioName = audioFileId ? (audioNameMap[audioFileId] || shortId(audioFileId)) : '-';
+            if (audioFileId) audioIds.push(audioFileId);
+            const playerCell = audioFileId
+              ? `<span class="audio-placeholder" data-audio-id="${audioFileId}"></span>`
+              : '-';
+            const rowsDisplay = rowIndices.length > 20
+              ? rowIndices.slice(0, 20).join(', ') + ` ... (${rowIndices.length} total)`
+              : rowIndices.join(', ');
+            detailHtml += `<tr>
+              <td>${shortId(esId)}</td>
+              <td>${audioName}</td>
+              <td>${playerCell}</td>
+              <td style="font-size:0.8rem">${rowsDisplay}</td>
+            </tr>`;
+          }
+          detailHtml += `</tbody></table></div>`;
+
+          expandedClusters.set(cid, detailHtml);
+          const tr = document.createElement('tr');
+          tr.className = 'assignment-row';
+          tr.dataset.clusterId = cid;
+          tr.innerHTML = `<td colspan="3">${detailHtml}</td>`;
+          row.after(tr);
+          // Create audio elements programmatically (innerHTML can break media elements)
+          tr.querySelectorAll('.audio-placeholder').forEach(span => {
+            const aid = span.dataset.audioId;
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.preload = 'metadata';
+            audio.style.cssText = 'height:32px;max-width:260px';
+            audio.src = `/audio/${aid}/download`;
+            span.replaceWith(audio);
+          });
+        } catch (e) { console.error(e); }
+      });
+    });
+  } catch (e) { console.error(e); }
+}
+
+let clusterJobIds = [];
+
+$('#queue-cluster-btn').addEventListener('click', async () => {
+  const checked = [...$('#cluster-embed-list').querySelectorAll('input:checked')].map(cb => cb.value);
+  if (checked.length === 0) { showMsg('cluster-msg', 'Select at least one embedding set', 'error'); return; }
+  let params;
+  try {
+    params = JSON.parse($('#cluster-params').value || 'null');
+  } catch (e) {
+    showMsg('cluster-msg', 'Invalid JSON in parameters', 'error');
+    return;
+  }
+  try {
+    const result = await api('/clustering/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ embedding_set_ids: checked, parameters: params }),
+    });
+    clusterJobIds.unshift(result.id);
+    clusterJobsHavePending = true;
+    showMsg('cluster-msg', `Clustering job queued: ${shortId(result.id)}`);
+    loadClusterJobs();
+  } catch (e) {
+    showMsg('cluster-msg', `Failed: ${e.message}`, 'error');
+  }
+});
+
+// ---- Polling for running jobs ----
+let clusterJobsHavePending = false;
+setInterval(() => {
+  const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  if (activeTab === 'processing') { loadProcJobs(); loadEmbeddingSets(); }
+  if (activeTab === 'clustering' && clusterJobsHavePending) loadClusterJobs();
+}, 3000);
+
+// ---- Initial load ----
+loadAudioList();
+</script>
+</body>
+</html>
