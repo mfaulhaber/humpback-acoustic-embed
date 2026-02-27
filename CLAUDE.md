@@ -86,7 +86,7 @@ UI can monitor via polling or a push channel.
 
 ## 5. Data Model (Conceptual)
 
-### TFLiteModelConfig (model registry)
+### ModelConfig (model registry) — DB table: model_configs
 - id
 - name (unique — used as model_version in jobs)
 - display_name
@@ -94,7 +94,11 @@ UI can monitor via polling or a push channel.
 - vector_dim
 - description (optional)
 - is_default (bool)
+- model_type (string: "tflite" | "tf2_saved_model", default "tflite")
+- input_format (string: "spectrogram" | "waveform", default "spectrogram")
 - created_at, updated_at
+
+Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfig`.
 
 ### AudioFile
 - id
@@ -167,12 +171,16 @@ Input:
 - optional metadata
 
 Pipeline:
-1. Resolve model: if model_version is None, use default from TFLiteModelConfig registry
+1. Resolve model: if model_version is None, use default from ModelConfig registry
 2. Decode audio (MP3/WAV)
 3. Resample to target sample rate (default: 32000 Hz)
 4. Slice into N-second windows (default: 5)
-5. Extract log-mel spectrogram (128 mel bins × 128 time frames)
-6. TFLite inference (batched, model resolved from registry by model_version)
+5. Branch on model's `input_format`:
+   - `"spectrogram"`: Extract log-mel spectrogram (128 mel bins × 128 time frames) → model.embed()
+   - `"waveform"`: Feed raw audio windows directly → model.embed() (TF2 SavedModel path)
+6. Model inference (batched, model resolved from registry by model_version):
+   - `model_type="tflite"` → TFLiteModel (spectrogram input)
+   - `model_type="tf2_saved_model"` → TF2SavedModel (waveform input)
 7. Produce embedding vectors (dims from model config)
 8. Save embeddings to Parquet (incremental)
 9. Persist EmbeddingSet row in SQL

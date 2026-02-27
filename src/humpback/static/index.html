@@ -240,7 +240,7 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
   <div class="card">
     <h3>Model Registry</h3>
     <table>
-      <thead><tr><th>Name</th><th>Display Name</th><th>Path</th><th>Dims</th><th>Default</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Display Name</th><th>Path</th><th>Type</th><th>Input</th><th>Dims</th><th>Default</th><th></th></tr></thead>
       <tbody id="admin-models-body"></tbody>
     </table>
     <p id="admin-models-empty" class="empty hidden">No models registered.</p>
@@ -248,7 +248,7 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
       <button class="btn btn-primary" id="scan-models-btn">Scan for Models</button>
     </div>
     <div id="scan-results" class="hidden" style="margin-top:0.75rem">
-      <h4 style="font-size:0.9rem;margin-bottom:0.5rem">Unregistered .tflite Files</h4>
+      <h4 style="font-size:0.9rem;margin-bottom:0.5rem">Unregistered Model Files</h4>
       <div id="scan-results-list"></div>
     </div>
     <div id="admin-models-msg"></div>
@@ -1135,6 +1135,8 @@ async function loadAdminModels() {
         <td>${m.name}</td>
         <td>${m.display_name}</td>
         <td style="font-size:0.8rem">${m.path}</td>
+        <td>${m.model_type || 'tflite'}</td>
+        <td>${m.input_format || 'spectrogram'}</td>
         <td>${m.vector_dim}</td>
         <td>${m.is_default ? '<strong>Yes</strong>' : 'No'}</td>
         <td>
@@ -1174,13 +1176,14 @@ $('#scan-models-btn').addEventListener('click', async () => {
     const list = $('#scan-results-list');
     if (unregistered.length === 0) {
       container.classList.remove('hidden');
-      list.innerHTML = '<p class="empty">All .tflite files are already registered.</p>';
+      list.innerHTML = '<p class="empty">All model files are already registered.</p>';
       return;
     }
     container.classList.remove('hidden');
     list.innerHTML = unregistered.map((f, i) => `
       <div class="card" style="padding:0.75rem;margin-bottom:0.5rem">
         <strong>${f.filename}</strong> <span style="font-size:0.8rem;color:#888">(${(f.size_bytes / 1024 / 1024).toFixed(1)} MB)</span>
+        <span class="badge" style="margin-left:0.5rem;background:#e0e7ff;color:#3730a3">${f.model_type || 'tflite'}</span>
         <div class="form-row" style="margin-top:0.5rem">
           <div class="form-group">
             <label>Name (identifier)</label>
@@ -1195,7 +1198,7 @@ $('#scan-models-btn').addEventListener('click', async () => {
             <input type="number" id="scan-dim-${i}" value="1280" min="1" style="width:100%">
           </div>
           <div class="form-group" style="display:flex;align-items:flex-end">
-            <button class="btn btn-primary btn-sm register-scanned" data-index="${i}" data-path="${f.path}">Register</button>
+            <button class="btn btn-primary btn-sm register-scanned" data-index="${i}" data-path="${f.path}" data-model-type="${f.model_type || 'tflite'}" data-input-format="${f.input_format || 'spectrogram'}">Register</button>
           </div>
         </div>
       </div>`).join('');
@@ -1208,6 +1211,8 @@ $('#scan-models-btn').addEventListener('click', async () => {
           display_name: $(`#scan-display-${idx}`).value,
           path: btn.dataset.path,
           vector_dim: parseInt($(`#scan-dim-${idx}`).value),
+          model_type: btn.dataset.modelType || 'tflite',
+          input_format: btn.dataset.inputFormat || 'spectrogram',
         };
         try {
           await api('/admin/models', {

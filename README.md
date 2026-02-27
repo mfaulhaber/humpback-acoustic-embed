@@ -9,7 +9,9 @@ with optional ecological/behavioral metadata.
 Key features:
 - Asynchronous job queue (SQL-backed, restart-safe)
 - Idempotent encoding (no reprocessing for same config)
-- Multi-model registry (register, switch, and manage TFLite models from the UI)
+- Multi-model registry supporting TFLite and TF2 SavedModel formats
+- TF2 SavedModel support for raw waveform input (e.g., SurfPerch)
+- macOS GPU acceleration via tensorflow-macos/tensorflow-metal
 - Embeddings stored in Parquet
 - REST API for job management and inspection
 - UMAP + HDBSCAN clustering pipeline
@@ -54,9 +56,10 @@ The worker polls for queued processing and clustering jobs and executes them.
 audio file (MP3/WAV) + optional metadata
   → resample to target SR (default 32kHz)
   → slice into N-second windows (default 5s)
-  → log-mel spectrogram (128 mel bins × 128 time frames)
-  → TFLite inference (multispecies_whale model)
-  → embedding vectors (1280 dims)
+  → branch on model input_format:
+      spectrogram: log-mel spectrogram (128 mel bins × 128 time frames) → TFLite inference
+      waveform:    raw audio windows → TF2 SavedModel inference
+  → embedding vectors (dims from model config)
   → save to Parquet (incremental, atomic)
 ```
 
@@ -65,11 +68,19 @@ skipped when an EmbeddingSet with the same encoding_signature already exists.
 
 ### Model Registry
 
-Multiple TFLite models can be registered and managed via the Admin tab or API.
+Multiple models can be registered and managed via the Admin tab or API. Supported
+model types:
+- **TFLite** (`model_type="tflite"`, `input_format="spectrogram"`): Standard TFLite models
+  that take log-mel spectrogram input
+- **TF2 SavedModel** (`model_type="tf2_saved_model"`, `input_format="waveform"`): TensorFlow 2
+  SavedModel directories that take raw audio waveform input (e.g., SurfPerch)
+
 A default model is seeded on first startup (`multispecies_whale_fp16`). When
 creating a processing job, if no `model_version` is specified, the default
-registered model is used. The worker resolves the model path and vector
-dimensions from the registry, caching loaded models across jobs.
+registered model is used. The worker resolves the model path, vector
+dimensions, model type, and input format from the registry, caching loaded
+models across jobs. The scan endpoint detects both `.tflite` files and
+directories containing `saved_model.pb`.
 
 Clustering validates that all selected embedding sets share the same vector
 dimensions to prevent mixing incompatible embeddings.
@@ -109,7 +120,7 @@ selected embedding sets (must share vector_dim)
 | PUT | `/admin/models/{id}` | Update model config |
 | DELETE | `/admin/models/{id}` | Delete model (fails if embeddings reference it) |
 | POST | `/admin/models/{id}/set-default` | Set model as default |
-| GET | `/admin/models/scan` | Scan `models/` dir for unregistered `.tflite` files |
+| GET | `/admin/models/scan` | Scan `models/` dir for unregistered models (.tflite + SavedModel dirs) |
 
 ---
 
@@ -179,6 +190,6 @@ Environment variables (prefix `HUMPBACK_`):
 - **Backend**: Python + FastAPI
 - **Queue**: SQL-backed polling queue
 - **DB**: SQLite with WAL mode (MVP)
-- **Embedding**: TensorFlow Lite via TensorFlow (flex delegate for custom ops; FakeTFLiteModel for testing)
+- **Embedding**: TensorFlow Lite + TF2 SavedModel (flex delegate for custom ops; macOS GPU via tensorflow-metal; FakeTFLiteModel/FakeTF2Model for testing)
 - **Clustering**: UMAP + HDBSCAN
 - **Storage**: Local filesystem

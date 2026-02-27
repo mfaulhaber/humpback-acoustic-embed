@@ -9,8 +9,8 @@ from humpback.models import (
     ClusterAssignment,
     ClusteringJob,
     EmbeddingSet,
+    ModelConfig,
     ProcessingJob,
-    TFLiteModelConfig,
 )
 from humpback.schemas.model_registry import (
     AvailableModelFile,
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _MODELS = [
     ("audio_files", AudioFile),
     ("audio_metadata", AudioMetadata),
-    ("model_configs", TFLiteModelConfig),
+    ("model_configs", ModelConfig),
     ("processing_jobs", ProcessingJob),
     ("embedding_sets", EmbeddingSet),
     ("clustering_jobs", ClusteringJob),
@@ -54,6 +54,8 @@ async def create_model(body: ModelConfigCreate, session: SessionDep):
             vector_dim=body.vector_dim,
             description=body.description,
             is_default=body.is_default,
+            model_type=body.model_type,
+            input_format=body.input_format,
         )
     except Exception as e:
         raise HTTPException(400, str(e))
@@ -71,6 +73,8 @@ async def update_model(
         vector_dim=body.vector_dim,
         description=body.description,
         is_default=body.is_default,
+        model_type=body.model_type,
+        input_format=body.input_format,
     )
     if model is None:
         raise HTTPException(404, "Model not found")

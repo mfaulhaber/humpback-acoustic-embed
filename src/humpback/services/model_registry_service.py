@@ -1,4 +1,4 @@
-"""Service layer for TFLite model registry CRUD and file scanning."""
+"""Service layer for model registry CRUD and file scanning."""
 
 from pathlib import Path
 from typing import Optional
@@ -7,38 +7,41 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
-from humpback.models.model_registry import TFLiteModelConfig
+from humpback.models.model_registry import ModelConfig
 from humpback.models.processing import EmbeddingSet
 
+# Backward-compatible alias
+ModelConfig = ModelConfig
 
-async def list_models(session: AsyncSession) -> list[TFLiteModelConfig]:
+
+async def list_models(session: AsyncSession) -> list[ModelConfig]:
     result = await session.execute(
-        select(TFLiteModelConfig).order_by(TFLiteModelConfig.name)
+        select(ModelConfig).order_by(ModelConfig.name)
     )
     return list(result.scalars().all())
 
 
 async def get_model_by_name(
     session: AsyncSession, name: str
-) -> Optional[TFLiteModelConfig]:
+) -> Optional[ModelConfig]:
     result = await session.execute(
-        select(TFLiteModelConfig).where(TFLiteModelConfig.name == name)
+        select(ModelConfig).where(ModelConfig.name == name)
     )
     return result.scalar_one_or_none()
 
 
 async def get_model_by_id(
     session: AsyncSession, model_id: str
-) -> Optional[TFLiteModelConfig]:
+) -> Optional[ModelConfig]:
     result = await session.execute(
-        select(TFLiteModelConfig).where(TFLiteModelConfig.id == model_id)
+        select(ModelConfig).where(ModelConfig.id == model_id)
     )
     return result.scalar_one_or_none()
 
 
-async def get_default_model(session: AsyncSession) -> Optional[TFLiteModelConfig]:
+async def get_default_model(session: AsyncSession) -> Optional[ModelConfig]:
     result = await session.execute(
-        select(TFLiteModelConfig).where(TFLiteModelConfig.is_default == True)  # noqa: E712
+        select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
     )
     return result.scalar_one_or_none()
 
@@ -52,17 +55,21 @@ async def create_model(
     vector_dim: int = 1280,
     description: Optional[str] = None,
     is_default: bool = False,
-) -> TFLiteModelConfig:
+    model_type: str = "tflite",
+    input_format: str = "spectrogram",
+) -> ModelConfig:
     if is_default:
         await _clear_defaults(session)
 
-    model = TFLiteModelConfig(
+    model = ModelConfig(
         name=name,
         display_name=display_name,
         path=path,
         vector_dim=vector_dim,
         description=description,
         is_default=is_default,
+        model_type=model_type,
+        input_format=input_format,
     )
     session.add(model)
     await session.commit()
@@ -77,7 +84,9 @@ async def update_model(
     vector_dim: Optional[int] = None,
     description: Optional[str] = None,
     is_default: Optional[bool] = None,
-) -> Optional[TFLiteModelConfig]:
+    model_type: Optional[str] = None,
+    input_format: Optional[str] = None,
+) -> Optional[ModelConfig]:
     model = await get_model_by_id(session, model_id)
     if model is None:
         return None
@@ -92,6 +101,10 @@ async def update_model(
         if is_default:
             await _clear_defaults(session)
         model.is_default = is_default
+    if model_type is not None:
+        model.model_type = model_type
+    if input_format is not None:
+        model.input_format = input_format
 
     await session.commit()
     return model
@@ -99,7 +112,7 @@ async def update_model(
 
 async def set_default_model(
     session: AsyncSession, model_id: str
-) -> Optional[TFLiteModelConfig]:
+) -> Optional[ModelConfig]:
     model = await get_model_by_id(session, model_id)
     if model is None:
         return None
@@ -129,16 +142,31 @@ async def delete_model(session: AsyncSession, model_id: str) -> None:
 
 
 def scan_model_files(settings: Settings) -> list[dict]:
-    """Scan models directory for .tflite files. Returns list of file info dicts."""
+    """Scan models directory for .tflite files and TF2 SavedModel directories."""
     models_dir = Path(settings.models_dir)
     files = []
     if models_dir.is_dir():
+        # Scan for .tflite files
         for p in sorted(models_dir.glob("*.tflite")):
             files.append({
                 "filename": p.name,
                 "path": str(p),
                 "size_bytes": p.stat().st_size,
+                "model_type": "tflite",
+                "input_format": "spectrogram",
             })
+        # Scan for TF2 SavedModel directories (contain saved_model.pb)
+        for p in sorted(models_dir.iterdir()):
+            if p.is_dir() and (p / "saved_model.pb").exists():
+                # Sum up directory size
+                total_size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                files.append({
+                    "filename": p.name,
+                    "path": str(p),
+                    "size_bytes": total_size,
+                    "model_type": "tf2_saved_model",
+                    "input_format": "waveform",
+                })
     return files
 
 
@@ -156,7 +184,7 @@ async def scan_model_files_with_status(
 
 async def seed_default_model(session: AsyncSession) -> None:
     """Insert the default model if the table is empty."""
-    result = await session.execute(select(TFLiteModelConfig).limit(1))
+    result = await session.execute(select(ModelConfig).limit(1))
     if result.scalar_one_or_none() is not None:
         return  # Table already has entries
 
@@ -173,7 +201,7 @@ async def seed_default_model(session: AsyncSession) -> None:
 async def _clear_defaults(session: AsyncSession) -> None:
     """Clear is_default on all models."""
     result = await session.execute(
-        select(TFLiteModelConfig).where(TFLiteModelConfig.is_default == True)  # noqa: E712
+        select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
     )
     for m in result.scalars().all():
         m.is_default = False

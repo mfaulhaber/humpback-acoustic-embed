@@ -105,6 +105,43 @@ async def test_scan_models(client, app_settings):
     assert isinstance(resp.json(), list)
 
 
+async def test_create_tf2_saved_model(client):
+    """Creating a model with model_type=tf2_saved_model should persist correctly."""
+    resp = await client.post("/admin/models", json={
+        "name": "surfperch_tf2",
+        "display_name": "SurfPerch TF2",
+        "path": "models/surfperch-tensorflow2",
+        "vector_dim": 1280,
+        "model_type": "tf2_saved_model",
+        "input_format": "waveform",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["model_type"] == "tf2_saved_model"
+    assert data["input_format"] == "waveform"
+    assert data["vector_dim"] == 1280
+
+    # Verify it shows up in the list
+    list_resp = await client.get("/admin/models")
+    models = list_resp.json()
+    tf2_models = [m for m in models if m["name"] == "surfperch_tf2"]
+    assert len(tf2_models) == 1
+    assert tf2_models[0]["model_type"] == "tf2_saved_model"
+
+
+async def test_default_model_type_in_response(client):
+    """Models created without explicit model_type should return tflite defaults."""
+    resp = await client.post("/admin/models", json={
+        "name": "plain_tflite",
+        "display_name": "Plain TFLite",
+        "path": "models/plain.tflite",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["model_type"] == "tflite"
+    assert data["input_format"] == "spectrogram"
+
+
 async def test_tables_includes_model_configs(client):
     resp = await client.get("/admin/tables")
     assert resp.status_code == 200

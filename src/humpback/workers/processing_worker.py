@@ -14,7 +14,7 @@ from humpback.models.processing import EmbeddingSet, ProcessingJob
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.embeddings import IncrementalParquetWriter
 from humpback.processing.features import extract_logmel
-from humpback.processing.inference import EmbeddingModel, FakeTFLiteModel
+from humpback.processing.inference import EmbeddingModel, FakeTF2Model, FakeTFLiteModel
 from humpback.processing.windowing import slice_windows
 from humpback.services.model_registry_service import get_model_by_name
 from humpback.storage import audio_raw_dir, embedding_path, ensure_dir
@@ -36,27 +36,40 @@ def get_model(settings: Settings) -> EmbeddingModel:
 
 async def get_model_for_job(
     session, job: ProcessingJob, settings: Settings
-) -> EmbeddingModel:
-    """Load model based on job's model_version, using registry and cache."""
+) -> tuple[EmbeddingModel, str]:
+    """Load model based on job's model_version, using registry and cache.
+
+    Returns (model, input_format) where input_format is "spectrogram" or "waveform".
+    """
     cache_key = job.model_version
+    model_config = await get_model_by_name(session, job.model_version)
+    input_format = (
+        model_config.input_format if model_config else "spectrogram"
+    )
+    model_type = model_config.model_type if model_config else "tflite"
 
     if cache_key in _model_cache:
-        return _model_cache[cache_key]
+        return _model_cache[cache_key], input_format
 
     if not settings.use_real_model:
-        # Look up vector_dim from registry, fall back to settings
-        model_config = await get_model_by_name(session, job.model_version)
         vector_dim = model_config.vector_dim if model_config else settings.vector_dim
-        model = FakeTFLiteModel(vector_dim)
+        if input_format == "waveform":
+            model = FakeTF2Model(vector_dim)
+        else:
+            model = FakeTFLiteModel(vector_dim)
         _model_cache[cache_key] = model
-        return model
+        return model, input_format
 
     # Real model: look up path and dims from registry
-    model_config = await get_model_by_name(session, job.model_version)
     if model_config:
-        from humpback.processing.inference import TFLiteModel
+        if model_type == "tf2_saved_model":
+            from humpback.processing.inference import TF2SavedModel
 
-        model = TFLiteModel(model_config.path, model_config.vector_dim)
+            model = TF2SavedModel(model_config.path, model_config.vector_dim)
+        else:
+            from humpback.processing.inference import TFLiteModel
+
+            model = TFLiteModel(model_config.path, model_config.vector_dim)
     else:
         # Fallback to settings for unregistered model versions
         from humpback.processing.inference import TFLiteModel
@@ -64,7 +77,7 @@ async def get_model_for_job(
         model = TFLiteModel(settings.model_path, settings.vector_dim)
 
     _model_cache[cache_key] = model
-    return model
+    return model, input_format
 
 
 async def run_processing_job(
@@ -101,8 +114,9 @@ async def run_processing_job(
         audio_path = audio_files[0]
 
         # Run CPU-bound processing in thread
+        input_format = "spectrogram"
         if model is None:
-            model = await get_model_for_job(session, job, settings)
+            model, input_format = await get_model_for_job(session, job, settings)
 
         final_path = embedding_path(
             settings.storage_root,
@@ -112,7 +126,7 @@ async def run_processing_job(
         )
 
         await asyncio.to_thread(
-            _process_audio, audio_path, job, model, final_path
+            _process_audio, audio_path, job, model, final_path, input_format
         )
 
         # Create EmbeddingSet record
@@ -153,6 +167,7 @@ def _process_audio(
     job: ProcessingJob,
     model: EmbeddingModel,
     final_path: Path,
+    input_format: str = "spectrogram",
 ) -> None:
     """CPU-bound audio processing (runs in thread)."""
     # Decode + resample
@@ -164,28 +179,34 @@ def _process_audio(
         final_path, vector_dim=model.vector_dim, batch_size=50
     )
 
-    batch_specs = []
+    batch_items = []
     batch_size = 32
 
     for window in slice_windows(audio, job.target_sample_rate, job.window_size_seconds):
-        spec = extract_logmel(
-            window,
-            job.target_sample_rate,
-            n_mels=128,
-            hop_length=1252,
-            target_frames=128,
-        )
-        batch_specs.append(spec)
-        if len(batch_specs) >= batch_size:
-            batch = np.stack(batch_specs)
+        if input_format == "waveform":
+            # Feed raw audio directly (TF2 SavedModel path)
+            batch_items.append(window)
+        else:
+            # Extract spectrogram (TFLite path)
+            spec = extract_logmel(
+                window,
+                job.target_sample_rate,
+                n_mels=128,
+                hop_length=1252,
+                target_frames=128,
+            )
+            batch_items.append(spec)
+
+        if len(batch_items) >= batch_size:
+            batch = np.stack(batch_items)
             embeddings = model.embed(batch)
             for emb in embeddings:
                 writer.add(emb)
-            batch_specs.clear()
+            batch_items.clear()
 
     # Process remaining windows
-    if batch_specs:
-        batch = np.stack(batch_specs)
+    if batch_items:
+        batch = np.stack(batch_items)
         embeddings = model.embed(batch)
         for emb in embeddings:
             writer.add(emb)
