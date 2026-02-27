@@ -25,6 +25,7 @@ class AudioMetadataOut(BaseModel):
 class AudioFileOut(BaseModel):
     id: str
     filename: str
+    folder_path: str = ""
     checksum_sha256: str
     duration_seconds: Optional[float] = None
     sample_rate_original: Optional[int] = None

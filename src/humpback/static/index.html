@@ -55,6 +55,19 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
 .upload-progress .bar-track { background: #eee; border-radius: 4px; height: 6px; overflow: hidden; }
 .upload-progress .bar-fill { background: #3a86ff; height: 100%; width: 0%; transition: width 0.3s; }
 .upload-progress .bar-label { font-size: 0.8rem; color: #666; margin-top: 0.25rem; }
+.tree-folder { margin-left: 0.5rem; }
+.tree-folder-header { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.25rem; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: #333; user-select: none; border-radius: 4px; }
+.tree-folder-header:hover { background: #f0f4ff; }
+.tree-folder-header .arrow { display: inline-block; width: 1rem; text-align: center; font-size: 0.7rem; transition: transform 0.15s; color: #888; }
+.tree-folder-header .arrow.open { transform: rotate(90deg); }
+.tree-folder-children { margin-left: 1rem; border-left: 1px solid #e0e0e0; padding-left: 0.25rem; }
+.tree-folder-children.collapsed { display: none; }
+.tree-file-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.3rem 0.5rem; font-size: 0.88rem; border-radius: 4px; cursor: pointer; }
+.tree-file-row:hover { background: #f0f6ff; }
+.tree-file-row .file-icon { color: #888; font-size: 0.8rem; }
+.tree-file-row .file-name { flex: 1; }
+.tree-file-row .file-meta { color: #888; font-size: 0.8rem; white-space: nowrap; }
+.tree-root { margin-top: 0.5rem; }
 </style>
 </head>
 <body>
@@ -88,10 +101,7 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
     </div>
     <div class="card">
       <h3>Audio Files</h3>
-      <table>
-        <thead><tr><th>Filename</th><th>Duration</th><th>Sample Rate</th><th>Created</th></tr></thead>
-        <tbody id="audio-table-body"></tbody>
-      </table>
+      <div id="audio-tree-container" class="tree-root"></div>
       <p id="audio-empty" class="empty hidden">No audio files uploaded yet.</p>
     </div>
   </div>
@@ -166,18 +176,12 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
   </div>
   <div class="card">
     <h3>Processing Jobs</h3>
-    <table>
-      <thead><tr><th>ID</th><th>Audio</th><th>Status</th><th>Model</th><th>Window</th><th>Created</th><th></th></tr></thead>
-      <tbody id="proc-table-body"></tbody>
-    </table>
+    <div id="proc-tree-container" class="tree-root"></div>
     <p id="proc-empty" class="empty hidden">No processing jobs.</p>
   </div>
   <div class="card">
     <h3>Embedding Sets</h3>
-    <table>
-      <thead><tr><th>ID</th><th>Audio</th><th>Model</th><th>Dims</th><th>Created</th></tr></thead>
-      <tbody id="embed-table-body"></tbody>
-    </table>
+    <div id="embed-tree-container" class="tree-root"></div>
     <p id="embed-empty" class="empty hidden">No embedding sets.</p>
   </div>
 </div>
@@ -295,36 +299,127 @@ $$('.tab-btn').forEach(btn => {
     $('#' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'audio') loadAudioList();
     if (btn.dataset.tab === 'processing') { loadAudioOptions(); loadModelOptions(); loadProcJobs(); loadEmbeddingSets(); }
-    if (btn.dataset.tab === 'clustering') { loadClusterEmbedOptions(); loadClusterJobs(); }
+    if (btn.dataset.tab === 'clustering') { loadClusterEmbedOptions(); loadAllClusterJobs(); }
     if (btn.dataset.tab === 'admin') { loadAdminTables(); loadAdminModels(); }
   });
 });
 
-// ---- Audio file name cache ----
-let audioNameMap = {};
+// ---- Audio file cache (id -> {filename, folder_path}) ----
+let audioFileMap = {};
+
+/**
+ * Build an expandable folder tree from a list of items.
+ * @param {Array} items - data items to display
+ * @param {Function} getPath - (item) => folder path string (e.g. "a/b/c")
+ * @param {Function} renderLeaf - (item) => HTML string for the leaf row
+ * @param {Object} expandState - persistent object tracking open/closed folders
+ * @param {HTMLElement} container - DOM element to render into
+ */
+function buildFolderTree(items, getPath, renderLeaf, expandState, container) {
+  // Build trie structure
+  const root = { children: {}, items: [] };
+  for (const item of items) {
+    const path = getPath(item);
+    if (!path) {
+      root.items.push(item);
+      continue;
+    }
+    const parts = path.split('/');
+    let node = root;
+    for (const part of parts) {
+      if (!node.children[part]) node.children[part] = { children: {}, items: [] };
+      node = node.children[part];
+    }
+    node.items.push(item);
+  }
+
+  function renderNode(node, pathSoFar) {
+    let html = '';
+    // Render subfolders sorted alphabetically
+    const folderNames = Object.keys(node.children).sort();
+    for (const name of folderNames) {
+      const fullPath = pathSoFar ? pathSoFar + '/' + name : name;
+      const isOpen = expandState[fullPath] !== false; // default open
+      const child = node.children[name];
+      const count = countItems(child);
+      html += `<div class="tree-folder">
+        <div class="tree-folder-header" data-path="${fullPath}">
+          <span class="arrow ${isOpen ? 'open' : ''}">\u25B6</span>
+          <span>\uD83D\uDCC1 ${name}</span>
+          <span style="color:#999;font-weight:normal;font-size:0.8rem">(${count})</span>
+        </div>
+        <div class="tree-folder-children ${isOpen ? '' : 'collapsed'}">
+          ${renderNode(child, fullPath)}
+        </div>
+      </div>`;
+    }
+    // Render leaf items
+    for (const item of node.items) {
+      html += renderLeaf(item);
+    }
+    return html;
+  }
+
+  function countItems(node) {
+    let c = node.items.length;
+    for (const child of Object.values(node.children)) c += countItems(child);
+    return c;
+  }
+
+  container.innerHTML = renderNode(root, '');
+
+  // Attach expand/collapse handlers
+  container.querySelectorAll('.tree-folder-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const path = header.dataset.path;
+      const children = header.nextElementSibling;
+      const arrow = header.querySelector('.arrow');
+      const isOpen = !children.classList.contains('collapsed');
+      if (isOpen) {
+        children.classList.add('collapsed');
+        arrow.classList.remove('open');
+        expandState[path] = false;
+      } else {
+        children.classList.remove('collapsed');
+        arrow.classList.add('open');
+        expandState[path] = true;
+      }
+    });
+  });
+}
 
 // ==================== AUDIO ====================
+const audioTreeExpand = {};
+
 async function loadAudioList() {
   try {
     const files = await api('/audio/');
-    audioNameMap = {};
-    files.forEach(f => audioNameMap[f.id] = f.filename);
-    const tbody = $('#audio-table-body');
+    audioFileMap = {};
+    files.forEach(f => { audioFileMap[f.id] = { filename: f.filename, folder_path: f.folder_path || '' }; });
+    const container = $('#audio-tree-container');
     if (files.length === 0) {
-      tbody.innerHTML = '';
+      container.innerHTML = '';
       $('#audio-empty').classList.remove('hidden');
       return;
     }
     $('#audio-empty').classList.add('hidden');
-    tbody.innerHTML = files.map(f => `
-      <tr data-id="${f.id}">
-        <td>${f.filename}</td>
-        <td>${f.duration_seconds ? f.duration_seconds.toFixed(1) + 's' : '-'}</td>
-        <td>${f.sample_rate_original || '-'}</td>
-        <td>${fmtDate(f.created_at)}</td>
-      </tr>`).join('');
-    tbody.querySelectorAll('tr').forEach(tr => {
-      tr.addEventListener('click', () => showAudioDetail(tr.dataset.id));
+
+    buildFolderTree(
+      files,
+      f => f.folder_path || '',
+      f => `<div class="tree-file-row" data-id="${f.id}">
+        <span class="file-icon">\uD83C\uDFB5</span>
+        <span class="file-name">${f.filename}</span>
+        <span class="file-meta">${f.duration_seconds ? f.duration_seconds.toFixed(1) + 's' : '-'}</span>
+        <span class="file-meta">${f.sample_rate_original ? f.sample_rate_original + ' Hz' : ''}</span>
+        <span class="file-meta">${fmtDate(f.created_at)}</span>
+      </div>`,
+      audioTreeExpand,
+      container,
+    );
+
+    container.querySelectorAll('.tree-file-row').forEach(row => {
+      row.addEventListener('click', () => showAudioDetail(row.dataset.id));
     });
   } catch (e) { console.error(e); }
 }
@@ -419,31 +514,62 @@ function readEntriesRecursive(entries) {
   return new Promise((resolve) => {
     const files = [];
     let pending = 0;
-    function readEntry(entry) {
+
+    function readAllEntries(reader) {
+      // Chromium returns at most 100 entries per readEntries call
+      return new Promise((res) => {
+        const all = [];
+        function readBatch() {
+          reader.readEntries(batch => {
+            if (batch.length === 0) { res(all); return; }
+            all.push(...batch);
+            readBatch();
+          });
+        }
+        readBatch();
+      });
+    }
+
+    function readEntry(entry, parentPath) {
       if (entry.isFile) {
         pending++;
-        entry.file(f => { files.push(f); if (--pending === 0) resolve(files); });
+        entry.file(f => {
+          // Attach the folder path so uploadFiles can use it
+          f._folderPath = parentPath;
+          files.push(f);
+          if (--pending === 0) resolve(files);
+        });
       } else if (entry.isDirectory) {
         pending++;
+        const dirPath = parentPath ? parentPath + '/' + entry.name : entry.name;
         const reader = entry.createReader();
-        reader.readEntries(subEntries => {
-          for (const sub of subEntries) readEntry(sub);
+        readAllEntries(reader).then(subEntries => {
+          for (const sub of subEntries) readEntry(sub, dirPath);
           if (--pending === 0) resolve(files);
         });
       }
     }
-    for (const entry of entries) readEntry(entry);
+    for (const entry of entries) readEntry(entry, '');
     if (pending === 0) resolve(files);
   });
 }
 
 fileInput.addEventListener('change', () => {
   const files = [...fileInput.files].filter(isAudioFile);
+  // No folder path for direct file selection
   if (files.length > 0) uploadFiles(files);
   fileInput.value = '';
 });
 folderInput.addEventListener('change', () => {
   const files = [...folderInput.files].filter(isAudioFile);
+  // Capture folder path from webkitRelativePath
+  for (const f of files) {
+    const rel = f.webkitRelativePath || '';
+    const parts = rel.split('/');
+    if (parts.length > 1) {
+      f._folderPath = parts.slice(0, -1).join('/');
+    }
+  }
   if (files.length > 0) uploadFiles(files);
   folderInput.value = '';
 });
@@ -460,6 +586,8 @@ async function uploadFiles(files) {
     try {
       const form = new FormData();
       form.append('file', file);
+      const folderPath = file._folderPath || '';
+      if (folderPath) form.append('folder_path', folderPath);
       await api('/audio/upload', { method: 'POST', body: form });
     } catch (e) {
       failed++;
@@ -498,14 +626,28 @@ $('#save-meta-btn').addEventListener('click', async () => {
 });
 
 // ==================== PROCESSING ====================
+function audioDisplayName(id) {
+  const info = audioFileMap[id];
+  if (!info) return shortId(id);
+  return info.folder_path ? info.folder_path + '/' + info.filename : info.filename;
+}
+
 async function loadAudioOptions() {
   try {
     const files = await api('/audio/');
-    audioNameMap = {};
-    files.forEach(f => audioNameMap[f.id] = f.filename);
+    audioFileMap = {};
+    files.forEach(f => { audioFileMap[f.id] = { filename: f.filename, folder_path: f.folder_path || '' }; });
+    const sorted = [...files].sort((a, b) => {
+      const pa = (a.folder_path || '') + '/' + a.filename;
+      const pb = (b.folder_path || '') + '/' + b.filename;
+      return pa.localeCompare(pb);
+    });
     const sel = $('#proc-audio-select');
     sel.innerHTML = '<option value="">-- select --</option>' +
-      files.map(f => `<option value="${f.id}">${f.filename}</option>`).join('');
+      sorted.map(f => {
+        const display = f.folder_path ? f.folder_path + '/' + f.filename : f.filename;
+        return `<option value="${f.id}">${display}</option>`;
+      }).join('');
   } catch (e) { console.error(e); }
 }
 
@@ -520,27 +662,45 @@ async function loadModelOptions() {
   } catch (e) { console.error(e); }
 }
 
+const procTreeExpand = {};
+const embedTreeExpand = {};
+
 async function loadProcJobs() {
   try {
     const jobs = await api('/processing/jobs');
-    const tbody = $('#proc-table-body');
+    const container = $('#proc-tree-container');
     if (jobs.length === 0) {
-      tbody.innerHTML = '';
+      container.innerHTML = '';
       $('#proc-empty').classList.remove('hidden');
       return;
     }
     $('#proc-empty').classList.add('hidden');
-    tbody.innerHTML = jobs.map(j => `
-      <tr>
-        <td>${shortId(j.id)}</td>
-        <td>${audioNameMap[j.audio_file_id] || shortId(j.audio_file_id)}</td>
-        <td>${badgeHtml(j.status)}</td>
-        <td>${j.model_version}</td>
-        <td>${j.window_size_seconds}s</td>
-        <td>${fmtDate(j.created_at)}</td>
-        <td>${(j.status === 'queued' || j.status === 'running') ? `<button class="btn btn-danger btn-sm cancel-proc" data-id="${j.id}">Cancel</button>` : ''}</td>
-      </tr>`).join('');
-    tbody.querySelectorAll('.cancel-proc').forEach(btn => {
+
+    buildFolderTree(
+      jobs,
+      j => {
+        const info = audioFileMap[j.audio_file_id];
+        return info ? info.folder_path : '';
+      },
+      j => {
+        const audioName = audioDisplayName(j.audio_file_id);
+        const cancelBtn = (j.status === 'queued' || j.status === 'running')
+          ? `<button class="btn btn-danger btn-sm cancel-proc" data-id="${j.id}" style="margin-left:0.5rem">Cancel</button>` : '';
+        return `<div class="tree-file-row" style="cursor:default">
+          <span class="file-meta">${shortId(j.id)}</span>
+          <span class="file-name">${audioFileMap[j.audio_file_id]?.filename || shortId(j.audio_file_id)}</span>
+          <span>${badgeHtml(j.status)}</span>
+          <span class="file-meta">${j.model_version}</span>
+          <span class="file-meta">${j.window_size_seconds}s</span>
+          <span class="file-meta">${fmtDate(j.created_at)}</span>
+          ${cancelBtn}
+        </div>`;
+      },
+      procTreeExpand,
+      container,
+    );
+
+    container.querySelectorAll('.cancel-proc').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         try {
@@ -555,21 +715,30 @@ async function loadProcJobs() {
 async function loadEmbeddingSets() {
   try {
     const sets = await api('/processing/embedding-sets');
-    const tbody = $('#embed-table-body');
+    const container = $('#embed-tree-container');
     if (sets.length === 0) {
-      tbody.innerHTML = '';
+      container.innerHTML = '';
       $('#embed-empty').classList.remove('hidden');
       return;
     }
     $('#embed-empty').classList.add('hidden');
-    tbody.innerHTML = sets.map(s => `
-      <tr>
-        <td>${shortId(s.id)}</td>
-        <td>${audioNameMap[s.audio_file_id] || shortId(s.audio_file_id)}</td>
-        <td>${s.model_version}</td>
-        <td>${s.vector_dim}</td>
-        <td>${fmtDate(s.created_at)}</td>
-      </tr>`).join('');
+
+    buildFolderTree(
+      sets,
+      s => {
+        const info = audioFileMap[s.audio_file_id];
+        return info ? info.folder_path : '';
+      },
+      s => `<div class="tree-file-row" style="cursor:default">
+        <span class="file-meta">${shortId(s.id)}</span>
+        <span class="file-name">${audioFileMap[s.audio_file_id]?.filename || shortId(s.audio_file_id)}</span>
+        <span class="file-meta">${s.model_version}</span>
+        <span class="file-meta">${s.vector_dim}d</span>
+        <span class="file-meta">${fmtDate(s.created_at)}</span>
+      </div>`,
+      embedTreeExpand,
+      container,
+    );
   } catch (e) { console.error(e); }
 }
 
@@ -685,9 +854,15 @@ async function loadClusterEmbedOptions() {
           ${model} (${group.vector_dim}d)
           <button type="button" class="btn btn-sm cluster-group-select-all" data-model="${model}" style="font-size:0.75rem;padding:0.15rem 0.5rem">Select All</button>
         </div>`;
-      for (const s of group.sets) {
+      // Sort by folder_path/filename
+      const sorted = [...group.sets].sort((a, b) => {
+        const pa = audioDisplayName(a.audio_file_id);
+        const pb = audioDisplayName(b.audio_file_id);
+        return pa.localeCompare(pb);
+      });
+      for (const s of sorted) {
         html += `<label><input type="checkbox" value="${s.id}" data-dim="${s.vector_dim}" data-model="${model}">
-          ${audioNameMap[s.audio_file_id] || shortId(s.audio_file_id)}
+          ${audioDisplayName(s.audio_file_id)}
         </label>`;
       }
       html += `</div>`;
@@ -717,6 +892,7 @@ $('#cluster-toggle-all-btn').addEventListener('click', () => {
 
 // Track expanded cluster labels so they survive polling redraws
 const expandedClusters = new Map(); // cluster_id -> assignments HTML
+const clusterAssignTreeExpand = {}; // persist expand state for assignment trees
 
 async function loadClusterJobs() {
   try {
@@ -803,39 +979,53 @@ async function loadClusterJobs() {
             if (!byEs[a.embedding_set_id]) byEs[a.embedding_set_id] = [];
             byEs[a.embedding_set_id].push(a.embedding_row_index);
           }
-          const audioIds = [];
-          let detailHtml = `<div style="font-size:0.85rem;padding:0.5rem">
-            <strong>Assignments (${assignments.length}):</strong>
-            <table style="margin-top:0.25rem;width:100%">
-              <thead><tr><th>Embedding Set</th><th>Audio File</th><th>Player</th><th>Rows</th></tr></thead><tbody>`;
+
+          // Build items with folder info for tree display
+          const assignItems = [];
           for (const [esId, rowIndices] of Object.entries(byEs)) {
             const es = esMap[esId];
             const audioFileId = es ? es.audio_file_id : null;
-            const audioName = audioFileId ? (audioNameMap[audioFileId] || shortId(audioFileId)) : '-';
-            if (audioFileId) audioIds.push(audioFileId);
-            const playerCell = audioFileId
-              ? `<span class="audio-placeholder" data-audio-id="${audioFileId}"></span>`
-              : '-';
-            const rowsDisplay = rowIndices.length > 20
-              ? rowIndices.slice(0, 20).join(', ') + ` ... (${rowIndices.length} total)`
-              : rowIndices.join(', ');
-            detailHtml += `<tr>
-              <td>${shortId(esId)}</td>
-              <td>${audioName}</td>
-              <td>${playerCell}</td>
-              <td style="font-size:0.8rem">${rowsDisplay}</td>
-            </tr>`;
+            const info = audioFileId ? audioFileMap[audioFileId] : null;
+            assignItems.push({
+              esId,
+              audioFileId,
+              filename: info ? info.filename : (audioFileId ? shortId(audioFileId) : '-'),
+              folder_path: info ? info.folder_path : '',
+              rowIndices,
+            });
           }
-          detailHtml += `</tbody></table></div>`;
 
-          expandedClusters.set(cid, detailHtml);
-          const tr = document.createElement('tr');
-          tr.className = 'assignment-row';
-          tr.dataset.clusterId = cid;
-          tr.innerHTML = `<td colspan="3">${detailHtml}</td>`;
-          row.after(tr);
-          // Create audio elements programmatically (innerHTML can break media elements)
-          tr.querySelectorAll('.audio-placeholder').forEach(span => {
+          // Build tree HTML
+          const treeContainer = document.createElement('div');
+          treeContainer.style.cssText = 'font-size:0.85rem;padding:0.5rem';
+          treeContainer.innerHTML = `<strong>Assignments (${assignments.length}):</strong>`;
+          const treeDiv = document.createElement('div');
+          treeDiv.className = 'tree-root';
+          treeContainer.appendChild(treeDiv);
+
+          buildFolderTree(
+            assignItems,
+            item => item.folder_path,
+            item => {
+              const rowsDisplay = item.rowIndices.length > 20
+                ? item.rowIndices.slice(0, 20).join(', ') + ` ... (${item.rowIndices.length} total)`
+                : item.rowIndices.join(', ');
+              const playerHtml = item.audioFileId
+                ? `<span class="audio-placeholder" data-audio-id="${item.audioFileId}"></span>`
+                : '';
+              return `<div class="tree-file-row" style="cursor:default;flex-wrap:wrap">
+                <span class="file-icon">\uD83C\uDFB5</span>
+                <span class="file-name">${item.filename}</span>
+                ${playerHtml}
+                <span class="file-meta">rows: ${rowsDisplay}</span>
+              </div>`;
+            },
+            clusterAssignTreeExpand,
+            treeDiv,
+          );
+
+          // Replace audio placeholders
+          treeContainer.querySelectorAll('.audio-placeholder').forEach(span => {
             const aid = span.dataset.audioId;
             const audio = document.createElement('audio');
             audio.controls = true;
@@ -844,6 +1034,17 @@ async function loadClusterJobs() {
             audio.src = `/audio/${aid}/download`;
             span.replaceWith(audio);
           });
+
+          const detailHtml = treeContainer.innerHTML;
+          expandedClusters.set(cid, detailHtml);
+          const tr = document.createElement('tr');
+          tr.className = 'assignment-row';
+          tr.dataset.clusterId = cid;
+          const td = document.createElement('td');
+          td.colSpan = 3;
+          td.appendChild(treeContainer);
+          tr.appendChild(td);
+          row.after(tr);
         } catch (e) { console.error(e); }
       });
     });
@@ -851,6 +1052,21 @@ async function loadClusterJobs() {
 }
 
 let clusterJobIds = [];
+
+async function loadAllClusterJobs() {
+  try {
+    const jobs = await api('/clustering/jobs');
+    // Merge server-side job IDs into our local list (preserving order, deduplicating)
+    const existing = new Set(clusterJobIds);
+    for (const j of jobs) {
+      if (!existing.has(j.id)) {
+        clusterJobIds.push(j.id);
+        existing.add(j.id);
+      }
+    }
+    loadClusterJobs();
+  } catch (e) { console.error(e); }
+}
 
 function buildClusterParams() {
   const params = {};

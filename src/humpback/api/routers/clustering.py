@@ -36,6 +36,12 @@ def _cluster_to_out(c) -> ClusterOut:
     )
 
 
+@router.get("/jobs")
+async def list_jobs(session: SessionDep) -> list[ClusteringJobOut]:
+    jobs = await clustering_service.list_clustering_jobs(session)
+    return [_job_to_out(j) for j in jobs]
+
+
 @router.post("/jobs", status_code=201)
 async def create_job(body: ClusteringJobCreate, session: SessionDep) -> ClusteringJobOut:
     try:

@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+import re
+
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from humpback.api.deps import SessionDep, SettingsDep
@@ -27,6 +29,7 @@ def _audio_to_out(af) -> AudioFileOut:
     return AudioFileOut(
         id=af.id,
         filename=af.filename,
+        folder_path=af.folder_path,
         checksum_sha256=af.checksum_sha256,
         duration_seconds=af.duration_seconds,
         sample_rate_original=af.sample_rate_original,
@@ -35,15 +38,26 @@ def _audio_to_out(af) -> AudioFileOut:
     )
 
 
+def _normalize_folder_path(raw: str) -> str:
+    """Strip leading/trailing slashes, collapse doubles, normalize."""
+    path = raw.strip()
+    path = re.sub(r"[\\/]+", "/", path)  # normalize separators
+    path = path.strip("/")
+    return path
+
+
 @router.post("/upload", status_code=201)
 async def upload_audio(
     file: UploadFile,
     session: SessionDep,
     settings: SettingsDep,
+    folder_path: str = Form(default=""),
 ) -> AudioFileOut:
     data = await file.read()
+    normalized_path = _normalize_folder_path(folder_path)
     af, created = await audio_service.upload_audio(
-        session, settings.storage_root, file.filename or "unknown.wav", data
+        session, settings.storage_root, file.filename or "unknown.wav", data,
+        folder_path=normalized_path,
     )
     return _audio_to_out(af)
 

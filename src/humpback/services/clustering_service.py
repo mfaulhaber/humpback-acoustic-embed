@@ -39,6 +39,13 @@ async def create_clustering_job(
     return job
 
 
+async def list_clustering_jobs(session: AsyncSession) -> list[ClusteringJob]:
+    result = await session.execute(
+        select(ClusteringJob).order_by(ClusteringJob.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
 async def get_clustering_job(
     session: AsyncSession, job_id: str
 ) -> Optional[ClusteringJob]:

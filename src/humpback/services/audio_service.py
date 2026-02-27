@@ -17,6 +17,7 @@ async def upload_audio(
     storage_root: Path,
     filename: str,
     file_data: bytes,
+    folder_path: str = "",
 ) -> tuple[AudioFile, bool]:
     """Upload an audio file. Returns (AudioFile, created). Deduplicates by SHA-256."""
     checksum = hashlib.sha256(file_data).hexdigest()
@@ -29,7 +30,7 @@ async def upload_audio(
     if row := existing.scalar_one_or_none():
         return row, False
 
-    af = AudioFile(filename=filename, checksum_sha256=checksum)
+    af = AudioFile(filename=filename, folder_path=folder_path, checksum_sha256=checksum)
     session.add(af)
     await session.flush()
 
