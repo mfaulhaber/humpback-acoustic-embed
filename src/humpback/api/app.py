@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from humpback.api.routers import audio, clustering, processing
+from humpback.api.routers import admin, audio, clustering, processing
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory, setup_sqlite_pragmas
 
@@ -39,6 +39,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(audio.router)
     app.include_router(processing.router)
     app.include_router(clustering.router)
+    app.include_router(admin.router)
 
     @app.get("/")
     async def root():

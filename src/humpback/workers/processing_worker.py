@@ -13,6 +13,7 @@ from humpback.models.audio import AudioFile
 from humpback.models.processing import EmbeddingSet, ProcessingJob
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.embeddings import IncrementalParquetWriter
+from humpback.processing.features import extract_logmel
 from humpback.processing.inference import EmbeddingModel, FakeTFLiteModel
 from humpback.processing.windowing import slice_windows
 from humpback.storage import audio_raw_dir, embedding_path, ensure_dir
@@ -25,8 +26,7 @@ def get_model(settings: Settings) -> EmbeddingModel:
     if settings.use_real_model:
         from humpback.processing.inference import TFLiteModel
 
-        model_path = str(settings.storage_root / "models" / "perch.tflite")
-        return TFLiteModel(model_path, settings.vector_dim)
+        return TFLiteModel(settings.model_path, settings.vector_dim)
     return FakeTFLiteModel(settings.vector_dim)
 
 
@@ -127,21 +127,28 @@ def _process_audio(
         final_path, vector_dim=model.vector_dim, batch_size=50
     )
 
-    batch_windows = []
+    batch_specs = []
     batch_size = 32
 
     for window in slice_windows(audio, job.target_sample_rate, job.window_size_seconds):
-        batch_windows.append(window)
-        if len(batch_windows) >= batch_size:
-            batch = np.stack(batch_windows)
+        spec = extract_logmel(
+            window,
+            job.target_sample_rate,
+            n_mels=128,
+            hop_length=1252,
+            target_frames=128,
+        )
+        batch_specs.append(spec)
+        if len(batch_specs) >= batch_size:
+            batch = np.stack(batch_specs)
             embeddings = model.embed(batch)
             for emb in embeddings:
                 writer.add(emb)
-            batch_windows.clear()
+            batch_specs.clear()
 
     # Process remaining windows
-    if batch_windows:
-        batch = np.stack(batch_windows)
+    if batch_specs:
+        batch = np.stack(batch_specs)
         embeddings = model.embed(batch)
         for emb in embeddings:
             writer.add(emb)

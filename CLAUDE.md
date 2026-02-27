@@ -33,9 +33,32 @@ All components run locally for MVP but should be designed so workers can scale h
 
 ---
 
-## 3. Core Design Principles
+## 3. Core Development Rules
 
-### 3.1 Idempotent Encoding (No Reprocessing)
+### 3.1 Package Management
+*   **ONLY** use `uv` for all Python package operations. **NEVER** use `pip`, `pip-tools`, `poetry`, or `conda`.
+*   Dependencies are managed via `pyproject.toml` and `uv.lock` files. The lock file should be committed to version control for reproducible builds.
+
+### 3.2 Environment Commands
+Use these commands for managing dependencies:
+*   Install/synchronize all dependencies: `uv sync`
+*   Add a new package (e.g., `requests`): `uv add requests`
+*   Remove a package: `uv remove <package>`
+*   Compile a new lock file: `uv pip compile pyproject.toml -o uv.lock`
+*   Upgrade a specific package: `uv lock --upgrade-package <package>`
+
+### 3.3 Running Python Code and Tools
+*   Run a Python script: `uv run <script-name>.py`
+*   Run Python tools/tests (e.g., `pytest`): `uv run pytest tests/`
+*   Run pre-commit hooks: `uv run pre-commit install`
+
+### 3.4 Best Practices
+*   Prefer `uv run` over manually activating a virtual environment and running commands directly.
+*   When troubleshooting, use `uv cache clean` as a last resort.
+
+## 4. Core Design Principles
+
+### 4.1 Idempotent Encoding (No Reprocessing)
 Each audio file is encoded once per (model_version, window_size, target_sample_rate, feature_config).
 
 A ProcessingJob MUST:
@@ -43,20 +66,20 @@ A ProcessingJob MUST:
 - check for an existing completed embedding set with that signature
 - skip work if the embedding set exists
 
-### 3.2 Resumable Workflow
+### 4.2 Resumable Workflow
 All steps are recorded in SQL. Workers must be restart-safe:
 - jobs can resume after crash/restart
 - partial artifacts should be either:
   - safely overwritten, or
   - written to temp and atomically promoted on completion
 
-### 3.3 Asynchronous, Observable Jobs
+### 4.3 Asynchronous, Observable Jobs
 Jobs are queued and executed in the background by workers.
 UI can monitor via polling or a push channel.
 
 ---
 
-## 4. Data Model (Conceptual)
+## 5. Data Model (Conceptual)
 
 ### AudioFile
 - id
@@ -122,7 +145,7 @@ only store indexing/assignment references.
 
 ---
 
-## 5. Processing Workflow
+## 6. Processing Workflow
 
 Input:
 - audio file (MP3 or WAV)
@@ -130,11 +153,11 @@ Input:
 
 Pipeline:
 1. Decode audio (MP3/WAV)
-2. Resample to target sample rate (Perch target)
+2. Resample to target sample rate (default: 32000 Hz)
 3. Slice into N-second windows (default: 5)
-4. Feature extraction (log-mel if not built into model)
+4. Extract log-mel spectrogram (128 mel bins × 128 time frames)
 5. TFLite inference (batched)
-6. Produce embedding vectors (512–1024 dims)
+6. Produce embedding vectors (1280 dims)
 7. Save embeddings to Parquet (incremental)
 8. Persist EmbeddingSet row in SQL
 9. Mark ProcessingJob complete
@@ -147,7 +170,7 @@ Rules:
 
 ---
 
-## 6. Clustering Workflow
+## 7. Clustering Workflow
 
 Input:
 - selected embedding sets
@@ -163,7 +186,7 @@ Pipeline:
 
 ---
 
-## 7. Workflow Queue
+## 8. Workflow Queue
 
 Use SQL-backed queue semantics:
 - Workers select queued jobs with row-level locking / "claim" update
@@ -178,7 +201,7 @@ Concurrency:
 
 ---
 
-## 8. Storage Layout
+## 9. Storage Layout
 
 /audio/
   raw/{audio_file_id}/original.(wav|mp3)
@@ -191,7 +214,7 @@ Concurrency:
 
 ---
 
-## 9. Web UI Requirements
+## 10. Web UI Requirements
 
 Processing:
 - Upload audio
@@ -212,14 +235,14 @@ Editing:
 
 ---
 
-## 10. Testing Requirements (MANDATORY)
+## 11. Testing Requirements (MANDATORY)
 
 Testing is not optional. Every meaningful change must include:
 - unit tests for new logic
 - integration tests for API endpoints
 - at least one end-to-end smoke test path that exercises the real workflows
 
-### 10.1 Unit Tests
+### 11.1 Unit Tests
 Add unit tests for:
 - encoding_signature computation (idempotency)
 - audio window slicing logic
@@ -233,7 +256,7 @@ Guidelines:
 - isolate file I/O behind temp directories
 - mock external dependencies when appropriate (e.g., TFLite interpreter)
 
-### 10.2 Running Tests Locally
+### 11.2 Running Tests Locally
 The repo must include:
 - `pytest` configuration
 - a single command to run unit+integration tests
@@ -250,7 +273,7 @@ Required commands:
 
 Document the chosen tool in README and add it to dev dependencies.
 
-### 10.3 End-to-End Smoke Test (E2E)
+### 11.3 End-to-End Smoke Test (E2E)
 Add a minimal E2E test that:
 1. Starts API + worker (in-process for tests or via subprocess)
 2. Uploads a small fixture audio file
@@ -266,7 +289,7 @@ Constraints:
 - Use a tiny audio fixture (e.g., 10–20 seconds)
 - Use a tiny embedding model stub if needed (see below)
 
-### 10.4 Model Stub Strategy (So Tests Are Fast)
+### 11.4 Model Stub Strategy (So Tests Are Fast)
 For unit/integration/E2E tests:
 - Provide a "FakeTFLiteModel" implementation that returns deterministic embeddings
   (e.g., sine/cosine transforms of window index)
@@ -276,7 +299,7 @@ For unit/integration/E2E tests:
 
 ---
 
-## 11. Definition of Done (Engineering)
+## 12. Definition of Done (Engineering)
 A PR/change is "done" only if:
 - unit tests added/updated for changed behavior
 - test suite passes locally
@@ -285,7 +308,7 @@ A PR/change is "done" only if:
 
 ---
 
-## 12. Non-Goals (MVP)
+## 13. Non-Goals (MVP)
 - Model fine-tuning
 - Real-time streaming inference
 - Multi-tenant support

@@ -14,15 +14,14 @@ dependencies = [
     "python-multipart>=0.0.18",
     "pyarrow>=18.0",
     "numpy>=1.26",
-]
-
-[project.optional-dependencies]
-ml = [
+    "tensorflow>=2.16",
     "librosa>=0.10",
     "umap-learn>=0.5",
     "hdbscan>=0.8",
     "scikit-learn>=1.5",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",

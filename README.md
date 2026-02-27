@@ -51,11 +51,11 @@ The worker polls for queued processing and clustering jobs and executes them.
 
 ```
 audio file (MP3/WAV) + optional metadata
-  → resample to target SR
+  → resample to target SR (default 32kHz)
   → slice into N-second windows (default 5s)
-  → (optional) log-mel features
-  → TFLite inference
-  → embedding vectors (512–1024 dims)
+  → log-mel spectrogram (128 mel bins × 128 time frames)
+  → TFLite inference (multispecies_whale model)
+  → embedding vectors (1280 dims)
   → save to Parquet (incremental, atomic)
 ```
 
@@ -149,8 +149,9 @@ Environment variables (prefix `HUMPBACK_`):
 | `HUMPBACK_MODEL_VERSION` | `perch_v1` | Model version identifier |
 | `HUMPBACK_WINDOW_SIZE_SECONDS` | `5.0` | Audio window size |
 | `HUMPBACK_TARGET_SAMPLE_RATE` | `32000` | Target sample rate |
-| `HUMPBACK_VECTOR_DIM` | `512` | Embedding vector dimensions |
-| `HUMPBACK_USE_REAL_MODEL` | `false` | Use real TFLite model vs fake |
+| `HUMPBACK_VECTOR_DIM` | `1280` | Embedding vector dimensions |
+| `HUMPBACK_USE_REAL_MODEL` | `true` | Use real TFLite model vs fake |
+| `HUMPBACK_MODEL_PATH` | `models/multispecies_whale_fp16_flex.tflite` | Path to TFLite model file |
 
 ---
 
@@ -159,6 +160,6 @@ Environment variables (prefix `HUMPBACK_`):
 - **Backend**: Python + FastAPI
 - **Queue**: SQL-backed polling queue
 - **DB**: SQLite with WAL mode (MVP)
-- **Embedding**: TFLite runtime (or FakeTFLiteModel for testing)
+- **Embedding**: TensorFlow Lite via TensorFlow (flex delegate for custom ops; FakeTFLiteModel for testing)
 - **Clustering**: UMAP + HDBSCAN
 - **Storage**: Local filesystem
