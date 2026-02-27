@@ -66,8 +66,19 @@ async def run_clustering_job(
         # Compute cluster sizes
         sizes = compute_cluster_sizes(labels)
 
-        # Persist clusters and assignments
+        # Write UMAP coordinates if dimensionality reduction was performed
         output_dir = ensure_dir(cluster_dir(settings.storage_root, job.id))
+        if reduced is not None:
+            umap_table = pa.table({
+                "x": pa.array(reduced[:, 0], type=pa.float32()),
+                "y": pa.array(reduced[:, 1], type=pa.float32()),
+                "cluster_label": pa.array([int(l) for l in labels], type=pa.int32()),
+                "embedding_set_id": pa.array(all_es_ids, type=pa.string()),
+                "embedding_row_index": pa.array(all_row_indices, type=pa.int32()),
+            })
+            pq.write_table(umap_table, str(output_dir / "umap_coords.parquet"))
+
+        # Persist clusters and assignments
 
         cluster_map: dict[int, Cluster] = {}
         for label, size in sizes.items():

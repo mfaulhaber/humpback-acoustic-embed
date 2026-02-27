@@ -14,7 +14,7 @@ Key features:
 - macOS GPU acceleration via tensorflow-macos/tensorflow-metal
 - Embeddings stored in Parquet
 - REST API for job management and inspection
-- UMAP + HDBSCAN clustering pipeline
+- UMAP + HDBSCAN clustering pipeline with interactive scatter plot visualization
 
 ---
 
@@ -114,6 +114,7 @@ selected embedding sets (must share vector_dim)
 | POST | `/clustering/jobs` | Create clustering job |
 | GET | `/clustering/jobs/{id}` | Get clustering job |
 | GET | `/clustering/jobs/{id}/clusters` | List clusters |
+| GET | `/clustering/jobs/{id}/visualization` | Get UMAP scatter plot data |
 | GET | `/clustering/clusters/{id}/assignments` | Get assignments |
 | GET | `/admin/models` | List registered models |
 | POST | `/admin/models` | Register a new model |
@@ -132,6 +133,7 @@ data/
   embeddings/{model_version}/{audio_file_id}/{encoding_signature}.parquet
   clusters/{clustering_job_id}/clusters.json
   clusters/{clustering_job_id}/assignments.parquet
+  clusters/{clustering_job_id}/umap_coords.parquet
 ```
 
 ---

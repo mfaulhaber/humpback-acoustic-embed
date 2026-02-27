@@ -68,7 +68,12 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
 .tree-file-row .file-name { flex: 1; }
 .tree-file-row .file-meta { color: #888; font-size: 0.8rem; white-space: nowrap; }
 .tree-root { margin-top: 0.5rem; }
+.umap-plot-container { margin-top: 0.75rem; }
+.btn-umap { background: #6c5ce7; color: #fff; margin-top: 0.5rem; }
+.btn-umap:hover { background: #5a4bd1; }
+.umap-no-data { color: #888; font-style: italic; padding: 1rem 0; }
 </style>
+<script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js" charset="utf-8"></script>
 </head>
 <body>
 
@@ -939,11 +944,14 @@ async function loadClusterJobs() {
           } catch (_) {}
         }
         const paramsSummary = job.parameters ? `<div style="font-size:0.8rem;color:#666;margin-top:0.25rem">${Object.entries(job.parameters).map(([k,v]) => `${k}=${v}`).join(', ')}</div>` : '';
+        const umapBtn = job.status === 'complete' ? `<button class="btn btn-umap" onclick="toggleUmapPlot('${jid}', event)">Show UMAP Plot</button>` : '';
         html += `<div class="card" style="margin-top:0.5rem">
           <strong>Job ${shortId(jid)}</strong> ${badgeHtml(job.status)}
           ${paramsSummary}
           ${job.error_message ? `<div class="msg msg-error" style="margin-top:0.5rem">${job.error_message}</div>` : ''}
           ${clustersHtml}
+          ${umapBtn}
+          <div id="umap-plot-${jid}" class="umap-plot-container" style="display:none;height:500px"></div>
         </div>`;
       } catch (_) {}
     }
@@ -1110,6 +1118,78 @@ $('#queue-cluster-btn').addEventListener('click', async () => {
     showMsg('cluster-msg', `Failed: ${e.message}`, 'error');
   }
 });
+
+// ---- UMAP Plot Toggle ----
+const umapPlotCache = {};
+
+async function toggleUmapPlot(jobId, event) {
+  if (event) event.stopPropagation();
+  const container = document.getElementById(`umap-plot-${jobId}`);
+  if (!container) return;
+
+  // Toggle visibility
+  if (container.style.display !== 'none' && container.innerHTML !== '') {
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = 'block';
+
+  // If already rendered, just show
+  if (umapPlotCache[jobId]) return;
+
+  try {
+    const data = await api(`/clustering/jobs/${jobId}/visualization`);
+    umapPlotCache[jobId] = true;
+
+    // Group points by cluster_label
+    const groups = {};
+    for (let i = 0; i < data.x.length; i++) {
+      const label = data.cluster_label[i];
+      if (!groups[label]) groups[label] = { x: [], y: [], text: [] };
+      groups[label].x.push(data.x[i]);
+      groups[label].y.push(data.y[i]);
+      groups[label].text.push(`ES: ${data.embedding_set_id[i].slice(0,8)}… Row: ${data.embedding_row_index[i]}`);
+    }
+
+    const palette = ['#3a86ff','#e63946','#2a9d8f','#e9c46a','#264653','#f4a261','#6c5ce7','#00b894','#fd79a8','#636e72','#d63031','#74b9ff','#a29bfe','#ffeaa7','#55efc4'];
+    const traces = [];
+    const sortedLabels = Object.keys(groups).map(Number).sort((a, b) => a - b);
+
+    for (const label of sortedLabels) {
+      const g = groups[label];
+      const isNoise = label === -1;
+      traces.push({
+        x: g.x, y: g.y, text: g.text,
+        mode: 'markers',
+        type: 'scatter',
+        name: isNoise ? 'Noise' : `Cluster ${label}`,
+        marker: {
+          color: isNoise ? '#b2bec3' : palette[label % palette.length],
+          size: isNoise ? 4 : 7,
+          opacity: isNoise ? 0.4 : 0.8,
+        },
+        hoverinfo: 'text+name',
+      });
+    }
+
+    const layout = {
+      xaxis: { title: 'UMAP 1' },
+      yaxis: { title: 'UMAP 2' },
+      legend: { orientation: 'v', x: 1.02, y: 1 },
+      margin: { l: 50, r: 120, t: 20, b: 50 },
+      hovermode: 'closest',
+    };
+
+    Plotly.newPlot(container, traces, layout, { responsive: true });
+  } catch (err) {
+    if (err.message && err.message.includes('404')) {
+      container.innerHTML = '<div class="umap-no-data">No UMAP data available for this job.</div>';
+    } else {
+      container.innerHTML = '<div class="umap-no-data">Failed to load UMAP plot.</div>';
+    }
+    umapPlotCache[jobId] = true;
+  }
+}
 
 // ---- Polling for running jobs ----
 let clusterJobsHavePending = false;

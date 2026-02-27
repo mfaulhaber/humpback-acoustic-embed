@@ -237,6 +237,7 @@ Concurrency:
 /clusters/
   {clustering_job_id}/clusters.json
   {clustering_job_id}/assignments.parquet
+  {clustering_job_id}/umap_coords.parquet
 
 ---
 

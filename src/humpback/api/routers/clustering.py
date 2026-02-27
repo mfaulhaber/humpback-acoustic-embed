@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
 
+import pyarrow.parquet as pq
 from fastapi import APIRouter, HTTPException
 
-from humpback.api.deps import SessionDep
+from humpback.api.deps import SessionDep, SettingsDep
 from humpback.schemas.clustering import (
     ClusterAssignmentOut,
     ClusteringJobCreate,
@@ -10,6 +12,7 @@ from humpback.schemas.clustering import (
     ClusterOut,
 )
 from humpback.services import clustering_service
+from humpback.storage import cluster_dir
 
 router = APIRouter(prefix="/clustering", tags=["clustering"])
 
@@ -65,6 +68,28 @@ async def get_job(job_id: str, session: SessionDep) -> ClusteringJobOut:
 async def list_clusters(job_id: str, session: SessionDep) -> list[ClusterOut]:
     clusters = await clustering_service.list_clusters(session, job_id)
     return [_cluster_to_out(c) for c in clusters]
+
+
+@router.get("/jobs/{job_id}/visualization")
+async def get_visualization(job_id: str, session: SessionDep, settings: SettingsDep):
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    umap_path = cluster_dir(Path(settings.storage_root), job_id) / "umap_coords.parquet"
+    if not umap_path.exists():
+        raise HTTPException(404, "UMAP coordinates not available for this job")
+
+    table = pq.read_table(str(umap_path))
+    return {
+        "x": table.column("x").to_pylist(),
+        "y": table.column("y").to_pylist(),
+        "cluster_label": table.column("cluster_label").to_pylist(),
+        "embedding_set_id": table.column("embedding_set_id").to_pylist(),
+        "embedding_row_index": table.column("embedding_row_index").to_pylist(),
+    }
 
 
 @router.get("/clusters/{cluster_id}/assignments")
