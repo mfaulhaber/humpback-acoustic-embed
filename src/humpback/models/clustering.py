@@ -13,6 +13,7 @@ class ClusteringJob(UUIDMixin, TimestampMixin, Base):
     embedding_set_ids: Mapped[str] = mapped_column(Text)  # JSON array
     parameters: Mapped[Optional[str]] = mapped_column(Text, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    metrics_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
     clusters: Mapped[list["Cluster"]] = relationship(
         back_populates="clustering_job", cascade="all, delete-orphan"

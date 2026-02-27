@@ -15,6 +15,9 @@ Key features:
 - Embeddings stored in Parquet
 - REST API for job management and inspection
 - UMAP + HDBSCAN clustering pipeline with interactive scatter plot visualization
+- Quantitative cluster evaluation (Silhouette, Davies-Bouldin, Calinski-Harabasz)
+- Semi-supervised metrics (ARI, NMI) from folder-path-derived category labels
+- Automatic parameter sweep (silhouette vs min_cluster_size) with Plotly chart
 
 ---
 
@@ -93,6 +96,9 @@ selected embedding sets (must share vector_dim)
   → optional UMAP dimensionality reduction
   → HDBSCAN clustering
   → persist clusters + assignments
+  → compute evaluation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz)
+  → compute semi-supervised metrics (ARI, NMI) from folder-path categories
+  → run parameter sweep (min_cluster_size vs silhouette)
 ```
 
 ---
@@ -115,6 +121,8 @@ selected embedding sets (must share vector_dim)
 | GET | `/clustering/jobs/{id}` | Get clustering job |
 | GET | `/clustering/jobs/{id}/clusters` | List clusters |
 | GET | `/clustering/jobs/{id}/visualization` | Get UMAP scatter plot data |
+| GET | `/clustering/jobs/{id}/metrics` | Get cluster evaluation metrics |
+| GET | `/clustering/jobs/{id}/parameter-sweep` | Get parameter sweep results |
 | GET | `/clustering/clusters/{id}/assignments` | Get assignments |
 | GET | `/admin/models` | List registered models |
 | POST | `/admin/models` | Register a new model |
@@ -134,6 +142,7 @@ data/
   clusters/{clustering_job_id}/clusters.json
   clusters/{clustering_job_id}/assignments.parquet
   clusters/{clustering_job_id}/umap_coords.parquet
+  clusters/{clustering_job_id}/parameter_sweep.json
 ```
 
 ---

@@ -5,6 +5,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from humpback.api.routers import admin, audio, clustering, processing
 from humpback.config import Settings
@@ -31,6 +32,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             await setup_sqlite_pragmas(engine)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Idempotent migration: add metrics_json column if missing
+            try:
+                await conn.execute(
+                    text("ALTER TABLE clustering_jobs ADD COLUMN metrics_json TEXT DEFAULT NULL")
+                )
+            except Exception:
+                pass  # Column already exists
         settings.storage_root.mkdir(parents=True, exist_ok=True)
         # Seed default model if registry is empty
         async with app.state.session_factory() as session:

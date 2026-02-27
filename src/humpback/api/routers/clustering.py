@@ -24,6 +24,7 @@ def _job_to_out(job) -> ClusteringJobOut:
         embedding_set_ids=json.loads(job.embedding_set_ids),
         parameters=json.loads(job.parameters) if job.parameters else None,
         error_message=job.error_message,
+        metrics=json.loads(job.metrics_json) if job.metrics_json else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -90,6 +91,35 @@ async def get_visualization(job_id: str, session: SessionDep, settings: Settings
         "embedding_set_id": table.column("embedding_set_id").to_pylist(),
         "embedding_row_index": table.column("embedding_row_index").to_pylist(),
     }
+
+
+@router.get("/jobs/{job_id}/metrics")
+async def get_metrics(job_id: str, session: SessionDep):
+    """Return parsed metrics_json for a clustering job."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+    if not job.metrics_json:
+        return {}
+    return json.loads(job.metrics_json)
+
+
+@router.get("/jobs/{job_id}/parameter-sweep")
+async def get_parameter_sweep(job_id: str, session: SessionDep, settings: SettingsDep):
+    """Return parameter_sweep.json from the cluster output directory."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    sweep_path = cluster_dir(Path(settings.storage_root), job_id) / "parameter_sweep.json"
+    if not sweep_path.exists():
+        raise HTTPException(404, "Parameter sweep data not available for this job")
+
+    return json.loads(sweep_path.read_text())
 
 
 @router.get("/clusters/{cluster_id}/assignments")

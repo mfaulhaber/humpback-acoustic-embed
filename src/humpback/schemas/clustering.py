@@ -15,6 +15,7 @@ class ClusteringJobOut(BaseModel):
     embedding_set_ids: list[str]
     parameters: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+    metrics: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

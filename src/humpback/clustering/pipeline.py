@@ -1,6 +1,7 @@
-"""Clustering pipeline: load embeddings → optional reduce → cluster."""
+"""Clustering pipeline: load embeddings -> optional reduce -> cluster."""
 
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -9,14 +10,23 @@ from humpback.clustering.clusterer import cluster_hdbscan
 from humpback.clustering.reducer import reduce_umap
 
 
+@dataclass
+class ClusteringResult:
+    """Result of the clustering pipeline."""
+
+    labels: np.ndarray
+    reduced_embeddings: np.ndarray | None
+    cluster_input: np.ndarray  # what HDBSCAN clustered on (needed for metrics)
+
+
 def run_clustering_pipeline(
     embeddings: np.ndarray,
     parameters: dict[str, Any] | None = None,
-) -> tuple[np.ndarray, np.ndarray | None]:
+) -> ClusteringResult:
     """Run the full clustering pipeline.
 
-    Returns (labels, reduced_embeddings).
-    reduced_embeddings is None if UMAP was not applied.
+    Returns a ClusteringResult with labels, optional UMAP-reduced embeddings,
+    and the array that HDBSCAN actually clustered on.
     """
     params = parameters or {}
 
@@ -43,7 +53,11 @@ def run_clustering_pipeline(
         min_samples=min_samples,
     )
 
-    return labels, reduced
+    return ClusteringResult(
+        labels=labels,
+        reduced_embeddings=reduced,
+        cluster_input=cluster_input,
+    )
 
 
 def compute_cluster_sizes(labels: np.ndarray) -> dict[int, int]:

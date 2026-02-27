@@ -1,4 +1,5 @@
 import io
+import json
 import math
 import struct
 import wave
@@ -192,3 +193,144 @@ async def test_visualization_no_umap_file(client, app_settings):
     resp = await client.get(f"/clustering/jobs/{job_id}/visualization")
     assert resp.status_code == 404
     assert "not available" in resp.json()["detail"].lower()
+
+
+async def _mark_job_complete_with_metrics(app_settings, job_id, metrics=None):
+    """Helper to mark a job complete and optionally set metrics_json."""
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy import update
+    from humpback.models.clustering import ClusteringJob
+
+    engine = create_async_engine(app_settings.database_url)
+    async_session = async_sessionmaker(engine)
+    values = {"status": "complete"}
+    if metrics is not None:
+        values["metrics_json"] = json.dumps(metrics)
+    async with async_session() as session:
+        await session.execute(
+            update(ClusteringJob).where(ClusteringJob.id == job_id).values(**values)
+        )
+        await session.commit()
+    await engine.dispose()
+
+
+async def test_metrics_not_found(client):
+    """Metrics for nonexistent job returns 404."""
+    resp = await client.get("/clustering/jobs/nonexistent/metrics")
+    assert resp.status_code == 404
+
+
+async def test_metrics_not_complete(client):
+    """Metrics for a queued job returns 400."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    resp = await client.get(f"/clustering/jobs/{job_id}/metrics")
+    assert resp.status_code == 400
+    assert "not complete" in resp.json()["detail"].lower()
+
+
+async def test_metrics_empty(client, app_settings):
+    """Metrics for a complete job with no metrics_json returns empty dict."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/metrics")
+    assert resp.status_code == 200
+    assert resp.json() == {}
+
+
+async def test_metrics_with_data(client, app_settings):
+    """Metrics endpoint returns stored metrics."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    metrics = {"silhouette_score": 0.75, "n_clusters": 3}
+    await _mark_job_complete_with_metrics(app_settings, job_id, metrics)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/metrics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["silhouette_score"] == 0.75
+    assert data["n_clusters"] == 3
+
+
+async def test_metrics_in_job_response(client, app_settings):
+    """Job detail response includes metrics field."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    metrics = {"silhouette_score": 0.5}
+    await _mark_job_complete_with_metrics(app_settings, job_id, metrics)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["metrics"] is not None
+    assert data["metrics"]["silhouette_score"] == 0.5
+
+
+async def test_parameter_sweep_not_found(client):
+    """Parameter sweep for nonexistent job returns 404."""
+    resp = await client.get("/clustering/jobs/nonexistent/parameter-sweep")
+    assert resp.status_code == 404
+
+
+async def test_parameter_sweep_not_complete(client):
+    """Parameter sweep for a queued job returns 400."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    resp = await client.get(f"/clustering/jobs/{job_id}/parameter-sweep")
+    assert resp.status_code == 400
+
+
+async def test_parameter_sweep_success(client, app_settings):
+    """Parameter sweep endpoint returns stored sweep data."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    # Write sweep file
+    cluster_path = Path(app_settings.storage_root) / "clusters" / job_id
+    cluster_path.mkdir(parents=True, exist_ok=True)
+    sweep_data = [
+        {"min_cluster_size": 2, "silhouette_score": 0.6, "n_clusters": 5, "noise_fraction": 0.1},
+        {"min_cluster_size": 3, "silhouette_score": 0.7, "n_clusters": 3, "noise_fraction": 0.05},
+    ]
+    (cluster_path / "parameter_sweep.json").write_text(json.dumps(sweep_data))
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/parameter-sweep")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert data[0]["min_cluster_size"] == 2
+    assert data[1]["silhouette_score"] == 0.7
+
+
+async def test_parameter_sweep_no_file(client, app_settings):
+    """Parameter sweep 404 when file doesn't exist."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/parameter-sweep")
+    assert resp.status_code == 404

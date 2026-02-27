@@ -147,6 +147,7 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 - created_at
 - updated_at
 - error_message
+- metrics_json (JSON, nullable — internal/category metrics computed after clustering)
 
 ### Cluster
 - id
@@ -208,7 +209,11 @@ Pipeline:
 4. Clustering (HDBSCAN default)
 5. Persist clusters and assignments
 6. Compute per-cluster metadata summaries
-6. Mark ClusteringJob complete
+7. Compute evaluation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz)
+8. Compute semi-supervised metrics (ARI, NMI) from folder-path-derived category labels
+9. Run parameter sweep (silhouette vs min_cluster_size) and save to parameter_sweep.json
+10. Persist metrics as metrics_json on ClusteringJob
+11. Mark ClusteringJob complete
 
 ---
 
@@ -238,6 +243,7 @@ Concurrency:
   {clustering_job_id}/clusters.json
   {clustering_job_id}/assignments.parquet
   {clustering_job_id}/umap_coords.parquet
+  {clustering_job_id}/parameter_sweep.json
 
 ---
 

@@ -1,4 +1,4 @@
-"""Clustering worker: load embeddings → reduce → cluster → persist."""
+"""Clustering worker: load embeddings -> reduce -> cluster -> persist."""
 
 import asyncio
 import json
@@ -11,8 +11,15 @@ import pyarrow.parquet as pq
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.clustering.pipeline import compute_cluster_sizes, run_clustering_pipeline
+from humpback.clustering.metrics import (
+    compute_category_metrics,
+    compute_cluster_metrics,
+    extract_category_from_folder_path,
+    run_parameter_sweep,
+)
+from humpback.clustering.pipeline import ClusteringResult, compute_cluster_sizes, run_clustering_pipeline
 from humpback.config import Settings
+from humpback.models.audio import AudioFile
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.processing import EmbeddingSet
 from humpback.processing.embeddings import read_embeddings
@@ -36,6 +43,8 @@ async def run_clustering_job(
         all_embeddings = []
         all_es_ids = []
         all_row_indices = []
+        # Map embedding_set_id -> folder_path for category metrics
+        es_folder_paths: dict[str, str] = {}
 
         for es_id in es_ids:
             result = await session.execute(
@@ -44,6 +53,14 @@ async def run_clustering_job(
             es = result.scalar_one_or_none()
             if es is None:
                 raise ValueError(f"Embedding set {es_id} not found")
+
+            # Resolve folder_path from audio file
+            if es_id not in es_folder_paths:
+                audio_result = await session.execute(
+                    select(AudioFile).where(AudioFile.id == es.audio_file_id)
+                )
+                audio_file = audio_result.scalar_one_or_none()
+                es_folder_paths[es_id] = audio_file.folder_path if audio_file else ""
 
             indices, embeddings = await asyncio.to_thread(
                 read_embeddings, Path(es.parquet_path)
@@ -59,9 +76,11 @@ async def run_clustering_job(
         embeddings_array = np.array(all_embeddings, dtype=np.float32)
 
         # Run clustering in thread
-        labels, reduced = await asyncio.to_thread(
+        clustering_result: ClusteringResult = await asyncio.to_thread(
             run_clustering_pipeline, embeddings_array, params
         )
+        labels = clustering_result.labels
+        reduced = clustering_result.reduced_embeddings
 
         # Compute cluster sizes
         sizes = compute_cluster_sizes(labels)
@@ -77,6 +96,44 @@ async def run_clustering_job(
                 "embedding_row_index": pa.array(all_row_indices, type=pa.int32()),
             })
             pq.write_table(umap_table, str(output_dir / "umap_coords.parquet"))
+
+        # --- Compute evaluation metrics ---
+        metrics: dict = {}
+
+        # Internal metrics (silhouette, davies-bouldin, calinski-harabasz)
+        try:
+            internal = await asyncio.to_thread(
+                compute_cluster_metrics, clustering_result.cluster_input, labels
+            )
+            metrics.update(internal)
+        except Exception:
+            logger.exception("Failed to compute internal cluster metrics")
+
+        # Category-based semi-supervised metrics
+        try:
+            category_labels = [
+                extract_category_from_folder_path(es_folder_paths.get(es_id, ""))
+                for es_id in all_es_ids
+            ]
+            if any(c is not None for c in category_labels):
+                cat_metrics = compute_category_metrics(labels, category_labels)
+                metrics.update(cat_metrics)
+        except Exception:
+            logger.exception("Failed to compute category metrics")
+
+        # Parameter sweep
+        try:
+            sweep = await asyncio.to_thread(
+                run_parameter_sweep, clustering_result.cluster_input, params
+            )
+            sweep_path = output_dir / "parameter_sweep.json"
+            sweep_path.write_text(json.dumps(sweep, indent=2))
+        except Exception:
+            logger.exception("Failed to run parameter sweep")
+
+        # Persist metrics
+        if metrics:
+            job.metrics_json = json.dumps(metrics)
 
         # Persist clusters and assignments
 

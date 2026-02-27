@@ -945,13 +945,15 @@ async function loadClusterJobs() {
         }
         const paramsSummary = job.parameters ? `<div style="font-size:0.8rem;color:#666;margin-top:0.25rem">${Object.entries(job.parameters).map(([k,v]) => `${k}=${v}`).join(', ')}</div>` : '';
         const umapBtn = job.status === 'complete' ? `<button class="btn btn-umap" onclick="toggleUmapPlot('${jid}', event)">Show UMAP Plot</button>` : '';
+        const evalBtn = job.status === 'complete' ? `<button class="btn" style="margin-left:0.5rem" onclick="toggleEvaluation('${jid}', event)">Show Evaluation</button>` : '';
         html += `<div class="card" style="margin-top:0.5rem">
           <strong>Job ${shortId(jid)}</strong> ${badgeHtml(job.status)}
           ${paramsSummary}
           ${job.error_message ? `<div class="msg msg-error" style="margin-top:0.5rem">${job.error_message}</div>` : ''}
           ${clustersHtml}
-          ${umapBtn}
+          <div style="display:flex;gap:0.25rem;margin-top:0.5rem">${umapBtn}${evalBtn}</div>
           <div id="umap-plot-${jid}" class="umap-plot-container" style="display:none;height:500px"></div>
+          <div id="eval-panel-${jid}" style="display:none;margin-top:0.75rem"></div>
         </div>`;
       } catch (_) {}
     }
@@ -1188,6 +1190,100 @@ async function toggleUmapPlot(jobId, event) {
       container.innerHTML = '<div class="umap-no-data">Failed to load UMAP plot.</div>';
     }
     umapPlotCache[jobId] = true;
+  }
+}
+
+// ---- Evaluation Panel ----
+const evalCache = {};
+
+async function toggleEvaluation(jobId, event) {
+  if (event) event.stopPropagation();
+  const panel = document.getElementById(`eval-panel-${jobId}`);
+  if (!panel) return;
+
+  if (panel.style.display !== 'none' && panel.innerHTML !== '') {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+
+  if (evalCache[jobId]) return;
+
+  try {
+    const [metrics, sweep] = await Promise.all([
+      api(`/clustering/jobs/${jobId}/metrics`).catch(() => ({})),
+      api(`/clustering/jobs/${jobId}/parameter-sweep`).catch(() => []),
+    ]);
+
+    evalCache[jobId] = true;
+
+    // Build metrics table
+    const metricRows = [
+      ['Silhouette Score', metrics.silhouette_score],
+      ['Davies-Bouldin Index', metrics.davies_bouldin_index],
+      ['Calinski-Harabasz Score', metrics.calinski_harabasz_score],
+      ['Clusters', metrics.n_clusters],
+      ['Noise Points', metrics.noise_count],
+    ];
+    if (metrics.adjusted_rand_index !== undefined) {
+      metricRows.push(['Adjusted Rand Index', metrics.adjusted_rand_index]);
+      metricRows.push(['Normalized Mutual Info', metrics.normalized_mutual_info]);
+      metricRows.push(['Categories', metrics.n_categories]);
+    }
+
+    let html = '<h4 style="margin-bottom:0.5rem;font-size:0.9rem">Cluster Evaluation Metrics</h4>';
+    html += '<table style="max-width:400px"><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>';
+    for (const [name, val] of metricRows) {
+      const display = val === null || val === undefined ? '-' : (typeof val === 'number' ? val.toFixed(4) : val);
+      html += `<tr><td>${name}</td><td>${display}</td></tr>`;
+    }
+    html += '</tbody></table>';
+
+    // Add sweep chart container
+    if (sweep && sweep.length > 0) {
+      html += `<div id="sweep-chart-${jobId}" style="height:350px;margin-top:1rem"></div>`;
+    }
+
+    panel.innerHTML = html;
+
+    // Render sweep chart
+    if (sweep && sweep.length > 0) {
+      const sweepContainer = document.getElementById(`sweep-chart-${jobId}`);
+      const xVals = sweep.map(s => s.min_cluster_size);
+      const silVals = sweep.map(s => s.silhouette_score);
+      const nClusters = sweep.map(s => s.n_clusters);
+
+      const traces = [
+        {
+          x: xVals, y: silVals,
+          name: 'Silhouette Score',
+          type: 'scatter', mode: 'lines+markers',
+          marker: { color: '#3a86ff' },
+          connectgaps: false,
+        },
+        {
+          x: xVals, y: nClusters,
+          name: 'N Clusters',
+          type: 'scatter', mode: 'lines+markers',
+          yaxis: 'y2',
+          marker: { color: '#e63946' },
+        },
+      ];
+
+      const layout = {
+        xaxis: { title: 'min_cluster_size' },
+        yaxis: { title: 'Silhouette Score', side: 'left' },
+        yaxis2: { title: 'N Clusters', overlaying: 'y', side: 'right' },
+        legend: { orientation: 'h', y: -0.2 },
+        margin: { l: 60, r: 60, t: 20, b: 60 },
+        hovermode: 'x unified',
+      };
+
+      Plotly.newPlot(sweepContainer, traces, layout, { responsive: true });
+    }
+  } catch (err) {
+    panel.innerHTML = '<div class="msg msg-error">Failed to load evaluation data.</div>';
+    evalCache[jobId] = true;
   }
 }
 
