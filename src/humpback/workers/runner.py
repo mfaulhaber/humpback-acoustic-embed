@@ -7,6 +7,7 @@ import sys
 
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
+from humpback.services.model_registry_service import seed_default_model
 from humpback.workers.clustering_worker import run_clustering_job
 from humpback.workers.processing_worker import get_model, run_processing_job
 from humpback.workers.queue import claim_clustering_job, claim_processing_job, recover_stale_jobs
@@ -40,6 +41,10 @@ async def run_worker(settings: Settings | None = None) -> None:
             loop.add_signal_handler(sig, handle_signal)
         except NotImplementedError:
             pass  # Windows
+
+    # Seed default model if registry is empty
+    async with session_factory() as session:
+        await seed_default_model(session)
 
     # Recover any jobs left in 'running' from a previous crash
     async with session_factory() as session:

@@ -38,9 +38,12 @@ def _cluster_to_out(c) -> ClusterOut:
 
 @router.post("/jobs", status_code=201)
 async def create_job(body: ClusteringJobCreate, session: SessionDep) -> ClusteringJobOut:
-    job = await clustering_service.create_clustering_job(
-        session, body.embedding_set_ids, body.parameters
-    )
+    try:
+        job = await clustering_service.create_clustering_job(
+            session, body.embedding_set_ids, body.parameters
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return _job_to_out(job)
 
 

@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from humpback.api.routers import admin, audio, clustering, processing
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory, setup_sqlite_pragmas
+from humpback.services.model_registry_service import seed_default_model
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -31,6 +32,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         settings.storage_root.mkdir(parents=True, exist_ok=True)
+        # Seed default model if registry is empty
+        async with app.state.session_factory() as session:
+            await seed_default_model(session)
 
     @app.on_event("shutdown")
     async def shutdown():

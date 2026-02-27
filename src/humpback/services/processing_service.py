@@ -6,12 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.processing import EmbeddingSet, JobStatus, ProcessingJob
 from humpback.processing.signature import compute_encoding_signature
+from humpback.services.model_registry_service import get_default_model
 
 
 async def create_processing_job(
     session: AsyncSession,
     audio_file_id: str,
-    model_version: str,
+    model_version: Optional[str],
     window_size_seconds: float,
     target_sample_rate: int,
     feature_config: Optional[dict[str, Any]] = None,
@@ -19,6 +20,14 @@ async def create_processing_job(
     """Create a processing job. Returns (job, skipped).
     If an EmbeddingSet already exists for this signature, marks job as complete immediately.
     """
+    # Resolve model_version from registry if not provided
+    if model_version is None:
+        default = await get_default_model(session)
+        if default is not None:
+            model_version = default.name
+        else:
+            model_version = "perch_v1"  # fallback
+
     signature = compute_encoding_signature(
         model_version, window_size_seconds, target_sample_rate, feature_config
     )

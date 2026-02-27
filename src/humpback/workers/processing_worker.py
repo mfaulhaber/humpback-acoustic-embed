@@ -16,10 +16,14 @@ from humpback.processing.embeddings import IncrementalParquetWriter
 from humpback.processing.features import extract_logmel
 from humpback.processing.inference import EmbeddingModel, FakeTFLiteModel
 from humpback.processing.windowing import slice_windows
+from humpback.services.model_registry_service import get_model_by_name
 from humpback.storage import audio_raw_dir, embedding_path, ensure_dir
 from humpback.workers.queue import complete_processing_job, fail_processing_job
 
 logger = logging.getLogger(__name__)
+
+# Cache of loaded models keyed by (model_name, use_real_model)
+_model_cache: dict[str, EmbeddingModel] = {}
 
 
 def get_model(settings: Settings) -> EmbeddingModel:
@@ -28,6 +32,39 @@ def get_model(settings: Settings) -> EmbeddingModel:
 
         return TFLiteModel(settings.model_path, settings.vector_dim)
     return FakeTFLiteModel(settings.vector_dim)
+
+
+async def get_model_for_job(
+    session, job: ProcessingJob, settings: Settings
+) -> EmbeddingModel:
+    """Load model based on job's model_version, using registry and cache."""
+    cache_key = job.model_version
+
+    if cache_key in _model_cache:
+        return _model_cache[cache_key]
+
+    if not settings.use_real_model:
+        # Look up vector_dim from registry, fall back to settings
+        model_config = await get_model_by_name(session, job.model_version)
+        vector_dim = model_config.vector_dim if model_config else settings.vector_dim
+        model = FakeTFLiteModel(vector_dim)
+        _model_cache[cache_key] = model
+        return model
+
+    # Real model: look up path and dims from registry
+    model_config = await get_model_by_name(session, job.model_version)
+    if model_config:
+        from humpback.processing.inference import TFLiteModel
+
+        model = TFLiteModel(model_config.path, model_config.vector_dim)
+    else:
+        # Fallback to settings for unregistered model versions
+        from humpback.processing.inference import TFLiteModel
+
+        model = TFLiteModel(settings.model_path, settings.vector_dim)
+
+    _model_cache[cache_key] = model
+    return model
 
 
 async def run_processing_job(
@@ -65,7 +102,7 @@ async def run_processing_job(
 
         # Run CPU-bound processing in thread
         if model is None:
-            model = get_model(settings)
+            model = await get_model_for_job(session, job, settings)
 
         final_path = embedding_path(
             settings.storage_root,

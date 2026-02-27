@@ -30,3 +30,13 @@ def test_fake_model_different_inputs_different_outputs():
 def test_vector_dim_property():
     model = FakeTFLiteModel(vector_dim=1024)
     assert model.vector_dim == 1024
+
+
+def test_fake_model_varying_vector_dims():
+    """FakeTFLiteModel should work correctly with different vector_dim values."""
+    for dim in [64, 128, 512, 1280, 2048]:
+        model = FakeTFLiteModel(vector_dim=dim)
+        specs = np.random.randn(2, 128, 128).astype(np.float32)
+        embeddings = model.embed(specs)
+        assert embeddings.shape == (2, dim)
+        assert model.vector_dim == dim

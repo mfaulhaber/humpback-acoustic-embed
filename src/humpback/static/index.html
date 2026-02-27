@@ -145,7 +145,7 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
       </div>
       <div class="form-group">
         <label>Model Version</label>
-        <input type="text" id="proc-model" value="perch_v1">
+        <select id="proc-model"><option value="">-- loading --</option></select>
       </div>
       <div class="form-group">
         <label>Window Size (s)</label>
@@ -234,6 +234,22 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
 <!-- ==================== ADMIN TAB ==================== -->
 <div id="admin" class="tab-content">
   <div class="card">
+    <h3>Model Registry</h3>
+    <table>
+      <thead><tr><th>Name</th><th>Display Name</th><th>Path</th><th>Dims</th><th>Default</th><th></th></tr></thead>
+      <tbody id="admin-models-body"></tbody>
+    </table>
+    <p id="admin-models-empty" class="empty hidden">No models registered.</p>
+    <div style="margin-top:0.75rem">
+      <button class="btn btn-primary" id="scan-models-btn">Scan for Models</button>
+    </div>
+    <div id="scan-results" class="hidden" style="margin-top:0.75rem">
+      <h4 style="font-size:0.9rem;margin-bottom:0.5rem">Unregistered .tflite Files</h4>
+      <div id="scan-results-list"></div>
+    </div>
+    <div id="admin-models-msg"></div>
+  </div>
+  <div class="card">
     <h3>Database Tables</h3>
     <table>
       <thead><tr><th>Table</th><th>Row Count</th></tr></thead>
@@ -278,9 +294,9 @@ $$('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     $('#' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'audio') loadAudioList();
-    if (btn.dataset.tab === 'processing') { loadAudioOptions(); loadProcJobs(); loadEmbeddingSets(); }
+    if (btn.dataset.tab === 'processing') { loadAudioOptions(); loadModelOptions(); loadProcJobs(); loadEmbeddingSets(); }
     if (btn.dataset.tab === 'clustering') { loadClusterEmbedOptions(); loadClusterJobs(); }
-    if (btn.dataset.tab === 'admin') loadAdminTables();
+    if (btn.dataset.tab === 'admin') { loadAdminTables(); loadAdminModels(); }
   });
 });
 
@@ -493,6 +509,17 @@ async function loadAudioOptions() {
   } catch (e) { console.error(e); }
 }
 
+async function loadModelOptions() {
+  try {
+    const models = await api('/admin/models');
+    const sel = $('#proc-model');
+    sel.innerHTML = models.map(m =>
+      `<option value="${m.name}"${m.is_default ? ' selected' : ''}>${m.display_name} (${m.vector_dim}d)</option>`
+    ).join('');
+    if (models.length === 0) sel.innerHTML = '<option value="">-- no models registered --</option>';
+  } catch (e) { console.error(e); }
+}
+
 async function loadProcJobs() {
   try {
     const jobs = await api('/processing/jobs');
@@ -628,9 +655,13 @@ $('#queue-all-proc-btn').addEventListener('click', async () => {
 });
 
 // ==================== CLUSTERING ====================
+// Store embedding sets data for client-side dim validation
+let clusterEmbedSetsData = [];
+
 async function loadClusterEmbedOptions() {
   try {
     const sets = await api('/processing/embedding-sets');
+    clusterEmbedSetsData = sets;
     const container = $('#cluster-embed-list');
     if (sets.length === 0) {
       container.innerHTML = '';
@@ -638,10 +669,41 @@ async function loadClusterEmbedOptions() {
       return;
     }
     $('#cluster-embed-empty').classList.add('hidden');
-    container.innerHTML = sets.map(s => `
-      <label><input type="checkbox" value="${s.id}">
-        ${audioNameMap[s.audio_file_id] || shortId(s.audio_file_id)} &mdash; ${s.model_version} (${s.vector_dim}d)
-      </label>`).join('');
+
+    // Group by model_version
+    const groups = {};
+    for (const s of sets) {
+      const key = s.model_version;
+      if (!groups[key]) groups[key] = { vector_dim: s.vector_dim, sets: [] };
+      groups[key].sets.push(s);
+    }
+
+    let html = '';
+    for (const [model, group] of Object.entries(groups)) {
+      html += `<div style="margin-bottom:0.75rem">
+        <div style="font-weight:600;font-size:0.85rem;margin-bottom:0.25rem;display:flex;align-items:center;gap:0.5rem">
+          ${model} (${group.vector_dim}d)
+          <button type="button" class="btn btn-sm cluster-group-select-all" data-model="${model}" style="font-size:0.75rem;padding:0.15rem 0.5rem">Select All</button>
+        </div>`;
+      for (const s of group.sets) {
+        html += `<label><input type="checkbox" value="${s.id}" data-dim="${s.vector_dim}" data-model="${model}">
+          ${audioNameMap[s.audio_file_id] || shortId(s.audio_file_id)}
+        </label>`;
+      }
+      html += `</div>`;
+    }
+    container.innerHTML = html;
+
+    // Per-group "Select All" buttons
+    container.querySelectorAll('.cluster-group-select-all').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const model = btn.dataset.model;
+        const boxes = [...container.querySelectorAll(`input[data-model="${model}"]`)];
+        const allChecked = boxes.every(cb => cb.checked);
+        boxes.forEach(cb => cb.checked = !allChecked);
+        btn.textContent = allChecked ? 'Select All' : 'Unselect All';
+      });
+    });
   } catch (e) { console.error(e); }
 }
 
@@ -806,8 +868,17 @@ function buildClusterParams() {
 }
 
 $('#queue-cluster-btn').addEventListener('click', async () => {
-  const checked = [...$('#cluster-embed-list').querySelectorAll('input:checked')].map(cb => cb.value);
+  const checkedBoxes = [...$('#cluster-embed-list').querySelectorAll('input:checked')];
+  const checked = checkedBoxes.map(cb => cb.value);
   if (checked.length === 0) { showMsg('cluster-msg', 'Select at least one embedding set', 'error'); return; }
+
+  // Client-side dimension validation
+  const dims = new Set(checkedBoxes.map(cb => cb.dataset.dim));
+  if (dims.size > 1) {
+    showMsg('cluster-msg', `Cannot cluster embedding sets with different dimensions: ${[...dims].join(', ')}`, 'error');
+    return;
+  }
+
   const params = buildClusterParams();
   try {
     const result = await api('/clustering/jobs', {
@@ -833,6 +904,110 @@ setInterval(() => {
 }, 3000);
 
 // ==================== ADMIN ====================
+async function loadAdminModels() {
+  try {
+    const models = await api('/admin/models');
+    const tbody = $('#admin-models-body');
+    if (models.length === 0) {
+      tbody.innerHTML = '';
+      $('#admin-models-empty').classList.remove('hidden');
+      return;
+    }
+    $('#admin-models-empty').classList.add('hidden');
+    tbody.innerHTML = models.map(m => `
+      <tr>
+        <td>${m.name}</td>
+        <td>${m.display_name}</td>
+        <td style="font-size:0.8rem">${m.path}</td>
+        <td>${m.vector_dim}</td>
+        <td>${m.is_default ? '<strong>Yes</strong>' : 'No'}</td>
+        <td>
+          ${!m.is_default ? `<button class="btn btn-sm btn-primary set-default-model" data-id="${m.id}">Set Default</button>` : ''}
+          <button class="btn btn-sm btn-danger delete-model" data-id="${m.id}" style="margin-left:0.25rem">Delete</button>
+        </td>
+      </tr>`).join('');
+
+    tbody.querySelectorAll('.set-default-model').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await api(`/admin/models/${btn.dataset.id}/set-default`, { method: 'POST' });
+          loadAdminModels();
+        } catch (err) { showMsg('admin-models-msg', `Failed: ${err.message}`, 'error'); }
+      });
+    });
+    tbody.querySelectorAll('.delete-model').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Delete this model from the registry?')) return;
+        try {
+          await api(`/admin/models/${btn.dataset.id}`, { method: 'DELETE' });
+          showMsg('admin-models-msg', 'Model deleted');
+          loadAdminModels();
+        } catch (err) { showMsg('admin-models-msg', `Failed: ${err.message}`, 'error'); }
+      });
+    });
+  } catch (e) { console.error(e); }
+}
+
+$('#scan-models-btn').addEventListener('click', async () => {
+  try {
+    const files = await api('/admin/models/scan');
+    const unregistered = files.filter(f => !f.registered);
+    const container = $('#scan-results');
+    const list = $('#scan-results-list');
+    if (unregistered.length === 0) {
+      container.classList.remove('hidden');
+      list.innerHTML = '<p class="empty">All .tflite files are already registered.</p>';
+      return;
+    }
+    container.classList.remove('hidden');
+    list.innerHTML = unregistered.map((f, i) => `
+      <div class="card" style="padding:0.75rem;margin-bottom:0.5rem">
+        <strong>${f.filename}</strong> <span style="font-size:0.8rem;color:#888">(${(f.size_bytes / 1024 / 1024).toFixed(1)} MB)</span>
+        <div class="form-row" style="margin-top:0.5rem">
+          <div class="form-group">
+            <label>Name (identifier)</label>
+            <input type="text" id="scan-name-${i}" value="${f.filename.replace('.tflite', '').replace(/[^a-zA-Z0-9_-]/g, '_')}" style="width:100%">
+          </div>
+          <div class="form-group">
+            <label>Display Name</label>
+            <input type="text" id="scan-display-${i}" value="${f.filename.replace('.tflite', '').replace(/[_-]/g, ' ')}" style="width:100%">
+          </div>
+          <div class="form-group">
+            <label>Vector Dim</label>
+            <input type="number" id="scan-dim-${i}" value="1280" min="1" style="width:100%">
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end">
+            <button class="btn btn-primary btn-sm register-scanned" data-index="${i}" data-path="${f.path}">Register</button>
+          </div>
+        </div>
+      </div>`).join('');
+
+    list.querySelectorAll('.register-scanned').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const idx = btn.dataset.index;
+        const body = {
+          name: $(`#scan-name-${idx}`).value,
+          display_name: $(`#scan-display-${idx}`).value,
+          path: btn.dataset.path,
+          vector_dim: parseInt($(`#scan-dim-${idx}`).value),
+        };
+        try {
+          await api('/admin/models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          showMsg('admin-models-msg', `Registered: ${body.name}`);
+          loadAdminModels();
+          btn.closest('.card').remove();
+        } catch (e) { showMsg('admin-models-msg', `Failed: ${e.message}`, 'error'); }
+      });
+    });
+  } catch (e) { showMsg('admin-models-msg', `Scan failed: ${e.message}`, 'error'); }
+});
+
 async function loadAdminTables() {
   try {
     const tables = await api('/admin/tables');

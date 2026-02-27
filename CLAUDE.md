@@ -56,6 +56,11 @@ Use these commands for managing dependencies:
 *   Prefer `uv run` over manually activating a virtual environment and running commands directly.
 *   When troubleshooting, use `uv cache clean` as a last resort.
 
+### 3.5 Documentation
+*   When a change adds, removes, or modifies API endpoints, data models, configuration options, architecture, or workflows, update **both** `CLAUDE.md` and `README.md` to reflect the change.
+*   `CLAUDE.md` is the authoritative spec — keep the data model, workflows, and design rules in sync with the code.
+*   `README.md` is user-facing — keep the API endpoints table, configuration table, feature list, and architecture overview current.
+
 ## 4. Core Design Principles
 
 ### 4.1 Idempotent Encoding (No Reprocessing)
@@ -80,6 +85,16 @@ UI can monitor via polling or a push channel.
 ---
 
 ## 5. Data Model (Conceptual)
+
+### TFLiteModelConfig (model registry)
+- id
+- name (unique — used as model_version in jobs)
+- display_name
+- path (relative to project root)
+- vector_dim
+- description (optional)
+- is_default (bool)
+- created_at, updated_at
 
 ### AudioFile
 - id
@@ -152,36 +167,39 @@ Input:
 - optional metadata
 
 Pipeline:
-1. Decode audio (MP3/WAV)
-2. Resample to target sample rate (default: 32000 Hz)
-3. Slice into N-second windows (default: 5)
-4. Extract log-mel spectrogram (128 mel bins × 128 time frames)
-5. TFLite inference (batched)
-6. Produce embedding vectors (1280 dims)
-7. Save embeddings to Parquet (incremental)
-8. Persist EmbeddingSet row in SQL
-9. Mark ProcessingJob complete
+1. Resolve model: if model_version is None, use default from TFLiteModelConfig registry
+2. Decode audio (MP3/WAV)
+3. Resample to target sample rate (default: 32000 Hz)
+4. Slice into N-second windows (default: 5)
+5. Extract log-mel spectrogram (128 mel bins × 128 time frames)
+6. TFLite inference (batched, model resolved from registry by model_version)
+7. Produce embedding vectors (dims from model config)
+8. Save embeddings to Parquet (incremental)
+9. Persist EmbeddingSet row in SQL
+10. Mark ProcessingJob complete
 
 Rules:
 - embeddings must be written incrementally (avoid holding all vectors in RAM)
 - write parquet to temp path, then atomically rename/move on completion
 - job must be restart-safe: if a temp exists, worker may resume or restart cleanly
 - if EmbeddingSet exists for encoding_signature and is complete → skip
+- worker caches loaded models in memory to avoid reloading across jobs
 
 ---
 
 ## 7. Clustering Workflow
 
 Input:
-- selected embedding sets
+- selected embedding sets (must share the same vector_dim)
 - optional metadata filters (subset)
 
 Pipeline:
-1. Load embeddings from Parquet
-2. Optional dimensionality reduction (UMAP)
-3. Clustering (HDBSCAN default)
-4. Persist clusters and assignments
-5. Compute per-cluster metadata summaries
+1. Validate all embedding sets share the same vector_dim (reject with error if mismatched)
+2. Load embeddings from Parquet
+3. Optional dimensionality reduction (UMAP)
+4. Clustering (HDBSCAN default)
+5. Persist clusters and assignments
+6. Compute per-cluster metadata summaries
 6. Mark ClusteringJob complete
 
 ---

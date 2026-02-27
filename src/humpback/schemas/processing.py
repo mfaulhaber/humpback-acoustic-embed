@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class ProcessingJobCreate(BaseModel):
     audio_file_id: str
-    model_version: str = "perch_v1"
+    model_version: Optional[str] = None
     window_size_seconds: float = 5.0
     target_sample_rate: int = 32000
     feature_config: Optional[dict[str, Any]] = None

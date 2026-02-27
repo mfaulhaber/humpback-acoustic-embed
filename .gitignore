@@ -13,5 +13,5 @@ build/
 htmlcov/
 *.tmp.parquet
 .DS_Store
-models/
+/models/
 grunt.wav

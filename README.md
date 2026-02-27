@@ -9,6 +9,7 @@ with optional ecological/behavioral metadata.
 Key features:
 - Asynchronous job queue (SQL-backed, restart-safe)
 - Idempotent encoding (no reprocessing for same config)
+- Multi-model registry (register, switch, and manage TFLite models from the UI)
 - Embeddings stored in Parquet
 - REST API for job management and inspection
 - UMAP + HDBSCAN clustering pipeline
@@ -62,10 +63,21 @@ audio file (MP3/WAV) + optional metadata
 Encoding is associated with the audio file and configuration. Reprocessing is
 skipped when an EmbeddingSet with the same encoding_signature already exists.
 
+### Model Registry
+
+Multiple TFLite models can be registered and managed via the Admin tab or API.
+A default model is seeded on first startup (`multispecies_whale_fp16`). When
+creating a processing job, if no `model_version` is specified, the default
+registered model is used. The worker resolves the model path and vector
+dimensions from the registry, caching loaded models across jobs.
+
+Clustering validates that all selected embedding sets share the same vector
+dimensions to prevent mixing incompatible embeddings.
+
 ### Clustering Workflow
 
 ```
-selected embedding sets
+selected embedding sets (must share vector_dim)
   → load from Parquet
   → optional UMAP dimensionality reduction
   → HDBSCAN clustering
@@ -92,6 +104,12 @@ selected embedding sets
 | GET | `/clustering/jobs/{id}` | Get clustering job |
 | GET | `/clustering/jobs/{id}/clusters` | List clusters |
 | GET | `/clustering/clusters/{id}/assignments` | Get assignments |
+| GET | `/admin/models` | List registered models |
+| POST | `/admin/models` | Register a new model |
+| PUT | `/admin/models/{id}` | Update model config |
+| DELETE | `/admin/models/{id}` | Delete model (fails if embeddings reference it) |
+| POST | `/admin/models/{id}/set-default` | Set model as default |
+| GET | `/admin/models/scan` | Scan `models/` dir for unregistered `.tflite` files |
 
 ---
 
@@ -151,7 +169,8 @@ Environment variables (prefix `HUMPBACK_`):
 | `HUMPBACK_TARGET_SAMPLE_RATE` | `32000` | Target sample rate |
 | `HUMPBACK_VECTOR_DIM` | `1280` | Embedding vector dimensions |
 | `HUMPBACK_USE_REAL_MODEL` | `true` | Use real TFLite model vs fake |
-| `HUMPBACK_MODEL_PATH` | `models/multispecies_whale_fp16_flex.tflite` | Path to TFLite model file |
+| `HUMPBACK_MODEL_PATH` | `models/multispecies_whale_fp16_flex.tflite` | Path to TFLite model file (fallback) |
+| `HUMPBACK_MODELS_DIR` | `models` | Directory to scan for `.tflite` model files |
 
 ---
 

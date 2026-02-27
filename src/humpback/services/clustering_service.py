@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
+from humpback.models.processing import EmbeddingSet
 
 
 async def create_clustering_job(
@@ -13,6 +14,22 @@ async def create_clustering_job(
     embedding_set_ids: list[str],
     parameters: Optional[dict[str, Any]] = None,
 ) -> ClusteringJob:
+    # Validate that all embedding sets share the same vector_dim
+    if embedding_set_ids:
+        result = await session.execute(
+            select(EmbeddingSet).where(EmbeddingSet.id.in_(embedding_set_ids))
+        )
+        sets = list(result.scalars().all())
+        if len(sets) != len(embedding_set_ids):
+            found_ids = {s.id for s in sets}
+            missing = [eid for eid in embedding_set_ids if eid not in found_ids]
+            raise ValueError(f"Embedding sets not found: {missing}")
+        dims = {s.vector_dim for s in sets}
+        if len(dims) > 1:
+            raise ValueError(
+                f"Cannot cluster embedding sets with different vector dimensions: {dims}"
+            )
+
     job = ClusteringJob(
         embedding_set_ids=json.dumps(embedding_set_ids),
         parameters=json.dumps(parameters) if parameters else None,

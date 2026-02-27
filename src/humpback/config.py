@@ -13,5 +13,6 @@ class Settings(BaseSettings):
     worker_poll_interval: float = 2.0
     use_real_model: bool = True
     model_path: str = "models/multispecies_whale_fp16_flex.tflite"
+    models_dir: str = "models"
 
     model_config = {"env_prefix": "HUMPBACK_"}
