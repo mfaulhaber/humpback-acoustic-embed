@@ -12,3 +12,6 @@ build/
 .coverage
 htmlcov/
 *.tmp.parquet
+.DS_Store
+models/
+grunt.wav
