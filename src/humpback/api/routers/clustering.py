@@ -3,8 +3,11 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.models.audio import AudioFile
+from humpback.models.processing import EmbeddingSet
 from humpback.schemas.clustering import (
     ClusterAssignmentOut,
     ClusteringJobCreate,
@@ -84,12 +87,27 @@ async def get_visualization(job_id: str, session: SessionDep, settings: Settings
         raise HTTPException(404, "UMAP coordinates not available for this job")
 
     table = pq.read_table(str(umap_path))
+    es_ids = table.column("embedding_set_id").to_pylist()
+
+    # Resolve embedding_set_id → audio filename
+    unique_es_ids = list(set(es_ids))
+    stmt = (
+        select(EmbeddingSet.id, AudioFile.filename)
+        .join(AudioFile, EmbeddingSet.audio_file_id == AudioFile.id)
+        .where(EmbeddingSet.id.in_(unique_es_ids))
+    )
+    rows = (await session.execute(stmt)).all()
+    es_to_filename = {r[0]: r[1] for r in rows}
+
+    audio_filenames = [es_to_filename.get(es_id, es_id) for es_id in es_ids]
+
     return {
         "x": table.column("x").to_pylist(),
         "y": table.column("y").to_pylist(),
         "cluster_label": table.column("cluster_label").to_pylist(),
-        "embedding_set_id": table.column("embedding_set_id").to_pylist(),
+        "embedding_set_id": es_ids,
         "embedding_row_index": table.column("embedding_row_index").to_pylist(),
+        "audio_filename": audio_filenames,
     }
 
 

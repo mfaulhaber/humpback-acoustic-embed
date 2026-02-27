@@ -71,6 +71,8 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
 .umap-plot-container { margin-top: 0.75rem; }
 .btn-umap { background: #6c5ce7; color: #fff; margin-top: 0.5rem; }
 .btn-umap:hover { background: #5a4bd1; }
+.btn-export { background: #2a9d8f; color: #fff; margin-top: 0.5rem; }
+.btn-export:hover { background: #238b7e; }
 .umap-no-data { color: #888; font-style: italic; padding: 1rem 0; }
 </style>
 <script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js" charset="utf-8"></script>
@@ -946,12 +948,13 @@ async function loadClusterJobs() {
         const paramsSummary = job.parameters ? `<div style="font-size:0.8rem;color:#666;margin-top:0.25rem">${Object.entries(job.parameters).map(([k,v]) => `${k}=${v}`).join(', ')}</div>` : '';
         const umapBtn = job.status === 'complete' ? `<button class="btn btn-umap" onclick="toggleUmapPlot('${jid}', event)">Show UMAP Plot</button>` : '';
         const evalBtn = job.status === 'complete' ? `<button class="btn" style="margin-left:0.5rem" onclick="toggleEvaluation('${jid}', event)">Show Evaluation</button>` : '';
+        const exportBtn = job.status === 'complete' ? `<button class="btn btn-export" style="margin-left:0.5rem" onclick="exportClusterReport('${jid}')">Export Report</button>` : '';
         html += `<div class="card" style="margin-top:0.5rem">
           <strong>Job ${shortId(jid)}</strong> ${badgeHtml(job.status)}
           ${paramsSummary}
           ${job.error_message ? `<div class="msg msg-error" style="margin-top:0.5rem">${job.error_message}</div>` : ''}
           ${clustersHtml}
-          <div style="display:flex;gap:0.25rem;margin-top:0.5rem">${umapBtn}${evalBtn}</div>
+          <div style="display:flex;gap:0.25rem;margin-top:0.5rem">${umapBtn}${evalBtn}${exportBtn}</div>
           <div id="umap-plot-${jid}" class="umap-plot-container" style="display:none;height:500px"></div>
           <div id="eval-panel-${jid}" style="display:none;margin-top:0.75rem"></div>
         </div>`;
@@ -1150,7 +1153,8 @@ async function toggleUmapPlot(jobId, event) {
       if (!groups[label]) groups[label] = { x: [], y: [], text: [] };
       groups[label].x.push(data.x[i]);
       groups[label].y.push(data.y[i]);
-      groups[label].text.push(`ES: ${data.embedding_set_id[i].slice(0,8)}… Row: ${data.embedding_row_index[i]}`);
+      const fname = (data.audio_filename && data.audio_filename[i]) ? data.audio_filename[i].replace(/\.\w+$/, '') : `ES: ${data.embedding_set_id[i].slice(0,8)}…`;
+      groups[label].text.push(`${fname} (row ${data.embedding_row_index[i]})`);
     }
 
     const palette = ['#3a86ff','#e63946','#2a9d8f','#e9c46a','#264653','#f4a261','#6c5ce7','#00b894','#fd79a8','#636e72','#d63031','#74b9ff','#a29bfe','#ffeaa7','#55efc4'];
@@ -1190,6 +1194,92 @@ async function toggleUmapPlot(jobId, event) {
       container.innerHTML = '<div class="umap-no-data">Failed to load UMAP plot.</div>';
     }
     umapPlotCache[jobId] = true;
+  }
+}
+
+// ---- Export Cluster Report ----
+async function exportClusterReport(jobId) {
+  try {
+    const [vizData, metrics] = await Promise.all([
+      api(`/clustering/jobs/${jobId}/visualization`),
+      api(`/clustering/jobs/${jobId}/metrics`),
+    ]);
+
+    // Build UMAP traces (same logic as toggleUmapPlot)
+    const groups = {};
+    for (let i = 0; i < vizData.x.length; i++) {
+      const label = vizData.cluster_label[i];
+      if (!groups[label]) groups[label] = { x: [], y: [], text: [] };
+      groups[label].x.push(vizData.x[i]);
+      groups[label].y.push(vizData.y[i]);
+      const fname = (vizData.audio_filename && vizData.audio_filename[i]) ? vizData.audio_filename[i].replace(/\.\w+$/, '') : `ES: ${vizData.embedding_set_id[i].slice(0,8)}`;
+      groups[label].text.push(`${fname} (row ${vizData.embedding_row_index[i]})`);
+    }
+    const palette = ['#3a86ff','#e63946','#2a9d8f','#e9c46a','#264653','#f4a261','#6c5ce7','#00b894','#fd79a8','#636e72','#d63031','#74b9ff','#a29bfe','#ffeaa7','#55efc4'];
+    const traces = [];
+    const sortedLabels = Object.keys(groups).map(Number).sort((a, b) => a - b);
+    for (const label of sortedLabels) {
+      const g = groups[label];
+      const isNoise = label === -1;
+      traces.push({
+        x: g.x, y: g.y, text: g.text,
+        mode: 'markers', type: 'scatter',
+        name: isNoise ? 'Noise' : `Cluster ${label}`,
+        marker: { color: isNoise ? '#b2bec3' : palette[label % palette.length], size: isNoise ? 4 : 7, opacity: isNoise ? 0.4 : 0.8 },
+        hoverinfo: 'text+name',
+      });
+    }
+    const layout = { xaxis: { title: 'UMAP 1' }, yaxis: { title: 'UMAP 2' }, legend: { orientation: 'v', x: 1.02, y: 1 }, margin: { l: 50, r: 120, t: 20, b: 50 }, hovermode: 'closest' };
+
+    // Build metrics table HTML
+    let metricsHtml = '';
+    if (metrics && Object.keys(metrics).length > 0) {
+      const fmt = (v) => typeof v === 'number' ? v.toFixed(4) : v;
+      let rows = '';
+      for (const [key, val] of Object.entries(metrics)) {
+        if (key === 'category_metrics' || typeof val === 'object') continue;
+        rows += `<tr><td>${key}</td><td>${fmt(val)}</td></tr>`;
+      }
+      if (metrics.category_metrics) {
+        for (const [key, val] of Object.entries(metrics.category_metrics)) {
+          rows += `<tr><td>${key} (category)</td><td>${fmt(val)}</td></tr>`;
+        }
+      }
+      metricsHtml = `<h2>Cluster Evaluation Metrics</h2>
+        <table class="metrics-table"><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    const sid = jobId.slice(0, 8);
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Cluster Report ${sid}</title>
+<script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"><\/script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  .metrics-table { border-collapse: collapse; width: 100%; max-width: 500px; }
+  .metrics-table th, .metrics-table td { border: 1px solid #ddd; padding: 0.4rem 0.75rem; text-align: left; }
+  .metrics-table th { background: #f5f5f5; }
+  .metrics-table tr:nth-child(even) { background: #fafafa; }
+</style></head><body>
+<h1>Cluster Report &mdash; Job ${sid}</h1>
+<div id="umap-plot" style="height:500px"></div>
+${metricsHtml}
+<p style="margin-top:2rem;font-size:0.8rem;color:#999">Generated ${new Date().toISOString().slice(0,16).replace('T',' ')}</p>
+<script>
+  Plotly.newPlot('umap-plot', ${JSON.stringify(traces)}, ${JSON.stringify(layout)}, {responsive: true});
+<\/script>
+</body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cluster_report_${sid}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Failed to export report: ' + err.message);
   }
 }
 
