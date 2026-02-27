@@ -1,12 +1,15 @@
+import io
 import json
+import struct
 from pathlib import Path
 
 import re
 
-from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.processing.audio_io import decode_audio
 from humpback.schemas.audio import AudioFileOut, AudioMetadataIn, AudioMetadataOut
 from humpback.services import audio_service
 from humpback.storage import audio_raw_dir
@@ -148,4 +151,53 @@ async def download_audio(
         file_path,
         media_type=media_type,
         headers={"Accept-Ranges": "bytes", "Content-Length": str(file_size)},
+    )
+
+
+@router.get("/{audio_id}/window")
+async def get_audio_window(
+    audio_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    start_seconds: float = Query(..., ge=0),
+    duration_seconds: float = Query(..., gt=0),
+):
+    """Return a WAV segment of the audio file for the given time range."""
+    af = await audio_service.get_audio(session, audio_id)
+    if af is None:
+        raise HTTPException(404, "Audio file not found")
+    suffix = Path(af.filename).suffix or ".wav"
+    file_path = audio_raw_dir(settings.storage_root, af.id) / f"original{suffix}"
+    if not file_path.exists():
+        raise HTTPException(404, "Audio file not found on disk")
+
+    audio, sr = decode_audio(file_path)
+
+    start_sample = int(start_seconds * sr)
+    end_sample = int((start_seconds + duration_seconds) * sr)
+    start_sample = min(start_sample, len(audio))
+    end_sample = min(end_sample, len(audio))
+    segment = audio[start_sample:end_sample]
+
+    # Encode as 16-bit PCM WAV in memory
+    import numpy as np
+
+    pcm = (segment * 32767).clip(-32768, 32767).astype(np.int16)
+    buf = io.BytesIO()
+    n_samples = len(pcm)
+    data_size = n_samples * 2  # 16-bit = 2 bytes per sample
+    # Write WAV header manually for single-channel 16-bit PCM
+    buf.write(b"RIFF")
+    buf.write(struct.pack("<I", 36 + data_size))
+    buf.write(b"WAVE")
+    buf.write(b"fmt ")
+    buf.write(struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
+    buf.write(b"data")
+    buf.write(struct.pack("<I", data_size))
+    buf.write(pcm.tobytes())
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="audio/wav",
+        headers={"Content-Length": str(buf.tell())},
     )
