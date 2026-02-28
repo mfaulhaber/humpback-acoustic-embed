@@ -1042,23 +1042,21 @@ async function loadClusterJobs() {
             item => {
               const windowSize = item.windowSize || 5;
               const aid = item.audioFileId;
-              let chipsHtml = '';
-              if (item.rowIndices.length > 1) {
-                const chips = item.rowIndices.map(ri => {
-                  const start = ri * windowSize;
-                  return `<button class="row-chip" data-start="${start}" data-dur="${windowSize}" data-ri="${ri}" title="Window ${ri} (${start}s\u2013${start + windowSize}s)">${ri}</button>`;
-                });
-                chipsHtml = item.rowIndices.length > 40
-                  ? chips.slice(0, 40).join('') + `<span class="file-meta"> ... (${item.rowIndices.length} total)</span>`
-                  : chips.join('');
-              }
+              const chips = item.rowIndices.map(ri => {
+                const start = ri * windowSize;
+                return `<button class="row-chip" data-start="${start}" data-dur="${windowSize}" data-ri="${ri}" title="Window ${ri} (${start}s\u2013${start + windowSize}s)">${ri}</button>`;
+              });
+              const chipsHtml = item.rowIndices.length > 40
+                ? chips.slice(0, 40).join('') + `<span class="file-meta"> ... (${item.rowIndices.length} total)</span>`
+                : chips.join('');
               const dur = item.duration || 0;
               const durLabel = formatTime(dur);
+              const singleWindow = item.rowIndices.length === 1;
               const barHtml = aid
                 ? `<div class="audio-bar" data-audio-id="${aid}" data-window-size="${windowSize}" data-duration="${dur}">
                     <button class="play-btn" title="Play">\u25B6</button>
                     ${chipsHtml}
-                    <button class="row-chip row-chip-active full-chip" data-mode="full">Full</button>
+                    <button class="row-chip${singleWindow ? '' : ' row-chip-active'} full-chip" data-mode="full">Full</button>
                     <span class="vol-container">\uD83D\uDD08<input type="range" class="vol-slider" min="0" max="1" step="0.1" value="1"></span>
                     <a class="dl-btn" href="/audio/${aid}/download" title="Download">\u22EF</a>
                     <audio preload="metadata" class="hidden-audio"></audio>
@@ -1108,8 +1106,19 @@ async function loadClusterJobs() {
               timePlayhead.style.left = (totalDur > 0 ? (start / totalDur * 100) : 0) + '%';
             }
 
-            audio.src = `/audio/${aid}/download`;
-            updateTimeBar(0, totalDur);
+            // Default to first row chip if it's the only one, otherwise full file
+            const rowChips = bar.querySelectorAll('.row-chip:not(.full-chip)');
+            if (rowChips.length === 1) {
+              const chip = rowChips[0];
+              chip.classList.add('row-chip-active');
+              const s = parseFloat(chip.dataset.start);
+              const d = parseFloat(chip.dataset.dur);
+              audio.src = `/audio/${aid}/window?start_seconds=${s}&duration_seconds=${d}`;
+              updateTimeBar(s, s + d);
+            } else {
+              audio.src = `/audio/${aid}/download`;
+              updateTimeBar(0, totalDur);
+            }
 
             // Playhead tracking
             audio.addEventListener('timeupdate', () => {
