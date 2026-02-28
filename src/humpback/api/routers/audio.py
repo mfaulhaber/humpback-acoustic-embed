@@ -132,7 +132,7 @@ async def download_audio(
     file_path = audio_raw_dir(settings.storage_root, af.id) / f"original{suffix}"
     if not file_path.exists():
         raise HTTPException(404, "Audio file not found on disk")
-    media_types = {".wav": "audio/wav", ".mp3": "audio/mpeg"}
+    media_types = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".flac": "audio/flac"}
     media_type = media_types.get(suffix.lower(), "application/octet-stream")
     file_size = file_path.stat().st_size
 

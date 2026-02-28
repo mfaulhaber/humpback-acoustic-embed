@@ -168,12 +168,12 @@ only store indexing/assignment references.
 ## 6. Processing Workflow
 
 Input:
-- audio file (MP3 or WAV)
+- audio file (MP3, WAV, or FLAC)
 - optional metadata
 
 Pipeline:
 1. Resolve model: if model_version is None, use default from ModelConfig registry
-2. Decode audio (MP3/WAV)
+2. Decode audio (MP3/WAV/FLAC)
 3. Resample to target sample rate (default: 32000 Hz)
 4. Slice into N-second windows (default: 5)
 5. Branch on model's `input_format`:
@@ -198,7 +198,7 @@ Rules:
 
 ```mermaid
 flowchart TD
-    A["Audio File<br/>(MP3/WAV)"] --> B["Decode Audio<br/>→ float32 mono"]
+    A["Audio File<br/>(MP3/WAV/FLAC)"] --> B["Decode Audio<br/>→ float32 mono"]
     B --> C["Resample<br/>→ 32 kHz"]
     C --> D["Slice Windows<br/>5 s → 160 000 samples"]
     D --> E{input_format?}
@@ -275,7 +275,7 @@ Concurrency:
 ## 9. Storage Layout
 
 /audio/
-  raw/{audio_file_id}/original.(wav|mp3)
+  raw/{audio_file_id}/original.(wav|mp3|flac)
 /embeddings/
   {model_version}/{audio_file_id}/{encoding_signature}.parquet
   {model_version}/{audio_file_id}/{encoding_signature}.tmp.parquet

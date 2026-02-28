@@ -14,6 +14,8 @@ def decode_audio(path: Path) -> tuple[np.ndarray, int]:
         return _decode_wav(path)
     elif suffix == ".mp3":
         return _decode_mp3(path)
+    elif suffix == ".flac":
+        return _decode_flac(path)
     else:
         raise ValueError(f"Unsupported audio format: {suffix}")
 
@@ -46,6 +48,15 @@ def _decode_mp3(path: Path) -> tuple[np.ndarray, int]:
         import librosa
     except ImportError:
         raise ImportError("librosa is required for MP3 decoding. Install with: pip install librosa")
+    audio, sr = librosa.load(str(path), sr=None, mono=True)
+    return audio, sr
+
+
+def _decode_flac(path: Path) -> tuple[np.ndarray, int]:
+    try:
+        import librosa
+    except ImportError:
+        raise ImportError("librosa is required for FLAC decoding. Install with: uv add librosa")
     audio, sr = librosa.load(str(path), sr=None, mono=True)
     return audio, sr
 

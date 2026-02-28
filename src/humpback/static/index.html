@@ -114,8 +114,8 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
       <h3>Upload Audio</h3>
       <div class="drop-zone" id="drop-zone">
         <p>Drag &amp; drop audio files or a folder here, or <a href="#" id="browse-link">browse files</a> / <a href="#" id="browse-folder-link">browse folder</a></p>
-        <input type="file" id="audio-file-input" accept=".wav,.mp3" multiple>
-        <input type="file" id="audio-folder-input" accept=".wav,.mp3" webkitdirectory multiple>
+        <input type="file" id="audio-file-input" accept=".wav,.mp3,.flac" multiple>
+        <input type="file" id="audio-folder-input" accept=".wav,.mp3,.flac" webkitdirectory multiple>
       </div>
       <div id="upload-progress" class="upload-progress hidden">
         <div class="bar-track"><div class="bar-fill" id="upload-bar"></div></div>
@@ -769,7 +769,7 @@ $('#audio-back').addEventListener('click', () => {
 const dropZone = $('#drop-zone');
 const fileInput = $('#audio-file-input');
 const folderInput = $('#audio-folder-input');
-const AUDIO_EXTENSIONS = ['.wav', '.mp3'];
+const AUDIO_EXTENSIONS = ['.wav', '.mp3', '.flac'];
 
 function isAudioFile(file) {
   const name = file.name.toLowerCase();

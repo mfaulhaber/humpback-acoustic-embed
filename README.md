@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project processes humpback whale audio recordings (MP3/WAV) into reusable
+This project processes humpback whale audio recordings (MP3/WAV/FLAC) into reusable
 embedding vectors using a Perch-compatible TFLite model, then performs clustering
 with optional ecological/behavioral metadata.
 
@@ -57,7 +57,7 @@ The worker polls for queued processing and clustering jobs and executes them.
 
 ```mermaid
 flowchart TD
-    A["Audio File<br/>(MP3/WAV)"] --> B["Decode Audio<br/>→ float32 mono"]
+    A["Audio File<br/>(MP3/WAV/FLAC)"] --> B["Decode Audio<br/>→ float32 mono"]
     B --> C["Resample<br/>→ 32 kHz"]
     C --> D["Slice Windows<br/>5 s → 160 000 samples"]
     D --> E{input_format?}
@@ -185,7 +185,7 @@ original recording the clustered segment falls.
 
 ```
 data/
-  audio/raw/{audio_file_id}/original.(wav|mp3)
+  audio/raw/{audio_file_id}/original.(wav|mp3|flac)
   embeddings/{model_version}/{audio_file_id}/{encoding_signature}.parquet
   clusters/{clustering_job_id}/clusters.json
   clusters/{clustering_job_id}/assignments.parquet

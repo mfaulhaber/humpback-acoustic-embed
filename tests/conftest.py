@@ -3,6 +3,7 @@ import tempfile
 import wave
 from pathlib import Path
 
+import numpy as np
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,4 +57,23 @@ def test_wav(tmp_path) -> Path:
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
         wf.writeframes(struct.pack(f"<{n_samples}h", *samples))
+    return path
+
+
+@pytest.fixture
+def test_flac(tmp_path) -> Path:
+    """Generate a ~10 second 16kHz mono sine-wave FLAC file."""
+    import soundfile as sf
+
+    path = tmp_path / "test_audio.flac"
+    sample_rate = 16000
+    duration = 10.0
+    n_samples = int(sample_rate * duration)
+    import math
+
+    samples = np.array(
+        [math.sin(2 * math.pi * 440 * i / sample_rate) for i in range(n_samples)],
+        dtype=np.float32,
+    )
+    sf.write(str(path), samples, sample_rate, format="FLAC")
     return path
