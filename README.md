@@ -101,6 +101,33 @@ selected embedding sets (must share vector_dim)
   → run parameter sweep (min_cluster_size vs silhouette)
 ```
 
+### Cluster Assignment Playback Controls
+
+When viewing a clustering job's results, expanding a cluster shows its audio
+file assignments organized in a folder tree. Each audio file has a compact
+playback control bar:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ [▶]  [0] [3] [17]  [Full]   🔈▮▮▯▯  ⋯                              │
+│ 0:15 [====██████=========================] 0:20                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+| Control | Description |
+|---------|-------------|
+| **Play/pause** (▶/⏸) | Plays the currently selected window or full file |
+| **Row-index chips** ([0], [3], ...) | Each chip represents a window assigned to this cluster. Click to select and auto-play that window segment |
+| **Full** | Switch to full-file playback mode |
+| **Volume** (🔈) | Adjusts playback volume |
+| **Download** (⋯) | Downloads the original audio file |
+| **Time indicator** | Bottom bar shows the selected window's position within the full audio file. The blue region highlights the active segment, and a playhead tracks progress during playback |
+
+When a file has only one window assigned to the cluster, that window is
+selected by default (instead of full-file mode) so playback starts on the
+relevant segment. The time indicator makes it easy to see where in the
+original recording the clustered segment falls.
+
 ---
 
 ## API Endpoints
@@ -111,6 +138,8 @@ selected embedding sets (must share vector_dim)
 | GET | `/audio/` | List audio files |
 | GET | `/audio/{id}` | Get audio file details |
 | PUT | `/audio/{id}/metadata` | Update metadata |
+| GET | `/audio/{id}/download` | Download original audio file (supports range requests) |
+| GET | `/audio/{id}/window` | Get a WAV segment (`?start_seconds=&duration_seconds=`) |
 | POST | `/processing/jobs` | Create processing job |
 | GET | `/processing/jobs` | List processing jobs |
 | GET | `/processing/jobs/{id}` | Get job status |
