@@ -1,16 +1,29 @@
+import asyncio
 import io
 import json
 import struct
 from pathlib import Path
 
+import numpy as np
 import re
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
+from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
-from humpback.processing.audio_io import decode_audio
-from humpback.schemas.audio import AudioFileOut, AudioMetadataIn, AudioMetadataOut
+from humpback.models.processing import EmbeddingSet
+from humpback.processing.audio_io import decode_audio, resample
+from humpback.processing.embeddings import read_embeddings
+from humpback.processing.features import extract_logmel
+from humpback.processing.windowing import slice_windows, count_windows
+from humpback.schemas.audio import (
+    AudioFileOut,
+    AudioMetadataIn,
+    AudioMetadataOut,
+    EmbeddingSimilarityOut,
+    SpectrogramOut,
+)
 from humpback.services import audio_service
 from humpback.storage import audio_raw_dir
 
@@ -200,4 +213,124 @@ async def get_audio_window(
         content=buf.getvalue(),
         media_type="audio/wav",
         headers={"Content-Length": str(buf.tell())},
+    )
+
+
+def _compute_spectrogram(
+    file_path: Path,
+    window_index: int,
+    window_size_seconds: float,
+    target_sample_rate: int,
+    n_mels: int,
+    n_fft: int,
+    hop_length: int,
+    target_frames: int,
+) -> tuple[np.ndarray, int, int]:
+    """CPU-bound spectrogram computation. Returns (spectrogram, sr, total_windows)."""
+    audio, sr = decode_audio(file_path)
+    audio = resample(audio, sr, target_sample_rate)
+    total = count_windows(len(audio), target_sample_rate, window_size_seconds)
+    if window_index >= total:
+        raise ValueError(f"window_index {window_index} >= total windows {total}")
+    for i, window in enumerate(slice_windows(audio, target_sample_rate, window_size_seconds)):
+        if i == window_index:
+            spec = extract_logmel(
+                window, target_sample_rate,
+                n_mels=n_mels, n_fft=n_fft,
+                hop_length=hop_length, target_frames=target_frames,
+            )
+            return spec, target_sample_rate, total
+    raise ValueError("window not found")
+
+
+@router.get("/{audio_id}/spectrogram")
+async def get_spectrogram(
+    audio_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    window_index: int = Query(..., ge=0),
+    window_size_seconds: float = Query(5.0, gt=0),
+    target_sample_rate: int = Query(32000, gt=0),
+    n_mels: int = Query(128, gt=0),
+    n_fft: int = Query(2048, gt=0),
+    hop_length: int = Query(1252, gt=0),
+    target_frames: int = Query(128, gt=0),
+) -> SpectrogramOut:
+    """Return log-mel spectrogram for a single window of the audio file."""
+    af = await audio_service.get_audio(session, audio_id)
+    if af is None:
+        raise HTTPException(404, "Audio file not found")
+    suffix = Path(af.filename).suffix or ".wav"
+    file_path = audio_raw_dir(settings.storage_root, af.id) / f"original{suffix}"
+    if not file_path.exists():
+        raise HTTPException(404, "Audio file not found on disk")
+
+    try:
+        spec, sr, total = await asyncio.to_thread(
+            _compute_spectrogram, file_path, window_index,
+            window_size_seconds, target_sample_rate,
+            n_mels, n_fft, hop_length, target_frames,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return SpectrogramOut(
+        window_index=window_index,
+        sample_rate=sr,
+        window_size_seconds=window_size_seconds,
+        shape=list(spec.shape),
+        data=spec.tolist(),
+        total_windows=total,
+        min_db=float(spec.min()),
+        max_db=float(spec.max()),
+    )
+
+
+def _cosine_similarity_matrix(embeddings: np.ndarray) -> np.ndarray:
+    """Compute mean-centered pairwise cosine similarity between all rows.
+
+    Subtracting the global mean embedding before normalisation removes
+    the shared "baseline" direction that makes raw cosine similarity
+    uninformatively high for non-negative (post-ReLU) embeddings.
+    """
+    centered = embeddings - embeddings.mean(axis=0, keepdims=True)
+    norms = np.linalg.norm(centered, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-10)  # avoid division by zero
+    normed = centered / norms
+    return normed @ normed.T
+
+
+@router.get("/{audio_id}/embeddings")
+async def get_embeddings(
+    audio_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    embedding_set_id: str = Query(...),
+) -> EmbeddingSimilarityOut:
+    """Return cosine similarity matrix between all window embeddings."""
+    af = await audio_service.get_audio(session, audio_id)
+    if af is None:
+        raise HTTPException(404, "Audio file not found")
+
+    result = await session.execute(
+        select(EmbeddingSet).where(EmbeddingSet.id == embedding_set_id)
+    )
+    es = result.scalar_one_or_none()
+    if es is None or es.audio_file_id != audio_id:
+        raise HTTPException(404, "Embedding set not found for this audio")
+
+    parquet_path = Path(es.parquet_path)
+
+    if not parquet_path.exists():
+        raise HTTPException(404, "Embedding parquet file not found on disk")
+
+    row_indices, embeddings = await asyncio.to_thread(read_embeddings, parquet_path)
+    sim_matrix = _cosine_similarity_matrix(embeddings)
+
+    return EmbeddingSimilarityOut(
+        embedding_set_id=es.id,
+        vector_dim=es.vector_dim,
+        num_windows=len(row_indices),
+        row_indices=row_indices.tolist(),
+        similarity_matrix=sim_matrix.tolist(),
     )

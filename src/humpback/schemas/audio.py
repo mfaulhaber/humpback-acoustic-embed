@@ -22,6 +22,25 @@ class AudioMetadataOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SpectrogramOut(BaseModel):
+    window_index: int
+    sample_rate: int
+    window_size_seconds: float
+    shape: list[int]
+    data: list[list[float]]
+    total_windows: int
+    min_db: float
+    max_db: float
+
+
+class EmbeddingSimilarityOut(BaseModel):
+    embedding_set_id: str
+    vector_dim: int
+    num_windows: int
+    row_indices: list[int]
+    similarity_matrix: list[list[float]]
+
+
 class AudioFileOut(BaseModel):
     id: str
     filename: str

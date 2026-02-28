@@ -55,16 +55,33 @@ The worker polls for queued processing and clustering jobs and executes them.
 
 ### Processing Workflow
 
+```mermaid
+flowchart TD
+    A["Audio File<br/>(MP3/WAV)"] --> B["Decode Audio<br/>→ float32 mono"]
+    B --> C["Resample<br/>→ 32 kHz"]
+    C --> D["Slice Windows<br/>5 s → 160 000 samples"]
+    D --> E{input_format?}
+    E -- spectrogram --> F["Log-Mel Spectrogram<br/>128 mels × 128 frames"]
+    E -- waveform --> G["Raw Waveform<br/>160 000 samples"]
+    F --> H["TFLite Model<br/>→ 1280-d vector"]
+    G --> I["TF2 SavedModel<br/>→ N-d vector"]
+    H --> J["Parquet Writer<br/>(incremental, atomic)"]
+    I --> J
+    J --> K["EmbeddingSet<br/>(SQL row)"]
+    K --> L["UMAP<br/>→ 2-d coords"]
+    L --> M["HDBSCAN<br/>→ cluster labels"]
+    M --> N["Metrics + Outputs"]
 ```
-audio file (MP3/WAV) + optional metadata
-  → resample to target SR (default 32kHz)
-  → slice into N-second windows (default 5s)
-  → branch on model input_format:
-      spectrogram: log-mel spectrogram (128 mel bins × 128 time frames) → TFLite inference
-      waveform:    raw audio windows → TF2 SavedModel inference
-  → embedding vectors (dims from model config)
-  → save to Parquet (incremental, atomic)
-```
+
+#### Key Signal Processing Parameters
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| Sample rate | 32 kHz | Resample target |
+| Window size | 5 s (160k samples) | Fixed-length, zero-padded |
+| Spectrogram | 128 mels × 128 frames | n_fft=2048, hop=1252 |
+| Embedding dim | 1280 | Perch default |
+| HDBSCAN min_cluster_size | 5 | Swept 2–50 for param search |
 
 Encoding is associated with the audio file and configuration. Reprocessing is
 skipped when an EmbeddingSet with the same encoding_signature already exists.
@@ -140,6 +157,8 @@ original recording the clustered segment falls.
 | PUT | `/audio/{id}/metadata` | Update metadata |
 | GET | `/audio/{id}/download` | Download original audio file (supports range requests) |
 | GET | `/audio/{id}/window` | Get a WAV segment (`?start_seconds=&duration_seconds=`) |
+| GET | `/audio/{id}/spectrogram` | Get log-mel spectrogram for a window (`?window_index=`) |
+| GET | `/audio/{id}/embeddings` | Get embedding vectors (`?embedding_set_id=`) |
 | POST | `/processing/jobs` | Create processing job |
 | GET | `/processing/jobs` | List processing jobs |
 | GET | `/processing/jobs/{id}` | Get job status |

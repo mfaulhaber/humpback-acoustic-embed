@@ -194,6 +194,46 @@ Rules:
 - if EmbeddingSet exists for encoding_signature and is complete → skip
 - worker caches loaded models in memory to avoid reloading across jobs
 
+### 6.1 Processing Pipeline Diagram
+
+```mermaid
+flowchart TD
+    A["Audio File<br/>(MP3/WAV)"] --> B["Decode Audio<br/>→ float32 mono"]
+    B --> C["Resample<br/>→ 32 kHz"]
+    C --> D["Slice Windows<br/>5 s → 160 000 samples"]
+    D --> E{input_format?}
+    E -- spectrogram --> F["Log-Mel Spectrogram<br/>128 mels × 128 frames"]
+    E -- waveform --> G["Raw Waveform<br/>160 000 samples"]
+    F --> H["TFLite Model<br/>→ 1280-d vector"]
+    G --> I["TF2 SavedModel<br/>→ N-d vector"]
+    H --> J["Parquet Writer<br/>(incremental, atomic)"]
+    I --> J
+    J --> K["EmbeddingSet<br/>(SQL row)"]
+    K --> L["UMAP<br/>→ 2-d coords"]
+    L --> M["HDBSCAN<br/>→ cluster labels"]
+    M --> N["Metrics<br/>Silhouette / DB / CH / ARI / NMI"]
+    M --> O["Outputs<br/>clusters.json, assignments.parquet,<br/>umap_coords.parquet, parameter_sweep.json"]
+```
+
+### 6.2 Signal Processing Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `target_sample_rate` | 32 000 Hz | Resample target for all audio |
+| `window_size_seconds` | 5.0 s | Window duration (= 160 000 samples at 32 kHz) |
+| `n_mels` | 128 | Mel frequency bins |
+| `n_fft` | 2048 | FFT window size |
+| `hop_length` | 1252 | STFT hop (chosen so 160 000 samples → 128 frames) |
+| `target_frames` | 128 | Time frames per spectrogram (pad/truncate) |
+| Spectrogram shape | 128 × 128 | (n_mels × target_frames) |
+| `vector_dim` | 1280 | Embedding dimensions (Perch default) |
+| `batch_size` | 100 | Parquet writer flush interval |
+| UMAP `n_neighbors` | 15 | UMAP neighbor count |
+| UMAP `min_dist` | 0.1 | UMAP minimum distance |
+| UMAP `n_components` | 2 | UMAP output dimensions |
+| HDBSCAN `min_cluster_size` | 5 | Minimum points per cluster |
+| Parameter sweep range | 2–50 | `min_cluster_size` sweep for silhouette score |
+
 ---
 
 ## 7. Clustering Workflow

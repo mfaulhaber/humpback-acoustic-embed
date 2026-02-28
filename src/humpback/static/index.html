@@ -92,7 +92,7 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
 .btn-export:hover { background: #238b7e; }
 .umap-no-data { color: #888; font-style: italic; padding: 1rem 0; }
 </style>
-<script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js" charset="utf-8"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 </head>
 <body>
 
@@ -137,33 +137,30 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
       <table id="audio-detail-info"><tbody></tbody></table>
     </div>
     <div class="detail-panel">
-      <h3>Metadata</h3>
-      <div class="form-group">
-        <label>Tag Data (JSON)</label>
-        <textarea id="meta-tag-data" rows="2" style="width:100%">{}</textarea>
-      </div>
-      <div class="form-group">
-        <label>Visual Observations (JSON)</label>
-        <textarea id="meta-visual" rows="2" style="width:100%">{}</textarea>
-      </div>
-      <div class="form-group">
-        <label>Group Composition (JSON)</label>
-        <textarea id="meta-group" rows="2" style="width:100%">{}</textarea>
-      </div>
-      <div class="form-group">
-        <label>Prey Density Proxy (JSON)</label>
-        <textarea id="meta-prey" rows="2" style="width:100%">{}</textarea>
-      </div>
-      <button class="btn btn-primary" id="save-meta-btn">Save Metadata</button>
-      <div id="meta-msg"></div>
-    </div>
-    <div class="detail-panel">
       <h3>Processing History</h3>
       <table>
         <thead><tr><th>Job ID</th><th>Status</th><th>Model</th><th>Window</th><th>Created</th></tr></thead>
         <tbody id="audio-proc-history"></tbody>
       </table>
       <p id="audio-proc-empty" class="empty hidden">No processing jobs for this file.</p>
+    </div>
+    <div id="viz-panel" class="detail-panel hidden">
+      <h3>Spectrogram &amp; Embedding Visualization</h3>
+      <div class="form-row" style="align-items:center;margin-bottom:0.75rem;">
+        <div class="form-group" style="flex:0 0 auto;min-width:220px;">
+          <label for="viz-es-select">Embedding Set</label>
+          <select id="viz-es-select" style="width:100%"></select>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-top:1.2rem;">
+          <button class="btn btn-sm btn-primary" id="viz-prev-btn">&larr; Prev</button>
+          <span id="viz-window-label" style="font-size:0.85rem;white-space:nowrap;">Window 0 of 0</span>
+          <button class="btn btn-sm btn-primary" id="viz-next-btn">Next &rarr;</button>
+        </div>
+      </div>
+      <div id="viz-audio-bar"></div>
+      <div id="viz-spectrogram" style="height:300px;"></div>
+      <div id="viz-embeddings" style="height:400px;margin-top:0.75rem;"></div>
+      <p id="viz-empty" class="empty hidden">No completed embedding sets for this file.</p>
     </div>
   </div>
 </div>
@@ -461,11 +458,6 @@ async function showAudioDetail(id) {
       <tr><td><strong>Duration</strong></td><td>${af.duration_seconds ? af.duration_seconds.toFixed(1) + 's' : '-'}</td></tr>
       <tr><td><strong>Sample Rate</strong></td><td>${af.sample_rate_original || '-'}</td></tr>
       <tr><td><strong>Created</strong></td><td>${fmtDate(af.created_at)}</td></tr>`;
-    const m = af.metadata;
-    $('#meta-tag-data').value = jsonPretty(m?.tag_data);
-    $('#meta-visual').value = jsonPretty(m?.visual_observations);
-    $('#meta-group').value = jsonPretty(m?.group_composition);
-    $('#meta-prey').value = jsonPretty(m?.prey_density_proxy);
     $('#audio-detail-view').dataset.audioId = id;
 
     // Load processing history for this audio
@@ -486,8 +478,286 @@ async function showAudioDetail(id) {
           <td>${fmtDate(j.created_at)}</td>
         </tr>`).join('');
     }
+
+    // Load visualization panel
+    loadVisualizationPanel(id);
   } catch (e) { console.error(e); }
 }
+
+// ---- Spectrogram & Embedding Visualization ----
+let vizState = { audioId: null, windowIndex: 0, totalWindows: 0, embeddingData: null };
+
+async function loadVisualizationPanel(audioId) {
+  vizState.audioId = audioId;
+  vizState.windowIndex = 0;
+  vizState.totalWindows = 0;
+  vizState.embeddingData = null;
+  const panel = $('#viz-panel');
+  const sel = $('#viz-es-select');
+  const empty = $('#viz-empty');
+
+  try {
+    const allSets = await api('/processing/embedding-sets');
+    const sets = allSets.filter(s => s.audio_file_id === audioId);
+    if (sets.length === 0) {
+      panel.classList.remove('hidden');
+      empty.classList.remove('hidden');
+      $('#viz-audio-bar').innerHTML = '';
+      $('#viz-spectrogram').innerHTML = '';
+      $('#viz-embeddings').innerHTML = '';
+      sel.innerHTML = '';
+      return;
+    }
+    empty.classList.add('hidden');
+    panel.classList.remove('hidden');
+    vizState._embeddingSets = sets;
+    sel.innerHTML = sets.map(s =>
+      `<option value="${s.id}">${shortId(s.id)} (${s.model_version}, ${s.vector_dim}d)</option>`
+    ).join('');
+    await onEmbeddingSetChange();
+  } catch (e) { console.error('viz load error', e); }
+}
+
+async function onEmbeddingSetChange() {
+  const esId = $('#viz-es-select').value;
+  if (!esId) return;
+  await loadEmbeddings(vizState.audioId, esId);
+  await loadSpectrogram(vizState.audioId, 0);
+  buildVizAudioBar(esId);
+}
+
+function buildVizAudioBar(esId) {
+  const container = $('#viz-audio-bar');
+  const aid = vizState.audioId;
+  const totalWindows = vizState.totalWindows;
+  if (!aid || totalWindows === 0) { container.innerHTML = ''; return; }
+
+  // Look up embedding set info for window_size_seconds
+  const sel = $('#viz-es-select');
+  const allSetsInfo = vizState._embeddingSets || [];
+  const esInfo = allSetsInfo.find(s => s.id === esId);
+  const windowSize = esInfo ? esInfo.window_size_seconds : 5;
+  const info = audioFileMap[aid];
+  const totalDur = info ? info.duration : totalWindows * windowSize;
+  const durLabel = formatTime(totalDur);
+
+  // Build window chips
+  let chipsHtml = '';
+  const maxChips = 40;
+  for (let i = 0; i < Math.min(totalWindows, maxChips); i++) {
+    const start = i * windowSize;
+    const active = i === vizState.windowIndex ? ' row-chip-active' : '';
+    chipsHtml += `<button class="row-chip${active}" data-start="${start}" data-dur="${windowSize}" data-ri="${i}" title="Window ${i} (${start}s\u2013${start + windowSize}s)">${i}</button>`;
+  }
+  if (totalWindows > maxChips) chipsHtml += `<span class="file-meta"> ... (${totalWindows} total)</span>`;
+
+  container.innerHTML = `<div class="audio-bar" id="viz-audio-bar-inner" data-audio-id="${aid}" data-window-size="${windowSize}" data-duration="${totalDur}">
+    <button class="play-btn" title="Play">\u25B6</button>
+    ${chipsHtml}
+    <button class="row-chip full-chip" data-mode="full">Full</button>
+    <span class="vol-container">\uD83D\uDD08<input type="range" class="vol-slider" min="0" max="1" step="0.1" value="1"></span>
+    <a class="dl-btn" href="/audio/${aid}/download" title="Download">\u22EF</a>
+    <audio preload="metadata" class="hidden-audio"></audio>
+    <div class="time-indicator">
+      <span class="time-label time-start">0:00</span>
+      <div class="time-track">
+        <div class="time-region" style="left:0%;width:100%"></div>
+        <div class="time-playhead" style="left:0%"></div>
+      </div>
+      <span class="time-label time-label-end time-end">${durLabel}</span>
+    </div>
+  </div>`;
+
+  // Wire up controls
+  const bar = container.querySelector('.audio-bar');
+  const audio = bar.querySelector('.hidden-audio');
+  const playBtn = bar.querySelector('.play-btn');
+  const volSlider = bar.querySelector('.vol-slider');
+  const timeRegion = bar.querySelector('.time-region');
+  const timePlayhead = bar.querySelector('.time-playhead');
+  const timeStart = bar.querySelector('.time-start');
+  const timeEnd = bar.querySelector('.time-end');
+  let selStart = 0, selEnd = totalDur;
+
+  function updateTimeBar(start, end) {
+    selStart = start; selEnd = end;
+    timeStart.textContent = formatTime(start);
+    timeEnd.textContent = formatTime(end);
+    if (totalDur > 0) {
+      timeRegion.style.left = (start / totalDur * 100) + '%';
+      timeRegion.style.width = ((end - start) / totalDur * 100) + '%';
+    } else {
+      timeRegion.style.left = '0%';
+      timeRegion.style.width = '100%';
+    }
+    timePlayhead.style.left = (totalDur > 0 ? (start / totalDur * 100) : 0) + '%';
+  }
+
+  // Default to current window
+  const initStart = vizState.windowIndex * windowSize;
+  audio.src = `/audio/${aid}/window?start_seconds=${initStart}&duration_seconds=${windowSize}`;
+  updateTimeBar(initStart, initStart + windowSize);
+
+  audio.addEventListener('timeupdate', () => {
+    if (totalDur > 0) {
+      const absTime = selStart + audio.currentTime;
+      timePlayhead.style.left = (absTime / totalDur * 100) + '%';
+    }
+  });
+
+  playBtn.addEventListener('click', () => {
+    if (audio.paused) { audio.play(); } else { audio.pause(); }
+  });
+  audio.addEventListener('play', () => { playBtn.textContent = '\u23F8'; });
+  audio.addEventListener('pause', () => { playBtn.textContent = '\u25B6'; });
+  audio.addEventListener('ended', () => { playBtn.textContent = '\u25B6'; });
+
+  bar.querySelectorAll('.row-chip:not(.full-chip)').forEach(chip => {
+    chip.addEventListener('click', () => {
+      bar.querySelectorAll('.row-chip').forEach(c => c.classList.remove('row-chip-active'));
+      chip.classList.add('row-chip-active');
+      const s = parseFloat(chip.dataset.start);
+      const d = parseFloat(chip.dataset.dur);
+      const ri = parseInt(chip.dataset.ri);
+      updateTimeBar(s, s + d);
+      audio.src = `/audio/${aid}/window?start_seconds=${s}&duration_seconds=${d}`;
+      audio.play();
+      // Sync spectrogram/embedding views
+      loadSpectrogram(aid, ri);
+    });
+  });
+
+  const fullChip = bar.querySelector('.full-chip');
+  fullChip.addEventListener('click', () => {
+    bar.querySelectorAll('.row-chip').forEach(c => c.classList.remove('row-chip-active'));
+    fullChip.classList.add('row-chip-active');
+    updateTimeBar(0, totalDur);
+    audio.src = `/audio/${aid}/download`;
+    audio.play();
+  });
+
+  volSlider.addEventListener('input', () => { audio.volume = volSlider.value; });
+}
+
+function updateVizAudioBarActiveChip(windowIndex) {
+  const bar = $('#viz-audio-bar-inner');
+  if (!bar) return;
+  bar.querySelectorAll('.row-chip').forEach(c => c.classList.remove('row-chip-active'));
+  const chip = bar.querySelector(`.row-chip[data-ri="${windowIndex}"]`);
+  if (chip) chip.classList.add('row-chip-active');
+  // Update audio source to the new window
+  const aid = bar.dataset.audioId;
+  const ws = parseFloat(bar.dataset.windowSize) || 5;
+  const totalDur = parseFloat(bar.dataset.duration) || 0;
+  const audio = bar.querySelector('.hidden-audio');
+  const start = windowIndex * ws;
+  audio.src = `/audio/${aid}/window?start_seconds=${start}&duration_seconds=${ws}`;
+  // Update time bar
+  const timeStart = bar.querySelector('.time-start');
+  const timeEnd = bar.querySelector('.time-end');
+  const timeRegion = bar.querySelector('.time-region');
+  const timePlayhead = bar.querySelector('.time-playhead');
+  timeStart.textContent = formatTime(start);
+  timeEnd.textContent = formatTime(start + ws);
+  if (totalDur > 0) {
+    timeRegion.style.left = (start / totalDur * 100) + '%';
+    timeRegion.style.width = (ws / totalDur * 100) + '%';
+    timePlayhead.style.left = (start / totalDur * 100) + '%';
+  }
+}
+
+async function loadSpectrogram(audioId, windowIndex) {
+  try {
+    const resp = await api(`/audio/${audioId}/spectrogram?window_index=${windowIndex}`);
+    vizState.windowIndex = windowIndex;
+    vizState.totalWindows = resp.total_windows;
+    $('#viz-window-label').textContent = `Window ${windowIndex} of ${resp.total_windows}`;
+    Plotly.react('viz-spectrogram', [{
+      z: resp.data,
+      type: 'heatmap',
+      colorscale: 'Viridis',
+      zmin: resp.min_db,
+      zmax: resp.max_db,
+      colorbar: { title: 'dB', thickness: 12 },
+    }], {
+      margin: { t: 30, b: 40, l: 50, r: 20 },
+      xaxis: { title: 'Time Frame' },
+      yaxis: { title: 'Mel Bin', autorange: 'reversed' },
+      title: { text: `Spectrogram — Window ${windowIndex}`, font: { size: 13 } },
+    }, { responsive: true });
+    highlightEmbeddingRow(windowIndex);
+  } catch (e) { console.error('spectrogram error', e); }
+}
+
+async function loadEmbeddings(audioId, embeddingSetId) {
+  try {
+    const resp = await api(`/audio/${audioId}/embeddings?embedding_set_id=${embeddingSetId}`);
+    vizState.embeddingData = resp;
+    const n = resp.num_windows;
+    const labels = resp.row_indices.map(i => `W${i}`);
+    Plotly.react('viz-embeddings', [{
+      z: resp.similarity_matrix,
+      x: labels,
+      y: labels,
+      type: 'heatmap',
+      colorscale: 'RdBu',
+      zmin: -1,
+      zmax: 1,
+      colorbar: { title: 'Cosine Sim', thickness: 12 },
+    }], {
+      margin: { t: 30, b: 50, l: 50, r: 20 },
+      xaxis: { title: 'Window', side: 'bottom' },
+      yaxis: { title: 'Window', autorange: 'reversed' },
+      title: { text: 'Pairwise Cosine Similarity', font: { size: 13 } },
+    }, { responsive: true });
+    // Click on similarity matrix navigates spectrogram to that window
+    const vizEl = document.getElementById('viz-embeddings');
+    vizEl.removeListener && vizEl.removeListener('plotly_click', vizEl._vizClickHandler);
+    vizEl._vizClickHandler = function(data) {
+      if (data.points && data.points.length > 0) {
+        const idx = data.points[0].pointIndex;
+        const row = Array.isArray(idx) ? idx[0] : data.points[0].y;
+        const winIdx = typeof row === 'number' ? row : resp.row_indices.indexOf(parseInt(String(row).replace('W', '')));
+        if (winIdx >= 0 && winIdx < vizState.totalWindows) {
+          loadSpectrogram(vizState.audioId, winIdx);
+          updateVizAudioBarActiveChip(winIdx);
+        }
+      }
+    };
+    vizEl.on('plotly_click', vizEl._vizClickHandler);
+    highlightEmbeddingRow(vizState.windowIndex);
+  } catch (e) { console.error('embeddings error', e); }
+}
+
+function highlightEmbeddingRow(windowIndex) {
+  const el = document.getElementById('viz-embeddings');
+  if (!el || !vizState.embeddingData) return;
+  const n = vizState.embeddingData.num_windows;
+  Plotly.relayout('viz-embeddings', {
+    shapes: [
+      { type: 'line', x0: -0.5, x1: n - 0.5, y0: windowIndex, y1: windowIndex,
+        line: { color: '#ff6b6b', width: 1.5, dash: 'dot' } },
+      { type: 'line', x0: windowIndex, x1: windowIndex, y0: -0.5, y1: n - 0.5,
+        line: { color: '#ff6b6b', width: 1.5, dash: 'dot' } },
+    ],
+  });
+}
+
+$('#viz-prev-btn').addEventListener('click', () => {
+  if (vizState.windowIndex > 0) {
+    const newIdx = vizState.windowIndex - 1;
+    loadSpectrogram(vizState.audioId, newIdx);
+    updateVizAudioBarActiveChip(newIdx);
+  }
+});
+$('#viz-next-btn').addEventListener('click', () => {
+  if (vizState.windowIndex < vizState.totalWindows - 1) {
+    const newIdx = vizState.windowIndex + 1;
+    loadSpectrogram(vizState.audioId, newIdx);
+    updateVizAudioBarActiveChip(newIdx);
+  }
+});
+$('#viz-es-select').addEventListener('change', () => onEmbeddingSetChange());
 
 $('#audio-back').addEventListener('click', () => {
   $('#audio-detail-view').classList.add('hidden');
@@ -628,27 +898,6 @@ async function uploadFiles(files) {
   setTimeout(() => progressEl.classList.add('hidden'), 2000);
   loadAudioList();
 }
-
-// Save metadata
-$('#save-meta-btn').addEventListener('click', async () => {
-  const audioId = $('#audio-detail-view').dataset.audioId;
-  try {
-    const body = {
-      tag_data: JSON.parse($('#meta-tag-data').value || 'null'),
-      visual_observations: JSON.parse($('#meta-visual').value || 'null'),
-      group_composition: JSON.parse($('#meta-group').value || 'null'),
-      prey_density_proxy: JSON.parse($('#meta-prey').value || 'null'),
-    };
-    await api(`/audio/${audioId}/metadata`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    showMsg('meta-msg', 'Metadata saved');
-  } catch (e) {
-    showMsg('meta-msg', `Failed: ${e.message}`, 'error');
-  }
-});
 
 // ==================== PROCESSING ====================
 function audioDisplayName(id) {
