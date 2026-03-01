@@ -9,7 +9,7 @@ from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
 from humpback.services.model_registry_service import seed_default_model
 from humpback.workers.clustering_worker import run_clustering_job
-from humpback.workers.processing_worker import get_model, run_processing_job
+from humpback.workers.processing_worker import run_processing_job
 from humpback.workers.queue import claim_clustering_job, claim_processing_job, recover_stale_jobs
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ async def run_worker(settings: Settings | None = None) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = create_session_factory(engine)
-    model = get_model(settings)
 
     shutdown = asyncio.Event()
 
@@ -56,7 +55,7 @@ async def run_worker(settings: Settings | None = None) -> None:
             job = await claim_processing_job(session)
             if job:
                 logger.info(f"Processing job {job.id} for audio {job.audio_file_id}")
-                await run_processing_job(session, job, settings, model)
+                await run_processing_job(session, job, settings)
                 continue
 
             # Then clustering jobs

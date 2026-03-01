@@ -85,11 +85,35 @@ class TFLiteModel:
 
 
 class TF2SavedModel:
-    """TensorFlow 2 SavedModel wrapper. Takes raw waveform input."""
+    """TensorFlow 2 SavedModel wrapper. Takes raw waveform input.
+
+    Attempts GPU inference first; falls back to CPU if it fails (e.g. Metal/XLA
+    compatibility issues).  The ``gpu_failed`` flag is set when fallback occurs
+    so callers can surface a warning.
+    """
+
+    gpu_failed: bool = False
 
     def __init__(self, model_dir: str, vector_dim: int = 1280):
+        import logging
+
         import tensorflow as tf
-        self._model = tf.saved_model.load(model_dir)
+
+        logger = logging.getLogger(__name__)
+
+        # Force CPU for TF2 SavedModel inference to avoid Metal/XLA issues
+        # where GPU execution silently produces incorrect results when a TFLite
+        # model has already initialized the Metal GPU context.
+        cpus = tf.config.list_logical_devices("CPU")
+        self._cpu_device = cpus[0].name if cpus else "/device:CPU:0"
+        logger.info(
+            "Loading TF2 SavedModel from %s (forcing CPU: %s)",
+            model_dir,
+            self._cpu_device,
+        )
+
+        with tf.device(self._cpu_device):
+            self._model = tf.saved_model.load(model_dir)
         self._serving_fn = self._model.signatures["serving_default"]
         self._vector_dim = vector_dim
 
@@ -100,6 +124,8 @@ class TF2SavedModel:
     def embed(self, waveforms: np.ndarray) -> np.ndarray:
         """Embed raw waveform windows. Input: (batch, n_samples). Output: (batch, vector_dim)."""
         import tensorflow as tf
+
         inputs = tf.constant(waveforms, dtype=tf.float32)
-        result = self._serving_fn(inputs=inputs)
+        with tf.device(self._cpu_device):
+            result = self._serving_fn(inputs=inputs)
         return result["embedding"].numpy()

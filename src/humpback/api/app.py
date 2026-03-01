@@ -13,6 +13,7 @@ from humpback.database import Base, create_engine, create_session_factory, setup
 from humpback.services.model_registry_service import seed_default_model
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+DIST_DIR = STATIC_DIR / "dist"
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
@@ -53,10 +54,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(clustering.router)
     app.include_router(admin.router)
 
+    # Serve React SPA from dist/ if it exists, otherwise fall back to legacy index.html
+    has_dist = DIST_DIR.is_dir() and (DIST_DIR / "index.html").exists()
+
+    if has_dist:
+        app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
+
     @app.get("/")
     async def root():
+        if has_dist:
+            return FileResponse(DIST_DIR / "index.html")
         return FileResponse(STATIC_DIR / "index.html")
 
+    # Keep legacy static mount for backward compat
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     return app

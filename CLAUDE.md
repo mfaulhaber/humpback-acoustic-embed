@@ -61,6 +61,76 @@ Use these commands for managing dependencies:
 *   `CLAUDE.md` is the authoritative spec — keep the data model, workflows, and design rules in sync with the code.
 *   `README.md` is user-facing — keep the API endpoints table, configuration table, feature list, and architecture overview current.
 
+## 3.6 Frontend Stack & Development
+
+The web UI is a React SPA in the `frontend/` directory, built with:
+
+| Layer | Technology |
+|-------|-----------|
+| Build | Vite + TypeScript |
+| UI Framework | React 18 |
+| Styling | Tailwind CSS |
+| Component Library | shadcn/ui (Radix primitives, copy-paste model in `frontend/src/components/ui/`) |
+| Server State | TanStack Query (polling, caching, mutations) |
+| Charts | react-plotly.js (wraps Plotly.js basic dist) |
+| Icons | lucide-react |
+| API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
+
+**No React Router** — the UI uses tab-based navigation managed via React state, not URL routing.
+
+#### Frontend Package Management
+*   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
+*   `npm install` — install dependencies
+*   `npm run dev` — start Vite dev server on `:5173` (proxies API calls to `:8000`)
+*   `npm run build` — production build to `src/humpback/static/dist/`
+*   `npx tsc --noEmit` — type-check without emitting
+
+#### Frontend File Structure
+```
+frontend/
+├── package.json, vite.config.ts, tsconfig.json, tailwind.config.ts
+├── components.json              (shadcn/ui config)
+├── index.html
+└── src/
+    ├── main.tsx                 (QueryClientProvider + App mount)
+    ├── App.tsx                  (tab state + tab content switching)
+    ├── index.css                (Tailwind directives + shadcn CSS vars)
+    ├── lib/utils.ts             (cn() helper)
+    ├── api/
+    │   ├── client.ts            (typed fetch wrapper, all endpoints)
+    │   └── types.ts             (TS interfaces mirroring Pydantic schemas)
+    ├── hooks/queries/           (TanStack Query hooks per domain)
+    ├── components/
+    │   ├── ui/                  (shadcn primitives)
+    │   ├── layout/              (AppShell, Header, TabNav)
+    │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
+    │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
+    │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
+    │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
+    │   └── shared/              (FolderTree, StatusBadge, MessageToast)
+    └── utils/                   (format.ts, audio.ts)
+```
+
+#### Dev Workflow
+```bash
+# Terminal 1: Backend
+uv run humpback-api          # API on :8000
+uv run humpback-worker       # Worker process
+
+# Terminal 2: Frontend dev server
+cd frontend && npm run dev   # Vite on :5173, proxies to :8000
+```
+
+#### Production Build & Serving
+```bash
+cd frontend && npm run build  # outputs to src/humpback/static/dist/
+uv run humpback-api           # serves SPA at / and API on :8000
+```
+
+The FastAPI backend detects `static/dist/index.html` at startup. When present, it serves the built SPA at `/` and mounts `/assets` for JS/CSS bundles. When absent, it falls back to the legacy `static/index.html`.
+
+---
+
 ## 4. Core Design Principles
 
 ### 4.1 Idempotent Encoding (No Reprocessing)

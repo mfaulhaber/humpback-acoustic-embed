@@ -49,6 +49,7 @@ async def get_model_for_job(
     model_type = model_config.model_type if model_config else "tflite"
 
     if cache_key in _model_cache:
+        logger.info("Using cached model for %s (type=%s)", cache_key, type(_model_cache[cache_key]).__name__)
         return _model_cache[cache_key], input_format
 
     if not settings.use_real_model:
@@ -65,10 +66,12 @@ async def get_model_for_job(
         if model_type == "tf2_saved_model":
             from humpback.processing.inference import TF2SavedModel
 
+            logger.info("Loading TF2SavedModel: path=%s, dim=%d", model_config.path, model_config.vector_dim)
             model = TF2SavedModel(model_config.path, model_config.vector_dim)
         else:
             from humpback.processing.inference import TFLiteModel
 
+            logger.info("Loading TFLiteModel: path=%s, dim=%d", model_config.path, model_config.vector_dim)
             model = TFLiteModel(model_config.path, model_config.vector_dim)
     else:
         # Fallback to settings for unregistered model versions
@@ -128,6 +131,12 @@ async def run_processing_job(
         await asyncio.to_thread(
             _process_audio, audio_path, job, model, final_path, input_format
         )
+
+        # Check for GPU fallback warning
+        if getattr(model, "gpu_failed", False):
+            warning = "GPU inference failed; used CPU fallback. Results are correct but processing may be slower."
+            logger.warning("Job %s: %s", job.id, warning)
+            job.warning_message = warning
 
         # Create EmbeddingSet record
         es = EmbeddingSet(

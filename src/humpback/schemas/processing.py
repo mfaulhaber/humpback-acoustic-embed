@@ -22,6 +22,7 @@ class ProcessingJobOut(BaseModel):
     target_sample_rate: int
     feature_config: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+    warning_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     skipped: bool = False

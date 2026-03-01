@@ -27,29 +27,45 @@ Key features:
 
 ### Install
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/), plus Node.js 18+ for the frontend.
 
 ```bash
+# Backend
 uv sync --all-extras
+
+# Frontend
+cd frontend && npm install
 ```
 
-### Run the API Server
+### Development Mode
+
+Run the backend and frontend dev server in separate terminals:
 
 ```bash
+# Terminal 1: API server
 uv run humpback-api
-# or
-uv run python -m humpback
+
+# Terminal 2: Worker
+uv run humpback-worker
+
+# Terminal 3: Frontend dev server (hot reload, proxies API to :8000)
+cd frontend && npm run dev
 ```
 
-API docs available at http://localhost:8000/docs
+Open http://localhost:5173 for the dev UI. API docs at http://localhost:8000/docs.
 
-### Run the Worker
+### Production Build
+
+Build the frontend and serve everything from the API server on a single port:
 
 ```bash
-uv run humpback-worker
+cd frontend && npm run build   # outputs to src/humpback/static/dist/
+uv run humpback-api            # serves SPA + API on :8000
 ```
 
-The worker polls for queued processing and clustering jobs and executes them.
+Open http://localhost:8000 — the FastAPI server serves the built SPA at `/` and
+the API at their usual paths. When `static/dist/` is not present, it falls back
+to the legacy `static/index.html`.
 
 ---
 
@@ -256,9 +272,27 @@ Environment variables (prefix `HUMPBACK_`):
 
 ## Tech Stack
 
-- **Backend**: Python + FastAPI
+### Backend
+- **API**: Python + FastAPI
 - **Queue**: SQL-backed polling queue
 - **DB**: SQLite with WAL mode (MVP)
 - **Embedding**: TensorFlow Lite + TF2 SavedModel (flex delegate for custom ops; macOS GPU via tensorflow-metal; FakeTFLiteModel/FakeTF2Model for testing)
 - **Clustering**: UMAP/PCA + HDBSCAN/K-Means/Agglomerative
 - **Storage**: Local filesystem
+
+### Frontend
+- **Build**: Vite + TypeScript
+- **UI**: React 18 + Tailwind CSS
+- **Components**: shadcn/ui (Radix primitives)
+- **Server State**: TanStack Query (polling, caching, mutations)
+- **Charts**: react-plotly.js (spectrograms, similarity matrices, UMAP scatter, parameter sweep)
+- **Icons**: lucide-react
+- **API Client**: Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`)
+
+The frontend lives in `frontend/` at the repo root. In development, Vite runs on
+`:5173` and proxies API requests to `:8000`. For production, `npm run build`
+outputs to `src/humpback/static/dist/` and the FastAPI server serves the SPA
+alongside the API on `:8000`.
+
+No client-side router is used — the UI is tab-based (Audio, Processing,
+Clustering, Admin) with navigation managed via React state.

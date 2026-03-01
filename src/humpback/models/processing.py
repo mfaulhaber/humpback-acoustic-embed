@@ -26,6 +26,7 @@ class ProcessingJob(UUIDMixin, TimestampMixin, Base):
     target_sample_rate: Mapped[int]
     feature_config: Mapped[Optional[str]] = mapped_column(Text, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    warning_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
     audio_file: Mapped["AudioFile"] = relationship(back_populates="processing_jobs")  # noqa: F821
 
