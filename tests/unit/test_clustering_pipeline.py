@@ -147,3 +147,144 @@ def test_pipeline_single_pass_when_cluster_dims_2():
     assert result.reduced_embeddings.shape == (40, 2)
     # Single pass: both should be the same array
     np.testing.assert_array_equal(result.cluster_input, result.reduced_embeddings)
+
+
+# --- New tests for Phase 2-3 features ---
+
+
+def test_pipeline_kmeans():
+    """K-Means should produce exactly n_clusters clusters with no noise."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(60, 16).astype(np.float32)
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={
+            "clustering_algorithm": "kmeans",
+            "n_clusters": 5,
+            "reduction_method": "none",
+        },
+    )
+
+    assert result.labels.shape == (60,)
+    unique_labels = set(result.labels.tolist())
+    assert len(unique_labels) == 5
+    assert -1 not in unique_labels  # no noise
+    assert result.reduced_embeddings is None
+
+
+def test_pipeline_agglomerative():
+    """Agglomerative should produce exactly n_clusters clusters."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(40, 16).astype(np.float32)
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={
+            "clustering_algorithm": "agglomerative",
+            "n_clusters": 4,
+            "linkage": "ward",
+            "reduction_method": "none",
+        },
+    )
+
+    assert result.labels.shape == (40,)
+    assert len(set(result.labels.tolist())) == 4
+    assert -1 not in set(result.labels.tolist())
+
+
+def test_pipeline_pca_reduction():
+    """PCA reduction should produce valid reduced embeddings."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(30, 64).astype(np.float32)
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={
+            "reduction_method": "pca",
+            "clustering_algorithm": "kmeans",
+            "n_clusters": 3,
+        },
+    )
+
+    assert result.reduced_embeddings is not None
+    assert result.reduced_embeddings.shape == (30, 2)
+    # Cluster input should be higher-dim PCA (default 5)
+    assert result.cluster_input.shape == (30, 5)
+
+
+def test_pipeline_pca_2d_single_pass():
+    """PCA with cluster dims=2 should do a single pass."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(30, 64).astype(np.float32)
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={
+            "reduction_method": "pca",
+            "umap_cluster_n_components": 2,
+            "clustering_algorithm": "kmeans",
+            "n_clusters": 3,
+        },
+    )
+
+    assert result.reduced_embeddings is not None
+    assert result.reduced_embeddings.shape == (30, 2)
+    np.testing.assert_array_equal(result.cluster_input, result.reduced_embeddings)
+
+
+def test_pipeline_reduction_method_none():
+    """reduction_method='none' should skip dimensionality reduction."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(30, 64).astype(np.float32)
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={
+            "reduction_method": "none",
+            "clustering_algorithm": "kmeans",
+            "n_clusters": 3,
+        },
+    )
+
+    assert result.reduced_embeddings is None
+    assert result.cluster_input.shape == (30, 64)
+
+
+def test_pipeline_cosine_metric():
+    """Pipeline should accept cosine distance metric."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(30, 16).astype(np.float32)
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={
+            "distance_metric": "cosine",
+            "reduction_method": "none",
+            "clustering_algorithm": "kmeans",
+            "n_clusters": 3,
+        },
+    )
+
+    assert result.labels.shape == (30,)
+    assert len(set(result.labels.tolist())) == 3
+
+
+def test_pipeline_agglomerative_ward_forces_euclidean():
+    """Ward linkage should force euclidean even if cosine is requested."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(30, 8).astype(np.float32)
+
+    # Should not raise despite cosine + ward
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={
+            "clustering_algorithm": "agglomerative",
+            "n_clusters": 3,
+            "linkage": "ward",
+            "distance_metric": "cosine",
+            "reduction_method": "none",
+        },
+    )
+
+    assert result.labels.shape == (30,)

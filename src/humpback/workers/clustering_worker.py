@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.clustering.metrics import (
-    compute_category_metrics,
     compute_cluster_metrics,
+    compute_detailed_category_metrics,
     extract_category_from_folder_path,
     run_parameter_sweep,
 )
@@ -109,22 +109,25 @@ async def run_clustering_job(
         except Exception:
             logger.exception("Failed to compute internal cluster metrics")
 
-        # Category-based semi-supervised metrics
+        # Category-based supervised metrics (detailed)
         try:
             category_labels = [
                 extract_category_from_folder_path(es_folder_paths.get(es_id, ""))
                 for es_id in all_es_ids
             ]
             if any(c is not None for c in category_labels):
-                cat_metrics = compute_category_metrics(labels, category_labels)
+                cat_metrics = compute_detailed_category_metrics(labels, category_labels)
                 metrics.update(cat_metrics)
         except Exception:
             logger.exception("Failed to compute category metrics")
 
-        # Parameter sweep
+        # Parameter sweep (with category labels for ARI/NMI)
         try:
             sweep = await asyncio.to_thread(
-                run_parameter_sweep, clustering_result.cluster_input, params
+                run_parameter_sweep,
+                clustering_result.cluster_input,
+                params,
+                category_labels,
             )
             sweep_path = output_dir / "parameter_sweep.json"
             sweep_path.write_text(json.dumps(sweep, indent=2))

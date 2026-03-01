@@ -14,10 +14,12 @@ Key features:
 - macOS GPU acceleration via tensorflow-macos/tensorflow-metal
 - Embeddings stored in Parquet
 - REST API for job management and inspection
-- UMAP + HDBSCAN clustering pipeline with interactive scatter plot visualization
+- Flexible clustering pipeline: HDBSCAN, K-Means, or Agglomerative with interactive scatter plot visualization
+- Dimensionality reduction: UMAP, PCA, or none; euclidean or cosine distance metric
 - Quantitative cluster evaluation (Silhouette, Davies-Bouldin, Calinski-Harabasz)
-- Semi-supervised metrics (ARI, NMI) from folder-path-derived category labels
-- Automatic parameter sweep (silhouette vs min_cluster_size) with Plotly chart
+- Detailed supervised metrics (ARI, NMI, homogeneity, completeness, v-measure, per-category purity, confusion matrix) from folder-path-derived category labels
+- Automatic parameter sweep (HDBSCAN min_cluster_size × selection_method + K-Means k) with ARI/NMI when categories available
+- Spectrogram normalization options (per-window max, global ref, standardize) via feature_config
 
 ---
 
@@ -81,9 +83,15 @@ flowchart TD
 | Window size | 5 s (160k samples) | Fixed-length, zero-padded |
 | Spectrogram | 128 mels × 128 frames | n_fft=2048, hop=1252 |
 | Embedding dim | 1280 | Perch default |
-| UMAP cluster dims | 5 | `umap_cluster_n_components` — HDBSCAN input; viz always 2D |
+| UMAP cluster dims | 5 | `umap_cluster_n_components` — clustering input; viz always 2D |
+| Clustering algorithm | hdbscan | `clustering_algorithm`: `"hdbscan"`, `"kmeans"`, `"agglomerative"` |
+| n_clusters | 15 | For kmeans/agglomerative |
+| Linkage | ward | For agglomerative: `"ward"`, `"complete"`, `"average"`, `"single"` |
+| Reduction method | umap | `reduction_method`: `"umap"`, `"pca"`, `"none"` |
+| Distance metric | euclidean | `distance_metric`: `"euclidean"` or `"cosine"` |
 | HDBSCAN selection | leaf | `cluster_selection_method` — 'leaf' (fine-grained) or 'eom' (coarser) |
 | HDBSCAN min_cluster_size | 5 | Swept 2–50 for param search |
+| Normalization | per_window_max | Spectrogram normalization in feature_config: `"per_window_max"`, `"global_ref"`, `"standardize"` |
 
 Encoding is associated with the audio file and configuration. Reprocessing is
 skipped when an EmbeddingSet with the same encoding_signature already exists.
@@ -112,12 +120,12 @@ dimensions to prevent mixing incompatible embeddings.
 ```
 selected embedding sets (must share vector_dim)
   → load from Parquet
-  → UMAP dimensionality reduction (10D for clustering, 2D for visualization)
-  → HDBSCAN clustering
+  → dimensionality reduction (UMAP, PCA, or none)
+  → clustering (HDBSCAN, K-Means, or Agglomerative)
   → persist clusters + assignments
   → compute evaluation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz)
-  → compute semi-supervised metrics (ARI, NMI) from folder-path categories
-  → run parameter sweep (min_cluster_size vs silhouette)
+  → compute detailed supervised metrics (ARI, NMI, homogeneity, completeness, v-measure, per-category purity, confusion matrix)
+  → run parameter sweep (HDBSCAN + K-Means, with ARI/NMI when categories available)
 ```
 
 ### Cluster Assignment Playback Controls
@@ -252,5 +260,5 @@ Environment variables (prefix `HUMPBACK_`):
 - **Queue**: SQL-backed polling queue
 - **DB**: SQLite with WAL mode (MVP)
 - **Embedding**: TensorFlow Lite + TF2 SavedModel (flex delegate for custom ops; macOS GPU via tensorflow-metal; FakeTFLiteModel/FakeTF2Model for testing)
-- **Clustering**: UMAP + HDBSCAN
+- **Clustering**: UMAP/PCA + HDBSCAN/K-Means/Agglomerative
 - **Storage**: Local filesystem

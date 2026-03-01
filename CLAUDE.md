@@ -233,7 +233,13 @@ flowchart TD
 | `umap_cluster_n_components` | 5 | UMAP dimensions for HDBSCAN input (visualization always 2D) |
 | `cluster_selection_method` | leaf | HDBSCAN selection: 'leaf' (fine-grained) or 'eom' (coarser) |
 | HDBSCAN `min_cluster_size` | 5 | Minimum points per cluster |
-| Parameter sweep range | 2–50 | `min_cluster_size` sweep for silhouette score |
+| `clustering_algorithm` | hdbscan | `"hdbscan"`, `"kmeans"`, or `"agglomerative"` |
+| `n_clusters` | 15 | For kmeans/agglomerative |
+| `linkage` | ward | For agglomerative: `"ward"`, `"complete"`, `"average"`, `"single"` |
+| `reduction_method` | umap | `"umap"`, `"pca"`, or `"none"` |
+| `distance_metric` | euclidean | `"euclidean"` or `"cosine"` (passed to UMAP + HDBSCAN) |
+| `normalization` | per_window_max | Spectrogram normalization: `"per_window_max"`, `"global_ref"`, `"standardize"` (in feature_config) |
+| Parameter sweep range | 2–50 | Sweeps HDBSCAN (min_cluster_size × selection_method) + K-Means (k=2..30) |
 
 ---
 
@@ -246,13 +252,15 @@ Input:
 Pipeline:
 1. Validate all embedding sets share the same vector_dim (reject with error if mismatched)
 2. Load embeddings from Parquet
-3. Optional dimensionality reduction (UMAP)
-4. Clustering (HDBSCAN default)
+3. Optional dimensionality reduction (UMAP, PCA, or none — controlled by `reduction_method`)
+4. Clustering (HDBSCAN, K-Means, or Agglomerative — controlled by `clustering_algorithm`)
 5. Persist clusters and assignments
 6. Compute per-cluster metadata summaries
 7. Compute evaluation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz)
-8. Compute semi-supervised metrics (ARI, NMI) from folder-path-derived category labels
-9. Run parameter sweep (silhouette vs min_cluster_size) and save to parameter_sweep.json
+8. Compute detailed supervised metrics from folder-path-derived category labels:
+   ARI, NMI, homogeneity, completeness, v_measure, per-category purity, confusion matrix
+9. Run parameter sweep (HDBSCAN: min_cluster_size × selection_method; K-Means: k=2..30)
+   with ARI/NMI when category labels available; save to parameter_sweep.json
 10. Persist metrics as metrics_json on ClusteringJob
 11. Mark ClusteringJob complete
 

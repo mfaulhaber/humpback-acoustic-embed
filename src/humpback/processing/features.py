@@ -8,11 +8,20 @@ def extract_logmel(
     n_fft: int = 2048,
     hop_length: int = 512,
     target_frames: int | None = None,
+    normalization: str = "per_window_max",
 ) -> np.ndarray:
     """Extract log-mel spectrogram features from an audio window.
 
     Returns shape (n_mels, time_frames). If target_frames is set,
     pads or truncates the time axis to that length.
+
+    Normalization modes:
+    - ``"per_window_max"`` — normalize to each window's own max (default,
+      backward compatible). Uses ``ref=np.max``.
+    - ``"global_ref"`` — use ``ref=1.0`` for absolute dB scale, preserving
+      relative energy differences across windows.
+    - ``"standardize"`` — convert to dB with ``ref=1.0``, clip to [-80, 0],
+      then scale to [0, 1].
     """
     try:
         import librosa
@@ -24,7 +33,15 @@ def extract_logmel(
             n_fft=n_fft,
             hop_length=hop_length,
         )
-        result = librosa.power_to_db(S, ref=np.max)
+        if normalization == "global_ref":
+            result = librosa.power_to_db(S, ref=1.0)
+        elif normalization == "standardize":
+            result = librosa.power_to_db(S, ref=1.0)
+            result = np.clip(result, -80.0, 0.0)
+            result = (result + 80.0) / 80.0  # scale to [0, 1]
+        else:
+            # per_window_max (default)
+            result = librosa.power_to_db(S, ref=np.max)
     except ImportError:
         # Fallback: simple FFT-based approximation for testing
         result = _simple_logmel(window, sample_rate, n_mels, n_fft, hop_length)

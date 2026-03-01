@@ -179,6 +179,11 @@ def _process_audio(
         final_path, vector_dim=model.vector_dim, batch_size=50
     )
 
+    # Parse feature_config for normalization setting
+    import json as _json
+    feature_config = _json.loads(job.feature_config) if job.feature_config else {}
+    normalization = feature_config.get("normalization", "per_window_max")
+
     batch_items = []
     batch_size = 32
 
@@ -194,6 +199,7 @@ def _process_audio(
                 n_mels=128,
                 hop_length=1252,
                 target_frames=128,
+                normalization=normalization,
             )
             batch_items.append(spec)
 
