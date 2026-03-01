@@ -22,7 +22,8 @@ def test_pipeline_basic():
     assert result.reduced_embeddings is not None
     assert result.reduced_embeddings.shape == (40, 2)
     assert result.cluster_input is not None
-    assert result.cluster_input.shape == (40, 2)
+    # Default umap_cluster_n_components=5, clamped to min(5, 64) = 5
+    assert result.cluster_input.shape == (40, 5)
 
 
 def test_pipeline_no_umap():
@@ -78,3 +79,71 @@ def test_umap_coords_parquet_schema(tmp_path):
     np.testing.assert_array_almost_equal(
         loaded.column("x").to_numpy(), reduced[:, 0], decimal=5
     )
+
+
+def test_pipeline_explicit_cluster_dims():
+    """Explicit umap_cluster_n_components controls cluster_input dimensions."""
+    rng = np.random.RandomState(42)
+    embeddings = np.vstack([
+        rng.randn(20, 64).astype(np.float32) + 5,
+        rng.randn(20, 64).astype(np.float32) - 5,
+    ])
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={"use_umap": True, "umap_cluster_n_components": 8, "min_cluster_size": 5},
+    )
+
+    assert result.cluster_input.shape == (40, 8)
+    assert result.reduced_embeddings.shape == (40, 2)
+
+
+def test_pipeline_backward_compat_umap_n_components():
+    """Old umap_n_components param is used when umap_cluster_n_components is absent."""
+    rng = np.random.RandomState(42)
+    embeddings = np.vstack([
+        rng.randn(20, 64).astype(np.float32) + 5,
+        rng.randn(20, 64).astype(np.float32) - 5,
+    ])
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={"use_umap": True, "umap_n_components": 5, "min_cluster_size": 5},
+    )
+
+    assert result.cluster_input.shape == (40, 5)
+    assert result.reduced_embeddings.shape == (40, 2)
+
+
+def test_pipeline_cluster_dims_clamped_to_input():
+    """umap_cluster_n_components is clamped to the input dimensionality."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(30, 6).astype(np.float32)
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={"use_umap": True, "umap_cluster_n_components": 20, "min_cluster_size": 5},
+    )
+
+    # Clamped to min(20, 6) = 6, but 6 == input dim so UMAP still runs
+    assert result.cluster_input.shape[1] <= 6
+    assert result.reduced_embeddings.shape == (30, 2)
+
+
+def test_pipeline_single_pass_when_cluster_dims_2():
+    """When cluster dims == 2, single UMAP pass; cluster_input == reduced_embeddings."""
+    rng = np.random.RandomState(42)
+    embeddings = np.vstack([
+        rng.randn(20, 64).astype(np.float32) + 5,
+        rng.randn(20, 64).astype(np.float32) - 5,
+    ])
+
+    result = run_clustering_pipeline(
+        embeddings,
+        parameters={"use_umap": True, "umap_cluster_n_components": 2, "min_cluster_size": 5},
+    )
+
+    assert result.cluster_input.shape == (40, 2)
+    assert result.reduced_embeddings.shape == (40, 2)
+    # Single pass: both should be the same array
+    np.testing.assert_array_equal(result.cluster_input, result.reduced_embeddings)

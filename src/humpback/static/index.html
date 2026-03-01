@@ -227,6 +227,13 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
         <label>Min Samples <span style="font-weight:normal;color:#888">(optional)</span></label>
         <input type="number" id="cluster-min-samples" value="" min="1" step="1" placeholder="default: min_cluster_size">
       </div>
+      <div class="form-group">
+        <label title="'leaf' finds more fine-grained clusters; 'eom' merges subclusters into larger ones">Selection Method</label>
+        <select id="cluster-selection-method">
+          <option value="leaf" selected>leaf</option>
+          <option value="eom">eom</option>
+        </select>
+      </div>
     </div>
     <h4 style="margin-top:0.5rem;margin-bottom:0.5rem;font-size:0.9rem">UMAP Dimensionality Reduction</h4>
     <div class="form-row">
@@ -234,8 +241,8 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
         <label><input type="checkbox" id="cluster-use-umap" checked style="margin-right:0.4rem">Enable UMAP</label>
       </div>
       <div class="form-group">
-        <label>Components</label>
-        <input type="number" id="cluster-umap-components" value="2" min="2" max="50" step="1">
+        <label title="UMAP dimensions for HDBSCAN input. Visualization always uses 2D.">Cluster Dims</label>
+        <input type="number" id="cluster-umap-cluster-components" value="5" min="2" max="50" step="1">
       </div>
       <div class="form-group">
         <label>Neighbors</label>
@@ -1489,9 +1496,10 @@ function buildClusterParams() {
   if (minSize && minSize >= 2) params.min_cluster_size = minSize;
   const minSamples = $('#cluster-min-samples').value;
   if (minSamples !== '') params.min_samples = parseInt(minSamples);
+  params.cluster_selection_method = $('#cluster-selection-method').value || 'leaf';
   params.use_umap = $('#cluster-use-umap').checked;
   if (params.use_umap) {
-    params.umap_n_components = parseInt($('#cluster-umap-components').value) || 2;
+    params.umap_cluster_n_components = parseInt($('#cluster-umap-cluster-components').value) || 5;
     params.umap_n_neighbors = parseInt($('#cluster-umap-neighbors').value) || 15;
     params.umap_min_dist = parseFloat($('#cluster-umap-min-dist').value) || 0.1;
   }

@@ -230,7 +230,8 @@ flowchart TD
 | `batch_size` | 100 | Parquet writer flush interval |
 | UMAP `n_neighbors` | 15 | UMAP neighbor count |
 | UMAP `min_dist` | 0.1 | UMAP minimum distance |
-| UMAP `n_components` | 2 | UMAP output dimensions |
+| `umap_cluster_n_components` | 5 | UMAP dimensions for HDBSCAN input (visualization always 2D) |
+| `cluster_selection_method` | leaf | HDBSCAN selection: 'leaf' (fine-grained) or 'eom' (coarser) |
 | HDBSCAN `min_cluster_size` | 5 | Minimum points per cluster |
 | Parameter sweep range | 2–50 | `min_cluster_size` sweep for silhouette score |
 

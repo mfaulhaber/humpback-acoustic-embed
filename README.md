@@ -68,7 +68,7 @@ flowchart TD
     H --> J["Parquet Writer<br/>(incremental, atomic)"]
     I --> J
     J --> K["EmbeddingSet<br/>(SQL row)"]
-    K --> L["UMAP<br/>→ 2-d coords"]
+    K --> L["UMAP<br/>→ 10-d (cluster) + 2-d (viz)"]
     L --> M["HDBSCAN<br/>→ cluster labels"]
     M --> N["Metrics + Outputs"]
 ```
@@ -81,6 +81,8 @@ flowchart TD
 | Window size | 5 s (160k samples) | Fixed-length, zero-padded |
 | Spectrogram | 128 mels × 128 frames | n_fft=2048, hop=1252 |
 | Embedding dim | 1280 | Perch default |
+| UMAP cluster dims | 5 | `umap_cluster_n_components` — HDBSCAN input; viz always 2D |
+| HDBSCAN selection | leaf | `cluster_selection_method` — 'leaf' (fine-grained) or 'eom' (coarser) |
 | HDBSCAN min_cluster_size | 5 | Swept 2–50 for param search |
 
 Encoding is associated with the audio file and configuration. Reprocessing is
@@ -110,7 +112,7 @@ dimensions to prevent mixing incompatible embeddings.
 ```
 selected embedding sets (must share vector_dim)
   → load from Parquet
-  → optional UMAP dimensionality reduction
+  → UMAP dimensionality reduction (10D for clustering, 2D for visualization)
   → HDBSCAN clustering
   → persist clusters + assignments
   → compute evaluation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz)

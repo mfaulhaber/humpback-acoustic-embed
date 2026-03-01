@@ -5,6 +5,7 @@ def cluster_hdbscan(
     embeddings: np.ndarray,
     min_cluster_size: int = 5,
     min_samples: int | None = None,
+    cluster_selection_method: str = "leaf",
 ) -> np.ndarray:
     """Cluster embeddings with HDBSCAN. Returns integer labels (-1 = noise)."""
     try:
@@ -13,6 +14,7 @@ def cluster_hdbscan(
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min(min_cluster_size, len(embeddings)),
             min_samples=min_samples,
+            cluster_selection_method=cluster_selection_method,
         )
         return clusterer.fit_predict(embeddings)
     except ImportError:
