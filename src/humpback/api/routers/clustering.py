@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.clustering.metrics import extract_category_from_folder_path
 from humpback.models.audio import AudioFile
 from humpback.models.processing import EmbeddingSet
 from humpback.schemas.clustering import (
@@ -92,14 +93,30 @@ async def get_visualization(job_id: str, session: SessionDep, settings: Settings
     # Resolve embedding_set_id → audio filename
     unique_es_ids = list(set(es_ids))
     stmt = (
-        select(EmbeddingSet.id, AudioFile.filename)
+        select(
+            EmbeddingSet.id,
+            EmbeddingSet.audio_file_id,
+            EmbeddingSet.window_size_seconds,
+            AudioFile.filename,
+            AudioFile.folder_path,
+        )
         .join(AudioFile, EmbeddingSet.audio_file_id == AudioFile.id)
         .where(EmbeddingSet.id.in_(unique_es_ids))
     )
     rows = (await session.execute(stmt)).all()
-    es_to_filename = {r[0]: r[1] for r in rows}
+    es_to_filename = {r[0]: r[3] for r in rows}
+    es_to_folder_path = {r[0]: r[4] for r in rows}
+    es_to_audio_file_id = {r[0]: r[1] for r in rows}
+    es_to_window_size = {r[0]: r[2] for r in rows}
 
     audio_filenames = [es_to_filename.get(es_id, es_id) for es_id in es_ids]
+    audio_file_ids = [es_to_audio_file_id.get(es_id, "") for es_id in es_ids]
+    window_sizes = [es_to_window_size.get(es_id, 5.0) for es_id in es_ids]
+    categories = []
+    for es_id in es_ids:
+        folder_path = es_to_folder_path.get(es_id)
+        cat = extract_category_from_folder_path(folder_path) if folder_path else None
+        categories.append(cat or "Unknown")
 
     return {
         "x": table.column("x").to_pylist(),
@@ -108,6 +125,9 @@ async def get_visualization(job_id: str, session: SessionDep, settings: Settings
         "embedding_set_id": es_ids,
         "embedding_row_index": table.column("embedding_row_index").to_pylist(),
         "audio_filename": audio_filenames,
+        "audio_file_id": audio_file_ids,
+        "window_size_seconds": window_sizes,
+        "category": categories,
     }
 
 

@@ -47,6 +47,7 @@ label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.2
 .msg { padding: 0.75rem; border-radius: 4px; margin-bottom: 0.75rem; font-size: 0.9rem; }
 .msg-success { background: #d4edda; color: #155724; }
 .msg-error { background: #f8d7da; color: #721c24; }
+.msg-warning { background: #fff3cd; color: #856404; }
 .hidden { display: none !important; }
 .empty { color: #999; font-style: italic; padding: 1rem 0; }
 .checkbox-list { max-height: 200px; overflow-y: auto; border: 1px solid #eee; border-radius: 4px; padding: 0.5rem; }
@@ -476,14 +477,18 @@ async function showAudioDetail(id) {
       $('#audio-proc-empty').classList.remove('hidden');
     } else {
       $('#audio-proc-empty').classList.add('hidden');
-      histTbody.innerHTML = related.map(j => `
-        <tr>
+      histTbody.innerHTML = related.map(j => {
+        const msgs = [];
+        if (j.warning_message) msgs.push(`<div class="msg msg-warning" style="padding:0.3rem 0.5rem;margin-top:0.25rem;font-size:0.8rem">${j.warning_message}</div>`);
+        if (j.error_message) msgs.push(`<div class="msg msg-error" style="padding:0.3rem 0.5rem;margin-top:0.25rem;font-size:0.8rem">${j.error_message}</div>`);
+        return `<tr>
           <td>${shortId(j.id)}</td>
-          <td>${badgeHtml(j.status)}</td>
+          <td>${badgeHtml(j.status)}${msgs.join('')}</td>
           <td>${j.model_version}</td>
           <td>${j.window_size_seconds}s</td>
           <td>${fmtDate(j.created_at)}</td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
     }
 
     // Load visualization panel
@@ -1003,6 +1008,10 @@ async function loadProcJobs() {
         const audioName = audioDisplayName(j.audio_file_id);
         const cancelBtn = (j.status === 'queued' || j.status === 'running')
           ? `<button class="btn btn-danger btn-sm cancel-proc" data-id="${j.id}" style="margin-left:0.5rem">Cancel</button>` : '';
+        const warnHtml = j.warning_message
+          ? `<div class="msg msg-warning" style="margin:0.25rem 0 0 1.5rem;padding:0.4rem 0.6rem;font-size:0.8rem">${j.warning_message}</div>` : '';
+        const errHtml = j.error_message
+          ? `<div class="msg msg-error" style="margin:0.25rem 0 0 1.5rem;padding:0.4rem 0.6rem;font-size:0.8rem">${j.error_message}</div>` : '';
         return `<div class="tree-file-row" style="cursor:default">
           <span class="file-meta">${shortId(j.id)}</span>
           <span class="file-name">${audioFileMap[j.audio_file_id]?.filename || shortId(j.audio_file_id)}</span>
@@ -1011,7 +1020,7 @@ async function loadProcJobs() {
           <span class="file-meta">${j.window_size_seconds}s</span>
           <span class="file-meta">${fmtDate(j.created_at)}</span>
           ${cancelBtn}
-        </div>`;
+        </div>${warnHtml}${errHtml}`;
       },
       procTreeExpand,
       container,
@@ -1560,11 +1569,16 @@ async function toggleUmapPlot(jobId, event) {
     const groups = {};
     for (let i = 0; i < data.x.length; i++) {
       const label = data.cluster_label[i];
-      if (!groups[label]) groups[label] = { x: [], y: [], text: [] };
+      if (!groups[label]) groups[label] = { x: [], y: [], text: [], customdata: [] };
       groups[label].x.push(data.x[i]);
       groups[label].y.push(data.y[i]);
-      const fname = (data.audio_filename && data.audio_filename[i]) ? data.audio_filename[i].replace(/\.\w+$/, '') : `ES: ${data.embedding_set_id[i].slice(0,8)}…`;
-      groups[label].text.push(`${fname} (row ${data.embedding_row_index[i]})`);
+      const cat = (data.category && data.category[i]) ? data.category[i] : 'Unknown';
+      groups[label].text.push(cat);
+      groups[label].customdata.push({
+        audioFileId: data.audio_file_id[i],
+        rowIndex: data.embedding_row_index[i],
+        windowSize: data.window_size_seconds[i],
+      });
     }
 
     const palette = ['#3a86ff','#e63946','#2a9d8f','#e9c46a','#264653','#f4a261','#6c5ce7','#00b894','#fd79a8','#636e72','#d63031','#74b9ff','#a29bfe','#ffeaa7','#55efc4'];
@@ -1575,7 +1589,7 @@ async function toggleUmapPlot(jobId, event) {
       const g = groups[label];
       const isNoise = label === -1;
       traces.push({
-        x: g.x, y: g.y, text: g.text,
+        x: g.x, y: g.y, text: g.text, customdata: g.customdata,
         mode: 'markers',
         type: 'scatter',
         name: isNoise ? 'Noise' : `Cluster ${label}`,
@@ -1597,6 +1611,25 @@ async function toggleUmapPlot(jobId, event) {
     };
 
     Plotly.newPlot(container, traces, layout, { responsive: true });
+
+    // Click-to-play: play the audio window for the clicked embedding point
+    container.on('plotly_click', function(clickData) {
+      const pt = clickData.points[0];
+      const meta = pt.customdata;
+      if (!meta || !meta.audioFileId) return;
+      const startSec = meta.rowIndex * meta.windowSize;
+      const url = `/audio/${meta.audioFileId}/window?start_seconds=${startSec}&duration_seconds=${meta.windowSize}`;
+
+      // Reuse or create a floating audio element for the UMAP plot
+      let audio = container._umapAudio;
+      if (!audio) {
+        audio = new Audio();
+        audio.volume = 0.8;
+        container._umapAudio = audio;
+      }
+      audio.src = url;
+      audio.play();
+    });
   } catch (err) {
     if (err.message && err.message.includes('404')) {
       container.innerHTML = '<div class="umap-no-data">No UMAP data available for this job.</div>';
@@ -1619,11 +1652,13 @@ async function exportClusterReport(jobId) {
     const groups = {};
     for (let i = 0; i < vizData.x.length; i++) {
       const label = vizData.cluster_label[i];
-      if (!groups[label]) groups[label] = { x: [], y: [], text: [] };
+      if (!groups[label]) groups[label] = { x: [], y: [], text: [], customdata: [] };
       groups[label].x.push(vizData.x[i]);
       groups[label].y.push(vizData.y[i]);
       const fname = (vizData.audio_filename && vizData.audio_filename[i]) ? vizData.audio_filename[i].replace(/\.\w+$/, '') : `ES: ${vizData.embedding_set_id[i].slice(0,8)}`;
-      groups[label].text.push(`${fname} (row ${vizData.embedding_row_index[i]})`);
+      const cat = (vizData.category && vizData.category[i]) ? vizData.category[i] : 'Unknown';
+      groups[label].text.push(cat);
+      groups[label].customdata.push(`${fname} (row ${vizData.embedding_row_index[i]})`);
     }
     const palette = ['#3a86ff','#e63946','#2a9d8f','#e9c46a','#264653','#f4a261','#6c5ce7','#00b894','#fd79a8','#636e72','#d63031','#74b9ff','#a29bfe','#ffeaa7','#55efc4'];
     const traces = [];
@@ -1632,7 +1667,7 @@ async function exportClusterReport(jobId) {
       const g = groups[label];
       const isNoise = label === -1;
       traces.push({
-        x: g.x, y: g.y, text: g.text,
+        x: g.x, y: g.y, text: g.text, customdata: g.customdata,
         mode: 'markers', type: 'scatter',
         name: isNoise ? 'Noise' : `Cluster ${label}`,
         marker: { color: isNoise ? '#b2bec3' : palette[label % palette.length], size: isNoise ? 4 : 7, opacity: isNoise ? 0.4 : 0.8 },
@@ -1677,7 +1712,21 @@ async function exportClusterReport(jobId) {
 ${metricsHtml}
 <p style="margin-top:2rem;font-size:0.8rem;color:#999">Generated ${new Date().toISOString().slice(0,16).replace('T',' ')}</p>
 <script>
-  Plotly.newPlot('umap-plot', ${JSON.stringify(traces)}, ${JSON.stringify(layout)}, {responsive: true});
+  var plot = document.getElementById('umap-plot');
+  Plotly.newPlot(plot, ${JSON.stringify(traces)}, ${JSON.stringify(layout)}, {responsive: true});
+  var tip = document.createElement('div');
+  tip.style.cssText = 'display:none;position:fixed;background:#333;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;pointer-events:none;z-index:9999;white-space:nowrap';
+  document.body.appendChild(tip);
+  plot.on('plotly_click', function(d) {
+    var pt = d.points[0];
+    if (!pt || !pt.customdata) return;
+    tip.textContent = pt.customdata;
+    tip.style.left = (d.event.clientX + 12) + 'px';
+    tip.style.top = (d.event.clientY - 28) + 'px';
+    tip.style.display = 'block';
+    clearTimeout(tip._t);
+    tip._t = setTimeout(function() { tip.style.display = 'none'; }, 3000);
+  });
 <\/script>
 </body></html>`;
 
