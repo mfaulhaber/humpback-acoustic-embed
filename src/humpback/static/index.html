@@ -546,8 +546,10 @@ function buildVizAudioBar(esId) {
   const maxChips = 40;
   for (let i = 0; i < Math.min(totalWindows, maxChips); i++) {
     const start = i * windowSize;
+    const end = Math.min(start + windowSize, totalDur);
+    const dur = +(end - start).toFixed(2);
     const active = i === vizState.windowIndex ? ' row-chip-active' : '';
-    chipsHtml += `<button class="row-chip${active}" data-start="${start}" data-dur="${windowSize}" data-ri="${i}" title="Window ${i} (${start}s\u2013${start + windowSize}s)">${i}</button>`;
+    chipsHtml += `<button class="row-chip${active}" data-start="${start}" data-dur="${dur}" data-ri="${i}" title="Window ${i} (${start}s\u2013${end}s)">${i}</button>`;
   }
   if (totalWindows > maxChips) chipsHtml += `<span class="file-meta"> ... (${totalWindows} total)</span>`;
 
@@ -593,10 +595,12 @@ function buildVizAudioBar(esId) {
     timePlayhead.style.left = (totalDur > 0 ? (start / totalDur * 100) : 0) + '%';
   }
 
-  // Default to current window
+  // Default to current window (clamp last window to actual audio length)
   const initStart = vizState.windowIndex * windowSize;
-  audio.src = `/audio/${aid}/window?start_seconds=${initStart}&duration_seconds=${windowSize}`;
-  updateTimeBar(initStart, initStart + windowSize);
+  const initEnd = totalDur > 0 ? Math.min(initStart + windowSize, totalDur) : initStart + windowSize;
+  const initDur = +(initEnd - initStart).toFixed(2);
+  audio.src = `/audio/${aid}/window?start_seconds=${initStart}&duration_seconds=${initDur}`;
+  updateTimeBar(initStart, initEnd);
 
   audio.addEventListener('timeupdate', () => {
     if (totalDur > 0) {
@@ -651,17 +655,19 @@ function updateVizAudioBarActiveChip(windowIndex) {
   const totalDur = parseFloat(bar.dataset.duration) || 0;
   const audio = bar.querySelector('.hidden-audio');
   const start = windowIndex * ws;
-  audio.src = `/audio/${aid}/window?start_seconds=${start}&duration_seconds=${ws}`;
+  const end = totalDur > 0 ? Math.min(start + ws, totalDur) : start + ws;
+  const actualDur = +(end - start).toFixed(2);
+  audio.src = `/audio/${aid}/window?start_seconds=${start}&duration_seconds=${actualDur}`;
   // Update time bar
   const timeStart = bar.querySelector('.time-start');
   const timeEnd = bar.querySelector('.time-end');
   const timeRegion = bar.querySelector('.time-region');
   const timePlayhead = bar.querySelector('.time-playhead');
   timeStart.textContent = formatTime(start);
-  timeEnd.textContent = formatTime(start + ws);
+  timeEnd.textContent = formatTime(end);
   if (totalDur > 0) {
     timeRegion.style.left = (start / totalDur * 100) + '%';
-    timeRegion.style.width = (ws / totalDur * 100) + '%';
+    timeRegion.style.width = (actualDur / totalDur * 100) + '%';
     timePlayhead.style.left = (start / totalDur * 100) + '%';
   }
 }
@@ -672,19 +678,49 @@ async function loadSpectrogram(audioId, windowIndex) {
     vizState.windowIndex = windowIndex;
     vizState.totalWindows = resp.total_windows;
     $('#viz-window-label').textContent = `Window ${windowIndex} of ${resp.total_windows}`;
-    Plotly.react('viz-spectrogram', [{
+    // Custom colorscale: dark navy → purple → pink/salmon → yellow/cream (0 dB)
+    const spectroColorscale = [
+      [0.0,  '#0d0829'],
+      [0.1,  '#1b0c42'],
+      [0.2,  '#36065e'],
+      [0.3,  '#56106e'],
+      [0.4,  '#76206c'],
+      [0.5,  '#98365b'],
+      [0.6,  '#bb4f45'],
+      [0.7,  '#d8692f'],
+      [0.8,  '#f0901e'],
+      [0.9,  '#f8c83c'],
+      [1.0,  '#fcffa4'],
+    ];
+    const traceOpts = {
       z: resp.data,
       type: 'heatmap',
-      colorscale: 'Viridis',
+      zsmooth: 'best',
+      colorscale: spectroColorscale,
       zmin: resp.min_db,
-      zmax: resp.max_db,
-      colorbar: { title: 'dB', thickness: 12 },
-    }], {
+      zmax: 0,
+      colorbar: {
+        thickness: 12,
+        ticksuffix: ' dB',
+        tickmode: 'linear',
+        tick0: 0,
+        dtick: 10,
+        tickprefix: '',
+      },
+    };
+    const layoutOpts = {
       margin: { t: 30, b: 40, l: 50, r: 20 },
-      xaxis: { title: 'Time Frame' },
-      yaxis: { title: 'Mel Bin', autorange: 'reversed' },
-      title: { text: `Spectrogram — Window ${windowIndex}`, font: { size: 13 } },
-    }, { responsive: true });
+      xaxis: { title: 'Time' },
+      yaxis: { title: 'Hz', type: 'log' },
+      title: { text: 'Mel Spectrogram', font: { size: 13 } },
+    };
+    if (resp.x_axis_seconds && resp.x_axis_seconds.length) {
+      traceOpts.x = resp.x_axis_seconds;
+    }
+    if (resp.y_axis_hz && resp.y_axis_hz.length) {
+      traceOpts.y = resp.y_axis_hz;
+    }
+    Plotly.react('viz-spectrogram', [traceOpts], layoutOpts, { responsive: true });
     highlightEmbeddingRow(windowIndex);
   } catch (e) { console.error('spectrogram error', e); }
 }

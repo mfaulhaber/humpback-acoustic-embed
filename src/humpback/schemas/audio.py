@@ -31,6 +31,8 @@ class SpectrogramOut(BaseModel):
     total_windows: int
     min_db: float
     max_db: float
+    y_axis_hz: list[float] = []
+    x_axis_seconds: list[float] = []
 
 
 class EmbeddingSimilarityOut(BaseModel):

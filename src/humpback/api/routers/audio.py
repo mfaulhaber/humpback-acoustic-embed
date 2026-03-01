@@ -225,22 +225,41 @@ def _compute_spectrogram(
     n_fft: int,
     hop_length: int,
     target_frames: int,
-) -> tuple[np.ndarray, int, int]:
-    """CPU-bound spectrogram computation. Returns (spectrogram, sr, total_windows)."""
+) -> tuple[np.ndarray, int, int, list[float], list[float]]:
+    """CPU-bound spectrogram computation. Returns (spectrogram, sr, total_windows, y_hz, x_seconds)."""
+    import librosa
+
     audio, sr = decode_audio(file_path)
     audio = resample(audio, sr, target_sample_rate)
-    total = count_windows(len(audio), target_sample_rate, window_size_seconds)
+    n_samples = len(audio)
+    total = count_windows(n_samples, target_sample_rate, window_size_seconds)
     if window_index >= total:
         raise ValueError(f"window_index {window_index} >= total windows {total}")
-    for i, window in enumerate(slice_windows(audio, target_sample_rate, window_size_seconds)):
-        if i == window_index:
-            spec = extract_logmel(
-                window, target_sample_rate,
-                n_mels=n_mels, n_fft=n_fft,
-                hop_length=hop_length, target_frames=target_frames,
-            )
-            return spec, target_sample_rate, total
-    raise ValueError("window not found")
+
+    # Extract the raw window (without zero-padding short final windows)
+    window_samples = int(target_sample_rate * window_size_seconds)
+    start = window_index * window_samples
+    end = min(start + window_samples, n_samples)
+    raw_window = audio[start:end]
+
+    # For the spectrogram visualization, only pad to target_frames if the
+    # window is full-length; short final windows use their natural frame count
+    is_short = len(raw_window) < window_samples
+    tf = None if is_short else target_frames
+
+    spec = extract_logmel(
+        raw_window, target_sample_rate,
+        n_mels=n_mels, n_fft=n_fft,
+        hop_length=hop_length, target_frames=tf,
+    )
+    # Compute mel center frequencies in Hz for y-axis
+    mel_frequencies = librosa.mel_frequencies(n_mels=n_mels + 2, fmin=0, fmax=target_sample_rate / 2)
+    y_hz = mel_frequencies[1:-1].tolist()
+    # Compute time axis in seconds for x-axis
+    n_frames = spec.shape[1]
+    time_offset = window_index * window_size_seconds
+    x_seconds = [time_offset + (j * hop_length / target_sample_rate) for j in range(n_frames)]
+    return spec, target_sample_rate, total, y_hz, x_seconds
 
 
 @router.get("/{audio_id}/spectrogram")
@@ -266,7 +285,7 @@ async def get_spectrogram(
         raise HTTPException(404, "Audio file not found on disk")
 
     try:
-        spec, sr, total = await asyncio.to_thread(
+        spec, sr, total, y_hz, x_seconds = await asyncio.to_thread(
             _compute_spectrogram, file_path, window_index,
             window_size_seconds, target_sample_rate,
             n_mels, n_fft, hop_length, target_frames,
@@ -283,6 +302,8 @@ async def get_spectrogram(
         total_windows=total,
         min_db=float(spec.min()),
         max_db=float(spec.max()),
+        y_axis_hz=y_hz,
+        x_axis_seconds=x_seconds,
     )
 
 
