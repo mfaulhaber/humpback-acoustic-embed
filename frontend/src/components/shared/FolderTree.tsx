@@ -42,16 +42,18 @@ interface FolderNodeProps<T> {
   fullPath: string;
   node: TreeNode<T>;
   renderLeaf: (item: T) => ReactNode;
+  renderFolderAction?: (folderPath: string, itemCount: number) => ReactNode;
   isExpanded: (key: string) => boolean;
   onToggle: (path: string) => void;
 }
 
-function FolderNode<T>({ name, fullPath, node, renderLeaf, isExpanded, onToggle }: FolderNodeProps<T>) {
+function FolderNode<T>({ name, fullPath, node, renderLeaf, renderFolderAction, isExpanded, onToggle }: FolderNodeProps<T>) {
   const isOpen = isExpanded(fullPath);
   const count = countItems(node);
+  const isTopLevel = !fullPath.includes("/");
 
   return (
-    <div>
+    <div className="group/folder">
       <button
         onClick={() => onToggle(fullPath)}
         className="flex items-center gap-1 py-1 px-1 w-full text-left hover:bg-accent rounded text-sm"
@@ -62,10 +64,18 @@ function FolderNode<T>({ name, fullPath, node, renderLeaf, isExpanded, onToggle 
         <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="font-medium">{name}</span>
         <span className="text-muted-foreground text-xs ml-1">({count})</span>
+        {isTopLevel && renderFolderAction && (
+          <span
+            className="ml-auto opacity-0 group-hover/folder:opacity-100 transition-opacity"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {renderFolderAction(fullPath, count)}
+          </span>
+        )}
       </button>
       {isOpen && (
         <div className="ml-4 border-l pl-2">
-          {renderChildren(node, renderLeaf, fullPath, isExpanded, onToggle)}
+          {renderChildren(node, renderLeaf, fullPath, isExpanded, onToggle, renderFolderAction)}
         </div>
       )}
     </div>
@@ -78,6 +88,7 @@ function renderChildren<T>(
   parentPath: string,
   isExpanded: (key: string) => boolean,
   onToggle: (path: string) => void,
+  renderFolderAction?: (folderPath: string, itemCount: number) => ReactNode,
 ): ReactNode {
   const folders = Array.from(node.children.entries()).sort(([a], [b]) => a.localeCompare(b));
   return (
@@ -91,6 +102,7 @@ function renderChildren<T>(
             fullPath={fp}
             node={child}
             renderLeaf={renderLeaf}
+            renderFolderAction={renderFolderAction}
             isExpanded={isExpanded}
             onToggle={onToggle}
           />
@@ -107,10 +119,11 @@ interface FolderTreeProps<T> {
   items: T[];
   getPath: (item: T) => string;
   renderLeaf: (item: T) => ReactNode;
+  renderFolderAction?: (folderPath: string, itemCount: number) => ReactNode;
   stateKey?: string;
 }
 
-export function FolderTree<T>({ items, getPath, renderLeaf, stateKey = "default" }: FolderTreeProps<T>) {
+export function FolderTree<T>({ items, getPath, renderLeaf, renderFolderAction, stateKey = "default" }: FolderTreeProps<T>) {
   const { isExpanded, toggle } = useCollapseState(stateKey, "ft");
 
   const root = buildTrie(items, getPath);
@@ -120,5 +133,5 @@ export function FolderTree<T>({ items, getPath, renderLeaf, stateKey = "default"
     return <div className="space-y-0.5">{root.items.map((item, i) => <div key={i}>{renderLeaf(item)}</div>)}</div>;
   }
 
-  return <div className="space-y-0.5">{renderChildren(root, renderLeaf, "", isExpanded, toggle)}</div>;
+  return <div className="space-y-0.5">{renderChildren(root, renderLeaf, "", isExpanded, toggle, renderFolderAction)}</div>;
 }

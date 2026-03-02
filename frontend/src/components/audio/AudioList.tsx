@@ -1,6 +1,10 @@
+import { useState } from "react";
+import { Trash2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { AudioFile } from "@/api/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FolderTree } from "@/components/shared/FolderTree";
+import { DeleteFolderDialog } from "@/components/audio/DeleteFolderDialog";
 import { fmtDate, formatTime } from "@/utils/format";
 
 interface AudioListProps {
@@ -9,6 +13,9 @@ interface AudioListProps {
 }
 
 export function AudioList({ audioFiles, onSelect }: AudioListProps) {
+  const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
   if (audioFiles.length === 0) {
     return (
       <Card>
@@ -29,6 +36,18 @@ export function AudioList({ audioFiles, onSelect }: AudioListProps) {
           items={audioFiles}
           getPath={(f) => f.folder_path}
           stateKey="audioTree"
+          renderFolderAction={(folderPath) => (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeletingFolder(folderPath);
+              }}
+              className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+              title={`Delete folder "${folderPath}"`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           renderLeaf={(file) => (
             <button
               onClick={() => onSelect(file)}
@@ -46,6 +65,20 @@ export function AudioList({ audioFiles, onSelect }: AudioListProps) {
           )}
         />
       </CardContent>
+
+      {deletingFolder && (
+        <DeleteFolderDialog
+          folderPath={deletingFolder}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setDeletingFolder(null);
+          }}
+          onDeleted={() => {
+            setDeletingFolder(null);
+            queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
+          }}
+        />
+      )}
     </Card>
   );
 }

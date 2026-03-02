@@ -22,6 +22,8 @@ from humpback.schemas.audio import (
     AudioMetadataIn,
     AudioMetadataOut,
     EmbeddingSimilarityOut,
+    FolderDeletePreview,
+    FolderDeleteResult,
     SpectrogramOut,
 )
 from humpback.services import audio_service
@@ -82,6 +84,29 @@ async def upload_audio(
 async def list_audio(session: SessionDep) -> list[AudioFileOut]:
     files = await audio_service.list_audio(session)
     return [_audio_to_out(af) for af in files]
+
+
+@router.get("/folders/delete-preview")
+async def folder_delete_preview(
+    session: SessionDep,
+    folder_path: str = Query(...),
+) -> FolderDeletePreview:
+    return await audio_service.preview_folder_delete(session, folder_path)
+
+
+@router.delete("/folders")
+async def delete_folder(
+    session: SessionDep,
+    settings: SettingsDep,
+    folder_path: str = Query(...),
+    confirm_clustering_delete: bool = Query(default=False),
+) -> FolderDeleteResult:
+    try:
+        return await audio_service.execute_folder_delete(
+            session, settings.storage_root, folder_path, confirm_clustering_delete
+        )
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @router.get("/{audio_id}")

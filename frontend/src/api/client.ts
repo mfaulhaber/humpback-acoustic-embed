@@ -8,6 +8,8 @@ import type {
   ClusterOut,
   EmbeddingSet,
   EmbeddingSimilarity,
+  FolderDeletePreview,
+  FolderDeleteResult,
   ModelConfig,
   ModelConfigCreate,
   ParameterSweepPoint,
@@ -83,6 +85,17 @@ export function audioDownloadUrl(audioId: string) {
 export function audioWindowUrl(audioId: string, startSeconds: number, durationSeconds: number) {
   return `/audio/${audioId}/window?start_seconds=${startSeconds}&duration_seconds=${durationSeconds}`;
 }
+
+// ---- Folder Delete ----
+
+export const fetchFolderDeletePreview = (folderPath: string) =>
+  api<FolderDeletePreview>(`/audio/folders/delete-preview?folder_path=${encodeURIComponent(folderPath)}`);
+
+export const deleteFolder = (folderPath: string, confirmClusteringDelete: boolean) =>
+  api<FolderDeleteResult>(
+    `/audio/folders?folder_path=${encodeURIComponent(folderPath)}&confirm_clustering_delete=${confirmClusteringDelete}`,
+    { method: "DELETE" },
+  );
 
 // ---- Processing ----
 

@@ -41,6 +41,31 @@ export interface EmbeddingSimilarity {
   similarity_matrix: number[][];
 }
 
+// ---- Folder Delete ----
+
+export interface AffectedClusteringJob {
+  id: string;
+  status: string;
+  overlapping_embedding_set_ids: string[];
+}
+
+export interface FolderDeletePreview {
+  folder_path: string;
+  audio_file_count: number;
+  embedding_set_count: number;
+  processing_job_count: number;
+  affected_clustering_jobs: AffectedClusteringJob[];
+  has_clustering_conflicts: boolean;
+}
+
+export interface FolderDeleteResult {
+  folder_path: string;
+  deleted_audio_files: number;
+  deleted_embedding_sets: number;
+  deleted_processing_jobs: number;
+  deleted_clustering_jobs: number;
+}
+
 // ---- Processing ----
 
 export interface ProcessingJobCreate {

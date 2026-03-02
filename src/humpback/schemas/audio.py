@@ -43,6 +43,29 @@ class EmbeddingSimilarityOut(BaseModel):
     similarity_matrix: list[list[float]]
 
 
+class AffectedClusteringJob(BaseModel):
+    id: str
+    status: str
+    overlapping_embedding_set_ids: list[str]
+
+
+class FolderDeletePreview(BaseModel):
+    folder_path: str
+    audio_file_count: int
+    embedding_set_count: int
+    processing_job_count: int
+    affected_clustering_jobs: list[AffectedClusteringJob]
+    has_clustering_conflicts: bool
+
+
+class FolderDeleteResult(BaseModel):
+    folder_path: str
+    deleted_audio_files: int
+    deleted_embedding_sets: int
+    deleted_processing_jobs: int
+    deleted_clustering_jobs: int
+
+
 class AudioFileOut(BaseModel):
     id: str
     filename: str
