@@ -66,6 +66,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return FileResponse(DIST_DIR / "index.html")
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/app/{full_path:path}")
+    async def spa_catchall(full_path: str):
+        if has_dist:
+            return FileResponse(DIST_DIR / "index.html")
+        return FileResponse(STATIC_DIR / "index.html")
+
     # Keep legacy static mount for backward compat
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

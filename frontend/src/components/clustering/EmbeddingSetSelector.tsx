@@ -2,12 +2,27 @@ import { useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ChevronRight, ChevronDown } from "lucide-react";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useCreateClusteringJob } from "@/hooks/queries/useClustering";
 import { ClusteringParamsForm, type ClusteringParams } from "./ClusteringParamsForm";
 import { showMsg } from "@/components/shared/MessageToast";
-import { shortId, audioDisplayName } from "@/utils/format";
 import type { EmbeddingSet } from "@/api/types";
+
+const ROOT_SENTINEL = "__root__";
+
+interface FolderNode {
+  /** child folder name (e.g. "Ascending_moan") or ROOT_SENTINEL */
+  child: string;
+  /** embedding sets for audio files in this subfolder */
+  sets: EmbeddingSet[];
+}
+
+interface ParentNode {
+  parent: string;
+  children: FolderNode[];
+  totalSets: number;
+}
 
 interface EmbeddingSetSelectorProps {
   embeddingSets: EmbeddingSet[];
@@ -15,55 +30,103 @@ interface EmbeddingSetSelectorProps {
 
 export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<string> | null>(null);
   const { data: audioFiles = [] } = useAudioFiles();
   const createJob = useCreateClusteringJob();
 
-  const audioMap = new Map(audioFiles.map((af) => [af.id, af]));
+  const audioMap = useMemo(() => new Map(audioFiles.map((af) => [af.id, af])), [audioFiles]);
 
-  // Group by model version
-  const grouped = useMemo(() => {
-    const map = new Map<string, EmbeddingSet[]>();
+  // Build two-level folder tree: parent → child → embedding sets
+  const folderTree = useMemo(() => {
+    // Map each embedding set to its parent/child folder via audioMap
+    const tree = new Map<string, Map<string, EmbeddingSet[]>>();
+
     for (const es of embeddingSets) {
-      const key = es.model_version;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(es);
-    }
-    return map;
-  }, [embeddingSets]);
+      const af = audioMap.get(es.audio_file_id);
+      const folderPath = af?.folder_path || "";
+      const slashIdx = folderPath.indexOf("/");
+      const parent = folderPath ? (slashIdx >= 0 ? folderPath.slice(0, slashIdx) : folderPath) : ROOT_SENTINEL;
+      const child = folderPath && slashIdx >= 0 ? folderPath.slice(slashIdx + 1) : ROOT_SENTINEL;
 
-  const toggleOne = useCallback((id: string) => {
+      if (!tree.has(parent)) tree.set(parent, new Map());
+      const childMap = tree.get(parent)!;
+      if (!childMap.has(child)) childMap.set(child, []);
+      childMap.get(child)!.push(es);
+    }
+
+    // Convert to sorted array structure
+    const result: ParentNode[] = [];
+    const sortedParents = [...tree.keys()].sort((a, b) => {
+      if (a === ROOT_SENTINEL) return -1;
+      if (b === ROOT_SENTINEL) return 1;
+      return a.localeCompare(b);
+    });
+
+    for (const parent of sortedParents) {
+      const childMap = tree.get(parent)!;
+      const sortedChildren = [...childMap.keys()].sort((a, b) => {
+        if (a === ROOT_SENTINEL) return -1;
+        if (b === ROOT_SENTINEL) return 1;
+        return a.localeCompare(b);
+      });
+      const children: FolderNode[] = sortedChildren.map((child) => ({
+        child,
+        sets: childMap.get(child)!,
+      }));
+      const totalSets = children.reduce((sum, c) => sum + c.sets.length, 0);
+      result.push({ parent, children, totalSets });
+    }
+
+    return result;
+  }, [embeddingSets, audioMap]);
+
+  const toggleChild = useCallback((sets: EmbeddingSet[]) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const allIn = sets.every((es) => next.has(es.id));
+      for (const es of sets) {
+        if (allIn) next.delete(es.id);
+        else next.add(es.id);
+      }
       return next;
     });
   }, []);
 
-  const toggleGroup = useCallback(
-    (modelVersion: string) => {
-      const group = grouped.get(modelVersion) ?? [];
-      const allSelected = group.every((es) => selected.has(es.id));
-      setSelected((prev) => {
-        const next = new Set(prev);
-        for (const es of group) {
-          if (allSelected) next.delete(es.id);
-          else next.add(es.id);
-        }
-        return next;
-      });
-    },
-    [grouped, selected],
-  );
+  const toggleParent = useCallback((node: ParentNode) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allSets = node.children.flatMap((c) => c.sets);
+      const allIn = allSets.every((es) => next.has(es.id));
+      for (const es of allSets) {
+        if (allIn) next.delete(es.id);
+        else next.add(es.id);
+      }
+      return next;
+    });
+  }, []);
 
   const toggleAll = useCallback(() => {
-    const allSelected = embeddingSets.every((es) => selected.has(es.id));
+    const allSelected = embeddingSets.length > 0 && embeddingSets.every((es) => selected.has(es.id));
     if (allSelected) {
       setSelected(new Set());
     } else {
       setSelected(new Set(embeddingSets.map((es) => es.id)));
     }
   }, [embeddingSets, selected]);
+
+  // null = initial state (all collapsed); once user interacts, explicit Set
+  const allParentKeys = useMemo(() => new Set(folderTree.map((n) => n.parent)), [folderTree]);
+  const effectiveCollapsed = collapsed ?? allParentKeys;
+
+  const toggleCollapse = useCallback((parent: string) => {
+    setCollapsed((prev) => {
+      const base = prev ?? allParentKeys;
+      const next = new Set(base);
+      if (next.has(parent)) next.delete(parent);
+      else next.add(parent);
+      return next;
+    });
+  }, [allParentKeys]);
 
   const handleSubmit = useCallback(
     (params: ClusteringParams) => {
@@ -105,6 +168,7 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
   );
 
   const allSelected = embeddingSets.length > 0 && embeddingSets.every((es) => selected.has(es.id));
+  const displayName = (key: string) => (key === ROOT_SENTINEL ? "(root)" : key);
 
   return (
     <Card>
@@ -117,35 +181,67 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Embedding set checkboxes grouped by model */}
-        <div className="space-y-3 max-h-60 overflow-y-auto">
-          {Array.from(grouped.entries()).map(([modelVersion, sets]) => {
-            const groupAllSelected = sets.every((es) => selected.has(es.id));
+        {/* Two-level folder tree */}
+        <div className="space-y-1 max-h-72 overflow-y-auto">
+          {folderTree.map((node) => {
+            const allParentSets = node.children.flatMap((c) => c.sets);
+            const parentAllSelected = allParentSets.every((es) => selected.has(es.id));
+            const parentSomeSelected = allParentSets.some((es) => selected.has(es.id));
+            const isCollapsed = effectiveCollapsed.has(node.parent);
+
             return (
-              <div key={modelVersion}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-medium">{modelVersion}</span>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => toggleGroup(modelVersion)}>
-                    {groupAllSelected ? "Deselect" : "Select All"}
-                  </Button>
+              <div key={node.parent}>
+                {/* Parent folder row */}
+                <div className="flex items-center gap-1.5 py-1">
+                  <button
+                    className="p-0.5 hover:bg-muted rounded"
+                    onClick={() => toggleCollapse(node.parent)}
+                  >
+                    {isCollapsed ? (
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                  </button>
+                  <Checkbox
+                    checked={parentAllSelected ? true : parentSomeSelected ? "indeterminate" : false}
+                    onCheckedChange={() => toggleParent(node)}
+                  />
+                  <span
+                    className="text-sm font-medium cursor-pointer select-none"
+                    onClick={() => toggleCollapse(node.parent)}
+                  >
+                    {displayName(node.parent)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    ({node.totalSets} sets)
+                  </span>
                 </div>
-                <div className="space-y-1 ml-2">
-                  {sets.map((es) => {
-                    const af = audioMap.get(es.audio_file_id);
-                    const name = af ? audioDisplayName(af.filename, af.folder_path) : es.audio_file_id;
-                    return (
-                      <label key={es.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <Checkbox
-                          checked={selected.has(es.id)}
-                          onCheckedChange={() => toggleOne(es.id)}
-                        />
-                        <span className="font-mono text-xs text-muted-foreground">{shortId(es.id)}</span>
-                        <span className="truncate">{name}</span>
-                        <span className="text-xs text-muted-foreground ml-auto">{es.vector_dim}d</span>
-                      </label>
-                    );
-                  })}
-                </div>
+
+                {/* Child folder rows */}
+                {!isCollapsed && (
+                  <div className="ml-6 space-y-0.5">
+                    {node.children.map((child) => {
+                      const childAllSelected = child.sets.every((es) => selected.has(es.id));
+                      const childSomeSelected = child.sets.some((es) => selected.has(es.id));
+                      return (
+                        <label
+                          key={child.child}
+                          className="flex items-center gap-2 py-0.5 text-sm cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={childAllSelected ? true : childSomeSelected ? "indeterminate" : false}
+                            onCheckedChange={() => toggleChild(child.sets)}
+                          />
+                          <span className="truncate">{displayName(child.child)}</span>
+                          <span className="text-xs text-muted-foreground ml-auto shrink-0">
+                            {child.sets.length} {child.sets.length === 1 ? "set" : "sets"}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -153,6 +249,12 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
             <p className="text-sm text-muted-foreground">No embedding sets available. Process some audio first.</p>
           )}
         </div>
+
+        {selected.size > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {selected.size} of {embeddingSets.length} embedding sets selected
+          </p>
+        )}
 
         <ClusteringParamsForm
           onSubmit={handleSubmit}

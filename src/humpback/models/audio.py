@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from humpback.database import Base, TimestampMixin, UUIDMixin
@@ -9,10 +9,13 @@ from humpback.database import Base, TimestampMixin, UUIDMixin
 
 class AudioFile(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "audio_files"
+    __table_args__ = (
+        UniqueConstraint("checksum_sha256", "folder_path", name="uq_checksum_folder"),
+    )
 
     filename: Mapped[str]
     folder_path: Mapped[str] = mapped_column(default="")
-    checksum_sha256: Mapped[str] = mapped_column(unique=True)
+    checksum_sha256: Mapped[str] = mapped_column()
     duration_seconds: Mapped[Optional[float]] = mapped_column(default=None)
     sample_rate_original: Mapped[Optional[int]] = mapped_column(default=None)
 

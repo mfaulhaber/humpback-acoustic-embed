@@ -1,10 +1,12 @@
 import { useMemo } from "react";
+import { useParams } from "react-router-dom";
 import { useClusteringJobs } from "@/hooks/queries/useClustering";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import { EmbeddingSetSelector } from "./EmbeddingSetSelector";
 import { ClusteringJobCard } from "./ClusteringJobCard";
 
 export function ClusteringTab() {
+  const { jobId: _focusedJobId } = useParams<{ jobId?: string }>();
   const { data: embeddingSets = [] } = useEmbeddingSets();
   const { data: jobs = [] } = useClusteringJobs(3000);
 

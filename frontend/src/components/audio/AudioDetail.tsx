@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useSpectrogram, useEmbeddingSimilarity } from "@/hooks/queries/useAudioFiles";
 import { useProcessingJobs } from "@/hooks/queries/useProcessing";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { AudioPlayerBar } from "./AudioPlayerBar";
+import { WindowPlayer } from "./WindowPlayer";
 import { SpectrogramPlot } from "./SpectrogramPlot";
 import { SimilarityMatrix } from "./SimilarityMatrix";
 import { shortId, fmtDate } from "@/utils/format";
@@ -21,10 +22,28 @@ interface AudioDetailProps {
 }
 
 export function AudioDetail({ file, embeddingSets, onBack, onPrev, onNext }: AudioDetailProps) {
-  const [windowIndex, setWindowIndex] = useState(0);
-  const [selectedEsId, setSelectedEsId] = useState<string | null>(
-    embeddingSets.length > 0 ? embeddingSets[0].id : null,
-  );
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const windowIndex = Number(searchParams.get("window") ?? 0);
+  const selectedEsId = searchParams.get("es") ?? (embeddingSets.length > 0 ? embeddingSets[0].id : null);
+
+  const setWindowIndex = (valueOrFn: number | ((prev: number) => number)) => {
+    const newVal = typeof valueOrFn === "function" ? valueOrFn(windowIndex) : valueOrFn;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("window", String(newVal));
+      return next;
+    }, { replace: true });
+  };
+
+  const setSelectedEsId = (id: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("es", id);
+      next.set("window", "0");
+      return next;
+    }, { replace: true });
+  };
 
   const selectedEs = embeddingSets.find((es) => es.id === selectedEsId);
   const windowSize = selectedEs?.window_size_seconds ?? 5;
@@ -183,13 +202,12 @@ export function AudioDetail({ file, embeddingSets, onBack, onPrev, onNext }: Aud
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <AudioPlayerBar
+            <WindowPlayer
               audioId={file.id}
-              totalWindows={totalWindows}
+              windows={Array.from({ length: totalWindows }, (_, i) => i)}
               windowSizeSeconds={windowSize}
-              duration={file.duration_seconds ?? 0}
-              activeWindow={windowIndex}
-              onWindowClick={setWindowIndex}
+              activeWindowIndex={windowIndex}
+              onWindowChange={setWindowIndex}
             />
             {spectrogram && <SpectrogramPlot data={spectrogram} />}
             {similarity && (

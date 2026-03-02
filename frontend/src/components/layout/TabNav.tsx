@@ -1,27 +1,27 @@
+import { NavLink } from "react-router-dom";
 import type { TabId } from "@/App";
 import { cn } from "@/lib/utils";
 import { Music, Cpu, Network, Settings } from "lucide-react";
 
-const tabs: { id: TabId; label: string; icon: typeof Music }[] = [
-  { id: "audio", label: "Audio", icon: Music },
-  { id: "processing", label: "Processing", icon: Cpu },
-  { id: "clustering", label: "Clustering", icon: Network },
-  { id: "admin", label: "Admin", icon: Settings },
+const tabs: { id: TabId; label: string; icon: typeof Music; to: string }[] = [
+  { id: "audio", label: "Audio", icon: Music, to: "/app/audio" },
+  { id: "processing", label: "Processing", icon: Cpu, to: "/app/processing" },
+  { id: "clustering", label: "Clustering", icon: Network, to: "/app/clustering" },
+  { id: "admin", label: "Admin", icon: Settings, to: "/app/admin" },
 ];
 
 interface TabNavProps {
   activeTab: TabId;
-  onTabChange: (tab: TabId) => void;
 }
 
-export function TabNav({ activeTab, onTabChange }: TabNavProps) {
+export function TabNav({ activeTab }: TabNavProps) {
   return (
     <nav className="border-b bg-white">
       <div className="max-w-[1400px] mx-auto flex">
-        {tabs.map(({ id, label, icon: Icon }) => (
-          <button
+        {tabs.map(({ id, label, icon: Icon, to }) => (
+          <NavLink
             key={id}
-            onClick={() => onTabChange(id)}
+            to={to}
             className={cn(
               "flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors",
               activeTab === id
@@ -31,7 +31,7 @@ export function TabNav({ activeTab, onTabChange }: TabNavProps) {
           >
             <Icon className="h-4 w-4" />
             {label}
-          </button>
+          </NavLink>
         ))}
       </div>
     </nav>

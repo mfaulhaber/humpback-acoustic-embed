@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
 import { AppShell } from "@/components/layout/AppShell";
 import { AudioTab } from "@/components/audio/AudioTab";
@@ -8,15 +8,29 @@ import { AdminTab } from "@/components/admin/AdminTab";
 
 export type TabId = "audio" | "processing" | "clustering" | "admin";
 
+function useActiveTab(): TabId {
+  const { pathname } = useLocation();
+  if (pathname.startsWith("/app/processing")) return "processing";
+  if (pathname.startsWith("/app/clustering")) return "clustering";
+  if (pathname.startsWith("/app/admin")) return "admin";
+  return "audio";
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>("audio");
+  const activeTab = useActiveTab();
 
   return (
-    <AppShell activeTab={activeTab} onTabChange={setActiveTab}>
-      {activeTab === "audio" && <AudioTab />}
-      {activeTab === "processing" && <ProcessingTab />}
-      {activeTab === "clustering" && <ClusteringTab />}
-      {activeTab === "admin" && <AdminTab />}
+    <AppShell activeTab={activeTab}>
+      <Routes>
+        <Route path="/" element={<Navigate to="/app/audio" replace />} />
+        <Route path="/app/audio/:audioId" element={<AudioTab />} />
+        <Route path="/app/audio" element={<AudioTab />} />
+        <Route path="/app/processing" element={<ProcessingTab />} />
+        <Route path="/app/clustering/:jobId" element={<ClusteringTab />} />
+        <Route path="/app/clustering" element={<ClusteringTab />} />
+        <Route path="/app/admin" element={<AdminTab />} />
+        <Route path="*" element={<Navigate to="/app/audio" replace />} />
+      </Routes>
       <Toaster />
     </AppShell>
   );

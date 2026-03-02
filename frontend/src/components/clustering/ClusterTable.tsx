@@ -3,7 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { useAssignments } from "@/hooks/queries/useClustering";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
-import { AudioPlayerBar } from "@/components/audio/AudioPlayerBar";
+import { WindowPlayer } from "@/components/audio/WindowPlayer";
 import { FolderTree } from "@/components/shared/FolderTree";
 import { cn } from "@/lib/utils";
 import type { ClusterOut } from "@/api/types";
@@ -95,7 +95,7 @@ function ClusterAssignments({ clusterId }: { clusterId: string }) {
   const grouped = useMemo(() => {
     const map = new Map<
       string,
-      { audioId: string; filename: string; folderPath: string; windowSize: number; duration: number; windows: number[] }
+      { audioId: string; filename: string; folderPath: string; windowSize: number; windows: number[] }
     >();
 
     for (const a of assignments) {
@@ -108,7 +108,6 @@ function ClusterAssignments({ clusterId }: { clusterId: string }) {
           filename: af?.filename ?? a.embedding_set_id,
           folderPath: af?.folder_path ?? "",
           windowSize: es?.window_size_seconds ?? 5,
-          duration: af?.duration_seconds ?? 0,
           windows: [],
         });
       }
@@ -129,14 +128,10 @@ function ClusterAssignments({ clusterId }: { clusterId: string }) {
       renderLeaf={(g) => (
         <div className="py-2">
           <p className="text-sm font-medium mb-1">{g.filename}</p>
-          <AudioPlayerBar
+          <WindowPlayer
             audioId={g.audioId}
-            totalWindows={Math.max(...g.windows) + 1}
+            windows={[...g.windows].sort((a, b) => a - b)}
             windowSizeSeconds={g.windowSize}
-            duration={g.duration}
-            activeWindow={g.windows[0] ?? 0}
-            onWindowClick={() => {}}
-            maxChips={40}
           />
         </div>
       )}

@@ -32,7 +32,10 @@ async def upload_audio(
     existing = await session.execute(
         select(AudioFile)
         .options(selectinload(AudioFile.metadata_))
-        .where(AudioFile.checksum_sha256 == checksum)
+        .where(
+            AudioFile.checksum_sha256 == checksum,
+            AudioFile.folder_path == folder_path,
+        )
     )
     if row := existing.scalar_one_or_none():
         return row, False
