@@ -54,6 +54,22 @@ export function ProcessingJobsList({ jobs }: ProcessingJobsListProps) {
             items={enriched}
             getPath={(j) => j._folderPath}
             stateKey="procTree"
+            renderFolderExtra={(_path, items) => {
+              const statuses = items.map((j) => j.status);
+              let aggregate: string;
+              if (statuses.some((s) => s === "running")) {
+                aggregate = "running";
+              } else if (statuses.some((s) => s === "queued")) {
+                aggregate = "queued";
+              } else if (statuses.some((s) => s === "failed")) {
+                aggregate = "failed";
+              } else if (statuses.every((s) => s === "canceled")) {
+                aggregate = "canceled";
+              } else {
+                aggregate = "complete";
+              }
+              return <StatusBadge status={aggregate} className="ml-1 text-[10px] px-1.5 py-0" />;
+            }}
             renderLeaf={(job) => (
               <div className="flex items-center gap-2 py-1 px-2 text-sm hover:bg-accent rounded">
                 <span className="font-mono text-xs text-muted-foreground">{shortId(job.id)}</span>
