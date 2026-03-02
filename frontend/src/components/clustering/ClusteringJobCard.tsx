@@ -7,7 +7,10 @@ import { UmapPlot } from "./UmapPlot";
 import { EvaluationPanel } from "./EvaluationPanel";
 import { ExportReport } from "./ExportReport";
 import { useClusters } from "@/hooks/queries/useClustering";
+import { useCollapseState } from "@/hooks/useCollapseState";
 import { shortId, fmtDate, jsonPretty } from "@/utils/format";
+import { ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { ClusteringJob } from "@/api/types";
 
 interface ClusteringJobCardProps {
@@ -19,12 +22,22 @@ export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
   const [showEval, setShowEval] = useState(false);
   const isComplete = job.status === "complete";
 
+  const { isExpanded, toggle } = useCollapseState("cjob", "cj");
+  const expanded = isExpanded(job.id);
+
   const { data: clusters = [] } = useClusters(isComplete ? job.id : null);
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center gap-3 flex-wrap">
+          {isComplete && (
+            <button onClick={() => toggle(job.id)} className="p-0.5 -ml-1 hover:bg-accent rounded">
+              <ChevronRight
+                className={cn("h-4 w-4 shrink-0 transition-transform", expanded && "rotate-90")}
+              />
+            </button>
+          )}
           <span className="font-mono text-sm font-medium">{shortId(job.id)}</span>
           <StatusBadge status={job.status} />
           {job.parameters && (
@@ -42,7 +55,7 @@ export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
         )}
       </CardHeader>
 
-      {isComplete && (
+      {isComplete && expanded && (
         <CardContent className="space-y-4">
           <ClusterTable clusters={clusters} />
 

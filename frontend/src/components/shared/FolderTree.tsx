@@ -1,6 +1,7 @@
-import { useState, useCallback, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { ChevronRight, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useCollapseState } from "@/hooks/useCollapseState";
 
 interface TreeNode<T> {
   children: Map<string, TreeNode<T>>;
@@ -41,12 +42,12 @@ interface FolderNodeProps<T> {
   fullPath: string;
   node: TreeNode<T>;
   renderLeaf: (item: T) => ReactNode;
-  expandState: Record<string, boolean>;
+  isExpanded: (key: string) => boolean;
   onToggle: (path: string) => void;
 }
 
-function FolderNode<T>({ name, fullPath, node, renderLeaf, expandState, onToggle }: FolderNodeProps<T>) {
-  const isOpen = expandState[fullPath] !== false; // default open
+function FolderNode<T>({ name, fullPath, node, renderLeaf, isExpanded, onToggle }: FolderNodeProps<T>) {
+  const isOpen = isExpanded(fullPath);
   const count = countItems(node);
 
   return (
@@ -64,7 +65,7 @@ function FolderNode<T>({ name, fullPath, node, renderLeaf, expandState, onToggle
       </button>
       {isOpen && (
         <div className="ml-4 border-l pl-2">
-          {renderChildren(node, renderLeaf, fullPath, expandState, onToggle)}
+          {renderChildren(node, renderLeaf, fullPath, isExpanded, onToggle)}
         </div>
       )}
     </div>
@@ -75,7 +76,7 @@ function renderChildren<T>(
   node: TreeNode<T>,
   renderLeaf: (item: T) => ReactNode,
   parentPath: string,
-  expandState: Record<string, boolean>,
+  isExpanded: (key: string) => boolean,
   onToggle: (path: string) => void,
 ): ReactNode {
   const folders = Array.from(node.children.entries()).sort(([a], [b]) => a.localeCompare(b));
@@ -90,7 +91,7 @@ function renderChildren<T>(
             fullPath={fp}
             node={child}
             renderLeaf={renderLeaf}
-            expandState={expandState}
+            isExpanded={isExpanded}
             onToggle={onToggle}
           />
         );
@@ -109,31 +110,15 @@ interface FolderTreeProps<T> {
   stateKey?: string;
 }
 
-// Persist expand state across re-renders using a module-level map
-const expandStates: Record<string, Record<string, boolean>> = {};
-
 export function FolderTree<T>({ items, getPath, renderLeaf, stateKey = "default" }: FolderTreeProps<T>) {
-  if (!expandStates[stateKey]) {
-    expandStates[stateKey] = {};
-  }
-  const [, setTick] = useState(0);
-
-  const onToggle = useCallback(
-    (path: string) => {
-      const st = expandStates[stateKey];
-      st[path] = st[path] === false ? true : false;
-      setTick((t) => t + 1);
-    },
-    [stateKey],
-  );
+  const { isExpanded, toggle } = useCollapseState(stateKey, "ft");
 
   const root = buildTrie(items, getPath);
-  const expandState = expandStates[stateKey];
 
   // If no folders at all, just render items flat
   if (root.children.size === 0) {
     return <div className="space-y-0.5">{root.items.map((item, i) => <div key={i}>{renderLeaf(item)}</div>)}</div>;
   }
 
-  return <div className="space-y-0.5">{renderChildren(root, renderLeaf, "", expandState, onToggle)}</div>;
+  return <div className="space-y-0.5">{renderChildren(root, renderLeaf, "", isExpanded, toggle)}</div>;
 }
