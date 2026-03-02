@@ -5,8 +5,9 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { ClusterTable } from "./ClusterTable";
 import { UmapPlot } from "./UmapPlot";
 import { EvaluationPanel } from "./EvaluationPanel";
+import { LabelDotPlot } from "./LabelDotPlot";
 import { ExportReport } from "./ExportReport";
-import { useClusters } from "@/hooks/queries/useClustering";
+import { useClusters, useMetrics } from "@/hooks/queries/useClustering";
 import { useCollapseState } from "@/hooks/useCollapseState";
 import { shortId, fmtDate, jsonPretty } from "@/utils/format";
 import { ChevronRight } from "lucide-react";
@@ -20,12 +21,19 @@ interface ClusteringJobCardProps {
 export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
   const [showUmap, setShowUmap] = useState(false);
   const [showEval, setShowEval] = useState(false);
+  const [showLabelPlot, setShowLabelPlot] = useState(false);
   const isComplete = job.status === "complete";
 
   const { isExpanded, toggle } = useCollapseState("cjob", "cj");
   const expanded = isExpanded(job.id);
 
   const { data: clusters = [] } = useClusters(isComplete ? job.id : null);
+  const { data: metrics } = useMetrics(isComplete ? job.id : null);
+
+  const hasConfusionMatrix =
+    !!metrics?.confusion_matrix &&
+    typeof metrics.confusion_matrix === "object" &&
+    Object.keys(metrics.confusion_matrix as object).length > 0;
 
   return (
     <Card>
@@ -66,11 +74,17 @@ export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
             <Button variant="outline" size="sm" onClick={() => setShowEval((v) => !v)}>
               {showEval ? "Hide Evaluation" : "Show Evaluation"}
             </Button>
+            {hasConfusionMatrix && (
+              <Button variant="outline" size="sm" onClick={() => setShowLabelPlot((v) => !v)}>
+                {showLabelPlot ? "Hide Label Plot" : "Show Label Plot"}
+              </Button>
+            )}
             <ExportReport jobId={job.id} />
           </div>
 
           {showUmap && <UmapPlot jobId={job.id} />}
           {showEval && <EvaluationPanel jobId={job.id} />}
+          {showLabelPlot && <LabelDotPlot jobId={job.id} />}
         </CardContent>
       )}
     </Card>
