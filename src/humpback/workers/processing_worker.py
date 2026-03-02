@@ -67,7 +67,7 @@ async def get_model_for_job(
             from humpback.processing.inference import TF2SavedModel
 
             logger.info("Loading TF2SavedModel: path=%s, dim=%d", model_config.path, model_config.vector_dim)
-            model = TF2SavedModel(model_config.path, model_config.vector_dim)
+            model = TF2SavedModel(model_config.path, model_config.vector_dim, force_cpu=settings.tf_force_cpu)
         else:
             from humpback.processing.inference import TFLiteModel
 

@@ -310,6 +310,7 @@ flowchart TD
 | `distance_metric` | euclidean | `"euclidean"` or `"cosine"` (passed to UMAP + HDBSCAN) |
 | `normalization` | per_window_max | Spectrogram normalization: `"per_window_max"`, `"global_ref"`, `"standardize"` (in feature_config) |
 | Parameter sweep range | 2–50 | Sweeps HDBSCAN (min_cluster_size × selection_method) + K-Means (k=2..30) |
+| `tf_force_cpu` | `false` | Force CPU for TF2 SavedModel inference, skipping GPU (env: `HUMPBACK_TF_FORCE_CPU`) |
 
 ---
 

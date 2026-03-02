@@ -131,6 +131,40 @@ directories containing `saved_model.pb`.
 Clustering validates that all selected embedding sets share the same vector
 dimensions to prevent mixing incompatible embeddings.
 
+### Apple Silicon GPU Acceleration (Metal)
+
+TF2 SavedModel inference runs on the Metal GPU on Apple Silicon Macs. This
+required solving a compatibility issue: JAX-exported SavedModels (like
+SurfPerch) embed `_XlaMustCompile` attributes in their graph, which force XLA
+compilation. Apple's `tensorflow-metal` plugin has no XLA backend, so these
+models fail on GPU even though every individual op (Conv2D, MatMul, RFFT, etc.)
+is natively supported by Metal.
+
+**How it works:**
+
+1. At model load time, the system inspects the SavedModel's protobuf for
+   `_XlaMustCompile` attributes
+2. If found, it creates a patched copy of the model (`<model_dir>-no-xla-compile`)
+   with the attribute stripped — variable shards are hard-linked to avoid
+   doubling disk usage
+3. The patched model is loaded on GPU and validated against a CPU baseline using
+   deterministic test inputs (tolerance: atol=1e-4, rtol=1e-3)
+4. If GPU validation passes, all inference runs on Metal GPU; if it fails, the
+   system falls back to CPU automatically and sets `gpu_failed=True` so the UI
+   can surface a warning
+
+The patched model copy is created once and reused across worker restarts. To
+force CPU-only inference (skipping GPU entirely), set `HUMPBACK_TF_FORCE_CPU=true`.
+
+**Typical startup log (GPU success):**
+
+```
+INFO: Model at models/surfperch-tensorflow2 contains _XlaMustCompile (JAX/XLA model). Patching for Metal GPU compatibility.
+INFO: Stripping _XlaMustCompile from models/surfperch-tensorflow2 → models/surfperch-tensorflow2-no-xla-compile
+INFO: Stripped 3 _XlaMustCompile attribute(s)
+INFO: GPU validation passed. Using GPU device: /device:GPU:0
+```
+
 ### Clustering Workflow
 
 ```
@@ -267,6 +301,7 @@ Environment variables (prefix `HUMPBACK_`):
 | `HUMPBACK_USE_REAL_MODEL` | `true` | Use real TFLite model vs fake |
 | `HUMPBACK_MODEL_PATH` | `models/multispecies_whale_fp16_flex.tflite` | Path to TFLite model file (fallback) |
 | `HUMPBACK_MODELS_DIR` | `models` | Directory to scan for `.tflite` model files |
+| `HUMPBACK_TF_FORCE_CPU` | `false` | Force CPU for TF2 SavedModel inference (skip GPU) |
 
 ---
 

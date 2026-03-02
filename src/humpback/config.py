@@ -14,5 +14,6 @@ class Settings(BaseSettings):
     use_real_model: bool = True
     model_path: str = "models/multispecies_whale_fp16_flex.tflite"
     models_dir: str = "models"
+    tf_force_cpu: bool = False
 
     model_config = {"env_prefix": "HUMPBACK_"}
