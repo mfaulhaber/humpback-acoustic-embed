@@ -131,6 +131,9 @@ export const fetchParameterSweep = (jobId: string) =>
 export const fetchAssignments = (clusterId: string) =>
   api<ClusterAssignment[]>(`/clustering/clusters/${clusterId}/assignments`);
 
+export const deleteClusteringJob = (jobId: string) =>
+  api<{ status: string }>(`/clustering/jobs/${jobId}`, { method: "DELETE" });
+
 // ---- Admin ----
 
 export const fetchModels = () => api<ModelConfig[]>("/admin/models");

@@ -160,6 +160,17 @@ async def get_parameter_sweep(job_id: str, session: SessionDep, settings: Settin
     return json.loads(sweep_path.read_text())
 
 
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, session: SessionDep, settings: SettingsDep):
+    try:
+        await clustering_service.delete_clustering_job(
+            session, job_id, Path(settings.storage_root)
+        )
+    except ValueError:
+        raise HTTPException(404, "Clustering job not found")
+    return {"status": "deleted"}
+
+
 @router.get("/clusters/{cluster_id}/assignments")
 async def get_assignments(cluster_id: str, session: SessionDep) -> list[ClusterAssignmentOut]:
     assignments = await clustering_service.get_cluster_assignments(session, cluster_id)

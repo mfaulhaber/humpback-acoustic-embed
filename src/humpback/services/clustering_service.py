@@ -1,4 +1,6 @@
 import json
+import shutil
+from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -7,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.processing import EmbeddingSet
+from humpback.storage import cluster_dir
 
 
 async def create_clustering_job(
@@ -73,3 +76,18 @@ async def get_cluster_assignments(
         select(ClusterAssignment).where(ClusterAssignment.cluster_id == cluster_id)
     )
     return list(result.scalars().all())
+
+
+async def delete_clustering_job(
+    session: AsyncSession, job_id: str, storage_root: Path
+) -> None:
+    job = await get_clustering_job(session, job_id)
+    if job is None:
+        raise ValueError(f"Clustering job not found: {job_id}")
+
+    await session.delete(job)
+    await session.commit()
+
+    output_dir = cluster_dir(storage_root, job_id)
+    if output_dir.exists():
+        shutil.rmtree(output_dir)

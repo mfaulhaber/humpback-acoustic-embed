@@ -7,6 +7,7 @@ import {
   fetchParameterSweep,
   fetchAssignments,
   createClusteringJob,
+  deleteClusteringJob,
 } from "@/api/client";
 import type { ClusteringJobCreate } from "@/api/types";
 
@@ -65,6 +66,16 @@ export function useCreateClusteringJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ClusteringJobCreate) => createClusteringJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["clusteringJobs"] });
+    },
+  });
+}
+
+export function useDeleteClusteringJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteClusteringJob(jobId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["clusteringJobs"] });
     },
