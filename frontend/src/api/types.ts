@@ -173,6 +173,20 @@ export interface ParameterSweepPoint {
   normalized_mutual_info?: number | null;
 }
 
+export interface DendrogramCoords {
+  icoord: number[][];
+  dcoord: number[][];
+}
+
+export interface DendrogramData {
+  categories: string[];
+  cluster_labels: string[];
+  values: number[][];
+  raw_counts: number[][];
+  row_dendrogram: DendrogramCoords;
+  col_dendrogram: DendrogramCoords;
+}
+
 // ---- Admin ----
 
 export interface ModelConfig {

@@ -21,6 +21,7 @@ dependencies = [
     "umap-learn>=0.5",
     "hdbscan>=0.8",
     "scikit-learn>=1.5",
+    "scipy>=1.14",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +31,6 @@ dev = [
     "pytest-cov>=6.0",
     "httpx>=0.28",
     "pytest-watch>=4.2",
-    "scipy>=1.14",
 ]
 
 [project.scripts]

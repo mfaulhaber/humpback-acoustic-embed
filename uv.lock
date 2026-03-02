@@ -744,6 +744,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "scikit-learn" },
+    { name = "scipy" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "tensorflow", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
     { name = "tensorflow-macos", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -759,7 +760,6 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-watch" },
-    { name = "scipy" },
 ]
 
 [package.dev-dependencies]
@@ -787,7 +787,7 @@ requires-dist = [
     { name = "pytest-watch", marker = "extra == 'dev'", specifier = ">=4.2" },
     { name = "python-multipart", specifier = ">=0.0.18" },
     { name = "scikit-learn", specifier = ">=1.5" },
-    { name = "scipy", marker = "extra == 'dev'", specifier = ">=1.14" },
+    { name = "scipy", specifier = ">=1.14" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "tensorflow", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'", specifier = ">=2.16" },
     { name = "tensorflow-macos", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=2.16" },

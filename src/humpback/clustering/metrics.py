@@ -175,6 +175,71 @@ def compute_detailed_category_metrics(
     }
 
 
+def compute_dendrogram_data(
+    confusion_matrix: dict[str, dict[str, int]],
+) -> dict[str, Any] | None:
+    """Compute hierarchical clustering dendrograms for a confusion matrix.
+
+    Takes the confusion matrix (category → {cluster_label: count}) and returns
+    reordered matrix data with dendrogram coordinates for both axes.
+
+    Returns None if fewer than 2 clusters or 2 categories.
+    """
+    from scipy.cluster.hierarchy import dendrogram, linkage
+
+    categories = sorted(confusion_matrix.keys())
+    cluster_set: set[str] = set()
+    for counts in confusion_matrix.values():
+        cluster_set.update(counts.keys())
+    cluster_labels = sorted(cluster_set, key=lambda x: int(x) if x.lstrip("-").isdigit() else x)
+
+    if len(categories) < 2 or len(cluster_labels) < 2:
+        return None
+
+    # Build matrix: rows=clusters, cols=categories
+    matrix = np.zeros((len(cluster_labels), len(categories)))
+    for j, cat in enumerate(categories):
+        for i, cl in enumerate(cluster_labels):
+            matrix[i, j] = confusion_matrix.get(cat, {}).get(cl, 0)
+
+    raw_counts = matrix.copy()
+
+    # Row-normalize (each row sums to 1)
+    row_sums = matrix.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1  # avoid division by zero
+    normalized = matrix / row_sums
+
+    # Compute linkage for rows (clusters) and columns (categories)
+    row_linkage = linkage(normalized, method="average", metric="euclidean")
+    col_linkage = linkage(normalized.T, method="average", metric="euclidean")
+
+    # Get dendrogram info (no_plot=True returns coordinates only)
+    row_dendro = dendrogram(row_linkage, no_plot=True)
+    col_dendro = dendrogram(col_linkage, no_plot=True)
+
+    # Reorder by dendrogram leaf order
+    row_order = row_dendro["leaves"]
+    col_order = col_dendro["leaves"]
+
+    reordered_normalized = normalized[np.ix_(row_order, col_order)]
+    reordered_raw = raw_counts[np.ix_(row_order, col_order)]
+
+    return {
+        "categories": [categories[i] for i in col_order],
+        "cluster_labels": [cluster_labels[i] for i in row_order],
+        "values": reordered_normalized.tolist(),
+        "raw_counts": reordered_raw.astype(int).tolist(),
+        "row_dendrogram": {
+            "icoord": row_dendro["icoord"],
+            "dcoord": row_dendro["dcoord"],
+        },
+        "col_dendrogram": {
+            "icoord": col_dendro["icoord"],
+            "dcoord": col_dendro["dcoord"],
+        },
+    }
+
+
 def run_parameter_sweep(
     embeddings: np.ndarray,
     parameters: dict[str, Any] | None = None,

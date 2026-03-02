@@ -6,6 +6,7 @@ import type {
   ClusteringJobCreate,
   ClusteringMetrics,
   ClusterOut,
+  DendrogramData,
   EmbeddingSet,
   EmbeddingSimilarity,
   FolderDeletePreview,
@@ -127,6 +128,9 @@ export const fetchMetrics = (jobId: string) =>
 
 export const fetchParameterSweep = (jobId: string) =>
   api<ParameterSweepPoint[]>(`/clustering/jobs/${jobId}/parameter-sweep`);
+
+export const fetchDendrogram = (jobId: string) =>
+  api<DendrogramData>(`/clustering/jobs/${jobId}/dendrogram`);
 
 export const fetchAssignments = (clusterId: string) =>
   api<ClusterAssignment[]>(`/clustering/clusters/${clusterId}/assignments`);

@@ -6,6 +6,7 @@ import { ClusterTable } from "./ClusterTable";
 import { UmapPlot } from "./UmapPlot";
 import { EvaluationPanel } from "./EvaluationPanel";
 import { LabelDotPlot } from "./LabelDotPlot";
+import { DendrogramHeatmap } from "./DendrogramHeatmap";
 import { ExportReport } from "./ExportReport";
 import { DeleteClusteringJobDialog } from "./DeleteClusteringJobDialog";
 import { useClusters, useMetrics } from "@/hooks/queries/useClustering";
@@ -23,6 +24,7 @@ export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
   const [showUmap, setShowUmap] = useState(false);
   const [showEval, setShowEval] = useState(false);
   const [showLabelPlot, setShowLabelPlot] = useState(false);
+  const [showDendrogram, setShowDendrogram] = useState(false);
   const [showTable, setShowTable] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const isComplete = job.status === "complete";
@@ -97,6 +99,11 @@ export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
                 {showLabelPlot ? "Hide Label Plot" : "Show Label Plot"}
               </Button>
             )}
+            {hasConfusionMatrix && (
+              <Button variant="outline" size="sm" onClick={() => setShowDendrogram((v) => !v)}>
+                {showDendrogram ? "Hide Dendrogram" : "Show Dendrogram"}
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setShowEval((v) => !v)}>
               {showEval ? "Hide Evaluation" : "Show Evaluation"}
             </Button>
@@ -105,6 +112,7 @@ export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
 
           {showUmap && <UmapPlot jobId={job.id} />}
           {showLabelPlot && <LabelDotPlot jobId={job.id} />}
+          {showDendrogram && <DendrogramHeatmap jobId={job.id} />}
           {showEval && <EvaluationPanel jobId={job.id} />}
         </CardContent>
       )}

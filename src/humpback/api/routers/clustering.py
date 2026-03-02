@@ -6,7 +6,10 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
-from humpback.clustering.metrics import extract_category_from_folder_path
+from humpback.clustering.metrics import (
+    compute_dendrogram_data,
+    extract_category_from_folder_path,
+)
 from humpback.models.audio import AudioFile
 from humpback.models.processing import EmbeddingSet
 from humpback.schemas.clustering import (
@@ -142,6 +145,31 @@ async def get_metrics(job_id: str, session: SessionDep):
     if not job.metrics_json:
         return {}
     return json.loads(job.metrics_json)
+
+
+@router.get("/jobs/{job_id}/dendrogram")
+async def get_dendrogram(job_id: str, session: SessionDep):
+    """Return hierarchical clustering dendrogram data for the confusion matrix."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+    if not job.metrics_json:
+        raise HTTPException(404, "No metrics available for this job")
+
+    metrics = json.loads(job.metrics_json)
+    confusion_matrix = metrics.get("confusion_matrix", {})
+    if not confusion_matrix:
+        raise HTTPException(404, "No confusion matrix available for this job")
+
+    result = compute_dendrogram_data(confusion_matrix)
+    if result is None:
+        raise HTTPException(
+            422, "Need at least 2 clusters and 2 categories to compute dendrogram"
+        )
+
+    return result
 
 
 @router.get("/jobs/{job_id}/parameter-sweep")

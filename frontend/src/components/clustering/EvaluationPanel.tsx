@@ -1,6 +1,4 @@
-import { useMemo } from "react";
-import Plot from "react-plotly.js";
-import { useMetrics, useParameterSweep } from "@/hooks/queries/useClustering";
+import { useMetrics } from "@/hooks/queries/useClustering";
 
 interface EvaluationPanelProps {
   jobId: string;
@@ -8,51 +6,6 @@ interface EvaluationPanelProps {
 
 export function EvaluationPanel({ jobId }: EvaluationPanelProps) {
   const { data: metrics, isLoading: metricsLoading } = useMetrics(jobId);
-  const { data: sweep, isLoading: sweepLoading } = useParameterSweep(jobId);
-
-  const sweepPlotData = useMemo(() => {
-    if (!sweep || sweep.length === 0) return null;
-
-    const xValues = sweep.map(
-      (p) => p.min_cluster_size ?? p.k ?? 0,
-    );
-    const traces: Plotly.Data[] = [
-      {
-        x: xValues,
-        y: sweep.map((p) => p.silhouette_score),
-        type: "scatter" as const,
-        mode: "lines+markers" as const,
-        name: "Silhouette Score",
-        marker: { color: "#3a86ff" },
-        connectgaps: false,
-      },
-      {
-        x: xValues,
-        y: sweep.map((p) => p.n_clusters),
-        type: "scatter" as const,
-        mode: "lines+markers" as const,
-        name: "N Clusters",
-        marker: { color: "#e63946" },
-        yaxis: "y2",
-      },
-    ];
-
-    const layout: Partial<Plotly.Layout> = {
-      xaxis: { title: { text: "min_cluster_size" } },
-      yaxis: { title: { text: "Silhouette Score" }, side: "left" },
-      yaxis2: {
-        title: { text: "N Clusters" },
-        overlaying: "y" as const,
-        side: "right",
-      },
-      legend: { orientation: "h" as const, y: -0.2 },
-      margin: { l: 60, r: 60, t: 20, b: 60 },
-      hovermode: "x unified" as const,
-      height: 350,
-    };
-
-    return { traces, layout };
-  }, [sweep]);
 
   if (metricsLoading) return <p className="text-sm text-muted-foreground">Loading metrics...</p>;
 
@@ -136,15 +89,6 @@ export function EvaluationPanel({ jobId }: EvaluationPanelProps) {
         </div>
       )}
 
-      {!sweepLoading && sweepPlotData && (
-        <Plot
-          data={sweepPlotData.traces}
-          layout={sweepPlotData.layout}
-          config={{ responsive: true, displayModeBar: false }}
-          useResizeHandler
-          style={{ width: "100%" }}
-        />
-      )}
     </div>
   );
 }

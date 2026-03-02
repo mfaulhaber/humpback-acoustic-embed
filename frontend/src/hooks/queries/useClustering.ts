@@ -4,6 +4,7 @@ import {
   fetchClusters,
   fetchVisualization,
   fetchMetrics,
+  fetchDendrogram,
   fetchParameterSweep,
   fetchAssignments,
   createClusteringJob,
@@ -40,6 +41,15 @@ export function useMetrics(jobId: string | null) {
   return useQuery({
     queryKey: ["metrics", jobId],
     queryFn: () => fetchMetrics(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity,
+  });
+}
+
+export function useDendrogram(jobId: string | null) {
+  return useQuery({
+    queryKey: ["dendrogram", jobId],
+    queryFn: () => fetchDendrogram(jobId!),
     enabled: !!jobId,
     staleTime: Infinity,
   });

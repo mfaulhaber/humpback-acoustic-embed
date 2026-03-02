@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
-import { fetchVisualization, fetchMetrics } from "@/api/client";
-import type { VisualizationData, ClusteringMetrics } from "@/api/types";
+import { fetchVisualization, fetchMetrics, fetchDendrogram } from "@/api/client";
+import type { VisualizationData, ClusteringMetrics, DendrogramData } from "@/api/types";
 import { shortId } from "@/utils/format";
 import { showMsg } from "@/components/shared/MessageToast";
 
@@ -118,6 +118,133 @@ function buildLabelPlotData(metrics: ClusteringMetrics) {
   return { trace, layout };
 }
 
+function buildDendrogramPlotData(data: DendrogramData) {
+  const { categories, cluster_labels, values, raw_counts, row_dendrogram, col_dendrogram } = data;
+
+  const nRows = cluster_labels.length;
+  const nCols = categories.length;
+
+  // Column dendrogram traces (top)
+  const colDendroTraces = col_dendrogram.icoord.map((ic, idx) => ({
+    x: ic,
+    y: col_dendrogram.dcoord[idx],
+    type: "scatter",
+    mode: "lines",
+    line: { color: "#64748b", width: 1 },
+    xaxis: "x",
+    yaxis: "y2",
+    hoverinfo: "skip",
+    showlegend: false,
+  }));
+
+  // Row dendrogram traces (left) — rotated
+  const rowDendroTraces = row_dendrogram.icoord.map((ic, idx) => ({
+    x: row_dendrogram.dcoord[idx].map((d: number) => -d),
+    y: ic,
+    type: "scatter",
+    mode: "lines",
+    line: { color: "#64748b", width: 1 },
+    xaxis: "x3",
+    yaxis: "y3",
+    hoverinfo: "skip",
+    showlegend: false,
+  }));
+
+  // Heatmap trace
+  const heatmapTrace = {
+    z: values,
+    x: categories,
+    y: cluster_labels,
+    type: "heatmap",
+    colorscale: [
+      [0, "#f0f4ff"],
+      [0.2, "#c7d7fe"],
+      [0.4, "#818cf8"],
+      [0.6, "#6366f1"],
+      [0.8, "#4338ca"],
+      [1, "#312e81"],
+    ],
+    xaxis: "x4",
+    yaxis: "y4",
+    customdata: raw_counts,
+    hovertemplate:
+      "Category: %{x}<br>Cluster: %{y}<br>Count: %{customdata}<br>Proportion: %{z:.3f}<extra></extra>",
+    showscale: true,
+    colorbar: {
+      title: { text: "Proportion" },
+      thickness: 12,
+      len: 0.55,
+      y: 0.25,
+      yanchor: "middle",
+    },
+    zmin: 0,
+    zmax: 1,
+  };
+
+  // Compute axis ranges
+  const colIAll = col_dendrogram.icoord.flat();
+  const colDAll = col_dendrogram.dcoord.flat();
+  const rowIAll = row_dendrogram.icoord.flat();
+  const rowDAll = row_dendrogram.dcoord.flat();
+
+  const colXRange = [Math.min(...colIAll) - 5, Math.max(...colIAll) + 5];
+  const colYRange = [0, Math.max(...colDAll) * 1.05];
+  const rowYRange = [Math.min(...rowIAll) - 5, Math.max(...rowIAll) + 5];
+  const rowXRange = [-Math.max(...rowDAll) * 1.05, 0];
+
+  const layout = {
+    xaxis: {
+      domain: [0.15, 0.92],
+      range: colXRange,
+      showticklabels: false,
+      showgrid: false,
+      zeroline: false,
+      showline: false,
+    },
+    yaxis2: {
+      domain: [0.82, 1],
+      range: colYRange,
+      showticklabels: false,
+      showgrid: false,
+      zeroline: false,
+      showline: false,
+    },
+    xaxis3: {
+      domain: [0, 0.13],
+      range: rowXRange,
+      showticklabels: false,
+      showgrid: false,
+      zeroline: false,
+      showline: false,
+    },
+    yaxis3: {
+      domain: [0, 0.8],
+      range: rowYRange,
+      showticklabels: false,
+      showgrid: false,
+      zeroline: false,
+      showline: false,
+    },
+    xaxis4: {
+      domain: [0.15, 0.92],
+      tickangle: -45,
+    },
+    yaxis4: {
+      domain: [0, 0.8],
+      autorange: "reversed",
+    },
+    height: Math.max(350, nRows * 28 + 200),
+    margin: { l: 100, r: 60, t: 30, b: Math.min(150, nCols * 10 + 60) },
+    hovermode: "closest",
+    showlegend: false,
+  };
+
+  return {
+    traces: [...colDendroTraces, ...rowDendroTraces, heatmapTrace],
+    layout,
+  };
+}
+
 interface ExportReportProps {
   jobId: string;
 }
@@ -128,9 +255,10 @@ export function ExportReport({ jobId }: ExportReportProps) {
   const handleExport = useCallback(async () => {
     setExporting(true);
     try {
-      const [viz, metrics] = await Promise.all([
+      const [viz, metrics, dendrogramData] = await Promise.all([
         fetchVisualization(jobId),
         fetchMetrics(jobId),
+        fetchDendrogram(jobId).catch(() => null),
       ]);
 
       // UMAP traces
@@ -146,6 +274,9 @@ export function ExportReport({ jobId }: ExportReportProps) {
 
       // Label distribution plot
       const labelPlot = buildLabelPlotData(metrics);
+
+      // Dendrogram heatmap
+      const dendrogramPlot = dendrogramData ? buildDendrogramPlotData(dendrogramData) : null;
 
       // Build metrics table HTML
       const metricRows = Object.entries(metrics)
@@ -188,11 +319,18 @@ var labelLayout=${JSON.stringify(labelPlot.layout)};
 Plotly.newPlot('label-plot',[labelTrace],labelLayout);`;
       }
 
+      if (dendrogramPlot) {
+        plotScripts += `
+var dendroTraces=${JSON.stringify(dendrogramPlot.traces)};
+var dendroLayout=${JSON.stringify(dendrogramPlot.layout)};
+Plotly.newPlot('dendro-plot',dendroTraces,dendroLayout);`;
+      }
+
       const sid = shortId(jobId);
       const html = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><title>Cluster Report - Job ${sid}</title>
-<script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"><\/script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"><\/script>
 <style>body{font-family:system-ui,sans-serif;max-width:1200px;margin:0 auto;padding:20px}h1{color:#1e293b}h3{color:#334155;margin-top:24px}table{border-collapse:collapse}th{text-align:left;border-bottom:2px solid #ccc;padding:4px 12px}.tooltip{position:fixed;background:#1e293b;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;pointer-events:none;z-index:1000;display:none}.section{margin-top:32px}</style>
 </head>
 <body>
@@ -207,6 +345,11 @@ Plotly.newPlot('label-plot',[labelTrace],labelLayout);`;
 ${labelPlot ? `<div class="section">
 <h3>Label Distribution</h3>
 <div id="label-plot" style="width:100%"></div>
+</div>` : ""}
+
+${dendrogramPlot ? `<div class="section">
+<h3>Cluster &times; Category Dendrogram</h3>
+<div id="dendro-plot" style="width:100%"></div>
 </div>` : ""}
 
 <div class="section">
