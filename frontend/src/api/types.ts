@@ -393,6 +393,28 @@ export interface DetectionJob {
   updated_at: string;
 }
 
+// ---- Directory Browsing ----
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface DirectoryListing {
+  path: string;
+  subdirectories: DirectoryEntry[];
+}
+
+// ---- Detection Content ----
+
+export interface DetectionRow {
+  filename: string;
+  start_sec: number;
+  end_sec: number;
+  avg_confidence: number;
+  peak_confidence: number;
+}
+
 // ---- Admin ----
 
 export interface ModelConfig {

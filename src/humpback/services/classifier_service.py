@@ -180,3 +180,79 @@ async def get_detection_job(
         select(DetectionJob).where(DetectionJob.id == job_id)
     )
     return result.scalar_one_or_none()
+
+
+async def delete_training_job(
+    session: AsyncSession, job_id: str, storage_root: Path
+) -> bool:
+    """Delete a training job. If it produced a model, cascade-delete the model too."""
+    result = await session.execute(
+        select(ClassifierTrainingJob).where(ClassifierTrainingJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return False
+
+    # Cascade-delete the associated classifier model if any
+    if job.classifier_model_id:
+        await delete_classifier_model(session, job.classifier_model_id, storage_root)
+
+    await session.delete(job)
+    await session.commit()
+    return True
+
+
+async def bulk_delete_training_jobs(
+    session: AsyncSession, job_ids: list[str], storage_root: Path
+) -> int:
+    """Delete multiple training jobs. Returns count of deleted jobs."""
+    count = 0
+    for job_id in job_ids:
+        if await delete_training_job(session, job_id, storage_root):
+            count += 1
+    return count
+
+
+async def delete_detection_job(
+    session: AsyncSession, job_id: str, storage_root: Path
+) -> bool:
+    """Delete a detection job and its output files."""
+    result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return False
+
+    # Delete detection output directory
+    from humpback.storage import detection_dir
+
+    ddir = detection_dir(storage_root, job_id)
+    if ddir.is_dir():
+        shutil.rmtree(ddir)
+
+    await session.delete(job)
+    await session.commit()
+    return True
+
+
+async def bulk_delete_detection_jobs(
+    session: AsyncSession, job_ids: list[str], storage_root: Path
+) -> int:
+    """Delete multiple detection jobs. Returns count of deleted jobs."""
+    count = 0
+    for job_id in job_ids:
+        if await delete_detection_job(session, job_id, storage_root):
+            count += 1
+    return count
+
+
+async def bulk_delete_classifier_models(
+    session: AsyncSession, model_ids: list[str], storage_root: Path
+) -> int:
+    """Delete multiple classifier models. Returns count of deleted models."""
+    count = 0
+    for model_id in model_ids:
+        if await delete_classifier_model(session, model_id, storage_root):
+            count += 1
+    return count

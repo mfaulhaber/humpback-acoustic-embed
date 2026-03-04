@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown, FolderOpen } from "lucide-react";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import {
@@ -12,7 +12,11 @@ import {
   useClassifierModels,
   useCreateTrainingJob,
   useDeleteClassifierModel,
+  useBulkDeleteTrainingJobs,
+  useBulkDeleteClassifierModels,
 } from "@/hooks/queries/useClassifier";
+import { FolderBrowser } from "@/components/shared/FolderBrowser";
+import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
@@ -39,19 +43,32 @@ export function TrainingTab() {
   const { data: models = [] } = useClassifierModels();
   const createMutation = useCreateTrainingJob();
   const deleteMutation = useDeleteClassifierModel();
+  const bulkDeleteJobsMutation = useBulkDeleteTrainingJobs();
+  const bulkDeleteModelsMutation = useBulkDeleteClassifierModels();
 
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string> | null>(null);
   const [negativeFolder, setNegativeFolder] = useState("");
+  const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
+
+  // Job table selection
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [showJobDeleteDialog, setShowJobDeleteDialog] = useState(false);
+
+  // Model table selection
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [showModelDeleteDialog, setShowModelDeleteDialog] = useState(false);
 
   const hasActiveJobs = trainingJobs.some(
-    (j) => j.status === "queued" || j.status === "running"
+    (j) => j.status === "queued" || j.status === "running",
   );
 
   const audioMap = useMemo(
     () => new Map(audioFiles.map((af) => [af.id, af])),
-    [audioFiles]
+    [audioFiles],
   );
 
   // Build two-level folder tree: parent → child → embedding sets
@@ -141,7 +158,7 @@ export function TrainingTab() {
 
   const allParentKeys = useMemo(
     () => new Set(folderTree.map((n) => n.parent)),
-    [folderTree]
+    [folderTree],
   );
   const effectiveCollapsed = collapsed ?? allParentKeys;
 
@@ -155,7 +172,7 @@ export function TrainingTab() {
         return next;
       });
     },
-    [allParentKeys]
+    [allParentKeys],
   );
 
   const handleSubmit = () => {
@@ -172,8 +189,47 @@ export function TrainingTab() {
           setSelected(new Set());
           setNegativeFolder("");
         },
-      }
+      },
     );
+  };
+
+  // Job table helpers
+  const toggleJobId = (id: string) => {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allJobsSelected =
+    trainingJobs.length > 0 &&
+    trainingJobs.every((j) => selectedJobIds.has(j.id));
+  const someJobsSelected = trainingJobs.some((j) => selectedJobIds.has(j.id));
+
+  const toggleAllJobs = () => {
+    if (allJobsSelected) setSelectedJobIds(new Set());
+    else setSelectedJobIds(new Set(trainingJobs.map((j) => j.id)));
+  };
+
+  // Model table helpers
+  const toggleModelId = (id: string) => {
+    setSelectedModelIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allModelsSelected =
+    models.length > 0 && models.every((m) => selectedModelIds.has(m.id));
+  const someModelsSelected = models.some((m) => selectedModelIds.has(m.id));
+
+  const toggleAllModels = () => {
+    if (allModelsSelected) setSelectedModelIds(new Set());
+    else setSelectedModelIds(new Set(models.map((m) => m.id)));
   };
 
   const allSelected =
@@ -181,6 +237,14 @@ export function TrainingTab() {
     embeddingSets.every((es) => selected.has(es.id));
   const displayName = (key: string) =>
     key === ROOT_SENTINEL ? "(root)" : key;
+
+  const jobsWithModels = useMemo(() => {
+    const count = [...selectedJobIds].filter((id) => {
+      const job = trainingJobs.find((j) => j.id === id);
+      return job?.classifier_model_id;
+    }).length;
+    return count;
+  }, [selectedJobIds, trainingJobs]);
 
   return (
     <div className="space-y-4">
@@ -213,16 +277,15 @@ export function TrainingTab() {
               {folderTree.map((node) => {
                 const allParentSets = node.children.flatMap((c) => c.sets);
                 const parentAllSelected = allParentSets.every((es) =>
-                  selected.has(es.id)
+                  selected.has(es.id),
                 );
                 const parentSomeSelected = allParentSets.some((es) =>
-                  selected.has(es.id)
+                  selected.has(es.id),
                 );
                 const isCollapsed = effectiveCollapsed.has(node.parent);
 
                 return (
                   <div key={node.parent}>
-                    {/* Parent folder row */}
                     <div className="flex items-center gap-1.5 py-1">
                       <button
                         className="p-0.5 hover:bg-muted rounded"
@@ -255,15 +318,14 @@ export function TrainingTab() {
                       </span>
                     </div>
 
-                    {/* Child folder rows */}
                     {!isCollapsed && (
                       <div className="ml-6 space-y-0.5">
                         {node.children.map((child) => {
                           const childAllSelected = child.sets.every((es) =>
-                            selected.has(es.id)
+                            selected.has(es.id),
                           );
                           const childSomeSelected = child.sets.some((es) =>
-                            selected.has(es.id)
+                            selected.has(es.id),
                           );
                           return (
                             <label
@@ -313,11 +375,21 @@ export function TrainingTab() {
             <label className="text-sm font-medium">
               Negative Audio Folder Path
             </label>
-            <Input
-              value={negativeFolder}
-              onChange={(e) => setNegativeFolder(e.target.value)}
-              placeholder="/path/to/negative/audio"
-            />
+            <div className="flex gap-2">
+              <Input
+                value={negativeFolder}
+                onChange={(e) => setNegativeFolder(e.target.value)}
+                placeholder="/path/to/negative/audio"
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setFolderBrowserOpen(true)}
+                title="Browse folders"
+              >
+                <FolderOpen className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <Button
             onClick={handleSubmit}
@@ -338,103 +410,245 @@ export function TrainingTab() {
         </CardContent>
       </Card>
 
-      {/* Training Jobs */}
+      {/* Training Jobs Table */}
       {trainingJobs.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Training Jobs{" "}
+        <div className="border rounded-md">
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold">Training Jobs</h3>
+              <Badge variant="secondary">{trainingJobs.length}</Badge>
               {hasActiveJobs && (
                 <span className="text-xs text-muted-foreground">
                   (polling…)
                 </span>
               )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {trainingJobs.map((job) => (
-                <TrainingJobRow key={job.id} job={job} />
-              ))}
             </div>
-          </CardContent>
-        </Card>
+            {selectedJobIds.size > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setShowJobDeleteDialog(true)}
+              >
+                Delete ({selectedJobIds.size})
+              </Button>
+            )}
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="w-10 px-3 py-2">
+                  <Checkbox
+                    checked={
+                      allJobsSelected
+                        ? true
+                        : someJobsSelected
+                          ? "indeterminate"
+                          : false
+                    }
+                    onCheckedChange={toggleAllJobs}
+                  />
+                </th>
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-left font-medium">
+                  Positive Sets
+                </th>
+                <th className="px-3 py-2 text-left font-medium">Model</th>
+                <th className="px-3 py-2 text-left font-medium">Created</th>
+                <th className="px-3 py-2 text-left font-medium">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trainingJobs.map((job) => (
+                <TrainingJobTableRow
+                  key={job.id}
+                  job={job}
+                  checked={selectedJobIds.has(job.id)}
+                  onToggle={() => toggleJobId(job.id)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      {/* Trained Models */}
+      {/* Trained Models Table */}
       {models.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Trained Models</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
+        <div className="border rounded-md">
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold">Trained Models</h3>
+              <Badge variant="secondary">{models.length}</Badge>
+            </div>
+            {selectedModelIds.size > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setShowModelDeleteDialog(true)}
+              >
+                Delete ({selectedModelIds.size})
+              </Button>
+            )}
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="w-10 px-3 py-2">
+                  <Checkbox
+                    checked={
+                      allModelsSelected
+                        ? true
+                        : someModelsSelected
+                          ? "indeterminate"
+                          : false
+                    }
+                    onCheckedChange={toggleAllModels}
+                  />
+                </th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-left font-medium">Model</th>
+                <th className="px-3 py-2 text-left font-medium">Accuracy</th>
+                <th className="px-3 py-2 text-left font-medium">AUC</th>
+                <th className="px-3 py-2 text-left font-medium">Created</th>
+              </tr>
+            </thead>
+            <tbody>
               {models.map((m) => (
-                <ModelRow
+                <ModelTableRow
                   key={m.id}
                   model={m}
+                  checked={selectedModelIds.has(m.id)}
+                  onToggle={() => toggleModelId(m.id)}
                   onDelete={() => deleteMutation.mutate(m.id)}
                 />
               ))}
-            </div>
-          </CardContent>
-        </Card>
+            </tbody>
+          </table>
+        </div>
       )}
+
+      {/* Dialogs */}
+      <FolderBrowser
+        open={folderBrowserOpen}
+        onOpenChange={setFolderBrowserOpen}
+        onSelect={setNegativeFolder}
+        initialPath={negativeFolder || "/"}
+      />
+
+      <BulkDeleteDialog
+        open={showJobDeleteDialog}
+        onOpenChange={setShowJobDeleteDialog}
+        count={selectedJobIds.size}
+        entityName="training job"
+        warningText={
+          jobsWithModels > 0
+            ? `${jobsWithModels} job(s) have trained models that will also be deleted.`
+            : undefined
+        }
+        onConfirm={() => {
+          bulkDeleteJobsMutation.mutate([...selectedJobIds], {
+            onSuccess: () => {
+              setSelectedJobIds(new Set());
+              setShowJobDeleteDialog(false);
+            },
+          });
+        }}
+        isPending={bulkDeleteJobsMutation.isPending}
+      />
+
+      <BulkDeleteDialog
+        open={showModelDeleteDialog}
+        onOpenChange={setShowModelDeleteDialog}
+        count={selectedModelIds.size}
+        entityName="classifier model"
+        onConfirm={() => {
+          bulkDeleteModelsMutation.mutate([...selectedModelIds], {
+            onSuccess: () => {
+              setSelectedModelIds(new Set());
+              setShowModelDeleteDialog(false);
+            },
+          });
+        }}
+        isPending={bulkDeleteModelsMutation.isPending}
+      />
     </div>
   );
 }
 
-function TrainingJobRow({ job }: { job: ClassifierTrainingJob }) {
-  const statusColor: Record<string, string> = {
-    queued: "bg-yellow-100 text-yellow-800",
-    running: "bg-blue-100 text-blue-800",
-    complete: "bg-green-100 text-green-800",
-    failed: "bg-red-100 text-red-800",
-    canceled: "bg-gray-100 text-gray-800",
-  };
+const statusColor: Record<string, string> = {
+  queued: "bg-yellow-100 text-yellow-800",
+  running: "bg-blue-100 text-blue-800",
+  complete: "bg-green-100 text-green-800",
+  failed: "bg-red-100 text-red-800",
+  canceled: "bg-gray-100 text-gray-800",
+};
+
+function TrainingJobTableRow({
+  job,
+  checked,
+  onToggle,
+}: {
+  job: ClassifierTrainingJob;
+  checked: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between p-2 border rounded text-sm">
-      <div className="flex items-center gap-2">
-        <Badge className={statusColor[job.status] ?? ""}>
-          {job.status}
-        </Badge>
-        <span className="font-medium">{job.name}</span>
-        <span className="text-muted-foreground">
-          {job.positive_embedding_set_ids.length} set(s) — {job.model_version}
-        </span>
-      </div>
-      {job.error_message && (
-        <span className="text-red-600 text-xs truncate max-w-64">
-          {job.error_message}
-        </span>
-      )}
-    </div>
+    <tr className="border-b last:border-0 hover:bg-muted/30">
+      <td className="px-3 py-2">
+        <Checkbox checked={checked} onCheckedChange={onToggle} />
+      </td>
+      <td className="px-3 py-2">
+        <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
+      </td>
+      <td className="px-3 py-2 font-medium">{job.name}</td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {job.positive_embedding_set_ids.length} set(s)
+      </td>
+      <td className="px-3 py-2 text-muted-foreground">{job.model_version}</td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {new Date(job.created_at).toLocaleDateString()}
+      </td>
+      <td className="px-3 py-2">
+        {job.error_message && (
+          <span className="text-red-600 text-xs truncate block max-w-48">
+            {job.error_message}
+          </span>
+        )}
+      </td>
+    </tr>
   );
 }
 
-function ModelRow({
+function ModelTableRow({
   model,
+  checked,
+  onToggle,
   onDelete,
 }: {
   model: ClassifierModelInfo;
+  checked: boolean;
+  onToggle: () => void;
   onDelete: () => void;
 }) {
   const summary = model.training_summary as Record<string, number> | null;
   return (
-    <div className="flex items-center justify-between p-2 border rounded text-sm">
-      <div className="flex items-center gap-3">
-        <span className="font-medium">{model.name}</span>
-        <span className="text-muted-foreground">{model.model_version}</span>
-        {summary && (
-          <span className="text-muted-foreground">
-            acc={((summary.cv_accuracy ?? 0) * 100).toFixed(1)}% AUC=
-            {((summary.cv_roc_auc ?? 0) * 100).toFixed(1)}%
-          </span>
-        )}
-      </div>
-      <Button variant="outline" size="sm" onClick={onDelete}>
-        Delete
-      </Button>
-    </div>
+    <tr className="border-b last:border-0 hover:bg-muted/30">
+      <td className="px-3 py-2">
+        <Checkbox checked={checked} onCheckedChange={onToggle} />
+      </td>
+      <td className="px-3 py-2 font-medium">{model.name}</td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {model.model_version}
+      </td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {summary ? `${((summary.cv_accuracy ?? 0) * 100).toFixed(1)}%` : "—"}
+      </td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {summary ? `${((summary.cv_roc_auc ?? 0) * 100).toFixed(1)}%` : "—"}
+      </td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {new Date(model.created_at).toLocaleDateString()}
+      </td>
+    </tr>
   );
 }

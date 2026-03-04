@@ -89,8 +89,10 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 ```
 frontend/
 ├── package.json, vite.config.ts, tsconfig.json, tailwind.config.ts
+├── playwright.config.ts         (Playwright test config)
 ├── components.json              (shadcn/ui config)
 ├── index.html
+├── e2e/                         (Playwright test specs)
 └── src/
     ├── main.tsx                 (QueryClientProvider + App mount)
     ├── App.tsx                  (tab state + tab content switching)
@@ -106,9 +108,9 @@ frontend/
     │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
-    │   ├── classifier/          (ClassifierTab, TrainingTab, DetectionTab)
+    │   ├── classifier/          (ClassifierTab, TrainingTab, DetectionTab, BulkDeleteDialog)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
-    │   └── shared/              (FolderTree, StatusBadge, MessageToast)
+    │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast)
     └── utils/                   (format.ts, audio.ts)
 ```
 
@@ -467,10 +469,15 @@ Clustering:
 - Cluster detail: members and metadata distributions
 
 Binary Classifier:
-- Train tab: select positive embedding sets, specify negative audio folder, name the model, queue training job
-- Detect tab: select trained model, specify audio folder to scan, set confidence threshold, queue detection job
+- Train tab: select positive embedding sets, specify negative audio folder (with folder browser dialog), name the model, queue training job
+- Detect tab: select trained model, specify audio folder to scan (with folder browser dialog), set confidence threshold, queue detection job
 - Monitor training and detection job status with polling
 - Download detection TSV results
+- Training jobs & trained models displayed in table layout with checkbox selection and bulk delete (training job delete cascade-deletes associated model)
+- Detection jobs displayed in table layout with checkbox selection and bulk delete
+- Expandable detection job rows show sortable TSV detection data (default: avg_confidence desc)
+- Inline audio playback of detected segments via streaming WAV slice endpoint
+- Server-side folder browser endpoint (`GET /classifier/browse-directories`) for selecting negative audio and detection audio folders
 
 Editing:
 - Manage/edit AudioMetadata associated with audio file
@@ -531,7 +538,35 @@ Constraints:
 - Use a tiny audio fixture (e.g., 10–20 seconds)
 - Use a tiny embedding model stub if needed (see below)
 
-### 11.4 Model Stub Strategy (So Tests Are Fast)
+### 11.4 Frontend Tests (Playwright)
+When changing UI components, add or update Playwright tests in `frontend/e2e/`.
+
+**When to add tests:**
+- Any new interactive feature (buttons, forms, expandable rows, audio playback)
+- Changes to data flow between frontend and backend (API calls, query hooks)
+- Bug fixes for UI behavior (regression tests)
+
+**Test patterns:**
+- **API-level tests** — use `request` fixture to hit backend endpoints directly and validate response content (e.g., WAV duration, JSON shape). These are fast and don't need a browser page.
+- **UI interaction tests** — use `page` fixture to navigate, click, and assert DOM state. Verify that user actions produce correct side effects (e.g., audio element src, table expansion, form submission).
+- Skip gracefully when preconditions aren't met (e.g., no completed jobs) using `test.skip()`.
+
+**Running:**
+```bash
+cd frontend
+npx playwright test                    # all tests
+npx playwright test e2e/some.spec.ts   # specific file
+npx playwright test -g "test name"     # by name pattern
+npx playwright test --headed           # see the browser
+```
+
+**Requirements:**
+- Tests run against `localhost:5173` (frontend dev server) proxying to `localhost:8000` (backend)
+- Backend must be running with real or fixture data
+- Config is in `frontend/playwright.config.ts`; tests go in `frontend/e2e/*.spec.ts`
+- Install browsers once: `cd frontend && npx playwright install chromium`
+
+### 11.5 Model Stub Strategy (So Tests Are Fast)
 For unit/integration/E2E tests:
 - Provide a "FakeTFLiteModel" implementation that returns deterministic embeddings
   (e.g., sine/cosine transforms of window index)
@@ -546,6 +581,7 @@ A PR/change is "done" only if:
 - unit tests added/updated for changed behavior
 - test suite passes locally
 - E2E smoke test passes locally
+- Playwright tests added/updated for UI changes (`cd frontend && npx playwright test`)
 - idempotency rules preserved (no duplicate embedding sets)
 
 ---

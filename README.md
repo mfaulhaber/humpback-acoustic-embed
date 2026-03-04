@@ -450,6 +450,14 @@ original recording the clustered segment falls.
 | GET | `/classifier/detection-jobs` | List detection jobs |
 | GET | `/classifier/detection-jobs/{id}` | Get detection job |
 | GET | `/classifier/detection-jobs/{id}/download` | Download detections TSV |
+| GET | `/classifier/detection-jobs/{id}/content` | Get detection TSV rows as JSON |
+| GET | `/classifier/detection-jobs/{id}/audio-slice` | Stream WAV slice (`?filename=&start_sec=&duration_sec=`) |
+| DELETE | `/classifier/training-jobs/{id}` | Delete training job (cascade-deletes model) |
+| POST | `/classifier/training-jobs/bulk-delete` | Bulk delete training jobs |
+| DELETE | `/classifier/detection-jobs/{id}` | Delete detection job + output files |
+| POST | `/classifier/detection-jobs/bulk-delete` | Bulk delete detection jobs |
+| POST | `/classifier/models/bulk-delete` | Bulk delete classifier models |
+| GET | `/classifier/browse-directories` | Browse server filesystem directories (`?root=`) |
 | GET | `/admin/models` | List registered models |
 | POST | `/admin/models` | Register a new model |
 | PUT | `/admin/models/{id}` | Update model config |
@@ -511,6 +519,31 @@ uv run pytest -k <pattern>          # Pattern matching
 ```bash
 uv run ptw
 ```
+
+### Frontend tests (Playwright)
+
+UI behavior is tested with Playwright. Tests live in `frontend/e2e/` and run against
+the dev server (`:5173`) proxying to the backend (`:8000`).
+
+```bash
+# One-time setup: install Chromium browser
+cd frontend && npx playwright install chromium
+
+# Run all frontend tests (requires backend + frontend dev server running)
+cd frontend && npx playwright test
+
+# Run a specific test file
+npx playwright test e2e/detection-playback.spec.ts
+
+# Run by test name pattern
+npx playwright test -g "audio-slice"
+
+# Run with browser visible (for debugging)
+npx playwright test --headed
+```
+
+Tests skip gracefully when preconditions aren't met (e.g., no completed detection
+jobs in the database).
 
 ---
 

@@ -6,6 +6,11 @@ import {
   deleteClassifierModel,
   fetchDetectionJobs,
   createDetectionJob,
+  browseDirectories,
+  bulkDeleteTrainingJobs,
+  bulkDeleteClassifierModels,
+  bulkDeleteDetectionJobs,
+  fetchDetectionContent,
 } from "@/api/client";
 import type { ClassifierTrainingJobCreate, DetectionJobCreate } from "@/api/types";
 
@@ -59,5 +64,52 @@ export function useDeleteClassifierModel() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["classifierModels"] });
     },
+  });
+}
+
+export function useBrowseDirectories(root: string | null) {
+  return useQuery({
+    queryKey: ["browseDirectories", root],
+    queryFn: () => browseDirectories(root!),
+    enabled: root !== null,
+  });
+}
+
+export function useBulkDeleteTrainingJobs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteTrainingJobs(ids),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trainingJobs"] });
+      qc.invalidateQueries({ queryKey: ["classifierModels"] });
+    },
+  });
+}
+
+export function useBulkDeleteClassifierModels() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteClassifierModels(ids),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["classifierModels"] });
+    },
+  });
+}
+
+export function useBulkDeleteDetectionJobs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteDetectionJobs(ids),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["detectionJobs"] });
+    },
+  });
+}
+
+export function useDetectionContent(jobId: string | null) {
+  return useQuery({
+    queryKey: ["detectionContent", jobId],
+    queryFn: () => fetchDetectionContent(jobId!),
+    enabled: jobId !== null,
   });
 }

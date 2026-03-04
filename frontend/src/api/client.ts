@@ -13,6 +13,8 @@ import type {
   DendrogramData,
   DetectionJob,
   DetectionJobCreate,
+  DetectionRow,
+  DirectoryListing,
   EmbeddingSet,
   EmbeddingSimilarity,
   FolderDeletePreview,
@@ -194,6 +196,36 @@ export const fetchDetectionJob = (jobId: string) =>
 
 export function detectionTsvUrl(jobId: string) {
   return `/classifier/detection-jobs/${jobId}/download`;
+}
+
+export const browseDirectories = (root: string) =>
+  api<DirectoryListing>(`/classifier/browse-directories?root=${encodeURIComponent(root)}`);
+
+export const deleteTrainingJob = (jobId: string) =>
+  api<{ status: string }>(`/classifier/training-jobs/${jobId}`, { method: "DELETE" });
+
+export const bulkDeleteTrainingJobs = (ids: string[]) =>
+  post<{ status: string; count: number }>("/classifier/training-jobs/bulk-delete", { ids });
+
+export const bulkDeleteClassifierModels = (ids: string[]) =>
+  post<{ status: string; count: number }>("/classifier/models/bulk-delete", { ids });
+
+export const deleteDetectionJob = (jobId: string) =>
+  api<{ status: string }>(`/classifier/detection-jobs/${jobId}`, { method: "DELETE" });
+
+export const bulkDeleteDetectionJobs = (ids: string[]) =>
+  post<{ status: string; count: number }>("/classifier/detection-jobs/bulk-delete", { ids });
+
+export const fetchDetectionContent = (jobId: string) =>
+  api<DetectionRow[]>(`/classifier/detection-jobs/${jobId}/content`);
+
+export function detectionAudioSliceUrl(
+  jobId: string,
+  filename: string,
+  startSec: number,
+  durationSec: number,
+) {
+  return `/classifier/detection-jobs/${jobId}/audio-slice?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&duration_sec=${durationSec}`;
 }
 
 // ---- Admin ----
