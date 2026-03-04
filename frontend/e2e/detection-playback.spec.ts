@@ -70,6 +70,18 @@ test.describe("Detection audio playback", () => {
     // Audio should be approximately the requested duration (within 1 second tolerance)
     expect(audioDuration).toBeGreaterThan(duration - 1);
     expect(audioDuration).toBeLessThan(duration + 1);
+
+    // Verify peak normalization: the loudest sample should be near ±32767
+    const dataOffset = 44; // WAV header size
+    let maxAbs = 0;
+    for (let i = dataOffset; i < body.length - 1; i += 2) {
+      const sample = body.readInt16LE(i);
+      const abs = Math.abs(sample);
+      if (abs > maxAbs) maxAbs = abs;
+    }
+    console.log(`Peak sample magnitude: ${maxAbs} / 32767`);
+    // Normalized audio should have peak above 90% of full scale
+    expect(maxAbs).toBeGreaterThan(32767 * 0.9);
   });
 
   test("play button triggers audio element with correct src", async ({

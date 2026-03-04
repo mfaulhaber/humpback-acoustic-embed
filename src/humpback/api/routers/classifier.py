@@ -322,6 +322,7 @@ async def get_detection_audio_slice(
     filename: str = Query(...),
     start_sec: float = Query(..., ge=0),
     duration_sec: float = Query(..., gt=0),
+    normalize: bool = Query(True),
 ):
     """Stream a WAV slice from a detection job's audio folder."""
     job = await classifier_service.get_detection_job(session, job_id)
@@ -361,6 +362,12 @@ async def get_detection_audio_slice(
     start_sample = min(start_sample, len(audio))
     end_sample = min(end_sample, len(audio))
     segment = audio[start_sample:end_sample]
+
+    # Peak-normalize so every clip plays at consistent loudness
+    if normalize:
+        peak = np.max(np.abs(segment))
+        if peak > 0:
+            segment = segment / peak
 
     # Encode as 16-bit PCM WAV in memory
     pcm = (segment * 32767).clip(-32768, 32767).astype(np.int16)
