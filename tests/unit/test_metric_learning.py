@@ -264,6 +264,7 @@ def test_refinement_report_structure():
         "training_params", "n_labeled_samples", "n_categories",
         "n_total_samples", "categories_used", "loss_history",
         "final_loss", "comparison", "base_summary", "refined_summary",
+        "_refined_embeddings",
     }
     assert expected_keys == set(result.keys())
 
@@ -290,6 +291,32 @@ def test_refinement_report_structure():
     assert result["n_categories"] == 3
     assert result["n_labeled_samples"] == 60
     assert result["n_total_samples"] == 60
+
+
+def test_refinement_returns_refined_embeddings():
+    """Full run: _refined_embeddings is in return dict with correct shape."""
+    embeddings, labels = _make_separable(n_per_class=20, n_classes=3, dim=32)
+
+    result = run_metric_learning_refinement(
+        embeddings,
+        labels,
+        params={
+            "ml_n_epochs": 3,
+            "ml_hidden_dim": 32,
+            "ml_output_dim": 16,
+            "ml_batch_size": 32,
+            "ml_mining_strategy": "random",
+            "clustering_algorithm": "kmeans",
+            "n_clusters": 3,
+            "reduction_method": "none",
+        },
+    )
+    assert result is not None
+    assert "_refined_embeddings" in result
+
+    refined = result["_refined_embeddings"]
+    assert refined.shape == (60, 16)  # n_total_samples × ml_output_dim
+    assert refined.dtype == np.float32
 
 
 def test_refinement_deterministic():

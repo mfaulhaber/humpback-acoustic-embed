@@ -16,6 +16,8 @@ async def create_clustering_job(
     session: AsyncSession,
     embedding_set_ids: list[str],
     parameters: Optional[dict[str, Any]] = None,
+    refined_from_job_id: Optional[str] = None,
+    storage_root: Optional[Path] = None,
 ) -> ClusteringJob:
     # Validate that all embedding sets share the same vector_dim
     if embedding_set_ids:
@@ -33,9 +35,29 @@ async def create_clustering_job(
                 f"Cannot cluster embedding sets with different vector dimensions: {dims}"
             )
 
+    # Validate refined_from_job_id if provided
+    if refined_from_job_id is not None:
+        source_result = await session.execute(
+            select(ClusteringJob).where(ClusteringJob.id == refined_from_job_id)
+        )
+        source_job = source_result.scalar_one_or_none()
+        if source_job is None:
+            raise ValueError(f"Source clustering job not found: {refined_from_job_id}")
+        if source_job.status != "complete":
+            raise ValueError(
+                f"Source clustering job is not complete (status={source_job.status})"
+            )
+        if storage_root is not None:
+            refined_path = cluster_dir(storage_root, refined_from_job_id) / "refined_embeddings.parquet"
+            if not refined_path.exists():
+                raise ValueError(
+                    f"Source job {refined_from_job_id} has no refined embeddings"
+                )
+
     job = ClusteringJob(
         embedding_set_ids=json.dumps(embedding_set_ids),
         parameters=json.dumps(parameters) if parameters else None,
+        refined_from_job_id=refined_from_job_id,
     )
     session.add(job)
     await session.commit()

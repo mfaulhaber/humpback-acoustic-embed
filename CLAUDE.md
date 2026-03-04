@@ -218,6 +218,7 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 - updated_at
 - error_message
 - metrics_json (JSON, nullable — internal/category metrics computed after clustering)
+- refined_from_job_id (nullable — reference to a source ClusteringJob whose refined embeddings to use for re-clustering)
 
 ### Cluster
 - id
@@ -345,9 +346,23 @@ Pipeline:
 10. Compute fragmentation report (per-category & per-cluster entropy, Gini, noise rates); save to report.json
 11. Opt-in: Classifier baseline (`run_classifier=true`) — logistic regression cross-validation on category labels; save to classifier_report.json + label_queue.json (active learning priority queue)
 12. Opt-in: Stability evaluation (`stability_runs≥2`) — re-cluster N times with different random seeds, compute pairwise ARI; save to stability_summary.json
-13. Opt-in: Metric learning refinement (`enable_metric_learning=true`) — train 2-layer MLP projection head with triplet loss on labeled embeddings, project all embeddings into refined space, re-cluster with same params, compare base vs refined metrics; save to refinement_report.json
-14. Persist metrics as metrics_json on ClusteringJob
-15. Mark ClusteringJob complete
+13. Opt-in: Metric learning refinement (`enable_metric_learning=true`) — train 2-layer MLP projection head with triplet loss on labeled embeddings, project all embeddings into refined space, re-cluster with same params, compare base vs refined metrics; save to refinement_report.json + refined_embeddings.parquet
+14. If `refined_from_job_id` is set, load refined embeddings from source job instead of raw embeddings
+15. Persist metrics as metrics_json on ClusteringJob
+16. Mark ClusteringJob complete
+
+### 7.1 Original vs Refined Embeddings
+
+Original embeddings (1280-d) come from the pre-trained model and capture general
+acoustic features. Refined embeddings (128-d by default) are produced by projecting
+the originals through a triplet-loss-trained MLP that pulls same-category embeddings
+closer and pushes different categories apart, using folder-path-derived labels.
+
+The refinement pipeline: extract labeled subset (categories with ≥5 samples) → train
+`1280→512→128` MLP with triplet loss → project *all* embeddings → L2 normalize →
+save as `refined_embeddings.parquet`. Setting `refined_from_job_id` on a new
+clustering job loads these refined vectors instead of the originals for full
+re-clustering. Training uses GPU when available (`HUMPBACK_TF_FORCE_CPU` to override).
 
 ---
 
@@ -383,6 +398,7 @@ Concurrency:
   {clustering_job_id}/label_queue.json           (opt-in active learning queue)
   {clustering_job_id}/stability_summary.json     (opt-in stability evaluation)
   {clustering_job_id}/refinement_report.json     (opt-in metric learning refinement)
+  {clustering_job_id}/refined_embeddings.parquet (opt-in refined embedding vectors for re-clustering)
 
 ---
 

@@ -550,6 +550,93 @@ async def test_label_queue_success(client, app_settings):
 # --- Refinement endpoint tests ---
 
 
+async def test_create_job_refined_from_invalid_id(client):
+    """Creating a job with a non-existent refined_from_job_id should fail."""
+    resp = await client.post(
+        "/clustering/jobs",
+        json={
+            "embedding_set_ids": [],
+            "refined_from_job_id": "nonexistent-job-id",
+        },
+    )
+    assert resp.status_code == 400
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_create_job_refined_from_incomplete(client):
+    """Creating a job with a non-complete source job should fail."""
+    # Create a queued job to use as source
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    source_id = create.json()["id"]
+
+    resp = await client.post(
+        "/clustering/jobs",
+        json={
+            "embedding_set_ids": [],
+            "refined_from_job_id": source_id,
+        },
+    )
+    assert resp.status_code == 400
+    assert "not complete" in resp.json()["detail"].lower()
+
+
+async def test_create_job_refined_from_no_parquet(client, app_settings):
+    """Creating a job from a complete source without refined parquet should fail."""
+    # Create and mark complete (no refined_embeddings.parquet)
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    source_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, source_id)
+
+    resp = await client.post(
+        "/clustering/jobs",
+        json={
+            "embedding_set_ids": [],
+            "refined_from_job_id": source_id,
+        },
+    )
+    assert resp.status_code == 400
+    assert "no refined embeddings" in resp.json()["detail"].lower()
+
+
+async def test_create_job_refined_from_valid(client, app_settings):
+    """Creating a job from a complete source with refined parquet should succeed."""
+    # Create and mark complete
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    source_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, source_id)
+
+    # Write a refined_embeddings.parquet
+    cluster_path = Path(app_settings.storage_root) / "clusters" / source_id
+    cluster_path.mkdir(parents=True, exist_ok=True)
+    table = pa.table({
+        "embedding_set_id": pa.array(["es1", "es1"], type=pa.string()),
+        "embedding_row_index": pa.array([0, 1], type=pa.int32()),
+        "embedding": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+    })
+    pq.write_table(table, str(cluster_path / "refined_embeddings.parquet"))
+
+    resp = await client.post(
+        "/clustering/jobs",
+        json={
+            "embedding_set_ids": [],
+            "refined_from_job_id": source_id,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["refined_from_job_id"] == source_id
+    assert data["status"] == "queued"
+
+
 async def test_refinement_not_found(client):
     """Refinement for nonexistent job returns 404."""
     resp = await client.get("/clustering/jobs/nonexistent/refinement")

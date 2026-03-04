@@ -23,7 +23,7 @@ Key features:
 - Fragmentation analysis: per-category and per-cluster entropy, Gini coefficient, noise rates
 - Stability evaluation: re-cluster with multiple random seeds, pairwise ARI agreement
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
-- Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison
+- Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 
 ---
 
@@ -315,6 +315,51 @@ embeddings through the learned projection and re-clusters:
   color-coded green (improvement) or red (regression), accounting for metric
   direction (higher-is-better vs lower-is-better).
 
+##### Original vs Refined Embeddings
+
+**Original embeddings** come from the pre-trained model (e.g. Perch). Audio is
+sliced into 5-second windows, each window is fed through the model, and you get a
+1280-dimensional vector per window. These vectors capture acoustic features learned
+during the model's pre-training — general-purpose, not tuned to your category
+structure.
+
+**Refined embeddings** are those same vectors run through a small learned projection
+that reshapes the space to better match your folder-based category labels:
+
+1. **Labeled subset extraction** — The system derives category labels from each audio
+   file's `folder_path` (e.g. `Grunt`, `Upsweep`). Categories with fewer than 5
+   samples are excluded; at least 2 viable categories are required.
+2. **Triplet training** — A 2-layer MLP (`1280 → 512 → 128`, with ReLU) is trained
+   using triplet loss on the labeled subset. Each training step picks triplets of
+   (anchor, positive, negative) where anchor/positive share a category and the
+   negative doesn't. The loss pushes same-category embeddings closer together and
+   different-category embeddings apart in the projected 128-d space.
+3. **Project all embeddings** — After training, *every* embedding (labeled or not) is
+   passed through the trained MLP and L2-normalized. This produces the refined
+   embeddings — same number of rows, but now 128-d instead of 1280-d, in a space
+   where your categories are better separated.
+
+| | Original | Refined |
+|---|---|---|
+| Source | Pre-trained model (Perch) | MLP projection of original |
+| Dimensions | 1280 (model default) | 128 (configurable via `ml_output_dim`) |
+| Optimized for | General bioacoustic features | Your specific category labels |
+| Supervised? | No | Yes (triplet loss on folder labels) |
+
+##### Re-clustering from Refined Embeddings
+
+When metric learning runs, the refined embeddings are saved as
+`refined_embeddings.parquet`. The evaluation panel shows a "Re-cluster with Refined
+Embeddings" button that creates a new clustering job with `refined_from_job_id`
+pointing to the source job. The worker loads the 128-d refined vectors instead of
+the 1280-d originals, then runs the full pipeline (UMAP, HDBSCAN/K-Means, metrics,
+parameter sweep, etc.) on that improved space. If the refinement comparison showed
+better ARI/NMI, the re-clustered results should produce more category-coherent
+clusters.
+
+The trade-off: refined embeddings are only as good as your labels. If folder
+categories are noisy or incomplete, the projection can overfit to bad signal.
+
 **What to do with these:** If the refined metrics improve (especially ARI/NMI),
 the triplet-loss projection is successfully pulling same-category embeddings closer
 and pushing different categories apart. This validates that the category structure
@@ -322,15 +367,16 @@ exists in the data but wasn't fully captured by the original model. If metrics
 don't improve or worsen, the original embedding space may already be near-optimal
 for these categories, or more labeled data is needed.
 
-Triplet mining strategies:
+##### Triplet Mining Strategies
+
 - **random:** Fast, good baseline — randomly samples anchor/positive/negative triplets
 - **semi-hard** (default): Selects negatives that are closer than the positive but
   within the margin — focuses training on the most informative examples
 - **hard:** Picks the closest negative for each anchor — aggressive but can cause
   training instability with noisy labels
 
-All training runs on CPU (`tf.device('/CPU:0')`) to avoid Apple Silicon GPU
-complications with TF/Keras.
+Training uses GPU when available (Metal on Apple Silicon), respecting the
+`HUMPBACK_TF_FORCE_CPU` env var. Falls back to CPU if no GPU is found.
 
 ### Cluster Assignment Playback Controls
 
@@ -417,6 +463,7 @@ data/
   clusters/{clustering_job_id}/label_queue.json           (opt-in)
   clusters/{clustering_job_id}/stability_summary.json     (opt-in)
   clusters/{clustering_job_id}/refinement_report.json     (opt-in)
+  clusters/{clustering_job_id}/refined_embeddings.parquet (opt-in, for re-clustering)
 ```
 
 ---

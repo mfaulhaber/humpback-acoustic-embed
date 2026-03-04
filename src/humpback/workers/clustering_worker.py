@@ -76,6 +76,27 @@ async def run_clustering_job(
 
         embeddings_array = np.array(all_embeddings, dtype=np.float32)
 
+        # If re-clustering from refined embeddings, replace the array
+        if job.refined_from_job_id:
+            source_dir = cluster_dir(settings.storage_root, job.refined_from_job_id)
+            refined_path = source_dir / "refined_embeddings.parquet"
+            if not refined_path.exists():
+                raise ValueError(
+                    f"Refined embeddings not found for source job {job.refined_from_job_id}"
+                )
+            refined_table = pq.read_table(str(refined_path))
+            refined_es_ids = refined_table.column("embedding_set_id").to_pylist()
+            refined_row_indices = refined_table.column("embedding_row_index").to_pylist()
+            refined_vectors = refined_table.column("embedding").to_pylist()
+            embeddings_array = np.array(refined_vectors, dtype=np.float32)
+            all_es_ids = refined_es_ids
+            all_row_indices = refined_row_indices
+            logger.info(
+                "Loaded %d refined embeddings from job %s",
+                len(embeddings_array),
+                job.refined_from_job_id,
+            )
+
         # Run clustering in thread
         clustering_result: ClusteringResult = await asyncio.to_thread(
             run_clustering_pipeline, embeddings_array, params
@@ -203,9 +224,19 @@ async def run_clustering_job(
                     params,
                 )
                 if refinement_result is not None:
+                    # Pop and persist refined embeddings before JSON serialization
+                    refined_emb = refinement_result.pop("_refined_embeddings", None)
                     (output_dir / "refinement_report.json").write_text(
                         json.dumps(refinement_result, indent=2)
                     )
+                    if refined_emb is not None:
+                        refined_table = pa.table({
+                            "embedding_set_id": pa.array(all_es_ids, type=pa.string()),
+                            "embedding_row_index": pa.array(all_row_indices, type=pa.int32()),
+                            "embedding": [refined_emb[i].tolist() for i in range(len(refined_emb))],
+                        })
+                        pq.write_table(refined_table, str(output_dir / "refined_embeddings.parquet"))
+                        logger.info("Saved refined embeddings (%d rows) to %s", len(refined_emb), output_dir / "refined_embeddings.parquet")
         except Exception:
             logger.exception("Failed to run metric learning refinement")
 

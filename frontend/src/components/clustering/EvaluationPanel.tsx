@@ -1,9 +1,10 @@
 import { useState, useMemo } from "react";
-import { useMetrics, useFragmentation, useStability, useClassifier, useLabelQueue, useRefinement } from "@/hooks/queries/useClustering";
-import type { CategoryFragmentation, ClassifierReport, ClusterFragmentation, LabelQueueEntry, RefinementReport, StabilitySummary } from "@/api/types";
+import { useMetrics, useFragmentation, useStability, useClassifier, useLabelQueue, useRefinement, useCreateClusteringJob } from "@/hooks/queries/useClustering";
+import type { CategoryFragmentation, ClassifierReport, ClusteringJob, ClusterFragmentation, LabelQueueEntry, RefinementReport, StabilitySummary } from "@/api/types";
 
 interface EvaluationPanelProps {
   jobId: string;
+  job?: ClusteringJob | null;
 }
 
 type SortDir = "asc" | "desc";
@@ -68,7 +69,7 @@ function fmt(v: number | undefined | null, decimals = 4): string {
   return v.toFixed(decimals);
 }
 
-export function EvaluationPanel({ jobId }: EvaluationPanelProps) {
+export function EvaluationPanel({ jobId, job }: EvaluationPanelProps) {
   const { data: metrics, isLoading: metricsLoading } = useMetrics(jobId);
   const { data: fragReport } = useFragmentation(jobId);
   const { data: stability } = useStability(jobId);
@@ -207,7 +208,7 @@ export function EvaluationPanel({ jobId }: EvaluationPanelProps) {
 
       {labelQueue && labelQueue.length > 0 && <LabelQueueSection data={labelQueue} />}
 
-      {refinement && <RefinementSection data={refinement} />}
+      {refinement && <RefinementSection data={refinement} jobId={jobId} job={job} />}
     </div>
   );
 }
@@ -492,8 +493,22 @@ function ClassifierSection({ data }: { data: ClassifierReport }) {
   );
 }
 
-function RefinementSection({ data }: { data: RefinementReport }) {
+function RefinementSection({ data, jobId, job }: { data: RefinementReport; jobId: string; job?: ClusteringJob | null }) {
   const tp = data.training_params;
+  const createJob = useCreateClusteringJob();
+
+  const handleRecluster = () => {
+    if (!job) return;
+    // Strip enable_metric_learning from params to avoid re-running refinement
+    const params = { ...(job.parameters || {}) };
+    delete params.enable_metric_learning;
+
+    createJob.mutate({
+      embedding_set_ids: job.embedding_set_ids,
+      parameters: params,
+      refined_from_job_id: jobId,
+    });
+  };
 
   return (
     <>
@@ -570,6 +585,29 @@ function RefinementSection({ data }: { data: RefinementReport }) {
           </table>
         </div>
       </div>
+
+      {/* Re-cluster button */}
+      {job && (
+        <div>
+          <button
+            className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+            onClick={handleRecluster}
+            disabled={createJob.isPending}
+          >
+            {createJob.isPending ? "Creating job..." : "Re-cluster with Refined Embeddings"}
+          </button>
+          {createJob.isSuccess && (
+            <p className="text-xs text-green-600 mt-1">
+              Re-clustering job created. Check the jobs list for progress.
+            </p>
+          )}
+          {createJob.isError && (
+            <p className="text-xs text-red-600 mt-1">
+              Failed to create job: {createJob.error?.message}
+            </p>
+          )}
+        </div>
+      )}
     </>
   );
 }

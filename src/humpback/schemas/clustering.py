@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class ClusteringJobCreate(BaseModel):
     embedding_set_ids: list[str]
     parameters: Optional[dict[str, Any]] = None
+    refined_from_job_id: Optional[str] = None
 
 
 class ClusteringJobOut(BaseModel):
@@ -16,6 +17,7 @@ class ClusteringJobOut(BaseModel):
     parameters: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     metrics: Optional[dict[str, Any]] = None
+    refined_from_job_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

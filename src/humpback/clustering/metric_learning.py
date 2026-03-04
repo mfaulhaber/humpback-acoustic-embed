@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import numpy as np
@@ -10,6 +11,32 @@ from scipy.spatial.distance import cdist
 from sklearn.preprocessing import LabelEncoder
 
 logger = logging.getLogger(__name__)
+
+
+def _get_tf_device() -> str:
+    """Return the best available TF device for metric learning.
+
+    Checks ``HUMPBACK_TF_FORCE_CPU`` env var first, then tries GPU via
+    ``configure_tf_gpu()``, falls back to CPU.
+    """
+    import tensorflow as tf
+
+    if os.environ.get("HUMPBACK_TF_FORCE_CPU", "").lower() in ("1", "true", "yes"):
+        device = tf.config.list_logical_devices("CPU")[0].name
+        logger.info("Metric learning: forced CPU by HUMPBACK_TF_FORCE_CPU (%s)", device)
+        return device
+
+    from humpback.processing.inference import configure_tf_gpu
+
+    configure_tf_gpu()
+    gpus = tf.config.list_logical_devices("GPU")
+    if gpus:
+        logger.info("Metric learning: using GPU %s", gpus[0].name)
+        return gpus[0].name
+
+    device = tf.config.list_logical_devices("CPU")[0].name
+    logger.info("Metric learning: no GPU found, using CPU (%s)", device)
+    return device
 
 # Metric direction constants for comparison
 _HIGHER_IS_BETTER = {
@@ -60,7 +87,7 @@ def generate_triplets(
     proj_dists = None
     if strategy in ("hard", "semi-hard") and embeddings.shape[0] < 10000:
         if model is not None:
-            with tf.device("/CPU:0"):
+            with tf.device(_get_tf_device()):
                 proj = tf.math.l2_normalize(
                     model(tf.constant(embeddings, dtype=tf.float32), training=False),
                     axis=1,
@@ -169,7 +196,7 @@ def train_projection(
 
     input_dim = embeddings.shape[1]
 
-    with tf.device("/CPU:0"):
+    with tf.device(_get_tf_device()):
         tf.random.set_seed(random_state)
         np.random.seed(random_state)
 
@@ -343,7 +370,7 @@ def run_metric_learning_refinement(
     # Project ALL embeddings through trained model
     import tensorflow as tf
 
-    with tf.device("/CPU:0"):
+    with tf.device(_get_tf_device()):
         refined_all = tf.math.l2_normalize(
             train_result["model"](
                 tf.constant(embeddings, dtype=tf.float32), training=False
@@ -419,4 +446,7 @@ def run_metric_learning_refinement(
             k: round(v, 6) if v is not None else None
             for k, v in refined_summary.items()
         },
+        # Internal: refined embeddings for persistence by worker.
+        # Underscore prefix signals this should be popped before JSON serialization.
+        "_refined_embeddings": refined_all,
     }

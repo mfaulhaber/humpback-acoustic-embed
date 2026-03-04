@@ -109,6 +109,7 @@ export interface EmbeddingSet {
 export interface ClusteringJobCreate {
   embedding_set_ids: string[];
   parameters?: Record<string, unknown> | null;
+  refined_from_job_id?: string | null;
 }
 
 export interface ClusteringJob {
@@ -118,6 +119,7 @@ export interface ClusteringJob {
   parameters: Record<string, unknown> | null;
   error_message: string | null;
   metrics: Record<string, unknown> | null;
+  refined_from_job_id: string | null;
   created_at: string;
   updated_at: string;
 }

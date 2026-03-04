@@ -113,7 +113,7 @@ export function ClusteringJobCard({ job }: ClusteringJobCardProps) {
           {showUmap && <UmapPlot jobId={job.id} />}
           {showLabelPlot && <LabelDotPlot jobId={job.id} />}
           {showDendrogram && <DendrogramHeatmap jobId={job.id} />}
-          {showEval && <EvaluationPanel jobId={job.id} />}
+          {showEval && <EvaluationPanel jobId={job.id} job={job} />}
         </CardContent>
       )}
 

@@ -32,6 +32,7 @@ def _job_to_out(job) -> ClusteringJobOut:
         parameters=json.loads(job.parameters) if job.parameters else None,
         error_message=job.error_message,
         metrics=json.loads(job.metrics_json) if job.metrics_json else None,
+        refined_from_job_id=job.refined_from_job_id,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -54,10 +55,14 @@ async def list_jobs(session: SessionDep) -> list[ClusteringJobOut]:
 
 
 @router.post("/jobs", status_code=201)
-async def create_job(body: ClusteringJobCreate, session: SessionDep) -> ClusteringJobOut:
+async def create_job(body: ClusteringJobCreate, session: SessionDep, settings: SettingsDep) -> ClusteringJobOut:
     try:
         job = await clustering_service.create_clustering_job(
-            session, body.embedding_set_ids, body.parameters
+            session,
+            body.embedding_set_ids,
+            body.parameters,
+            refined_from_job_id=body.refined_from_job_id,
+            storage_root=Path(settings.storage_root),
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
