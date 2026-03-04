@@ -7,6 +7,7 @@ def reduce_umap(
     n_neighbors: int = 15,
     min_dist: float = 0.1,
     metric: str = "euclidean",
+    random_state: int = 42,
 ) -> np.ndarray:
     """Reduce dimensionality with UMAP."""
     try:
@@ -21,7 +22,7 @@ def reduce_umap(
             n_neighbors=effective_neighbors,
             min_dist=min_dist,
             metric=metric,
-            random_state=42,
+            random_state=random_state,
         )
         return reducer.fit_transform(embeddings)
     except ImportError:
@@ -31,12 +32,13 @@ def reduce_umap(
 def reduce_pca(
     embeddings: np.ndarray,
     n_components: int = 2,
+    random_state: int = 42,
 ) -> np.ndarray:
     """Reduce dimensionality with PCA (deterministic, good for small datasets)."""
     from sklearn.decomposition import PCA
 
     n_components = min(n_components, embeddings.shape[1], len(embeddings))
-    pca = PCA(n_components=n_components, random_state=42)
+    pca = PCA(n_components=n_components, random_state=random_state)
     return pca.fit_transform(embeddings).astype(np.float32)
 
 

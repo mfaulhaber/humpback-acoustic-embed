@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from humpback.clustering.metrics import (
     compute_cluster_metrics,
     compute_detailed_category_metrics,
+    compute_fragmentation_report,
     extract_category_from_folder_path,
     run_parameter_sweep,
 )
@@ -133,6 +134,80 @@ async def run_clustering_job(
             sweep_path.write_text(json.dumps(sweep, indent=2))
         except Exception:
             logger.exception("Failed to run parameter sweep")
+
+        # Fragmentation report
+        frag_report = None
+        try:
+            frag_report = compute_fragmentation_report(labels, category_labels, job.id)
+            if frag_report is not None:
+                report_path = output_dir / "report.json"
+                report_path.write_text(json.dumps(frag_report, indent=2))
+        except Exception:
+            logger.exception("Failed to compute fragmentation report")
+
+        # Classifier baseline (opt-in via run_classifier parameter)
+        try:
+            if (params or {}).get("run_classifier", False) and any(
+                c is not None for c in category_labels
+            ):
+                from humpback.clustering.classifier import run_classifier_baseline
+
+                classifier_result = await asyncio.to_thread(
+                    run_classifier_baseline,
+                    embeddings_array,
+                    category_labels,
+                    frag_report,
+                    all_es_ids,
+                    all_row_indices,
+                )
+                if classifier_result is not None:
+                    (output_dir / "classifier_report.json").write_text(
+                        json.dumps(classifier_result["classifier_report"], indent=2)
+                    )
+                    (output_dir / "label_queue.json").write_text(
+                        json.dumps(classifier_result["label_queue"], indent=2)
+                    )
+        except Exception:
+            logger.exception("Failed to run classifier baseline")
+
+        # Stability evaluation (opt-in via stability_runs parameter)
+        try:
+            stability_runs = (params or {}).get("stability_runs", 0)
+            if isinstance(stability_runs, int) and stability_runs >= 2:
+                from humpback.clustering.stability import run_stability_evaluation
+
+                stability_result = await asyncio.to_thread(
+                    run_stability_evaluation,
+                    embeddings_array,
+                    params,
+                    category_labels,
+                    stability_runs,
+                )
+                stability_path = output_dir / "stability_summary.json"
+                stability_path.write_text(json.dumps(stability_result, indent=2))
+        except Exception:
+            logger.exception("Failed to run stability evaluation")
+
+        # Metric learning refinement (opt-in via enable_metric_learning parameter)
+        try:
+            if (params or {}).get("enable_metric_learning", False) and any(
+                c is not None for c in category_labels
+            ):
+                from humpback.clustering.metric_learning import run_metric_learning_refinement
+
+                refinement_result = await asyncio.to_thread(
+                    run_metric_learning_refinement,
+                    embeddings_array,
+                    category_labels,
+                    frag_report,
+                    params,
+                )
+                if refinement_result is not None:
+                    (output_dir / "refinement_report.json").write_text(
+                        json.dumps(refinement_result, indent=2)
+                    )
+        except Exception:
+            logger.exception("Failed to run metric learning refinement")
 
         # Persist metrics
         if metrics:

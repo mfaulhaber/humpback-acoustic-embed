@@ -1,9 +1,16 @@
 import numpy as np
 
 from humpback.clustering.metrics import (
+    _gini_coefficient,
+    _shannon_entropy,
+    _top_k_mass,
+    compute_category_fragmentation,
     compute_category_metrics,
+    compute_cluster_fragmentation,
     compute_cluster_metrics,
     compute_detailed_category_metrics,
+    compute_fragmentation_report,
+    compute_global_fragmentation,
     extract_category_from_folder_path,
     run_parameter_sweep,
 )
@@ -208,3 +215,197 @@ def test_run_parameter_sweep_with_category_labels():
     assert len(entries_with_ari) > 0
     for entry in entries_with_ari:
         assert "normalized_mutual_info" in entry
+
+
+# ---------------------------------------------------------------------------
+# Helper function tests
+# ---------------------------------------------------------------------------
+
+
+def test_shannon_entropy_uniform():
+    """Uniform distribution of 4 bins → ln(4)."""
+    counts = np.array([10, 10, 10, 10])
+    result = _shannon_entropy(counts)
+    assert abs(result - np.log(4)) < 1e-10
+
+
+def test_shannon_entropy_concentrated():
+    """Single non-zero bin → 0."""
+    counts = np.array([0, 0, 100, 0])
+    assert _shannon_entropy(counts) == 0.0
+
+
+def test_shannon_entropy_empty():
+    """Empty array → 0."""
+    assert _shannon_entropy(np.array([])) == 0.0
+
+
+def test_gini_coefficient_equal():
+    """Equal counts → Gini ≈ 0."""
+    counts = np.array([25, 25, 25, 25])
+    g = _gini_coefficient(counts)
+    assert abs(g) < 0.01
+
+
+def test_gini_coefficient_concentrated():
+    """One non-zero in many → Gini > 0.5."""
+    counts = np.array([0, 0, 0, 0, 100])
+    g = _gini_coefficient(counts)
+    assert g > 0.5
+
+
+def test_top_k_mass():
+    """Known distribution → verify top-k fractions."""
+    counts = np.array([10, 20, 30, 40])
+    assert abs(_top_k_mass(counts, 1) - 0.4) < 1e-10
+    assert abs(_top_k_mass(counts, 2) - 0.7) < 1e-10
+    assert abs(_top_k_mass(counts, 3) - 0.9) < 1e-10
+
+
+def test_top_k_mass_empty():
+    """All zeros → 0."""
+    assert _top_k_mass(np.array([0, 0, 0]), 2) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Category fragmentation tests
+# ---------------------------------------------------------------------------
+
+
+def test_category_fragmentation_perfect_clustering():
+    """Each category maps to exactly one cluster → top1=1, entropy=0, neff=1."""
+    labels = np.array([0, 0, 0, 1, 1, 1])
+    categories = ["A", "A", "A", "B", "B", "B"]
+
+    result = compute_category_fragmentation(labels, categories)
+
+    assert result["A"]["top1_mass"] == 1.0
+    assert result["A"]["entropy"] == 0.0
+    assert result["A"]["neff"] == 1.0
+    assert result["B"]["top1_mass"] == 1.0
+
+
+def test_category_fragmentation_with_noise():
+    """Noise rate correctly computed when noise points present."""
+    labels = np.array([0, 0, -1, 1, 1, -1])
+    categories = ["A", "A", "A", "B", "B", "B"]
+
+    result = compute_category_fragmentation(labels, categories)
+
+    assert result["A"]["n_total"] == 3
+    assert result["A"]["n_noise"] == 1
+    assert abs(result["A"]["noise_rate"] - 1.0 / 3) < 1e-10
+
+
+def test_category_fragmentation_split_category():
+    """Category split across clusters → top1<1, entropy>0, neff>1."""
+    labels = np.array([0, 0, 1, 1, 2, 2])
+    categories = ["A", "A", "A", "A", "B", "B"]
+
+    result = compute_category_fragmentation(labels, categories)
+
+    assert result["A"]["top1_mass"] < 1.0
+    assert result["A"]["entropy"] > 0.0
+    assert result["A"]["neff"] > 1.0
+
+
+def test_category_fragmentation_none_categories_ignored():
+    """None categories are excluded from results."""
+    labels = np.array([0, 0, 1, 1])
+    categories = ["A", "A", None, None]
+
+    result = compute_category_fragmentation(labels, categories)
+
+    assert "A" in result
+    assert len(result) == 1  # None category not present
+
+
+# ---------------------------------------------------------------------------
+# Cluster fragmentation tests
+# ---------------------------------------------------------------------------
+
+
+def test_cluster_fragmentation_pure_clusters():
+    """Pure clusters → dominant_mass=1, entropy=0."""
+    labels = np.array([0, 0, 0, 1, 1, 1])
+    categories = ["A", "A", "A", "B", "B", "B"]
+
+    result = compute_cluster_fragmentation(labels, categories)
+
+    assert result["0"]["dominant_mass"] == 1.0
+    assert result["0"]["cluster_entropy"] == 0.0
+    assert result["1"]["dominant_category"] == "B"
+
+
+def test_cluster_fragmentation_mixed_cluster():
+    """Mixed cluster → dominant_mass<1, entropy>0."""
+    labels = np.array([0, 0, 0, 0])
+    categories = ["A", "A", "B", "B"]
+
+    result = compute_cluster_fragmentation(labels, categories)
+
+    assert result["0"]["dominant_mass"] == 0.5
+    assert result["0"]["cluster_entropy"] > 0
+
+
+def test_cluster_fragmentation_noise_excluded():
+    """Noise cluster (-1) not in results."""
+    labels = np.array([0, 0, -1, -1])
+    categories = ["A", "A", "B", "B"]
+
+    result = compute_cluster_fragmentation(labels, categories)
+
+    assert "-1" not in result
+    assert "0" in result
+
+
+# ---------------------------------------------------------------------------
+# Global fragmentation + full report tests
+# ---------------------------------------------------------------------------
+
+
+def test_global_fragmentation_basic():
+    """Perfect clustering → low fragmentation indices."""
+    labels = np.array([0, 0, 0, 1, 1, 1])
+    categories = ["A", "A", "A", "B", "B", "B"]
+
+    cat_frag = compute_category_fragmentation(labels, categories)
+    cl_frag = compute_cluster_fragmentation(labels, categories)
+    result = compute_global_fragmentation(cat_frag, cl_frag, labels, categories)
+
+    assert result["mean_entropy_norm"] == 0.0
+    assert result["mean_neff"] == 1.0
+    assert result["mean_noise_rate"] == 0.0
+    assert result["mean_cluster_entropy_norm"] == 0.0
+
+
+def test_fragmentation_report_structure():
+    """Report has correct top-level keys and summary."""
+    labels = np.array([0, 0, 1, 1, -1])
+    categories = ["A", "A", "B", "B", "A"]
+
+    report = compute_fragmentation_report(labels, categories, "test-job-1")
+
+    assert report is not None
+    assert report["job_id"] == "test-job-1"
+    assert "category_fragmentation" in report
+    assert "cluster_fragmentation" in report
+    assert "global_fragmentation" in report
+    assert "summary" in report
+
+    summary = report["summary"]
+    assert summary["n_categories"] == 2
+    assert summary["n_clusters"] == 2
+    assert summary["n_total"] == 5
+    assert summary["n_noise_total"] == 1
+    assert abs(summary["overall_noise_rate"] - 0.2) < 1e-10
+
+
+def test_fragmentation_report_no_categories():
+    """Returns None when all categories are None."""
+    labels = np.array([0, 0, 1, 1])
+    categories = [None, None, None, None]
+
+    report = compute_fragmentation_report(labels, categories, "test-job-2")
+
+    assert report is None

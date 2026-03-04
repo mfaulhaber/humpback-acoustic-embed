@@ -12,6 +12,9 @@ export interface ClusteringParams {
   umapComponents: number;
   umapNeighbors: number;
   umapMinDist: number;
+  stabilityRuns: number;
+  runClassifier: boolean;
+  enableMetricLearning: boolean;
 }
 
 interface ClusteringParamsFormProps {
@@ -27,6 +30,9 @@ export function ClusteringParamsForm({ onSubmit, disabled }: ClusteringParamsFor
   const [umapComponents, setUmapComponents] = useState("5");
   const [umapNeighbors, setUmapNeighbors] = useState("15");
   const [umapMinDist, setUmapMinDist] = useState("0.1");
+  const [stabilityRuns, setStabilityRuns] = useState("0");
+  const [runClassifier, setRunClassifier] = useState(false);
+  const [enableMetricLearning, setEnableMetricLearning] = useState(false);
 
   const handleSubmit = () => {
     onSubmit({
@@ -37,6 +43,9 @@ export function ClusteringParamsForm({ onSubmit, disabled }: ClusteringParamsFor
       umapComponents: parseInt(umapComponents) || 5,
       umapNeighbors: parseInt(umapNeighbors) || 15,
       umapMinDist: parseFloat(umapMinDist) || 0.1,
+      stabilityRuns: parseInt(stabilityRuns) || 0,
+      runClassifier,
+      enableMetricLearning,
     });
   };
 
@@ -125,6 +134,50 @@ export function ClusteringParamsForm({ onSubmit, disabled }: ClusteringParamsFor
           </div>
         </div>
       )}
+
+      <div className="border-t pt-3">
+        <h4 className="text-sm font-medium mb-2">Stability Evaluation</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground">Stability Runs (0 = off)</label>
+            <Input
+              type="number"
+              value={stabilityRuns}
+              onChange={(e) => setStabilityRuns(e.target.value)}
+              className="h-8"
+              min={0}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t pt-3">
+        <h4 className="text-sm font-medium mb-2">Classifier Baseline</h4>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            checked={runClassifier}
+            onCheckedChange={(v) => setRunClassifier(!!v)}
+            id="run-classifier"
+          />
+          <label htmlFor="run-classifier" className="text-sm cursor-pointer">
+            Run classifier baseline (requires folder-path category labels)
+          </label>
+        </div>
+      </div>
+
+      <div className="border-t pt-3">
+        <h4 className="text-sm font-medium mb-2">Metric Learning Refinement</h4>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            checked={enableMetricLearning}
+            onCheckedChange={(v) => setEnableMetricLearning(!!v)}
+            id="enable-metric-learning"
+          />
+          <label htmlFor="enable-metric-learning" className="text-sm cursor-pointer">
+            Train projection head and re-cluster (requires folder-path category labels)
+          </label>
+        </div>
+      </div>
 
       <Button size="sm" onClick={handleSubmit} disabled={disabled}>
         Queue Clustering Job

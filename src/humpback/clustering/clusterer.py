@@ -27,12 +27,13 @@ def cluster_hdbscan(
 def cluster_kmeans(
     embeddings: np.ndarray,
     n_clusters: int = 15,
+    random_state: int = 42,
 ) -> np.ndarray:
     """Cluster embeddings with K-Means. Returns integer labels (no noise)."""
     from sklearn.cluster import KMeans
 
     n_clusters = min(n_clusters, len(embeddings))
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
     return kmeans.fit_predict(embeddings)
 
 

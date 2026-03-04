@@ -20,6 +20,10 @@ Key features:
 - Detailed supervised metrics (ARI, NMI, homogeneity, completeness, v-measure, per-category purity, confusion matrix) from folder-path-derived category labels
 - Automatic parameter sweep (HDBSCAN min_cluster_size × selection_method + K-Means k) with ARI/NMI when categories available
 - Spectrogram normalization options (per-window max, global ref, standardize) via feature_config
+- Fragmentation analysis: per-category and per-cluster entropy, Gini coefficient, noise rates
+- Stability evaluation: re-cluster with multiple random seeds, pairwise ARI agreement
+- Classifier baseline: logistic regression cross-validation with active learning priority queue
+- Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison
 
 ---
 
@@ -108,6 +112,12 @@ flowchart TD
 | HDBSCAN selection | leaf | `cluster_selection_method` — 'leaf' (fine-grained) or 'eom' (coarser) |
 | HDBSCAN min_cluster_size | 5 | Swept 2–50 for param search |
 | Normalization | per_window_max | Spectrogram normalization in feature_config: `"per_window_max"`, `"global_ref"`, `"standardize"` |
+| `run_classifier` | false | Opt-in classifier baseline on category labels |
+| `stability_runs` | 0 | Opt-in stability evaluation (≥ 2 to enable) |
+| `enable_metric_learning` | false | Opt-in triplet-loss MLP refinement |
+| `ml_output_dim` | 128 | Metric learning projection output dim |
+| `ml_n_epochs` | 50 | Metric learning training epochs |
+| `ml_mining_strategy` | semi-hard | Triplet mining: `"random"`, `"hard"`, `"semi-hard"` |
 
 Encoding is associated with the audio file and configuration. Reprocessing is
 skipped when an EmbeddingSet with the same encoding_signature already exists.
@@ -176,7 +186,151 @@ selected embedding sets (must share vector_dim)
   → compute evaluation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz)
   → compute detailed supervised metrics (ARI, NMI, homogeneity, completeness, v-measure, per-category purity, confusion matrix)
   → run parameter sweep (HDBSCAN + K-Means, with ARI/NMI when categories available)
+  → compute fragmentation report (per-category & per-cluster entropy, Gini, noise rates)
+  → [opt-in] classifier baseline (logistic regression CV + active learning queue)
+  → [opt-in] stability evaluation (N re-runs with different seeds, pairwise ARI)
+  → [opt-in] metric learning refinement (triplet-loss MLP → re-cluster → compare)
 ```
+
+### Clustering Analysis & Evaluation
+
+After clustering completes, the system produces a suite of analysis outputs. Some
+run automatically; others are opt-in via job parameters. All results are available
+through the API and displayed in the Evaluation Panel in the UI.
+
+#### Internal Metrics (always computed)
+
+| Metric | What it measures | Higher or lower is better |
+|--------|-----------------|--------------------------|
+| **Silhouette Score** | How similar each point is to its own cluster vs the nearest other cluster (−1 to 1) | Higher |
+| **Davies-Bouldin Index** | Average similarity between each cluster and its most similar cluster | Lower |
+| **Calinski-Harabasz Score** | Ratio of between-cluster to within-cluster dispersion | Higher |
+
+These metrics are *unsupervised* — they evaluate clustering structure without
+needing ground-truth labels.
+
+#### Supervised Metrics (when folder-path category labels exist)
+
+Audio files organized in subfolders (e.g., `Grunt/`, `Upsweep/`, `Buzz/`) are
+automatically assigned category labels derived from the deepest folder path component.
+When these labels are available, the system computes:
+
+| Metric | What it measures |
+|--------|-----------------|
+| **ARI** (Adjusted Rand Index) | Agreement between cluster assignments and categories, corrected for chance (−1 to 1, 1 = perfect) |
+| **NMI** (Normalized Mutual Info) | Shared information between clusters and categories (0 to 1) |
+| **Homogeneity** | Whether each cluster contains only members of a single category |
+| **Completeness** | Whether all members of a category are assigned to the same cluster |
+| **V-measure** | Harmonic mean of homogeneity and completeness |
+| **Per-category purity** | Fraction of each category's samples in its dominant cluster |
+| **Confusion matrix** | Full cluster × category count matrix |
+
+**What to do with these:** ARI and NMI tell you how well the embedding space
+naturally separates your call types. Low scores suggest the model may not
+distinguish these call types well, or that your category labels need refinement.
+
+#### Dendrogram Heatmap
+
+A hierarchical clustering of the confusion matrix, showing which clusters and
+categories are most similar. Helps identify cluster merges or splits that might
+improve category alignment.
+
+#### Parameter Sweep (always computed)
+
+Automatically sweeps HDBSCAN (`min_cluster_size` 2–50 × `leaf`/`eom`) and K-Means
+(`k` 2–30), recording Silhouette score, cluster count, noise fraction, and
+ARI/NMI (when labels available) for each configuration.
+
+**What to do with these:** Use the sweep results to find the parameter
+configuration that maximizes your metric of interest. If ARI peaks at a different
+`min_cluster_size` than Silhouette, it means the "best" clustering depends on
+whether you optimize for internal cohesion or category alignment.
+
+#### Fragmentation Report (always computed)
+
+Measures how categories and clusters relate to each other:
+
+- **Per-category fragmentation:** For each category, how many clusters its members
+  are spread across. Metrics include normalized entropy (0 = all in one cluster,
+  1 = uniformly spread), Gini coefficient, top-k cluster mass, and noise rate.
+- **Per-cluster composition:** For each cluster, how mixed its members are across
+  categories. Reports the dominant category, its mass fraction, and cluster entropy.
+- **Global summary:** Mean entropy, mean N_eff (effective number of clusters per
+  category), and overall noise rate.
+
+**What to do with these:** High fragmentation for a category (e.g.,
+`normalized_entropy > 0.5`) means that call type is acoustically diverse or the
+embedding space doesn't group it tightly. This can guide data collection (get more
+examples of fragmented types) or suggest those categories need subcategories.
+
+#### Stability Evaluation (opt-in: `stability_runs ≥ 2`)
+
+Re-runs the full clustering pipeline N times with different random seeds and
+measures consistency:
+
+- **Pairwise ARI:** Agreement between every pair of runs (mean, std, min, max).
+  High mean ARI (> 0.8) indicates the clustering is robust to random initialization.
+- **Aggregate metrics:** Mean/std/min/max of Silhouette, ARI, NMI, noise fraction,
+  and cluster count across all runs.
+- **Per-run details:** Full metrics for each individual run.
+
+**What to do with these:** If pairwise ARI is low (< 0.5), the clustering is
+unstable — results change significantly with different random seeds. Consider using
+PCA instead of UMAP (PCA is deterministic), increasing `min_cluster_size`, or
+switching to K-Means which is less sensitive to initialization.
+
+#### Classifier Baseline (opt-in: `run_classifier = true`)
+
+Trains a logistic regression classifier via stratified K-fold cross-validation on
+the category labels to measure how linearly separable the categories are in the
+original embedding space:
+
+- **Overall accuracy, macro/weighted F1:** How well a simple classifier can predict
+  categories from embeddings alone.
+- **Per-class precision/recall/F1:** Which categories the classifier can and cannot
+  distinguish.
+- **Confusion matrix:** Which categories get confused with each other.
+- **Active learning queue:** Every sample ranked by labeling priority — unlabeled
+  samples get the highest priority, followed by high-uncertainty labeled samples
+  (measured by classifier entropy and margin), boosted by the category's
+  fragmentation score.
+
+**What to do with these:** If classifier accuracy is high (> 0.85), the embedding
+space already separates your categories well and clustering issues likely come from
+the clustering algorithm or parameters. If accuracy is low, the embedding space
+doesn't distinguish your categories — consider metric learning refinement (below),
+a different model, or revising your category definitions. The active learning queue
+tells you which samples to label next for maximum impact.
+
+#### Metric Learning Refinement (opt-in: `enable_metric_learning = true`)
+
+Trains a 2-layer MLP projection head (`Dense(512, relu) → Dense(128) → L2 normalize`)
+using triplet loss on the labeled subset of embeddings, then projects *all*
+embeddings through the learned projection and re-clusters:
+
+- **Training summary:** Epochs, learning rate, margin, mining strategy, final loss,
+  loss history.
+- **Base vs Refined comparison:** Side-by-side table of every metric (Silhouette,
+  DB, ARI, NMI, noise fraction, fragmentation index, cluster count) with deltas
+  color-coded green (improvement) or red (regression), accounting for metric
+  direction (higher-is-better vs lower-is-better).
+
+**What to do with these:** If the refined metrics improve (especially ARI/NMI),
+the triplet-loss projection is successfully pulling same-category embeddings closer
+and pushing different categories apart. This validates that the category structure
+exists in the data but wasn't fully captured by the original model. If metrics
+don't improve or worsen, the original embedding space may already be near-optimal
+for these categories, or more labeled data is needed.
+
+Triplet mining strategies:
+- **random:** Fast, good baseline — randomly samples anchor/positive/negative triplets
+- **semi-hard** (default): Selects negatives that are closer than the positive but
+  within the margin — focuses training on the most informative examples
+- **hard:** Picks the closest negative for each anchor — aggressive but can cause
+  training instability with noisy labels
+
+All training runs on CPU (`tf.device('/CPU:0')`) to avoid Apple Silicon GPU
+complications with TF/Keras.
 
 ### Cluster Assignment Playback Controls
 
@@ -227,10 +381,17 @@ original recording the clustered segment falls.
 | GET | `/processing/embedding-sets/{id}` | Get embedding set |
 | POST | `/clustering/jobs` | Create clustering job |
 | GET | `/clustering/jobs/{id}` | Get clustering job |
+| DELETE | `/clustering/jobs/{id}` | Delete clustering job |
 | GET | `/clustering/jobs/{id}/clusters` | List clusters |
 | GET | `/clustering/jobs/{id}/visualization` | Get UMAP scatter plot data |
 | GET | `/clustering/jobs/{id}/metrics` | Get cluster evaluation metrics |
 | GET | `/clustering/jobs/{id}/parameter-sweep` | Get parameter sweep results |
+| GET | `/clustering/jobs/{id}/dendrogram` | Get cluster × category dendrogram heatmap data |
+| GET | `/clustering/jobs/{id}/fragmentation` | Get fragmentation report |
+| GET | `/clustering/jobs/{id}/stability` | Get stability evaluation results |
+| GET | `/clustering/jobs/{id}/classifier` | Get classifier baseline report |
+| GET | `/clustering/jobs/{id}/label-queue` | Get active learning priority queue |
+| GET | `/clustering/jobs/{id}/refinement` | Get metric learning refinement report |
 | GET | `/clustering/clusters/{id}/assignments` | Get assignments |
 | GET | `/admin/models` | List registered models |
 | POST | `/admin/models` | Register a new model |
@@ -251,6 +412,11 @@ data/
   clusters/{clustering_job_id}/assignments.parquet
   clusters/{clustering_job_id}/umap_coords.parquet
   clusters/{clustering_job_id}/parameter_sweep.json
+  clusters/{clustering_job_id}/report.json                (fragmentation)
+  clusters/{clustering_job_id}/classifier_report.json     (opt-in)
+  clusters/{clustering_job_id}/label_queue.json           (opt-in)
+  clusters/{clustering_job_id}/stability_summary.json     (opt-in)
+  clusters/{clustering_job_id}/refinement_report.json     (opt-in)
 ```
 
 ---

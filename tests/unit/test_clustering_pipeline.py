@@ -288,3 +288,57 @@ def test_pipeline_agglomerative_ward_forces_euclidean():
     )
 
     assert result.labels.shape == (30,)
+
+
+# --- Tests for random_state threading ---
+
+
+def test_pipeline_different_random_state_umap():
+    """Different random_state values should produce different UMAP reductions."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(40, 64).astype(np.float32)
+
+    r1 = run_clustering_pipeline(
+        embeddings,
+        parameters={"reduction_method": "umap", "random_state": 42, "min_cluster_size": 5},
+    )
+    r2 = run_clustering_pipeline(
+        embeddings,
+        parameters={"reduction_method": "umap", "random_state": 99, "min_cluster_size": 5},
+    )
+
+    # UMAP is stochastic — different seeds should give different reductions
+    assert r1.reduced_embeddings is not None
+    assert r2.reduced_embeddings is not None
+    assert not np.allclose(r1.reduced_embeddings, r2.reduced_embeddings)
+
+
+def test_pipeline_same_random_state_reproducible():
+    """Same random_state should produce identical results."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(40, 64).astype(np.float32)
+
+    params = {"reduction_method": "umap", "random_state": 42, "min_cluster_size": 5}
+    r1 = run_clustering_pipeline(embeddings, parameters=params)
+    r2 = run_clustering_pipeline(embeddings, parameters=params)
+
+    np.testing.assert_array_equal(r1.labels, r2.labels)
+    np.testing.assert_array_almost_equal(r1.reduced_embeddings, r2.reduced_embeddings)
+
+
+def test_pipeline_default_random_state_backward_compat():
+    """Omitting random_state should behave the same as explicit 42."""
+    rng = np.random.RandomState(42)
+    embeddings = rng.randn(40, 64).astype(np.float32)
+
+    r1 = run_clustering_pipeline(
+        embeddings,
+        parameters={"reduction_method": "umap", "min_cluster_size": 5},
+    )
+    r2 = run_clustering_pipeline(
+        embeddings,
+        parameters={"reduction_method": "umap", "random_state": 42, "min_cluster_size": 5},
+    )
+
+    np.testing.assert_array_equal(r1.labels, r2.labels)
+    np.testing.assert_array_almost_equal(r1.reduced_embeddings, r2.reduced_embeddings)

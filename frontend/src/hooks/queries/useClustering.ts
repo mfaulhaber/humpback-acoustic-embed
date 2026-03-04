@@ -5,6 +5,11 @@ import {
   fetchVisualization,
   fetchMetrics,
   fetchDendrogram,
+  fetchFragmentation,
+  fetchStability,
+  fetchClassifier,
+  fetchLabelQueue,
+  fetchRefinement,
   fetchParameterSweep,
   fetchAssignments,
   createClusteringJob,
@@ -50,6 +55,51 @@ export function useDendrogram(jobId: string | null) {
   return useQuery({
     queryKey: ["dendrogram", jobId],
     queryFn: () => fetchDendrogram(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity,
+  });
+}
+
+export function useFragmentation(jobId: string | null) {
+  return useQuery({
+    queryKey: ["fragmentation", jobId],
+    queryFn: () => fetchFragmentation(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity,
+  });
+}
+
+export function useStability(jobId: string | null) {
+  return useQuery({
+    queryKey: ["stability", jobId],
+    queryFn: () => fetchStability(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity,
+  });
+}
+
+export function useClassifier(jobId: string | null) {
+  return useQuery({
+    queryKey: ["classifier", jobId],
+    queryFn: () => fetchClassifier(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity,
+  });
+}
+
+export function useLabelQueue(jobId: string | null) {
+  return useQuery({
+    queryKey: ["labelQueue", jobId],
+    queryFn: () => fetchLabelQueue(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity,
+  });
+}
+
+export function useRefinement(jobId: string | null) {
+  return useQuery({
+    queryKey: ["refinement", jobId],
+    queryFn: () => fetchRefinement(jobId!),
     enabled: !!jobId,
     staleTime: Infinity,
   });

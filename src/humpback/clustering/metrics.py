@@ -10,6 +10,43 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+def _shannon_entropy(counts: np.ndarray) -> float:
+    """Shannon entropy in nats from a 1-D array of non-negative counts."""
+    counts = np.asarray(counts, dtype=np.float64)
+    counts = counts[counts > 0]
+    if len(counts) <= 1:
+        return 0.0
+    probs = counts / counts.sum()
+    return float(-np.sum(probs * np.log(probs)))
+
+
+def _gini_coefficient(counts: np.ndarray) -> float:
+    """Gini coefficient (0 = equal, 1 = concentrated)."""
+    counts = np.asarray(counts, dtype=np.float64)
+    total = counts.sum()
+    n = len(counts)
+    if total == 0 or n <= 1:
+        return 0.0
+    sorted_x = np.sort(counts)
+    index = np.arange(1, n + 1)
+    return float((2.0 * np.sum(index * sorted_x)) / (n * total) - (n + 1.0) / n)
+
+
+def _top_k_mass(counts: np.ndarray, k: int) -> float:
+    """Fraction of the total in the top-*k* elements."""
+    counts = np.asarray(counts, dtype=np.float64)
+    total = counts.sum()
+    if total == 0:
+        return 0.0
+    top_k = np.sort(counts)[-k:]
+    return float(top_k.sum() / total)
+
+
 def compute_cluster_metrics(
     embeddings: np.ndarray,
     labels: np.ndarray,
@@ -236,6 +273,202 @@ def compute_dendrogram_data(
         "col_dendrogram": {
             "icoord": col_dendro["icoord"],
             "dcoord": col_dendro["dcoord"],
+        },
+    }
+
+
+def compute_category_fragmentation(
+    labels: np.ndarray,
+    category_labels: list[str | None],
+) -> dict[str, dict[str, float]]:
+    """Per-category fragmentation metrics.
+
+    For each non-None category, computes noise stats, top-k cluster mass,
+    Shannon entropy (normalized against global cluster count), effective
+    number of clusters, and Gini coefficient.
+    """
+    labels = np.asarray(labels)
+    # Global non-noise cluster count (used for entropy normalization)
+    non_noise_mask = labels != -1
+    global_clusters = set(labels[non_noise_mask].tolist())
+    n_clusters_global = len(global_clusters)
+    log_n = float(np.log(n_clusters_global)) if n_clusters_global > 1 else 1.0
+
+    # Group indices by category
+    cat_to_indices: dict[str, list[int]] = {}
+    for i, cat in enumerate(category_labels):
+        if cat is not None:
+            cat_to_indices.setdefault(cat, []).append(i)
+
+    result: dict[str, dict[str, float]] = {}
+    for cat, indices in sorted(cat_to_indices.items()):
+        cat_labels = labels[indices]
+        n_total = len(cat_labels)
+        noise_mask = cat_labels == -1
+        n_noise = int(noise_mask.sum())
+        n_non_noise = n_total - n_noise
+
+        noise_rate = n_noise / n_total if n_total > 0 else 0.0
+
+        # Cluster distribution (non-noise only)
+        non_noise_labels = cat_labels[~noise_mask]
+        if len(non_noise_labels) > 0:
+            unique, counts = np.unique(non_noise_labels, return_counts=True)
+            entropy = _shannon_entropy(counts)
+            neff = float(np.exp(entropy))
+            gini = _gini_coefficient(counts)
+            top1 = _top_k_mass(counts, 1)
+            top2 = _top_k_mass(counts, 2)
+            top3 = _top_k_mass(counts, 3)
+            norm_entropy = entropy / log_n if log_n > 0 else 0.0
+        else:
+            entropy = 0.0
+            neff = 0.0
+            gini = 0.0
+            top1 = top2 = top3 = 0.0
+            norm_entropy = 0.0
+
+        result[cat] = {
+            "n_total": float(n_total),
+            "n_non_noise": float(n_non_noise),
+            "n_noise": float(n_noise),
+            "noise_rate": noise_rate,
+            "top1_mass": top1,
+            "top2_mass": top2,
+            "top3_mass": top3,
+            "entropy": entropy,
+            "normalized_entropy": norm_entropy,
+            "neff": neff,
+            "gini": gini,
+        }
+
+    return result
+
+
+def compute_cluster_fragmentation(
+    labels: np.ndarray,
+    category_labels: list[str | None],
+) -> dict[str, dict[str, Any]]:
+    """Per-cluster composition metrics.
+
+    For each non-noise cluster, computes size, dominant category, dominant mass,
+    and Shannon entropy across categories.
+    """
+    labels = np.asarray(labels)
+    # Count distinct non-None categories for entropy normalization
+    valid_cats = set(c for c in category_labels if c is not None)
+    n_categories = len(valid_cats)
+    log_n_cat = float(np.log(n_categories)) if n_categories > 1 else 1.0
+
+    # Group by cluster
+    cluster_to_cats: dict[int, list[str]] = {}
+    for lab, cat in zip(labels.tolist(), category_labels):
+        if lab == -1 or cat is None:
+            continue
+        cluster_to_cats.setdefault(lab, []).append(cat)
+
+    result: dict[str, dict[str, Any]] = {}
+    for cl in sorted(cluster_to_cats.keys()):
+        cats = cluster_to_cats[cl]
+        size = len(cats)
+        # Category distribution
+        cat_counts: dict[str, int] = {}
+        for c in cats:
+            cat_counts[c] = cat_counts.get(c, 0) + 1
+        counts_arr = np.array(list(cat_counts.values()), dtype=np.float64)
+        dominant_cat = max(cat_counts, key=cat_counts.get)  # type: ignore[arg-type]
+        dominant_mass = float(cat_counts[dominant_cat] / size) if size > 0 else 0.0
+        entropy = _shannon_entropy(counts_arr)
+        norm_entropy = entropy / log_n_cat if log_n_cat > 0 else 0.0
+
+        result[str(cl)] = {
+            "size": size,
+            "dominant_category": dominant_cat,
+            "dominant_mass": dominant_mass,
+            "cluster_entropy": entropy,
+            "cluster_entropy_norm": norm_entropy,
+        }
+
+    return result
+
+
+def compute_global_fragmentation(
+    category_frag: dict[str, dict[str, float]],
+    cluster_frag: dict[str, dict[str, Any]],
+    labels: np.ndarray,
+    category_labels: list[str | None],
+) -> dict[str, float]:
+    """Weighted-average global fragmentation indices."""
+    # Category-weighted averages (weight = n_non_noise)
+    cat_weights = []
+    cat_entropy_norm = []
+    cat_neff = []
+    cat_noise_rate = []
+    for cat, m in category_frag.items():
+        w = m["n_non_noise"]
+        cat_weights.append(w)
+        cat_entropy_norm.append(m["normalized_entropy"])
+        cat_neff.append(m["neff"])
+        cat_noise_rate.append(m["noise_rate"])
+
+    total_cat_w = sum(cat_weights) or 1.0
+    mean_entropy_norm = sum(w * v for w, v in zip(cat_weights, cat_entropy_norm)) / total_cat_w
+    mean_neff = sum(w * v for w, v in zip(cat_weights, cat_neff)) / total_cat_w
+    mean_noise_rate = sum(w * v for w, v in zip(cat_weights, cat_noise_rate)) / total_cat_w
+
+    # Cluster-weighted average (weight = size)
+    cl_weights = []
+    cl_entropy_norm = []
+    for cl, m in cluster_frag.items():
+        cl_weights.append(m["size"])
+        cl_entropy_norm.append(m["cluster_entropy_norm"])
+
+    total_cl_w = sum(cl_weights) or 1.0
+    mean_cluster_entropy_norm = sum(w * v for w, v in zip(cl_weights, cl_entropy_norm)) / total_cl_w
+
+    return {
+        "mean_entropy_norm": mean_entropy_norm,
+        "mean_neff": mean_neff,
+        "mean_noise_rate": mean_noise_rate,
+        "mean_cluster_entropy_norm": mean_cluster_entropy_norm,
+    }
+
+
+def compute_fragmentation_report(
+    labels: np.ndarray,
+    category_labels: list[str | None],
+    job_id: str,
+) -> dict[str, Any] | None:
+    """Build the full fragmentation report (``report.json``).
+
+    Returns None if no valid (non-None) categories exist.
+    """
+    if not any(c is not None for c in category_labels):
+        return None
+
+    labels = np.asarray(labels)
+    cat_frag = compute_category_fragmentation(labels, category_labels)
+    cl_frag = compute_cluster_fragmentation(labels, category_labels)
+    global_frag = compute_global_fragmentation(cat_frag, cl_frag, labels, category_labels)
+
+    n_total = len(labels)
+    n_noise_total = int((labels == -1).sum())
+
+    non_noise_clusters = set(labels[labels != -1].tolist())
+    n_clusters = len(non_noise_clusters)
+    n_categories = len(cat_frag)
+
+    return {
+        "job_id": job_id,
+        "category_fragmentation": cat_frag,
+        "cluster_fragmentation": cl_frag,
+        "global_fragmentation": global_frag,
+        "summary": {
+            "n_categories": n_categories,
+            "n_clusters": n_clusters,
+            "n_total": n_total,
+            "n_noise_total": n_noise_total,
+            "overall_noise_rate": n_noise_total / n_total if n_total > 0 else 0.0,
         },
     }
 

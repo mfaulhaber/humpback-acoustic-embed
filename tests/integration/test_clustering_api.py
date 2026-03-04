@@ -334,3 +334,301 @@ async def test_parameter_sweep_no_file(client, app_settings):
 
     resp = await client.get(f"/clustering/jobs/{job_id}/parameter-sweep")
     assert resp.status_code == 404
+
+
+# --- Stability endpoint tests ---
+
+
+async def test_stability_not_found(client):
+    """Stability for nonexistent job returns 404."""
+    resp = await client.get("/clustering/jobs/nonexistent/stability")
+    assert resp.status_code == 404
+
+
+async def test_stability_not_complete(client):
+    """Stability for a queued job returns 400."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    resp = await client.get(f"/clustering/jobs/{job_id}/stability")
+    assert resp.status_code == 400
+    assert "not complete" in resp.json()["detail"].lower()
+
+
+async def test_stability_no_file(client, app_settings):
+    """Stability 404 when file doesn't exist for a complete job."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/stability")
+    assert resp.status_code == 404
+
+
+async def test_stability_success(client, app_settings):
+    """Stability endpoint returns stored stability data."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    # Write stability file
+    cluster_path = Path(app_settings.storage_root) / "clusters" / job_id
+    cluster_path.mkdir(parents=True, exist_ok=True)
+    stability_data = {
+        "n_runs": 3,
+        "seeds": [42, 123, 456],
+        "pairwise_label_agreement": {
+            "mean_pairwise_ari": 0.9,
+            "std_pairwise_ari": 0.02,
+            "min_pairwise_ari": 0.85,
+            "max_pairwise_ari": 0.95,
+        },
+        "aggregate_metrics": {
+            "n_clusters_mean": 5.0,
+            "n_clusters_std": 0.5,
+            "n_clusters_min": 4.0,
+            "n_clusters_max": 6.0,
+        },
+        "per_run": [
+            {"run_index": 0, "seed": 42, "n_clusters": 5, "noise_fraction": 0.0,
+             "silhouette_score": 0.5, "adjusted_rand_index": None,
+             "normalized_mutual_info": None, "fragmentation_index": None},
+        ],
+    }
+    (cluster_path / "stability_summary.json").write_text(json.dumps(stability_data))
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/stability")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["n_runs"] == 3
+    assert data["pairwise_label_agreement"]["mean_pairwise_ari"] == 0.9
+    assert len(data["per_run"]) == 1
+
+
+# --- Classifier endpoint tests ---
+
+
+async def test_classifier_not_found(client):
+    """Classifier for nonexistent job returns 404."""
+    resp = await client.get("/clustering/jobs/nonexistent/classifier")
+    assert resp.status_code == 404
+
+
+async def test_classifier_not_complete(client):
+    """Classifier for a queued job returns 400."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    resp = await client.get(f"/clustering/jobs/{job_id}/classifier")
+    assert resp.status_code == 400
+    assert "not complete" in resp.json()["detail"].lower()
+
+
+async def test_classifier_no_file(client, app_settings):
+    """Classifier 404 when file doesn't exist for a complete job."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/classifier")
+    assert resp.status_code == 404
+
+
+async def test_classifier_success(client, app_settings):
+    """Classifier endpoint returns stored classifier report."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    # Write classifier report file
+    cluster_path = Path(app_settings.storage_root) / "clusters" / job_id
+    cluster_path.mkdir(parents=True, exist_ok=True)
+    classifier_data = {
+        "n_samples": 100,
+        "n_categories": 3,
+        "n_folds": 5,
+        "categories_excluded": [],
+        "overall_accuracy": 0.85,
+        "per_class": {
+            "Grunt": {"precision": 0.9, "recall": 0.85, "f1_score": 0.87, "support": 40},
+        },
+        "macro_avg": {"precision": 0.84, "recall": 0.83, "f1_score": 0.83, "support": 100},
+        "weighted_avg": {"precision": 0.85, "recall": 0.85, "f1_score": 0.85, "support": 100},
+        "confusion_matrix": {"Grunt": {"Grunt": 34, "Buzz": 6}},
+    }
+    (cluster_path / "classifier_report.json").write_text(json.dumps(classifier_data))
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/classifier")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["n_samples"] == 100
+    assert data["overall_accuracy"] == 0.85
+    assert "Grunt" in data["per_class"]
+
+
+async def test_label_queue_no_file(client, app_settings):
+    """Label queue 404 when file doesn't exist for a complete job."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/label-queue")
+    assert resp.status_code == 404
+
+
+async def test_label_queue_success(client, app_settings):
+    """Label queue endpoint returns stored queue data."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    # Write label queue file
+    cluster_path = Path(app_settings.storage_root) / "clusters" / job_id
+    cluster_path.mkdir(parents=True, exist_ok=True)
+    queue_data = [
+        {
+            "rank": 1,
+            "global_index": 5,
+            "embedding_set_id": "es-1",
+            "embedding_row_index": 3,
+            "current_category": None,
+            "predicted_category": None,
+            "entropy": None,
+            "margin": None,
+            "max_prob": None,
+            "fragmentation_boost": 0.0,
+            "priority": 1.0,
+        },
+        {
+            "rank": 2,
+            "global_index": 10,
+            "embedding_set_id": "es-2",
+            "embedding_row_index": 1,
+            "current_category": "Grunt",
+            "predicted_category": "Grunt",
+            "entropy": 0.5,
+            "margin": 0.3,
+            "max_prob": 0.7,
+            "fragmentation_boost": 0.1,
+            "priority": 0.8,
+        },
+    ]
+    (cluster_path / "label_queue.json").write_text(json.dumps(queue_data))
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/label-queue")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["rank"] == 1
+    assert data[0]["priority"] == 1.0
+    assert data[1]["current_category"] == "Grunt"
+
+
+# --- Refinement endpoint tests ---
+
+
+async def test_refinement_not_found(client):
+    """Refinement for nonexistent job returns 404."""
+    resp = await client.get("/clustering/jobs/nonexistent/refinement")
+    assert resp.status_code == 404
+
+
+async def test_refinement_not_complete(client):
+    """Refinement for a queued job returns 400."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    resp = await client.get(f"/clustering/jobs/{job_id}/refinement")
+    assert resp.status_code == 400
+    assert "not complete" in resp.json()["detail"].lower()
+
+
+async def test_refinement_no_file(client, app_settings):
+    """Refinement 404 when file doesn't exist for a complete job."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/refinement")
+    assert resp.status_code == 404
+
+
+async def test_refinement_success(client, app_settings):
+    """Refinement endpoint returns stored refinement report."""
+    create = await client.post(
+        "/clustering/jobs",
+        json={"embedding_set_ids": []},
+    )
+    job_id = create.json()["id"]
+    await _mark_job_complete_with_metrics(app_settings, job_id)
+
+    # Write refinement report file
+    cluster_path = Path(app_settings.storage_root) / "clusters" / job_id
+    cluster_path.mkdir(parents=True, exist_ok=True)
+    refinement_data = {
+        "training_params": {
+            "output_dim": 128,
+            "hidden_dim": 512,
+            "n_epochs": 50,
+            "lr": 0.001,
+            "margin": 1.0,
+            "batch_size": 256,
+            "mining_strategy": "semi-hard",
+        },
+        "n_labeled_samples": 100,
+        "n_categories": 3,
+        "n_total_samples": 120,
+        "categories_used": ["Grunt", "Buzz", "Upsweep"],
+        "loss_history": [0.95, 0.72, 0.51],
+        "final_loss": 0.51,
+        "comparison": [
+            {
+                "metric": "Silhouette Score",
+                "key": "silhouette_score",
+                "base": 0.32,
+                "refined": 0.51,
+                "delta": 0.19,
+                "improved": True,
+            },
+        ],
+        "base_summary": {"silhouette_score": 0.32},
+        "refined_summary": {"silhouette_score": 0.51},
+    }
+    (cluster_path / "refinement_report.json").write_text(json.dumps(refinement_data))
+
+    resp = await client.get(f"/clustering/jobs/{job_id}/refinement")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["n_labeled_samples"] == 100
+    assert data["n_categories"] == 3
+    assert len(data["comparison"]) == 1
+    assert data["comparison"][0]["improved"] is True
+    assert data["final_loss"] == 0.51

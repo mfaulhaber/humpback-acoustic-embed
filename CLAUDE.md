@@ -311,6 +311,16 @@ flowchart TD
 | `normalization` | per_window_max | Spectrogram normalization: `"per_window_max"`, `"global_ref"`, `"standardize"` (in feature_config) |
 | Parameter sweep range | 2–50 | Sweeps HDBSCAN (min_cluster_size × selection_method) + K-Means (k=2..30) |
 | `tf_force_cpu` | `false` | Force CPU for TF2 SavedModel inference, skipping GPU (env: `HUMPBACK_TF_FORCE_CPU`) |
+| `run_classifier` | `false` | Opt-in: run logistic regression classifier baseline on category labels |
+| `stability_runs` | 0 | Opt-in: number of stability re-runs (≥ 2 to enable); re-clusters with different random seeds |
+| `enable_metric_learning` | `false` | Opt-in: train MLP projection head via triplet loss, re-cluster, compare metrics |
+| `ml_output_dim` | 128 | Metric learning: projection output dimensionality |
+| `ml_hidden_dim` | 512 | Metric learning: hidden layer dimensionality |
+| `ml_n_epochs` | 50 | Metric learning: training epochs |
+| `ml_lr` | 0.001 | Metric learning: Adam learning rate |
+| `ml_margin` | 1.0 | Metric learning: triplet loss margin |
+| `ml_batch_size` | 256 | Metric learning: triplets per epoch |
+| `ml_mining_strategy` | semi-hard | Metric learning: `"random"`, `"hard"`, or `"semi-hard"` triplet mining |
 
 ---
 
@@ -332,8 +342,12 @@ Pipeline:
    ARI, NMI, homogeneity, completeness, v_measure, per-category purity, confusion matrix
 9. Run parameter sweep (HDBSCAN: min_cluster_size × selection_method; K-Means: k=2..30)
    with ARI/NMI when category labels available; save to parameter_sweep.json
-10. Persist metrics as metrics_json on ClusteringJob
-11. Mark ClusteringJob complete
+10. Compute fragmentation report (per-category & per-cluster entropy, Gini, noise rates); save to report.json
+11. Opt-in: Classifier baseline (`run_classifier=true`) — logistic regression cross-validation on category labels; save to classifier_report.json + label_queue.json (active learning priority queue)
+12. Opt-in: Stability evaluation (`stability_runs≥2`) — re-cluster N times with different random seeds, compute pairwise ARI; save to stability_summary.json
+13. Opt-in: Metric learning refinement (`enable_metric_learning=true`) — train 2-layer MLP projection head with triplet loss on labeled embeddings, project all embeddings into refined space, re-cluster with same params, compare base vs refined metrics; save to refinement_report.json
+14. Persist metrics as metrics_json on ClusteringJob
+15. Mark ClusteringJob complete
 
 ---
 
@@ -364,6 +378,11 @@ Concurrency:
   {clustering_job_id}/assignments.parquet
   {clustering_job_id}/umap_coords.parquet
   {clustering_job_id}/parameter_sweep.json
+  {clustering_job_id}/report.json                (fragmentation report)
+  {clustering_job_id}/classifier_report.json     (opt-in classifier baseline)
+  {clustering_job_id}/label_queue.json           (opt-in active learning queue)
+  {clustering_job_id}/stability_summary.json     (opt-in stability evaluation)
+  {clustering_job_id}/refinement_report.json     (opt-in metric learning refinement)
 
 ---
 

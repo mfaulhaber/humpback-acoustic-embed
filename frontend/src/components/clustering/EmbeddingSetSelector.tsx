@@ -155,6 +155,15 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
       } else {
         parameters.reduction_method = "none";
       }
+      if (params.stabilityRuns >= 2) {
+        parameters.stability_runs = params.stabilityRuns;
+      }
+      if (params.runClassifier) {
+        parameters.run_classifier = true;
+      }
+      if (params.enableMetricLearning) {
+        parameters.enable_metric_learning = true;
+      }
 
       createJob.mutate(
         { embedding_set_ids: [...selected], parameters },

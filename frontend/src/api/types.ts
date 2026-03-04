@@ -187,6 +187,150 @@ export interface DendrogramData {
   col_dendrogram: DendrogramCoords;
 }
 
+// ---- Fragmentation ----
+
+export interface CategoryFragmentation {
+  n_total: number;
+  n_non_noise: number;
+  n_noise: number;
+  noise_rate: number;
+  top1_mass: number;
+  top2_mass: number;
+  top3_mass: number;
+  entropy: number;
+  normalized_entropy: number;
+  neff: number;
+  gini: number;
+}
+
+export interface ClusterFragmentation {
+  size: number;
+  dominant_category: string;
+  dominant_mass: number;
+  cluster_entropy: number;
+  cluster_entropy_norm: number;
+}
+
+export interface GlobalFragmentation {
+  mean_entropy_norm: number;
+  mean_neff: number;
+  mean_noise_rate: number;
+  mean_cluster_entropy_norm: number;
+}
+
+export interface FragmentationSummary {
+  n_categories: number;
+  n_clusters: number;
+  n_total: number;
+  n_noise_total: number;
+  overall_noise_rate: number;
+}
+
+export interface FragmentationReport {
+  job_id: string;
+  category_fragmentation: Record<string, CategoryFragmentation>;
+  cluster_fragmentation: Record<string, ClusterFragmentation>;
+  global_fragmentation: GlobalFragmentation;
+  summary: FragmentationSummary;
+}
+
+// ---- Stability ----
+
+export interface StabilityRunMetrics {
+  run_index: number;
+  seed: number;
+  n_clusters: number;
+  noise_fraction: number;
+  silhouette_score: number | null;
+  adjusted_rand_index: number | null;
+  normalized_mutual_info: number | null;
+  fragmentation_index: number | null;
+}
+
+export interface PairwiseLabelAgreement {
+  mean_pairwise_ari: number | null;
+  std_pairwise_ari: number | null;
+  min_pairwise_ari: number | null;
+  max_pairwise_ari: number | null;
+}
+
+export interface StabilitySummary {
+  n_runs: number;
+  seeds: number[];
+  pairwise_label_agreement: PairwiseLabelAgreement;
+  aggregate_metrics: Record<string, number | null>;
+  per_run: StabilityRunMetrics[];
+}
+
+// ---- Classifier Baseline ----
+
+export interface PerClassMetrics {
+  precision: number;
+  recall: number;
+  f1_score: number;
+  support: number;
+}
+
+export interface ClassifierReport {
+  n_samples: number;
+  n_categories: number;
+  n_folds: number;
+  categories_excluded: string[];
+  overall_accuracy: number;
+  per_class: Record<string, PerClassMetrics>;
+  macro_avg: PerClassMetrics;
+  weighted_avg: PerClassMetrics;
+  confusion_matrix: Record<string, Record<string, number>>;
+}
+
+export interface LabelQueueEntry {
+  rank: number;
+  global_index: number;
+  embedding_set_id: string;
+  embedding_row_index: number;
+  current_category: string | null;
+  predicted_category: string | null;
+  entropy: number | null;
+  margin: number | null;
+  max_prob: number | null;
+  fragmentation_boost: number;
+  priority: number;
+}
+
+// ---- Metric Learning Refinement ----
+
+export interface RefinementTrainingParams {
+  output_dim: number;
+  hidden_dim: number;
+  n_epochs: number;
+  lr: number;
+  margin: number;
+  batch_size: number;
+  mining_strategy: string;
+}
+
+export interface RefinementMetricComparison {
+  metric: string;
+  key: string;
+  base: number | null;
+  refined: number | null;
+  delta: number | null;
+  improved: boolean | null;
+}
+
+export interface RefinementReport {
+  training_params: RefinementTrainingParams;
+  n_labeled_samples: number;
+  n_categories: number;
+  n_total_samples: number;
+  categories_used: string[];
+  loss_history: number[];
+  final_loss: number;
+  comparison: RefinementMetricComparison[];
+  base_summary: Record<string, number | null>;
+  refined_summary: Record<string, number | null>;
+}
+
 // ---- Admin ----
 
 export interface ModelConfig {

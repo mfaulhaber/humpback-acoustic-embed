@@ -1,6 +1,7 @@
 import type {
   AudioFile,
   AvailableModelFile,
+  ClassifierReport,
   ClusterAssignment,
   ClusteringJob,
   ClusteringJobCreate,
@@ -11,6 +12,10 @@ import type {
   EmbeddingSimilarity,
   FolderDeletePreview,
   FolderDeleteResult,
+  FragmentationReport,
+  LabelQueueEntry,
+  RefinementReport,
+  StabilitySummary,
   ModelConfig,
   ModelConfigCreate,
   ParameterSweepPoint,
@@ -131,6 +136,21 @@ export const fetchParameterSweep = (jobId: string) =>
 
 export const fetchDendrogram = (jobId: string) =>
   api<DendrogramData>(`/clustering/jobs/${jobId}/dendrogram`);
+
+export const fetchFragmentation = (jobId: string) =>
+  api<FragmentationReport>(`/clustering/jobs/${jobId}/fragmentation`);
+
+export const fetchStability = (jobId: string) =>
+  api<StabilitySummary>(`/clustering/jobs/${jobId}/stability`);
+
+export const fetchClassifier = (jobId: string) =>
+  api<ClassifierReport>(`/clustering/jobs/${jobId}/classifier`);
+
+export const fetchLabelQueue = (jobId: string) =>
+  api<LabelQueueEntry[]>(`/clustering/jobs/${jobId}/label-queue`);
+
+export const fetchRefinement = (jobId: string) =>
+  api<RefinementReport>(`/clustering/jobs/${jobId}/refinement`);
 
 export const fetchAssignments = (clusterId: string) =>
   api<ClusterAssignment[]>(`/clustering/clusters/${clusterId}/assignments`);

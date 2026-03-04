@@ -37,6 +37,7 @@ def run_clustering_pipeline(
 
     distance_metric = params.get("distance_metric", "euclidean")
     reduction_method = params.get("reduction_method", None)
+    random_state = params.get("random_state", 42)
 
     # Backward compat: use_umap=False maps to reduction_method="none"
     if reduction_method is None:
@@ -54,11 +55,11 @@ def run_clustering_pipeline(
 
         if reduction_method == "pca":
             if cluster_n_components == 2:
-                reduced = reduce_pca(embeddings, n_components=2)
+                reduced = reduce_pca(embeddings, n_components=2, random_state=random_state)
                 cluster_input = reduced
             else:
-                cluster_input = reduce_pca(embeddings, n_components=cluster_n_components)
-                reduced = reduce_pca(embeddings, n_components=2)
+                cluster_input = reduce_pca(embeddings, n_components=cluster_n_components, random_state=random_state)
+                reduced = reduce_pca(embeddings, n_components=2, random_state=random_state)
         else:
             # UMAP (default)
             n_neighbors = params.get("umap_n_neighbors", 15)
@@ -67,6 +68,7 @@ def run_clustering_pipeline(
                 n_neighbors=n_neighbors,
                 min_dist=min_dist,
                 metric=distance_metric,
+                random_state=random_state,
             )
 
             if cluster_n_components == 2:
@@ -83,7 +85,7 @@ def run_clustering_pipeline(
 
     if algorithm == "kmeans":
         n_clusters = params.get("n_clusters", 15)
-        labels = cluster_kmeans(cluster_input, n_clusters=n_clusters)
+        labels = cluster_kmeans(cluster_input, n_clusters=n_clusters, random_state=random_state)
     elif algorithm == "agglomerative":
         n_clusters = params.get("n_clusters", 15)
         linkage = params.get("linkage", "ward")

@@ -172,6 +172,86 @@ async def get_dendrogram(job_id: str, session: SessionDep):
     return result
 
 
+@router.get("/jobs/{job_id}/fragmentation")
+async def get_fragmentation(job_id: str, session: SessionDep, settings: SettingsDep):
+    """Return fragmentation report (report.json) for a clustering job."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    report_path = cluster_dir(Path(settings.storage_root), job_id) / "report.json"
+    if not report_path.exists():
+        raise HTTPException(404, "Fragmentation report not available for this job")
+
+    return json.loads(report_path.read_text())
+
+
+@router.get("/jobs/{job_id}/stability")
+async def get_stability(job_id: str, session: SessionDep, settings: SettingsDep):
+    """Return stability_summary.json for a clustering job."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    stability_path = cluster_dir(Path(settings.storage_root), job_id) / "stability_summary.json"
+    if not stability_path.exists():
+        raise HTTPException(404, "Stability data not available for this job")
+
+    return json.loads(stability_path.read_text())
+
+
+@router.get("/jobs/{job_id}/classifier")
+async def get_classifier(job_id: str, session: SessionDep, settings: SettingsDep):
+    """Return classifier_report.json for a clustering job."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    report_path = cluster_dir(Path(settings.storage_root), job_id) / "classifier_report.json"
+    if not report_path.exists():
+        raise HTTPException(404, "Classifier report not available for this job")
+
+    return json.loads(report_path.read_text())
+
+
+@router.get("/jobs/{job_id}/label-queue")
+async def get_label_queue(job_id: str, session: SessionDep, settings: SettingsDep):
+    """Return label_queue.json for a clustering job."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    queue_path = cluster_dir(Path(settings.storage_root), job_id) / "label_queue.json"
+    if not queue_path.exists():
+        raise HTTPException(404, "Label queue not available for this job")
+
+    return json.loads(queue_path.read_text())
+
+
+@router.get("/jobs/{job_id}/refinement")
+async def get_refinement(job_id: str, session: SessionDep, settings: SettingsDep):
+    """Return refinement_report.json for a clustering job."""
+    job = await clustering_service.get_clustering_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    report_path = cluster_dir(Path(settings.storage_root), job_id) / "refinement_report.json"
+    if not report_path.exists():
+        raise HTTPException(404, "Refinement report not available for this job")
+
+    return json.loads(report_path.read_text())
+
+
 @router.get("/jobs/{job_id}/parameter-sweep")
 async def get_parameter_sweep(job_id: str, session: SessionDep, settings: SettingsDep):
     """Return parameter_sweep.json from the cluster output directory."""
