@@ -413,6 +413,18 @@ export interface DetectionRow {
   end_sec: number;
   avg_confidence: number;
   peak_confidence: number;
+  humpback: number | null;
+  ship: number | null;
+  background: number | null;
+}
+
+export interface DetectionLabelRow {
+  filename: string;
+  start_sec: number;
+  end_sec: number;
+  humpback: number | null;
+  ship: number | null;
+  background: number | null;
 }
 
 // ---- Admin ----

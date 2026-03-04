@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import {
   ArrowUp,
   ArrowDown,
   Download,
+  Save,
 } from "lucide-react";
 import {
   useClassifierModels,
@@ -20,20 +21,29 @@ import {
   useCreateDetectionJob,
   useBulkDeleteDetectionJobs,
   useDetectionContent,
+  useSaveDetectionLabels,
 } from "@/hooks/queries/useClassifier";
 import { detectionTsvUrl, detectionAudioSliceUrl } from "@/api/client";
 import { FolderBrowser } from "@/components/shared/FolderBrowser";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
-import type { DetectionJob, DetectionRow } from "@/api/types";
+import type { DetectionJob, DetectionRow, DetectionLabelRow } from "@/api/types";
 
-type SortKey = keyof DetectionRow;
+type SortKey = "filename" | "start_sec" | "end_sec" | "avg_confidence";
 type SortDir = "asc" | "desc";
+
+type LabelField = "humpback" | "ship" | "background";
+
+// Key for identifying a detection row: "filename:start_sec:end_sec"
+function rowKey(row: { filename: string; start_sec: number; end_sec: number }): string {
+  return `${row.filename}:${row.start_sec}:${row.end_sec}`;
+}
 
 export function DetectionTab() {
   const { data: models = [] } = useClassifierModels();
   const { data: detectionJobs = [] } = useDetectionJobs(3000);
   const createMutation = useCreateDetectionJob();
   const bulkDeleteMutation = useBulkDeleteDetectionJobs();
+  const saveLabelsMutation = useSaveDetectionLabels();
 
   const [selectedModelId, setSelectedModelId] = useState("");
   const [audioFolder, setAudioFolder] = useState("");
@@ -50,6 +60,12 @@ export function DetectionTab() {
   // Audio playback
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
+
+  // Label edits: jobId -> rowKey -> { humpback, ship, background }
+  const [labelEdits, setLabelEdits] = useState<
+    Map<string, Map<string, Partial<Record<LabelField, number | null>>>>
+  >(new Map());
+  const [dirtyJobs, setDirtyJobs] = useState<Set<string>>(new Set());
 
   const hasActiveJobs = detectionJobs.some(
     (j) => j.status === "queued" || j.status === "running",
@@ -115,13 +131,57 @@ export function DetectionTab() {
         audio.load();
         setPlayingKey(key);
         audio.play().catch(() => {
-          // Browser may reject play if the source isn't ready yet
           setPlayingKey(null);
         });
       }
     },
     [playingKey],
   );
+
+  // Label editing
+  const handleLabelChange = useCallback(
+    (jobId: string, rk: string, field: LabelField, value: number | null) => {
+      setLabelEdits((prev) => {
+        const next = new Map(prev);
+        const jobEdits = new Map(next.get(jobId) ?? new Map());
+        const rowEdits = { ...(jobEdits.get(rk) ?? {}) };
+        rowEdits[field] = value;
+        jobEdits.set(rk, rowEdits);
+        next.set(jobId, jobEdits);
+        return next;
+      });
+      setDirtyJobs((prev) => new Set(prev).add(jobId));
+    },
+    [],
+  );
+
+  const handleSaveLabels = useCallback(async () => {
+    const promises: Promise<unknown>[] = [];
+    for (const jobId of dirtyJobs) {
+      const jobEdits = labelEdits.get(jobId);
+      if (!jobEdits || jobEdits.size === 0) continue;
+
+      const rows: DetectionLabelRow[] = [];
+      for (const [rk, edits] of jobEdits) {
+        const [filename, startStr, endStr] = rk.split(":");
+        rows.push({
+          filename,
+          start_sec: parseFloat(startStr),
+          end_sec: parseFloat(endStr),
+          humpback: edits.humpback ?? null,
+          ship: edits.ship ?? null,
+          background: edits.background ?? null,
+        });
+      }
+
+      promises.push(
+        saveLabelsMutation.mutateAsync({ jobId, rows }),
+      );
+    }
+    await Promise.all(promises);
+    setLabelEdits(new Map());
+    setDirtyJobs(new Set());
+  }, [dirtyJobs, labelEdits, saveLabelsMutation]);
 
   return (
     <div className="space-y-4">
@@ -217,15 +277,25 @@ export function DetectionTab() {
                 </span>
               )}
             </div>
-            {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={dirtyJobs.size === 0 || saveLabelsMutation.isPending}
+                onClick={handleSaveLabels}
+              >
+                <Save className="h-3.5 w-3.5 mr-1" />
+                {saveLabelsMutation.isPending ? "Saving…" : "Save Labels"}
+              </Button>
               <Button
                 variant="destructive"
                 size="sm"
+                disabled={selectedIds.size === 0}
                 onClick={() => setShowDeleteDialog(true)}
               >
                 Delete ({selectedIds.size})
               </Button>
-            )}
+            </div>
           </div>
           <table className="w-full text-sm">
             <thead>
@@ -268,6 +338,8 @@ export function DetectionTab() {
                   }
                   playingKey={playingKey}
                   onPlay={handlePlay}
+                  labelEdits={labelEdits.get(job.id) ?? null}
+                  onLabelChange={handleLabelChange}
                 />
               ))}
             </tbody>
@@ -318,6 +390,8 @@ function DetectionJobTableRow({
   onExpand,
   playingKey,
   onPlay,
+  labelEdits,
+  onLabelChange,
 }: {
   job: DetectionJob;
   checked: boolean;
@@ -326,6 +400,8 @@ function DetectionJobTableRow({
   onExpand: () => void;
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow) => void;
+  labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
+  onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
 }) {
   const summary = job.result_summary as Record<string, number> | null;
   const canExpand = job.status === "complete" && job.output_tsv_path;
@@ -365,7 +441,7 @@ function DetectionJobTableRow({
         <td className="px-3 py-2 text-muted-foreground">
           {summary
             ? `${summary.n_spans} span(s) in ${summary.n_files} file(s)`
-            : "—"}
+            : "\u2014"}
         </td>
         <td className="px-3 py-2">
           {canExpand && (
@@ -394,6 +470,8 @@ function DetectionJobTableRow({
               jobId={job.id}
               playingKey={playingKey}
               onPlay={onPlay}
+              labelEdits={labelEdits}
+              onLabelChange={onLabelChange}
             />
           </td>
         </tr>
@@ -406,14 +484,20 @@ function DetectionContentTable({
   jobId,
   playingKey,
   onPlay,
+  labelEdits,
+  onLabelChange,
 }: {
   jobId: string;
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow) => void;
+  labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
+  onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
 }) {
   const { data: rows = [], isLoading } = useDetectionContent(jobId);
   const [sortKey, setSortKey] = useState<SortKey>("avg_confidence");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -438,6 +522,77 @@ function DetectionContentTable({
         : sb.localeCompare(sa);
     });
   }, [rows, sortKey, sortDir]);
+
+  const getEffectiveLabel = useCallback(
+    (row: DetectionRow, field: LabelField): number | null => {
+      const rk = rowKey(row);
+      const edit = labelEdits?.get(rk);
+      if (edit && field in edit) {
+        return edit[field] ?? null;
+      }
+      return row[field];
+    },
+    [labelEdits],
+  );
+
+  const handleCheckboxClick = useCallback(
+    (row: DetectionRow, field: LabelField) => {
+      const current = getEffectiveLabel(row, field);
+      const next = current === 1 ? 0 : 1;
+      onLabelChange(jobId, rowKey(row), field, next);
+    },
+    [jobId, getEffectiveLabel, onLabelChange],
+  );
+
+  // Keyboard shortcuts: h/s/b toggle labels on focused row, arrow keys navigate
+  const keyMap: Record<string, LabelField> = { h: "humpback", s: "ship", b: "background" };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Skip when typing in an input, select, or textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+      if (e.key === "ArrowDown" || e.key === "j") {
+        e.preventDefault();
+        setFocusedIndex((prev) => {
+          if (prev === null) return 0;
+          return Math.min(prev + 1, sorted.length - 1);
+        });
+        return;
+      }
+      if (e.key === "ArrowUp" || e.key === "k") {
+        e.preventDefault();
+        setFocusedIndex((prev) => {
+          if (prev === null) return 0;
+          return Math.max(prev - 1, 0);
+        });
+        return;
+      }
+
+      if (e.key === " " && focusedIndex !== null && focusedIndex < sorted.length) {
+        e.preventDefault();
+        onPlay(jobId, sorted[focusedIndex]);
+        return;
+      }
+
+      const field = keyMap[e.key.toLowerCase()];
+      if (field && focusedIndex !== null && focusedIndex < sorted.length) {
+        e.preventDefault();
+        handleCheckboxClick(sorted[focusedIndex], field);
+      }
+    };
+
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [sorted, focusedIndex, handleCheckboxClick, onPlay, jobId]);
+
+  // Scroll focused row into view
+  useEffect(() => {
+    if (focusedIndex === null || !tableRef.current) return;
+    const row = tableRef.current.querySelector(`tbody tr:nth-child(${focusedIndex + 1})`);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedIndex]);
 
   if (isLoading) {
     return (
@@ -477,7 +632,7 @@ function DetectionContentTable({
   );
 
   return (
-    <div className="bg-muted/20 border-t">
+    <div className="bg-muted/20 border-t" ref={tableRef}>
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b">
@@ -485,20 +640,34 @@ function DetectionContentTable({
             <SortHeader label="File" field="filename" />
             <SortHeader label="Start (s)" field="start_sec" />
             <SortHeader label="End (s)" field="end_sec" />
-            <SortHeader label="Avg Confidence" field="avg_confidence" />
-            <SortHeader label="Peak Confidence" field="peak_confidence" />
+            <SortHeader label="Confidence" field="avg_confidence" />
+            <th className="px-3 py-1.5 text-center font-medium">Humpback</th>
+            <th className="px-3 py-1.5 text-center font-medium">Ship</th>
+            <th className="px-3 py-1.5 text-center font-medium">Background</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((row, i) => {
             const key = `${jobId}:${row.filename}:${row.start_sec}`;
             const isPlaying = playingKey === key;
+            const isFocused = focusedIndex === i;
             return (
-              <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+              <tr
+                key={i}
+                className={`border-b last:border-0 cursor-pointer ${
+                  isFocused
+                    ? "bg-blue-100 dark:bg-blue-900/30"
+                    : "hover:bg-muted/30"
+                }`}
+                onClick={() => setFocusedIndex(i)}
+              >
                 <td className="px-3 py-1.5">
                   <button
                     className="p-0.5 hover:bg-muted rounded"
-                    onClick={() => onPlay(jobId, row)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPlay(jobId, row);
+                    }}
                     title={isPlaying ? "Pause" : "Play"}
                   >
                     {isPlaying ? (
@@ -519,8 +688,29 @@ function DetectionContentTable({
                 <td className="px-3 py-1.5">
                   {row.avg_confidence.toFixed(3)}
                 </td>
-                <td className="px-3 py-1.5">
-                  {row.peak_confidence.toFixed(3)}
+                <td className="px-3 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer"
+                    checked={getEffectiveLabel(row, "humpback") === 1}
+                    onChange={() => handleCheckboxClick(row, "humpback")}
+                  />
+                </td>
+                <td className="px-3 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer"
+                    checked={getEffectiveLabel(row, "ship") === 1}
+                    onChange={() => handleCheckboxClick(row, "ship")}
+                  />
+                </td>
+                <td className="px-3 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer"
+                    checked={getEffectiveLabel(row, "background") === 1}
+                    onChange={() => handleCheckboxClick(row, "background")}
+                  />
                 </td>
               </tr>
             );

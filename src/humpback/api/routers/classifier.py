@@ -3,8 +3,11 @@
 import csv
 import io
 import json
+import os
 import struct
+import tempfile
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -284,6 +287,17 @@ async def bulk_delete_models(
 # ---- Detection Content ----
 
 
+def _parse_label(value: str | None) -> int | None:
+    """Parse a label column value: '0' → 0, '1' → 1, else → None."""
+    if value is not None:
+        value = value.strip()
+    if value == "0":
+        return 0
+    if value == "1":
+        return 1
+    return None
+
+
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     """Parse detection TSV and return rows as JSON."""
@@ -307,9 +321,108 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
                     "end_sec": float(row.get("end_sec", 0)),
                     "avg_confidence": float(row.get("avg_confidence", 0)),
                     "peak_confidence": float(row.get("peak_confidence", 0)),
+                    "humpback": _parse_label(row.get("humpback")),
+                    "ship": _parse_label(row.get("ship")),
+                    "background": _parse_label(row.get("background")),
                 }
             )
     return rows
+
+
+# ---- Detection Labels ----
+
+
+class DetectionLabelRow(BaseModel):
+    filename: str
+    start_sec: float
+    end_sec: float
+    humpback: Optional[int] = None
+    ship: Optional[int] = None
+    background: Optional[int] = None
+
+
+def _serialize_label(value: int | None) -> str:
+    """Serialize label value for TSV: None → '', 0 → '0', 1 → '1'."""
+    if value is None:
+        return ""
+    return str(value)
+
+
+@router.put("/detection-jobs/{job_id}/labels")
+async def save_detection_labels(
+    job_id: str, body: list[DetectionLabelRow], session: SessionDep
+) -> dict:
+    """Merge label annotations into the detection TSV file."""
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+    if job.status != "complete" or not job.output_tsv_path:
+        raise HTTPException(400, "Detection job not complete or no output available")
+    tsv_path = Path(job.output_tsv_path)
+    if not tsv_path.is_file():
+        raise HTTPException(404, "TSV file not found on disk")
+
+    # Build lookup of label updates keyed by (filename, start_sec, end_sec)
+    label_map: dict[tuple[str, float, float], DetectionLabelRow] = {}
+    for row in body:
+        label_map[(row.filename, row.start_sec, row.end_sec)] = row
+
+    # Read existing TSV
+    existing_rows = []
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            existing_rows.append(row)
+
+    # Merge labels
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "humpback",
+        "ship",
+        "background",
+    ]
+    updated_rows = []
+    for row in existing_rows:
+        key = (
+            row.get("filename", ""),
+            float(row.get("start_sec", 0)),
+            float(row.get("end_sec", 0)),
+        )
+        update = label_map.get(key)
+        out_row = {
+            "filename": row.get("filename", ""),
+            "start_sec": row.get("start_sec", "0"),
+            "end_sec": row.get("end_sec", "0"),
+            "avg_confidence": row.get("avg_confidence", "0"),
+            "peak_confidence": row.get("peak_confidence", "0"),
+            "humpback": _serialize_label(update.humpback) if update else row.get("humpback", ""),
+            "ship": _serialize_label(update.ship) if update else row.get("ship", ""),
+            "background": _serialize_label(update.background) if update else row.get("background", ""),
+        }
+        updated_rows.append(out_row)
+
+    # Write atomically via temp file
+    tsv_dir = tsv_path.parent
+    fd, tmp_path = tempfile.mkstemp(dir=str(tsv_dir), suffix=".tsv")
+    try:
+        with os.fdopen(fd, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(updated_rows)
+        os.replace(tmp_path, str(tsv_path))
+    except Exception:
+        # Clean up temp file on failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    return {"status": "ok", "updated": len(label_map)}
 
 
 # ---- Audio Slice Streaming ----

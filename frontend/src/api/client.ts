@@ -13,6 +13,7 @@ import type {
   DendrogramData,
   DetectionJob,
   DetectionJobCreate,
+  DetectionLabelRow,
   DetectionRow,
   DirectoryListing,
   EmbeddingSet,
@@ -55,6 +56,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function post<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function put<T>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -218,6 +227,12 @@ export const bulkDeleteDetectionJobs = (ids: string[]) =>
 
 export const fetchDetectionContent = (jobId: string) =>
   api<DetectionRow[]>(`/classifier/detection-jobs/${jobId}/content`);
+
+export const saveDetectionLabels = (jobId: string, rows: DetectionLabelRow[]) =>
+  put<{ status: string; updated: number }>(
+    `/classifier/detection-jobs/${jobId}/labels`,
+    rows,
+  );
 
 export function detectionAudioSliceUrl(
   jobId: string,

@@ -11,8 +11,13 @@ import {
   bulkDeleteClassifierModels,
   bulkDeleteDetectionJobs,
   fetchDetectionContent,
+  saveDetectionLabels,
 } from "@/api/client";
-import type { ClassifierTrainingJobCreate, DetectionJobCreate } from "@/api/types";
+import type {
+  ClassifierTrainingJobCreate,
+  DetectionJobCreate,
+  DetectionLabelRow,
+} from "@/api/types";
 
 export function useTrainingJobs(refetchInterval?: number) {
   return useQuery({
@@ -111,5 +116,16 @@ export function useDetectionContent(jobId: string | null) {
     queryKey: ["detectionContent", jobId],
     queryFn: () => fetchDetectionContent(jobId!),
     enabled: jobId !== null,
+  });
+}
+
+export function useSaveDetectionLabels() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, rows }: { jobId: string; rows: DetectionLabelRow[] }) =>
+      saveDetectionLabels(jobId, rows),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["detectionContent", variables.jobId] });
+    },
   });
 }
