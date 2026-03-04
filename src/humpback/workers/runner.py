@@ -8,9 +8,16 @@ import sys
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
 from humpback.services.model_registry_service import seed_default_model
+from humpback.workers.classifier_worker import run_detection_job, run_training_job
 from humpback.workers.clustering_worker import run_clustering_job
 from humpback.workers.processing_worker import run_processing_job
-from humpback.workers.queue import claim_clustering_job, claim_processing_job, recover_stale_jobs
+from humpback.workers.queue import (
+    claim_clustering_job,
+    claim_detection_job,
+    claim_processing_job,
+    claim_training_job,
+    recover_stale_jobs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,20 +57,56 @@ async def run_worker(settings: Settings | None = None) -> None:
         await recover_stale_jobs(session)
 
     while not shutdown.is_set():
-        async with session_factory() as session:
-            # Try processing jobs first
-            job = await claim_processing_job(session)
-            if job:
-                logger.info(f"Processing job {job.id} for audio {job.audio_file_id}")
-                await run_processing_job(session, job, settings)
-                continue
+        claimed = False
+        job = cjob = tjob = djob = None
 
-            # Then clustering jobs
+        # Try processing jobs first
+        async with session_factory() as session:
+            job = await claim_processing_job(session)
+        if job:
+            logger.info(f"Processing job {job.id} for audio {job.audio_file_id}")
+            async with session_factory() as session:
+                await run_processing_job(session, job, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then clustering jobs
+        async with session_factory() as session:
             cjob = await claim_clustering_job(session)
-            if cjob:
-                logger.info(f"Clustering job {cjob.id}")
+        if cjob:
+            logger.info(f"Clustering job {cjob.id}")
+            async with session_factory() as session:
                 await run_clustering_job(session, cjob, settings)
-                continue
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then classifier training jobs
+        async with session_factory() as session:
+            tjob = await claim_training_job(session)
+        if tjob:
+            logger.info(f"Training job {tjob.id} ({tjob.name})")
+            async with session_factory() as session:
+                await run_training_job(session, tjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then detection jobs
+        async with session_factory() as session:
+            djob = await claim_detection_job(session)
+        if djob:
+            logger.info(f"Detection job {djob.id}")
+            async with session_factory() as session:
+                await run_detection_job(session, djob, settings)
+            claimed = True
+
+        if claimed:
+            continue
 
         # No jobs found, wait before polling again
         try:

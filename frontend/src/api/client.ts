@@ -1,13 +1,18 @@
 import type {
   AudioFile,
   AvailableModelFile,
+  ClassifierModelInfo,
   ClassifierReport,
+  ClassifierTrainingJob,
+  ClassifierTrainingJobCreate,
   ClusterAssignment,
   ClusteringJob,
   ClusteringJobCreate,
   ClusteringMetrics,
   ClusterOut,
   DendrogramData,
+  DetectionJob,
+  DetectionJobCreate,
   EmbeddingSet,
   EmbeddingSimilarity,
   FolderDeletePreview,
@@ -157,6 +162,39 @@ export const fetchAssignments = (clusterId: string) =>
 
 export const deleteClusteringJob = (jobId: string) =>
   api<{ status: string }>(`/clustering/jobs/${jobId}`, { method: "DELETE" });
+
+// ---- Binary Classifier ----
+
+export const fetchTrainingJobs = () =>
+  api<ClassifierTrainingJob[]>("/classifier/training-jobs");
+
+export const createTrainingJob = (body: ClassifierTrainingJobCreate) =>
+  post<ClassifierTrainingJob>("/classifier/training-jobs", body);
+
+export const fetchTrainingJob = (jobId: string) =>
+  api<ClassifierTrainingJob>(`/classifier/training-jobs/${jobId}`);
+
+export const fetchClassifierModels = () =>
+  api<ClassifierModelInfo[]>("/classifier/models");
+
+export const fetchClassifierModel = (modelId: string) =>
+  api<ClassifierModelInfo>(`/classifier/models/${modelId}`);
+
+export const deleteClassifierModel = (modelId: string) =>
+  api<{ status: string }>(`/classifier/models/${modelId}`, { method: "DELETE" });
+
+export const fetchDetectionJobs = () =>
+  api<DetectionJob[]>("/classifier/detection-jobs");
+
+export const createDetectionJob = (body: DetectionJobCreate) =>
+  post<DetectionJob>("/classifier/detection-jobs", body);
+
+export const fetchDetectionJob = (jobId: string) =>
+  api<DetectionJob>(`/classifier/detection-jobs/${jobId}`);
+
+export function detectionTsvUrl(jobId: string) {
+  return `/classifier/detection-jobs/${jobId}/download`;
+}
 
 // ---- Admin ----
 

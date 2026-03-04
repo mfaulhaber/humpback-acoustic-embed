@@ -33,6 +33,14 @@ def atomic_rename(src: Path, dst: Path) -> None:
     os.replace(src, dst)
 
 
+def classifier_dir(storage_root: Path, classifier_model_id: str) -> Path:
+    return storage_root / "classifiers" / classifier_model_id
+
+
+def detection_dir(storage_root: Path, detection_job_id: str) -> Path:
+    return storage_root / "detections" / detection_job_id
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path

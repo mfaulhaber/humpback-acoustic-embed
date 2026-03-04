@@ -24,6 +24,7 @@ Key features:
 - Stability evaluation: re-cluster with multiple random seeds, pairwise ARI agreement
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
+- Binary whale vocalization classifier: train LogisticRegression on positive embeddings + negative audio, scan arbitrary hydrophone folders for whale presence with merged detection spans
 
 ---
 
@@ -439,6 +440,16 @@ original recording the clustered segment falls.
 | GET | `/clustering/jobs/{id}/label-queue` | Get active learning priority queue |
 | GET | `/clustering/jobs/{id}/refinement` | Get metric learning refinement report |
 | GET | `/clustering/clusters/{id}/assignments` | Get assignments |
+| POST | `/classifier/training-jobs` | Queue classifier training job |
+| GET | `/classifier/training-jobs` | List training jobs |
+| GET | `/classifier/training-jobs/{id}` | Get training job |
+| GET | `/classifier/models` | List trained classifier models |
+| GET | `/classifier/models/{id}` | Get classifier model details |
+| DELETE | `/classifier/models/{id}` | Delete classifier model + files |
+| POST | `/classifier/detection-jobs` | Queue detection job |
+| GET | `/classifier/detection-jobs` | List detection jobs |
+| GET | `/classifier/detection-jobs/{id}` | Get detection job |
+| GET | `/classifier/detection-jobs/{id}/download` | Download detections TSV |
 | GET | `/admin/models` | List registered models |
 | POST | `/admin/models` | Register a new model |
 | PUT | `/admin/models/{id}` | Update model config |
@@ -464,6 +475,10 @@ data/
   clusters/{clustering_job_id}/stability_summary.json     (opt-in)
   clusters/{clustering_job_id}/refinement_report.json     (opt-in)
   clusters/{clustering_job_id}/refined_embeddings.parquet (opt-in, for re-clustering)
+  classifiers/{classifier_model_id}/model.joblib         (binary classifier pipeline)
+  classifiers/{classifier_model_id}/training_summary.json
+  detections/{detection_job_id}/detections.tsv            (detection output)
+  detections/{detection_job_id}/run_summary.json
 ```
 
 ---
@@ -543,4 +558,4 @@ outputs to `src/humpback/static/dist/` and the FastAPI server serves the SPA
 alongside the API on `:8000`.
 
 No client-side router is used — the UI is tab-based (Audio, Processing,
-Clustering, Admin) with navigation managed via React state.
+Clustering, Classifier, Admin) with navigation managed via React state.

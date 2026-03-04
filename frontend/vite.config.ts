@@ -15,6 +15,7 @@ export default defineConfig({
       "/audio": "http://localhost:8000",
       "/processing": "http://localhost:8000",
       "/clustering": "http://localhost:8000",
+      "/classifier": "http://localhost:8000",
       "/admin": "http://localhost:8000",
     },
   },

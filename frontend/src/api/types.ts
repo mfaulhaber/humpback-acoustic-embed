@@ -333,6 +333,66 @@ export interface RefinementReport {
   refined_summary: Record<string, number | null>;
 }
 
+// ---- Binary Classifier ----
+
+export interface ClassifierTrainingJobCreate {
+  name: string;
+  positive_embedding_set_ids: string[];
+  negative_audio_folder: string;
+  parameters?: Record<string, unknown> | null;
+}
+
+export interface ClassifierTrainingJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed" | "canceled";
+  name: string;
+  positive_embedding_set_ids: string[];
+  negative_audio_folder: string;
+  model_version: string;
+  window_size_seconds: number;
+  target_sample_rate: number;
+  feature_config: Record<string, unknown> | null;
+  parameters: Record<string, unknown> | null;
+  classifier_model_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClassifierModelInfo {
+  id: string;
+  name: string;
+  model_path: string;
+  model_version: string;
+  vector_dim: number;
+  window_size_seconds: number;
+  target_sample_rate: number;
+  feature_config: Record<string, unknown> | null;
+  training_summary: Record<string, unknown> | null;
+  training_job_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DetectionJobCreate {
+  classifier_model_id: string;
+  audio_folder: string;
+  confidence_threshold?: number;
+}
+
+export interface DetectionJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed" | "canceled";
+  classifier_model_id: string;
+  audio_folder: string;
+  confidence_threshold: number;
+  output_tsv_path: string | null;
+  result_summary: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ---- Admin ----
 
 export interface ModelConfig {

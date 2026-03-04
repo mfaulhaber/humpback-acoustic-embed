@@ -14,9 +14,15 @@ from humpback.api.app import create_app
 from humpback.config import Settings
 from humpback.database import create_engine, create_session_factory
 from humpback.processing.inference import FakeTFLiteModel
+from humpback.workers.classifier_worker import run_detection_job, run_training_job
 from humpback.workers.clustering_worker import run_clustering_job
 from humpback.workers.processing_worker import run_processing_job
-from humpback.workers.queue import claim_clustering_job, claim_processing_job
+from humpback.workers.queue import (
+    claim_clustering_job,
+    claim_detection_job,
+    claim_processing_job,
+    claim_training_job,
+)
 
 
 def make_wav_bytes(duration: float = 10.0, sample_rate: int = 16000) -> bytes:
@@ -178,5 +184,127 @@ async def test_full_workflow(e2e_settings, e2e_client):
     output_dir = settings.storage_root / "clusters" / cjob_id
     assert (output_dir / "clusters.json").exists()
     assert (output_dir / "assignments.parquet").exists()
+
+    await engine.dispose()
+
+
+async def test_classifier_workflow(e2e_settings, e2e_client, tmp_path):
+    """E2E: process embeddings → train classifier → run detection → download TSV."""
+    client = e2e_client
+    settings = e2e_settings
+
+    # 1. Upload and process audio (positive samples)
+    wav_data = make_wav_bytes(duration=10.0, sample_rate=16000)
+    resp = await client.post(
+        "/audio/upload",
+        files={"file": ("whale.wav", wav_data, "audio/wav")},
+    )
+    assert resp.status_code == 201
+    audio_id = resp.json()["id"]
+
+    resp = await client.post(
+        "/processing/jobs",
+        json={
+            "audio_file_id": audio_id,
+            "model_version": settings.model_version,
+            "window_size_seconds": settings.window_size_seconds,
+            "target_sample_rate": settings.target_sample_rate,
+        },
+    )
+    assert resp.status_code == 201
+    pjob_id = resp.json()["id"]
+
+    engine = create_engine(settings.database_url)
+    session_factory = create_session_factory(engine)
+
+    async with session_factory() as session:
+        claimed = await claim_processing_job(session)
+        assert claimed is not None
+        await run_processing_job(session, claimed, settings)
+
+    resp = await client.get("/processing/embedding-sets")
+    es_list = resp.json()
+    assert len(es_list) >= 1
+    es_id = es_list[0]["id"]
+
+    # 2. Create negative audio folder
+    neg_dir = tmp_path / "negatives"
+    neg_dir.mkdir()
+    neg_wav = neg_dir / "noise.wav"
+    neg_wav.write_bytes(make_wav_bytes(duration=10.0, sample_rate=16000))
+
+    # 3. Create training job
+    resp = await client.post(
+        "/classifier/training-jobs",
+        json={
+            "name": "test-classifier",
+            "positive_embedding_set_ids": [es_id],
+            "negative_audio_folder": str(neg_dir),
+        },
+    )
+    assert resp.status_code == 201
+    tjob_data = resp.json()
+    tjob_id = tjob_data["id"]
+    assert tjob_data["status"] == "queued"
+
+    # 4. Run training job
+    async with session_factory() as session:
+        claimed = await claim_training_job(session)
+        assert claimed is not None
+        assert claimed.id == tjob_id
+        await run_training_job(session, claimed, settings)
+
+    # 5. Verify training complete
+    resp = await client.get(f"/classifier/training-jobs/{tjob_id}")
+    assert resp.status_code == 200
+    tjob = resp.json()
+    assert tjob["status"] == "complete"
+    assert tjob["classifier_model_id"] is not None
+
+    # 6. Verify classifier model exists
+    resp = await client.get("/classifier/models")
+    models = resp.json()
+    assert len(models) >= 1
+    model_id = models[0]["id"]
+    assert models[0]["name"] == "test-classifier"
+    assert models[0]["training_summary"] is not None
+
+    # 7. Create detection job (scan the negative folder itself)
+    detect_dir = tmp_path / "detect_audio"
+    detect_dir.mkdir()
+    (detect_dir / "test.wav").write_bytes(make_wav_bytes(duration=5.0, sample_rate=16000))
+
+    resp = await client.post(
+        "/classifier/detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "audio_folder": str(detect_dir),
+            "confidence_threshold": 0.5,
+        },
+    )
+    assert resp.status_code == 201
+    djob_id = resp.json()["id"]
+
+    # 8. Run detection job
+    async with session_factory() as session:
+        claimed = await claim_detection_job(session)
+        assert claimed is not None
+        assert claimed.id == djob_id
+        await run_detection_job(session, claimed, settings)
+
+    # 9. Verify detection complete
+    resp = await client.get(f"/classifier/detection-jobs/{djob_id}")
+    assert resp.status_code == 200
+    djob = resp.json()
+    assert djob["status"] == "complete"
+    assert djob["output_tsv_path"] is not None
+    assert djob["result_summary"] is not None
+    assert djob["result_summary"]["n_files"] == 1
+
+    # 10. Download TSV
+    resp = await client.get(f"/classifier/detection-jobs/{djob_id}/download")
+    assert resp.status_code == 200
+    tsv_content = resp.text
+    assert "filename" in tsv_content  # header row
 
     await engine.dispose()

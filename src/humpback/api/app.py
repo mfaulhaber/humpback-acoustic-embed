@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from humpback.api.routers import admin, audio, clustering, processing
+from humpback.api.routers import admin, audio, classifier, clustering, processing
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory, setup_sqlite_pragmas
 from humpback.services.model_registry_service import seed_default_model
@@ -49,9 +49,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def shutdown():
         await engine.dispose()
 
+    import humpback.models.classifier  # noqa: F401 — register tables
+
     app.include_router(audio.router)
     app.include_router(processing.router)
     app.include_router(clustering.router)
+    app.include_router(classifier.router)
     app.include_router(admin.router)
 
     # Serve React SPA from dist/ if it exists, otherwise fall back to legacy index.html

@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.models.classifier import ClassifierTrainingJob, DetectionJob
 from humpback.models.clustering import ClusteringJob
 from humpback.models.processing import EmbeddingSet, JobStatus, ProcessingJob
 
@@ -48,9 +49,40 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count2:
         logger.warning(f"Recovered {count2} stale clustering job(s)")
 
-    if count or count2:
+    result3 = await session.execute(
+        update(ClassifierTrainingJob)
+        .where(
+            ClassifierTrainingJob.status == "running",
+            ClassifierTrainingJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count3 = result3.rowcount
+    if count3:
+        logger.warning(f"Recovered {count3} stale training job(s)")
+
+    result4 = await session.execute(
+        update(DetectionJob)
+        .where(
+            DetectionJob.status == "running",
+            DetectionJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count4 = result4.rowcount
+    if count4:
+        logger.warning(f"Recovered {count4} stale detection job(s)")
+
+    total = count + count2 + count3 + count4
+    if total:
         await session.commit()
-    return count + count2
+    return total
 
 
 async def claim_processing_job(session: AsyncSession) -> Optional[ProcessingJob]:
@@ -147,6 +179,96 @@ async def fail_clustering_job(
     await session.execute(
         update(ClusteringJob)
         .where(ClusteringJob.id == job_id)
+        .values(
+            status="failed",
+            error_message=error,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
+
+
+# ---- Classifier Training Jobs ----
+
+
+async def claim_training_job(session: AsyncSession) -> Optional[ClassifierTrainingJob]:
+    result = await session.execute(
+        select(ClassifierTrainingJob)
+        .where(ClassifierTrainingJob.status == "queued")
+        .order_by(ClassifierTrainingJob.created_at)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+
+    job.status = "running"
+    job.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    return job
+
+
+async def complete_training_job(session: AsyncSession, job_id: str) -> None:
+    await session.execute(
+        update(ClassifierTrainingJob)
+        .where(ClassifierTrainingJob.id == job_id)
+        .values(status="complete", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+
+
+async def fail_training_job(
+    session: AsyncSession, job_id: str, error: str
+) -> None:
+    await session.execute(
+        update(ClassifierTrainingJob)
+        .where(ClassifierTrainingJob.id == job_id)
+        .values(
+            status="failed",
+            error_message=error,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
+
+
+# ---- Detection Jobs ----
+
+
+async def claim_detection_job(session: AsyncSession) -> Optional[DetectionJob]:
+    result = await session.execute(
+        select(DetectionJob)
+        .where(DetectionJob.status == "queued")
+        .order_by(DetectionJob.created_at)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+
+    job.status = "running"
+    job.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    return job
+
+
+async def complete_detection_job(session: AsyncSession, job_id: str) -> None:
+    await session.execute(
+        update(DetectionJob)
+        .where(DetectionJob.id == job_id)
+        .values(status="complete", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+
+
+async def fail_detection_job(
+    session: AsyncSession, job_id: str, error: str
+) -> None:
+    await session.execute(
+        update(DetectionJob)
+        .where(DetectionJob.id == job_id)
         .values(
             status="failed",
             error_message=error,

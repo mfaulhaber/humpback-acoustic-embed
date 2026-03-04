@@ -106,6 +106,7 @@ frontend/
     │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
+    │   ├── classifier/          (ClassifierTab, TrainingTab, DetectionTab)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
     │   └── shared/              (FolderTree, StatusBadge, MessageToast)
     └── utils/                   (format.ts, audio.ts)
@@ -233,6 +234,45 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 
 Note: do NOT store every embedding vector row in SQL in MVP; store embeddings in Parquet and
 only store indexing/assignment references.
+
+### ClassifierModel (binary classifier artifact) — DB table: classifier_models
+- id
+- name (user-supplied display name)
+- model_path (path to .joblib file)
+- model_version (embedding model used)
+- vector_dim
+- window_size_seconds
+- target_sample_rate
+- feature_config (JSON, nullable)
+- training_summary (JSON, nullable — n_pos, n_neg, cv_accuracy, cv_roc_auc)
+- training_job_id (nullable)
+- created_at, updated_at
+
+### ClassifierTrainingJob — DB table: classifier_training_jobs
+- id
+- status: queued | running | complete | failed | canceled
+- name (for the produced model)
+- positive_embedding_set_ids (JSON array)
+- negative_audio_folder (filesystem path)
+- model_version
+- window_size_seconds
+- target_sample_rate
+- feature_config (JSON, nullable)
+- parameters (JSON, nullable — C, max_iter, solver)
+- classifier_model_id (nullable, set on completion)
+- error_message (nullable)
+- created_at, updated_at
+
+### DetectionJob — DB table: detection_jobs
+- id
+- status: queued | running | complete | failed | canceled
+- classifier_model_id (FK)
+- audio_folder (filesystem path to scan)
+- confidence_threshold (float, default 0.5)
+- output_tsv_path (nullable, set on completion)
+- result_summary (JSON, nullable — n_files, n_windows, n_detections, n_spans)
+- error_message (nullable)
+- created_at, updated_at
 
 ---
 
@@ -379,6 +419,8 @@ Concurrency:
 - prevent two running ProcessingJobs for same encoding_signature
 - allow multiple clustering jobs in parallel (configurable)
 
+Worker priority order: processing → clustering → classifier training → detection
+
 ---
 
 ## 9. Storage Layout
@@ -399,6 +441,12 @@ Concurrency:
   {clustering_job_id}/stability_summary.json     (opt-in stability evaluation)
   {clustering_job_id}/refinement_report.json     (opt-in metric learning refinement)
   {clustering_job_id}/refined_embeddings.parquet (opt-in refined embedding vectors for re-clustering)
+/classifiers/
+  {classifier_model_id}/model.joblib              (StandardScaler + LogisticRegression pipeline)
+  {classifier_model_id}/training_summary.json
+/detections/
+  {detection_job_id}/detections.tsv               (filename, start_sec, end_sec, avg_confidence, peak_confidence)
+  {detection_job_id}/run_summary.json
 
 ---
 
@@ -417,6 +465,12 @@ Clustering:
 - Queue clustering job
 - Monitor status
 - Cluster detail: members and metadata distributions
+
+Binary Classifier:
+- Train tab: select positive embedding sets, specify negative audio folder, name the model, queue training job
+- Detect tab: select trained model, specify audio folder to scan, set confidence threshold, queue detection job
+- Monitor training and detection job status with polling
+- Download detection TSV results
 
 Editing:
 - Manage/edit AudioMetadata associated with audio file
