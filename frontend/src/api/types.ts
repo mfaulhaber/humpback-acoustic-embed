@@ -389,8 +389,16 @@ export interface DetectionJob {
   output_tsv_path: string | null;
   result_summary: Record<string, unknown> | null;
   error_message: string | null;
+  extract_status: string | null;
+  extract_error: string | null;
+  extract_summary: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExtractionSettings {
+  positive_output_path: string;
+  negative_output_path: string;
 }
 
 // ---- Directory Browsing ----

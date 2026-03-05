@@ -12,6 +12,8 @@ import {
   bulkDeleteDetectionJobs,
   fetchDetectionContent,
   saveDetectionLabels,
+  fetchExtractionSettings,
+  extractLabeledSamples,
 } from "@/api/client";
 import type {
   ClassifierTrainingJobCreate,
@@ -116,6 +118,31 @@ export function useDetectionContent(jobId: string | null) {
     queryKey: ["detectionContent", jobId],
     queryFn: () => fetchDetectionContent(jobId!),
     enabled: jobId !== null,
+  });
+}
+
+export function useExtractionSettings() {
+  return useQuery({
+    queryKey: ["extractionSettings"],
+    queryFn: fetchExtractionSettings,
+  });
+}
+
+export function useExtractLabeledSamples() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobIds,
+      positiveOutputPath,
+      negativeOutputPath,
+    }: {
+      jobIds: string[];
+      positiveOutputPath?: string;
+      negativeOutputPath?: string;
+    }) => extractLabeledSamples(jobIds, positiveOutputPath, negativeOutputPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["detectionJobs"] });
+    },
   });
 }
 

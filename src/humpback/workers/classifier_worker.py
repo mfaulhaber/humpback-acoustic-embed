@@ -10,6 +10,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.classifier.detector import run_detection, write_detections_tsv
+from humpback.classifier.extractor import extract_labeled_samples
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
 from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob, DetectionJob
@@ -18,8 +19,10 @@ from humpback.storage import classifier_dir, detection_dir, ensure_dir
 from humpback.workers.model_cache import get_model_by_version
 from humpback.workers.queue import (
     complete_detection_job,
+    complete_extraction_job,
     complete_training_job,
     fail_detection_job,
+    fail_extraction_job,
     fail_training_job,
 )
 
@@ -188,3 +191,44 @@ async def run_detection_job(
             await fail_detection_job(session, job.id, str(e))
         except Exception:
             logger.exception("Failed to mark detection job as failed")
+
+
+async def run_extraction_job(
+    session: AsyncSession,
+    job: DetectionJob,
+    settings: Settings,
+) -> None:
+    """Execute a labeled sample extraction job."""
+    try:
+        config = json.loads(job.extract_config) if job.extract_config else {}
+        pos_path = config.get("positive_output_path", settings.positive_sample_path)
+        neg_path = config.get("negative_output_path", settings.negative_sample_path)
+
+        if not job.output_tsv_path:
+            raise ValueError("Detection job has no output TSV path")
+
+        summary = await asyncio.to_thread(
+            extract_labeled_samples,
+            job.output_tsv_path,
+            job.audio_folder,
+            pos_path,
+            neg_path,
+        )
+
+        await session.execute(
+            update(DetectionJob)
+            .where(DetectionJob.id == job.id)
+            .values(extract_summary=json.dumps(summary))
+        )
+        await complete_extraction_job(session, job.id)
+
+    except Exception as e:
+        logger.exception("Extraction job %s failed", job.id)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        try:
+            await fail_extraction_job(session, job.id, str(e))
+        except Exception:
+            logger.exception("Failed to mark extraction job as failed")

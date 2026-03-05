@@ -72,6 +72,9 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         output_tsv_path=job.output_tsv_path,
         result_summary=json.loads(job.result_summary) if job.result_summary else None,
         error_message=job.error_message,
+        extract_status=job.extract_status,
+        extract_error=job.extract_error,
+        extract_summary=json.loads(job.extract_summary) if job.extract_summary else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -192,6 +195,70 @@ async def download_detections(
         media_type="text/tab-separated-values",
         filename=f"detections_{job_id}.tsv",
     )
+
+
+# ---- Extraction ----
+
+
+class ExtractRequest(BaseModel):
+    job_ids: list[str]
+    positive_output_path: Optional[str] = None
+    negative_output_path: Optional[str] = None
+
+
+@router.post("/detection-jobs/extract")
+async def extract_labeled_samples(
+    body: ExtractRequest, session: SessionDep, settings: SettingsDep
+) -> dict:
+    """Queue extraction of labeled samples from completed detection jobs."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select, update
+
+    from humpback.models.classifier import DetectionJob
+
+    # Validate jobs exist and are complete
+    result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id.in_(body.job_ids))
+    )
+    jobs = list(result.scalars().all())
+    if len(jobs) != len(body.job_ids):
+        found_ids = {j.id for j in jobs}
+        missing = [jid for jid in body.job_ids if jid not in found_ids]
+        raise HTTPException(404, f"Detection jobs not found: {missing}")
+
+    for j in jobs:
+        if j.status != "complete":
+            raise HTTPException(400, f"Detection job {j.id} is not complete (status={j.status})")
+
+    pos_path = body.positive_output_path or settings.positive_sample_path
+    neg_path = body.negative_output_path or settings.negative_sample_path
+    config = json.dumps({"positive_output_path": pos_path, "negative_output_path": neg_path})
+
+    for j in jobs:
+        await session.execute(
+            update(DetectionJob)
+            .where(DetectionJob.id == j.id)
+            .values(
+                extract_status="queued",
+                extract_error=None,
+                extract_summary=None,
+                extract_config=config,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+    await session.commit()
+
+    return {"status": "queued", "count": len(jobs)}
+
+
+@router.get("/extraction-settings")
+async def get_extraction_settings(settings: SettingsDep) -> dict:
+    """Return default extraction output paths from config."""
+    return {
+        "positive_output_path": settings.positive_sample_path,
+        "negative_output_path": settings.negative_sample_path,
+    }
 
 
 # ---- Browse Directories ----

@@ -15,5 +15,7 @@ class Settings(BaseSettings):
     model_path: str = "models/multispecies_whale_fp16_flex.tflite"
     models_dir: str = "models"
     tf_force_cpu: bool = False
+    positive_sample_path: str = "/Users/michael/development/data-vocalizations/positives"
+    negative_sample_path: str = "/Users/michael/development/data-vocalizations/negatives"
 
     model_config = {"env_prefix": "HUMPBACK_"}

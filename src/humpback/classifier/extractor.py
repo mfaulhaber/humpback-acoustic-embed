@@ -1,0 +1,164 @@
+"""Extract labeled audio samples from detection TSV files."""
+
+import csv
+import io
+import logging
+import os
+import re
+import struct
+import wave
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import numpy as np
+
+from humpback.processing.audio_io import decode_audio
+
+logger = logging.getLogger(__name__)
+
+# Regex patterns for parsing timestamps from filenames
+# e.g. "20250115T143022Z_..." or "20250115T143022.123456Z_..."
+_TS_PATTERN = re.compile(
+    r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z"
+)
+
+
+def parse_recording_timestamp(filename: str) -> datetime | None:
+    """Extract a recording start timestamp from a filename.
+
+    Looks for ISO-like pattern YYYYMMDDTHHMMSSZ or YYYYMMDDTHHMMSS.ffffffZ.
+    Returns a timezone-aware UTC datetime, or None if no pattern found.
+    """
+    m = _TS_PATTERN.search(filename)
+    if m is None:
+        return None
+    year, month, day, hour, minute, second = (int(g) for g in m.groups()[:6])
+    frac_str = m.group(7)
+    microsecond = 0
+    if frac_str:
+        # Pad or truncate to 6 digits
+        frac_str = frac_str[:6].ljust(6, "0")
+        microsecond = int(frac_str)
+    return datetime(year, month, day, hour, minute, second, microsecond, tzinfo=timezone.utc)
+
+
+def _format_ts(dt: datetime) -> str:
+    """Format datetime as YYYYMMDDTHHMMss.ffffffZ."""
+    return dt.strftime("%Y%m%dT%H%M%S.%fZ")
+
+
+def _date_folder(dt: datetime) -> str:
+    """Return YYYY/MM/dd path component."""
+    return dt.strftime("%Y/%m/%d")
+
+
+def write_wav_file(audio_segment: np.ndarray, sr: int, output_path: Path) -> None:
+    """Write a float32 audio segment as 16-bit PCM WAV."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Peak normalize
+    peak = np.max(np.abs(audio_segment))
+    if peak > 0:
+        audio_segment = audio_segment / peak
+    pcm = (audio_segment * 32767).clip(-32768, 32767).astype(np.int16)
+    with wave.open(str(output_path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(pcm.tobytes())
+
+
+def extract_labeled_samples(
+    tsv_path: str | Path,
+    audio_folder: str | Path,
+    positive_output_path: str | Path,
+    negative_output_path: str | Path,
+) -> dict:
+    """Extract labeled audio segments from a detection TSV.
+
+    Reads the TSV, filters to rows with at least one label=1,
+    slices audio, and writes WAV files to the appropriate directories.
+
+    Returns a summary dict with counts per label.
+    """
+    tsv_path = Path(tsv_path)
+    audio_folder = Path(audio_folder)
+    positive_output_path = Path(positive_output_path)
+    negative_output_path = Path(negative_output_path)
+
+    # Read TSV and filter to labeled rows
+    labeled_rows: list[dict] = []
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            humpback = row.get("humpback", "").strip()
+            ship = row.get("ship", "").strip()
+            background = row.get("background", "").strip()
+            if humpback == "1" or ship == "1" or background == "1":
+                labeled_rows.append(row)
+
+    if not labeled_rows:
+        return {"n_humpback": 0, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+
+    # Group by source filename
+    by_file: dict[str, list[dict]] = {}
+    for row in labeled_rows:
+        fn = row.get("filename", "")
+        by_file.setdefault(fn, []).append(row)
+
+    counts = {"n_humpback": 0, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+
+    for source_filename, rows in by_file.items():
+        source_path = audio_folder / source_filename
+        if not source_path.is_file():
+            logger.warning("Source audio not found: %s", source_path)
+            continue
+
+        # Decode once per source file
+        audio, sr = decode_audio(source_path)
+        recording_ts = parse_recording_timestamp(source_filename)
+
+        for row in rows:
+            start_sec = float(row.get("start_sec", 0))
+            end_sec = float(row.get("end_sec", 0))
+
+            start_sample = int(start_sec * sr)
+            end_sample = int(end_sec * sr)
+            start_sample = min(start_sample, len(audio))
+            end_sample = min(end_sample, len(audio))
+            segment = audio[start_sample:end_sample]
+
+            if len(segment) == 0:
+                continue
+
+            # Build filename
+            if recording_ts:
+                abs_start = recording_ts + timedelta(seconds=start_sec)
+                abs_end = recording_ts + timedelta(seconds=end_sec)
+                wav_name = f"{_format_ts(abs_start)}_{_format_ts(abs_end)}.wav"
+                date_folder = _date_folder(abs_start)
+            else:
+                stem = Path(source_filename).stem
+                wav_name = f"{stem}_{start_sec}_{end_sec}.wav"
+                date_folder = "unknown_date"
+
+            # Route to label-specific folders
+            labels_to_write: list[tuple[Path, str]] = []
+            if row.get("humpback", "").strip() == "1":
+                out_dir = positive_output_path / "humpback" / date_folder
+                labels_to_write.append((out_dir, "humpback"))
+            if row.get("ship", "").strip() == "1":
+                out_dir = negative_output_path / "ship" / date_folder
+                labels_to_write.append((out_dir, "ship"))
+            if row.get("background", "").strip() == "1":
+                out_dir = negative_output_path / "background" / date_folder
+                labels_to_write.append((out_dir, "background"))
+
+            for out_dir, label_name in labels_to_write:
+                out_path = out_dir / wav_name
+                if out_path.exists():
+                    counts["n_skipped"] += 1
+                    continue
+                write_wav_file(segment, sr, out_path)
+                counts[f"n_{label_name}"] += 1
+
+    return counts

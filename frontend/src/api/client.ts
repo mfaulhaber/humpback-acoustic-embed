@@ -16,6 +16,7 @@ import type {
   DetectionLabelRow,
   DetectionRow,
   DirectoryListing,
+  ExtractionSettings,
   EmbeddingSet,
   EmbeddingSimilarity,
   FolderDeletePreview,
@@ -233,6 +234,20 @@ export const saveDetectionLabels = (jobId: string, rows: DetectionLabelRow[]) =>
     `/classifier/detection-jobs/${jobId}/labels`,
     rows,
   );
+
+export const fetchExtractionSettings = () =>
+  api<ExtractionSettings>("/classifier/extraction-settings");
+
+export const extractLabeledSamples = (
+  jobIds: string[],
+  positiveOutputPath?: string,
+  negativeOutputPath?: string,
+) =>
+  post<{ status: string; count: number }>("/classifier/detection-jobs/extract", {
+    job_ids: jobIds,
+    positive_output_path: positiveOutputPath,
+    negative_output_path: negativeOutputPath,
+  });
 
 export function detectionAudioSliceUrl(
   jobId: string,

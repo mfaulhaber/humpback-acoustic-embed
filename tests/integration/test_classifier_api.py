@@ -79,3 +79,29 @@ async def test_get_detection_job_not_found(client):
 async def test_download_detection_not_found(client):
     resp = await client.get("/classifier/detection-jobs/nonexistent/download")
     assert resp.status_code == 404
+
+
+async def test_extraction_settings(client):
+    resp = await client.get("/classifier/extraction-settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "positive_output_path" in data
+    assert "negative_output_path" in data
+
+
+async def test_extract_nonexistent_jobs(client):
+    resp = await client.post(
+        "/classifier/detection-jobs/extract",
+        json={"job_ids": ["nonexistent"]},
+    )
+    assert resp.status_code == 404
+
+
+async def test_extract_empty_job_ids(client):
+    resp = await client.post(
+        "/classifier/detection-jobs/extract",
+        json={"job_ids": []},
+    )
+    # Empty list: all 0 jobs found, 0 expected → should succeed with count 0
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 0

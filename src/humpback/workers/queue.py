@@ -276,3 +276,48 @@ async def fail_detection_job(
         )
     )
     await session.commit()
+
+
+# ---- Extraction Jobs ----
+
+
+async def claim_extraction_job(session: AsyncSession) -> Optional[DetectionJob]:
+    result = await session.execute(
+        select(DetectionJob)
+        .where(DetectionJob.extract_status == "queued")
+        .order_by(DetectionJob.updated_at)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+
+    job.extract_status = "running"
+    job.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    return job
+
+
+async def complete_extraction_job(session: AsyncSession, job_id: str) -> None:
+    await session.execute(
+        update(DetectionJob)
+        .where(DetectionJob.id == job_id)
+        .values(extract_status="complete", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+
+
+async def fail_extraction_job(
+    session: AsyncSession, job_id: str, error: str
+) -> None:
+    await session.execute(
+        update(DetectionJob)
+        .where(DetectionJob.id == job_id)
+        .values(
+            extract_status="failed",
+            extract_error=error,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
