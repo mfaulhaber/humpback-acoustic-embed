@@ -227,11 +227,38 @@ async def test_classifier_workflow(e2e_settings, e2e_client, tmp_path):
     assert len(es_list) >= 1
     es_id = es_list[0]["id"]
 
-    # 2. Create negative audio folder
-    neg_dir = tmp_path / "negatives"
-    neg_dir.mkdir()
-    neg_wav = neg_dir / "noise.wav"
-    neg_wav.write_bytes(make_wav_bytes(duration=10.0, sample_rate=16000))
+    # 2. Upload and process negative audio
+    neg_wav_data = make_wav_bytes(duration=10.0, sample_rate=16000)
+    resp = await client.post(
+        "/audio/upload",
+        files={"file": ("noise.wav", neg_wav_data, "audio/wav")},
+        data={"folder_path": "negatives"},
+    )
+    assert resp.status_code == 201
+    neg_audio_id = resp.json()["id"]
+
+    resp = await client.post(
+        "/processing/jobs",
+        json={
+            "audio_file_id": neg_audio_id,
+            "model_version": settings.model_version,
+            "window_size_seconds": settings.window_size_seconds,
+            "target_sample_rate": settings.target_sample_rate,
+        },
+    )
+    assert resp.status_code == 201
+
+    async with session_factory() as session:
+        claimed = await claim_processing_job(session)
+        assert claimed is not None
+        await run_processing_job(session, claimed, settings)
+
+    resp = await client.get("/processing/embedding-sets")
+    neg_es_list = resp.json()
+    # Find the embedding set for the negative audio
+    neg_es_id = next(
+        es["id"] for es in neg_es_list if es["audio_file_id"] == neg_audio_id
+    )
 
     # 3. Create training job
     resp = await client.post(
@@ -239,7 +266,7 @@ async def test_classifier_workflow(e2e_settings, e2e_client, tmp_path):
         json={
             "name": "test-classifier",
             "positive_embedding_set_ids": [es_id],
-            "negative_audio_folder": str(neg_dir),
+            "negative_embedding_set_ids": [neg_es_id],
         },
     )
     assert resp.status_code == 201

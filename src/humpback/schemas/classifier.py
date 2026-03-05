@@ -7,7 +7,7 @@ from pydantic import BaseModel
 class ClassifierTrainingJobCreate(BaseModel):
     name: str
     positive_embedding_set_ids: list[str]
-    negative_audio_folder: str
+    negative_embedding_set_ids: list[str]
     parameters: Optional[dict[str, Any]] = None
 
 
@@ -16,7 +16,7 @@ class ClassifierTrainingJobOut(BaseModel):
     status: str
     name: str
     positive_embedding_set_ids: list[str]
-    negative_audio_folder: str
+    negative_embedding_set_ids: list[str]
     model_version: str
     window_size_seconds: float
     target_sample_rate: int

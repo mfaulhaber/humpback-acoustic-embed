@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ChevronRight, ChevronDown, FolderOpen } from "lucide-react";
+import { ChevronRight, ChevronDown } from "lucide-react";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import {
@@ -15,7 +15,6 @@ import {
   useBulkDeleteTrainingJobs,
   useBulkDeleteClassifierModels,
 } from "@/hooks/queries/useClassifier";
-import { FolderBrowser } from "@/components/shared/FolderBrowser";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import type {
   ClassifierTrainingJob,
@@ -47,10 +46,10 @@ export function TrainingTab() {
   const bulkDeleteModelsMutation = useBulkDeleteClassifierModels();
 
   const [name, setName] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [collapsed, setCollapsed] = useState<Set<string> | null>(null);
-  const [negativeFolder, setNegativeFolder] = useState("");
-  const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
+  const [posSelected, setPosSelected] = useState<Set<string>>(new Set());
+  const [posCollapsed, setPosCollapsed] = useState<Set<string> | null>(null);
+  const [negSelected, setNegSelected] = useState<Set<string>>(new Set());
+  const [negCollapsed, setNegCollapsed] = useState<Set<string> | null>(null);
 
   // Job table selection
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -120,49 +119,59 @@ export function TrainingTab() {
     return result;
   }, [embeddingSets, audioMap]);
 
-  const toggleChild = useCallback((sets: EmbeddingSet[]) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      const allIn = sets.every((es) => next.has(es.id));
-      for (const es of sets) {
-        if (allIn) next.delete(es.id);
-        else next.add(es.id);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleParent = useCallback((node: ParentNode) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      const allSets = node.children.flatMap((c) => c.sets);
-      const allIn = allSets.every((es) => next.has(es.id));
-      for (const es of allSets) {
-        if (allIn) next.delete(es.id);
-        else next.add(es.id);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleAll = useCallback(() => {
-    const allSelected =
-      embeddingSets.length > 0 &&
-      embeddingSets.every((es) => selected.has(es.id));
-    if (allSelected) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(embeddingSets.map((es) => es.id)));
-    }
-  }, [embeddingSets, selected]);
-
   const allParentKeys = useMemo(
     () => new Set(folderTree.map((n) => n.parent)),
     [folderTree],
   );
-  const effectiveCollapsed = collapsed ?? allParentKeys;
 
-  const toggleCollapse = useCallback(
+  // Generic toggle helpers that work for both pos and neg panels
+  const makeToggleChild = (
+    setSel: React.Dispatch<React.SetStateAction<Set<string>>>,
+  ) =>
+    (sets: EmbeddingSet[]) => {
+      setSel((prev) => {
+        const next = new Set(prev);
+        const allIn = sets.every((es) => next.has(es.id));
+        for (const es of sets) {
+          if (allIn) next.delete(es.id);
+          else next.add(es.id);
+        }
+        return next;
+      });
+    };
+
+  const makeToggleParent = (
+    setSel: React.Dispatch<React.SetStateAction<Set<string>>>,
+  ) =>
+    (node: ParentNode) => {
+      setSel((prev) => {
+        const next = new Set(prev);
+        const allSets = node.children.flatMap((c) => c.sets);
+        const allIn = allSets.every((es) => next.has(es.id));
+        for (const es of allSets) {
+          if (allIn) next.delete(es.id);
+          else next.add(es.id);
+        }
+        return next;
+      });
+    };
+
+  const makeToggleAll = (
+    sel: Set<string>,
+    setSel: React.Dispatch<React.SetStateAction<Set<string>>>,
+  ) =>
+    () => {
+      const allSel =
+        embeddingSets.length > 0 &&
+        embeddingSets.every((es) => sel.has(es.id));
+      if (allSel) setSel(new Set());
+      else setSel(new Set(embeddingSets.map((es) => es.id)));
+    };
+
+  const makeToggleCollapse = (
+    collapsed: Set<string> | null,
+    setCollapsed: React.Dispatch<React.SetStateAction<Set<string> | null>>,
+  ) =>
     (parent: string) => {
       setCollapsed((prev) => {
         const base = prev ?? allParentKeys;
@@ -171,23 +180,43 @@ export function TrainingTab() {
         else next.add(parent);
         return next;
       });
-    },
+    };
+
+  const togglePosChild = useCallback(makeToggleChild(setPosSelected), []);
+  const togglePosParent = useCallback(makeToggleParent(setPosSelected), []);
+  const togglePosAll = useCallback(
+    makeToggleAll(posSelected, setPosSelected),
+    [embeddingSets, posSelected],
+  );
+  const togglePosCollapse = useCallback(
+    makeToggleCollapse(posCollapsed, setPosCollapsed),
+    [allParentKeys],
+  );
+
+  const toggleNegChild = useCallback(makeToggleChild(setNegSelected), []);
+  const toggleNegParent = useCallback(makeToggleParent(setNegSelected), []);
+  const toggleNegAll = useCallback(
+    makeToggleAll(negSelected, setNegSelected),
+    [embeddingSets, negSelected],
+  );
+  const toggleNegCollapse = useCallback(
+    makeToggleCollapse(negCollapsed, setNegCollapsed),
     [allParentKeys],
   );
 
   const handleSubmit = () => {
-    if (!name || selected.size === 0 || !negativeFolder) return;
+    if (!name || posSelected.size === 0 || negSelected.size === 0) return;
     createMutation.mutate(
       {
         name,
-        positive_embedding_set_ids: [...selected],
-        negative_audio_folder: negativeFolder,
+        positive_embedding_set_ids: [...posSelected],
+        negative_embedding_set_ids: [...negSelected],
       },
       {
         onSuccess: () => {
           setName("");
-          setSelected(new Set());
-          setNegativeFolder("");
+          setPosSelected(new Set());
+          setNegSelected(new Set());
         },
       },
     );
@@ -232,9 +261,6 @@ export function TrainingTab() {
     else setSelectedModelIds(new Set(models.map((m) => m.id)));
   };
 
-  const allSelected =
-    embeddingSets.length > 0 &&
-    embeddingSets.every((es) => selected.has(es.id));
   const displayName = (key: string) =>
     key === ROOT_SENTINEL ? "(root)" : key;
 
@@ -263,140 +289,40 @@ export function TrainingTab() {
             />
           </div>
 
-          {/* Folder-based embedding set selector */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium">
-                Positive Embedding Sets
-              </label>
-              <Button variant="outline" size="sm" onClick={toggleAll}>
-                {allSelected ? "Deselect All" : "Select All"}
-              </Button>
-            </div>
-            <div className="space-y-1 max-h-72 overflow-y-auto border rounded p-2">
-              {folderTree.map((node) => {
-                const allParentSets = node.children.flatMap((c) => c.sets);
-                const parentAllSelected = allParentSets.every((es) =>
-                  selected.has(es.id),
-                );
-                const parentSomeSelected = allParentSets.some((es) =>
-                  selected.has(es.id),
-                );
-                const isCollapsed = effectiveCollapsed.has(node.parent);
+          {/* Positive Embedding Sets */}
+          <EmbeddingSetPanel
+            label="Positive Embedding Sets"
+            selected={posSelected}
+            collapsed={posCollapsed ?? allParentKeys}
+            folderTree={folderTree}
+            embeddingSets={embeddingSets}
+            onToggleChild={togglePosChild}
+            onToggleParent={togglePosParent}
+            onToggleAll={togglePosAll}
+            onToggleCollapse={togglePosCollapse}
+            displayName={displayName}
+          />
 
-                return (
-                  <div key={node.parent}>
-                    <div className="flex items-center gap-1.5 py-1">
-                      <button
-                        className="p-0.5 hover:bg-muted rounded"
-                        onClick={() => toggleCollapse(node.parent)}
-                      >
-                        {isCollapsed ? (
-                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                        ) : (
-                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                        )}
-                      </button>
-                      <Checkbox
-                        checked={
-                          parentAllSelected
-                            ? true
-                            : parentSomeSelected
-                              ? "indeterminate"
-                              : false
-                        }
-                        onCheckedChange={() => toggleParent(node)}
-                      />
-                      <span
-                        className="text-sm font-medium cursor-pointer select-none"
-                        onClick={() => toggleCollapse(node.parent)}
-                      >
-                        {displayName(node.parent)}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        ({node.totalSets} sets)
-                      </span>
-                    </div>
+          {/* Negative Embedding Sets */}
+          <EmbeddingSetPanel
+            label="Negative Embedding Sets"
+            selected={negSelected}
+            collapsed={negCollapsed ?? allParentKeys}
+            folderTree={folderTree}
+            embeddingSets={embeddingSets}
+            onToggleChild={toggleNegChild}
+            onToggleParent={toggleNegParent}
+            onToggleAll={toggleNegAll}
+            onToggleCollapse={toggleNegCollapse}
+            displayName={displayName}
+          />
 
-                    {!isCollapsed && (
-                      <div className="ml-6 space-y-0.5">
-                        {node.children.map((child) => {
-                          const childAllSelected = child.sets.every((es) =>
-                            selected.has(es.id),
-                          );
-                          const childSomeSelected = child.sets.some((es) =>
-                            selected.has(es.id),
-                          );
-                          return (
-                            <label
-                              key={child.child}
-                              className="flex items-center gap-2 py-0.5 text-sm cursor-pointer"
-                            >
-                              <Checkbox
-                                checked={
-                                  childAllSelected
-                                    ? true
-                                    : childSomeSelected
-                                      ? "indeterminate"
-                                      : false
-                                }
-                                onCheckedChange={() => toggleChild(child.sets)}
-                              />
-                              <span className="truncate">
-                                {displayName(child.child)}
-                              </span>
-                              <span className="text-xs text-muted-foreground ml-auto shrink-0">
-                                {child.sets.length}{" "}
-                                {child.sets.length === 1 ? "set" : "sets"}
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {embeddingSets.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  No embedding sets available. Process audio first.
-                </p>
-              )}
-            </div>
-            {selected.size > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {selected.size} of {embeddingSets.length} embedding sets
-                selected
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className="text-sm font-medium">
-              Negative Audio Folder Path
-            </label>
-            <div className="flex gap-2">
-              <Input
-                value={negativeFolder}
-                onChange={(e) => setNegativeFolder(e.target.value)}
-                placeholder="/path/to/negative/audio"
-              />
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setFolderBrowserOpen(true)}
-                title="Browse folders"
-              >
-                <FolderOpen className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
           <Button
             onClick={handleSubmit}
             disabled={
               !name ||
-              selected.size === 0 ||
-              !negativeFolder ||
+              posSelected.size === 0 ||
+              negSelected.size === 0 ||
               createMutation.isPending
             }
           >
@@ -423,15 +349,14 @@ export function TrainingTab() {
                 </span>
               )}
             </div>
-            {selectedJobIds.size > 0 && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowJobDeleteDialog(true)}
-              >
-                Delete ({selectedJobIds.size})
-              </Button>
-            )}
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={selectedJobIds.size === 0}
+              onClick={() => setShowJobDeleteDialog(true)}
+            >
+              Delete ({selectedJobIds.size})
+            </Button>
           </div>
           <table className="w-full text-sm">
             <thead>
@@ -480,15 +405,14 @@ export function TrainingTab() {
               <h3 className="text-sm font-semibold">Trained Models</h3>
               <Badge variant="secondary">{models.length}</Badge>
             </div>
-            {selectedModelIds.size > 0 && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowModelDeleteDialog(true)}
-              >
-                Delete ({selectedModelIds.size})
-              </Button>
-            )}
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={selectedModelIds.size === 0}
+              onClick={() => setShowModelDeleteDialog(true)}
+            >
+              Delete ({selectedModelIds.size})
+            </Button>
           </div>
           <table className="w-full text-sm">
             <thead>
@@ -528,13 +452,6 @@ export function TrainingTab() {
       )}
 
       {/* Dialogs */}
-      <FolderBrowser
-        open={folderBrowserOpen}
-        onOpenChange={setFolderBrowserOpen}
-        onSelect={setNegativeFolder}
-        initialPath={negativeFolder || "/"}
-      />
-
       <BulkDeleteDialog
         open={showJobDeleteDialog}
         onOpenChange={setShowJobDeleteDialog}
@@ -574,6 +491,148 @@ export function TrainingTab() {
     </div>
   );
 }
+
+// ---- Embedding Set Panel (shared by positive and negative) ----
+
+function EmbeddingSetPanel({
+  label,
+  selected,
+  collapsed,
+  folderTree,
+  embeddingSets,
+  onToggleChild,
+  onToggleParent,
+  onToggleAll,
+  onToggleCollapse,
+  displayName,
+}: {
+  label: string;
+  selected: Set<string>;
+  collapsed: Set<string>;
+  folderTree: ParentNode[];
+  embeddingSets: EmbeddingSet[];
+  onToggleChild: (sets: EmbeddingSet[]) => void;
+  onToggleParent: (node: ParentNode) => void;
+  onToggleAll: () => void;
+  onToggleCollapse: (parent: string) => void;
+  displayName: (key: string) => string;
+}) {
+  const allSelected =
+    embeddingSets.length > 0 &&
+    embeddingSets.every((es) => selected.has(es.id));
+  const someSelected = embeddingSets.some((es) => selected.has(es.id));
+
+  return (
+    <div>
+      <div className="space-y-1 max-h-72 overflow-y-auto border rounded p-2">
+        <div className="flex items-center gap-2 pb-1 border-b mb-1">
+          <Checkbox
+            checked={
+              allSelected ? true : someSelected ? "indeterminate" : false
+            }
+            onCheckedChange={onToggleAll}
+          />
+          <span className="text-sm font-medium">{label}</span>
+        </div>
+        {folderTree.map((node) => {
+          const allParentSets = node.children.flatMap((c) => c.sets);
+          const parentAllSelected = allParentSets.every((es) =>
+            selected.has(es.id),
+          );
+          const parentSomeSelected = allParentSets.some((es) =>
+            selected.has(es.id),
+          );
+          const isCollapsed = collapsed.has(node.parent);
+
+          return (
+            <div key={node.parent}>
+              <div className="flex items-center gap-1.5 py-1">
+                <button
+                  className="p-0.5 hover:bg-muted rounded"
+                  onClick={() => onToggleCollapse(node.parent)}
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
+                </button>
+                <Checkbox
+                  checked={
+                    parentAllSelected
+                      ? true
+                      : parentSomeSelected
+                        ? "indeterminate"
+                        : false
+                  }
+                  onCheckedChange={() => onToggleParent(node)}
+                />
+                <span
+                  className="text-sm font-medium cursor-pointer select-none"
+                  onClick={() => onToggleCollapse(node.parent)}
+                >
+                  {displayName(node.parent)}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  ({node.totalSets} sets)
+                </span>
+              </div>
+
+              {!isCollapsed && (
+                <div className="ml-6 space-y-0.5">
+                  {node.children.map((child) => {
+                    const childAllSelected = child.sets.every((es) =>
+                      selected.has(es.id),
+                    );
+                    const childSomeSelected = child.sets.some((es) =>
+                      selected.has(es.id),
+                    );
+                    return (
+                      <label
+                        key={child.child}
+                        className="flex items-center gap-2 py-0.5 text-sm cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={
+                            childAllSelected
+                              ? true
+                              : childSomeSelected
+                                ? "indeterminate"
+                                : false
+                          }
+                          onCheckedChange={() => onToggleChild(child.sets)}
+                        />
+                        <span className="truncate">
+                          {displayName(child.child)}
+                        </span>
+                        <span className="text-xs text-muted-foreground ml-auto shrink-0">
+                          {child.sets.length}{" "}
+                          {child.sets.length === 1 ? "set" : "sets"}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {embeddingSets.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No embedding sets available. Process audio first.
+          </p>
+        )}
+      </div>
+      {selected.size > 0 && (
+        <p className="text-xs text-muted-foreground mt-1">
+          {selected.size} of {embeddingSets.length} embedding sets selected
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---- Table Row Components ----
 
 const statusColor: Record<string, string> = {
   queued: "bg-yellow-100 text-yellow-800",

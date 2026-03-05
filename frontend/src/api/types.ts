@@ -338,7 +338,7 @@ export interface RefinementReport {
 export interface ClassifierTrainingJobCreate {
   name: string;
   positive_embedding_set_ids: string[];
-  negative_audio_folder: string;
+  negative_embedding_set_ids: string[];
   parameters?: Record<string, unknown> | null;
 }
 
@@ -347,7 +347,7 @@ export interface ClassifierTrainingJob {
   status: "queued" | "running" | "complete" | "failed" | "canceled";
   name: string;
   positive_embedding_set_ids: string[];
-  negative_audio_folder: string;
+  negative_embedding_set_ids: string[];
   model_version: string;
   window_size_seconds: number;
   target_sample_rate: number;

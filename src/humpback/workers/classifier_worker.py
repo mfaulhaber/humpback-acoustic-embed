@@ -10,7 +10,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.classifier.detector import run_detection, write_detections_tsv
-from humpback.classifier.trainer import embed_audio_folder, train_binary_classifier
+from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
 from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob, DetectionJob
 from humpback.processing.embeddings import read_embeddings
@@ -51,25 +51,21 @@ async def run_training_job(
             positive_parts.append(vectors)
         positive_embeddings = np.vstack(positive_parts)
 
-        # Load embedding model
-        model, input_format = await get_model_by_version(
-            session, job.model_version, settings
+        # Load negative embeddings from parquet files
+        neg_ids = json.loads(job.negative_embedding_set_ids)
+        neg_result = await session.execute(
+            select(EmbeddingSet).where(EmbeddingSet.id.in_(neg_ids))
         )
+        neg_embedding_sets = list(neg_result.scalars().all())
 
-        # Parse feature_config and parameters
-        feature_config = json.loads(job.feature_config) if job.feature_config else None
+        negative_parts: list[np.ndarray] = []
+        for es in neg_embedding_sets:
+            _, vectors = read_embeddings(Path(es.parquet_path))
+            negative_parts.append(vectors)
+        negative_embeddings = np.vstack(negative_parts)
+
+        # Parse parameters
         parameters = json.loads(job.parameters) if job.parameters else None
-
-        # Embed negative audio folder (CPU-bound, run in thread)
-        negative_embeddings = await asyncio.to_thread(
-            embed_audio_folder,
-            Path(job.negative_audio_folder),
-            model,
-            job.window_size_seconds,
-            job.target_sample_rate,
-            input_format,
-            feature_config,
-        )
 
         # Train classifier (CPU-bound)
         pipeline, summary = await asyncio.to_thread(
@@ -95,7 +91,7 @@ async def run_training_job(
             name=job.name,
             model_path=str(final_path),
             model_version=job.model_version,
-            vector_dim=model.vector_dim,
+            vector_dim=embedding_sets[0].vector_dim,
             window_size_seconds=job.window_size_seconds,
             target_sample_rate=job.target_sample_rate,
             feature_config=job.feature_config,

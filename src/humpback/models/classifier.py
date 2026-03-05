@@ -26,7 +26,7 @@ class ClassifierTrainingJob(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(default="queued")
     name: Mapped[str]
     positive_embedding_set_ids: Mapped[str] = mapped_column(Text)  # JSON array
-    negative_audio_folder: Mapped[str]
+    negative_embedding_set_ids: Mapped[str] = mapped_column(Text)  # JSON array
     model_version: Mapped[str]
     window_size_seconds: Mapped[float]
     target_sample_rate: Mapped[int]

@@ -32,7 +32,7 @@ def _training_job_to_out(job) -> ClassifierTrainingJobOut:
         status=job.status,
         name=job.name,
         positive_embedding_set_ids=json.loads(job.positive_embedding_set_ids),
-        negative_audio_folder=job.negative_audio_folder,
+        negative_embedding_set_ids=json.loads(job.negative_embedding_set_ids),
         model_version=job.model_version,
         window_size_seconds=job.window_size_seconds,
         target_sample_rate=job.target_sample_rate,
@@ -88,7 +88,7 @@ async def create_training_job(
             session,
             body.name,
             body.positive_embedding_set_ids,
-            body.negative_audio_folder,
+            body.negative_embedding_set_ids,
             body.parameters,
         )
     except ValueError as e:

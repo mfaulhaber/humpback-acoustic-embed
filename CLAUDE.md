@@ -56,12 +56,17 @@ Use these commands for managing dependencies:
 *   Prefer `uv run` over manually activating a virtual environment and running commands directly.
 *   When troubleshooting, use `uv cache clean` as a last resort.
 
-### 3.5 Documentation
+### 3.5 Database Migrations
+*   When a change adds, removes, or renames columns on any SQL table, **always** create an Alembic migration in `alembic/versions/` and run it with `uv run alembic upgrade head` before verifying the change works.
+*   Migration files follow the naming convention `NNN_short_description.py` (e.g., `007_negative_embedding_set_ids.py`), incrementing from the latest revision.
+*   Use `op.batch_alter_table()` for SQLite compatibility.
+
+### 3.6 Documentation
 *   When a change adds, removes, or modifies API endpoints, data models, configuration options, architecture, or workflows, update **both** `CLAUDE.md` and `README.md` to reflect the change.
 *   `CLAUDE.md` is the authoritative spec — keep the data model, workflows, and design rules in sync with the code.
 *   `README.md` is user-facing — keep the API endpoints table, configuration table, feature list, and architecture overview current.
 
-## 3.6 Frontend Stack & Development
+## 3.7 Frontend Stack & Development
 
 The web UI is a React SPA in the `frontend/` directory, built with:
 
@@ -255,7 +260,7 @@ only store indexing/assignment references.
 - status: queued | running | complete | failed | canceled
 - name (for the produced model)
 - positive_embedding_set_ids (JSON array)
-- negative_audio_folder (filesystem path)
+- negative_embedding_set_ids (JSON array)
 - model_version
 - window_size_seconds
 - target_sample_rate
@@ -469,7 +474,7 @@ Clustering:
 - Cluster detail: members and metadata distributions
 
 Binary Classifier:
-- Train tab: select positive embedding sets, specify negative audio folder (with folder browser dialog), name the model, queue training job
+- Train tab: select positive and negative embedding sets, name the model, queue training job
 - Detect tab: select trained model, specify audio folder to scan (with folder browser dialog), set confidence threshold, queue detection job
 - Monitor training and detection job status with polling
 - Download detection TSV results

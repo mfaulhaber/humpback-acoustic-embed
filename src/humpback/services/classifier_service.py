@@ -18,50 +18,52 @@ async def create_training_job(
     session: AsyncSession,
     name: str,
     positive_embedding_set_ids: list[str],
-    negative_audio_folder: str,
+    negative_embedding_set_ids: list[str],
     parameters: Optional[dict[str, Any]] = None,
 ) -> ClassifierTrainingJob:
     """Create a classifier training job after validating inputs."""
     if not positive_embedding_set_ids:
         raise ValueError("At least one positive embedding set is required")
+    if not negative_embedding_set_ids:
+        raise ValueError("At least one negative embedding set is required")
 
-    # Load and validate embedding sets
+    # Load and validate positive embedding sets
     result = await session.execute(
         select(EmbeddingSet).where(EmbeddingSet.id.in_(positive_embedding_set_ids))
     )
-    embedding_sets = list(result.scalars().all())
-    if len(embedding_sets) != len(positive_embedding_set_ids):
-        found_ids = {es.id for es in embedding_sets}
+    pos_sets = list(result.scalars().all())
+    if len(pos_sets) != len(positive_embedding_set_ids):
+        found_ids = {es.id for es in pos_sets}
         missing = set(positive_embedding_set_ids) - found_ids
-        raise ValueError(f"Embedding sets not found: {missing}")
+        raise ValueError(f"Positive embedding sets not found: {missing}")
 
-    # Validate all share same model_version, vector_dim, etc.
-    model_versions = {es.model_version for es in embedding_sets}
+    # Load and validate negative embedding sets
+    result = await session.execute(
+        select(EmbeddingSet).where(EmbeddingSet.id.in_(negative_embedding_set_ids))
+    )
+    neg_sets = list(result.scalars().all())
+    if len(neg_sets) != len(negative_embedding_set_ids):
+        found_ids = {es.id for es in neg_sets}
+        missing = set(negative_embedding_set_ids) - found_ids
+        raise ValueError(f"Negative embedding sets not found: {missing}")
+
+    # Validate all sets share same model_version and vector_dim
+    all_sets = pos_sets + neg_sets
+    model_versions = {es.model_version for es in all_sets}
     if len(model_versions) > 1:
         raise ValueError(f"Embedding sets use different model versions: {model_versions}")
 
-    vector_dims = {es.vector_dim for es in embedding_sets}
+    vector_dims = {es.vector_dim for es in all_sets}
     if len(vector_dims) > 1:
         raise ValueError(f"Embedding sets have different vector dimensions: {vector_dims}")
 
-    # Validate negative audio folder exists and has audio files
-    neg_folder = Path(negative_audio_folder)
-    if not neg_folder.is_dir():
-        raise ValueError(f"Negative audio folder not found: {negative_audio_folder}")
-
-    audio_files = [
-        p for p in neg_folder.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS
-    ]
-    if not audio_files:
-        raise ValueError(f"No audio files found in {negative_audio_folder}")
-
-    # Use first embedding set's config
-    ref = embedding_sets[0]
+    # Use first positive embedding set's config
+    ref = pos_sets[0]
 
     job = ClassifierTrainingJob(
         name=name,
         positive_embedding_set_ids=json.dumps(positive_embedding_set_ids),
-        negative_audio_folder=negative_audio_folder,
+        negative_embedding_set_ids=json.dumps(negative_embedding_set_ids),
         model_version=ref.model_version,
         window_size_seconds=ref.window_size_seconds,
         target_sample_rate=ref.target_sample_rate,
