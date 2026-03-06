@@ -3,7 +3,7 @@
 ## Overview
 
 This project processes humpback whale audio recordings (MP3/WAV/FLAC) into reusable
-embedding vectors using a Perch-compatible TFLite model, then performs clustering
+embedding vectors using a Perch-compatible TFLite or TensorFlow2 model, then performs clustering
 with optional ecological/behavioral metadata.
 
 Key features:
@@ -29,6 +29,13 @@ Key features:
 ---
 
 ## Quick Start
+
+### Requirements
+
+#### SurfPerch TensorFlow 2 Model
+
+Download https://www.kaggle.com/models/google/surfperch and place in /models folder
+
 
 ### Install
 
@@ -379,34 +386,6 @@ for these categories, or more labeled data is needed.
 Training uses GPU when available (Metal on Apple Silicon), respecting the
 `HUMPBACK_TF_FORCE_CPU` env var. Falls back to CPU if no GPU is found.
 
-### Cluster Assignment Playback Controls
-
-When viewing a clustering job's results, expanding a cluster shows its audio
-file assignments organized in a folder tree. Each audio file has a compact
-playback control bar:
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ [▶]  [0] [3] [17]  [Full]   🔈▮▮▯▯  ⋯                              │
-│ 0:15 [====██████=========================] 0:20                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-| Control | Description |
-|---------|-------------|
-| **Play/pause** (▶/⏸) | Plays the currently selected window or full file |
-| **Row-index chips** ([0], [3], ...) | Each chip represents a window assigned to this cluster. Click to select and auto-play that window segment |
-| **Full** | Switch to full-file playback mode |
-| **Volume** (🔈) | Adjusts playback volume |
-| **Download** (⋯) | Downloads the original audio file |
-| **Time indicator** | Bottom bar shows the selected window's position within the full audio file. The blue region highlights the active segment, and a playhead tracks progress during playback |
-
-When a file has only one window assigned to the cluster, that window is
-selected by default (instead of full-file mode) so playback starts on the
-relevant segment. The time indicator makes it easy to see where in the
-original recording the clustered segment falls.
-
----
 
 ## API Endpoints
 
