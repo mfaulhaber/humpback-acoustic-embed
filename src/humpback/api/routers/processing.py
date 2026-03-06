@@ -20,6 +20,7 @@ def _job_to_out(job, skipped: bool = False) -> ProcessingJobOut:
         target_sample_rate=job.target_sample_rate,
         feature_config=json.loads(job.feature_config) if job.feature_config else None,
         error_message=job.error_message,
+        warning_message=job.warning_message,
         created_at=job.created_at,
         updated_at=job.updated_at,
         skipped=skipped,

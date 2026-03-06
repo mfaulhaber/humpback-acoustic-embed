@@ -119,14 +119,19 @@ async def claim_processing_job(session: AsyncSession) -> Optional[ProcessingJob]
     return job
 
 
-async def complete_processing_job(session: AsyncSession, job_id: str) -> None:
+async def complete_processing_job(
+    session: AsyncSession, job_id: str, warning_message: str | None = None
+) -> None:
+    values: dict = {
+        "status": JobStatus.complete.value,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if warning_message is not None:
+        values["warning_message"] = warning_message
     await session.execute(
         update(ProcessingJob)
         .where(ProcessingJob.id == job_id)
-        .values(
-            status=JobStatus.complete.value,
-            updated_at=datetime.now(timezone.utc),
-        )
+        .values(**values)
     )
     await session.commit()
 

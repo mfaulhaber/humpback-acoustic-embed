@@ -335,3 +335,57 @@ async def test_classifier_workflow(e2e_settings, e2e_client, tmp_path):
     assert "filename" in tsv_content  # header row
 
     await engine.dispose()
+
+
+async def test_short_audio_warns_no_embedding_set(e2e_settings, e2e_client):
+    """Short audio (<window_size) completes with warning, no EmbeddingSet created."""
+    client = e2e_client
+    settings = e2e_settings
+
+    # Upload a 2-second audio file (shorter than 5s window)
+    wav_data = make_wav_bytes(duration=2.0, sample_rate=16000)
+    resp = await client.post(
+        "/audio/upload",
+        files={"file": ("short.wav", wav_data, "audio/wav")},
+    )
+    assert resp.status_code == 201
+    audio_id = resp.json()["id"]
+
+    # Create processing job
+    resp = await client.post(
+        "/processing/jobs",
+        json={
+            "audio_file_id": audio_id,
+            "model_version": settings.model_version,
+            "window_size_seconds": settings.window_size_seconds,
+            "target_sample_rate": settings.target_sample_rate,
+        },
+    )
+    assert resp.status_code == 201
+    job_id = resp.json()["id"]
+
+    # Run processing job
+    engine = create_engine(settings.database_url)
+    session_factory = create_session_factory(engine)
+
+    async with session_factory() as session:
+        claimed = await claim_processing_job(session)
+        assert claimed is not None
+        assert claimed.id == job_id
+        await run_processing_job(session, claimed, settings)
+
+    # Job should be complete with a warning
+    resp = await client.get(f"/processing/jobs/{job_id}")
+    assert resp.status_code == 200
+    job = resp.json()
+    assert job["status"] == "complete"
+    assert job["warning_message"] is not None
+    assert "too short" in job["warning_message"]
+
+    # No embedding set should have been created
+    resp = await client.get("/processing/embedding-sets")
+    assert resp.status_code == 200
+    es_list = [es for es in resp.json() if es["audio_file_id"] == audio_id]
+    assert len(es_list) == 0
+
+    await engine.dispose()

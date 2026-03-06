@@ -128,36 +128,50 @@ async def run_processing_job(
             job.encoding_signature,
         )
 
-        await asyncio.to_thread(
+        total_rows = await asyncio.to_thread(
             _process_audio, audio_path, job, model, final_path, input_format
         )
 
         # Check for GPU fallback warning
+        warning = None
         if getattr(model, "gpu_failed", False):
             warning = "GPU inference failed; used CPU fallback. Results are correct but processing may be slower."
             logger.warning("Job %s: %s", job.id, warning)
-            job.warning_message = warning
 
-        # Create EmbeddingSet record
-        es = EmbeddingSet(
-            audio_file_id=job.audio_file_id,
-            encoding_signature=job.encoding_signature,
-            model_version=job.model_version,
-            window_size_seconds=job.window_size_seconds,
-            target_sample_rate=job.target_sample_rate,
-            vector_dim=model.vector_dim,
-            parquet_path=str(final_path),
-        )
-        session.add(es)
-        await session.flush()
+        if total_rows == 0:
+            # Audio too short for window size — no embeddings produced
+            audio_data, sr = decode_audio(audio_path)
+            duration = len(audio_data) / sr
+            warning = (
+                f"Audio too short for window size ({duration:.1f}s < "
+                f"{job.window_size_seconds:.1f}s) — no embeddings produced"
+            )
+            logger.warning("Job %s: %s", job.id, warning)
+            # Clean up empty parquet if it was somehow written
+            if final_path.exists():
+                final_path.unlink()
+        else:
+            # Create EmbeddingSet record only when embeddings were produced
+            es = EmbeddingSet(
+                audio_file_id=job.audio_file_id,
+                encoding_signature=job.encoding_signature,
+                model_version=job.model_version,
+                window_size_seconds=job.window_size_seconds,
+                target_sample_rate=job.target_sample_rate,
+                vector_dim=model.vector_dim,
+                parquet_path=str(final_path),
+            )
+            session.add(es)
+            await session.flush()
 
         # Update audio file metadata if not set
         if af.duration_seconds is None:
-            audio, sr = decode_audio(audio_path)
-            af.duration_seconds = len(audio) / sr
+            audio_data, sr = decode_audio(audio_path)
+            af.duration_seconds = len(audio_data) / sr
             af.sample_rate_original = sr
+            await session.flush()
 
-        await complete_processing_job(session, job.id)
+        await complete_processing_job(session, job.id, warning_message=warning)
 
     except Exception as e:
         logger.exception(f"Processing job {job.id} failed")
@@ -177,8 +191,8 @@ def _process_audio(
     model: EmbeddingModel,
     final_path: Path,
     input_format: str = "spectrogram",
-) -> None:
-    """CPU-bound audio processing (runs in thread)."""
+) -> int:
+    """CPU-bound audio processing (runs in thread). Returns number of embeddings written."""
     # Decode + resample
     audio, sr = decode_audio(audio_path)
     audio = resample(audio, sr, job.target_sample_rate)
@@ -234,3 +248,4 @@ def _process_audio(
             writer.add(emb)
 
     writer.close()
+    return writer.total_rows
