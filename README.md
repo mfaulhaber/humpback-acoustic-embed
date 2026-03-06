@@ -25,6 +25,7 @@ Key features:
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 - Binary whale vocalization classifier: train LogisticRegression on positive embeddings + negative audio, scan arbitrary hydrophone folders for whale presence with merged detection spans
+- Folder import: reference audio files in-place from local filesystem folders without copying
 
 ---
 
@@ -400,6 +401,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/audio/upload` | Upload audio file (SHA-256 dedup) |
+| POST | `/audio/import-folder?folder_path=` | Import audio from local folder by reference (no copy) |
 | GET | `/audio/` | List audio files |
 | GET | `/audio/{id}` | Get audio file details |
 | PUT | `/audio/{id}/metadata` | Update metadata |

@@ -181,6 +181,8 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 ### AudioFile
 - id
 - filename
+- folder_path
+- source_folder (nullable — absolute path to source directory for imported files; when set, audio is read in-place instead of from `audio/raw/`)
 - checksum_sha256
 - duration_seconds
 - sample_rate_original
@@ -456,7 +458,7 @@ Worker priority order: processing → clustering → classifier training → det
 ## 9. Storage Layout
 
 /audio/
-  raw/{audio_file_id}/original.(wav|mp3|flac)
+  raw/{audio_file_id}/original.(wav|mp3|flac)    (uploaded files only; imported files are read from source_folder)
 /embeddings/
   {model_version}/{audio_file_id}/{encoding_signature}.parquet
   {model_version}/{audio_file_id}/{encoding_signature}.tmp.parquet

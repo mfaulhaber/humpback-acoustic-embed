@@ -15,6 +15,7 @@ from humpback.schemas.audio import (
     AffectedClusteringJob,
     FolderDeletePreview,
     FolderDeleteResult,
+    FolderImportResult,
 )
 from humpback.storage import audio_raw_dir, cluster_dir, ensure_dir
 
@@ -59,6 +60,86 @@ async def upload_audio(
         .where(AudioFile.id == af.id)
     )
     return result.scalar_one(), True
+
+
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
+
+
+async def import_folder(
+    session: AsyncSession,
+    folder_path: str,
+) -> FolderImportResult:
+    """Import audio files from a filesystem folder by reference (no copy)."""
+    source = Path(folder_path).resolve()
+    if not source.is_dir():
+        raise ValueError(f"Not a directory: {source}")
+
+    base_name = source.name  # e.g. "whales"
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for audio_file in sorted(source.rglob("*")):
+        if not audio_file.is_file():
+            continue
+        if audio_file.suffix.lower() not in AUDIO_EXTENSIONS:
+            continue
+
+        # Compute sub-folder relative to source for folder_path hierarchy
+        rel = audio_file.parent.relative_to(source)
+        if str(rel) == ".":
+            file_folder_path = base_name
+        else:
+            file_folder_path = f"{base_name}/{rel}"
+
+        try:
+            file_data = audio_file.read_bytes()
+            checksum = hashlib.sha256(file_data).hexdigest()
+        except Exception as e:
+            errors.append(f"{audio_file.name}: {e}")
+            continue
+
+        # Deduplicate by (checksum, folder_path)
+        existing = await session.execute(
+            select(AudioFile).where(
+                AudioFile.checksum_sha256 == checksum,
+                AudioFile.folder_path == file_folder_path,
+            )
+        )
+        if existing.scalar_one_or_none():
+            skipped += 1
+            continue
+
+        # Populate duration/sample_rate from headers
+        duration = None
+        sample_rate = None
+        try:
+            from humpback.processing.audio_io import decode_audio
+            audio_data, sr = decode_audio(audio_file)
+            duration = len(audio_data) / sr
+            sample_rate = sr
+        except Exception:
+            pass
+
+        af = AudioFile(
+            filename=audio_file.name,
+            folder_path=file_folder_path,
+            source_folder=str(audio_file.parent),
+            checksum_sha256=checksum,
+            duration_seconds=duration,
+            sample_rate_original=sample_rate,
+        )
+        session.add(af)
+        imported += 1
+
+    await session.commit()
+
+    return FolderImportResult(
+        folder_path=base_name,
+        imported=imported,
+        skipped=skipped,
+        errors=errors,
+    )
 
 
 async def list_audio(session: AsyncSession) -> list[AudioFile]:
@@ -242,9 +323,11 @@ async def execute_folder_delete(
 
     # 4. Delete audio files (cascade handles AudioMetadata) + raw audio dirs
     for af in audio_files:
-        raw_dir = audio_raw_dir(storage_root, af.id)
-        if raw_dir.exists():
-            shutil.rmtree(raw_dir)
+        # Only remove raw dir for uploaded files (no source_folder)
+        if not af.source_folder:
+            raw_dir = audio_raw_dir(storage_root, af.id)
+            if raw_dir.exists():
+                shutil.rmtree(raw_dir)
         await session.delete(af)
 
     await session.commit()

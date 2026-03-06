@@ -15,6 +15,7 @@ class AudioFile(UUIDMixin, TimestampMixin, Base):
 
     filename: Mapped[str]
     folder_path: Mapped[str] = mapped_column(default="")
+    source_folder: Mapped[Optional[str]] = mapped_column(default=None)
     checksum_sha256: Mapped[str] = mapped_column()
     duration_seconds: Mapped[Optional[float]] = mapped_column(default=None)
     sample_rate_original: Mapped[Optional[int]] = mapped_column(default=None)

@@ -1,6 +1,7 @@
 import type {
   AudioFile,
   AvailableModelFile,
+  FolderImportResult,
   ClassifierModelInfo,
   ClassifierReport,
   ClassifierTrainingJob,
@@ -75,17 +76,10 @@ function put<T>(path: string, body: unknown): Promise<T> {
 
 // ---- Audio ----
 
-export async function uploadAudio(file: File, folderPath?: string): Promise<AudioFile> {
-  const form = new FormData();
-  form.append("file", file);
-  if (folderPath) form.append("folder_path", folderPath);
-  const res = await fetch("/audio/upload", { method: "POST", body: form });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text);
-  }
-  return res.json();
-}
+export const importFolder = (folderPath: string) =>
+  api<FolderImportResult>(`/audio/import-folder?folder_path=${encodeURIComponent(folderPath)}`, {
+    method: "POST",
+  });
 
 export const fetchAudioFiles = () => api<AudioFile[]>("/audio/");
 

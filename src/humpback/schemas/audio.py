@@ -70,6 +70,7 @@ class AudioFileOut(BaseModel):
     id: str
     filename: str
     folder_path: str = ""
+    source_folder: Optional[str] = None
     checksum_sha256: str
     duration_seconds: Optional[float] = None
     sample_rate_original: Optional[int] = None
@@ -77,3 +78,10 @@ class AudioFileOut(BaseModel):
     metadata: Optional[AudioMetadataOut] = None
 
     model_config = {"from_attributes": True}
+
+
+class FolderImportResult(BaseModel):
+    folder_path: str
+    imported: int
+    skipped: int
+    errors: list[str]

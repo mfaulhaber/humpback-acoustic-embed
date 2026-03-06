@@ -13,11 +13,19 @@ export interface AudioFile {
   id: string;
   filename: string;
   folder_path: string;
+  source_folder: string | null;
   checksum_sha256: string;
   duration_seconds: number | null;
   sample_rate_original: number | null;
   created_at: string;
   metadata: AudioMetadata | null;
+}
+
+export interface FolderImportResult {
+  folder_path: string;
+  imported: number;
+  skipped: number;
+  errors: string[];
 }
 
 export interface SpectrogramData {

@@ -17,7 +17,7 @@ from humpback.processing.features import extract_logmel
 from humpback.processing.inference import EmbeddingModel, FakeTF2Model, FakeTFLiteModel
 from humpback.processing.windowing import slice_windows
 from humpback.services.model_registry_service import get_model_by_name
-from humpback.storage import audio_raw_dir, embedding_path, ensure_dir
+from humpback.storage import embedding_path, ensure_dir, resolve_audio_path
 from humpback.workers.queue import complete_processing_job, fail_processing_job
 
 logger = logging.getLogger(__name__)
@@ -110,11 +110,9 @@ async def run_processing_job(
         af = af_result.scalar_one()
 
         # Find the audio file on disk
-        raw_dir = audio_raw_dir(settings.storage_root, af.id)
-        audio_files = list(raw_dir.glob("original.*"))
-        if not audio_files:
-            raise FileNotFoundError(f"No audio file found in {raw_dir}")
-        audio_path = audio_files[0]
+        audio_path = resolve_audio_path(af, settings.storage_root)
+        if not audio_path.exists():
+            raise FileNotFoundError(f"No audio file found at {audio_path}")
 
         # Run CPU-bound processing in thread
         input_format = "spectrogram"

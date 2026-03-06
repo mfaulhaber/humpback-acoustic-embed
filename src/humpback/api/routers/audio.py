@@ -24,10 +24,11 @@ from humpback.schemas.audio import (
     EmbeddingSimilarityOut,
     FolderDeletePreview,
     FolderDeleteResult,
+    FolderImportResult,
     SpectrogramOut,
 )
 from humpback.services import audio_service
-from humpback.storage import audio_raw_dir
+from humpback.storage import audio_raw_dir, resolve_audio_path
 
 router = APIRouter(prefix="/audio", tags=["audio"])
 
@@ -48,6 +49,7 @@ def _audio_to_out(af) -> AudioFileOut:
         id=af.id,
         filename=af.filename,
         folder_path=af.folder_path,
+        source_folder=af.source_folder,
         checksum_sha256=af.checksum_sha256,
         duration_seconds=af.duration_seconds,
         sample_rate_original=af.sample_rate_original,
@@ -78,6 +80,18 @@ async def upload_audio(
         folder_path=normalized_path,
     )
     return _audio_to_out(af)
+
+
+@router.post("/import-folder", status_code=200)
+async def import_folder(
+    session: SessionDep,
+    folder_path: str = Query(...),
+) -> FolderImportResult:
+    """Import audio files from a local filesystem folder by reference (no copy)."""
+    try:
+        return await audio_service.import_folder(session, folder_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/")
@@ -153,10 +167,10 @@ async def download_audio(
     af = await audio_service.get_audio(session, audio_id)
     if af is None:
         raise HTTPException(404, "Audio file not found")
-    suffix = Path(af.filename).suffix or ".wav"
-    file_path = audio_raw_dir(settings.storage_root, af.id) / f"original{suffix}"
+    file_path = resolve_audio_path(af, settings.storage_root)
     if not file_path.exists():
         raise HTTPException(404, "Audio file not found on disk")
+    suffix = file_path.suffix or ".wav"
     media_types = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".flac": "audio/flac"}
     media_type = media_types.get(suffix.lower(), "application/octet-stream")
     file_size = file_path.stat().st_size
@@ -204,8 +218,7 @@ async def get_audio_window(
     af = await audio_service.get_audio(session, audio_id)
     if af is None:
         raise HTTPException(404, "Audio file not found")
-    suffix = Path(af.filename).suffix or ".wav"
-    file_path = audio_raw_dir(settings.storage_root, af.id) / f"original{suffix}"
+    file_path = resolve_audio_path(af, settings.storage_root)
     if not file_path.exists():
         raise HTTPException(404, "Audio file not found on disk")
 
@@ -304,8 +317,7 @@ async def get_spectrogram(
     af = await audio_service.get_audio(session, audio_id)
     if af is None:
         raise HTTPException(404, "Audio file not found")
-    suffix = Path(af.filename).suffix or ".wav"
-    file_path = audio_raw_dir(settings.storage_root, af.id) / f"original{suffix}"
+    file_path = resolve_audio_path(af, settings.storage_root)
     if not file_path.exists():
         raise HTTPException(404, "Audio file not found on disk")
 

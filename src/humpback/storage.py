@@ -44,3 +44,21 @@ def detection_dir(storage_root: Path, detection_job_id: str) -> Path:
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def resolve_audio_path(af, storage_root: Path) -> Path:
+    """Return the on-disk path for an AudioFile.
+
+    If the file was imported from a source folder, read from there directly.
+    Otherwise fall back to the uploaded copy in audio/raw/.
+    """
+    if af.source_folder:
+        return Path(af.source_folder) / af.filename
+    # Uploaded file — find original.* in the raw directory
+    raw_dir = audio_raw_dir(storage_root, af.id)
+    candidates = list(raw_dir.glob("original.*"))
+    if candidates:
+        return candidates[0]
+    # Fall back to suffix from filename
+    suffix = Path(af.filename).suffix or ".wav"
+    return raw_dir / f"original{suffix}"
