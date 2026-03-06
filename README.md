@@ -89,8 +89,10 @@ to the legacy `static/index.html`.
 flowchart TD
     A["Audio File<br/>(MP3/WAV/FLAC)"] --> B["Decode Audio<br/>→ float32 mono"]
     B --> C["Resample<br/>→ 32 kHz"]
-    C --> D["Slice Windows<br/>5 s → 160 000 samples"]
-    D --> E{input_format?}
+    C --> D{"Duration ≥ window?"}
+    D -- No --> D2["Skip file<br/>(log warning)"]
+    D -- Yes --> D3["Slice Windows<br/>5 s → 160 000 samples<br/>(overlap-back last window)"]
+    D3 --> E{input_format?}
     E -- spectrogram --> F["Log-Mel Spectrogram<br/>128 mels × 128 frames"]
     E -- waveform --> G["Raw Waveform<br/>160 000 samples"]
     F --> H["TFLite Model<br/>→ 1280-d vector"]
@@ -108,7 +110,7 @@ flowchart TD
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | Sample rate | 32 kHz | Resample target |
-| Window size | 5 s (160k samples) | Fixed-length, zero-padded |
+| Window size | 5 s (160k samples) | Fixed-length, overlap-back last window (no zero-padding). Files shorter than window size are skipped. |
 | Spectrogram | 128 mels × 128 frames | n_fft=2048, hop=1252 |
 | Embedding dim | 1280 | Perch default |
 | UMAP cluster dims | 5 | `umap_cluster_n_components` — clustering input; viz always 2D |
@@ -129,6 +131,12 @@ flowchart TD
 
 Encoding is associated with the audio file and configuration. Reprocessing is
 skipped when an EmbeddingSet with the same encoding_signature already exists.
+
+**Minimum audio duration:** Audio files shorter than `window_size_seconds` (default
+5.0 s) are skipped entirely — they produce 0 windows and 0 embeddings. When the last
+chunk of a longer file is shorter than a full window, it is shifted backward
+(overlap-back) so the window ends at the audio boundary and contains only real audio,
+avoiding the false positives caused by zero-padding.
 
 ### Model Registry
 

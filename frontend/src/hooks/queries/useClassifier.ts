@@ -14,6 +14,9 @@ import {
   saveDetectionLabels,
   fetchExtractionSettings,
   extractLabeledSamples,
+  fetchDetectionDiagnostics,
+  fetchDetectionDiagnosticsSummary,
+  fetchTrainingDataSummary,
 } from "@/api/client";
 import type {
   ClassifierTrainingJobCreate,
@@ -154,5 +157,34 @@ export function useSaveDetectionLabels() {
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["detectionContent", variables.jobId] });
     },
+  });
+}
+
+export function useDetectionDiagnostics(
+  jobId: string | null,
+  filename?: string,
+  offset = 0,
+  limit = 1000,
+) {
+  return useQuery({
+    queryKey: ["detectionDiagnostics", jobId, filename, offset, limit],
+    queryFn: () => fetchDetectionDiagnostics(jobId!, filename, offset, limit),
+    enabled: jobId !== null,
+  });
+}
+
+export function useDetectionDiagnosticsSummary(jobId: string | null) {
+  return useQuery({
+    queryKey: ["detectionDiagnosticsSummary", jobId],
+    queryFn: () => fetchDetectionDiagnosticsSummary(jobId!),
+    enabled: jobId !== null,
+  });
+}
+
+export function useTrainingDataSummary(modelId: string | null) {
+  return useQuery({
+    queryKey: ["trainingDataSummary", modelId],
+    queryFn: () => fetchTrainingDataSummary(modelId!),
+    enabled: modelId !== null,
   });
 }

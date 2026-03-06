@@ -193,6 +193,13 @@ def _process_audio(
     feature_config = _json.loads(job.feature_config) if job.feature_config else {}
     normalization = feature_config.get("normalization", "per_window_max")
 
+    window_samples = int(job.target_sample_rate * job.window_size_seconds)
+    if len(audio) < window_samples:
+        logger.warning(
+            "Audio too short for window size (%.3fs < %.1fs), producing 0 embeddings for job %s",
+            len(audio) / job.target_sample_rate, job.window_size_seconds, job.id,
+        )
+
     batch_items = []
     batch_size = 32
 

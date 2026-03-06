@@ -105,3 +105,21 @@ async def test_extract_empty_job_ids(client):
     # Empty list: all 0 jobs found, 0 expected → should succeed with count 0
     assert resp.status_code == 200
     assert resp.json()["count"] == 0
+
+
+# ---- Diagnostics Endpoints ----
+
+
+async def test_diagnostics_not_found(client):
+    resp = await client.get("/classifier/detection-jobs/nonexistent/diagnostics")
+    assert resp.status_code == 404
+
+
+async def test_diagnostics_summary_not_found(client):
+    resp = await client.get("/classifier/detection-jobs/nonexistent/diagnostics/summary")
+    assert resp.status_code == 404
+
+
+async def test_training_summary_not_found(client):
+    resp = await client.get("/classifier/models/nonexistent/training-summary")
+    assert resp.status_code == 404

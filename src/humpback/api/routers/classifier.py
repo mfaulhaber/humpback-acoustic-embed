@@ -20,6 +20,12 @@ from humpback.schemas.classifier import (
     ClassifierTrainingJobOut,
     DetectionJobCreate,
     DetectionJobOut,
+    DiagnosticsResponse,
+    DiagnosticsSummaryResponse,
+    PerFileDiagnosticSummary,
+    TrainingDataSummaryResponse,
+    TrainingSourceInfo,
+    WindowDiagnosticRecord,
 )
 from humpback.services import classifier_service
 
@@ -194,6 +200,182 @@ async def download_detections(
         tsv_path,
         media_type="text/tab-separated-values",
         filename=f"detections_{job_id}.tsv",
+    )
+
+
+# ---- Diagnostics ----
+
+
+def _diagnostics_path(job) -> Path:
+    """Derive window_diagnostics.parquet path from a detection job."""
+    if not job.output_tsv_path:
+        return None
+    return Path(job.output_tsv_path).parent / "window_diagnostics.parquet"
+
+
+@router.get("/detection-jobs/{job_id}/diagnostics")
+async def get_detection_diagnostics(
+    job_id: str,
+    session: SessionDep,
+    filename: Optional[str] = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(1000, ge=1, le=10000),
+) -> DiagnosticsResponse:
+    """Return paginated per-window diagnostic records from a detection job."""
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+
+    diag_path = _diagnostics_path(job)
+    if diag_path is None or not diag_path.is_file():
+        raise HTTPException(404, "Diagnostics not available for this job")
+
+    table = pq.read_table(diag_path)
+
+    filenames = sorted(pc.unique(table.column("filename")).to_pylist())
+
+    if filename:
+        mask = pc.equal(table.column("filename"), filename)
+        table = table.filter(mask)
+
+    total = table.num_rows
+    page = table.slice(offset, limit)
+
+    records = [
+        WindowDiagnosticRecord(
+            filename=page.column("filename")[i].as_py(),
+            window_index=page.column("window_index")[i].as_py(),
+            offset_sec=page.column("offset_sec")[i].as_py(),
+            confidence=page.column("confidence")[i].as_py(),
+            is_overlapped=page.column("is_overlapped")[i].as_py(),
+            overlap_sec=page.column("overlap_sec")[i].as_py(),
+        )
+        for i in range(page.num_rows)
+    ]
+
+    return DiagnosticsResponse(records=records, total=total, filenames=filenames)
+
+
+@router.get("/detection-jobs/{job_id}/diagnostics/summary")
+async def get_detection_diagnostics_summary(
+    job_id: str,
+    session: SessionDep,
+) -> DiagnosticsSummaryResponse:
+    """Return aggregate diagnostic statistics for a detection job."""
+    import numpy as np
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+
+    diag_path = _diagnostics_path(job)
+    if diag_path is None or not diag_path.is_file():
+        raise HTTPException(404, "Diagnostics not available for this job")
+
+    table = pq.read_table(diag_path)
+    total_windows = table.num_rows
+
+    is_overlapped = table.column("is_overlapped")
+    confidence = table.column("confidence")
+    filenames_col = table.column("filename")
+
+    overlapped_mask = pc.equal(is_overlapped, True)
+    total_overlapped = pc.sum(overlapped_mask.cast("int32")).as_py()
+    overlapped_ratio = total_overlapped / total_windows if total_windows > 0 else 0.0
+
+    # Overlapped vs normal mean confidence
+    overlapped_conf = pc.filter(confidence, overlapped_mask)
+    normal_mask = pc.invert(overlapped_mask)
+    normal_conf = pc.filter(confidence, normal_mask)
+
+    overlapped_mean = float(pc.mean(overlapped_conf).as_py()) if len(overlapped_conf) > 0 else None
+    normal_mean = float(pc.mean(normal_conf).as_py()) if len(normal_conf) > 0 else None
+
+    # Confidence histogram (10 bins from 0 to 1)
+    conf_np = confidence.to_pylist()
+    conf_arr = np.array(conf_np, dtype=np.float32)
+    is_overlapped_arr = np.array(is_overlapped.to_pylist(), dtype=bool)
+    bin_edges = np.linspace(0, 1, 11)
+    hist_all, _ = np.histogram(conf_arr, bins=bin_edges)
+    histogram = []
+    for i in range(len(bin_edges) - 1):
+        if i == len(bin_edges) - 2:
+            bin_mask = (conf_arr >= bin_edges[i]) & (conf_arr <= bin_edges[i + 1])
+        else:
+            bin_mask = (conf_arr >= bin_edges[i]) & (conf_arr < bin_edges[i + 1])
+        n_overlapped_in_bin = int(is_overlapped_arr[bin_mask].sum())
+        histogram.append({
+            "bin_start": float(bin_edges[i]),
+            "bin_end": float(bin_edges[i + 1]),
+            "count": int(hist_all[i]),
+            "count_overlapped": n_overlapped_in_bin,
+        })
+
+    # Per-file summaries
+    unique_files = sorted(pc.unique(filenames_col).to_pylist())
+    per_file = []
+    for fname in unique_files:
+        file_mask = pc.equal(filenames_col, fname)
+        file_table = table.filter(file_mask)
+        file_conf = file_table.column("confidence")
+        file_overlapped = file_table.column("is_overlapped")
+        file_overlapped_mask = pc.equal(file_overlapped, True)
+        file_normal_mask = pc.invert(file_overlapped_mask)
+
+        n_overlapped = pc.sum(file_overlapped_mask.cast("int32")).as_py()
+        overlapped_c = pc.filter(file_conf, file_overlapped_mask)
+        normal_c = pc.filter(file_conf, file_normal_mask)
+
+        pf_summary = PerFileDiagnosticSummary(
+            filename=fname,
+            n_windows=file_table.num_rows,
+            n_overlapped=n_overlapped,
+            mean_confidence=float(pc.mean(file_conf).as_py()),
+            mean_confidence_overlapped=float(pc.mean(overlapped_c).as_py()) if len(overlapped_c) > 0 else None,
+            mean_confidence_normal=float(pc.mean(normal_c).as_py()) if len(normal_c) > 0 else None,
+        )
+        per_file.append(pf_summary)
+
+    return DiagnosticsSummaryResponse(
+        total_windows=total_windows,
+        total_overlapped=total_overlapped,
+        overlapped_ratio=overlapped_ratio,
+        confidence_histogram=histogram,
+        overlapped_mean_confidence=overlapped_mean,
+        normal_mean_confidence=normal_mean,
+        per_file=per_file,
+    )
+
+
+# ---- Training Data Summary ----
+
+
+@router.get("/models/{model_id}/training-summary")
+async def get_training_summary(
+    model_id: str,
+    session: SessionDep,
+) -> TrainingDataSummaryResponse:
+    """Return training data provenance for a classifier model."""
+    summary = await classifier_service.get_training_data_summary(session, model_id)
+    if summary is None:
+        raise HTTPException(404, "Model or training job not found")
+
+    return TrainingDataSummaryResponse(
+        model_id=summary["model_id"],
+        model_name=summary["model_name"],
+        positive_sources=[TrainingSourceInfo(**s) for s in summary["positive_sources"]],
+        negative_sources=[TrainingSourceInfo(**s) for s in summary["negative_sources"]],
+        total_positive=summary["total_positive"],
+        total_negative=summary["total_negative"],
+        balance_ratio=summary["balance_ratio"],
+        window_size_seconds=summary["window_size_seconds"],
+        positive_duration_sec=summary["positive_duration_sec"],
+        negative_duration_sec=summary["negative_duration_sec"],
     )
 
 

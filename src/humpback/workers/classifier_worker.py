@@ -9,7 +9,7 @@ import joblib
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.classifier.detector import run_detection, write_detections_tsv
+from humpback.classifier.detector import run_detection, write_detections_tsv, write_window_diagnostics
 from humpback.classifier.extractor import extract_labeled_samples
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
@@ -149,8 +149,8 @@ async def run_detection_job(
 
         feature_config = json.loads(cm.feature_config) if cm.feature_config else None
 
-        # Run detection (CPU-bound)
-        detections, summary = await asyncio.to_thread(
+        # Run detection (CPU-bound) with diagnostics
+        detections, summary, diagnostics = await asyncio.to_thread(
             run_detection,
             Path(job.audio_folder),
             pipeline,
@@ -160,12 +160,19 @@ async def run_detection_job(
             job.confidence_threshold,
             input_format,
             feature_config,
+            True,  # emit_diagnostics
         )
 
         # Write outputs
         ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
         tsv_path = ddir / "detections.tsv"
         write_detections_tsv(detections, tsv_path)
+
+        # Write window diagnostics
+        if diagnostics:
+            diag_path = ddir / "window_diagnostics.parquet"
+            write_window_diagnostics(diagnostics, diag_path)
+            summary["has_diagnostics"] = True
 
         summary_path = ddir / "run_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2))

@@ -435,6 +435,70 @@ export interface DetectionLabelRow {
   background: number | null;
 }
 
+// ---- Detection Diagnostics ----
+
+export interface WindowDiagnosticRecord {
+  filename: string;
+  window_index: number;
+  offset_sec: number;
+  confidence: number;
+  is_overlapped: boolean;
+  overlap_sec: number;
+}
+
+export interface DiagnosticsResponse {
+  records: WindowDiagnosticRecord[];
+  total: number;
+  filenames: string[];
+}
+
+export interface PerFileDiagnosticSummary {
+  filename: string;
+  n_windows: number;
+  n_overlapped: number;
+  mean_confidence: number;
+  mean_confidence_overlapped: number | null;
+  mean_confidence_normal: number | null;
+}
+
+export interface ConfidenceHistogramBin {
+  bin_start: number;
+  bin_end: number;
+  count: number;
+  count_overlapped: number;
+}
+
+export interface DiagnosticsSummaryResponse {
+  total_windows: number;
+  total_overlapped: number;
+  overlapped_ratio: number;
+  confidence_histogram: ConfidenceHistogramBin[];
+  overlapped_mean_confidence: number | null;
+  normal_mean_confidence: number | null;
+  per_file: PerFileDiagnosticSummary[];
+}
+
+export interface TrainingSourceInfo {
+  embedding_set_id: string;
+  audio_file_id: string | null;
+  filename: string | null;
+  n_vectors: number;
+  duration_represented_sec: number | null;
+}
+
+export interface TrainingDataSummaryResponse {
+  model_id: string;
+  model_name: string;
+  positive_sources: TrainingSourceInfo[];
+  negative_sources: TrainingSourceInfo[];
+  total_positive: number;
+  total_negative: number;
+  balance_ratio: number;
+  window_size_seconds: number;
+  positive_duration_sec: number | null;
+  negative_duration_sec: number | null;
+}
+
 // ---- Admin ----
 
 export interface ModelConfig {

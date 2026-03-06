@@ -45,6 +45,14 @@ def embed_audio_folder(
             audio, sr = decode_audio(audio_path)
             audio = resample(audio, sr, target_sample_rate)
 
+            window_samples = int(target_sample_rate * window_size_seconds)
+            if len(audio) < window_samples:
+                logger.warning(
+                    "Skipping %s: audio too short (%.3fs < %.1fs window)",
+                    audio_path.name, len(audio) / target_sample_rate, window_size_seconds,
+                )
+                continue
+
             batch_items: list[np.ndarray] = []
             batch_size = 32
 

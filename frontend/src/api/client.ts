@@ -15,6 +15,8 @@ import type {
   DetectionJobCreate,
   DetectionLabelRow,
   DetectionRow,
+  DiagnosticsResponse,
+  DiagnosticsSummaryResponse,
   DirectoryListing,
   ExtractionSettings,
   EmbeddingSet,
@@ -32,6 +34,7 @@ import type {
   ProcessingJobCreate,
   SpectrogramData,
   TableInfo,
+  TrainingDataSummaryResponse,
   VisualizationData,
 } from "./types";
 
@@ -257,6 +260,29 @@ export function detectionAudioSliceUrl(
 ) {
   return `/classifier/detection-jobs/${jobId}/audio-slice?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&duration_sec=${durationSec}`;
 }
+
+// ---- Detection Diagnostics ----
+
+export const fetchDetectionDiagnostics = (
+  jobId: string,
+  filename?: string,
+  offset = 0,
+  limit = 1000,
+) => {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (filename) params.set("filename", filename);
+  return api<DiagnosticsResponse>(
+    `/classifier/detection-jobs/${jobId}/diagnostics?${params}`,
+  );
+};
+
+export const fetchDetectionDiagnosticsSummary = (jobId: string) =>
+  api<DiagnosticsSummaryResponse>(
+    `/classifier/detection-jobs/${jobId}/diagnostics/summary`,
+  );
+
+export const fetchTrainingDataSummary = (modelId: string) =>
+  api<TrainingDataSummaryResponse>(`/classifier/models/${modelId}/training-summary`);
 
 // ---- Admin ----
 

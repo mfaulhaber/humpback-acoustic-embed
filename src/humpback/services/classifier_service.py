@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
+import pyarrow.parquet as pq
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -258,3 +259,72 @@ async def bulk_delete_classifier_models(
         if await delete_classifier_model(session, model_id, storage_root):
             count += 1
     return count
+
+
+async def get_training_data_summary(
+    session: AsyncSession, model_id: str
+) -> Optional[dict[str, Any]]:
+    """Build training data provenance summary for a classifier model."""
+    result = await session.execute(
+        select(ClassifierModel).where(ClassifierModel.id == model_id)
+    )
+    cm = result.scalar_one_or_none()
+    if cm is None:
+        return None
+
+    # Find the training job
+    if not cm.training_job_id:
+        return None
+    result = await session.execute(
+        select(ClassifierTrainingJob).where(ClassifierTrainingJob.id == cm.training_job_id)
+    )
+    tj = result.scalar_one_or_none()
+    if tj is None:
+        return None
+
+    pos_ids = json.loads(tj.positive_embedding_set_ids)
+    neg_ids = json.loads(tj.negative_embedding_set_ids)
+
+    async def _resolve_sources(es_ids: list[str]) -> tuple[list[dict], int]:
+        if not es_ids:
+            return [], 0
+        result = await session.execute(
+            select(EmbeddingSet).where(EmbeddingSet.id.in_(es_ids))
+        )
+        sets = list(result.scalars().all())
+        sources = []
+        total = 0
+        for es in sets:
+            n_vectors = 0
+            try:
+                meta = pq.read_metadata(es.parquet_path)
+                n_vectors = meta.num_rows
+            except Exception:
+                pass
+            total += n_vectors
+            duration = n_vectors * cm.window_size_seconds if n_vectors else None
+            sources.append({
+                "embedding_set_id": es.id,
+                "audio_file_id": es.audio_file_id,
+                "n_vectors": n_vectors,
+                "duration_represented_sec": duration,
+            })
+        return sources, total
+
+    pos_sources, total_pos = await _resolve_sources(pos_ids)
+    neg_sources, total_neg = await _resolve_sources(neg_ids)
+
+    balance = total_pos / total_neg if total_neg > 0 else float("inf")
+
+    return {
+        "model_id": cm.id,
+        "model_name": cm.name,
+        "positive_sources": pos_sources,
+        "negative_sources": neg_sources,
+        "total_positive": total_pos,
+        "total_negative": total_neg,
+        "balance_ratio": balance,
+        "window_size_seconds": cm.window_size_seconds,
+        "positive_duration_sec": total_pos * cm.window_size_seconds if total_pos else None,
+        "negative_duration_sec": total_neg * cm.window_size_seconds if total_neg else None,
+    }

@@ -277,7 +277,7 @@ only store indexing/assignment references.
 - audio_folder (filesystem path to scan)
 - confidence_threshold (float, default 0.5)
 - output_tsv_path (nullable, set on completion)
-- result_summary (JSON, nullable — n_files, n_windows, n_detections, n_spans)
+- result_summary (JSON, nullable — n_files, n_windows, n_detections, n_spans, n_skipped_short)
 - error_message (nullable)
 - created_at, updated_at
 
@@ -293,7 +293,7 @@ Pipeline:
 1. Resolve model: if model_version is None, use default from ModelConfig registry
 2. Decode audio (MP3/WAV/FLAC)
 3. Resample to target sample rate (default: 32000 Hz)
-4. Slice into N-second windows (default: 5)
+4. Slice into N-second windows (default: 5) using overlap-back strategy (see Windowing Rules below)
 5. Branch on model's `input_format`:
    - `"spectrogram"`: Extract log-mel spectrogram (128 mel bins × 128 time frames) → model.embed()
    - `"waveform"`: Feed raw audio windows directly → model.embed() (TF2 SavedModel path)
@@ -312,14 +312,37 @@ Rules:
 - if EmbeddingSet exists for encoding_signature and is complete → skip
 - worker caches loaded models in memory to avoid reloading across jobs
 
+### 6.0 Windowing Rules
+
+Audio is sliced into fixed-length windows using an **overlap-back** strategy instead of zero-padding:
+
+| Scenario | Behavior |
+|----------|----------|
+| Audio ≥ 1 window, last chunk is full | Normal: no overlap, no padding |
+| Audio ≥ 1 window, last chunk is partial | **Overlap-back**: shift last window start backward so it ends at the audio boundary, overlapping with the previous window. Contains only real audio. |
+| Audio < 1 window (shorter than `window_size_seconds`) | **Skipped entirely**: produces 0 windows, 0 embeddings. A warning is logged. |
+
+**Why not zero-pad?** Zero-padded final windows create out-of-distribution spectrograms that cause false positives in classifiers. The overlap-back strategy ensures every window contains only real audio.
+
+**Minimum audio duration** = `window_size_seconds` (default 5.0 s). Audio files shorter than this threshold are skipped by:
+- `slice_windows()` / `slice_windows_with_metadata()` — yield nothing
+- `count_windows()` — returns 0
+- Processing worker — logs warning, writes empty embedding set
+- Detection worker — logs warning, increments `n_skipped_short` in summary
+- Trainer (`embed_audio_folder`) — logs warning, skips file
+
+`WindowMetadata` carries `is_overlapped: bool` to flag overlap-back windows (replacing the former `is_padded` field).
+
 ### 6.1 Processing Pipeline Diagram
 
 ```mermaid
 flowchart TD
     A["Audio File<br/>(MP3/WAV/FLAC)"] --> B["Decode Audio<br/>→ float32 mono"]
     B --> C["Resample<br/>→ 32 kHz"]
-    C --> D["Slice Windows<br/>5 s → 160 000 samples"]
-    D --> E{input_format?}
+    C --> D{"Duration ≥ window?"}
+    D -- No --> D2["Skip file<br/>(log warning)"]
+    D -- Yes --> D3["Slice Windows<br/>5 s → 160 000 samples<br/>(overlap-back last window)"]
+    D3 --> E{input_format?}
     E -- spectrogram --> F["Log-Mel Spectrogram<br/>128 mels × 128 frames"]
     E -- waveform --> G["Raw Waveform<br/>160 000 samples"]
     F --> H["TFLite Model<br/>→ 1280-d vector"]
