@@ -9,6 +9,10 @@ Current embedding workflows:
 - Clustering of Humpback non-song vocalizations with optional ecological/behavioral metadata.
 - Training binary classifer with inference against raw hydrophone recordings.  
 
+Project Goals:
+- Ongoing test bed for agentic no-human coding CI/CD workflow. 
+- Investigating state-of-the-art clustering/classification with TensorFlow2 audio embedings.
+
 Key features:
 - Asynchronous job queue (SQL-backed, restart-safe)
 - Idempotent encoding (no reprocessing for same config)
@@ -549,13 +553,20 @@ Available as `/project:<name>` in Claude Code sessions:
 
 | Command | Purpose |
 |---------|---------|
-| `/project:start` | Load project context (STATUS, PLANS, DECISIONS) and summarize state. No coding. |
-| `/project:implement` | Structured implementation: restate task, identify files, implement, test, update docs. |
-| `/project:review` | Pre-commit checklist: architecture violations, missing tests/migrations, stale docs. |
-| `/project:handoff` | End-of-session: update STATUS.md, PLANS.md, DECISIONS.md for next session. |
-| `/project:debug` | Root-cause debugging: symptom, reproduce, fix, regression test. |
+| `/start` | Load project context (STATUS, PLANS, DECISIONS) and summarize state. No coding. |
+| `/implement` | Structured implementation: restate task, identify files, implement, test, update docs. |
+| `/review` | Pre-commit checklist: architecture violations, missing tests/migrations, stale docs. |
+| `/handoff` | End-of-session: update STATUS.md, PLANS.md, DECISIONS.md for next session. |
+| `/debug` | Root-cause debugging: symptom, reproduce, fix, regression test. |
 
 Command files are in `.claude/commands/` and reference the shared workflows.
+
+
+/start     → initialized session
+/plan (Claude command), exit plan option 4 with this command : Save this plan to PLANS.md and then implement it.
+/implement → executes plan
+/review    → checks plan implementation
+/handoff   → records outcome
 
 ### Codex App Skills
 
