@@ -101,3 +101,63 @@ def test_predict_proba_shape():
     proba = pipeline.predict_proba(test_data)
     assert proba.shape == (10, 2)
     assert np.allclose(proba.sum(axis=1), 1.0)
+
+
+def test_class_weight_balanced_default():
+    """With balanced weighting (default), imbalanced data doesn't predict all-positive."""
+    rng = np.random.RandomState(42)
+    dim = 16
+    # Heavily imbalanced: 100 positive, 10 negative — both near zero
+    positive = rng.randn(100, dim) + 0.5
+    negative = rng.randn(10, dim) - 0.5
+
+    pipeline, summary = train_binary_classifier(positive, negative)
+
+    # Generate test data centered at origin — should not all be positive
+    test_data = rng.randn(50, dim)
+    preds = pipeline.predict(test_data)
+    n_positive = int(np.sum(preds == 1))
+    # With balanced weights, not everything should be predicted positive
+    assert n_positive < 50, "Balanced weighting should not predict all-positive"
+
+
+def test_class_weight_none_override():
+    """Passing class_weight=None restores old behavior."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(50, 16) + 2.0
+    negative = rng.randn(50, 16) - 2.0
+
+    pipeline, summary = train_binary_classifier(
+        positive, negative,
+        parameters={"class_weight": None},
+    )
+
+    # Should still produce a working pipeline
+    assert hasattr(pipeline, "predict")
+    clf = pipeline.named_steps["classifier"]
+    assert clf.class_weight is None
+
+
+def test_imbalance_warning():
+    """Ratio > 3:1 produces imbalance_warning in summary."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(40, 16) + 2.0
+    negative = rng.randn(10, 16) - 2.0
+
+    _, summary = train_binary_classifier(positive, negative)
+
+    assert summary["balance_ratio"] == 4.0
+    assert "imbalance_warning" in summary
+    assert "imbalance" in summary["imbalance_warning"].lower()
+
+
+def test_no_warning_when_balanced():
+    """1:1 ratio has no imbalance_warning."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(30, 16) + 2.0
+    negative = rng.randn(30, 16) - 2.0
+
+    _, summary = train_binary_classifier(positive, negative)
+
+    assert summary["balance_ratio"] == 1.0
+    assert "imbalance_warning" not in summary

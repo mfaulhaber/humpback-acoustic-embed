@@ -90,6 +90,7 @@ def run_detection(
         raise ValueError(f"No audio files found in {audio_folder}")
 
     all_detections: list[dict] = []
+    all_confidences: list[float] = []
     diagnostics_records: list[dict] = [] if emit_diagnostics else None
     total_windows = 0
     total_positive = 0
@@ -197,18 +198,34 @@ def run_detection(
                 all_detections.append(span)
 
             total_positive += sum(1 for c in window_confidences if c >= confidence_threshold)
+            all_confidences.extend(window_confidences)
 
         except Exception:
             logger.warning("Failed to process %s, skipping", audio_path, exc_info=True)
             continue
 
-    summary = {
+    summary: dict = {
         "n_files": len(audio_files),
         "n_windows": total_windows,
         "n_detections": total_positive,
         "n_spans": len(all_detections),
         "n_skipped_short": n_skipped_short,
     }
+
+    if all_confidences:
+        conf_arr = np.array(all_confidences)
+        summary["confidence_stats"] = {
+            "mean": float(np.mean(conf_arr)),
+            "median": float(np.median(conf_arr)),
+            "std": float(np.std(conf_arr)),
+            "min": float(np.min(conf_arr)),
+            "max": float(np.max(conf_arr)),
+            "p10": float(np.percentile(conf_arr, 10)),
+            "p25": float(np.percentile(conf_arr, 25)),
+            "p75": float(np.percentile(conf_arr, 75)),
+            "p90": float(np.percentile(conf_arr, 90)),
+            "pct_above_threshold": float(np.mean(conf_arr >= confidence_threshold)),
+        }
 
     logger.info(
         "Detection complete: %d files, %d windows, %d detections, %d spans, %d skipped (short)",

@@ -117,12 +117,14 @@ def train_binary_classifier(
         np.zeros(len(negative_embeddings), dtype=int),
     ])
 
+    class_weight = parameters.get("class_weight", "balanced")
     pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("classifier", LogisticRegression(
             solver=parameters.get("solver", "lbfgs"),
             max_iter=parameters.get("max_iter", 1000),
             C=parameters.get("C", 1.0),
+            class_weight=class_weight,
         )),
     ])
 
@@ -144,15 +146,31 @@ def train_binary_classifier(
     # Final fit on all data
     pipeline.fit(X, y)
 
+    n_pos = len(positive_embeddings)
+    n_neg = len(negative_embeddings)
+    balance_ratio = round(n_pos / n_neg, 2) if n_neg > 0 else float("inf")
+
     summary = {
-        "n_positive": int(len(positive_embeddings)),
-        "n_negative": int(len(negative_embeddings)),
+        "n_positive": int(n_pos),
+        "n_negative": int(n_neg),
+        "balance_ratio": balance_ratio,
         "cv_accuracy": float(np.nanmean(cv_results["test_accuracy"])),
         "cv_accuracy_std": float(np.nanstd(cv_results["test_accuracy"])),
         "cv_roc_auc": float(np.nanmean(cv_results["test_roc_auc"])),
         "cv_roc_auc_std": float(np.nanstd(cv_results["test_roc_auc"])),
         "n_cv_folds": n_splits,
     }
+
+    if balance_ratio > 3.0 or balance_ratio < 1 / 3.0:
+        summary["imbalance_warning"] = (
+            f"Class imbalance detected: {n_pos} positive vs {n_neg} negative "
+            f"(ratio {balance_ratio}:1). Results may be unreliable without "
+            f"class_weight='balanced'."
+        )
+        logger.warning(
+            "Class imbalance: %d positive vs %d negative (ratio %.1f:1)",
+            n_pos, n_neg, balance_ratio,
+        )
 
     logger.info(
         "Trained classifier: accuracy=%.3f (+-%.3f), AUC=%.3f (+-%.3f)",

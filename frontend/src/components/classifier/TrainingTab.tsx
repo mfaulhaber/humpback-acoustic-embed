@@ -431,6 +431,7 @@ export function TrainingTab() {
                 </th>
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-left font-medium">Model</th>
+                <th className="px-3 py-2 text-left font-medium">Samples</th>
                 <th className="px-3 py-2 text-left font-medium">Accuracy</th>
                 <th className="px-3 py-2 text-left font-medium">AUC</th>
                 <th className="px-3 py-2 text-left font-medium">Created</th>
@@ -689,7 +690,13 @@ function ModelTableRow({
   onToggle: () => void;
   onDelete: () => void;
 }) {
-  const summary = model.training_summary as Record<string, number> | null;
+  const summary = model.training_summary as Record<string, unknown> | null;
+  const nPos = summary?.n_positive as number | undefined;
+  const nNeg = summary?.n_negative as number | undefined;
+  const balanceRatio = summary?.balance_ratio as number | undefined;
+  const imbalanceWarning = summary?.imbalance_warning as string | undefined;
+  const cvAccuracy = summary?.cv_accuracy as number | undefined;
+  const cvRocAuc = summary?.cv_roc_auc as number | undefined;
   return (
     <tr className="border-b last:border-0 hover:bg-muted/30">
       <td className="px-3 py-2">
@@ -699,11 +706,30 @@ function ModelTableRow({
       <td className="px-3 py-2 text-muted-foreground">
         {model.model_version}
       </td>
-      <td className="px-3 py-2 text-muted-foreground">
-        {summary ? `${((summary.cv_accuracy ?? 0) * 100).toFixed(1)}%` : "—"}
+      <td className="px-3 py-2">
+        {nPos != null && nNeg != null ? (
+          <span className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">
+              {nPos}+ / {nNeg}&minus;
+            </span>
+            {imbalanceWarning && (
+              <Badge
+                className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0"
+                title={imbalanceWarning}
+              >
+                {balanceRatio}:1
+              </Badge>
+            )}
+          </span>
+        ) : (
+          "—"
+        )}
       </td>
       <td className="px-3 py-2 text-muted-foreground">
-        {summary ? `${((summary.cv_roc_auc ?? 0) * 100).toFixed(1)}%` : "—"}
+        {cvAccuracy != null ? `${(cvAccuracy * 100).toFixed(1)}%` : "—"}
+      </td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {cvRocAuc != null ? `${(cvRocAuc * 100).toFixed(1)}%` : "—"}
       </td>
       <td className="px-3 py-2 text-muted-foreground">
         {new Date(model.created_at).toLocaleDateString()}

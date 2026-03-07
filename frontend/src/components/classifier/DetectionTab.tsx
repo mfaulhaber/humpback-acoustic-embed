@@ -434,8 +434,11 @@ function DetectionJobTableRow({
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
 }) {
-  const summary = job.result_summary as Record<string, number> | null;
+  const summary = job.result_summary as Record<string, unknown> | null;
   const canExpand = job.status === "complete" && job.output_tsv_path;
+  const confStats = summary?.confidence_stats as Record<string, number> | undefined;
+  const pctAbove = confStats?.pct_above_threshold;
+  const meanConf = confStats?.mean;
 
   return (
     <>
@@ -469,10 +472,25 @@ function DetectionJobTableRow({
         <td className="px-3 py-2 text-muted-foreground">
           {job.confidence_threshold}
         </td>
-        <td className="px-3 py-2 text-muted-foreground">
-          {summary
-            ? `${summary.n_spans} span(s) in ${summary.n_files} file(s)`
-            : "\u2014"}
+        <td className="px-3 py-2">
+          <span className="text-muted-foreground">
+            {summary
+              ? `${summary.n_spans} span(s) in ${summary.n_files} file(s)`
+              : "\u2014"}
+          </span>
+          {meanConf != null && (
+            <span className="text-xs text-muted-foreground ml-2" title={`Mean confidence: ${meanConf.toFixed(3)}`}>
+              avg {meanConf.toFixed(2)}
+            </span>
+          )}
+          {pctAbove != null && pctAbove > 0.9 && (
+            <Badge
+              className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0 ml-1.5"
+              title={`${(pctAbove * 100).toFixed(0)}% of windows above threshold — possible class imbalance in training data`}
+            >
+              High positive rate
+            </Badge>
+          )}
         </td>
         <td className="px-3 py-2">
           {canExpand && (

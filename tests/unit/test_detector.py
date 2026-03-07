@@ -7,7 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from humpback.classifier.trainer import embed_audio_folder
+from humpback.classifier.detector import run_detection
+from humpback.classifier.trainer import embed_audio_folder, train_binary_classifier
 from humpback.processing.inference import FakeTFLiteModel
 
 
@@ -141,3 +142,34 @@ def test_embed_audio_folder_mixed_short_and_long(tmp_path):
 
     assert result.shape[0] == 2
     assert result.shape[1] == 64
+
+
+def test_confidence_stats_in_summary(tmp_path):
+    """run_detection summary includes confidence_stats with expected keys."""
+    # Create detection audio
+    audio_dir = tmp_path / "detect"
+    audio_dir.mkdir()
+    _write_wav(audio_dir / "a.wav", duration=12.0)
+
+    # Train a simple classifier on fake embeddings
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64) + 2.0
+    neg = rng.randn(20, 64) - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+
+    detections, summary, _ = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+    )
+
+    assert "confidence_stats" in summary
+    stats = summary["confidence_stats"]
+    expected_keys = {"mean", "median", "std", "min", "max", "p10", "p25", "p75", "p90", "pct_above_threshold"}
+    assert expected_keys == set(stats.keys())
+    assert 0.0 <= stats["pct_above_threshold"] <= 1.0
+    assert stats["min"] <= stats["mean"] <= stats["max"]
