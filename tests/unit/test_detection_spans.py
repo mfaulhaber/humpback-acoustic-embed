@@ -240,6 +240,78 @@ def test_write_tsv_preserves_n_windows():
         }
 
 
+def test_append_detections_tsv_creates_with_header(tmp_path):
+    """append_detections_tsv creates file with header on first call."""
+    import csv
+    from pathlib import Path
+
+    from humpback.classifier.detector import append_detections_tsv
+
+    tsv_path = tmp_path / "detections.tsv"
+    detections = [
+        {
+            "filename": "a.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+            "avg_confidence": 0.8,
+            "peak_confidence": 0.9,
+            "n_windows": 2,
+        },
+    ]
+    append_detections_tsv(detections, tsv_path)
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "a.wav"
+    assert set(reader.fieldnames) == {
+        "filename", "start_sec", "end_sec",
+        "avg_confidence", "peak_confidence", "n_windows",
+    }
+
+
+def test_append_detections_tsv_appends_without_duplicate_header(tmp_path):
+    """Second call appends rows without duplicating the header."""
+    import csv
+
+    from humpback.classifier.detector import append_detections_tsv
+
+    tsv_path = tmp_path / "detections.tsv"
+    det1 = [{
+        "filename": "a.wav", "start_sec": 0.0, "end_sec": 5.0,
+        "avg_confidence": 0.8, "peak_confidence": 0.9, "n_windows": 2,
+    }]
+    det2 = [{
+        "filename": "b.wav", "start_sec": 1.0, "end_sec": 6.0,
+        "avg_confidence": 0.7, "peak_confidence": 0.85, "n_windows": 3,
+    }]
+    append_detections_tsv(det1, tsv_path)
+    append_detections_tsv(det2, tsv_path)
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        rows = list(reader)
+
+    assert len(rows) == 2
+    assert rows[0]["filename"] == "a.wav"
+    assert rows[1]["filename"] == "b.wav"
+
+
+def test_append_detections_tsv_noop_on_empty():
+    """append_detections_tsv does nothing for empty list."""
+    import tempfile
+    from pathlib import Path
+
+    from humpback.classifier.detector import append_detections_tsv
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tsv_path = Path(tmp) / "detections.tsv"
+        append_detections_tsv([], tsv_path)
+        assert not tsv_path.exists()
+
+
 def test_events_backward_compat_equivalence():
     """When hop == window and high == low == threshold, matches merge_detection_spans."""
     import numpy as np

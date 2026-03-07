@@ -39,6 +39,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Detection job: scan audio folder with configurable `hop_seconds` (default 1.0s)
 - Hysteresis event merging with dual thresholds (`high_threshold`/`low_threshold`)
 - Per-event `n_windows` count in TSV output
+- Incremental detection results: file-by-file progress with live UI updates during job execution
+- Inline audio playback and label annotation available while detection is still running
 - Extraction boundary snapping to `window_size` multiples
 - Inline audio playback of detected segments
 - Detection label annotation with keyboard shortcuts
@@ -56,7 +58,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `010_detection_hysteresis.py`
+- **Latest migration**: `011_detection_progress_columns.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs
 
 ---

@@ -9,7 +9,13 @@ import joblib
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.classifier.detector import run_detection, write_detections_tsv, write_window_diagnostics
+from humpback.classifier.detector import (
+    AUDIO_EXTENSIONS,
+    append_detections_tsv,
+    run_detection,
+    write_detections_tsv,
+    write_window_diagnostics,
+)
 from humpback.classifier.extractor import extract_labeled_samples
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
@@ -128,6 +134,7 @@ async def run_detection_job(
     session: AsyncSession,
     job: DetectionJob,
     settings: Settings,
+    session_factory=None,
 ) -> None:
     """Execute a detection job end-to-end."""
     try:
@@ -149,7 +156,53 @@ async def run_detection_job(
 
         feature_config = json.loads(cm.feature_config) if cm.feature_config else None
 
-        # Run detection (CPU-bound) with diagnostics
+        # Set up output directory and TSV path early for incremental writes
+        ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
+        tsv_path = ddir / "detections.tsv"
+
+        # Count audio files and set initial progress in DB
+        audio_files = sorted(
+            p for p in Path(job.audio_folder).rglob("*")
+            if p.suffix.lower() in AUDIO_EXTENSIONS
+        )
+        files_total = len(audio_files)
+
+        await session.execute(
+            update(DetectionJob)
+            .where(DetectionJob.id == job.id)
+            .values(
+                output_tsv_path=str(tsv_path),
+                files_total=files_total,
+                files_processed=0,
+            )
+        )
+        await session.commit()
+
+        # Build incremental callback for per-file progress
+        loop = asyncio.get_event_loop()
+
+        def on_file_complete(file_detections: list[dict], files_done: int, total: int):
+            # Append detections to TSV (synchronous file I/O, safe from thread)
+            if file_detections:
+                append_detections_tsv(file_detections, tsv_path)
+
+            # Schedule async DB progress update on the event loop
+            if session_factory is not None:
+                async def _update_progress():
+                    try:
+                        async with session_factory() as progress_session:
+                            await progress_session.execute(
+                                update(DetectionJob)
+                                .where(DetectionJob.id == job.id)
+                                .values(files_processed=files_done)
+                            )
+                            await progress_session.commit()
+                    except Exception:
+                        logger.debug("Failed to update detection progress", exc_info=True)
+
+                loop.call_soon_threadsafe(asyncio.ensure_future, _update_progress())
+
+        # Run detection (CPU-bound) with diagnostics and incremental callback
         detections, summary, diagnostics = await asyncio.to_thread(
             run_detection,
             Path(job.audio_folder),
@@ -164,11 +217,10 @@ async def run_detection_job(
             job.hop_seconds,
             job.high_threshold,
             job.low_threshold,
+            on_file_complete,
         )
 
-        # Write outputs
-        ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
-        tsv_path = ddir / "detections.tsv"
+        # Overwrite TSV with final authoritative version
         write_detections_tsv(detections, tsv_path)
 
         # Write window diagnostics
@@ -185,8 +237,8 @@ async def run_detection_job(
             update(DetectionJob)
             .where(DetectionJob.id == job.id)
             .values(
-                output_tsv_path=str(tsv_path),
                 result_summary=json.dumps(summary),
+                files_processed=files_total,
             )
         )
         await complete_detection_job(session, job.id)

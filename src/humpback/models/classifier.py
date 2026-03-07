@@ -49,6 +49,8 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     output_tsv_path: Mapped[Optional[str]] = mapped_column(default=None)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    files_processed: Mapped[Optional[int]] = mapped_column(default=None)
+    files_total: Mapped[Optional[int]] = mapped_column(default=None)
     extract_status: Mapped[Optional[str]] = mapped_column(default=None)
     extract_error: Mapped[Optional[str]] = mapped_column(Text, default=None)
     extract_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)

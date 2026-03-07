@@ -32,3 +32,4 @@ Configurable `hop_seconds` for overlapping windows, hysteresis dual-threshold ev
 - Negative embedding sets for training (ADR-004)
 - Multi-agent memory framework migration
 - Overlapping window inference + hysteresis event detection (ADR-005)
+- Incremental detection rendering with per-file progress (ADR-006)

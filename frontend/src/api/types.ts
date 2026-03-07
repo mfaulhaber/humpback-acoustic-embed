@@ -403,6 +403,8 @@ export interface DetectionJob {
   output_tsv_path: string | null;
   result_summary: Record<string, unknown> | null;
   error_message: string | null;
+  files_processed: number | null;
+  files_total: number | null;
   extract_status: string | null;
   extract_error: string | null;
   extract_summary: Record<string, unknown> | null;

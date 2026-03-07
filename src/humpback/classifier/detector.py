@@ -2,6 +2,7 @@
 
 import csv
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -129,6 +130,7 @@ def run_detection(
     hop_seconds: float = 1.0,
     high_threshold: float = 0.70,
     low_threshold: float = 0.45,
+    on_file_complete: Callable[[list[dict], int, int], None] | None = None,
 ) -> tuple[list[dict], dict, list[dict] | None]:
     """Scan audio folder, classify each window, merge events.
 
@@ -151,6 +153,8 @@ def run_detection(
     total_windows = 0
     total_positive = 0
     n_skipped_short = 0
+    files_done = 0
+    n_audio_files = len(audio_files)
 
     for audio_path in audio_files:
         try:
@@ -164,6 +168,9 @@ def run_detection(
                     audio_path.name, len(audio) / target_sample_rate, window_size_seconds,
                 )
                 n_skipped_short += 1
+                files_done += 1
+                if on_file_complete is not None:
+                    on_file_complete([], files_done, n_audio_files)
                 continue
 
             # Embed all windows (always use metadata for event merging)
@@ -250,8 +257,16 @@ def run_detection(
             total_positive += sum(1 for c in window_confidences if c >= confidence_threshold)
             all_confidences.extend(window_confidences)
 
+            files_done += 1
+            if on_file_complete is not None:
+                # events already have filename set (line above)
+                on_file_complete(list(events), files_done, n_audio_files)
+
         except Exception:
             logger.warning("Failed to process %s, skipping", audio_path, exc_info=True)
+            files_done += 1
+            if on_file_complete is not None:
+                on_file_complete([], files_done, n_audio_files)
             continue
 
     summary: dict = {
@@ -289,15 +304,31 @@ def run_detection(
     return all_detections, summary, diagnostics_records
 
 
+TSV_FIELDNAMES = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
+
+
 def write_detections_tsv(detections: list[dict], path: Path) -> None:
-    """Write detections to a TSV file."""
+    """Write detections to a TSV file (overwrites)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=TSV_FIELDNAMES, delimiter="\t")
         writer.writeheader()
         for det in detections:
-            writer.writerow({k: det[k] for k in fieldnames})
+            writer.writerow({k: det[k] for k in TSV_FIELDNAMES})
+
+
+def append_detections_tsv(detections: list[dict], path: Path) -> None:
+    """Append detections to an existing TSV file (creates with header if needed)."""
+    if not detections:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists() or path.stat().st_size == 0
+    with open(path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=TSV_FIELDNAMES, delimiter="\t")
+        if write_header:
+            writer.writeheader()
+        for det in detections:
+            writer.writerow({k: det[k] for k in TSV_FIELDNAMES})
 
 
 def write_window_diagnostics(records: list[dict], path: Path) -> None:

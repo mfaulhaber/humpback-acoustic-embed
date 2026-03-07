@@ -90,3 +90,21 @@ Append-only record of significant design decisions. Do not edit historical entri
 - Per-event `n_windows` count in TSV output
 - Added Alembic migration `010_detection_hysteresis.py`
 - Legacy behavior available with `hop_seconds=5.0, high_threshold=0.5, low_threshold=0.5`
+
+---
+
+## ADR-006: Incremental detection rendering with per-file progress
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Detection jobs on large audio folders could run for minutes with no intermediate feedback. Users had to wait for full completion before reviewing any results.
+
+**Decision**: Refactor the detection pipeline to emit results incrementally after each audio file completes. A callback from `run_detection()` appends detections to the TSV and updates `files_processed`/`files_total` progress fields in the DB. The content API serves partial results for running jobs. The frontend polls content at 3s intervals while expanded and allows labeling (client-side) during execution, with Save Labels disabled until completion. The final `write_detections_tsv()` call still overwrites with the authoritative version on completion.
+
+**Consequences**:
+- Users can listen to and label detections while the job is still running
+- Progress visible as "Processing file X/Y" in the job table
+- Save Labels, Extract, Delete disabled until completion (TSV safety)
+- Added Alembic migration `011_detection_progress_columns.py`
+- Thread-safe progress updates via `loop.call_soon_threadsafe()` with separate session

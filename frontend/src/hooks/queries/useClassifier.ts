@@ -116,11 +116,12 @@ export function useBulkDeleteDetectionJobs() {
   });
 }
 
-export function useDetectionContent(jobId: string | null) {
+export function useDetectionContent(jobId: string | null, refetchInterval?: number) {
   return useQuery({
     queryKey: ["detectionContent", jobId],
     queryFn: () => fetchDetectionContent(jobId!),
     enabled: jobId !== null,
+    refetchInterval,
   });
 }
 

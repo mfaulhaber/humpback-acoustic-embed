@@ -1,5 +1,9 @@
 """Integration tests for classifier API endpoints."""
 
+import csv
+import json
+import uuid
+
 
 async def test_create_training_job_missing_embedding_sets(client):
     """400 when embedding sets don't exist."""
@@ -123,3 +127,94 @@ async def test_diagnostics_summary_not_found(client):
 async def test_training_summary_not_found(client):
     resp = await client.get("/classifier/models/nonexistent/training-summary")
     assert resp.status_code == 404
+
+
+# ---- Incremental Detection Content ----
+
+
+async def test_content_endpoint_serves_running_job(client, app_settings):
+    """GET /content returns partial results when job is running with TSV on disk."""
+    from pathlib import Path
+    from sqlalchemy import insert
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    # Create a running detection job directly in the DB
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    # Write a partial TSV to disk
+    storage_root = Path(app_settings.storage_root)
+    ddir = storage_root / "detection" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow({
+            "filename": "test.wav", "start_sec": "1.0", "end_sec": "6.0",
+            "avg_confidence": "0.85", "peak_confidence": "0.9", "n_windows": "2",
+        })
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="running",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+                files_processed=1,
+                files_total=5,
+            )
+        )
+        await session.commit()
+
+    # Content endpoint should serve partial results
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "test.wav"
+    assert rows[0]["avg_confidence"] == 0.85
+
+    # Job list should include progress fields
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}")
+    assert resp.status_code == 200
+    job_data = resp.json()
+    assert job_data["files_processed"] == 1
+    assert job_data["files_total"] == 5
+    assert job_data["status"] == "running"
+
+    await engine.dispose()
+
+
+async def test_content_endpoint_rejects_queued_job(client, app_settings):
+    """GET /content returns 400 for queued jobs (no TSV yet)."""
+    from sqlalchemy import insert
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="queued",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 400
+
+    await engine.dispose()

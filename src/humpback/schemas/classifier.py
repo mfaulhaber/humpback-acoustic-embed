@@ -76,6 +76,8 @@ class DetectionJobOut(BaseModel):
     output_tsv_path: Optional[str] = None
     result_summary: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+    files_processed: Optional[int] = None
+    files_total: Optional[int] = None
     extract_status: Optional[str] = None
     extract_error: Optional[str] = None
     extract_summary: Optional[dict[str, Any]] = None

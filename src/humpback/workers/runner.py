@@ -103,7 +103,7 @@ async def run_worker(settings: Settings | None = None) -> None:
         if djob:
             logger.info(f"Detection job {djob.id}")
             async with session_factory() as session:
-                await run_detection_job(session, djob, settings)
+                await run_detection_job(session, djob, settings, session_factory=session_factory)
             claimed = True
 
         if claimed:

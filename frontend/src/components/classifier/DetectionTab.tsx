@@ -342,7 +342,12 @@ export function DetectionTab() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={dirtyJobs.size === 0 || saveLabelsMutation.isPending}
+                disabled={
+                  dirtyJobs.size === 0 ||
+                  saveLabelsMutation.isPending ||
+                  (expandedJobId != null &&
+                    detectionJobs.find((j) => j.id === expandedJobId)?.status === "running")
+                }
                 onClick={handleSaveLabels}
               >
                 <Save className="h-3.5 w-3.5 mr-1" />
@@ -483,7 +488,10 @@ function DetectionJobTableRow({
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
 }) {
   const summary = job.result_summary as Record<string, unknown> | null;
-  const canExpand = job.status === "complete" && job.output_tsv_path;
+  const isRunning = job.status === "running";
+  const canExpand =
+    (job.status === "complete" || (isRunning && (job.files_processed ?? 0) > 0)) &&
+    !!job.output_tsv_path;
   const confStats = summary?.confidence_stats as Record<string, number> | undefined;
   const pctAbove = confStats?.pct_above_threshold;
   const meanConf = confStats?.mean;
@@ -526,7 +534,9 @@ function DetectionJobTableRow({
           <span className="text-muted-foreground">
             {summary
               ? `${summary.n_spans} span(s) in ${summary.n_files} file(s)`
-              : "\u2014"}
+              : isRunning && job.files_total != null
+                ? `Processing file ${job.files_processed ?? 0}/${job.files_total}…`
+                : "\u2014"}
           </span>
           {meanConf != null && (
             <span className="text-xs text-muted-foreground ml-2" title={`Mean confidence: ${meanConf.toFixed(3)}`}>
@@ -543,7 +553,7 @@ function DetectionJobTableRow({
           )}
         </td>
         <td className="px-3 py-2">
-          {canExpand && (
+          {job.status === "complete" && job.output_tsv_path && (
             <a
               href={detectionTsvUrl(job.id)}
               download
@@ -576,6 +586,7 @@ function DetectionJobTableRow({
           <td colSpan={9} className="p-0">
             <DetectionContentTable
               jobId={job.id}
+              isRunning={isRunning}
               playingKey={playingKey}
               onPlay={onPlay}
               labelEdits={labelEdits}
@@ -590,22 +601,37 @@ function DetectionJobTableRow({
 
 function DetectionContentTable({
   jobId,
+  isRunning,
   playingKey,
   onPlay,
   labelEdits,
   onLabelChange,
 }: {
   jobId: string;
+  isRunning: boolean;
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
 }) {
-  const { data: rows = [], isLoading } = useDetectionContent(jobId);
-  const [sortKey, setSortKey] = useState<SortKey>("avg_confidence");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const { data: rows = [], isLoading } = useDetectionContent(
+    jobId,
+    isRunning ? 3000 : undefined,
+  );
+  const [sortKey, setSortKey] = useState<SortKey>(isRunning ? "filename" : "avg_confidence");
+  const [sortDir, setSortDir] = useState<SortDir>(isRunning ? "asc" : "desc");
+  const prevRunning = useRef(isRunning);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
+
+  // Switch to confidence desc when job completes
+  useEffect(() => {
+    if (prevRunning.current && !isRunning) {
+      setSortKey("avg_confidence");
+      setSortDir("desc");
+    }
+    prevRunning.current = isRunning;
+  }, [isRunning]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -741,6 +767,12 @@ function DetectionContentTable({
 
   return (
     <div className="bg-muted/20 border-t" ref={tableRef}>
+      {isRunning && (
+        <div className="px-4 py-2 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 text-xs flex items-center gap-2 border-b">
+          <span className="animate-pulse">&#9679;</span>
+          Detection in progress — results updating live. Save Labels available after completion.
+        </div>
+      )}
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b">

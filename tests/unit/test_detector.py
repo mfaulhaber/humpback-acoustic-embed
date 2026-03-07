@@ -215,6 +215,49 @@ def test_run_detection_with_hop(tmp_path):
     assert summary_hop["n_windows"] > summary_no_hop["n_windows"]
 
 
+def test_run_detection_on_file_complete_callback(tmp_path):
+    """on_file_complete callback is invoked once per audio file with correct progress."""
+    audio_dir = tmp_path / "detect"
+    audio_dir.mkdir()
+    _write_wav(audio_dir / "a.wav", duration=6.0)
+    _write_wav(audio_dir / "b.wav", duration=6.0)
+    _write_wav(audio_dir / "c.wav", duration=1.0)  # too short, will be skipped
+
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64) + 2.0
+    neg = rng.randn(20, 64) - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+
+    calls = []
+
+    def on_file_complete(file_detections, files_done, files_total):
+        calls.append({
+            "detections": list(file_detections),
+            "files_done": files_done,
+            "files_total": files_total,
+        })
+
+    run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        on_file_complete=on_file_complete,
+    )
+
+    # Should be called 3 times (a.wav, b.wav, c.wav including skipped)
+    assert len(calls) == 3
+    # files_total is always 3
+    assert all(c["files_total"] == 3 for c in calls)
+    # files_done increments
+    assert [c["files_done"] for c in calls] == [1, 2, 3]
+    # The skipped file (c.wav) should have empty detections
+    assert calls[2]["detections"] == []
+
+
 def test_run_detection_hysteresis(tmp_path):
     """Hysteresis thresholds produce different event boundaries than single threshold."""
     audio_dir = tmp_path / "detect"

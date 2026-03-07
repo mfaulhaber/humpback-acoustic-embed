@@ -81,6 +81,8 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         output_tsv_path=job.output_tsv_path,
         result_summary=json.loads(job.result_summary) if job.result_summary else None,
         error_message=job.error_message,
+        files_processed=job.files_processed,
+        files_total=job.files_total,
         extract_status=job.extract_status,
         extract_error=job.extract_error,
         extract_summary=json.loads(job.extract_summary) if job.extract_summary else None,
@@ -562,8 +564,8 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status != "complete" or not job.output_tsv_path:
-        raise HTTPException(400, "Detection job not complete or no output available")
+    if job.status not in ("running", "complete") or not job.output_tsv_path:
+        raise HTTPException(400, "Detection job not ready or no output available")
     tsv_path = Path(job.output_tsv_path)
     if not tsv_path.is_file():
         raise HTTPException(404, "TSV file not found on disk")
