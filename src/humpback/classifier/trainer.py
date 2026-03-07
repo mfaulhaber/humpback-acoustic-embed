@@ -5,9 +5,11 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_validate
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import Normalizer, StandardScaler
 
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.features import extract_logmel
@@ -117,16 +119,32 @@ def train_binary_classifier(
         np.zeros(len(negative_embeddings), dtype=int),
     ])
 
+    classifier_type = parameters.get("classifier_type", "logistic_regression")
+    l2_normalize = parameters.get("l2_normalize", False)
     class_weight = parameters.get("class_weight", "balanced")
-    pipeline = Pipeline([
-        ("scaler", StandardScaler()),
-        ("classifier", LogisticRegression(
+
+    # Build pipeline steps
+    steps: list[tuple] = []
+    if l2_normalize:
+        steps.append(("l2_norm", Normalizer(norm="l2")))
+    steps.append(("scaler", StandardScaler()))
+
+    if classifier_type == "mlp":
+        steps.append(("classifier", MLPClassifier(
+            hidden_layer_sizes=(128,),
+            max_iter=parameters.get("max_iter", 500),
+            early_stopping=True,
+            random_state=42,
+        )))
+    else:
+        steps.append(("classifier", LogisticRegression(
             solver=parameters.get("solver", "lbfgs"),
             max_iter=parameters.get("max_iter", 1000),
             C=parameters.get("C", 1.0),
             class_weight=class_weight,
-        )),
-    ])
+        )))
+
+    pipeline = Pipeline(steps)
 
     # Cross-validation for honest estimates.
     # n_splits must not exceed the size of the minority class so that
@@ -138,7 +156,7 @@ def train_binary_classifier(
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     cv_results = cross_validate(
         pipeline, X, y, cv=cv,
-        scoring=["accuracy", "roc_auc"],
+        scoring=["accuracy", "roc_auc", "precision", "recall", "f1"],
         return_train_score=False,
         error_score="raise",
     )
@@ -150,15 +168,57 @@ def train_binary_classifier(
     n_neg = len(negative_embeddings)
     balance_ratio = round(n_pos / n_neg, 2) if n_neg > 0 else float("inf")
 
+    # Decision boundary diagnostics on training set
+    if hasattr(pipeline.named_steps["classifier"], "decision_function"):
+        scores = pipeline.decision_function(X)
+    else:
+        scores = pipeline.predict_proba(X)[:, 1]
+
+    pos_scores = scores[y == 1]
+    neg_scores = scores[y == 0]
+    pos_mean = float(np.mean(pos_scores))
+    neg_mean = float(np.mean(neg_scores))
+    pooled_std = float(np.sqrt(
+        (np.var(pos_scores) * len(pos_scores) + np.var(neg_scores) * len(neg_scores))
+        / (len(pos_scores) + len(neg_scores))
+    ))
+    score_separation = float((pos_mean - neg_mean) / pooled_std) if pooled_std > 0 else 0.0
+
+    train_preds = pipeline.predict(X)
+    cm = confusion_matrix(y, train_preds, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
+
+    # Effective class weights
+    clf = pipeline.named_steps["classifier"]
+    effective_class_weights = None
+    if hasattr(clf, "class_weight") and clf.class_weight == "balanced":
+        from sklearn.utils.class_weight import compute_class_weight
+        weights = compute_class_weight("balanced", classes=np.array([0, 1]), y=y)
+        effective_class_weights = {"0": round(float(weights[0]), 4), "1": round(float(weights[1]), 4)}
+
     summary = {
         "n_positive": int(n_pos),
         "n_negative": int(n_neg),
         "balance_ratio": balance_ratio,
+        "classifier_type": classifier_type,
+        "l2_normalize": l2_normalize,
+        "class_weight_strategy": str(class_weight),
+        "effective_class_weights": effective_class_weights,
         "cv_accuracy": float(np.nanmean(cv_results["test_accuracy"])),
         "cv_accuracy_std": float(np.nanstd(cv_results["test_accuracy"])),
         "cv_roc_auc": float(np.nanmean(cv_results["test_roc_auc"])),
         "cv_roc_auc_std": float(np.nanstd(cv_results["test_roc_auc"])),
+        "cv_precision": float(np.nanmean(cv_results["test_precision"])),
+        "cv_precision_std": float(np.nanstd(cv_results["test_precision"])),
+        "cv_recall": float(np.nanmean(cv_results["test_recall"])),
+        "cv_recall_std": float(np.nanstd(cv_results["test_recall"])),
+        "cv_f1": float(np.nanmean(cv_results["test_f1"])),
+        "cv_f1_std": float(np.nanstd(cv_results["test_f1"])),
         "n_cv_folds": n_splits,
+        "positive_mean_score": pos_mean,
+        "negative_mean_score": neg_mean,
+        "score_separation": score_separation,
+        "train_confusion": {"tp": int(tp), "fp": int(fp), "tn": int(tn), "fn": int(fn)},
     }
 
     if balance_ratio > 3.0 or balance_ratio < 1 / 3.0:

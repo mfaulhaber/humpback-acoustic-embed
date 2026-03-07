@@ -4,7 +4,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ChevronRight, ChevronDown, Settings2 } from "lucide-react";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import {
@@ -50,6 +62,13 @@ export function TrainingTab() {
   const [posCollapsed, setPosCollapsed] = useState<Set<string> | null>(null);
   const [negSelected, setNegSelected] = useState<Set<string>>(new Set());
   const [negCollapsed, setNegCollapsed] = useState<Set<string> | null>(null);
+
+  // Advanced options
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [classifierType, setClassifierType] = useState("logistic_regression");
+  const [l2Normalize, setL2Normalize] = useState(false);
+  const [regularizationC, setRegularizationC] = useState(1.0);
+  const [classWeight, setClassWeight] = useState("balanced");
 
   // Job table selection
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -206,11 +225,20 @@ export function TrainingTab() {
 
   const handleSubmit = () => {
     if (!name || posSelected.size === 0 || negSelected.size === 0) return;
+    const parameters: Record<string, unknown> = {
+      classifier_type: classifierType,
+      l2_normalize: l2Normalize,
+      class_weight: classWeight === "balanced" ? "balanced" : null,
+    };
+    if (classifierType === "logistic_regression") {
+      parameters.C = regularizationC;
+    }
     createMutation.mutate(
       {
         name,
         positive_embedding_set_ids: [...posSelected],
         negative_embedding_set_ids: [...negSelected],
+        parameters,
       },
       {
         onSuccess: () => {
@@ -316,6 +344,67 @@ export function TrainingTab() {
             onToggleCollapse={toggleNegCollapse}
             displayName={displayName}
           />
+
+          {/* Advanced Options */}
+          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+                <Settings2 className="h-3.5 w-3.5" />
+                Advanced Options
+                {advancedOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-3 pt-2 border rounded p-3 mt-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium">Classifier Type</label>
+                  <Select value={classifierType} onValueChange={setClassifierType}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="logistic_regression">Logistic Regression</SelectItem>
+                      <SelectItem value="mlp">Neural Network (MLP)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Class Weight</label>
+                  <Select value={classWeight} onValueChange={setClassWeight}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="balanced">Balanced</SelectItem>
+                      <SelectItem value="none">None (uniform)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={l2Normalize}
+                    onCheckedChange={(v) => setL2Normalize(v === true)}
+                  />
+                  L2 Normalize Embeddings
+                </label>
+                {classifierType === "logistic_regression" && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium whitespace-nowrap">Regularization (C)</label>
+                    <Input
+                      type="number"
+                      min={0.001}
+                      step={0.1}
+                      value={regularizationC}
+                      onChange={(e) => setRegularizationC(parseFloat(e.target.value) || 1.0)}
+                      className="w-24"
+                    />
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
 
           <Button
             onClick={handleSubmit}
@@ -434,6 +523,8 @@ export function TrainingTab() {
                 <th className="px-3 py-2 text-left font-medium">Samples</th>
                 <th className="px-3 py-2 text-left font-medium">Accuracy</th>
                 <th className="px-3 py-2 text-left font-medium">AUC</th>
+                <th className="px-3 py-2 text-left font-medium">Precision</th>
+                <th className="px-3 py-2 text-left font-medium">F1</th>
                 <th className="px-3 py-2 text-left font-medium">Created</th>
               </tr>
             </thead>
@@ -690,6 +781,7 @@ function ModelTableRow({
   onToggle: () => void;
   onDelete: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const summary = model.training_summary as Record<string, unknown> | null;
   const nPos = summary?.n_positive as number | undefined;
   const nNeg = summary?.n_negative as number | undefined;
@@ -697,43 +789,129 @@ function ModelTableRow({
   const imbalanceWarning = summary?.imbalance_warning as string | undefined;
   const cvAccuracy = summary?.cv_accuracy as number | undefined;
   const cvRocAuc = summary?.cv_roc_auc as number | undefined;
+  const cvPrecision = summary?.cv_precision as number | undefined;
+  const cvF1 = summary?.cv_f1 as number | undefined;
+  const scoreSeparation = summary?.score_separation as number | undefined;
+  const classifierType = summary?.classifier_type as string | undefined;
+  const trainConfusion = summary?.train_confusion as Record<string, number> | undefined;
+  const effectiveWeights = summary?.effective_class_weights as Record<string, string> | undefined;
+  const configWarning = summary?._config_mismatch_warning as string | undefined;
+
+  const classifierTag = classifierType === "mlp" ? "MLP" : classifierType === "logistic_regression" ? "LR" : null;
+
   return (
-    <tr className="border-b last:border-0 hover:bg-muted/30">
-      <td className="px-3 py-2">
-        <Checkbox checked={checked} onCheckedChange={onToggle} />
-      </td>
-      <td className="px-3 py-2 font-medium">{model.name}</td>
-      <td className="px-3 py-2 text-muted-foreground">
-        {model.model_version}
-      </td>
-      <td className="px-3 py-2">
-        {nPos != null && nNeg != null ? (
+    <>
+      <tr
+        className="border-b last:border-0 hover:bg-muted/30 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+          <Checkbox checked={checked} onCheckedChange={onToggle} />
+        </td>
+        <td className="px-3 py-2 font-medium">
           <span className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">
-              {nPos}+ / {nNeg}&minus;
-            </span>
-            {imbalanceWarning && (
-              <Badge
-                className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0"
-                title={imbalanceWarning}
-              >
-                {balanceRatio}:1
+            {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+            {model.name}
+            {classifierTag && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+                {classifierTag}
               </Badge>
             )}
           </span>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td className="px-3 py-2 text-muted-foreground">
-        {cvAccuracy != null ? `${(cvAccuracy * 100).toFixed(1)}%` : "—"}
-      </td>
-      <td className="px-3 py-2 text-muted-foreground">
-        {cvRocAuc != null ? `${(cvRocAuc * 100).toFixed(1)}%` : "—"}
-      </td>
-      <td className="px-3 py-2 text-muted-foreground">
-        {new Date(model.created_at).toLocaleDateString()}
-      </td>
-    </tr>
+        </td>
+        <td className="px-3 py-2 text-muted-foreground">
+          {model.model_version}
+        </td>
+        <td className="px-3 py-2">
+          {nPos != null && nNeg != null ? (
+            <span className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">
+                {nPos}+ / {nNeg}&minus;
+              </span>
+              {imbalanceWarning && (
+                <Badge
+                  className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0"
+                  title={imbalanceWarning}
+                >
+                  {balanceRatio}:1
+                </Badge>
+              )}
+            </span>
+          ) : (
+            "—"
+          )}
+        </td>
+        <td className="px-3 py-2 text-muted-foreground">
+          {cvAccuracy != null ? `${(cvAccuracy * 100).toFixed(1)}%` : "—"}
+        </td>
+        <td className="px-3 py-2 text-muted-foreground">
+          {cvRocAuc != null ? `${(cvRocAuc * 100).toFixed(1)}%` : "—"}
+        </td>
+        <td className="px-3 py-2">
+          <span className="flex items-center gap-1">
+            <span className="text-muted-foreground">
+              {cvPrecision != null ? `${(cvPrecision * 100).toFixed(1)}%` : "—"}
+            </span>
+            {cvPrecision != null && cvPrecision < 0.7 && (
+              <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0">Low</Badge>
+            )}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-muted-foreground">
+          {cvF1 != null ? `${(cvF1 * 100).toFixed(1)}%` : "—"}
+        </td>
+        <td className="px-3 py-2">
+          <span className="flex items-center gap-1">
+            <span className="text-muted-foreground">
+              {new Date(model.created_at).toLocaleDateString()}
+            </span>
+            {scoreSeparation != null && scoreSeparation < 1.0 && (
+              <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0" title={`Score separation: ${scoreSeparation.toFixed(2)}`}>
+                Poor sep.
+              </Badge>
+            )}
+          </span>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="border-b last:border-0 bg-muted/20">
+          <td colSpan={9} className="px-6 py-3">
+            <div className="grid grid-cols-3 gap-4 text-xs">
+              {scoreSeparation != null && (
+                <div>
+                  <span className="font-medium">Score Separation:</span>{" "}
+                  <span className="text-muted-foreground">{scoreSeparation.toFixed(3)}</span>
+                </div>
+              )}
+              {effectiveWeights && (
+                <div>
+                  <span className="font-medium">Class Weights:</span>{" "}
+                  <span className="text-muted-foreground">neg={effectiveWeights["0"]}, pos={effectiveWeights["1"]}</span>
+                </div>
+              )}
+              {summary?.l2_normalize != null && (
+                <div>
+                  <span className="font-medium">L2 Normalize:</span>{" "}
+                  <span className="text-muted-foreground">{summary.l2_normalize ? "Yes" : "No"}</span>
+                </div>
+              )}
+              {trainConfusion && (
+                <div className="col-span-3">
+                  <span className="font-medium">Train Confusion:</span>{" "}
+                  <span className="text-muted-foreground">
+                    TP={trainConfusion.tp} FP={trainConfusion.fp} TN={trainConfusion.tn} FN={trainConfusion.fn}
+                  </span>
+                </div>
+              )}
+              {configWarning && (
+                <div className="col-span-3">
+                  <Badge className="bg-amber-100 text-amber-800 text-[10px]">{configWarning}</Badge>
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

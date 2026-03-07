@@ -28,6 +28,11 @@ async def create_training_job(
     if not negative_embedding_set_ids:
         raise ValueError("At least one negative embedding set is required")
 
+    # Reject overlap between positive and negative sets
+    overlap = set(positive_embedding_set_ids) & set(negative_embedding_set_ids)
+    if overlap:
+        raise ValueError(f"Embedding sets cannot be both positive and negative: {overlap}")
+
     # Load and validate positive embedding sets
     result = await session.execute(
         select(EmbeddingSet).where(EmbeddingSet.id.in_(positive_embedding_set_ids))
@@ -57,6 +62,16 @@ async def create_training_job(
     vector_dims = {es.vector_dim for es in all_sets}
     if len(vector_dims) > 1:
         raise ValueError(f"Embedding sets have different vector dimensions: {vector_dims}")
+
+    # Check encoding signature consistency
+    encoding_sigs = {es.encoding_signature for es in all_sets if es.encoding_signature}
+    if len(encoding_sigs) > 1:
+        if parameters is None:
+            parameters = {}
+        parameters["_config_mismatch_warning"] = (
+            f"Embedding sets use {len(encoding_sigs)} different encoding signatures. "
+            "Results may be unreliable when mixing different processing configurations."
+        )
 
     # Use first positive embedding set's config
     ref = pos_sets[0]

@@ -8,14 +8,6 @@ No active plans.
 
 ---
 
-### [COMPLETED] Overlapping Window Inference + Hysteresis Event Detection
-
-Full plan: `~/.claude/plans/shimmying-foraging-lynx.md`
-
-Configurable `hop_seconds` for overlapping windows, hysteresis dual-threshold event merging, and per-event diagnostics. Implemented across 6 phases (core logic, DB/model, API, frontend, tests, docs). See ADR-005.
-
----
-
 ## Backlog
 
 - Explore GPU-accelerated batch processing for large audio libraries
@@ -33,3 +25,4 @@ Configurable `hop_seconds` for overlapping windows, hysteresis dual-threshold ev
 - Multi-agent memory framework migration
 - Overlapping window inference + hysteresis event detection (ADR-005)
 - Incremental detection rendering with per-file progress (ADR-006)
+- Fix escalating false positives: MLP classifier + diagnostics (ADR-007)

@@ -108,3 +108,22 @@ Append-only record of significant design decisions. Do not edit historical entri
 - Save Labels, Extract, Delete disabled until completion (TSV safety)
 - Added Alembic migration `011_detection_progress_columns.py`
 - Thread-safe progress updates via `loop.call_soon_threadsafe()` with separate session
+
+---
+
+## ADR-007: MLP classifier option + enhanced diagnostics for iterative training
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Users iteratively training binary classifiers with extract-reprocess-retrain loops experienced escalating false positives. The root cause is LogisticRegression's linear decision boundary cannot curve around overlapping embedding regions. Each retrain shifts the hyperplane, creating new FPs elsewhere. Additionally, limited diagnostics (only accuracy + AUC) masked precision problems.
+
+**Decision**: Add MLP classifier as an alternative to LogisticRegression, L2 normalization option, expanded CV metrics (precision/recall/F1), and decision boundary diagnostics (score separation, train confusion matrix). Add overlap validation to prevent same embedding set in both positive and negative lists. Add encoding signature consistency warning.
+
+**Consequences**:
+- `classifier_type` parameter: `"logistic_regression"` (default, backward-compatible) or `"mlp"` (MLPClassifier with non-linear boundary)
+- `l2_normalize` parameter: opt-in Normalizer step before StandardScaler
+- Training summary now includes `cv_precision`, `cv_recall`, `cv_f1`, `score_separation`, `train_confusion`, `classifier_type`, `l2_normalize`, `effective_class_weights`
+- Frontend advanced options: classifier type, L2 normalize, regularization C, class weight
+- Frontend model table: Precision and F1 columns, diagnostic badges, expandable detail rows
+- No schema changes, no migrations required

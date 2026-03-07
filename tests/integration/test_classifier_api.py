@@ -192,6 +192,21 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
     await engine.dispose()
 
 
+async def test_overlap_rejected(client, app_settings):
+    """Same embedding set ID in both pos and neg returns 400."""
+    shared_id = "shared-set-id"
+    resp = await client.post(
+        "/classifier/training-jobs",
+        json={
+            "name": "overlap-test",
+            "positive_embedding_set_ids": [shared_id, "other-pos"],
+            "negative_embedding_set_ids": [shared_id, "other-neg"],
+        },
+    )
+    assert resp.status_code == 400
+    assert "both positive and negative" in resp.json()["detail"]
+
+
 async def test_content_endpoint_rejects_queued_job(client, app_settings):
     """GET /content returns 400 for queued jobs (no TSV yet)."""
     from sqlalchemy import insert

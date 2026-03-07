@@ -27,7 +27,7 @@ Key features:
 - Stability evaluation: re-cluster with multiple random seeds, pairwise ARI agreement
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
-- Binary whale vocalization classifier: train LogisticRegression on positive embeddings + negative audio, scan arbitrary hydrophone folders for whale presence with merged detection spans
+- Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
 - Folder import: reference audio files in-place from local filesystem folders without copying
 
 ---

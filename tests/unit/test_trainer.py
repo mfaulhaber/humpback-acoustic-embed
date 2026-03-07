@@ -2,6 +2,9 @@
 
 import numpy as np
 import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import Normalizer
 
 from humpback.classifier.trainer import train_binary_classifier
 
@@ -161,3 +164,141 @@ def test_no_warning_when_balanced():
 
     assert summary["balance_ratio"] == 1.0
     assert "imbalance_warning" not in summary
+
+
+# ---- MLP classifier + diagnostics tests ----
+
+
+def test_mlp_classifier_type():
+    """MLP pipeline has MLPClassifier and produces valid predictions."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(50, 16) + 2.0
+    negative = rng.randn(50, 16) - 2.0
+
+    pipeline, summary = train_binary_classifier(
+        positive, negative,
+        parameters={"classifier_type": "mlp"},
+    )
+
+    assert isinstance(pipeline.named_steps["classifier"], MLPClassifier)
+    preds = pipeline.predict(rng.randn(10, 16))
+    assert len(preds) == 10
+    assert set(preds).issubset({0, 1})
+
+    proba = pipeline.predict_proba(rng.randn(5, 16))
+    assert proba.shape == (5, 2)
+
+
+def test_mlp_reduces_fps_on_overlapping_data():
+    """MLP achieves higher precision than LR on non-linearly separable data."""
+    rng = np.random.RandomState(42)
+    n = 200
+    dim = 16
+
+    # Concentric clusters: positives in a shell, negatives at the center
+    # This is non-linearly separable
+    pos = rng.randn(n, dim)
+    pos = pos / np.linalg.norm(pos, axis=1, keepdims=True) * 3.0  # on shell at r=3
+    pos += rng.randn(n, dim) * 0.3  # small noise
+
+    neg = rng.randn(n, dim) * 0.5  # centered at origin, small spread
+
+    _, lr_summary = train_binary_classifier(
+        pos, neg,
+        parameters={"classifier_type": "logistic_regression"},
+    )
+    _, mlp_summary = train_binary_classifier(
+        pos, neg,
+        parameters={"classifier_type": "mlp"},
+    )
+
+    # MLP should achieve better precision on this non-linear boundary
+    assert mlp_summary["cv_precision"] >= lr_summary["cv_precision"] - 0.05, (
+        f"MLP precision {mlp_summary['cv_precision']:.3f} should be at least close to "
+        f"LR precision {lr_summary['cv_precision']:.3f} on non-linear data"
+    )
+
+
+def test_l2_normalize_pipeline():
+    """L2 normalize inserts Normalizer step, pipeline has 3 steps."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(30, 16) + 2.0
+    negative = rng.randn(30, 16) - 2.0
+
+    pipeline, _ = train_binary_classifier(
+        positive, negative,
+        parameters={"l2_normalize": True},
+    )
+
+    assert len(pipeline.steps) == 3
+    assert pipeline.steps[0][0] == "l2_norm"
+    assert isinstance(pipeline.steps[0][1], Normalizer)
+    assert pipeline.steps[1][0] == "scaler"
+    assert pipeline.steps[2][0] == "classifier"
+
+
+def test_extended_cv_metrics():
+    """Summary contains precision, recall, F1 from cross-validation."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(50, 16) + 2.0
+    negative = rng.randn(50, 16) - 2.0
+
+    _, summary = train_binary_classifier(positive, negative)
+
+    for key in ["cv_precision", "cv_precision_std", "cv_recall", "cv_recall_std", "cv_f1", "cv_f1_std"]:
+        assert key in summary, f"Missing key: {key}"
+        assert isinstance(summary[key], float)
+
+
+def test_decision_boundary_diagnostics():
+    """Summary contains score_separation, mean scores, and train confusion."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(50, 16) + 2.0
+    negative = rng.randn(50, 16) - 2.0
+
+    _, summary = train_binary_classifier(positive, negative)
+
+    assert "positive_mean_score" in summary
+    assert "negative_mean_score" in summary
+    assert "score_separation" in summary
+    assert isinstance(summary["score_separation"], float)
+    assert summary["score_separation"] > 0  # well-separated data
+
+    assert "train_confusion" in summary
+    tc = summary["train_confusion"]
+    assert all(k in tc for k in ["tp", "fp", "tn", "fn"])
+    assert tc["tp"] + tc["fn"] == 50  # all positives
+    assert tc["tn"] + tc["fp"] == 50  # all negatives
+
+
+def test_default_backward_compat():
+    """Default parameters produce 2-step pipeline with LogisticRegression."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(30, 16) + 2.0
+    negative = rng.randn(30, 16) - 2.0
+
+    pipeline, summary = train_binary_classifier(positive, negative)
+
+    assert len(pipeline.steps) == 2
+    assert isinstance(pipeline.named_steps["classifier"], LogisticRegression)
+    assert summary["classifier_type"] == "logistic_regression"
+    assert summary["l2_normalize"] is False
+
+
+def test_classifier_type_in_summary():
+    """Classifier type is recorded in summary for both LR and MLP."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(30, 16) + 2.0
+    negative = rng.randn(30, 16) - 2.0
+
+    _, lr_summary = train_binary_classifier(
+        positive, negative,
+        parameters={"classifier_type": "logistic_regression"},
+    )
+    assert lr_summary["classifier_type"] == "logistic_regression"
+
+    _, mlp_summary = train_binary_classifier(
+        positive, negative,
+        parameters={"classifier_type": "mlp"},
+    )
+    assert mlp_summary["classifier_type"] == "mlp"

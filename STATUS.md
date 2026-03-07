@@ -33,9 +33,13 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Re-clustering from refined embeddings via `refined_from_job_id`
 
 ### Binary Classifier
-- Train LogisticRegression from positive + negative embedding sets
+- Train LogisticRegression (default) or MLPClassifier from positive + negative embedding sets
+- Optional L2 normalization of embeddings before scaling
 - Balanced class weights by default
-- Cross-validation metrics (accuracy, ROC-AUC)
+- Cross-validation metrics (accuracy, ROC-AUC, precision, recall, F1)
+- Decision boundary diagnostics: score separation (d-prime), train confusion matrix
+- Overlap validation: rejects same embedding set in both positive and negative lists
+- Encoding signature consistency warning when mixing different processing configs
 - Detection job: scan audio folder with configurable `hop_seconds` (default 1.0s)
 - Hysteresis event merging with dual thresholds (`high_threshold`/`low_threshold`)
 - Per-event `n_windows` count in TSV output
