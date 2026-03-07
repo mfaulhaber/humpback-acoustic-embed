@@ -39,7 +39,7 @@ humpback-acoustic-embed/
 ├── pyproject.toml         (Python dependencies)
 ├── uv.lock                (lockfile)
 ├── alembic.ini            (migration config)
-├── alembic/versions/      (migration scripts, 001–009)
+├── alembic/versions/      (migration scripts, 001–010)
 ├── src/humpback/
 │   ├── api/               (FastAPI routes)
 │   ├── classifier/        (training, detection, embedding)
@@ -178,9 +178,13 @@ only store indexing/assignment references.
 - classifier_model_id (FK)
 - audio_folder (filesystem path to scan)
 - confidence_threshold (float, default 0.5)
+- hop_seconds (float, default 1.0 — stride between windows)
+- high_threshold (float, default 0.70 — confidence to start an event)
+- low_threshold (float, default 0.45 — confidence to continue an event)
 - output_tsv_path (nullable, set on completion)
-- result_summary (JSON, nullable — n_files, n_windows, n_detections, n_spans, n_skipped_short)
+- result_summary (JSON, nullable — n_files, n_windows, n_detections, n_spans, n_skipped_short, hop_seconds, high_threshold, low_threshold)
 - error_message (nullable)
+- extract_status, extract_error, extract_summary, extract_config (extraction columns)
 - created_at, updated_at
 
 ---

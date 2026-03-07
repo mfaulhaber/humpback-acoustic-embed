@@ -36,8 +36,10 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Train LogisticRegression from positive + negative embedding sets
 - Balanced class weights by default
 - Cross-validation metrics (accuracy, ROC-AUC)
-- Detection job: scan audio folder, produce TSV with confidence scores
-- Span merging for contiguous detections
+- Detection job: scan audio folder with configurable `hop_seconds` (default 1.0s)
+- Hysteresis event merging with dual thresholds (`high_threshold`/`low_threshold`)
+- Per-event `n_windows` count in TSV output
+- Extraction boundary snapping to `window_size` multiples
 - Inline audio playback of detected segments
 - Detection label annotation with keyboard shortcuts
 
@@ -54,7 +56,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `009_add_source_folder.py`
+- **Latest migration**: `010_detection_hysteresis.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs
 
 ---

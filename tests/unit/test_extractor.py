@@ -210,3 +210,79 @@ class TestExtractLabeledSamples:
         summary = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
         assert summary["n_humpback"] == 1
         assert summary["n_ship"] == 1
+
+
+class TestExtractionSnapping:
+    def test_extraction_snaps_to_window_multiples(self, tmp_path):
+        """Event [2.5, 10.0] with window_size=5.0 snaps to [0.0, 10.0]."""
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        _make_wav(audio_folder / "test.wav", duration=15.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "test.wav", "start_sec": "2.5", "end_sec": "10.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+        extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0)
+
+        humpback_files = list(pos_out.rglob("*.wav"))
+        assert len(humpback_files) == 1
+        # Snapped to [0.0, 10.0] = 10.0s
+        import wave
+        with wave.open(str(humpback_files[0]), "r") as wf:
+            duration = wf.getnframes() / wf.getframerate()
+        assert abs(duration - 10.0) < 0.1
+
+    def test_extraction_exact_multiple_unchanged(self, tmp_path):
+        """Event [5.0, 15.0] stays [5.0, 15.0] = 10.0s."""
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        _make_wav(audio_folder / "test.wav", duration=20.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "test.wav", "start_sec": "5.0", "end_sec": "15.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+        extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0)
+
+        humpback_files = list(pos_out.rglob("*.wav"))
+        assert len(humpback_files) == 1
+        import wave
+        with wave.open(str(humpback_files[0]), "r") as wf:
+            duration = wf.getnframes() / wf.getframerate()
+        assert abs(duration - 10.0) < 0.1
+
+    def test_extraction_backward_compat_default(self, tmp_path):
+        """No window_size param defaults to 5.0."""
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        _make_wav(audio_folder / "test.wav", duration=15.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "test.wav", "start_sec": "2.5", "end_sec": "7.5",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+        # No window_size_seconds → defaults to 5.0 → [2.5, 7.5] snaps to [0.0, 10.0]
+        extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+
+        humpback_files = list(pos_out.rglob("*.wav"))
+        assert len(humpback_files) == 1
+        import wave
+        with wave.open(str(humpback_files[0]), "r") as wf:
+            duration = wf.getnframes() / wf.getframerate()
+        assert abs(duration - 10.0) < 0.1

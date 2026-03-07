@@ -435,7 +435,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/classifier/models` | List trained classifier models |
 | GET | `/classifier/models/{id}` | Get classifier model details |
 | DELETE | `/classifier/models/{id}` | Delete classifier model + files |
-| POST | `/classifier/detection-jobs` | Queue detection job |
+| POST | `/classifier/detection-jobs` | Queue detection job (`hop_seconds`, `high_threshold`, `low_threshold`) |
 | GET | `/classifier/detection-jobs` | List detection jobs |
 | GET | `/classifier/detection-jobs/{id}` | Get detection job |
 | GET | `/classifier/detection-jobs/{id}/download` | Download detections TSV |

@@ -43,6 +43,9 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     classifier_model_id: Mapped[str]
     audio_folder: Mapped[str]
     confidence_threshold: Mapped[float] = mapped_column(default=0.5)
+    hop_seconds: Mapped[float] = mapped_column(default=1.0)
+    high_threshold: Mapped[float] = mapped_column(default=0.70)
+    low_threshold: Mapped[float] = mapped_column(default=0.45)
     output_tsv_path: Mapped[Optional[str]] = mapped_column(default=None)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)

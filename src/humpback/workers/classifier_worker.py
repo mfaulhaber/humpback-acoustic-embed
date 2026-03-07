@@ -161,6 +161,9 @@ async def run_detection_job(
             input_format,
             feature_config,
             True,  # emit_diagnostics
+            job.hop_seconds,
+            job.high_threshold,
+            job.low_threshold,
         )
 
         # Write outputs
@@ -214,12 +217,21 @@ async def run_extraction_job(
         if not job.output_tsv_path:
             raise ValueError("Detection job has no output TSV path")
 
+        # Look up window_size_seconds from the classifier model
+        from sqlalchemy import select as sa_select
+        cm_result = await session.execute(
+            sa_select(ClassifierModel).where(ClassifierModel.id == job.classifier_model_id)
+        )
+        cm = cm_result.scalar_one_or_none()
+        ws = cm.window_size_seconds if cm else 5.0
+
         summary = await asyncio.to_thread(
             extract_labeled_samples,
             job.output_tsv_path,
             job.audio_folder,
             pos_path,
             neg_path,
+            ws,
         )
 
         await session.execute(

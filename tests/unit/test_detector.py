@@ -173,3 +173,88 @@ def test_confidence_stats_in_summary(tmp_path):
     assert expected_keys == set(stats.keys())
     assert 0.0 <= stats["pct_above_threshold"] <= 1.0
     assert stats["min"] <= stats["mean"] <= stats["max"]
+
+    # New summary keys
+    assert "hop_seconds" in summary
+    assert "high_threshold" in summary
+    assert "low_threshold" in summary
+
+
+def test_run_detection_with_hop(tmp_path):
+    """With hop < window, more windows are produced per file."""
+    audio_dir = tmp_path / "detect"
+    audio_dir.mkdir()
+    _write_wav(audio_dir / "a.wav", duration=12.0)
+
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64) + 2.0
+    neg = rng.randn(20, 64) - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+
+    _, summary_no_hop, _ = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        hop_seconds=5.0,
+    )
+
+    _, summary_hop, _ = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        hop_seconds=1.0,
+    )
+
+    assert summary_hop["n_windows"] > summary_no_hop["n_windows"]
+
+
+def test_run_detection_hysteresis(tmp_path):
+    """Hysteresis thresholds produce different event boundaries than single threshold."""
+    audio_dir = tmp_path / "detect"
+    audio_dir.mkdir()
+    _write_wav(audio_dir / "a.wav", duration=30.0)
+
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64) + 2.0
+    neg = rng.randn(20, 64) - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+
+    dets_single, _, _ = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        hop_seconds=5.0,
+        high_threshold=0.5,
+        low_threshold=0.5,
+    )
+
+    dets_hysteresis, _, _ = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        hop_seconds=5.0,
+        high_threshold=0.7,
+        low_threshold=0.3,
+    )
+
+    # With higher start threshold, we should get fewer or equal events
+    assert len(dets_hysteresis) <= len(dets_single)
+
+    # All detections should have n_windows
+    for det in dets_single + dets_hysteresis:
+        assert "n_windows" in det
+        assert det["n_windows"] >= 1

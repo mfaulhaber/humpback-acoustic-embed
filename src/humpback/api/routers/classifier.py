@@ -75,6 +75,9 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         classifier_model_id=job.classifier_model_id,
         audio_folder=job.audio_folder,
         confidence_threshold=job.confidence_threshold,
+        hop_seconds=job.hop_seconds,
+        high_threshold=job.high_threshold,
+        low_threshold=job.low_threshold,
         output_tsv_path=job.output_tsv_path,
         result_summary=json.loads(job.result_summary) if job.result_summary else None,
         error_message=job.error_message,
@@ -161,6 +164,9 @@ async def create_detection_job(
             body.classifier_model_id,
             body.audio_folder,
             body.confidence_threshold,
+            body.hop_seconds,
+            body.high_threshold,
+            body.low_threshold,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -244,11 +250,14 @@ async def get_detection_diagnostics(
     total = table.num_rows
     page = table.slice(offset, limit)
 
+    has_end_sec = "end_sec" in page.column_names
+
     records = [
         WindowDiagnosticRecord(
             filename=page.column("filename")[i].as_py(),
             window_index=page.column("window_index")[i].as_py(),
             offset_sec=page.column("offset_sec")[i].as_py(),
+            end_sec=page.column("end_sec")[i].as_py() if has_end_sec else page.column("offset_sec")[i].as_py() + 5.0,
             confidence=page.column("confidence")[i].as_py(),
             is_overlapped=page.column("is_overlapped")[i].as_py(),
             overlap_sec=page.column("overlap_sec")[i].as_py(),
@@ -570,6 +579,7 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
                     "end_sec": float(row.get("end_sec", 0)),
                     "avg_confidence": float(row.get("avg_confidence", 0)),
                     "peak_confidence": float(row.get("peak_confidence", 0)),
+                    "n_windows": int(row["n_windows"]) if row.get("n_windows") else None,
                     "humpback": _parse_label(row.get("humpback")),
                     "ship": _parse_label(row.get("ship")),
                     "background": _parse_label(row.get("background")),
@@ -630,6 +640,7 @@ async def save_detection_labels(
         "end_sec",
         "avg_confidence",
         "peak_confidence",
+        "n_windows",
         "humpback",
         "ship",
         "background",
@@ -648,6 +659,7 @@ async def save_detection_labels(
             "end_sec": row.get("end_sec", "0"),
             "avg_confidence": row.get("avg_confidence", "0"),
             "peak_confidence": row.get("peak_confidence", "0"),
+            "n_windows": row.get("n_windows", ""),
             "humpback": _serialize_label(update.humpback) if update else row.get("humpback", ""),
             "ship": _serialize_label(update.ship) if update else row.get("ship", ""),
             "background": _serialize_label(update.background) if update else row.get("background", ""),

@@ -3,6 +3,7 @@
 import csv
 import io
 import logging
+import math
 import os
 import re
 import struct
@@ -72,6 +73,7 @@ def extract_labeled_samples(
     audio_folder: str | Path,
     positive_output_path: str | Path,
     negative_output_path: str | Path,
+    window_size_seconds: float = 5.0,
 ) -> dict:
     """Extract labeled audio segments from a detection TSV.
 
@@ -120,6 +122,10 @@ def extract_labeled_samples(
         for row in rows:
             start_sec = float(row.get("start_sec", 0))
             end_sec = float(row.get("end_sec", 0))
+
+            # Snap to window_size multiples for clean training samples
+            start_sec = math.floor(start_sec / window_size_seconds) * window_size_seconds
+            end_sec = math.ceil(end_sec / window_size_seconds) * window_size_seconds
 
             start_sample = int(start_sec * sr)
             end_sample = int(end_sec * sr)

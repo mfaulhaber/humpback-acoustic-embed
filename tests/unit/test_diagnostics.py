@@ -28,9 +28,9 @@ def _write_wav(path: Path, duration: float = 2.0, sample_rate: int = 16000):
 def test_write_window_diagnostics(tmp_path):
     """write_window_diagnostics writes valid Parquet with expected schema."""
     records = [
-        {"filename": "a.wav", "window_index": 0, "offset_sec": 0.0,
+        {"filename": "a.wav", "window_index": 0, "offset_sec": 0.0, "end_sec": 5.0,
          "confidence": 0.8, "is_overlapped": False, "overlap_sec": 0.0},
-        {"filename": "a.wav", "window_index": 1, "offset_sec": 5.0,
+        {"filename": "a.wav", "window_index": 1, "offset_sec": 5.0, "end_sec": 10.0,
          "confidence": 0.3, "is_overlapped": True, "overlap_sec": 2.0},
     ]
     path = tmp_path / "diag.parquet"
@@ -40,7 +40,7 @@ def test_write_window_diagnostics(tmp_path):
     table = pq.read_table(path)
     assert table.num_rows == 2
     assert set(table.column_names) == {
-        "filename", "window_index", "offset_sec", "confidence", "is_overlapped", "overlap_sec",
+        "filename", "window_index", "offset_sec", "end_sec", "confidence", "is_overlapped", "overlap_sec",
     }
     assert table.column("filename")[0].as_py() == "a.wav"
     assert table.column("is_overlapped")[1].as_py() is True
@@ -79,6 +79,7 @@ def test_run_detection_returns_diagnostics(tmp_path):
         confidence_threshold=0.5,
         input_format="spectrogram",
         emit_diagnostics=True,
+        hop_seconds=5.0,
     )
 
     assert diagnostics is not None
@@ -89,6 +90,7 @@ def test_run_detection_returns_diagnostics(tmp_path):
     assert diagnostics[0]["offset_sec"] == 0.0
     assert diagnostics[0]["is_overlapped"] is False
     assert diagnostics[0]["overlap_sec"] == 0.0
+    assert diagnostics[0]["end_sec"] == 5.0
 
     # Second window: overlapped (shifted back to cover remaining 2s)
     assert diagnostics[1]["window_index"] == 1
@@ -142,6 +144,7 @@ def test_run_detection_skips_short_files(tmp_path):
         confidence_threshold=0.5,
         input_format="spectrogram",
         emit_diagnostics=True,
+        hop_seconds=5.0,
     )
 
     assert summary["n_skipped_short"] == 1

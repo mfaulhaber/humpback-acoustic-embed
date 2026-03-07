@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ClassifierTrainingJobCreate(BaseModel):
@@ -51,6 +51,17 @@ class DetectionJobCreate(BaseModel):
     classifier_model_id: str
     audio_folder: str
     confidence_threshold: float = 0.5
+    hop_seconds: float = 1.0
+    high_threshold: float = 0.70
+    low_threshold: float = 0.45
+
+    @model_validator(mode="after")
+    def _validate_thresholds(self):
+        if self.high_threshold < self.low_threshold:
+            raise ValueError("high_threshold must be >= low_threshold")
+        if self.hop_seconds <= 0:
+            raise ValueError("hop_seconds must be positive")
+        return self
 
 
 class DetectionJobOut(BaseModel):
@@ -59,6 +70,9 @@ class DetectionJobOut(BaseModel):
     classifier_model_id: str
     audio_folder: str
     confidence_threshold: float
+    hop_seconds: float
+    high_threshold: float
+    low_threshold: float
     output_tsv_path: Optional[str] = None
     result_summary: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -78,6 +92,7 @@ class WindowDiagnosticRecord(BaseModel):
     filename: str
     window_index: int
     offset_sec: float
+    end_sec: float
     confidence: float
     is_overlapped: bool
     overlap_sec: float

@@ -60,6 +60,9 @@ export function DetectionTab() {
   const [selectedModelId, setSelectedModelId] = useState("");
   const [audioFolder, setAudioFolder] = useState("");
   const [threshold, setThreshold] = useState(0.5);
+  const [hopSeconds, setHopSeconds] = useState(1.0);
+  const [highThreshold, setHighThreshold] = useState(0.70);
+  const [lowThreshold, setLowThreshold] = useState(0.45);
   const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
 
   // Table selection
@@ -91,6 +94,9 @@ export function DetectionTab() {
         classifier_model_id: selectedModelId,
         audio_folder: audioFolder,
         confidence_threshold: threshold,
+        hop_seconds: hopSeconds,
+        high_threshold: highThreshold,
+        low_threshold: lowThreshold,
       },
       {
         onSuccess: () => {
@@ -249,7 +255,7 @@ export function DetectionTab() {
           </div>
           <div>
             <label className="text-sm font-medium">
-              Confidence Threshold: {threshold.toFixed(2)}
+              Confidence Threshold (summary stats): {threshold.toFixed(2)}
             </label>
             <input
               type="range"
@@ -260,6 +266,48 @@ export function DetectionTab() {
               onChange={(e) => setThreshold(parseFloat(e.target.value))}
               className="w-full mt-1"
             />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-sm font-medium">Hop Size (s)</label>
+              <Input
+                type="number"
+                min={0.1}
+                max={10}
+                step={0.1}
+                value={hopSeconds}
+                onChange={(e) => setHopSeconds(parseFloat(e.target.value) || 1.0)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">
+                Start Threshold: {highThreshold.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={highThreshold}
+                onChange={(e) => setHighThreshold(parseFloat(e.target.value))}
+                className="w-full mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">
+                Continue Threshold: {lowThreshold.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={lowThreshold}
+                onChange={(e) => setLowThreshold(parseFloat(e.target.value))}
+                className="w-full mt-1"
+              />
+            </div>
           </div>
           <Button
             onClick={handleSubmit}
@@ -470,7 +518,9 @@ function DetectionJobTableRow({
           {job.audio_folder}
         </td>
         <td className="px-3 py-2 text-muted-foreground">
-          {job.confidence_threshold}
+          <span title={`Confidence: ${job.confidence_threshold}, Hop: ${job.hop_seconds}s`}>
+            {job.high_threshold}/{job.low_threshold}
+          </span>
         </td>
         <td className="px-3 py-2">
           <span className="text-muted-foreground">

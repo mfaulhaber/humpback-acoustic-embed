@@ -81,6 +81,9 @@ async def create_detection_job(
     classifier_model_id: str,
     audio_folder: str,
     confidence_threshold: float = 0.5,
+    hop_seconds: float = 1.0,
+    high_threshold: float = 0.70,
+    low_threshold: float = 0.45,
 ) -> DetectionJob:
     """Create a detection job after validating inputs."""
     # Validate classifier model exists
@@ -105,10 +108,18 @@ async def create_detection_job(
     if not 0.0 <= confidence_threshold <= 1.0:
         raise ValueError("confidence_threshold must be between 0.0 and 1.0")
 
+    if hop_seconds > cm.window_size_seconds:
+        raise ValueError(
+            f"hop_seconds ({hop_seconds}) must be <= window_size_seconds ({cm.window_size_seconds})"
+        )
+
     job = DetectionJob(
         classifier_model_id=classifier_model_id,
         audio_folder=audio_folder,
         confidence_threshold=confidence_threshold,
+        hop_seconds=hop_seconds,
+        high_threshold=high_threshold,
+        low_threshold=low_threshold,
     )
     session.add(job)
     await session.commit()

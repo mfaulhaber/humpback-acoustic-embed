@@ -72,3 +72,21 @@ Append-only record of significant design decisions. Do not edit historical entri
 - Consistent with the idempotent encoding principle
 - Added Alembic migration `007_negative_embedding_set_ids.py`
 - UI updated to allow selecting embedding sets as negative examples
+
+---
+
+## ADR-005: Overlapping window inference + hysteresis event detection
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: The detection pipeline used non-overlapping 5-second windows with index-based span merging. This caused poor temporal resolution (events snapped to 5s boundaries) and no ability to tune sensitivity with dual thresholds.
+
+**Decision**: Add configurable `hop_seconds` for overlapping window inference and replace single-threshold span merging with hysteresis-based event detection using `high_threshold` (start) and `low_threshold` (continue). Extraction boundaries snap outward to `window_size` multiples for clean training samples.
+
+**Consequences**:
+- Detection defaults to 1s hop with 0.70/0.45 hysteresis thresholds (new behavior by default)
+- Sub-second temporal resolution for event boundaries
+- Per-event `n_windows` count in TSV output
+- Added Alembic migration `010_detection_hysteresis.py`
+- Legacy behavior available with `hop_seconds=5.0, high_threshold=0.5, low_threshold=0.5`

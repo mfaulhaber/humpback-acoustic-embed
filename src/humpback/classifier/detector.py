@@ -13,7 +13,7 @@ import pyarrow.parquet as pq
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.features import extract_logmel
 from humpback.processing.inference import EmbeddingModel
-from humpback.processing.windowing import WindowMetadata, slice_windows, slice_windows_with_metadata
+from humpback.processing.windowing import WindowMetadata, slice_windows_with_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,59 @@ def merge_detection_spans(
     return spans
 
 
+def merge_detection_events(
+    window_records: list[dict],
+    high_threshold: float,
+    low_threshold: float,
+) -> list[dict]:
+    """Merge windows into detection events using hysteresis thresholds.
+
+    When not in event: confidence >= high_threshold opens a new event.
+    When in event: confidence >= low_threshold continues; below closes.
+
+    Returns list of dicts: {start_sec, end_sec, avg_confidence, peak_confidence, n_windows}.
+    """
+    events: list[dict] = []
+    in_event = False
+    event_start = 0.0
+    event_end = 0.0
+    event_confidences: list[float] = []
+
+    for rec in window_records:
+        conf = rec["confidence"]
+        if not in_event:
+            if conf >= high_threshold:
+                in_event = True
+                event_start = rec["offset_sec"]
+                event_end = rec["end_sec"]
+                event_confidences = [conf]
+        else:
+            if conf >= low_threshold:
+                event_end = rec["end_sec"]
+                event_confidences.append(conf)
+            else:
+                events.append({
+                    "start_sec": event_start,
+                    "end_sec": event_end,
+                    "avg_confidence": float(np.mean(event_confidences)),
+                    "peak_confidence": float(np.max(event_confidences)),
+                    "n_windows": len(event_confidences),
+                })
+                in_event = False
+
+    # Close final event
+    if in_event:
+        events.append({
+            "start_sec": event_start,
+            "end_sec": event_end,
+            "avg_confidence": float(np.mean(event_confidences)),
+            "peak_confidence": float(np.max(event_confidences)),
+            "n_windows": len(event_confidences),
+        })
+
+    return events
+
+
 def run_detection(
     audio_folder: Path,
     pipeline: Pipeline,
@@ -73,11 +126,14 @@ def run_detection(
     input_format: str = "spectrogram",
     feature_config: dict | None = None,
     emit_diagnostics: bool = False,
+    hop_seconds: float = 1.0,
+    high_threshold: float = 0.70,
+    low_threshold: float = 0.45,
 ) -> tuple[list[dict], dict, list[dict] | None]:
-    """Scan audio folder, classify each window, merge spans.
+    """Scan audio folder, classify each window, merge events.
 
     Returns (detections_list, summary_dict, diagnostics_or_none).
-    Each detection: {filename, start_sec, end_sec, avg_confidence, peak_confidence}.
+    Each detection: {filename, start_sec, end_sec, avg_confidence, peak_confidence, n_windows}.
     When emit_diagnostics=True, diagnostics is a list of per-window records.
     """
     feature_config = feature_config or {}
@@ -110,49 +166,32 @@ def run_detection(
                 n_skipped_short += 1
                 continue
 
-            # Embed all windows
+            # Embed all windows (always use metadata for event merging)
             batch_items: list[np.ndarray] = []
             batch_size = 32
             file_embeddings: list[np.ndarray] = []
-            window_metas: list[WindowMetadata] = [] if emit_diagnostics else None
+            window_metas: list[WindowMetadata] = []
 
-            if emit_diagnostics:
-                for window, meta in slice_windows_with_metadata(
-                    audio, target_sample_rate, window_size_seconds
-                ):
-                    window_metas.append(meta)
-                    if input_format == "waveform":
-                        batch_items.append(window)
-                    else:
-                        spec = extract_logmel(
-                            window, target_sample_rate,
-                            n_mels=128, hop_length=1252, target_frames=128,
-                            normalization=normalization,
-                        )
-                        batch_items.append(spec)
+            for window, meta in slice_windows_with_metadata(
+                audio, target_sample_rate, window_size_seconds,
+                hop_seconds=hop_seconds,
+            ):
+                window_metas.append(meta)
+                if input_format == "waveform":
+                    batch_items.append(window)
+                else:
+                    spec = extract_logmel(
+                        window, target_sample_rate,
+                        n_mels=128, hop_length=1252, target_frames=128,
+                        normalization=normalization,
+                    )
+                    batch_items.append(spec)
 
-                    if len(batch_items) >= batch_size:
-                        batch = np.stack(batch_items)
-                        embeddings = model.embed(batch)
-                        file_embeddings.append(embeddings)
-                        batch_items.clear()
-            else:
-                for window in slice_windows(audio, target_sample_rate, window_size_seconds):
-                    if input_format == "waveform":
-                        batch_items.append(window)
-                    else:
-                        spec = extract_logmel(
-                            window, target_sample_rate,
-                            n_mels=128, hop_length=1252, target_frames=128,
-                            normalization=normalization,
-                        )
-                        batch_items.append(spec)
-
-                    if len(batch_items) >= batch_size:
-                        batch = np.stack(batch_items)
-                        embeddings = model.embed(batch)
-                        file_embeddings.append(embeddings)
-                        batch_items.clear()
+                if len(batch_items) >= batch_size:
+                    batch = np.stack(batch_items)
+                    embeddings = model.embed(batch)
+                    file_embeddings.append(embeddings)
+                    batch_items.clear()
 
             if batch_items:
                 batch = np.stack(batch_items)
@@ -171,8 +210,18 @@ def run_detection(
 
             rel_path = str(audio_path.relative_to(audio_folder))
 
+            # Build window records for event merging
+            window_records = [
+                {
+                    "offset_sec": meta.offset_sec,
+                    "end_sec": meta.offset_sec + window_size_seconds,
+                    "confidence": conf,
+                }
+                for meta, conf in zip(window_metas, window_confidences)
+            ]
+
             # Collect per-window diagnostics
-            if emit_diagnostics and window_metas is not None:
+            if emit_diagnostics:
                 for i_meta, (meta, conf) in enumerate(zip(window_metas, window_confidences)):
                     if meta.is_overlapped and i_meta > 0:
                         prev_end = window_metas[i_meta - 1].offset_sec + window_size_seconds
@@ -183,19 +232,20 @@ def run_detection(
                         "filename": rel_path,
                         "window_index": meta.window_index,
                         "offset_sec": meta.offset_sec,
+                        "end_sec": meta.offset_sec + window_size_seconds,
                         "confidence": conf,
                         "is_overlapped": meta.is_overlapped,
                         "overlap_sec": overlap_sec,
                     })
 
-            # Merge spans
-            spans = merge_detection_spans(
-                window_confidences, confidence_threshold, window_size_seconds
+            # Merge events using hysteresis
+            events = merge_detection_events(
+                window_records, high_threshold, low_threshold
             )
 
-            for span in spans:
-                span["filename"] = rel_path
-                all_detections.append(span)
+            for event in events:
+                event["filename"] = rel_path
+                all_detections.append(event)
 
             total_positive += sum(1 for c in window_confidences if c >= confidence_threshold)
             all_confidences.extend(window_confidences)
@@ -210,6 +260,9 @@ def run_detection(
         "n_detections": total_positive,
         "n_spans": len(all_detections),
         "n_skipped_short": n_skipped_short,
+        "hop_seconds": hop_seconds,
+        "high_threshold": high_threshold,
+        "low_threshold": low_threshold,
     }
 
     if all_confidences:
@@ -239,7 +292,7 @@ def run_detection(
 def write_detections_tsv(detections: list[dict], path: Path) -> None:
     """Write detections to a TSV file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence"]
+    fieldnames = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
@@ -254,6 +307,7 @@ def write_window_diagnostics(records: list[dict], path: Path) -> None:
         ("filename", pa.string()),
         ("window_index", pa.int32()),
         ("offset_sec", pa.float32()),
+        ("end_sec", pa.float32()),
         ("confidence", pa.float32()),
         ("is_overlapped", pa.bool_()),
         ("overlap_sec", pa.float32()),
@@ -262,6 +316,7 @@ def write_window_diagnostics(records: list[dict], path: Path) -> None:
         "filename": [r["filename"] for r in records],
         "window_index": [r["window_index"] for r in records],
         "offset_sec": [r["offset_sec"] for r in records],
+        "end_sec": [r["end_sec"] for r in records],
         "confidence": [r["confidence"] for r in records],
         "is_overlapped": [r["is_overlapped"] for r in records],
         "overlap_sec": [r["overlap_sec"] for r in records],

@@ -386,6 +386,9 @@ export interface DetectionJobCreate {
   classifier_model_id: string;
   audio_folder: string;
   confidence_threshold?: number;
+  hop_seconds?: number;
+  high_threshold?: number;
+  low_threshold?: number;
 }
 
 export interface DetectionJob {
@@ -394,6 +397,9 @@ export interface DetectionJob {
   classifier_model_id: string;
   audio_folder: string;
   confidence_threshold: number;
+  hop_seconds: number;
+  high_threshold: number;
+  low_threshold: number;
   output_tsv_path: string | null;
   result_summary: Record<string, unknown> | null;
   error_message: string | null;
@@ -429,6 +435,7 @@ export interface DetectionRow {
   end_sec: number;
   avg_confidence: number;
   peak_confidence: number;
+  n_windows: number | null;
   humpback: number | null;
   ship: number | null;
   background: number | null;
@@ -449,6 +456,7 @@ export interface WindowDiagnosticRecord {
   filename: string;
   window_index: number;
   offset_sec: number;
+  end_sec: number;
   confidence: number;
   is_overlapped: boolean;
   overlap_sec: number;
