@@ -3,8 +3,11 @@
 ## Overview
 
 This project processes humpback whale audio recordings (MP3/WAV/FLAC) into reusable
-embedding vectors using a Perch-compatible TFLite or TensorFlow2 model, then performs clustering
-with optional ecological/behavioral metadata.
+embedding vectors using a Perch-compatible TFLite or TensorFlow2 model.
+
+Current embedding workflows:
+- Clustering of Humpback non-song vocalizations with optional ecological/behavioral metadata.
+- Training binary classifer with inference against raw hydrophone recordings.  
 
 Key features:
 - Asynchronous job queue (SQL-backed, restart-safe)
@@ -626,3 +629,19 @@ alongside the API on `:8000`.
 
 No client-side router is used — the UI is tab-based (Audio, Processing,
 Clustering, Classifier, Admin) with navigation managed via React state.
+
+## Acknowledgements
+
+This project leverages open-source tools and datasets provided by the **Orcasound** community. We are grateful for their commitment to open science and marine conservation.
+
+### **Software & Analysis**
+We utilized the [ambient-sound-analysis](https://github.com/orcasound/ambient-sound-analysis) repository, which provided the core pipeline for converting historical `.ts` files into compact Power Spectral Density (PSD) grids. 
+
+*   **Original Authors**: Caleb Case, Mitch Haldeman, Grant Savage, Zach Price, Timothy Tan, and Vaibhav Mehrotra.
+*   **License**: [MIT License](https://github.com/orcasound/ambient-sound-analysis/blob/main/LICENSE).
+
+### **Data & Training**
+Our humpback whale detection/analysis models were trained using the [Humpback Whales Training Data](https://github.com) curated in the Orcadata wiki. This dataset includes:
+*   **Acoustic Bouts**: Catalogues of common vocalization types and patterned non-song sequences.
+*   **Attribution**: Data provided by the Orcasound and OrcaLab communities, including recordings from the 2020 and 2021 seasons.
+
