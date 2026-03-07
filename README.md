@@ -536,6 +536,51 @@ jobs in the database).
 
 ---
 
+## Agent Workflows
+
+The project includes structured workflows for AI coding agents (Claude Code and Codex App). Workflow logic lives in `.agents/workflows/` as the single source of truth, with thin wrappers for each platform.
+
+### Claude Code Commands
+
+Available as `/project:<name>` in Claude Code sessions:
+
+| Command | Purpose |
+|---------|---------|
+| `/project:start` | Load project context (STATUS, PLANS, DECISIONS) and summarize state. No coding. |
+| `/project:implement` | Structured implementation: restate task, identify files, implement, test, update docs. |
+| `/project:review` | Pre-commit checklist: architecture violations, missing tests/migrations, stale docs. |
+| `/project:handoff` | End-of-session: update STATUS.md, PLANS.md, DECISIONS.md for next session. |
+| `/project:debug` | Root-cause debugging: symptom, reproduce, fix, regression test. |
+
+Command files are in `.claude/commands/` and reference the shared workflows.
+
+### Codex App Skills
+
+Available as skills in Codex:
+
+| Skill | Purpose |
+|-------|---------|
+| `implement` | Same as `/project:implement` above |
+| `review` | Same as `/project:review` above |
+| `debug` | Same as `/project:debug` above |
+
+Skill definitions are in `.agents/skills/<name>/SKILL.md` and reference the same shared workflows. Codex also reads `AGENTS.md` as its entry point, which points to `CLAUDE.md` as the authoritative spec.
+
+### Memory Files
+
+Both agents share persistent project memory via root-level markdown files:
+
+| File | Purpose |
+|------|---------|
+| `CLAUDE.md` | Behavioral rules, development constraints, testing requirements |
+| `MEMORY.md` | Data models, workflows, signal parameters, storage layout |
+| `AGENTS.md` | Codex entry point with key constraints |
+| `DECISIONS.md` | Architecture decision log (append-only) |
+| `STATUS.md` | Current project state, capabilities, constraints |
+| `PLANS.md` | Active and backlog development plans |
+
+---
+
 ## Configuration
 
 Environment variables (prefix `HUMPBACK_`):
