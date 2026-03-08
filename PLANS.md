@@ -28,3 +28,4 @@
 - Fix escalating false positives: MLP classifier + diagnostics (ADR-007)
 - Multi-model support: grouping, filtering & validation
 - Fix TFLite/TF2 vector_dim mismatch: auto-detect from model output
+- Optimize TFLite encoding: batch inference via resize_tensor_input + multi-threading + timing instrumentation

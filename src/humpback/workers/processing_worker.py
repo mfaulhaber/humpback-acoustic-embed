@@ -191,9 +191,14 @@ def _process_audio(
     input_format: str = "spectrogram",
 ) -> int:
     """CPU-bound audio processing (runs in thread). Returns number of embeddings written."""
+    import json as _json
+    import time
+
     # Decode + resample
+    t0 = time.monotonic()
     audio, sr = decode_audio(audio_path)
     audio = resample(audio, sr, job.target_sample_rate)
+    t_decode = time.monotonic() - t0
 
     # Write embeddings incrementally
     writer = IncrementalParquetWriter(
@@ -201,7 +206,6 @@ def _process_audio(
     )
 
     # Parse feature_config for normalization setting
-    import json as _json
     feature_config = _json.loads(job.feature_config) if job.feature_config else {}
     normalization = feature_config.get("normalization", "per_window_max")
 
@@ -214,8 +218,12 @@ def _process_audio(
 
     batch_items = []
     batch_size = 32
+    t_features = 0.0
+    t_inference = 0.0
+    n_windows = 0
 
     for window in slice_windows(audio, job.target_sample_rate, job.window_size_seconds):
+        t0 = time.monotonic()
         if input_format == "waveform":
             # Feed raw audio directly (TF2 SavedModel path)
             batch_items.append(window)
@@ -230,10 +238,14 @@ def _process_audio(
                 normalization=normalization,
             )
             batch_items.append(spec)
+        t_features += time.monotonic() - t0
+        n_windows += 1
 
         if len(batch_items) >= batch_size:
             batch = np.stack(batch_items)
+            t0 = time.monotonic()
             embeddings = model.embed(batch)
+            t_inference += time.monotonic() - t0
             for emb in embeddings:
                 writer.add(emb)
             batch_items.clear()
@@ -241,9 +253,17 @@ def _process_audio(
     # Process remaining windows
     if batch_items:
         batch = np.stack(batch_items)
+        t0 = time.monotonic()
         embeddings = model.embed(batch)
+        t_inference += time.monotonic() - t0
         for emb in embeddings:
             writer.add(emb)
 
     writer.close()
+
+    logger.info(
+        "Processing timing: decode=%.3fs, features=%.3fs (%d windows), inference=%.3fs",
+        t_decode, t_features, n_windows, t_inference,
+    )
+
     return writer.total_rows

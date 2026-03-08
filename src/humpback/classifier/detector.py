@@ -138,6 +138,8 @@ def run_detection(
     Each detection: {filename, start_sec, end_sec, avg_confidence, peak_confidence, n_windows}.
     When emit_diagnostics=True, diagnostics is a list of per-window records.
     """
+    import time
+
     feature_config = feature_config or {}
     normalization = feature_config.get("normalization", "per_window_max")
 
@@ -155,11 +157,17 @@ def run_detection(
     n_skipped_short = 0
     files_done = 0
     n_audio_files = len(audio_files)
+    t_decode_total = 0.0
+    t_features_total = 0.0
+    t_inference_total = 0.0
+    n_windows_total = 0
 
     for audio_path in audio_files:
         try:
+            t0 = time.monotonic()
             audio, sr = decode_audio(audio_path)
             audio = resample(audio, sr, target_sample_rate)
+            t_decode_total += time.monotonic() - t0
 
             window_samples = int(target_sample_rate * window_size_seconds)
             if len(audio) < window_samples:
@@ -184,6 +192,7 @@ def run_detection(
                 hop_seconds=hop_seconds,
             ):
                 window_metas.append(meta)
+                t0 = time.monotonic()
                 if input_format == "waveform":
                     batch_items.append(window)
                 else:
@@ -193,16 +202,22 @@ def run_detection(
                         normalization=normalization,
                     )
                     batch_items.append(spec)
+                t_features_total += time.monotonic() - t0
+                n_windows_total += 1
 
                 if len(batch_items) >= batch_size:
                     batch = np.stack(batch_items)
+                    t0 = time.monotonic()
                     embeddings = model.embed(batch)
+                    t_inference_total += time.monotonic() - t0
                     file_embeddings.append(embeddings)
                     batch_items.clear()
 
             if batch_items:
                 batch = np.stack(batch_items)
+                t0 = time.monotonic()
                 embeddings = model.embed(batch)
+                t_inference_total += time.monotonic() - t0
                 file_embeddings.append(embeddings)
 
             if not file_embeddings:
@@ -299,6 +314,10 @@ def run_detection(
         "Detection complete: %d files, %d windows, %d detections, %d spans, %d skipped (short)",
         summary["n_files"], summary["n_windows"],
         summary["n_detections"], summary["n_spans"], summary["n_skipped_short"],
+    )
+    logger.info(
+        "Detection timing: decode=%.3fs, features=%.3fs (%d windows), inference=%.3fs",
+        t_decode_total, t_features_total, n_windows_total, t_inference_total,
     )
 
     return all_detections, summary, diagnostics_records

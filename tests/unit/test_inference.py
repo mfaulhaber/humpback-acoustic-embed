@@ -249,3 +249,118 @@ def test_tflite_fallback_when_detection_fails():
     model = _make_tflite_model_stub([1], vector_dim=512)
     actual = model._detect_output_dim()
     assert actual is None
+
+
+# ---- TFLiteModel batch embed tests ----
+
+
+def _make_batch_tflite_model(vector_dim=128):
+    """Create a TFLiteModel with a mocked interpreter for batch testing."""
+    model = object.__new__(TFLiteModel)
+    model._vector_dim = vector_dim
+    model._batch_resize_failed = False
+
+    interpreter = MagicMock()
+    model._interpreter = interpreter
+    model._input_details = [{"index": 0, "shape": np.array([1, 128, 128])}]
+    model._output_details = [{"index": 1, "shape": np.array([1, vector_dim])}]
+    model._base_input_shape = [1, 128, 128]
+    model._last_batch_size = 1
+    model._num_threads = 4
+
+    def fake_get_tensor(idx):
+        # Return output shaped to current batch size
+        return np.zeros((model._last_batch_size, vector_dim), dtype=np.float32)
+
+    interpreter.get_tensor.side_effect = fake_get_tensor
+    return model
+
+
+def test_tflite_batch_embed_single_invoke():
+    """Batch of 4 should call invoke() exactly once (not 4 times)."""
+    model = _make_batch_tflite_model(vector_dim=128)
+    spectrograms = np.random.randn(4, 128, 128).astype(np.float32)
+
+    # Track batch size through resize
+    def track_resize(idx, shape):
+        model._last_batch_size = shape[0]
+
+    model._interpreter.resize_tensor_input.side_effect = track_resize
+
+    result = model.embed(spectrograms)
+    assert result.shape == (4, 128)
+    assert model._interpreter.invoke.call_count == 1
+
+
+def test_tflite_batch_embed_resize_on_size_change():
+    """resize_tensor_input should be called when batch size changes from default."""
+    model = _make_batch_tflite_model(vector_dim=128)
+    spectrograms = np.random.randn(4, 128, 128).astype(np.float32)
+
+    def track_resize(idx, shape):
+        model._last_batch_size = shape[0]
+
+    model._interpreter.resize_tensor_input.side_effect = track_resize
+
+    model.embed(spectrograms)
+    model._interpreter.resize_tensor_input.assert_called_once_with(0, [4, 128, 128])
+
+
+def test_tflite_batch_embed_no_resize_same_size():
+    """No resize should happen when batch size matches the last batch size."""
+    model = _make_batch_tflite_model(vector_dim=128)
+    model._last_batch_size = 4  # pretend we already resized to 4
+
+    spectrograms = np.random.randn(4, 128, 128).astype(np.float32)
+    model.embed(spectrograms)
+    model._interpreter.resize_tensor_input.assert_not_called()
+
+
+def test_tflite_batch_embed_empty():
+    """Empty input should return shape (0, vector_dim) without calling interpreter."""
+    model = _make_batch_tflite_model(vector_dim=256)
+    spectrograms = np.empty((0, 128, 128), dtype=np.float32)
+
+    result = model.embed(spectrograms)
+    assert result.shape == (0, 256)
+    model._interpreter.invoke.assert_not_called()
+
+
+def test_tflite_batch_fallback_on_resize_failure():
+    """When resize raises, model should fall back to sequential with warning logged."""
+    model = _make_batch_tflite_model(vector_dim=128)
+    model._interpreter.resize_tensor_input.side_effect = RuntimeError("resize not supported")
+
+    # For sequential fallback, get_tensor returns single-item output
+    model._interpreter.get_tensor.side_effect = lambda idx: np.zeros(
+        (1, 128), dtype=np.float32
+    )
+
+    spectrograms = np.random.randn(3, 128, 128).astype(np.float32)
+    result = model.embed(spectrograms)
+
+    assert result.shape == (3, 128)
+    assert model._batch_resize_failed is True
+    # Sequential: invoke called once per item
+    assert model._interpreter.invoke.call_count == 3
+
+
+def test_tflite_num_threads_passed():
+    """num_threads should be passed to the Interpreter constructor."""
+    import tensorflow as tf
+
+    with patch.object(tf.lite, "Interpreter", wraps=None) as mock_interp_cls:
+        mock_interp = MagicMock()
+        mock_interp.get_input_details.return_value = [
+            {"index": 0, "shape": np.array([1, 128, 128])}
+        ]
+        mock_interp.get_output_details.return_value = [
+            {"index": 1, "shape": np.array([1, 512])}
+        ]
+        mock_interp_cls.return_value = mock_interp
+
+        TFLiteModel("dummy.tflite", vector_dim=512, num_threads=8)
+
+        mock_interp_cls.assert_called_once_with(
+            model_path="dummy.tflite", num_threads=8
+        )

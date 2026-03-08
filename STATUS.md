@@ -17,6 +17,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Audio decoding, resampling (32 kHz), overlap-back windowing (5s default)
 - Log-mel spectrogram extraction (128x128) for TFLite models
 - Raw waveform input for TF2 SavedModel models
+- Batch TFLite inference via `resize_tensor_input` with automatic sequential fallback
+- Multi-threaded TFLite interpreter (default `os.cpu_count()` threads)
+- Processing timing instrumentation (decode, features, inference) in worker, detector, and trainer
 - Incremental Parquet embedding output with atomic writes
 - Idempotent encoding via `encoding_signature`
 - Background worker with job queue (queued/running/complete/failed/canceled)

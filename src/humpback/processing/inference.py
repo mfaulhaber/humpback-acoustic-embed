@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Protocol
 
 import numpy as np
@@ -90,13 +91,25 @@ class FakeTF2Model:
 class TFLiteModel:
     """Real TFLite model wrapper. Only used when USE_REAL_MODEL=true."""
 
-    def __init__(self, model_path: str, vector_dim: int = 512):
+    def __init__(self, model_path: str, vector_dim: int = 512, num_threads: int | None = None):
         import tensorflow as tf
+
+        if num_threads is None:
+            num_threads = os.cpu_count() or 4
+        self._num_threads = num_threads
+
         # Full TF includes flex delegate support automatically for flex models
-        self._interpreter = tf.lite.Interpreter(model_path=model_path)
+        self._interpreter = tf.lite.Interpreter(
+            model_path=model_path, num_threads=num_threads
+        )
         self._interpreter.allocate_tensors()
         self._input_details = self._interpreter.get_input_details()
         self._output_details = self._interpreter.get_output_details()
+
+        # Cache base input shape for batch resize
+        self._base_input_shape = list(self._input_details[0]["shape"])
+        self._last_batch_size = self._base_input_shape[0]  # typically 1
+        self._batch_resize_failed = False
 
         actual_dim = self._detect_output_dim()
         if actual_dim is not None and actual_dim != vector_dim:
@@ -123,12 +136,57 @@ class TFLiteModel:
 
     def embed(self, spectrograms: np.ndarray) -> np.ndarray:
         """Embed a batch of spectrograms. Input: (batch, n_mels, time_frames). Output: (batch, vector_dim)."""
+        if spectrograms.shape[0] == 0:
+            return np.empty((0, self._vector_dim), dtype=np.float32)
+
+        if self._batch_resize_failed:
+            return self._embed_sequential(spectrograms)
+
+        batch_size = spectrograms.shape[0]
+        input_idx = self._input_details[0]["index"]
+        output_idx = self._output_details[0]["index"]
+
+        try:
+            if batch_size != self._last_batch_size:
+                new_shape = list(self._base_input_shape)
+                new_shape[0] = batch_size
+                self._interpreter.resize_tensor_input(input_idx, new_shape)
+                self._interpreter.allocate_tensors()
+                self._last_batch_size = batch_size
+
+            self._interpreter.set_tensor(input_idx, spectrograms.astype(np.float32))
+            self._interpreter.invoke()
+            return self._interpreter.get_tensor(output_idx).copy()
+        except Exception as e:
+            if not self._batch_resize_failed:
+                logger.warning(
+                    "Batch resize/invoke failed, falling back to sequential inference: %s", e
+                )
+                self._batch_resize_failed = True
+            return self._embed_sequential(spectrograms)
+
+    def _embed_sequential(self, spectrograms: np.ndarray) -> np.ndarray:
+        """Fallback: embed one spectrogram at a time."""
+        input_idx = self._input_details[0]["index"]
+        output_idx = self._output_details[0]["index"]
+
+        # Resize back to single-item if needed
+        if self._last_batch_size != 1:
+            try:
+                new_shape = list(self._base_input_shape)
+                new_shape[0] = 1
+                self._interpreter.resize_tensor_input(input_idx, new_shape)
+                self._interpreter.allocate_tensors()
+                self._last_batch_size = 1
+            except Exception:
+                pass
+
         results = []
         for i in range(spectrograms.shape[0]):
             inp = spectrograms[i : i + 1].astype(np.float32)
-            self._interpreter.set_tensor(self._input_details[0]["index"], inp)
+            self._interpreter.set_tensor(input_idx, inp)
             self._interpreter.invoke()
-            out = self._interpreter.get_tensor(self._output_details[0]["index"])
+            out = self._interpreter.get_tensor(output_idx)
             results.append(out[0])
         return np.array(results, dtype=np.float32)
 

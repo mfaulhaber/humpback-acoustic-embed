@@ -30,6 +30,8 @@ def embed_audio_folder(
     feature_config: dict | None = None,
 ) -> np.ndarray:
     """Recursively scan folder for audio files, embed each, return stacked vectors."""
+    import time
+
     feature_config = feature_config or {}
     normalization = feature_config.get("normalization", "per_window_max")
 
@@ -41,11 +43,17 @@ def embed_audio_folder(
         raise ValueError(f"No audio files found in {folder}")
 
     logger.info("Embedding %d audio files from %s", len(audio_files), folder)
+    t_decode_total = 0.0
+    t_features_total = 0.0
+    t_inference_total = 0.0
+    n_windows_total = 0
 
     for audio_path in audio_files:
         try:
+            t0 = time.monotonic()
             audio, sr = decode_audio(audio_path)
             audio = resample(audio, sr, target_sample_rate)
+            t_decode_total += time.monotonic() - t0
 
             window_samples = int(target_sample_rate * window_size_seconds)
             if len(audio) < window_samples:
@@ -59,6 +67,7 @@ def embed_audio_folder(
             batch_size = 32
 
             for window in slice_windows(audio, target_sample_rate, window_size_seconds):
+                t0 = time.monotonic()
                 if input_format == "waveform":
                     batch_items.append(window)
                 else:
@@ -71,16 +80,22 @@ def embed_audio_folder(
                         normalization=normalization,
                     )
                     batch_items.append(spec)
+                t_features_total += time.monotonic() - t0
+                n_windows_total += 1
 
                 if len(batch_items) >= batch_size:
                     batch = np.stack(batch_items)
+                    t0 = time.monotonic()
                     embeddings = model.embed(batch)
+                    t_inference_total += time.monotonic() - t0
                     all_embeddings.append(embeddings)
                     batch_items.clear()
 
             if batch_items:
                 batch = np.stack(batch_items)
+                t0 = time.monotonic()
                 embeddings = model.embed(batch)
+                t_inference_total += time.monotonic() - t0
                 all_embeddings.append(embeddings)
 
         except Exception:
@@ -89,6 +104,11 @@ def embed_audio_folder(
 
     if not all_embeddings:
         raise ValueError(f"No embeddings produced from {folder}")
+
+    logger.info(
+        "Embedding timing: decode=%.3fs, features=%.3fs (%d windows), inference=%.3fs",
+        t_decode_total, t_features_total, n_windows_total, t_inference_total,
+    )
 
     return np.vstack(all_embeddings)
 
