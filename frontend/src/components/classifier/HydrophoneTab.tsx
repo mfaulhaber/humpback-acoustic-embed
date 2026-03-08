@@ -12,11 +12,15 @@ import {
   ArrowUp,
   ArrowDown,
   Download,
+  Save,
+  PackageOpen,
   Square,
   AlertTriangle,
   AlertCircle,
   Info,
   X,
+  Folder,
+  Globe,
 } from "lucide-react";
 import {
   useClassifierModels,
@@ -27,11 +31,12 @@ import {
   useBulkDeleteDetectionJobs,
   useDetectionContent,
   useSaveDetectionLabels,
+  useExtractLabeledSamples,
   useBrowseDirectories,
 } from "@/hooks/queries/useClassifier";
 import { detectionTsvUrl, detectionAudioSliceUrl } from "@/api/client";
-import { Folder, Globe } from "lucide-react";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
+import { ExtractDialog } from "./ExtractDialog";
 import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
 
 type SortKey = "filename" | "start_sec" | "end_sec" | "avg_confidence";
@@ -66,6 +71,14 @@ export function HydrophoneTab() {
   const cancelMutation = useCancelHydrophoneDetectionJob();
   const bulkDeleteMutation = useBulkDeleteDetectionJobs();
   const saveLabelsMutation = useSaveDetectionLabels();
+  const extractMutation = useExtractLabeledSamples();
+
+  // Buffered label edits: jobId -> rowKey -> { humpback, ship, background }
+  const [labelEdits, setLabelEdits] = useState<
+    Map<string, Map<string, Partial<Record<LabelField, number | null>>>>
+  >(new Map());
+  const [dirtyJobs, setDirtyJobs] = useState<Set<string>>(new Set());
+  const [showExtractDialog, setShowExtractDialog] = useState(false);
 
   // Form state
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -143,24 +156,46 @@ export function HydrophoneTab() {
     [playingKey],
   );
 
-  // Auto-save labels for hydrophone jobs
+  // Buffered label editing (save via Save Labels button)
   const handleLabelChange = useCallback(
     (jobId: string, rk: string, field: LabelField, value: number | null) => {
-      const [filename, startStr, endStr] = rk.split(":");
-      const rows: DetectionLabelRow[] = [
-        {
+      setLabelEdits((prev) => {
+        const next = new Map(prev);
+        const jobEdits = new Map(next.get(jobId) ?? new Map());
+        const rowEdits = { ...(jobEdits.get(rk) ?? {}) };
+        rowEdits[field] = value;
+        jobEdits.set(rk, rowEdits);
+        next.set(jobId, jobEdits);
+        return next;
+      });
+      setDirtyJobs((prev) => new Set(prev).add(jobId));
+    },
+    [],
+  );
+
+  const handleSaveLabels = useCallback(async () => {
+    const promises: Promise<unknown>[] = [];
+    for (const jobId of dirtyJobs) {
+      const jobEdits = labelEdits.get(jobId);
+      if (!jobEdits || jobEdits.size === 0) continue;
+      const rows: DetectionLabelRow[] = [];
+      for (const [rk, edits] of jobEdits) {
+        const [filename, startStr, endStr] = rk.split(":");
+        rows.push({
           filename,
           start_sec: parseFloat(startStr),
           end_sec: parseFloat(endStr),
-          humpback: field === "humpback" ? value : null,
-          ship: field === "ship" ? value : null,
-          background: field === "background" ? value : null,
-        },
-      ];
-      saveLabelsMutation.mutate({ jobId, rows });
-    },
-    [saveLabelsMutation],
-  );
+          humpback: edits.humpback ?? null,
+          ship: edits.ship ?? null,
+          background: edits.background ?? null,
+        });
+      }
+      promises.push(saveLabelsMutation.mutateAsync({ jobId, rows }));
+    }
+    await Promise.all(promises);
+    setLabelEdits(new Map());
+    setDirtyJobs(new Set());
+  }, [dirtyJobs, labelEdits, saveLabelsMutation]);
 
   return (
     <div className="space-y-4">
@@ -460,6 +495,18 @@ export function HydrophoneTab() {
             {activeJob.alerts && activeJob.alerts.length > 0 && (
               <AlertsPanel alerts={activeJob.alerts} />
             )}
+
+            {/* Live detection content */}
+            {(activeJob.segments_processed ?? 0) > 0 && activeJob.output_tsv_path && (
+              <HydrophoneContentTable
+                jobId={activeJob.id}
+                isRunning={true}
+                playingKey={playingKey}
+                onPlay={handlePlay}
+                onLabelChange={handleLabelChange}
+                labelEdits={labelEdits.get(activeJob.id) ?? null}
+              />
+            )}
           </CardContent>
         </Card>
       )}
@@ -472,14 +519,39 @@ export function HydrophoneTab() {
               <h3 className="text-sm font-semibold">Previous Jobs</h3>
               <Badge variant="secondary">{previousJobs.length}</Badge>
             </div>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={selectedIds.size === 0}
-              onClick={() => setShowDeleteDialog(true)}
-            >
-              Delete ({selectedIds.size})
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={
+                  dirtyJobs.size === 0 ||
+                  saveLabelsMutation.isPending ||
+                  (expandedJobId != null &&
+                    jobs.find((j) => j.id === expandedJobId)?.status === "running")
+                }
+                onClick={handleSaveLabels}
+              >
+                <Save className="h-3.5 w-3.5 mr-1" />
+                {saveLabelsMutation.isPending ? "Saving…" : "Save Labels"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={selectedIds.size === 0}
+                onClick={() => setShowExtractDialog(true)}
+              >
+                <PackageOpen className="h-3.5 w-3.5 mr-1" />
+                Extract Labeled Samples
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={selectedIds.size === 0}
+                onClick={() => setShowDeleteDialog(true)}
+              >
+                Delete ({selectedIds.size})
+              </Button>
+            </div>
           </div>
           <table className="w-full text-sm">
             <thead>
@@ -508,6 +580,7 @@ export function HydrophoneTab() {
                 <th className="px-3 py-2 text-left font-medium">Threshold</th>
                 <th className="px-3 py-2 text-left font-medium">Results</th>
                 <th className="px-3 py-2 text-left font-medium">Download</th>
+                <th className="px-3 py-2 text-left font-medium">Extract</th>
                 <th className="px-3 py-2 text-left font-medium">Error</th>
               </tr>
             </thead>
@@ -525,6 +598,7 @@ export function HydrophoneTab() {
                   playingKey={playingKey}
                   onPlay={handlePlay}
                   onLabelChange={handleLabelChange}
+                  labelEdits={labelEdits.get(job.id) ?? null}
                 />
               ))}
             </tbody>
@@ -546,6 +620,14 @@ export function HydrophoneTab() {
           });
         }}
         isPending={bulkDeleteMutation.isPending}
+      />
+
+      <ExtractDialog
+        open={showExtractDialog}
+        onOpenChange={setShowExtractDialog}
+        selectedIds={selectedIds}
+        extractMutation={extractMutation}
+        onSuccess={() => setSelectedIds(new Set())}
       />
     </div>
   );
@@ -607,6 +689,7 @@ function HydrophoneJobRow({
   playingKey,
   onPlay,
   onLabelChange,
+  labelEdits,
 }: {
   job: DetectionJob;
   checked: boolean;
@@ -616,9 +699,13 @@ function HydrophoneJobRow({
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
+  labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
 }) {
   const summary = job.result_summary as Record<string, unknown> | null;
-  const canExpand = job.status === "complete" && !!job.output_tsv_path;
+  const isRunning = job.status === "running";
+  const canExpand =
+    (job.status === "complete" || (isRunning && (job.segments_processed ?? 0) > 0)) &&
+    !!job.output_tsv_path;
 
   return (
     <>
@@ -677,6 +764,15 @@ function HydrophoneJobRow({
           )}
         </td>
         <td className="px-3 py-2">
+          {job.extract_status ? (
+            <Badge className={statusColor[job.extract_status] ?? ""}>
+              {job.extract_status}
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">&mdash;</span>
+          )}
+        </td>
+        <td className="px-3 py-2">
           {job.error_message && (
             <span className="text-red-600 text-xs truncate block max-w-48">
               {job.error_message}
@@ -686,12 +782,14 @@ function HydrophoneJobRow({
       </tr>
       {expanded && canExpand && (
         <tr>
-          <td colSpan={9} className="p-0">
+          <td colSpan={10} className="p-0">
             <HydrophoneContentTable
               jobId={job.id}
+              isRunning={isRunning}
               playingKey={playingKey}
               onPlay={onPlay}
               onLabelChange={onLabelChange}
+              labelEdits={labelEdits}
             />
           </td>
         </tr>
@@ -702,20 +800,37 @@ function HydrophoneJobRow({
 
 function HydrophoneContentTable({
   jobId,
+  isRunning,
   playingKey,
   onPlay,
   onLabelChange,
+  labelEdits,
 }: {
   jobId: string;
+  isRunning: boolean;
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
+  labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
 }) {
-  const { data: rows = [], isLoading } = useDetectionContent(jobId);
-  const [sortKey, setSortKey] = useState<SortKey>("avg_confidence");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const { data: rows = [], isLoading } = useDetectionContent(
+    jobId,
+    isRunning ? 3000 : undefined,
+  );
+  const [sortKey, setSortKey] = useState<SortKey>(isRunning ? "filename" : "avg_confidence");
+  const [sortDir, setSortDir] = useState<SortDir>(isRunning ? "asc" : "desc");
+  const prevRunning = useRef(isRunning);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
+
+  // Switch to confidence desc when job completes
+  useEffect(() => {
+    if (prevRunning.current && !isRunning) {
+      setSortKey("avg_confidence");
+      setSortDir("desc");
+    }
+    prevRunning.current = isRunning;
+  }, [isRunning]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -741,9 +856,14 @@ function HydrophoneContentTable({
 
   const getEffectiveLabel = useCallback(
     (row: DetectionRow, field: LabelField): number | null => {
+      const rk = rowKey(row);
+      const edit = labelEdits?.get(rk);
+      if (edit && field in edit) {
+        return edit[field] ?? null;
+      }
       return row[field];
     },
-    [],
+    [labelEdits],
   );
 
   const handleCheckboxClick = useCallback(

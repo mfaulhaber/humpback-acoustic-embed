@@ -4,7 +4,142 @@
 
 ## Active
 
-(No active plans)
+# Plan: HydrophoneTab — Live Detection Content + Save/Extract Labels
+
+## Context
+
+The Hydrophone detection UI has two gaps compared to the Detect tab:
+1. **No live detection results** — the active job panel shows segment progress but never displays the actual detection rows as they arrive. Expanding rows is restricted to completed jobs only.
+2. **Missing action buttons** — "Save Labels" and "Extract Labeled Samples" buttons are absent from the previous jobs toolbar, unlike the Detect tab.
+
+## Files to Modify
+
+| File | Action |
+|------|--------|
+| `frontend/src/components/classifier/ExtractDialog.tsx` | **Create** — extract from DetectionTab |
+| `frontend/src/components/classifier/DetectionTab.tsx` | Remove ExtractDialog definition, add import |
+| `frontend/src/components/classifier/HydrophoneTab.tsx` | Main changes — live content + buttons |
+
+No backend changes needed. All endpoints already work for hydrophone jobs.
+
+---
+
+### Step 1: Extract `ExtractDialog` into shared component
+
+**Create** `frontend/src/components/classifier/ExtractDialog.tsx`
+- Move lines 864-988 from `DetectionTab.tsx` (the `ExtractDialog` function + its imports)
+- Export `ExtractDialog` as named export
+- Needs imports: `useState`, `useEffect`, `Input`, `Button`, `FolderOpen`, Dialog primitives, `FolderBrowser`, `useExtractionSettings`, `useExtractLabeledSamples`
+
+**Modify** `DetectionTab.tsx`
+- Remove the `ExtractDialog` function (lines 864-988)
+- Remove now-unused imports: `useExtractionSettings`, `FolderOpen` (if not used elsewhere), Dialog primitives (keep if used elsewhere)
+- Add: `import { ExtractDialog } from "./ExtractDialog";`
+
+### Step 2: Enable live detection content for running jobs
+
+**In `HydrophoneTab.tsx`:**
+
+**2a.** `HydrophoneJobRow` — expand `canExpand` guard (line 621):
+```typescript
+// Before:
+const canExpand = job.status === "complete" && !!job.output_tsv_path;
+// After:
+const isRunning = job.status === "running";
+const canExpand =
+  (job.status === "complete" || (isRunning && (job.segments_processed ?? 0) > 0)) &&
+  !!job.output_tsv_path;
+```
+
+**2b.** Pass `isRunning` prop from `HydrophoneJobRow` to `HydrophoneContentTable`.
+
+**2c.** `HydrophoneContentTable` — add polling + sort transition:
+- Accept `isRunning: boolean` prop
+- Change `useDetectionContent(jobId)` → `useDetectionContent(jobId, isRunning ? 3000 : undefined)`
+- Initialize sort: `filename/asc` when running, `avg_confidence/desc` when not
+- Add `useEffect` to switch sort from filename→confidence when job transitions from running→complete (matching DetectionTab lines 628-634)
+
+**2d.** Active job panel (lines 401-465) — embed content table after alerts:
+```typescript
+{(activeJob.segments_processed ?? 0) > 0 && activeJob.output_tsv_path && (
+  <HydrophoneContentTable
+    jobId={activeJob.id}
+    isRunning={true}
+    playingKey={playingKey}
+    onPlay={handlePlay}
+    onLabelChange={handleLabelChange}
+    labelEdits={labelEdits.get(activeJob.id) ?? null}
+  />
+)}
+```
+
+### Step 3: Switch from auto-save to buffered label editing + add buttons
+
+**In `HydrophoneTab.tsx`:**
+
+**3a.** Add state for buffered editing (replacing auto-save):
+```typescript
+const extractMutation = useExtractLabeledSamples();
+const [labelEdits, setLabelEdits] = useState<
+  Map<string, Map<string, Partial<Record<LabelField, number | null>>>>
+>(new Map());
+const [dirtyJobs, setDirtyJobs] = useState<Set<string>>(new Set());
+const [showExtractDialog, setShowExtractDialog] = useState(false);
+```
+
+**3b.** Replace `handleLabelChange` (lines 147-163) — buffer edits locally instead of calling `saveLabelsMutation.mutate()` immediately. Match DetectionTab lines 161-175.
+
+**3c.** Add `handleSaveLabels` — batch-save all dirty jobs. Match DetectionTab lines 177-203.
+
+**3d.** Add buttons to toolbar (line 471-483 area). Three buttons in a flex row:
+- **Save Labels** — disabled when `dirtyJobs.size === 0` or expanded job is running
+- **Extract Labeled Samples** — disabled when `selectedIds.size === 0`, opens `ExtractDialog`
+- **Delete** — existing button, unchanged
+
+**3e.** Pass `labelEdits` through `HydrophoneJobRow` → `HydrophoneContentTable`.
+
+**3f.** Update `HydrophoneContentTable.getEffectiveLabel` to check buffered edits first, fall back to server value (matching DetectionTab lines 660-668).
+
+**3g.** Add `ExtractDialog` render next to `BulkDeleteDialog`.
+
+### Step 4: Add Extract status column to previous jobs table
+
+- Add `<th>Extract</th>` column header after "Download"
+- Add extract status badge cell in `HydrophoneJobRow` (matching DetectionTab lines 567-575)
+- Update `colSpan` in the expanded content row from 9 to 10
+
+### Imports to Add/Update in HydrophoneTab
+
+```typescript
+// Add:
+import { Save, PackageOpen } from "lucide-react";
+import { useExtractLabeledSamples } from "@/hooks/queries/useClassifier";
+import { ExtractDialog } from "./ExtractDialog";
+```
+
+---
+
+### Verification
+
+1. **Live content during running job:**
+   - Start a hydrophone detection job
+   - Confirm the active job panel shows detection rows once `segments_processed > 0`
+   - Confirm rows update every 3s as new detections arrive
+   - Confirm sort switches from filename/asc → confidence/desc on completion
+
+2. **Save Labels:**
+   - Expand a completed job, toggle label checkboxes
+   - Confirm Save Labels button enables (dirty state)
+   - Click Save Labels, confirm it saves and button disables
+   - Confirm Save Labels is disabled while a running job is expanded
+
+3. **Extract Labeled Samples:**
+   - Select completed jobs via checkboxes
+   - Click Extract, confirm dialog opens with path fields
+   - Submit extraction, confirm extract_status badge appears
+
+4. **Type-check:** `cd frontend && npx tsc --noEmit`
+5. **Existing tests:** `cd frontend && npx playwright test`
 
 ---
 
