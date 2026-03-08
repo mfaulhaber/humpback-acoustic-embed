@@ -6,6 +6,7 @@ import numpy as np
 from humpback.processing.inference import (
     FakeTF2Model,
     FakeTFLiteModel,
+    TFLiteModel,
     TF2SavedModel,
     _has_xla_must_compile,
     _strip_xla_must_compile,
@@ -216,3 +217,35 @@ def test_strip_xla_must_compile_reuses_existing(tmp_path):
     first = _strip_xla_must_compile(str(model_dir))
     second = _strip_xla_must_compile(str(model_dir))
     assert first == second
+
+
+# ---- TFLiteModel auto-detect vector_dim tests ----
+
+
+def _make_tflite_model_stub(output_shape, vector_dim):
+    """Create a TFLiteModel stub with mocked output details (bypasses real interpreter)."""
+    model = object.__new__(TFLiteModel)
+    model._output_details = [{"index": 0, "shape": np.array(output_shape)}]
+    model._vector_dim = vector_dim
+    return model
+
+
+def test_tflite_auto_detects_vector_dim():
+    """TFLiteModel._detect_output_dim should read actual dim from output details."""
+    model = _make_tflite_model_stub([1, 1536], vector_dim=1280)
+    actual = model._detect_output_dim()
+    assert actual == 1536
+
+
+def test_tflite_no_override_when_dims_match():
+    """_detect_output_dim returns the matching dim (no mismatch to correct)."""
+    model = _make_tflite_model_stub([1, 1280], vector_dim=1280)
+    actual = model._detect_output_dim()
+    assert actual == 1280
+
+
+def test_tflite_fallback_when_detection_fails():
+    """_detect_output_dim returns None for unusual output shapes."""
+    model = _make_tflite_model_stub([1], vector_dim=512)
+    actual = model._detect_output_dim()
+    assert actual is None

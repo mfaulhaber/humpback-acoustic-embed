@@ -142,6 +142,24 @@ async def test_default_model_type_in_response(client):
     assert data["input_format"] == "spectrogram"
 
 
+def test_available_model_file_schema_includes_detected_dim():
+    """AvailableModelFile schema should serialize detected_vector_dim when present."""
+    from humpback.schemas.model_registry import AvailableModelFile
+
+    with_dim = AvailableModelFile(
+        filename="model.tflite", path="/tmp/model.tflite",
+        size_bytes=1000, registered=False, detected_vector_dim=1536,
+    )
+    assert with_dim.detected_vector_dim == 1536
+    assert with_dim.model_dump()["detected_vector_dim"] == 1536
+
+    without_dim = AvailableModelFile(
+        filename="model.tflite", path="/tmp/model.tflite",
+        size_bytes=1000, registered=False,
+    )
+    assert without_dim.detected_vector_dim is None
+
+
 async def test_tables_includes_model_configs(client):
     resp = await client.get("/admin/tables")
     assert resp.status_code == 200

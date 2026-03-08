@@ -97,7 +97,25 @@ class TFLiteModel:
         self._interpreter.allocate_tensors()
         self._input_details = self._interpreter.get_input_details()
         self._output_details = self._interpreter.get_output_details()
-        self._vector_dim = vector_dim
+
+        actual_dim = self._detect_output_dim()
+        if actual_dim is not None and actual_dim != vector_dim:
+            logger.warning(
+                "Model %s: configured vector_dim=%d but actual output dim=%d; using %d",
+                model_path, vector_dim, actual_dim, actual_dim,
+            )
+            self._vector_dim = actual_dim
+        else:
+            self._vector_dim = vector_dim
+
+    def _detect_output_dim(self) -> int | None:
+        """Read the actual output dimension from the interpreter's output details."""
+        try:
+            if self._output_details and len(self._output_details[0]["shape"]) == 2:
+                return int(self._output_details[0]["shape"][1])
+        except (IndexError, KeyError):
+            pass
+        return None
 
     @property
     def vector_dim(self) -> int:
@@ -246,6 +264,7 @@ class TF2SavedModel:
                 self._model = tf.saved_model.load(model_dir)
             self._serving_fn = self._model.signatures["serving_default"]
             self._device = cpu_device
+            self._auto_correct_vector_dim(model_dir)
             return
 
         # --- Attempt GPU ---
@@ -262,6 +281,7 @@ class TF2SavedModel:
                 self._model = tf.saved_model.load(model_dir)
             self._serving_fn = self._model.signatures["serving_default"]
             self._device = cpu_device
+            self._auto_correct_vector_dim(model_dir)
             return
 
         gpu_device = gpus[0].name
@@ -301,6 +321,7 @@ class TF2SavedModel:
             self._model = cpu_model
             self._serving_fn = cpu_fn
             self._device = cpu_device
+            self._auto_correct_vector_dim(model_dir)
             return
 
         # Validate GPU output matches CPU
@@ -311,6 +332,7 @@ class TF2SavedModel:
                 self._serving_fn = gpu_fn
                 self._device = gpu_device
                 del cpu_model
+                self._auto_correct_vector_dim(model_dir)
                 return
         except Exception:
             logger.exception(
@@ -328,7 +350,23 @@ class TF2SavedModel:
         self._model = cpu_model
         self._serving_fn = cpu_fn
         self._device = cpu_device
+        self._auto_correct_vector_dim(model_dir)
         del gpu_model
+
+    def _auto_correct_vector_dim(self, model_dir: str) -> None:
+        """Detect actual output dim from the serving function and correct if needed."""
+        try:
+            shape = self._serving_fn.structured_outputs["embedding"].shape
+            if len(shape) == 2 and shape[1] is not None:
+                actual_dim = int(shape[1])
+                if actual_dim != self._vector_dim:
+                    logger.warning(
+                        "Model %s: configured vector_dim=%d but actual output dim=%d; using %d",
+                        model_dir, self._vector_dim, actual_dim, actual_dim,
+                    )
+                    self._vector_dim = actual_dim
+        except (KeyError, IndexError, TypeError, AttributeError):
+            pass
 
     @staticmethod
     def _validate_gpu(gpu_fn, cpu_fn, gpu_device: str, cpu_device: str) -> bool:

@@ -13,7 +13,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Audio detail view with processing history
 
 ### Processing Pipeline
-- Configurable model registry (TFLite + TF2 SavedModel) with auto-detection of input format and vector dim
+- Configurable model registry (TFLite + TF2 SavedModel) with auto-detection of input format and vector dim (scanner + runtime safety net)
 - Audio decoding, resampling (32 kHz), overlap-back windowing (5s default)
 - Log-mel spectrogram extraction (128x128) for TFLite models
 - Raw waveform input for TF2 SavedModel models

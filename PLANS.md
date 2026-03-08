@@ -4,7 +4,7 @@
 
 ## Active
 
-No active plans.
+(none)
 
 ---
 
@@ -27,3 +27,4 @@ No active plans.
 - Incremental detection rendering with per-file progress (ADR-006)
 - Fix escalating false positives: MLP classifier + diagnostics (ADR-007)
 - Multi-model support: grouping, filtering & validation
+- Fix TFLite/TF2 vector_dim mismatch: auto-detect from model output

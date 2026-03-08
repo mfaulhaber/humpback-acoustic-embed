@@ -164,6 +164,23 @@ def _detect_tflite_info(model_path: str) -> tuple[str, int | None]:
     return input_format, vector_dim
 
 
+def _detect_tf2_vector_dim(model_dir: str) -> int | None:
+    """Detect vector dim from a TF2 SavedModel's serving signature.
+
+    Returns the embedding output dimension, or None if detection fails.
+    """
+    try:
+        import tensorflow as tf
+        model = tf.saved_model.load(model_dir)
+        serving_fn = model.signatures["serving_default"]
+        shape = serving_fn.structured_outputs["embedding"].shape
+        if len(shape) == 2 and shape[1] is not None:
+            return int(shape[1])
+    except Exception:
+        pass
+    return None
+
+
 def scan_model_files(settings: Settings) -> list[dict]:
     """Scan models directory for .tflite files and TF2 SavedModel directories."""
     models_dir = Path(settings.models_dir)
@@ -187,13 +204,17 @@ def scan_model_files(settings: Settings) -> list[dict]:
             if p.is_dir() and (p / "saved_model.pb").exists():
                 # Sum up directory size
                 total_size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
-                files.append({
+                entry = {
                     "filename": p.name,
                     "path": str(p),
                     "size_bytes": total_size,
                     "model_type": "tf2_saved_model",
                     "input_format": "waveform",
-                })
+                }
+                detected_dim = _detect_tf2_vector_dim(str(p))
+                if detected_dim is not None:
+                    entry["detected_vector_dim"] = detected_dim
+                files.append(entry)
     return files
 
 

@@ -46,3 +46,4 @@ class AvailableModelFile(BaseModel):
     registered: bool
     model_type: str = "tflite"
     input_format: str = "spectrogram"
+    detected_vector_dim: int | None = None
