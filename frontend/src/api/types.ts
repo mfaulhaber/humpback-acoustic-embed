@@ -395,7 +395,7 @@ export interface DetectionJob {
   id: string;
   status: "queued" | "running" | "complete" | "failed" | "canceled";
   classifier_model_id: string;
-  audio_folder: string;
+  audio_folder: string | null;
   confidence_threshold: number;
   hop_seconds: number;
   high_threshold: number;
@@ -408,8 +408,40 @@ export interface DetectionJob {
   extract_status: string | null;
   extract_error: string | null;
   extract_summary: Record<string, unknown> | null;
+  // Hydrophone fields
+  hydrophone_id: string | null;
+  hydrophone_name: string | null;
+  start_timestamp: number | null;
+  end_timestamp: number | null;
+  segments_processed: number | null;
+  segments_total: number | null;
+  time_covered_sec: number | null;
+  alerts: FlashAlert[] | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface FlashAlert {
+  type: "error" | "warning" | "info";
+  message: string;
+  timestamp: string;
+}
+
+export interface HydrophoneInfo {
+  id: string;
+  name: string;
+  location: string;
+}
+
+export interface HydrophoneDetectionJobCreate {
+  classifier_model_id: string;
+  hydrophone_id: string;
+  start_timestamp: number;
+  end_timestamp: number;
+  confidence_threshold?: number;
+  hop_seconds?: number;
+  high_threshold?: number;
+  low_threshold?: number;
 }
 
 export interface ExtractionSettings {

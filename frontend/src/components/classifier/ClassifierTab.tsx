@@ -2,8 +2,9 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { TrainingTab } from "./TrainingTab";
 import { DetectionTab } from "./DetectionTab";
+import { HydrophoneTab } from "./HydrophoneTab";
 
-type SubView = "train" | "detect";
+type SubView = "train" | "detect" | "hydrophone";
 
 export function ClassifierTab() {
   const [view, setView] = useState<SubView>("train");
@@ -33,9 +34,26 @@ export function ClassifierTab() {
         >
           Detect
         </button>
+        <button
+          className={cn(
+            "px-4 py-1.5 text-sm font-medium rounded-t transition-colors",
+            view === "hydrophone"
+              ? "bg-slate-800 text-white"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+          onClick={() => setView("hydrophone")}
+        >
+          Hydrophone
+        </button>
       </div>
 
-      {view === "train" ? <TrainingTab /> : <DetectionTab />}
+      {view === "train" ? (
+        <TrainingTab />
+      ) : view === "detect" ? (
+        <DetectionTab />
+      ) : (
+        <HydrophoneTab />
+      )}
     </div>
   );
 }

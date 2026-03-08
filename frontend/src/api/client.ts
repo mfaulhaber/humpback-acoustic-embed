@@ -25,6 +25,8 @@ import type {
   FolderDeletePreview,
   FolderDeleteResult,
   FragmentationReport,
+  HydrophoneDetectionJobCreate,
+  HydrophoneInfo,
   LabelQueueEntry,
   RefinementReport,
   StabilitySummary,
@@ -260,6 +262,22 @@ export function detectionAudioSliceUrl(
 ) {
   return `/classifier/detection-jobs/${jobId}/audio-slice?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&duration_sec=${durationSec}`;
 }
+
+// ---- Hydrophone Detection ----
+
+export const fetchHydrophones = () =>
+  api<HydrophoneInfo[]>("/classifier/hydrophones");
+
+export const fetchHydrophoneDetectionJobs = () =>
+  api<DetectionJob[]>("/classifier/hydrophone-detection-jobs");
+
+export const createHydrophoneDetectionJob = (body: HydrophoneDetectionJobCreate) =>
+  post<DetectionJob>("/classifier/hydrophone-detection-jobs", body);
+
+export const cancelHydrophoneDetectionJob = (jobId: string) =>
+  api<{ status: string }>(`/classifier/hydrophone-detection-jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
 
 // ---- Detection Diagnostics ----
 

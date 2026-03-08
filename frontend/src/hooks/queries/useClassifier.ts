@@ -17,11 +17,16 @@ import {
   fetchDetectionDiagnostics,
   fetchDetectionDiagnosticsSummary,
   fetchTrainingDataSummary,
+  fetchHydrophones,
+  fetchHydrophoneDetectionJobs,
+  createHydrophoneDetectionJob,
+  cancelHydrophoneDetectionJob,
 } from "@/api/client";
 import type {
   ClassifierTrainingJobCreate,
   DetectionJobCreate,
   DetectionLabelRow,
+  HydrophoneDetectionJobCreate,
 } from "@/api/types";
 
 export function useTrainingJobs(refetchInterval?: number) {
@@ -187,5 +192,43 @@ export function useTrainingDataSummary(modelId: string | null) {
     queryKey: ["trainingDataSummary", modelId],
     queryFn: () => fetchTrainingDataSummary(modelId!),
     enabled: modelId !== null,
+  });
+}
+
+// ---- Hydrophone Detection ----
+
+export function useHydrophones() {
+  return useQuery({
+    queryKey: ["hydrophones"],
+    queryFn: fetchHydrophones,
+  });
+}
+
+export function useHydrophoneDetectionJobs(refetchInterval?: number) {
+  return useQuery({
+    queryKey: ["hydrophoneDetectionJobs"],
+    queryFn: fetchHydrophoneDetectionJobs,
+    refetchInterval,
+  });
+}
+
+export function useCreateHydrophoneDetectionJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: HydrophoneDetectionJobCreate) =>
+      createHydrophoneDetectionJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
+    },
+  });
+}
+
+export function useCancelHydrophoneDetectionJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => cancelHydrophoneDetectionJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
+    },
   });
 }

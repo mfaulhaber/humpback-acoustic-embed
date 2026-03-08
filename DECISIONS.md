@@ -127,3 +127,25 @@ Append-only record of significant design decisions. Do not edit historical entri
 - Frontend advanced options: classifier type, L2 normalize, regularization C, class weight
 - Frontend model table: Precision and F1 columns, diagnostic badges, expandable detail rows
 - No schema changes, no migrations required
+
+---
+
+## ADR-008: S3 HLS streaming detection for Orcasound hydrophones
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Users want to run classifier detection on historic Orcasound hydrophone audio stored as HLS streams in public S3 buckets. The existing detection pipeline only works with local audio folders.
+
+**Decision**: Extend `detection_jobs` (not a new table) with nullable hydrophone columns. Build a parallel streaming pipeline that fetches HLS `.ts` segments from S3, decodes them in-memory via ffmpeg stdin/stdout pipes, and feeds chunks through the existing inference pipeline. Anonymous S3 access (UNSIGNED signature) for the public Orcasound bucket. Audio playback re-fetches from S3 on demand. Hydrophone config is a hardcoded list in `config.py`.
+
+**Consequences**:
+- New columns on `detection_jobs`: `hydrophone_id`, `hydrophone_name`, `start_timestamp`, `end_timestamp`, `segments_processed`, `segments_total`, `time_covered_sec`, `alerts`
+- `audio_folder` changed from NOT NULL to nullable (hydrophone jobs have no local folder)
+- Queue claim functions split: `claim_detection_job` filters `hydrophone_id IS NULL`, `claim_hydrophone_detection_job` filters `IS NOT NULL`
+- Detection job listing split: local list excludes hydrophone jobs; separate hydrophone list endpoint
+- Cancel support via `threading.Event` + DB polling every 2s
+- Flash alerts (JSON array) stored in DB for segment decode failures
+- 7-day maximum time range per job
+- Added `boto3` dependency
+- Alembic migration `012_hydrophone_detection_columns.py`

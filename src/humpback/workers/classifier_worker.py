@@ -255,6 +255,191 @@ async def run_detection_job(
             logger.exception("Failed to mark detection job as failed")
 
 
+async def run_hydrophone_detection_job(
+    session: AsyncSession,
+    job: DetectionJob,
+    settings: Settings,
+    session_factory=None,
+) -> None:
+    """Execute a hydrophone detection job end-to-end."""
+    import threading
+
+    try:
+        from sqlalchemy import select
+
+        # Load classifier model
+        result = await session.execute(
+            select(ClassifierModel).where(ClassifierModel.id == job.classifier_model_id)
+        )
+        cm = result.scalar_one()
+
+        # Load sklearn pipeline
+        pipeline = joblib.load(cm.model_path)
+
+        # Load embedding model
+        model, input_format = await get_model_by_version(
+            session, cm.model_version, settings
+        )
+
+        feature_config = json.loads(cm.feature_config) if cm.feature_config else None
+
+        # Set up output directory and TSV path
+        ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
+        tsv_path = ddir / "detections.tsv"
+
+        await session.execute(
+            update(DetectionJob)
+            .where(DetectionJob.id == job.id)
+            .values(output_tsv_path=str(tsv_path))
+        )
+        await session.commit()
+
+        # Cancel support
+        cancel_event = threading.Event()
+        loop = asyncio.get_event_loop()
+
+        # Progress callback
+        def on_chunk_complete(
+            chunk_detections: list[dict],
+            segments_done: int,
+            segments_total: int,
+            time_covered_sec: float,
+        ):
+            if chunk_detections:
+                append_detections_tsv(chunk_detections, tsv_path)
+
+            if session_factory is not None:
+                async def _update_progress():
+                    try:
+                        async with session_factory() as progress_session:
+                            await progress_session.execute(
+                                update(DetectionJob)
+                                .where(DetectionJob.id == job.id)
+                                .values(
+                                    segments_processed=segments_done,
+                                    segments_total=segments_total,
+                                    time_covered_sec=time_covered_sec,
+                                )
+                            )
+                            await progress_session.commit()
+                    except Exception:
+                        logger.debug("Failed to update hydrophone progress", exc_info=True)
+
+                loop.call_soon_threadsafe(asyncio.ensure_future, _update_progress())
+
+        # Alert callback
+        alerts_list: list[dict] = []
+
+        def on_alert(alert: dict):
+            alerts_list.append(alert)
+            if session_factory is not None:
+                async def _update_alerts():
+                    try:
+                        async with session_factory() as alert_session:
+                            await alert_session.execute(
+                                update(DetectionJob)
+                                .where(DetectionJob.id == job.id)
+                                .values(alerts=json.dumps(alerts_list))
+                            )
+                            await alert_session.commit()
+                    except Exception:
+                        logger.debug("Failed to update alerts", exc_info=True)
+
+                loop.call_soon_threadsafe(asyncio.ensure_future, _update_alerts())
+
+        # Poll for cancellation in background
+        async def _poll_cancel():
+            while not cancel_event.is_set():
+                await asyncio.sleep(2)
+                try:
+                    if session_factory is not None:
+                        async with session_factory() as poll_session:
+                            result = await poll_session.execute(
+                                select(DetectionJob.status).where(
+                                    DetectionJob.id == job.id
+                                )
+                            )
+                            status = result.scalar_one_or_none()
+                            if status == "canceled":
+                                cancel_event.set()
+                                return
+                except Exception:
+                    pass
+
+        cancel_task = asyncio.ensure_future(_poll_cancel())
+
+        from humpback.classifier.hydrophone_detector import run_hydrophone_detection
+
+        detections, summary = await asyncio.to_thread(
+            run_hydrophone_detection,
+            job.hydrophone_id,
+            job.start_timestamp,
+            job.end_timestamp,
+            pipeline,
+            model,
+            cm.window_size_seconds,
+            cm.target_sample_rate,
+            job.confidence_threshold,
+            input_format,
+            feature_config,
+            job.hop_seconds,
+            job.high_threshold,
+            job.low_threshold,
+            on_chunk_complete,
+            on_alert,
+            cancel_event.is_set,
+        )
+
+        cancel_task.cancel()
+
+        if cancel_event.is_set():
+            # Write what we have
+            from humpback.classifier.detector import write_detections_tsv
+            write_detections_tsv(detections, tsv_path)
+            await session.execute(
+                update(DetectionJob)
+                .where(DetectionJob.id == job.id)
+                .values(
+                    status="canceled",
+                    result_summary=json.dumps(summary),
+                    alerts=json.dumps(alerts_list) if alerts_list else None,
+                    updated_at=__import__("datetime").datetime.now(
+                        __import__("datetime").timezone.utc
+                    ),
+                )
+            )
+            await session.commit()
+            return
+
+        # Write final TSV
+        from humpback.classifier.detector import write_detections_tsv
+        write_detections_tsv(detections, tsv_path)
+
+        summary_path = ddir / "run_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2))
+
+        await session.execute(
+            update(DetectionJob)
+            .where(DetectionJob.id == job.id)
+            .values(
+                result_summary=json.dumps(summary),
+                alerts=json.dumps(alerts_list) if alerts_list else None,
+            )
+        )
+        await complete_detection_job(session, job.id)
+
+    except Exception as e:
+        logger.exception("Hydrophone detection job %s failed", job.id)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        try:
+            await fail_detection_job(session, job.id, str(e))
+        except Exception:
+            logger.exception("Failed to mark hydrophone detection job as failed")
+
+
 async def run_extraction_job(
     session: AsyncSession,
     job: DetectionJob,

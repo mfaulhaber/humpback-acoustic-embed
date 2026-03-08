@@ -41,7 +41,7 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
 
     status: Mapped[str] = mapped_column(default="queued")
     classifier_model_id: Mapped[str]
-    audio_folder: Mapped[str]
+    audio_folder: Mapped[Optional[str]] = mapped_column(default=None)
     confidence_threshold: Mapped[float] = mapped_column(default=0.5)
     hop_seconds: Mapped[float] = mapped_column(default=1.0)
     high_threshold: Mapped[float] = mapped_column(default=0.70)
@@ -55,3 +55,12 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     extract_error: Mapped[Optional[str]] = mapped_column(Text, default=None)
     extract_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     extract_config: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    # Hydrophone detection fields
+    hydrophone_id: Mapped[Optional[str]] = mapped_column(default=None)
+    hydrophone_name: Mapped[Optional[str]] = mapped_column(default=None)
+    start_timestamp: Mapped[Optional[float]] = mapped_column(default=None)
+    end_timestamp: Mapped[Optional[float]] = mapped_column(default=None)
+    segments_processed: Mapped[Optional[int]] = mapped_column(default=None)
+    segments_total: Mapped[Optional[int]] = mapped_column(default=None)
+    time_covered_sec: Mapped[Optional[float]] = mapped_column(default=None)
+    alerts: Mapped[Optional[str]] = mapped_column(Text, default=None)

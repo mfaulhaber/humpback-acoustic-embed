@@ -521,7 +521,7 @@ function DetectionJobTableRow({
         </td>
         <td
           className="px-3 py-2 text-muted-foreground truncate max-w-48"
-          title={job.audio_folder}
+          title={job.audio_folder ?? undefined}
         >
           {job.audio_folder}
         </td>

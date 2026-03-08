@@ -1,0 +1,200 @@
+"""Integration tests for hydrophone detection API endpoints."""
+
+import uuid
+
+
+async def test_list_hydrophones(client):
+    """GET /classifier/hydrophones returns configured locations."""
+    resp = await client.get("/classifier/hydrophones")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 4
+    ids = {h["id"] for h in data}
+    assert "rpi_orcasound_lab" in ids
+    assert all("name" in h and "location" in h for h in data)
+
+
+async def test_list_hydrophone_detection_jobs_empty(client):
+    """GET /classifier/hydrophone-detection-jobs returns empty list initially."""
+    resp = await client.get("/classifier/hydrophone-detection-jobs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_create_hydrophone_detection_job_bad_model(client):
+    """POST with nonexistent model returns 400."""
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": "nonexistent",
+            "hydrophone_id": "rpi_orcasound_lab",
+            "start_timestamp": 1700000000,
+            "end_timestamp": 1700003600,
+        },
+    )
+    assert resp.status_code == 400
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_create_hydrophone_detection_job_bad_hydrophone(client, app_settings):
+    """POST with unknown hydrophone_id returns 400."""
+    # First we need a valid model — insert one directly
+    from sqlalchemy import insert
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="test-model",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "hydrophone_id": "unknown_hydrophone",
+            "start_timestamp": 1700000000,
+            "end_timestamp": 1700003600,
+        },
+    )
+    assert resp.status_code == 400
+    assert "unknown hydrophone" in resp.json()["detail"].lower()
+
+    await engine.dispose()
+
+
+async def test_create_hydrophone_detection_job_invalid_time_range(client, app_settings):
+    """POST with end <= start returns 422 (Pydantic validation)."""
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": "some-model",
+            "hydrophone_id": "rpi_orcasound_lab",
+            "start_timestamp": 1700003600,
+            "end_timestamp": 1700000000,
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_hydrophone_detection_job_too_long_range(client):
+    """POST with > 7 day range returns 422."""
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": "some-model",
+            "hydrophone_id": "rpi_orcasound_lab",
+            "start_timestamp": 1700000000,
+            "end_timestamp": 1700000000 + 8 * 86400,  # 8 days
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_hydrophone_detection_job_success(client, app_settings):
+    """POST with valid model + hydrophone creates a queued job."""
+    from sqlalchemy import insert
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="hydro-test-model",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "hydrophone_id": "rpi_orcasound_lab",
+            "start_timestamp": 1700000000,
+            "end_timestamp": 1700003600,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["hydrophone_id"] == "rpi_orcasound_lab"
+    assert data["hydrophone_name"] == "Orcasound Lab"
+    assert data["start_timestamp"] == 1700000000
+    assert data["end_timestamp"] == 1700003600
+
+    # Should appear in the list
+    list_resp = await client.get("/classifier/hydrophone-detection-jobs")
+    assert list_resp.status_code == 200
+    jobs = list_resp.json()
+    assert any(j["id"] == data["id"] for j in jobs)
+
+    # Should NOT appear in the local detection jobs list
+    local_resp = await client.get("/classifier/detection-jobs")
+    local_jobs = local_resp.json()
+    assert not any(j["id"] == data["id"] for j in local_jobs)
+
+    await engine.dispose()
+
+
+async def test_cancel_hydrophone_job_not_found(client):
+    """POST cancel for nonexistent job returns 404."""
+    resp = await client.post("/classifier/hydrophone-detection-jobs/nonexistent/cancel")
+    assert resp.status_code == 404
+
+
+async def test_detection_job_out_has_hydrophone_fields(client, app_settings):
+    """DetectionJobOut includes nullable hydrophone fields for local jobs."""
+    from sqlalchemy import insert
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="queued",
+                classifier_model_id="fake-model",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Hydrophone fields should be null for local jobs
+    assert data["hydrophone_id"] is None
+    assert data["hydrophone_name"] is None
+    assert data["start_timestamp"] is None
+    assert data["segments_processed"] is None
+    assert data["alerts"] is None
+
+    await engine.dispose()

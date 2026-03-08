@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import pyarrow.parquet as pq
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob, DetectionJob
@@ -141,6 +141,86 @@ async def create_detection_job(
     return job
 
 
+async def create_hydrophone_detection_job(
+    session: AsyncSession,
+    classifier_model_id: str,
+    hydrophone_id: str,
+    start_timestamp: float,
+    end_timestamp: float,
+    confidence_threshold: float = 0.5,
+    hop_seconds: float = 1.0,
+    high_threshold: float = 0.70,
+    low_threshold: float = 0.45,
+) -> DetectionJob:
+    """Create a hydrophone detection job after validating inputs."""
+    from humpback.config import HYDROPHONE_IDS, ORCASOUND_HYDROPHONES
+
+    # Validate classifier model exists
+    result = await session.execute(
+        select(ClassifierModel).where(ClassifierModel.id == classifier_model_id)
+    )
+    cm = result.scalar_one_or_none()
+    if cm is None:
+        raise ValueError(f"Classifier model not found: {classifier_model_id}")
+
+    # Validate hydrophone
+    if hydrophone_id not in HYDROPHONE_IDS:
+        raise ValueError(f"Unknown hydrophone: {hydrophone_id}")
+
+    hydrophone = next(h for h in ORCASOUND_HYDROPHONES if h["id"] == hydrophone_id)
+
+    if not 0.0 <= confidence_threshold <= 1.0:
+        raise ValueError("confidence_threshold must be between 0.0 and 1.0")
+
+    job = DetectionJob(
+        classifier_model_id=classifier_model_id,
+        hydrophone_id=hydrophone_id,
+        hydrophone_name=hydrophone["name"],
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+        confidence_threshold=confidence_threshold,
+        hop_seconds=hop_seconds,
+        high_threshold=high_threshold,
+        low_threshold=low_threshold,
+    )
+    session.add(job)
+    await session.commit()
+    return job
+
+
+async def list_hydrophone_detection_jobs(session: AsyncSession) -> list[DetectionJob]:
+    """List detection jobs that are hydrophone-based."""
+    result = await session.execute(
+        select(DetectionJob)
+        .where(DetectionJob.hydrophone_id.isnot(None))
+        .order_by(DetectionJob.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def cancel_hydrophone_detection_job(
+    session: AsyncSession, job_id: str
+) -> Optional[DetectionJob]:
+    """Cancel a running hydrophone detection job. Returns job if found."""
+    result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+    if job.status != "running":
+        raise ValueError(f"Job is not running (status={job.status})")
+
+    from datetime import datetime, timezone
+    await session.execute(
+        update(DetectionJob)
+        .where(DetectionJob.id == job_id)
+        .values(status="canceled", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+    return job
+
+
 async def list_training_jobs(session: AsyncSession) -> list[ClassifierTrainingJob]:
     result = await session.execute(
         select(ClassifierTrainingJob).order_by(ClassifierTrainingJob.created_at.desc())
@@ -196,8 +276,11 @@ async def delete_classifier_model(
 
 
 async def list_detection_jobs(session: AsyncSession) -> list[DetectionJob]:
+    """List local (non-hydrophone) detection jobs."""
     result = await session.execute(
-        select(DetectionJob).order_by(DetectionJob.created_at.desc())
+        select(DetectionJob)
+        .where(DetectionJob.hydrophone_id.is_(None))
+        .order_by(DetectionJob.created_at.desc())
     )
     return list(result.scalars().all())
 

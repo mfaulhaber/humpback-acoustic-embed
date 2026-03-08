@@ -242,9 +242,35 @@ async def fail_training_job(
 
 
 async def claim_detection_job(session: AsyncSession) -> Optional[DetectionJob]:
+    """Claim a queued local detection job (not hydrophone)."""
     result = await session.execute(
         select(DetectionJob)
-        .where(DetectionJob.status == "queued")
+        .where(
+            DetectionJob.status == "queued",
+            DetectionJob.hydrophone_id.is_(None),
+        )
+        .order_by(DetectionJob.created_at)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+
+    job.status = "running"
+    job.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    return job
+
+
+async def claim_hydrophone_detection_job(session: AsyncSession) -> Optional[DetectionJob]:
+    """Claim a queued hydrophone detection job."""
+    result = await session.execute(
+        select(DetectionJob)
+        .where(
+            DetectionJob.status == "queued",
+            DetectionJob.hydrophone_id.isnot(None),
+        )
         .order_by(DetectionJob.created_at)
         .limit(1)
         .with_for_update(skip_locked=True)

@@ -23,6 +23,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "scipy>=1.14",
     "joblib>=1.5.3",
+    "boto3>=1.42.63",
 ]
 
 [project.optional-dependencies]

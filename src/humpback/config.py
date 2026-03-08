@@ -19,3 +19,17 @@ class Settings(BaseSettings):
     negative_sample_path: str = "/Users/michael/development/data-vocalizations/negatives"
 
     model_config = {"env_prefix": "HUMPBACK_"}
+
+
+# ---- Orcasound Hydrophone Configuration ----
+
+ORCASOUND_HYDROPHONES = [
+    {"id": "rpi_orcasound_lab", "name": "Orcasound Lab", "location": "San Juan Islands"},
+    {"id": "rpi_north_sjc", "name": "North San Juan Channel", "location": "San Juan Channel"},
+    {"id": "rpi_port_townsend", "name": "Port Townsend", "location": "Puget Sound"},
+    {"id": "rpi_bush_point", "name": "Bush Point", "location": "Whidbey Island"},
+]
+
+ORCASOUND_S3_BUCKET = "audio-orcasound-net"
+
+HYDROPHONE_IDS = {h["id"] for h in ORCASOUND_HYDROPHONES}

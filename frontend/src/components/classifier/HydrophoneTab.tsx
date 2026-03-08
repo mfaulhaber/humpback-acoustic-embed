@@ -1,0 +1,790 @@
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  ChevronDown,
+  ChevronRight,
+  Play,
+  Pause,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  Square,
+  AlertTriangle,
+  AlertCircle,
+  Info,
+  X,
+} from "lucide-react";
+import {
+  useClassifierModels,
+  useHydrophones,
+  useHydrophoneDetectionJobs,
+  useCreateHydrophoneDetectionJob,
+  useCancelHydrophoneDetectionJob,
+  useBulkDeleteDetectionJobs,
+  useDetectionContent,
+  useSaveDetectionLabels,
+} from "@/hooks/queries/useClassifier";
+import { detectionTsvUrl, detectionAudioSliceUrl } from "@/api/client";
+import { BulkDeleteDialog } from "./BulkDeleteDialog";
+import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
+
+type SortKey = "filename" | "start_sec" | "end_sec" | "avg_confidence";
+type SortDir = "asc" | "desc";
+type LabelField = "humpback" | "ship" | "background";
+
+function rowKey(row: { filename: string; start_sec: number; end_sec: number }): string {
+  return `${row.filename}:${row.start_sec}:${row.end_sec}`;
+}
+
+const statusColor: Record<string, string> = {
+  queued: "bg-yellow-100 text-yellow-800",
+  running: "bg-blue-100 text-blue-800",
+  complete: "bg-green-100 text-green-800",
+  failed: "bg-red-100 text-red-800",
+  canceled: "bg-gray-100 text-gray-800",
+};
+
+function formatDateRange(startTs: number, endTs: number): string {
+  const start = new Date(startTs * 1000);
+  const end = new Date(endTs * 1000);
+  const fmt = (d: Date) =>
+    d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${fmt(start)} — ${fmt(end)}`;
+}
+
+export function HydrophoneTab() {
+  const { data: models = [] } = useClassifierModels();
+  const { data: hydrophones = [] } = useHydrophones();
+  const { data: jobs = [] } = useHydrophoneDetectionJobs(3000);
+  const createMutation = useCreateHydrophoneDetectionJob();
+  const cancelMutation = useCancelHydrophoneDetectionJob();
+  const bulkDeleteMutation = useBulkDeleteDetectionJobs();
+  const saveLabelsMutation = useSaveDetectionLabels();
+
+  // Form state
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [selectedHydrophoneId, setSelectedHydrophoneId] = useState("");
+  const [startDatetime, setStartDatetime] = useState("");
+  const [endDatetime, setEndDatetime] = useState("");
+  const [threshold, setThreshold] = useState(0.5);
+  const [hopSeconds, setHopSeconds] = useState(1.0);
+  const [highThreshold, setHighThreshold] = useState(0.70);
+  const [lowThreshold, setLowThreshold] = useState(0.45);
+
+  // Table state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+
+  // Audio
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playingKey, setPlayingKey] = useState<string | null>(null);
+
+  const activeJob = jobs.find((j) => j.status === "running" || j.status === "queued");
+  const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued");
+
+  const handleSubmit = () => {
+    if (!selectedModelId || !selectedHydrophoneId || !startDatetime || !endDatetime) return;
+    const startTs = new Date(startDatetime).getTime() / 1000;
+    const endTs = new Date(endDatetime).getTime() / 1000;
+    createMutation.mutate({
+      classifier_model_id: selectedModelId,
+      hydrophone_id: selectedHydrophoneId,
+      start_timestamp: startTs,
+      end_timestamp: endTs,
+      confidence_threshold: threshold,
+      hop_seconds: hopSeconds,
+      high_threshold: highThreshold,
+      low_threshold: lowThreshold,
+    });
+  };
+
+  // Selection helpers
+  const toggleId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handlePlay = useCallback(
+    (jobId: string, row: DetectionRow) => {
+      const key = `${jobId}:${row.filename}:${row.start_sec}`;
+      if (playingKey === key) {
+        audioRef.current?.pause();
+        setPlayingKey(null);
+        return;
+      }
+      const spanDuration = row.end_sec - row.start_sec;
+      const duration = Math.max(spanDuration, 5);
+      const url = detectionAudioSliceUrl(jobId, row.filename, row.start_sec, duration);
+      if (audioRef.current) {
+        const audio = audioRef.current;
+        audio.src = url;
+        audio.load();
+        setPlayingKey(key);
+        audio.play().catch(() => setPlayingKey(null));
+      }
+    },
+    [playingKey],
+  );
+
+  // Auto-save labels for hydrophone jobs
+  const handleLabelChange = useCallback(
+    (jobId: string, rk: string, field: LabelField, value: number | null) => {
+      const [filename, startStr, endStr] = rk.split(":");
+      const rows: DetectionLabelRow[] = [
+        {
+          filename,
+          start_sec: parseFloat(startStr),
+          end_sec: parseFloat(endStr),
+          humpback: field === "humpback" ? value : null,
+          ship: field === "ship" ? value : null,
+          background: field === "background" ? value : null,
+        },
+      ];
+      saveLabelsMutation.mutate({ jobId, rows });
+    },
+    [saveLabelsMutation],
+  );
+
+  return (
+    <div className="space-y-4">
+      <audio ref={audioRef} onEnded={() => setPlayingKey(null)} />
+
+      {/* Job Creation Form */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Hydrophone Detection</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">Hydrophone</label>
+              <select
+                className="w-full border rounded px-3 py-2 text-sm mt-1"
+                value={selectedHydrophoneId}
+                onChange={(e) => setSelectedHydrophoneId(e.target.value)}
+              >
+                <option value="">Select a hydrophone…</option>
+                {hydrophones.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.name} — {h.location}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Classifier Model</label>
+              <select
+                className="w-full border rounded px-3 py-2 text-sm mt-1"
+                value={selectedModelId}
+                onChange={(e) => setSelectedModelId(e.target.value)}
+              >
+                <option value="">Select a model…</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({m.model_version})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">Start Date/Time</label>
+              <Input
+                type="datetime-local"
+                value={startDatetime}
+                onChange={(e) => setStartDatetime(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">End Date/Time</label>
+              <Input
+                type="datetime-local"
+                value={endDatetime}
+                onChange={(e) => setEndDatetime(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium">
+              Confidence Threshold (summary): {threshold.toFixed(2)}
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={threshold}
+              onChange={(e) => setThreshold(parseFloat(e.target.value))}
+              className="w-full mt-1"
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-sm font-medium">Hop Size (s)</label>
+              <Input
+                type="number"
+                min={0.1}
+                max={10}
+                step={0.1}
+                value={hopSeconds}
+                onChange={(e) => setHopSeconds(parseFloat(e.target.value) || 1.0)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">
+                Start Threshold: {highThreshold.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={highThreshold}
+                onChange={(e) => setHighThreshold(parseFloat(e.target.value))}
+                className="w-full mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">
+                Continue Threshold: {lowThreshold.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={lowThreshold}
+                onChange={(e) => setLowThreshold(parseFloat(e.target.value))}
+                className="w-full mt-1"
+              />
+            </div>
+          </div>
+          <Button
+            onClick={handleSubmit}
+            disabled={
+              !selectedModelId ||
+              !selectedHydrophoneId ||
+              !startDatetime ||
+              !endDatetime ||
+              createMutation.isPending
+            }
+          >
+            {createMutation.isPending ? "Creating…" : "Start Detection"}
+          </Button>
+          {createMutation.isError && (
+            <p className="text-sm text-red-600">
+              {(createMutation.error as Error).message}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Active Job Panel */}
+      {activeJob && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">
+                Active Job — {activeJob.hydrophone_name}
+              </CardTitle>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={activeJob.status !== "running" || cancelMutation.isPending}
+                onClick={() => cancelMutation.mutate(activeJob.id)}
+              >
+                <Square className="h-3.5 w-3.5 mr-1" />
+                Stop
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {activeJob.start_timestamp && activeJob.end_timestamp && (
+              <p className="text-sm text-muted-foreground">
+                {formatDateRange(activeJob.start_timestamp, activeJob.end_timestamp)}
+              </p>
+            )}
+            <div className="space-y-1">
+              <div className="flex justify-between text-sm">
+                <span>
+                  Processed {activeJob.segments_processed ?? 0}/
+                  {activeJob.segments_total ?? "?"} segments
+                  {activeJob.time_covered_sec != null && (
+                    <span className="text-muted-foreground">
+                      {" "}({activeJob.time_covered_sec.toFixed(0)}s audio)
+                    </span>
+                  )}
+                </span>
+                <Badge className={statusColor[activeJob.status] ?? ""}>
+                  {activeJob.status}
+                </Badge>
+              </div>
+              {activeJob.segments_total != null && activeJob.segments_total > 0 && (
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        ((activeJob.segments_processed ?? 0) / activeJob.segments_total) * 100,
+                      )}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Flash Alerts */}
+            {activeJob.alerts && activeJob.alerts.length > 0 && (
+              <AlertsPanel alerts={activeJob.alerts} />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Previous Jobs */}
+      {previousJobs.length > 0 && (
+        <div className="border rounded-md">
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold">Previous Jobs</h3>
+              <Badge variant="secondary">{previousJobs.length}</Badge>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={selectedIds.size === 0}
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              Delete ({selectedIds.size})
+            </Button>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="w-10 px-3 py-2">
+                  <Checkbox
+                    checked={
+                      previousJobs.length > 0 &&
+                      previousJobs.every((j) => selectedIds.has(j.id))
+                        ? true
+                        : previousJobs.some((j) => selectedIds.has(j.id))
+                          ? "indeterminate"
+                          : false
+                    }
+                    onCheckedChange={() => {
+                      const allSel = previousJobs.every((j) => selectedIds.has(j.id));
+                      if (allSel) setSelectedIds(new Set());
+                      else setSelectedIds(new Set(previousJobs.map((j) => j.id)));
+                    }}
+                  />
+                </th>
+                <th className="w-8 px-1 py-2" />
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+                <th className="px-3 py-2 text-left font-medium">Hydrophone</th>
+                <th className="px-3 py-2 text-left font-medium">Date Range</th>
+                <th className="px-3 py-2 text-left font-medium">Threshold</th>
+                <th className="px-3 py-2 text-left font-medium">Results</th>
+                <th className="px-3 py-2 text-left font-medium">Download</th>
+                <th className="px-3 py-2 text-left font-medium">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {previousJobs.map((job) => (
+                <HydrophoneJobRow
+                  key={job.id}
+                  job={job}
+                  checked={selectedIds.has(job.id)}
+                  onToggle={() => toggleId(job.id)}
+                  expanded={expandedJobId === job.id}
+                  onExpand={() =>
+                    setExpandedJobId(expandedJobId === job.id ? null : job.id)
+                  }
+                  playingKey={playingKey}
+                  onPlay={handlePlay}
+                  onLabelChange={handleLabelChange}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <BulkDeleteDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        count={selectedIds.size}
+        entityName="hydrophone detection job"
+        onConfirm={() => {
+          bulkDeleteMutation.mutate([...selectedIds], {
+            onSuccess: () => {
+              setSelectedIds(new Set());
+              setShowDeleteDialog(false);
+            },
+          });
+        }}
+        isPending={bulkDeleteMutation.isPending}
+      />
+    </div>
+  );
+}
+
+function AlertsPanel({ alerts }: { alerts: FlashAlert[] }) {
+  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+
+  const visible = alerts.filter((_, i) => !dismissed.has(i));
+  if (visible.length === 0) return null;
+
+  const dismiss = (idx: number) => {
+    setDismissed((prev) => new Set(prev).add(idx));
+  };
+
+  const alertStyles: Record<string, string> = {
+    error: "bg-red-50 border-red-200 text-red-800 dark:bg-red-950/30 dark:border-red-800 dark:text-red-300",
+    warning: "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300",
+    info: "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-300",
+  };
+
+  const alertIcons: Record<string, typeof AlertTriangle> = {
+    error: AlertCircle,
+    warning: AlertTriangle,
+    info: Info,
+  };
+
+  return (
+    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+      {alerts.map((alert, i) => {
+        if (dismissed.has(i)) return null;
+        const Icon = alertIcons[alert.type] ?? Info;
+        return (
+          <div
+            key={i}
+            className={`flex items-start gap-2 px-3 py-2 text-xs border rounded ${alertStyles[alert.type] ?? alertStyles.info}`}
+          >
+            <Icon className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+            <span className="flex-1">{alert.message}</span>
+            <button
+              className="p-0.5 hover:bg-black/10 rounded flex-shrink-0"
+              onClick={() => dismiss(i)}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HydrophoneJobRow({
+  job,
+  checked,
+  onToggle,
+  expanded,
+  onExpand,
+  playingKey,
+  onPlay,
+  onLabelChange,
+}: {
+  job: DetectionJob;
+  checked: boolean;
+  onToggle: () => void;
+  expanded: boolean;
+  onExpand: () => void;
+  playingKey: string | null;
+  onPlay: (jobId: string, row: DetectionRow) => void;
+  onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
+}) {
+  const summary = job.result_summary as Record<string, unknown> | null;
+  const canExpand = job.status === "complete" && !!job.output_tsv_path;
+
+  return (
+    <>
+      <tr className="border-b hover:bg-muted/30">
+        <td className="px-3 py-2">
+          <Checkbox checked={checked} onCheckedChange={onToggle} />
+        </td>
+        <td className="px-1 py-2">
+          {canExpand && (
+            <button className="p-0.5 hover:bg-muted rounded" onClick={onExpand}>
+              {expanded ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+            </button>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
+        </td>
+        <td className="px-3 py-2 text-muted-foreground">{job.hydrophone_name}</td>
+        <td className="px-3 py-2 text-muted-foreground text-xs">
+          {job.start_timestamp && job.end_timestamp
+            ? formatDateRange(job.start_timestamp, job.end_timestamp)
+            : "\u2014"}
+        </td>
+        <td className="px-3 py-2 text-muted-foreground">
+          {job.high_threshold}/{job.low_threshold}
+        </td>
+        <td className="px-3 py-2 text-muted-foreground">
+          {summary
+            ? `${summary.n_spans} span(s)`
+            : "\u2014"}
+          {job.time_covered_sec != null && (
+            <span className="text-xs ml-1">
+              ({job.time_covered_sec.toFixed(0)}s)
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          {job.status === "complete" && job.output_tsv_path && (
+            <a
+              href={detectionTsvUrl(job.id)}
+              download
+              className="text-blue-600 hover:underline text-xs inline-flex items-center gap-1"
+            >
+              <Download className="h-3 w-3" />
+              TSV
+            </a>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          {job.error_message && (
+            <span className="text-red-600 text-xs truncate block max-w-48">
+              {job.error_message}
+            </span>
+          )}
+        </td>
+      </tr>
+      {expanded && canExpand && (
+        <tr>
+          <td colSpan={9} className="p-0">
+            <HydrophoneContentTable
+              jobId={job.id}
+              playingKey={playingKey}
+              onPlay={onPlay}
+              onLabelChange={onLabelChange}
+            />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function HydrophoneContentTable({
+  jobId,
+  playingKey,
+  onPlay,
+  onLabelChange,
+}: {
+  jobId: string;
+  playingKey: string | null;
+  onPlay: (jobId: string, row: DetectionRow) => void;
+  onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
+}) {
+  const { data: rows = [], isLoading } = useDetectionContent(jobId);
+  const [sortKey, setSortKey] = useState<SortKey>("avg_confidence");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  };
+
+  const sorted = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (typeof av === "number" && typeof bv === "number") {
+        return sortDir === "asc" ? av - bv : bv - av;
+      }
+      const sa = String(av);
+      const sb = String(bv);
+      return sortDir === "asc" ? sa.localeCompare(sb) : sb.localeCompare(sa);
+    });
+  }, [rows, sortKey, sortDir]);
+
+  const getEffectiveLabel = useCallback(
+    (row: DetectionRow, field: LabelField): number | null => {
+      return row[field];
+    },
+    [],
+  );
+
+  const handleCheckboxClick = useCallback(
+    (row: DetectionRow, field: LabelField) => {
+      const current = getEffectiveLabel(row, field);
+      const next = current === 1 ? 0 : 1;
+      onLabelChange(jobId, rowKey(row), field, next);
+    },
+    [jobId, getEffectiveLabel, onLabelChange],
+  );
+
+  // Keyboard shortcuts
+  const keyMap: Record<string, LabelField> = { h: "humpback", s: "ship", b: "background" };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+      if (e.key === "ArrowDown" || e.key === "j") {
+        e.preventDefault();
+        setFocusedIndex((prev) => {
+          if (prev === null) return 0;
+          return Math.min(prev + 1, sorted.length - 1);
+        });
+        return;
+      }
+      if (e.key === "ArrowUp" || e.key === "k") {
+        e.preventDefault();
+        setFocusedIndex((prev) => {
+          if (prev === null) return 0;
+          return Math.max(prev - 1, 0);
+        });
+        return;
+      }
+      if (e.key === " " && focusedIndex !== null && focusedIndex < sorted.length) {
+        e.preventDefault();
+        onPlay(jobId, sorted[focusedIndex]);
+        return;
+      }
+      const field = keyMap[e.key.toLowerCase()];
+      if (field && focusedIndex !== null && focusedIndex < sorted.length) {
+        e.preventDefault();
+        handleCheckboxClick(sorted[focusedIndex], field);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [sorted, focusedIndex, handleCheckboxClick, onPlay, jobId]);
+
+  useEffect(() => {
+    if (focusedIndex === null || !tableRef.current) return;
+    const row = tableRef.current.querySelector(`tbody tr:nth-child(${focusedIndex + 1})`);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedIndex]);
+
+  if (isLoading) {
+    return <div className="p-4 text-sm text-muted-foreground">Loading detections…</div>;
+  }
+  if (rows.length === 0) {
+    return <div className="p-4 text-sm text-muted-foreground">No detections</div>;
+  }
+
+  const SortHeader = ({ label, field }: { label: string; field: SortKey }) => (
+    <th
+      className="px-3 py-1.5 text-left font-medium cursor-pointer hover:bg-muted/50 select-none"
+      onClick={() => handleSort(field)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortKey === field &&
+          (sortDir === "asc" ? (
+            <ArrowUp className="h-3 w-3" />
+          ) : (
+            <ArrowDown className="h-3 w-3" />
+          ))}
+      </span>
+    </th>
+  );
+
+  return (
+    <div className="bg-muted/20 border-t" ref={tableRef}>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b">
+            <th className="w-8 px-3 py-1.5" />
+            <SortHeader label="Chunk" field="filename" />
+            <SortHeader label="Start (s)" field="start_sec" />
+            <SortHeader label="End (s)" field="end_sec" />
+            <SortHeader label="Confidence" field="avg_confidence" />
+            <th className="px-3 py-1.5 text-center font-medium">Humpback</th>
+            <th className="px-3 py-1.5 text-center font-medium">Ship</th>
+            <th className="px-3 py-1.5 text-center font-medium">Background</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((row, i) => {
+            const key = `${jobId}:${row.filename}:${row.start_sec}`;
+            const isPlaying = playingKey === key;
+            const isFocused = focusedIndex === i;
+            return (
+              <tr
+                key={i}
+                className={`border-b last:border-0 cursor-pointer ${
+                  isFocused ? "bg-blue-100 dark:bg-blue-900/30" : "hover:bg-muted/30"
+                }`}
+                onClick={() => setFocusedIndex(i)}
+              >
+                <td className="px-3 py-1.5">
+                  <button
+                    className="p-0.5 hover:bg-muted rounded"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPlay(jobId, row);
+                    }}
+                    title={isPlaying ? "Pause" : "Play"}
+                  >
+                    {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                  </button>
+                </td>
+                <td className="px-3 py-1.5 truncate max-w-40" title={row.filename}>
+                  {row.filename}
+                </td>
+                <td className="px-3 py-1.5">{row.start_sec.toFixed(1)}</td>
+                <td className="px-3 py-1.5">{row.end_sec.toFixed(1)}</td>
+                <td className="px-3 py-1.5">{row.avg_confidence.toFixed(3)}</td>
+                <td className="px-3 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer"
+                    checked={getEffectiveLabel(row, "humpback") === 1}
+                    onChange={() => handleCheckboxClick(row, "humpback")}
+                  />
+                </td>
+                <td className="px-3 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer"
+                    checked={getEffectiveLabel(row, "ship") === 1}
+                    onChange={() => handleCheckboxClick(row, "ship")}
+                  />
+                </td>
+                <td className="px-3 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer"
+                    checked={getEffectiveLabel(row, "background") === 1}
+                    onChange={() => handleCheckboxClick(row, "background")}
+                  />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}

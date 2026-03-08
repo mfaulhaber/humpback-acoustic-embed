@@ -22,6 +22,8 @@ from humpback.schemas.classifier import (
     DetectionJobOut,
     DiagnosticsResponse,
     DiagnosticsSummaryResponse,
+    HydrophoneDetectionJobCreate,
+    HydrophoneInfo,
     PerFileDiagnosticSummary,
     TrainingDataSummaryResponse,
     TrainingSourceInfo,
@@ -86,6 +88,14 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         extract_status=job.extract_status,
         extract_error=job.extract_error,
         extract_summary=json.loads(job.extract_summary) if job.extract_summary else None,
+        hydrophone_id=job.hydrophone_id,
+        hydrophone_name=job.hydrophone_name,
+        start_timestamp=job.start_timestamp,
+        end_timestamp=job.end_timestamp,
+        segments_processed=job.segments_processed,
+        segments_total=job.segments_total,
+        time_covered_sec=job.time_covered_sec,
+        alerts=json.loads(job.alerts) if job.alerts else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -209,6 +219,58 @@ async def download_detections(
         media_type="text/tab-separated-values",
         filename=f"detections_{job_id}.tsv",
     )
+
+
+# ---- Hydrophone Detection ----
+
+
+@router.get("/hydrophones")
+async def list_hydrophones() -> list[HydrophoneInfo]:
+    """List configured hydrophone locations."""
+    from humpback.config import ORCASOUND_HYDROPHONES
+    return [HydrophoneInfo(**h) for h in ORCASOUND_HYDROPHONES]
+
+
+@router.post("/hydrophone-detection-jobs", status_code=201)
+async def create_hydrophone_detection_job(
+    body: HydrophoneDetectionJobCreate, session: SessionDep
+) -> DetectionJobOut:
+    try:
+        job = await classifier_service.create_hydrophone_detection_job(
+            session,
+            body.classifier_model_id,
+            body.hydrophone_id,
+            body.start_timestamp,
+            body.end_timestamp,
+            body.confidence_threshold,
+            body.hop_seconds,
+            body.high_threshold,
+            body.low_threshold,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _detection_job_to_out(job)
+
+
+@router.get("/hydrophone-detection-jobs")
+async def list_hydrophone_detection_jobs(
+    session: SessionDep,
+) -> list[DetectionJobOut]:
+    jobs = await classifier_service.list_hydrophone_detection_jobs(session)
+    return [_detection_job_to_out(j) for j in jobs]
+
+
+@router.post("/hydrophone-detection-jobs/{job_id}/cancel")
+async def cancel_hydrophone_detection_job(
+    job_id: str, session: SessionDep
+) -> dict:
+    try:
+        job = await classifier_service.cancel_hydrophone_detection_job(session, job_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if job is None:
+        raise HTTPException(404, "Hydrophone detection job not found")
+    return {"status": "canceled"}
 
 
 # ---- Diagnostics ----
@@ -691,61 +753,15 @@ async def save_detection_labels(
 # ---- Audio Slice Streaming ----
 
 
-@router.get("/detection-jobs/{job_id}/audio-slice")
-async def get_detection_audio_slice(
-    job_id: str,
-    session: SessionDep,
-    filename: str = Query(...),
-    start_sec: float = Query(..., ge=0),
-    duration_sec: float = Query(..., gt=0),
-    normalize: bool = Query(True),
-):
-    """Stream a WAV slice from a detection job's audio folder."""
-    job = await classifier_service.get_detection_job(session, job_id)
-    if job is None:
-        raise HTTPException(404, "Detection job not found")
-
-    audio_folder = Path(job.audio_folder)
-    file_path = audio_folder / filename
-
-    # Path traversal check
-    try:
-        file_path.resolve().relative_to(audio_folder.resolve())
-    except ValueError:
-        raise HTTPException(400, "Invalid filename (path traversal)")
-
-    if not file_path.is_file():
-        raise HTTPException(404, f"Audio file not found: {filename}")
-
-    import asyncio
-
+def _encode_wav_response(segment: "np.ndarray", sr: int, normalize: bool) -> Response:
+    """Encode audio segment as WAV response."""
     import numpy as np
 
-    from humpback.processing.audio_io import decode_audio
-
-    audio, sr = await asyncio.to_thread(decode_audio, file_path)
-
-    total_duration = len(audio) / sr
-    # Clamp start so we always have audio to return: if the requested
-    # range extends past the end of the file (common for the last detection
-    # window which was zero-padded), shift start backwards.
-    end_sec_requested = start_sec + duration_sec
-    if end_sec_requested > total_duration:
-        start_sec = max(0.0, total_duration - duration_sec)
-
-    start_sample = int(start_sec * sr)
-    end_sample = int((start_sec + duration_sec) * sr)
-    start_sample = min(start_sample, len(audio))
-    end_sample = min(end_sample, len(audio))
-    segment = audio[start_sample:end_sample]
-
-    # Peak-normalize so every clip plays at consistent loudness
     if normalize:
         peak = np.max(np.abs(segment))
         if peak > 0:
             segment = segment / peak
 
-    # Encode as 16-bit PCM WAV in memory
     pcm = (segment * 32767).clip(-32768, 32767).astype(np.int16)
     buf = io.BytesIO()
     n_samples = len(pcm)
@@ -764,3 +780,102 @@ async def get_detection_audio_slice(
         media_type="audio/wav",
         headers={"Content-Length": str(buf.tell())},
     )
+
+
+@router.get("/detection-jobs/{job_id}/audio-slice")
+async def get_detection_audio_slice(
+    job_id: str,
+    session: SessionDep,
+    filename: str = Query(...),
+    start_sec: float = Query(..., ge=0),
+    duration_sec: float = Query(..., gt=0),
+    normalize: bool = Query(True),
+):
+    """Stream a WAV slice from a detection job's audio folder or S3."""
+    import asyncio
+
+    import numpy as np
+
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+
+    # Hydrophone jobs: re-fetch from S3 on demand
+    if job.hydrophone_id:
+        from datetime import datetime, timezone
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client, decode_ts_bytes
+
+        # Parse synthetic filename (e.g. "20260301T143000Z.wav") to get chunk start time
+        basename = filename.replace(".wav", "")
+        try:
+            chunk_utc = datetime.strptime(basename, "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            raise HTTPException(400, f"Invalid hydrophone filename format: {filename}")
+
+        chunk_start_ts = chunk_utc.timestamp()
+        # The requested audio is at chunk_start + start_sec
+        abs_start = chunk_start_ts + start_sec
+        abs_end = abs_start + duration_sec
+
+        # Fetch relevant S3 segments
+        client = OrcasoundS3Client()
+        folders = client.list_hls_folders(job.hydrophone_id, abs_start, abs_end)
+        if not folders:
+            raise HTTPException(404, "No S3 audio data found for this time range")
+
+        # Fetch and decode segments that cover our range
+        target_sr = 32000  # default
+        all_audio = []
+        for folder_ts in folders:
+            segs = client.list_segments(job.hydrophone_id, folder_ts)
+            for seg_key in segs:
+                try:
+                    seg_bytes = await asyncio.to_thread(client.fetch_segment, seg_key)
+                    audio = await asyncio.to_thread(decode_ts_bytes, seg_bytes, target_sr)
+                    all_audio.append(audio)
+                except Exception:
+                    continue
+
+        if not all_audio:
+            raise HTTPException(404, "Could not decode any audio segments")
+
+        combined = np.concatenate(all_audio)
+        # Extract the requested slice (approximate — we fetch nearby segments)
+        # Use full combined audio with duration clamping
+        end_sample = min(int(duration_sec * target_sr), len(combined))
+        segment = combined[:end_sample]
+
+        return _encode_wav_response(segment, target_sr, normalize)
+
+    # Local audio folder path
+    from humpback.processing.audio_io import decode_audio
+
+    audio_folder = Path(job.audio_folder)
+    file_path = audio_folder / filename
+
+    # Path traversal check
+    try:
+        file_path.resolve().relative_to(audio_folder.resolve())
+    except ValueError:
+        raise HTTPException(400, "Invalid filename (path traversal)")
+
+    if not file_path.is_file():
+        raise HTTPException(404, f"Audio file not found: {filename}")
+
+    audio, sr = await asyncio.to_thread(decode_audio, file_path)
+
+    total_duration = len(audio) / sr
+    end_sec_requested = start_sec + duration_sec
+    if end_sec_requested > total_duration:
+        start_sec = max(0.0, total_duration - duration_sec)
+
+    start_sample = int(start_sec * sr)
+    end_sample = int((start_sec + duration_sec) * sr)
+    start_sample = min(start_sample, len(audio))
+    end_sample = min(end_sample, len(audio))
+    segment = audio[start_sample:end_sample]
+
+    return _encode_wav_response(segment, sr, normalize)

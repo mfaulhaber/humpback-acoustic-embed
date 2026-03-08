@@ -68,7 +68,7 @@ class DetectionJobOut(BaseModel):
     id: str
     status: str
     classifier_model_id: str
-    audio_folder: str
+    audio_folder: Optional[str] = None
     confidence_threshold: float
     hop_seconds: float
     high_threshold: float
@@ -81,10 +81,52 @@ class DetectionJobOut(BaseModel):
     extract_status: Optional[str] = None
     extract_error: Optional[str] = None
     extract_summary: Optional[dict[str, Any]] = None
+    # Hydrophone fields
+    hydrophone_id: Optional[str] = None
+    hydrophone_name: Optional[str] = None
+    start_timestamp: Optional[float] = None
+    end_timestamp: Optional[float] = None
+    segments_processed: Optional[int] = None
+    segments_total: Optional[int] = None
+    time_covered_sec: Optional[float] = None
+    alerts: Optional[list[dict[str, Any]]] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---- Hydrophone ----
+
+
+class HydrophoneInfo(BaseModel):
+    id: str
+    name: str
+    location: str
+
+
+class HydrophoneDetectionJobCreate(BaseModel):
+    classifier_model_id: str
+    hydrophone_id: str
+    start_timestamp: float
+    end_timestamp: float
+    confidence_threshold: float = 0.5
+    hop_seconds: float = 1.0
+    high_threshold: float = 0.70
+    low_threshold: float = 0.45
+
+    @model_validator(mode="after")
+    def _validate(self):
+        if self.high_threshold < self.low_threshold:
+            raise ValueError("high_threshold must be >= low_threshold")
+        if self.hop_seconds <= 0:
+            raise ValueError("hop_seconds must be positive")
+        if self.end_timestamp <= self.start_timestamp:
+            raise ValueError("end_timestamp must be > start_timestamp")
+        max_range = 7 * 24 * 3600  # 7 days
+        if self.end_timestamp - self.start_timestamp > max_range:
+            raise ValueError("Time range must be <= 7 days")
+        return self
 
 
 # ---- Diagnostics ----
