@@ -11,7 +11,12 @@ from humpback.classifier.detector import (
     append_detections_tsv,
     merge_detection_events,
 )
-from humpback.classifier.s3_stream import LocalHLSClient, OrcasoundS3Client, iter_audio_chunks
+from humpback.classifier.s3_stream import (
+    CachingS3Client,
+    LocalHLSClient,
+    OrcasoundS3Client,
+    iter_audio_chunks,
+)
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
 from humpback.processing.windowing import slice_windows_with_metadata
@@ -37,20 +42,25 @@ def run_hydrophone_detection(
     on_alert: Callable | None = None,
     cancel_check: Callable[[], bool] | None = None,
     local_cache_path: str | None = None,
+    s3_cache_path: str | None = None,
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
-    When local_cache_path is provided, reads HLS segments from local
-    filesystem cache instead of S3.
+    Client selection priority:
+    1. local_cache_path → LocalHLSClient (pre-downloaded cache)
+    2. s3_cache_path → CachingS3Client (write-through S3 cache)
+    3. fallback → OrcasoundS3Client (direct S3, no caching)
 
     Returns (all_detections, summary).
     """
     feature_config = feature_config or {}
     normalization = feature_config.get("normalization", "per_window_max")
 
-    client: OrcasoundS3Client | LocalHLSClient
+    client: OrcasoundS3Client | LocalHLSClient | CachingS3Client
     if local_cache_path:
         client = LocalHLSClient(local_cache_path)
+    elif s3_cache_path:
+        client = CachingS3Client(s3_cache_path)
     else:
         client = OrcasoundS3Client()
 

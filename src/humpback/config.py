@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     tf_force_cpu: bool = False
     positive_sample_path: str = "/Users/michael/development/data-vocalizations/positives"
     negative_sample_path: str = "/Users/michael/development/data-vocalizations/negatives"
+    s3_cache_path: str = "/Users/michael/development/orcasound_s3_cache"
 
     model_config = {"env_prefix": "HUMPBACK_"}
 

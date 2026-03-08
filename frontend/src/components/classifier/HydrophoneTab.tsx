@@ -55,6 +55,21 @@ const statusColor: Record<string, string> = {
   canceled: "bg-gray-100 text-gray-800",
 };
 
+function computeUtcRange(filename: string, startSec: number, endSec: number): string {
+  const basename = filename.replace(".wav", "");
+  const match = basename.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) return filename;
+  const chunkDate = new Date(
+    Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6])
+  );
+  const fmt = (ms: number): string => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+  };
+  return `${fmt(chunkDate.getTime() + startSec * 1000)}_${fmt(chunkDate.getTime() + endSec * 1000)}`;
+}
+
 function formatDateRange(startTs: number, endTs: number): string {
   const start = new Date(startTs * 1000);
   const end = new Date(endTs * 1000);
@@ -950,7 +965,7 @@ function HydrophoneContentTable({
         <thead>
           <tr className="border-b">
             <th className="w-8 px-3 py-1.5" />
-            <SortHeader label="Chunk" field="filename" />
+            <SortHeader label="Detection Range" field="filename" />
             <SortHeader label="Start (s)" field="start_sec" />
             <SortHeader label="End (s)" field="end_sec" />
             <SortHeader label="Confidence" field="avg_confidence" />
@@ -984,8 +999,8 @@ function HydrophoneContentTable({
                     {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                   </button>
                 </td>
-                <td className="px-3 py-1.5 truncate max-w-40" title={row.filename}>
-                  {row.filename}
+                <td className="px-3 py-1.5 truncate max-w-64" title={computeUtcRange(row.filename, row.start_sec, row.end_sec)}>
+                  {computeUtcRange(row.filename, row.start_sec, row.end_sec)}
                 </td>
                 <td className="px-3 py-1.5">{row.start_sec.toFixed(1)}</td>
                 <td className="px-3 py-1.5">{row.end_sec.toFixed(1)}</td>

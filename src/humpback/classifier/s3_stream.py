@@ -1,7 +1,9 @@
 """S3 and local HLS streaming clients for Orcasound hydrophone audio."""
 
 import io
+import json
 import logging
+import os
 import struct
 import subprocess
 from collections.abc import Callable
@@ -13,6 +15,10 @@ import numpy as np
 from humpback.config import ORCASOUND_S3_BUCKET
 
 logger = logging.getLogger(__name__)
+
+
+class SegmentNotFoundError(Exception):
+    """Raised when a segment is confirmed missing (404 cached)."""
 
 
 class OrcasoundS3Client:
@@ -157,6 +163,136 @@ class LocalHLSClient:
         return total
 
 
+class CachingS3Client:
+    """Write-through S3 cache: fetches from S3 and caches on local filesystem.
+
+    Mirrors the S3 bucket directory structure under cache_root.
+    Uses .404.json markers for confirmed-missing segments/folders.
+    """
+
+    def __init__(self, cache_root: str):
+        self._s3 = OrcasoundS3Client()
+        self._root = Path(cache_root) / ORCASOUND_S3_BUCKET
+
+    def list_hls_folders(
+        self, hydrophone_id: str, start_ts: float, end_ts: float
+    ) -> list[str]:
+        """Merge S3 folder list with locally cached folders."""
+        # Query S3 for authoritative list
+        try:
+            s3_folders = self._s3.list_hls_folders(hydrophone_id, start_ts, end_ts)
+        except Exception:
+            logger.warning("S3 list_hls_folders failed, using cache only")
+            s3_folders = []
+
+        # Also check local cache for folders with .ts files in range
+        hls_dir = self._root / hydrophone_id / "hls"
+        local_folders: list[str] = []
+        if hls_dir.is_dir():
+            for entry in hls_dir.iterdir():
+                if not entry.is_dir():
+                    continue
+                try:
+                    ts = int(entry.name)
+                except ValueError:
+                    continue
+                if ts <= end_ts and ts >= start_ts - 3600:
+                    has_ts = any(f.suffix == ".ts" for f in entry.iterdir())
+                    if has_ts:
+                        local_folders.append(entry.name)
+
+        # Merge and deduplicate
+        all_folders = set(s3_folders) | set(local_folders)
+        return sorted(all_folders, key=int)
+
+    def list_segments(self, hydrophone_id: str, folder_ts: str) -> list[str]:
+        """List segments, merging local cache with S3."""
+        folder_dir = self._root / hydrophone_id / "hls" / folder_ts
+        marker_path = folder_dir / ".404.json"
+
+        # Collect local .ts files
+        local_keys: set[str] = set()
+        if folder_dir.is_dir():
+            for entry in folder_dir.iterdir():
+                if entry.suffix == ".ts":
+                    local_keys.add(
+                        f"{hydrophone_id}/hls/{folder_ts}/{entry.name}"
+                    )
+
+        # If folder marked as 404, return local-only
+        if marker_path.is_file():
+            return sorted(local_keys)
+
+        # Query S3
+        try:
+            s3_keys = self._s3.list_segments(hydrophone_id, folder_ts)
+        except Exception:
+            logger.warning(
+                "S3 list_segments failed for %s/%s, using cache only",
+                hydrophone_id, folder_ts,
+            )
+            return sorted(local_keys)
+
+        if not s3_keys and not local_keys:
+            # Mark folder as empty
+            folder_dir.mkdir(parents=True, exist_ok=True)
+            marker_path.write_text(
+                json.dumps({"cached_at_utc": datetime.now(timezone.utc).isoformat()})
+            )
+            return []
+
+        # Merge and deduplicate
+        all_keys = local_keys | set(s3_keys)
+        return sorted(all_keys)
+
+    def fetch_segment(self, key: str) -> bytes:
+        """Fetch segment, using local cache or S3 with write-through."""
+        local_path = self._root / key
+        marker_path = local_path.parent / f"{local_path.name}.404.json"
+
+        # Cache hit
+        if local_path.is_file():
+            return local_path.read_bytes()
+
+        # Known missing
+        if marker_path.is_file():
+            raise SegmentNotFoundError(f"Segment confirmed missing: {key}")
+
+        # Fetch from S3
+        try:
+            data = self._s3.fetch_segment(key)
+        except Exception as e:
+            # Check if it's a botocore ClientError with 404/NoSuchKey
+            resp = getattr(e, "response", None)
+            code = ""
+            if isinstance(resp, dict):
+                code = resp.get("Error", {}).get("Code", "")
+            if code in ("NoSuchKey", "404"):
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                marker_path.write_text(
+                    json.dumps({"cached_at_utc": datetime.now(timezone.utc).isoformat()})
+                )
+                raise SegmentNotFoundError(f"Segment not found on S3: {key}") from e
+            raise
+
+        # Atomic write to cache
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = local_path.with_suffix(".tmp")
+        tmp_path.write_bytes(data)
+        os.replace(str(tmp_path), str(local_path))
+
+        return data
+
+    def count_segments(
+        self, hydrophone_id: str, folder_timestamps: list[str]
+    ) -> int:
+        """Count total .ts segments across folders."""
+        total = 0
+        for folder_ts in folder_timestamps:
+            total += len(self.list_segments(hydrophone_id, folder_ts))
+        return total
+
+
 def decode_ts_bytes(ts_bytes: bytes, target_sr: int = 32000) -> np.ndarray:
     """Decode HLS .ts segment bytes to float32 audio array via ffmpeg.
 
@@ -199,7 +335,7 @@ def decode_ts_bytes(ts_bytes: bytes, target_sr: int = 32000) -> np.ndarray:
 
 
 def iter_audio_chunks(
-    client: "OrcasoundS3Client | LocalHLSClient",
+    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
     hydrophone_id: str,
     start_ts: float,
     end_ts: float,
@@ -230,7 +366,9 @@ def iter_audio_chunks(
 
     chunk_samples = int(chunk_seconds * target_sr)
     accumulator = np.array([], dtype=np.float32)
-    chunk_start_ts = start_ts
+    # Base chunk timestamps on the first folder's actual recording time,
+    # not the job's start_ts (which may precede available data by hours).
+    chunk_start_ts = float(folder_segment_map[0][0])
     segments_done = 0
 
     for folder_ts, segments in folder_segment_map:

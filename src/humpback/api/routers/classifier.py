@@ -788,6 +788,7 @@ def _encode_wav_response(segment: "np.ndarray", sr: int, normalize: bool) -> Res
 async def get_detection_audio_slice(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
     filename: str = Query(...),
     start_sec: float = Query(..., ge=0),
     duration_sec: float = Query(..., gt=0),
@@ -802,13 +803,12 @@ async def get_detection_audio_slice(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    # Hydrophone jobs: re-fetch from S3 or local cache on demand
+    # Hydrophone jobs: reconstruct audio from cached HLS segments
     if job.hydrophone_id:
         from datetime import datetime, timezone
 
         from humpback.classifier.s3_stream import (
             LocalHLSClient,
-            OrcasoundS3Client,
             decode_ts_bytes,
         )
 
@@ -822,41 +822,95 @@ async def get_detection_audio_slice(
             raise HTTPException(400, f"Invalid hydrophone filename format: {filename}")
 
         chunk_start_ts = chunk_utc.timestamp()
-        # The requested audio is at chunk_start + start_sec
+
+        # Read from local cache (segments are cached by CachingS3Client during detection)
+        cache_path = job.local_cache_path or settings.s3_cache_path
+        local = LocalHLSClient(cache_path)
+        target_sr = 32000
+        est_seg_dur = 10.0  # HLS segments are ~10s
+
+        # Try direct folder match first (works for new-style timestamps
+        # where chunk_start_ts reflects actual recording time)
         abs_start = chunk_start_ts + start_sec
         abs_end = abs_start + duration_sec
+        folders = local.list_hls_folders(job.hydrophone_id, abs_start, abs_end)
 
-        # Use local cache or S3
-        if job.local_cache_path:
-            client: OrcasoundS3Client | LocalHLSClient = LocalHLSClient(job.local_cache_path)
-        else:
-            client = OrcasoundS3Client()
+        if folders:
+            # Direct match: decode nearby segments from the matching folder
+            all_audio: list = []
+            for folder_ts in folders:
+                segs = local.list_segments(job.hydrophone_id, folder_ts)
+                if not segs:
+                    continue
+                folder_start = int(folder_ts)
+                offset_in_folder = max(0.0, abs_start - folder_start)
+                start_idx = max(0, int(offset_in_folder / est_seg_dur) - 2)
+                n_needed = int((duration_sec + 4 * est_seg_dur) / est_seg_dur) + 4
+                end_idx = min(len(segs), start_idx + n_needed)
 
-        folders = client.list_hls_folders(job.hydrophone_id, abs_start, abs_end)
+                for seg_key in segs[start_idx:end_idx]:
+                    try:
+                        seg_bytes = await asyncio.to_thread(local.fetch_segment, seg_key)
+                        audio = await asyncio.to_thread(decode_ts_bytes, seg_bytes, target_sr)
+                        all_audio.append(audio)
+                    except Exception:
+                        continue
+
+            if all_audio:
+                combined = np.concatenate(all_audio)
+                local_offset = max(0.0, abs_start - int(folders[0]) - start_idx * est_seg_dur)
+                start_sample = max(0, int(local_offset * target_sr))
+                end_sample = min(len(combined), start_sample + int(duration_sec * target_sr))
+                segment = combined[start_sample:end_sample]
+                if len(segment) == 0:
+                    segment = combined[: min(int(duration_sec * target_sr), len(combined))]
+                return _encode_wav_response(segment, target_sr, normalize)
+
+        # Fallback: synthetic filename is a sequential offset from job start
+        # (old-style timestamps where iter_audio_chunks used start_ts as base).
+        # Compute position in the sequential audio stream.
+        stream_offset = (chunk_start_ts - job.start_timestamp) + start_sec
+
+        # List ALL folders for the job's time range from local cache
+        folders = local.list_hls_folders(
+            job.hydrophone_id, job.start_timestamp, job.end_timestamp
+        )
         if not folders:
             raise HTTPException(404, "No audio data found for this time range")
 
-        # Fetch and decode segments that cover our range
-        target_sr = 32000  # default
+        # Collect all segment keys in order across folders
+        all_segs: list[str] = []
+        for fts in folders:
+            all_segs.extend(local.list_segments(job.hydrophone_id, fts))
+
+        if not all_segs:
+            raise HTTPException(404, "No cached segments found")
+
+        # Estimate which segments to decode
+        start_idx = max(0, int(stream_offset / est_seg_dur) - 2)
+        n_needed = int((duration_sec + 4 * est_seg_dur) / est_seg_dur) + 4
+        end_idx = min(len(all_segs), start_idx + n_needed)
+
         all_audio = []
-        for folder_ts in folders:
-            segs = client.list_segments(job.hydrophone_id, folder_ts)
-            for seg_key in segs:
-                try:
-                    seg_bytes = await asyncio.to_thread(client.fetch_segment, seg_key)
-                    audio = await asyncio.to_thread(decode_ts_bytes, seg_bytes, target_sr)
-                    all_audio.append(audio)
-                except Exception:
-                    continue
+        for seg_key in all_segs[start_idx:end_idx]:
+            try:
+                seg_bytes = await asyncio.to_thread(local.fetch_segment, seg_key)
+                audio = await asyncio.to_thread(decode_ts_bytes, seg_bytes, target_sr)
+                all_audio.append(audio)
+            except Exception:
+                continue
 
         if not all_audio:
             raise HTTPException(404, "Could not decode any audio segments")
 
         combined = np.concatenate(all_audio)
-        # Extract the requested slice (approximate — we fetch nearby segments)
-        # Use full combined audio with duration clamping
-        end_sample = min(int(duration_sec * target_sr), len(combined))
-        segment = combined[:end_sample]
+        local_offset = max(0.0, stream_offset - start_idx * est_seg_dur)
+        start_sample = max(0, int(local_offset * target_sr))
+        end_sample = min(len(combined), start_sample + int(duration_sec * target_sr))
+        segment = combined[start_sample:end_sample]
+
+        if len(segment) == 0:
+            segment = combined[: min(int(duration_sec * target_sr), len(combined))]
 
         return _encode_wav_response(segment, target_sr, normalize)
 

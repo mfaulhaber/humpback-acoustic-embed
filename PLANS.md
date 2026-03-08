@@ -4,6 +4,12 @@
 
 ## Active
 
+(none)
+
+---
+
+## Recently Completed
+
 # Plan: HydrophoneTab — Live Detection Content + Save/Extract Labels
 
 ## Context
@@ -535,3 +541,4 @@ type SubView = "train" | "detect" | "hydrophone";
 - Optimize TFLite encoding: batch inference via resize_tensor_input + multi-threading + timing instrumentation
 - Optimize spectrogram extraction: vectorized STFT via batched `np.fft.rfft` (10.9x feature speedup) + TFLite inference batch_size tuned to 64 (6.2x vs sequential)
 - S3 HLS Streaming Detection (Hydrophone Tab): Orcasound hydrophone integration with in-memory S3 streaming, cancel support, flash alerts, auto-save labels
+- S3 Caching, UTC Display & WAV Export: CachingS3Client with write-through cache + 404 markers, UTC range display in detection table, WAV export for hydrophone jobs

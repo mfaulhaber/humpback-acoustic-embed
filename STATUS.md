@@ -56,14 +56,17 @@ Current state of the humpback acoustic embedding and clustering platform.
 
 ### Hydrophone Streaming Detection
 - S3 HLS streaming from Orcasound public hydrophone network (anonymous access)
+- Write-through S3 cache (`CachingS3Client`): fetches from S3 on first access, caches segments locally with atomic writes, 404 markers for missing segments
 - Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
+- Client priority: local_cache_path > s3_cache_path > direct S3
 - 4 configured hydrophones: Orcasound Lab, North San Juan Channel, Port Townsend, Bush Point
 - In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
 - Streaming detection pipeline with per-chunk progress updates
 - Cancel support via threading.Event + DB polling
 - Flash alerts for segment decode failures (dismissable, color-coded)
-- Audio playback re-fetches from S3 or local cache on demand
-- Auto-save labels on each toggle (no explicit Save button)
+- Audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
+- UTC range display in Detection Range column (replaces raw synthetic filenames)
+- WAV export for hydrophone jobs: fetches audio from HLS, writes labeled samples to positive/negative folders
 - Max 7-day time range per job
 
 ### Web UI

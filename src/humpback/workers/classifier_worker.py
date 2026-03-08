@@ -389,6 +389,7 @@ async def run_hydrophone_detection_job(
             on_alert,
             cancel_event.is_set,
             job.local_cache_path,
+            settings.s3_cache_path,
         )
 
         cancel_task.cancel()
@@ -463,14 +464,34 @@ async def run_extraction_job(
         cm = cm_result.scalar_one_or_none()
         ws = cm.window_size_seconds if cm else 5.0
 
-        summary = await asyncio.to_thread(
-            extract_labeled_samples,
-            job.output_tsv_path,
-            job.audio_folder,
-            pos_path,
-            neg_path,
-            ws,
-        )
+        if job.hydrophone_id:
+            from humpback.classifier.extractor import extract_hydrophone_labeled_samples
+            from humpback.classifier.s3_stream import CachingS3Client, LocalHLSClient
+
+            if job.local_cache_path:
+                extract_client = LocalHLSClient(job.local_cache_path)
+            else:
+                extract_client = CachingS3Client(settings.s3_cache_path)
+
+            summary = await asyncio.to_thread(
+                extract_hydrophone_labeled_samples,
+                job.output_tsv_path,
+                job.hydrophone_id,
+                pos_path,
+                neg_path,
+                extract_client,
+                cm.target_sample_rate if cm else 32000,
+                ws,
+            )
+        else:
+            summary = await asyncio.to_thread(
+                extract_labeled_samples,
+                job.output_tsv_path,
+                job.audio_folder,
+                pos_path,
+                neg_path,
+                ws,
+            )
 
         await session.execute(
             update(DetectionJob)

@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from humpback.classifier.extractor import (
+    extract_hydrophone_labeled_samples,
     extract_labeled_samples,
     parse_recording_timestamp,
     write_wav_file,
@@ -286,3 +287,101 @@ class TestExtractionSnapping:
         with wave.open(str(humpback_files[0]), "r") as wf:
             duration = wf.getnframes() / wf.getframerate()
         assert abs(duration - 10.0) < 0.1
+
+
+class TestExtractHydrophoneLabeledSamples:
+    """Test hydrophone-specific extraction with mocked HLS client."""
+
+    def test_basic_hydrophone_extraction(self, tmp_path):
+        """Extract labeled hydrophone samples using a mock client."""
+        from io import BytesIO
+        from unittest.mock import MagicMock, patch
+
+        # Create TSV with a labeled detection
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "20250615T080000Z.wav",
+             "start_sec": "0.0", "end_sec": "5.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1718438400"]
+        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path, "rpi_orcasound_lab",
+                pos_out, neg_out, mock_client,
+                target_sample_rate=sr, window_size_seconds=5.0,
+            )
+
+        assert summary["n_humpback"] == 1
+        assert summary["n_ship"] == 0
+
+        humpback_files = list(pos_out.rglob("*.wav"))
+        assert len(humpback_files) == 1
+        assert "2025/06/15" in str(humpback_files[0])
+
+    def test_no_labeled_rows(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "20250615T080000Z.wav",
+             "start_sec": "0", "end_sec": "5",
+             "avg_confidence": "0.5", "peak_confidence": "0.6",
+             "humpback": "", "ship": "", "background": ""},
+        ])
+
+        mock_client = MagicMock()
+
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path, "rpi_orcasound_lab",
+            tmp_path / "pos", tmp_path / "neg", mock_client,
+        )
+        assert summary["n_humpback"] == 0
+        mock_client.list_hls_folders.assert_not_called()
+
+    def test_idempotent_skip(self, tmp_path):
+        """Running extraction twice skips existing files."""
+        from unittest.mock import MagicMock, patch
+
+        sr = 32000
+        audio = np.zeros(sr * 60, dtype=np.float32)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "20250615T080000Z.wav",
+             "start_sec": "0.0", "end_sec": "5.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1718438400"]
+        mock_client.list_segments.return_value = ["seg0.ts"]
+        mock_client.fetch_segment.return_value = b"fake"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
+            s1 = extract_hydrophone_labeled_samples(
+                tsv_path, "rpi_orcasound_lab", pos_out, neg_out, mock_client,
+            )
+            s2 = extract_hydrophone_labeled_samples(
+                tsv_path, "rpi_orcasound_lab", pos_out, neg_out, mock_client,
+            )
+
+        assert s1["n_humpback"] == 1
+        assert s2["n_humpback"] == 0
+        assert s2["n_skipped"] == 1
