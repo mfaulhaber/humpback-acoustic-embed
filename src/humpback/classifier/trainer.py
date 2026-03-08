@@ -12,7 +12,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Normalizer, StandardScaler
 
 from humpback.processing.audio_io import decode_audio, resample
-from humpback.processing.features import extract_logmel
+from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
 from humpback.processing.windowing import slice_windows
 
@@ -63,36 +63,31 @@ def embed_audio_folder(
                 )
                 continue
 
-            batch_items: list[np.ndarray] = []
-            batch_size = 32
-
+            # Phase 1: Collect all windows
+            raw_windows: list[np.ndarray] = []
             for window in slice_windows(audio, target_sample_rate, window_size_seconds):
+                raw_windows.append(window)
+
+            if not raw_windows:
+                continue
+
+            # Phase 2: Feature extraction (batch for spectrogram, pass-through for waveform)
+            n_windows_total += len(raw_windows)
+            if input_format == "waveform":
+                batch_items: list[np.ndarray] = raw_windows
+            else:
                 t0 = time.monotonic()
-                if input_format == "waveform":
-                    batch_items.append(window)
-                else:
-                    spec = extract_logmel(
-                        window,
-                        target_sample_rate,
-                        n_mels=128,
-                        hop_length=1252,
-                        target_frames=128,
-                        normalization=normalization,
-                    )
-                    batch_items.append(spec)
+                batch_items = extract_logmel_batch(
+                    raw_windows, target_sample_rate,
+                    n_mels=128, hop_length=1252, target_frames=128,
+                    normalization=normalization,
+                )
                 t_features_total += time.monotonic() - t0
-                n_windows_total += 1
 
-                if len(batch_items) >= batch_size:
-                    batch = np.stack(batch_items)
-                    t0 = time.monotonic()
-                    embeddings = model.embed(batch)
-                    t_inference_total += time.monotonic() - t0
-                    all_embeddings.append(embeddings)
-                    batch_items.clear()
-
-            if batch_items:
-                batch = np.stack(batch_items)
+            # Phase 3: Batch embed (groups of 64 — optimal for TFLite on M-series)
+            batch_size = 64
+            for i in range(0, len(batch_items), batch_size):
+                batch = np.stack(batch_items[i : i + batch_size])
                 t0 = time.monotonic()
                 embeddings = model.embed(batch)
                 t_inference_total += time.monotonic() - t0

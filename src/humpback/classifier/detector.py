@@ -12,7 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from humpback.processing.audio_io import decode_audio, resample
-from humpback.processing.features import extract_logmel
+from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
 from humpback.processing.windowing import WindowMetadata, slice_windows_with_metadata
 
@@ -181,47 +181,44 @@ def run_detection(
                     on_file_complete([], files_done, n_audio_files)
                 continue
 
-            # Embed all windows (always use metadata for event merging)
-            batch_items: list[np.ndarray] = []
-            batch_size = 32
-            file_embeddings: list[np.ndarray] = []
+            # Phase 1: Collect all windows
+            raw_windows: list[np.ndarray] = []
             window_metas: list[WindowMetadata] = []
-
             for window, meta in slice_windows_with_metadata(
                 audio, target_sample_rate, window_size_seconds,
                 hop_seconds=hop_seconds,
             ):
                 window_metas.append(meta)
+                raw_windows.append(window)
+
+            if not raw_windows:
+                files_done += 1
+                if on_file_complete is not None:
+                    on_file_complete([], files_done, n_audio_files)
+                continue
+
+            # Phase 2: Feature extraction (batch for spectrogram, pass-through for waveform)
+            n_windows_total += len(raw_windows)
+            if input_format == "waveform":
+                batch_items: list[np.ndarray] = raw_windows
+            else:
                 t0 = time.monotonic()
-                if input_format == "waveform":
-                    batch_items.append(window)
-                else:
-                    spec = extract_logmel(
-                        window, target_sample_rate,
-                        n_mels=128, hop_length=1252, target_frames=128,
-                        normalization=normalization,
-                    )
-                    batch_items.append(spec)
+                batch_items = extract_logmel_batch(
+                    raw_windows, target_sample_rate,
+                    n_mels=128, hop_length=1252, target_frames=128,
+                    normalization=normalization,
+                )
                 t_features_total += time.monotonic() - t0
-                n_windows_total += 1
 
-                if len(batch_items) >= batch_size:
-                    batch = np.stack(batch_items)
-                    t0 = time.monotonic()
-                    embeddings = model.embed(batch)
-                    t_inference_total += time.monotonic() - t0
-                    file_embeddings.append(embeddings)
-                    batch_items.clear()
-
-            if batch_items:
-                batch = np.stack(batch_items)
+            # Phase 3: Batch embed (groups of 64 — optimal for TFLite on M-series)
+            batch_size = 64
+            file_embeddings: list[np.ndarray] = []
+            for i in range(0, len(batch_items), batch_size):
+                batch = np.stack(batch_items[i : i + batch_size])
                 t0 = time.monotonic()
                 embeddings = model.embed(batch)
                 t_inference_total += time.monotonic() - t0
                 file_embeddings.append(embeddings)
-
-            if not file_embeddings:
-                continue
 
             all_emb = np.vstack(file_embeddings)
             total_windows += len(all_emb)

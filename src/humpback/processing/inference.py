@@ -88,6 +88,24 @@ class FakeTF2Model:
         return embeddings
 
 
+def _suppress_tflite_stderr(fn):
+    """Call *fn* while suppressing C++ stderr output (TFLite delegate warnings).
+
+    TFLite's XNNPACK delegate prints a WARNING to fd 2 when the model contains
+    dynamic-shaped tensors.  This is harmless (it falls back to reference
+    kernels for those ops) but confusing to users.
+    """
+    stderr_fd = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        return fn()
+    finally:
+        os.dup2(stderr_fd, 2)
+        os.close(devnull)
+        os.close(stderr_fd)
+
+
 class TFLiteModel:
     """Real TFLite model wrapper. Only used when USE_REAL_MODEL=true."""
 
@@ -98,11 +116,13 @@ class TFLiteModel:
             num_threads = os.cpu_count() or 4
         self._num_threads = num_threads
 
-        # Full TF includes flex delegate support automatically for flex models
+        # Suppress the harmless XNNPACK delegate warning about dynamic-sized
+        # tensors.  The warning is emitted by TFLite's C++ runtime directly to
+        # fd 2, so Python's redirect_stderr cannot catch it.
         self._interpreter = tf.lite.Interpreter(
             model_path=model_path, num_threads=num_threads
         )
-        self._interpreter.allocate_tensors()
+        _suppress_tflite_stderr(self._interpreter.allocate_tensors)
         self._input_details = self._interpreter.get_input_details()
         self._output_details = self._interpreter.get_output_details()
 
@@ -151,7 +171,7 @@ class TFLiteModel:
                 new_shape = list(self._base_input_shape)
                 new_shape[0] = batch_size
                 self._interpreter.resize_tensor_input(input_idx, new_shape)
-                self._interpreter.allocate_tensors()
+                _suppress_tflite_stderr(self._interpreter.allocate_tensors)
                 self._last_batch_size = batch_size
 
             self._interpreter.set_tensor(input_idx, spectrograms.astype(np.float32))

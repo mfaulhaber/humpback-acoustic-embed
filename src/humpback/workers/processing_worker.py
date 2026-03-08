@@ -13,7 +13,7 @@ from humpback.models.audio import AudioFile
 from humpback.models.processing import EmbeddingSet, ProcessingJob
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.embeddings import IncrementalParquetWriter
-from humpback.processing.features import extract_logmel
+from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel, FakeTF2Model, FakeTFLiteModel
 from humpback.processing.windowing import slice_windows
 from humpback.services.model_registry_service import get_model_by_name
@@ -216,48 +216,38 @@ def _process_audio(
             len(audio) / job.target_sample_rate, job.window_size_seconds, job.id,
         )
 
-    batch_items = []
-    batch_size = 32
     t_features = 0.0
     t_inference = 0.0
-    n_windows = 0
 
+    # Phase 1: Collect all windows
+    raw_windows: list[np.ndarray] = []
     for window in slice_windows(audio, job.target_sample_rate, job.window_size_seconds):
-        t0 = time.monotonic()
+        raw_windows.append(window)
+
+    n_windows = len(raw_windows)
+
+    if raw_windows:
+        # Phase 2: Feature extraction (batch for spectrogram, pass-through for waveform)
         if input_format == "waveform":
-            # Feed raw audio directly (TF2 SavedModel path)
-            batch_items.append(window)
+            batch_items: list[np.ndarray] = raw_windows
         else:
-            # Extract spectrogram (TFLite path)
-            spec = extract_logmel(
-                window,
-                job.target_sample_rate,
-                n_mels=128,
-                hop_length=1252,
-                target_frames=128,
+            t0 = time.monotonic()
+            batch_items = extract_logmel_batch(
+                raw_windows, job.target_sample_rate,
+                n_mels=128, hop_length=1252, target_frames=128,
                 normalization=normalization,
             )
-            batch_items.append(spec)
-        t_features += time.monotonic() - t0
-        n_windows += 1
+            t_features = time.monotonic() - t0
 
-        if len(batch_items) >= batch_size:
-            batch = np.stack(batch_items)
+        # Phase 3: Batch embed (groups of 64 — optimal for TFLite on M-series)
+        batch_size = 64
+        for i in range(0, len(batch_items), batch_size):
+            batch = np.stack(batch_items[i : i + batch_size])
             t0 = time.monotonic()
             embeddings = model.embed(batch)
             t_inference += time.monotonic() - t0
             for emb in embeddings:
                 writer.add(emb)
-            batch_items.clear()
-
-    # Process remaining windows
-    if batch_items:
-        batch = np.stack(batch_items)
-        t0 = time.monotonic()
-        embeddings = model.embed(batch)
-        t_inference += time.monotonic() - t0
-        for emb in embeddings:
-            writer.add(emb)
 
     writer.close()
 

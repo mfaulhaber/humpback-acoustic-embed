@@ -29,3 +29,4 @@
 - Multi-model support: grouping, filtering & validation
 - Fix TFLite/TF2 vector_dim mismatch: auto-detect from model output
 - Optimize TFLite encoding: batch inference via resize_tensor_input + multi-threading + timing instrumentation
+- Optimize spectrogram extraction: vectorized STFT via batched `np.fft.rfft` (10.9x feature speedup) + TFLite inference batch_size tuned to 64 (6.2x vs sequential)
