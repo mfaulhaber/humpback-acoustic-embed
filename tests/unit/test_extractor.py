@@ -385,3 +385,53 @@ class TestExtractHydrophoneLabeledSamples:
         assert s1["n_humpback"] == 1
         assert s2["n_humpback"] == 0
         assert s2["n_skipped"] == 1
+
+    def test_late_timestamp_row_extracts_with_stream_anchor(self, tmp_path):
+        """Late rows resolve via first-folder anchor when stream bounds are provided."""
+        from unittest.mock import MagicMock, patch
+
+        sr = 32000
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "19700101T003910Z.wav",
+             "start_sec": "0.0", "end_sec": "5.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        mock_client = MagicMock()
+
+        def _list_hls_folders(_hydrophone_id: str, start_ts: float, end_ts: float):
+            return ["1500"] if start_ts <= 1500 <= end_ts else []
+
+        def _list_segments(_hydrophone_id: str, folder_ts: str):
+            if folder_ts != "1500":
+                return []
+            return [f"rpi/hls/1500/seg{i:04d}.ts" for i in range(100)]
+
+        mock_client.list_hls_folders.side_effect = _list_hls_folders
+        mock_client.list_segments.side_effect = _list_segments
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch(
+            "humpback.classifier.s3_stream.decode_ts_bytes",
+            return_value=np.ones(sr * 10, dtype=np.float32),
+        ):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
+                stream_start_timestamp=1000.0,
+                stream_end_timestamp=3000.0,
+            )
+
+        assert summary["n_humpback"] == 1
+        assert summary["n_skipped"] == 0
+        assert len(list(pos_out.rglob("*.wav"))) == 1

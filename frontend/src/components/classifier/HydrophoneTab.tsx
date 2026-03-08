@@ -120,6 +120,21 @@ export function HydrophoneTab() {
 
   const activeJob = jobs.find((j) => j.status === "running" || j.status === "queued");
   const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued");
+  const expandedJob = useMemo(
+    () => previousJobs.find((j) => j.id === expandedJobId) ?? null,
+    [previousJobs, expandedJobId],
+  );
+  const expandedCompletedJobId =
+    expandedJob && expandedJob.status === "complete" ? expandedJob.id : null;
+  const { data: expandedRows = [] } = useDetectionContent(expandedCompletedJobId);
+  const expandedHasSavedLabels = useMemo(
+    () => expandedRows.some((r) => r.humpback === 1 || r.ship === 1 || r.background === 1),
+    [expandedRows],
+  );
+  const extractTargetIds = useMemo(() => {
+    if (!expandedCompletedJobId || !expandedHasSavedLabels) return new Set<string>();
+    return new Set<string>([expandedCompletedJobId]);
+  }, [expandedCompletedJobId, expandedHasSavedLabels]);
 
   const handleSubmit = () => {
     if (!selectedModelId || !selectedHydrophoneId || !startDatetime || !endDatetime) return;
@@ -552,7 +567,7 @@ export function HydrophoneTab() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={selectedIds.size === 0}
+                disabled={extractTargetIds.size === 0}
                 onClick={() => setShowExtractDialog(true)}
               >
                 <PackageOpen className="h-3.5 w-3.5 mr-1" />
@@ -640,9 +655,9 @@ export function HydrophoneTab() {
       <ExtractDialog
         open={showExtractDialog}
         onOpenChange={setShowExtractDialog}
-        selectedIds={selectedIds}
+        selectedIds={extractTargetIds}
         extractMutation={extractMutation}
-        onSuccess={() => setSelectedIds(new Set())}
+        onSuccess={() => undefined}
       />
     </div>
   );

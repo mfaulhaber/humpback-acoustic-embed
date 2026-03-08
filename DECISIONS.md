@@ -166,3 +166,27 @@ Append-only record of significant design decisions. Do not edit historical entri
 - Provides consistent claim behavior across processing, clustering, training, detection, hydrophone detection, and extraction jobs
 - Reduces reliance on database locking features that differ by backend
 - Requires small retry loops in claimers but keeps queue behavior deterministic
+
+---
+
+## ADR-010: Shared hydrophone stream-offset resolver for playback and extraction
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Hydrophone detection-row timestamps can be anchored differently across job generations.
+Newer rows align to the first available HLS folder timestamp, while older rows are effectively
+anchored to `job.start_timestamp`. Playback (`/audio-slice`) and extraction previously used
+different lookup strategies, causing some late rows to fail in playback and extraction.
+
+**Decision**: Introduce a shared stream-offset resolver in `classifier/s3_stream.py` and route both
+hydrophone playback and hydrophone labeled-sample extraction through it. Resolve offsets with two
+anchors in order: first available folder timestamp, then legacy `job.start_timestamp`. Decode only
+nearby candidate segments and return explicit not-found behavior when no decodable slice is
+resolved.
+
+**Consequences**:
+- Playback and extraction now resolve the same timeline mapping for hydrophone jobs
+- Late timestamp rows that failed with per-row folder lookup are now decodable
+- Legacy jobs remain backward compatible via `job.start_timestamp` fallback
+- Extraction worker now passes stream start/end bounds so resolver behavior is deterministic

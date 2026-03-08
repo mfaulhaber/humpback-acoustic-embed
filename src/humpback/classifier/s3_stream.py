@@ -334,6 +334,124 @@ def decode_ts_bytes(ts_bytes: bytes, target_sr: int = 32000) -> np.ndarray:
     return pcm.astype(np.float32) / 32768.0
 
 
+def _parse_chunk_start_timestamp(filename: str) -> float:
+    """Parse synthetic chunk filename (YYYYMMDDTHHMMSSZ.wav) to unix timestamp."""
+    basename = filename[:-4] if filename.endswith(".wav") else filename
+    try:
+        chunk_utc = datetime.strptime(basename, "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError as exc:
+        raise ValueError(f"Invalid hydrophone filename format: {filename}") from exc
+    return chunk_utc.timestamp()
+
+
+def _build_stream_segment_index(
+    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    hydrophone_id: str,
+    stream_start_ts: float,
+    stream_end_ts: float,
+) -> tuple[list[str], list[str]]:
+    """Build ordered folder and segment lists for a hydrophone job range."""
+    folders = client.list_hls_folders(hydrophone_id, stream_start_ts, stream_end_ts)
+    if not folders:
+        raise FileNotFoundError("No audio data found for this time range")
+
+    all_segments: list[str] = []
+    for folder_ts in folders:
+        all_segments.extend(client.list_segments(hydrophone_id, folder_ts))
+    if not all_segments:
+        raise FileNotFoundError("No cached segments found")
+
+    return folders, all_segments
+
+
+def resolve_hydrophone_audio_slice(
+    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    hydrophone_id: str,
+    stream_start_ts: float,
+    stream_end_ts: float,
+    filename: str,
+    row_start_sec: float,
+    duration_sec: float,
+    target_sr: int = 32000,
+    legacy_anchor_start_ts: float | None = None,
+    est_seg_dur: float = 10.0,
+) -> np.ndarray:
+    """Resolve and decode a hydrophone audio slice using stream-offset mapping.
+
+    Anchor order:
+    1. First available folder timestamp (current behavior)
+    2. legacy_anchor_start_ts (old jobs where filenames were anchored to job start)
+    """
+    if duration_sec <= 0:
+        raise ValueError("duration_sec must be > 0")
+
+    folders, all_segments = _build_stream_segment_index(
+        client, hydrophone_id, stream_start_ts, stream_end_ts
+    )
+    chunk_start_ts = _parse_chunk_start_timestamp(filename)
+    abs_start_ts = chunk_start_ts + row_start_sec
+
+    anchors: list[float] = [float(folders[0])]
+    if legacy_anchor_start_ts is not None:
+        legacy_anchor = float(legacy_anchor_start_ts)
+        if all(abs(legacy_anchor - a) > 1e-6 for a in anchors):
+            anchors.append(legacy_anchor)
+
+    n_needed = int((duration_sec + 4 * est_seg_dur) / est_seg_dur) + 4
+    last_reason = "No matching stream offset"
+
+    for anchor_ts in anchors:
+        stream_offset = abs_start_ts - anchor_ts
+        if stream_offset < 0:
+            last_reason = "Computed negative stream offset"
+            continue
+
+        start_idx = max(0, int(stream_offset / est_seg_dur) - 2)
+        if start_idx >= len(all_segments):
+            last_reason = "Computed segment index outside available stream range"
+            continue
+        end_idx = min(len(all_segments), start_idx + n_needed)
+        if end_idx <= start_idx:
+            last_reason = "No segments selected for decode window"
+            continue
+
+        decoded_segments: list[np.ndarray] = []
+        for seg_key in all_segments[start_idx:end_idx]:
+            try:
+                seg_bytes = client.fetch_segment(seg_key)
+                decoded_segments.append(decode_ts_bytes(seg_bytes, target_sr))
+            except Exception:
+                continue
+
+        if not decoded_segments:
+            last_reason = "Failed to decode all candidate segments"
+            continue
+
+        combined = np.concatenate(decoded_segments)
+        local_offset = max(0.0, stream_offset - start_idx * est_seg_dur)
+        start_sample = max(0, int(local_offset * target_sr))
+        end_sample = min(
+            len(combined),
+            start_sample + int(duration_sec * target_sr),
+        )
+
+        if end_sample <= start_sample:
+            last_reason = "Resolved sample window had no overlap with decoded audio"
+            continue
+
+        segment = combined[start_sample:end_sample]
+        if len(segment) > 0:
+            return segment
+
+        last_reason = "Resolved segment was empty"
+
+    raise FileNotFoundError(
+        f"Could not resolve hydrophone audio slice for {filename}: {last_reason}"
+    )
+
+
 def iter_audio_chunks(
     client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
     hydrophone_id: str,

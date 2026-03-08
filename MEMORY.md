@@ -370,6 +370,8 @@ Queue safety note:
 - `POST /classifier/hydrophone-detection-jobs` requires
   `hop_seconds <= classifier window_size_seconds`.
 - `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.
+- `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using
+  first-available-folder anchor, with legacy fallback to `job.start_timestamp`.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---
@@ -428,6 +430,7 @@ Binary Classifier:
 - Detection jobs displayed in table layout with checkbox selection and bulk delete
 - Expandable detection job rows show sortable TSV detection data (default: avg_confidence desc)
 - Inline audio playback of detected segments via streaming WAV slice endpoint
+- Hydrophone tab Extract button activates from saved labels on the expanded completed job
 - Server-side folder browser endpoint (`GET /classifier/browse-directories`) for selecting negative audio and detection audio folders
 
 Editing:

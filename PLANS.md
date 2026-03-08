@@ -10,6 +10,29 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Tab — Playback Timestamp Mapping + Saved-Label Extract Activation
+
+## Outcome (2026-03-08)
+
+- Implemented shared hydrophone stream-offset audio-slice resolver with anchor order:
+  first available folder timestamp, then legacy `job.start_timestamp`.
+- Switched hydrophone extraction to the same resolver path and passed detection
+  job stream bounds (`start_timestamp`, `end_timestamp`) through worker plumbing.
+- Updated Hydrophone tab extract enablement to use saved labels on the expanded
+  completed job only; Extract dialog now targets that single job.
+
+## Verification
+
+- `uv run pytest tests/` passed (`389` passed).
+- `cd frontend && npx tsc --noEmit` passed.
+- `cd frontend && npx playwright test` ran:
+  - New hydrophone regression test passed (`frontend/e2e/hydrophone-extract.spec.ts`).
+  - Existing unrelated failures remain in classifier training selectors
+    (`frontend/e2e/classifier-training.spec.ts`) and one slider-fill test
+    (`frontend/e2e/detection-hysteresis.spec.ts`).
+
+---
+
 # Plan: HydrophoneTab — Live Detection Content + Save/Extract Labels
 
 ## Context
@@ -148,8 +171,6 @@ import { ExtractDialog } from "./ExtractDialog";
 5. **Existing tests:** `cd frontend && npx playwright test`
 
 ---
-
-## Recently Completed
 
 # Plan: Classifier/Hydrophone Tab — S3 HLS Streaming Detection
 

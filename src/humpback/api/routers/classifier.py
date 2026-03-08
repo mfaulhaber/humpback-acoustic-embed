@@ -797,120 +797,42 @@ async def get_detection_audio_slice(
     """Stream a WAV slice from a detection job's audio folder or S3."""
     import asyncio
 
-    import numpy as np
-
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
     # Hydrophone jobs: reconstruct audio from cached HLS segments
     if job.hydrophone_id:
-        from datetime import datetime, timezone
-
         from humpback.classifier.s3_stream import (
             LocalHLSClient,
-            decode_ts_bytes,
+            resolve_hydrophone_audio_slice,
         )
 
-        # Parse synthetic filename (e.g. "20260301T143000Z.wav") to get chunk start time
-        basename = filename.replace(".wav", "")
-        try:
-            chunk_utc = datetime.strptime(basename, "%Y%m%dT%H%M%SZ").replace(
-                tzinfo=timezone.utc
-            )
-        except ValueError:
-            raise HTTPException(400, f"Invalid hydrophone filename format: {filename}")
-
-        chunk_start_ts = chunk_utc.timestamp()
+        if job.start_timestamp is None or job.end_timestamp is None:
+            raise HTTPException(400, "Hydrophone job missing start/end timestamps")
 
         # Read from local cache (segments are cached by CachingS3Client during detection)
         cache_path = job.local_cache_path or settings.s3_cache_path
         local = LocalHLSClient(cache_path)
         target_sr = 32000
-        est_seg_dur = 10.0  # HLS segments are ~10s
 
-        # Try direct folder match first (works for new-style timestamps
-        # where chunk_start_ts reflects actual recording time)
-        abs_start = chunk_start_ts + start_sec
-        abs_end = abs_start + duration_sec
-        folders = local.list_hls_folders(job.hydrophone_id, abs_start, abs_end)
-
-        if folders:
-            # Direct match: decode nearby segments from the matching folder
-            all_audio: list = []
-            for folder_ts in folders:
-                segs = local.list_segments(job.hydrophone_id, folder_ts)
-                if not segs:
-                    continue
-                folder_start = int(folder_ts)
-                offset_in_folder = max(0.0, abs_start - folder_start)
-                start_idx = max(0, int(offset_in_folder / est_seg_dur) - 2)
-                n_needed = int((duration_sec + 4 * est_seg_dur) / est_seg_dur) + 4
-                end_idx = min(len(segs), start_idx + n_needed)
-
-                for seg_key in segs[start_idx:end_idx]:
-                    try:
-                        seg_bytes = await asyncio.to_thread(local.fetch_segment, seg_key)
-                        audio = await asyncio.to_thread(decode_ts_bytes, seg_bytes, target_sr)
-                        all_audio.append(audio)
-                    except Exception:
-                        continue
-
-            if all_audio:
-                combined = np.concatenate(all_audio)
-                local_offset = max(0.0, abs_start - int(folders[0]) - start_idx * est_seg_dur)
-                start_sample = max(0, int(local_offset * target_sr))
-                end_sample = min(len(combined), start_sample + int(duration_sec * target_sr))
-                segment = combined[start_sample:end_sample]
-                if len(segment) == 0:
-                    segment = combined[: min(int(duration_sec * target_sr), len(combined))]
-                return _encode_wav_response(segment, target_sr, normalize)
-
-        # Fallback: synthetic filename is a sequential offset from job start
-        # (old-style timestamps where iter_audio_chunks used start_ts as base).
-        # Compute position in the sequential audio stream.
-        stream_offset = (chunk_start_ts - job.start_timestamp) + start_sec
-
-        # List ALL folders for the job's time range from local cache
-        folders = local.list_hls_folders(
-            job.hydrophone_id, job.start_timestamp, job.end_timestamp
-        )
-        if not folders:
-            raise HTTPException(404, "No audio data found for this time range")
-
-        # Collect all segment keys in order across folders
-        all_segs: list[str] = []
-        for fts in folders:
-            all_segs.extend(local.list_segments(job.hydrophone_id, fts))
-
-        if not all_segs:
-            raise HTTPException(404, "No cached segments found")
-
-        # Estimate which segments to decode
-        start_idx = max(0, int(stream_offset / est_seg_dur) - 2)
-        n_needed = int((duration_sec + 4 * est_seg_dur) / est_seg_dur) + 4
-        end_idx = min(len(all_segs), start_idx + n_needed)
-
-        all_audio = []
-        for seg_key in all_segs[start_idx:end_idx]:
-            try:
-                seg_bytes = await asyncio.to_thread(local.fetch_segment, seg_key)
-                audio = await asyncio.to_thread(decode_ts_bytes, seg_bytes, target_sr)
-                all_audio.append(audio)
-            except Exception:
-                continue
-
-        if not all_audio:
-            raise HTTPException(404, "Could not decode any audio segments")
-
-        combined = np.concatenate(all_audio)
-        local_offset = max(0.0, stream_offset - start_idx * est_seg_dur)
-        start_sample = max(0, int(local_offset * target_sr))
-        end_sample = min(len(combined), start_sample + int(duration_sec * target_sr))
-        segment = combined[start_sample:end_sample]
-
-        if len(segment) == 0:
-            segment = combined[: min(int(duration_sec * target_sr), len(combined))]
+        try:
+            segment = await asyncio.to_thread(
+                resolve_hydrophone_audio_slice,
+                local,
+                job.hydrophone_id,
+                job.start_timestamp,
+                job.end_timestamp,
+                filename,
+                start_sec,
+                duration_sec,
+                target_sr,
+                job.start_timestamp,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc))
 
         return _encode_wav_response(segment, target_sr, normalize)
 

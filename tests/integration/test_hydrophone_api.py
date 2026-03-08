@@ -1,6 +1,9 @@
 """Integration tests for hydrophone detection API endpoints."""
 
+from datetime import datetime, timezone
 import uuid
+
+import numpy as np
 
 
 async def test_list_hydrophones(client):
@@ -237,5 +240,138 @@ async def test_detection_job_out_has_hydrophone_fields(client, app_settings):
     assert data["start_timestamp"] is None
     assert data["segments_processed"] is None
     assert data["alerts"] is None
+
+    await engine.dispose()
+
+
+async def test_hydrophone_audio_slice_late_row_uses_first_folder_anchor(
+    client, app_settings, monkeypatch
+):
+    """Late synthetic rows should resolve via first-folder anchor mapping."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1000.0,
+                end_timestamp=3000.0,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    def _list_hls_folders(_self, _hydrophone_id: str, start_ts: float, end_ts: float):
+        return ["1500"] if start_ts <= 1500 <= end_ts else []
+
+    def _list_segments(_self, _hydrophone_id: str, folder_ts: str):
+        if folder_ts != "1500":
+            return []
+        return [f"rpi_orcasound_lab/hls/1500/seg{i:04d}.ts" for i in range(100)]
+
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.list_hls_folders",
+        _list_hls_folders,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.list_segments",
+        _list_segments,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.fetch_segment",
+        lambda _self, _key: b"fake-ts",
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.decode_ts_bytes",
+        lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
+    )
+
+    # 2350 is too far from job.start (legacy anchor), but valid from first folder (1500)
+    filename = datetime.fromtimestamp(2350, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/audio-slice",
+        params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
+    )
+    assert resp.status_code == 200
+    assert resp.content[:4] == b"RIFF"
+
+    await engine.dispose()
+
+
+async def test_hydrophone_audio_slice_legacy_anchor_fallback_still_works(
+    client, app_settings, monkeypatch
+):
+    """Older jobs still resolve rows anchored to job.start_timestamp."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1000.0,
+                end_timestamp=3000.0,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    def _list_hls_folders(_self, _hydrophone_id: str, start_ts: float, end_ts: float):
+        return ["1500"] if start_ts <= 1500 <= end_ts else []
+
+    def _list_segments(_self, _hydrophone_id: str, folder_ts: str):
+        if folder_ts != "1500":
+            return []
+        return [f"rpi_orcasound_lab/hls/1500/seg{i:04d}.ts" for i in range(100)]
+
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.list_hls_folders",
+        _list_hls_folders,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.list_segments",
+        _list_segments,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.fetch_segment",
+        lambda _self, _key: b"fake-ts",
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.decode_ts_bytes",
+        lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
+    )
+
+    # 1200 is before first folder (1500) so first-anchor offset is negative.
+    # Legacy job.start anchor should resolve this row.
+    filename = datetime.fromtimestamp(1200, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/audio-slice",
+        params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
+    )
+    assert resp.status_code == 200
+    assert resp.content[:4] == b"RIFF"
 
     await engine.dispose()

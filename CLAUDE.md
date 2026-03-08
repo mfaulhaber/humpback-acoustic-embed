@@ -241,6 +241,7 @@ When changing UI components, add or update Playwright tests in `frontend/e2e/`.
 **Test patterns:**
 - **API-level tests** — use `request` fixture to hit backend endpoints directly and validate response content (e.g., WAV duration, JSON shape). These are fast and don't need a browser page.
 - **UI interaction tests** — use `page` fixture to navigate, click, and assert DOM state. Verify that user actions produce correct side effects (e.g., audio element src, table expansion, form submission).
+- **Hydrophone regressions** — include timestamp-mapping playback checks and Extract-button activation checks when fixing Hydrophone tab playback/label workflows.
 - Skip gracefully when preconditions aren't met (e.g., no completed jobs) using `test.skip()`.
 
 **Running:**

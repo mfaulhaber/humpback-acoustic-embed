@@ -482,6 +482,8 @@ async def run_extraction_job(
                 extract_client,
                 cm.target_sample_rate if cm else 32000,
                 ws,
+                job.start_timestamp,
+                job.end_timestamp,
             )
         else:
             summary = await asyncio.to_thread(

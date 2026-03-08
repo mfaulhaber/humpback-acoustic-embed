@@ -209,6 +209,8 @@ def extract_hydrophone_labeled_samples(
     client,
     target_sample_rate: int = 32000,
     window_size_seconds: float = 5.0,
+    stream_start_timestamp: float | None = None,
+    stream_end_timestamp: float | None = None,
 ) -> dict:
     """Extract labeled audio segments from a hydrophone detection TSV.
 
@@ -242,6 +244,12 @@ def extract_hydrophone_labeled_samples(
         by_file.setdefault(fn, []).append(row)
 
     counts = {"n_humpback": 0, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+    use_stream_resolver = (
+        stream_start_timestamp is not None and stream_end_timestamp is not None
+    )
+
+    if use_stream_resolver:
+        from humpback.classifier.s3_stream import resolve_hydrophone_audio_slice
 
     for source_filename, rows in by_file.items():
         recording_ts = parse_recording_timestamp(source_filename)
@@ -279,30 +287,56 @@ def extract_hydrophone_labeled_samples(
                 out_dir = negative_output_path / "background" / date_folder
                 labels_to_write.append((out_dir, "background"))
 
+            pending_writes: list[tuple[Path, str]] = []
             for out_dir, label_name in labels_to_write:
                 out_path = out_dir / wav_name
                 if out_path.exists():
                     counts["n_skipped"] += 1
                     continue
+                pending_writes.append((out_path, label_name))
 
-                # Fetch audio from HLS
+            if not pending_writes:
+                continue
+
+            duration = end_sec - start_sec
+            segment: np.ndarray | None = None
+
+            if use_stream_resolver:
+                try:
+                    segment = resolve_hydrophone_audio_slice(
+                        client=client,
+                        hydrophone_id=hydrophone_id,
+                        stream_start_ts=float(stream_start_timestamp),
+                        stream_end_ts=float(stream_end_timestamp),
+                        filename=source_filename,
+                        row_start_sec=start_sec,
+                        duration_sec=duration,
+                        target_sr=target_sample_rate,
+                        legacy_anchor_start_ts=float(stream_start_timestamp),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "No hydrophone audio for %s (%.1f-%.1f): %s",
+                        source_filename,
+                        start_sec,
+                        end_sec,
+                        exc,
+                    )
+            else:
+                # Backward-compatible fallback for direct callers that do not
+                # provide stream bounds.
                 combined = _fetch_audio_range(
                     client, hydrophone_id, abs_start_ts, abs_end_ts, target_sample_rate
                 )
-                if combined is None:
-                    logger.warning("No audio data for range %s-%s", abs_start, abs_end)
-                    counts["n_skipped"] += 1
-                    continue
+                if combined is not None:
+                    end_sample = min(int(duration * target_sample_rate), len(combined))
+                    segment = combined[:end_sample]
 
-                # Slice to requested duration
-                duration = end_sec - start_sec
-                end_sample = min(int(duration * target_sample_rate), len(combined))
-                segment = combined[:end_sample]
+            if segment is None or len(segment) == 0:
+                counts["n_skipped"] += len(pending_writes)
+                continue
 
-                if len(segment) == 0:
-                    counts["n_skipped"] += 1
-                    continue
-
+            for out_path, label_name in pending_writes:
                 write_wav_file(segment, target_sample_rate, out_path)
                 counts[f"n_{label_name}"] += 1
 
