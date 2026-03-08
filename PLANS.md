@@ -523,6 +523,7 @@ type SubView = "train" | "detect" | "hydrophone";
 - Explore GPU-accelerated batch processing for large audio libraries
 - Add WebSocket push for real-time job status updates (replace polling)
 - Investigate multi-model ensemble clustering
+- Optimize `/audio/{id}/spectrogram` window fetch path to avoid materializing all windows when only one index is requested (reduce memory/time on long files)
 
 ---
 
@@ -536,6 +537,7 @@ type SubView = "train" | "detect" | "hydrophone";
 - Overlapping window inference + hysteresis event detection (ADR-005)
 - Incremental detection rendering with per-file progress (ADR-006)
 - Fix escalating false positives: MLP classifier + diagnostics (ADR-007)
+- Queue claim hardening + API validation pass (P0-P2): atomic compare-and-set claims for all worker job types, strict input validation, robust Range parsing, overlap-back-aligned spectrogram offsets (ADR-009)
 - Multi-model support: grouping, filtering & validation
 - Fix TFLite/TF2 vector_dim mismatch: auto-detect from model output
 - Optimize TFLite encoding: batch inference via resize_tensor_input + multi-threading + timing instrumentation

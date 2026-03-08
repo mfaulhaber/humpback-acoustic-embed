@@ -159,6 +159,47 @@ async def test_create_hydrophone_detection_job_success(client, app_settings):
     await engine.dispose()
 
 
+async def test_create_hydrophone_detection_job_hop_too_large(client, app_settings):
+    """POST rejects hop_seconds larger than classifier window size."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="hydro-test-model-hop",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "hydrophone_id": "rpi_orcasound_lab",
+            "start_timestamp": 1700000000,
+            "end_timestamp": 1700003600,
+            "hop_seconds": 10.0,
+        },
+    )
+    assert resp.status_code == 400
+    assert "must be <=" in resp.json()["detail"]
+
+    await engine.dispose()
+
+
 async def test_cancel_hydrophone_job_not_found(client):
     """POST cancel for nonexistent job returns 404."""
     resp = await client.post("/classifier/hydrophone-detection-jobs/nonexistent/cancel")

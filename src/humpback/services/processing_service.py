@@ -4,6 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.models.audio import AudioFile
 from humpback.models.processing import EmbeddingSet, JobStatus, ProcessingJob
 from humpback.processing.signature import compute_encoding_signature
 from humpback.services.model_registry_service import get_default_model
@@ -20,6 +21,12 @@ async def create_processing_job(
     """Create a processing job. Returns (job, skipped).
     If an EmbeddingSet already exists for this signature, marks job as complete immediately.
     """
+    audio = await session.execute(
+        select(AudioFile.id).where(AudioFile.id == audio_file_id)
+    )
+    if audio.scalar_one_or_none() is None:
+        raise ValueError(f"Audio file not found: {audio_file_id}")
+
     # Resolve model_version from registry if not provided
     if model_version is None:
         default = await get_default_model(session)

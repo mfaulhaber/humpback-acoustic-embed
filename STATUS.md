@@ -23,7 +23,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Processing timing instrumentation (decode, features, inference) in worker, detector, and trainer
 - Incremental Parquet embedding output with atomic writes
 - Idempotent encoding via `encoding_signature`
-- Background worker with job queue (queued/running/complete/failed/canceled)
+- Background worker with job queue (queued/running/complete/failed/canceled) and atomic compare-and-set claim updates
 
 ### Clustering
 - Model version validation: rejects clustering across different embedding models
@@ -36,6 +36,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Fragmentation report (entropy, Gini, noise rates)
 - Opt-in: classifier baseline, stability evaluation, metric learning refinement
 - Re-clustering from refined embeddings via `refined_from_job_id`
+- Clustering job validation requires at least one embedding set ID
 
 ### Binary Classifier
 - Train LogisticRegression (default) or MLPClassifier from positive + negative embedding sets
@@ -53,6 +54,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Extraction boundary snapping to `window_size` multiples
 - Inline audio playback of detected segments
 - Detection label annotation with keyboard shortcuts
+- Detection label API enforces label values in `{0, 1, null}`
 
 ### Hydrophone Streaming Detection
 - S3 HLS streaming from Orcasound public hydrophone network (anonymous access)
@@ -68,6 +70,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - UTC range display in Detection Range column (replaces raw synthetic filenames)
 - WAV export for hydrophone jobs: fetches audio from HLS, writes labeled samples to positive/negative folders
 - Max 7-day time range per job
+- Hydrophone job validation enforces `hop_seconds <= classifier window_size_seconds`
 
 ### Web UI
 - Tab-based SPA (Audio, Processing, Clustering, Classifier [Train/Detect/Hydrophone], Admin)
@@ -115,3 +118,4 @@ Changes to these areas require extra care and testing:
 - Model files must be present on disk (no remote model registry)
 - Audio shorter than `window_size_seconds` (5s) is skipped entirely
 - Imported audio must remain at original path (in-place reads)
+- `/audio/{id}/download` returns HTTP 416 for malformed/invalid Range headers

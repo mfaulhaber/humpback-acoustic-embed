@@ -35,14 +35,19 @@ def _job_to_out(job, skipped: bool = False) -> ProcessingJobOut:
 
 @router.post("/jobs", status_code=201)
 async def create_job(body: ProcessingJobCreate, session: SessionDep) -> ProcessingJobOut:
-    job, skipped = await processing_service.create_processing_job(
-        session,
-        body.audio_file_id,
-        body.model_version,
-        body.window_size_seconds,
-        body.target_sample_rate,
-        body.feature_config,
-    )
+    try:
+        job, skipped = await processing_service.create_processing_job(
+            session,
+            body.audio_file_id,
+            body.model_version,
+            body.window_size_seconds,
+            body.target_sample_rate,
+            body.feature_config,
+        )
+    except ValueError as e:
+        message = str(e)
+        status = 404 if message.startswith("Audio file not found:") else 400
+        raise HTTPException(status, message)
     return _job_to_out(job, skipped=skipped)
 
 

@@ -7,7 +7,7 @@ import os
 import struct
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -661,9 +661,9 @@ class DetectionLabelRow(BaseModel):
     filename: str
     start_sec: float
     end_sec: float
-    humpback: Optional[int] = None
-    ship: Optional[int] = None
-    background: Optional[int] = None
+    humpback: Optional[Literal[0, 1]] = None
+    ship: Optional[Literal[0, 1]] = None
+    background: Optional[Literal[0, 1]] = None
 
 
 def _serialize_label(value: int | None) -> str:

@@ -104,3 +104,17 @@ async def test_folder_path_in_list(client, wav_bytes):
     match = [f for f in files if f["filename"] == "listed.wav"]
     assert len(match) == 1
     assert match[0]["folder_path"] == "recordings/pacific"
+
+
+async def test_download_audio_invalid_range_header(client, wav_bytes):
+    upload = await client.post(
+        "/audio/upload",
+        files={"file": ("range.wav", wav_bytes, "audio/wav")},
+    )
+    audio_id = upload.json()["id"]
+
+    resp = await client.get(
+        f"/audio/{audio_id}/download",
+        headers={"Range": "bytes=abc-def"},
+    )
+    assert resp.status_code == 416

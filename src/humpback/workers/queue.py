@@ -16,6 +16,53 @@ logger = logging.getLogger(__name__)
 STALE_JOB_TIMEOUT = timedelta(minutes=10)
 
 
+async def _claim_next_job(
+    session: AsyncSession,
+    model,
+    *,
+    status_attr,
+    queued_value: str,
+    running_value: str,
+    order_attr,
+    extra_filters: tuple = (),
+):
+    """Atomically claim the next queued job for a model.
+
+    Uses compare-and-set semantics (`WHERE id=:candidate AND status=:queued`) so
+    concurrent workers cannot claim the same row.
+    """
+    candidate_result = await session.execute(
+        select(model.id)
+        .where(status_attr == queued_value, *extra_filters)
+        .order_by(order_attr)
+        .limit(1)
+    )
+    candidate_id = candidate_result.scalar_one_or_none()
+    if candidate_id is None:
+        return None
+
+    claim_result = await session.execute(
+        update(model)
+        .where(model.id == candidate_id, status_attr == queued_value)
+        .values(
+            **{
+                status_attr.key: running_value,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+    )
+    if (claim_result.rowcount or 0) != 1:
+        # Another worker claimed it first.
+        await session.rollback()
+        return None
+
+    await session.commit()
+    claimed_result = await session.execute(
+        select(model).where(model.id == candidate_id)
+    )
+    return claimed_result.scalar_one_or_none()
+
+
 async def recover_stale_jobs(session: AsyncSession) -> int:
     """Reset jobs stuck in 'running' past the stale timeout back to 'queued'."""
     cutoff = datetime.now(timezone.utc) - STALE_JOB_TIMEOUT
@@ -99,24 +146,21 @@ async def claim_processing_job(session: AsyncSession) -> Optional[ProcessingJob]
     )
 
     # Find a queued job not blocked by a running job with same signature
-    result = await session.execute(
-        select(ProcessingJob)
-        .where(
-            ProcessingJob.status == JobStatus.queued.value,
-            ~ProcessingJob.encoding_signature.in_(running_sigs),
+    # Retry a few times to handle races where another worker claims our
+    # selected candidate between SELECT and UPDATE.
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            ProcessingJob,
+            status_attr=ProcessingJob.status,
+            queued_value=JobStatus.queued.value,
+            running_value=JobStatus.running.value,
+            order_attr=ProcessingJob.created_at,
+            extra_filters=(~ProcessingJob.encoding_signature.in_(running_sigs),),
         )
-        .order_by(ProcessingJob.created_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    job = result.scalar_one_or_none()
-    if job is None:
-        return None
-
-    job.status = JobStatus.running.value
-    job.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return job
+        if job is not None:
+            return job
+    return None
 
 
 async def complete_processing_job(
@@ -152,21 +196,18 @@ async def fail_processing_job(
 
 
 async def claim_clustering_job(session: AsyncSession) -> Optional[ClusteringJob]:
-    result = await session.execute(
-        select(ClusteringJob)
-        .where(ClusteringJob.status == "queued")
-        .order_by(ClusteringJob.created_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    job = result.scalar_one_or_none()
-    if job is None:
-        return None
-
-    job.status = "running"
-    job.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return job
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            ClusteringJob,
+            status_attr=ClusteringJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=ClusteringJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
 
 
 async def complete_clustering_job(session: AsyncSession, job_id: str) -> None:
@@ -197,21 +238,18 @@ async def fail_clustering_job(
 
 
 async def claim_training_job(session: AsyncSession) -> Optional[ClassifierTrainingJob]:
-    result = await session.execute(
-        select(ClassifierTrainingJob)
-        .where(ClassifierTrainingJob.status == "queued")
-        .order_by(ClassifierTrainingJob.created_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    job = result.scalar_one_or_none()
-    if job is None:
-        return None
-
-    job.status = "running"
-    job.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return job
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            ClassifierTrainingJob,
+            status_attr=ClassifierTrainingJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=ClassifierTrainingJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
 
 
 async def complete_training_job(session: AsyncSession, job_id: str) -> None:
@@ -243,46 +281,36 @@ async def fail_training_job(
 
 async def claim_detection_job(session: AsyncSession) -> Optional[DetectionJob]:
     """Claim a queued local detection job (not hydrophone)."""
-    result = await session.execute(
-        select(DetectionJob)
-        .where(
-            DetectionJob.status == "queued",
-            DetectionJob.hydrophone_id.is_(None),
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            DetectionJob,
+            status_attr=DetectionJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=DetectionJob.created_at,
+            extra_filters=(DetectionJob.hydrophone_id.is_(None),),
         )
-        .order_by(DetectionJob.created_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    job = result.scalar_one_or_none()
-    if job is None:
-        return None
-
-    job.status = "running"
-    job.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return job
+        if job is not None:
+            return job
+    return None
 
 
 async def claim_hydrophone_detection_job(session: AsyncSession) -> Optional[DetectionJob]:
     """Claim a queued hydrophone detection job."""
-    result = await session.execute(
-        select(DetectionJob)
-        .where(
-            DetectionJob.status == "queued",
-            DetectionJob.hydrophone_id.isnot(None),
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            DetectionJob,
+            status_attr=DetectionJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=DetectionJob.created_at,
+            extra_filters=(DetectionJob.hydrophone_id.isnot(None),),
         )
-        .order_by(DetectionJob.created_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    job = result.scalar_one_or_none()
-    if job is None:
-        return None
-
-    job.status = "running"
-    job.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return job
+        if job is not None:
+            return job
+    return None
 
 
 async def complete_detection_job(session: AsyncSession, job_id: str) -> None:
@@ -313,21 +341,18 @@ async def fail_detection_job(
 
 
 async def claim_extraction_job(session: AsyncSession) -> Optional[DetectionJob]:
-    result = await session.execute(
-        select(DetectionJob)
-        .where(DetectionJob.extract_status == "queued")
-        .order_by(DetectionJob.updated_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    job = result.scalar_one_or_none()
-    if job is None:
-        return None
-
-    job.extract_status = "running"
-    job.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return job
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            DetectionJob,
+            status_attr=DetectionJob.extract_status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=DetectionJob.updated_at,
+        )
+        if job is not None:
+            return job
+    return None
 
 
 async def complete_extraction_job(session: AsyncSession, job_id: str) -> None:

@@ -19,26 +19,28 @@ async def create_clustering_job(
     refined_from_job_id: Optional[str] = None,
     storage_root: Optional[Path] = None,
 ) -> ClusteringJob:
+    if not embedding_set_ids:
+        raise ValueError("At least one embedding set is required")
+
     # Validate that all embedding sets share the same vector_dim
-    if embedding_set_ids:
-        result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.id.in_(embedding_set_ids))
+    result = await session.execute(
+        select(EmbeddingSet).where(EmbeddingSet.id.in_(embedding_set_ids))
+    )
+    sets = list(result.scalars().all())
+    if len(sets) != len(embedding_set_ids):
+        found_ids = {s.id for s in sets}
+        missing = [eid for eid in embedding_set_ids if eid not in found_ids]
+        raise ValueError(f"Embedding sets not found: {missing}")
+    dims = {s.vector_dim for s in sets}
+    if len(dims) > 1:
+        raise ValueError(
+            f"Cannot cluster embedding sets with different vector dimensions: {dims}"
         )
-        sets = list(result.scalars().all())
-        if len(sets) != len(embedding_set_ids):
-            found_ids = {s.id for s in sets}
-            missing = [eid for eid in embedding_set_ids if eid not in found_ids]
-            raise ValueError(f"Embedding sets not found: {missing}")
-        dims = {s.vector_dim for s in sets}
-        if len(dims) > 1:
-            raise ValueError(
-                f"Cannot cluster embedding sets with different vector dimensions: {dims}"
-            )
-        model_versions = {s.model_version for s in sets}
-        if len(model_versions) > 1:
-            raise ValueError(
-                f"Cannot cluster embedding sets from different models: {model_versions}"
-            )
+    model_versions = {s.model_version for s in sets}
+    if len(model_versions) > 1:
+        raise ValueError(
+            f"Cannot cluster embedding sets from different models: {model_versions}"
+        )
 
     # Validate refined_from_job_id if provided
     if refined_from_job_id is not None:

@@ -1,8 +1,5 @@
-import io
 import json
-import math
-import struct
-import wave
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -12,59 +9,57 @@ import pytest
 
 
 @pytest.fixture
-async def embedding_set_id(client):
-    """Upload audio and create an embedding set for clustering tests."""
-    # Upload audio
-    sr = 16000
-    duration = 2.0
-    n = int(sr * duration)
-    samples = [int(32767 * math.sin(2 * math.pi * 440 * i / sr)) for i in range(n)]
-    buf = io.BytesIO()
-    with wave.open(buf, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        wf.writeframes(struct.pack(f"<{n}h", *samples))
-    wav_bytes = buf.getvalue()
+async def embedding_set_id(app_settings):
+    """Create a minimal EmbeddingSet row for clustering API tests."""
+    from sqlalchemy import insert
 
-    upload = await client.post(
-        "/audio/upload",
-        files={"file": ("test.wav", wav_bytes, "audio/wav")},
-    )
-    audio_id = upload.json()["id"]
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.audio import AudioFile
+    from humpback.models.processing import EmbeddingSet
 
-    # Create a processing job (will be skipped or queued)
-    proc = await client.post(
-        "/processing/jobs",
-        json={"audio_file_id": audio_id},
-    )
-    assert proc.status_code == 201
+    audio_id = str(uuid.uuid4())
+    es_id = str(uuid.uuid4())
+    checksum = uuid.uuid4().hex
+    parquet_path = Path(app_settings.storage_root) / "fixtures" / f"{es_id}.parquet"
 
-    # We need a real embedding set — create one directly via DB
-    # Instead, just get the list; the seed model creates one if processing runs
-    # For testing, we'll just use the embedding set endpoint
-    sets = await client.get("/processing/embedding-sets")
-    if sets.json():
-        return sets.json()[0]["id"]
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        await session.execute(
+            insert(AudioFile).values(
+                id=audio_id,
+                filename="fixture.wav",
+                folder_path="fixtures",
+                checksum_sha256=checksum,
+            )
+        )
+        await session.execute(
+            insert(EmbeddingSet).values(
+                id=es_id,
+                audio_file_id=audio_id,
+                encoding_signature=f"sig-{es_id}",
+                model_version="fixture_model",
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+                vector_dim=1280,
+                parquet_path=str(parquet_path),
+            )
+        )
+        await session.commit()
+    await engine.dispose()
+    return es_id
 
-    # If no sets exist yet, create one manually via the DB is complex.
-    # Let's just use an empty list for the basic test and skip the validation.
-    pytest.skip("No embedding sets available for clustering test")
 
-
-async def test_create_clustering_job_with_empty_list(client):
-    """Creating a clustering job with empty embedding_set_ids should succeed."""
+async def test_create_clustering_job_with_empty_list(client, embedding_set_id):
+    """Creating a clustering job with empty embedding_set_ids should fail validation."""
     resp = await client.post(
         "/clustering/jobs",
         json={"embedding_set_ids": []},
     )
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["status"] == "queued"
-    assert data["embedding_set_ids"] == []
+    assert resp.status_code == 422
 
 
-async def test_create_clustering_job_invalid_ids(client):
+async def test_create_clustering_job_invalid_ids(client, embedding_set_id):
     """Creating a clustering job with non-existent IDs should fail."""
     resp = await client.post(
         "/clustering/jobs",
@@ -74,10 +69,10 @@ async def test_create_clustering_job_invalid_ids(client):
     assert "not found" in resp.json()["detail"].lower()
 
 
-async def test_get_clustering_job(client):
+async def test_get_clustering_job(client, embedding_set_id):
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     resp = await client.get(f"/clustering/jobs/{job_id}")
@@ -85,15 +80,15 @@ async def test_get_clustering_job(client):
     assert resp.json()["id"] == job_id
 
 
-async def test_get_clustering_job_not_found(client):
+async def test_get_clustering_job_not_found(client, embedding_set_id):
     resp = await client.get("/clustering/jobs/nonexistent")
     assert resp.status_code == 404
 
 
-async def test_list_clusters_empty(client):
+async def test_list_clusters_empty(client, embedding_set_id):
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     resp = await client.get(f"/clustering/jobs/{job_id}/clusters")
@@ -101,15 +96,15 @@ async def test_list_clusters_empty(client):
     assert resp.json() == []
 
 
-async def test_visualization_not_found(client):
+async def test_visualization_not_found(client, embedding_set_id):
     resp = await client.get("/clustering/jobs/nonexistent/visualization")
     assert resp.status_code == 404
 
 
-async def test_visualization_not_complete(client):
+async def test_visualization_not_complete(client, embedding_set_id):
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     # Job is queued, not complete
@@ -118,12 +113,12 @@ async def test_visualization_not_complete(client):
     assert "not complete" in resp.json()["detail"].lower()
 
 
-async def test_visualization_success(client, app_settings):
+async def test_visualization_success(client, embedding_set_id, app_settings):
     """Test visualization endpoint with a manually placed umap_coords.parquet."""
     # Create a job
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
 
@@ -168,11 +163,11 @@ async def test_visualization_success(client, app_settings):
     assert data["cluster_label"] == [0, 0, 1, 1, -1]
 
 
-async def test_visualization_no_umap_file(client, app_settings):
+async def test_visualization_no_umap_file(client, embedding_set_id, app_settings):
     """Test 404 when job is complete but umap_coords.parquet doesn't exist."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
 
@@ -214,17 +209,17 @@ async def _mark_job_complete_with_metrics(app_settings, job_id, metrics=None):
     await engine.dispose()
 
 
-async def test_metrics_not_found(client):
+async def test_metrics_not_found(client, embedding_set_id):
     """Metrics for nonexistent job returns 404."""
     resp = await client.get("/clustering/jobs/nonexistent/metrics")
     assert resp.status_code == 404
 
 
-async def test_metrics_not_complete(client):
+async def test_metrics_not_complete(client, embedding_set_id):
     """Metrics for a queued job returns 400."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     resp = await client.get(f"/clustering/jobs/{job_id}/metrics")
@@ -232,11 +227,11 @@ async def test_metrics_not_complete(client):
     assert "not complete" in resp.json()["detail"].lower()
 
 
-async def test_metrics_empty(client, app_settings):
+async def test_metrics_empty(client, embedding_set_id, app_settings):
     """Metrics for a complete job with no metrics_json returns empty dict."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -246,11 +241,11 @@ async def test_metrics_empty(client, app_settings):
     assert resp.json() == {}
 
 
-async def test_metrics_with_data(client, app_settings):
+async def test_metrics_with_data(client, embedding_set_id, app_settings):
     """Metrics endpoint returns stored metrics."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     metrics = {"silhouette_score": 0.75, "n_clusters": 3}
@@ -263,11 +258,11 @@ async def test_metrics_with_data(client, app_settings):
     assert data["n_clusters"] == 3
 
 
-async def test_metrics_in_job_response(client, app_settings):
+async def test_metrics_in_job_response(client, embedding_set_id, app_settings):
     """Job detail response includes metrics field."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     metrics = {"silhouette_score": 0.5}
@@ -280,28 +275,28 @@ async def test_metrics_in_job_response(client, app_settings):
     assert data["metrics"]["silhouette_score"] == 0.5
 
 
-async def test_parameter_sweep_not_found(client):
+async def test_parameter_sweep_not_found(client, embedding_set_id):
     """Parameter sweep for nonexistent job returns 404."""
     resp = await client.get("/clustering/jobs/nonexistent/parameter-sweep")
     assert resp.status_code == 404
 
 
-async def test_parameter_sweep_not_complete(client):
+async def test_parameter_sweep_not_complete(client, embedding_set_id):
     """Parameter sweep for a queued job returns 400."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     resp = await client.get(f"/clustering/jobs/{job_id}/parameter-sweep")
     assert resp.status_code == 400
 
 
-async def test_parameter_sweep_success(client, app_settings):
+async def test_parameter_sweep_success(client, embedding_set_id, app_settings):
     """Parameter sweep endpoint returns stored sweep data."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -323,11 +318,11 @@ async def test_parameter_sweep_success(client, app_settings):
     assert data[1]["silhouette_score"] == 0.7
 
 
-async def test_parameter_sweep_no_file(client, app_settings):
+async def test_parameter_sweep_no_file(client, embedding_set_id, app_settings):
     """Parameter sweep 404 when file doesn't exist."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -339,17 +334,17 @@ async def test_parameter_sweep_no_file(client, app_settings):
 # --- Stability endpoint tests ---
 
 
-async def test_stability_not_found(client):
+async def test_stability_not_found(client, embedding_set_id):
     """Stability for nonexistent job returns 404."""
     resp = await client.get("/clustering/jobs/nonexistent/stability")
     assert resp.status_code == 404
 
 
-async def test_stability_not_complete(client):
+async def test_stability_not_complete(client, embedding_set_id):
     """Stability for a queued job returns 400."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     resp = await client.get(f"/clustering/jobs/{job_id}/stability")
@@ -357,11 +352,11 @@ async def test_stability_not_complete(client):
     assert "not complete" in resp.json()["detail"].lower()
 
 
-async def test_stability_no_file(client, app_settings):
+async def test_stability_no_file(client, embedding_set_id, app_settings):
     """Stability 404 when file doesn't exist for a complete job."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -370,11 +365,11 @@ async def test_stability_no_file(client, app_settings):
     assert resp.status_code == 404
 
 
-async def test_stability_success(client, app_settings):
+async def test_stability_success(client, embedding_set_id, app_settings):
     """Stability endpoint returns stored stability data."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -416,17 +411,17 @@ async def test_stability_success(client, app_settings):
 # --- Classifier endpoint tests ---
 
 
-async def test_classifier_not_found(client):
+async def test_classifier_not_found(client, embedding_set_id):
     """Classifier for nonexistent job returns 404."""
     resp = await client.get("/clustering/jobs/nonexistent/classifier")
     assert resp.status_code == 404
 
 
-async def test_classifier_not_complete(client):
+async def test_classifier_not_complete(client, embedding_set_id):
     """Classifier for a queued job returns 400."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     resp = await client.get(f"/clustering/jobs/{job_id}/classifier")
@@ -434,11 +429,11 @@ async def test_classifier_not_complete(client):
     assert "not complete" in resp.json()["detail"].lower()
 
 
-async def test_classifier_no_file(client, app_settings):
+async def test_classifier_no_file(client, embedding_set_id, app_settings):
     """Classifier 404 when file doesn't exist for a complete job."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -447,11 +442,11 @@ async def test_classifier_no_file(client, app_settings):
     assert resp.status_code == 404
 
 
-async def test_classifier_success(client, app_settings):
+async def test_classifier_success(client, embedding_set_id, app_settings):
     """Classifier endpoint returns stored classifier report."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -482,11 +477,11 @@ async def test_classifier_success(client, app_settings):
     assert "Grunt" in data["per_class"]
 
 
-async def test_label_queue_no_file(client, app_settings):
+async def test_label_queue_no_file(client, embedding_set_id, app_settings):
     """Label queue 404 when file doesn't exist for a complete job."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -495,11 +490,11 @@ async def test_label_queue_no_file(client, app_settings):
     assert resp.status_code == 404
 
 
-async def test_label_queue_success(client, app_settings):
+async def test_label_queue_success(client, embedding_set_id, app_settings):
     """Label queue endpoint returns stored queue data."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -550,12 +545,12 @@ async def test_label_queue_success(client, app_settings):
 # --- Refinement endpoint tests ---
 
 
-async def test_create_job_refined_from_invalid_id(client):
+async def test_create_job_refined_from_invalid_id(client, embedding_set_id):
     """Creating a job with a non-existent refined_from_job_id should fail."""
     resp = await client.post(
         "/clustering/jobs",
         json={
-            "embedding_set_ids": [],
+            "embedding_set_ids": [embedding_set_id],
             "refined_from_job_id": "nonexistent-job-id",
         },
     )
@@ -563,19 +558,19 @@ async def test_create_job_refined_from_invalid_id(client):
     assert "not found" in resp.json()["detail"].lower()
 
 
-async def test_create_job_refined_from_incomplete(client):
+async def test_create_job_refined_from_incomplete(client, embedding_set_id):
     """Creating a job with a non-complete source job should fail."""
     # Create a queued job to use as source
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     source_id = create.json()["id"]
 
     resp = await client.post(
         "/clustering/jobs",
         json={
-            "embedding_set_ids": [],
+            "embedding_set_ids": [embedding_set_id],
             "refined_from_job_id": source_id,
         },
     )
@@ -583,12 +578,12 @@ async def test_create_job_refined_from_incomplete(client):
     assert "not complete" in resp.json()["detail"].lower()
 
 
-async def test_create_job_refined_from_no_parquet(client, app_settings):
+async def test_create_job_refined_from_no_parquet(client, embedding_set_id, app_settings):
     """Creating a job from a complete source without refined parquet should fail."""
     # Create and mark complete (no refined_embeddings.parquet)
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     source_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, source_id)
@@ -596,7 +591,7 @@ async def test_create_job_refined_from_no_parquet(client, app_settings):
     resp = await client.post(
         "/clustering/jobs",
         json={
-            "embedding_set_ids": [],
+            "embedding_set_ids": [embedding_set_id],
             "refined_from_job_id": source_id,
         },
     )
@@ -604,12 +599,12 @@ async def test_create_job_refined_from_no_parquet(client, app_settings):
     assert "no refined embeddings" in resp.json()["detail"].lower()
 
 
-async def test_create_job_refined_from_valid(client, app_settings):
+async def test_create_job_refined_from_valid(client, embedding_set_id, app_settings):
     """Creating a job from a complete source with refined parquet should succeed."""
     # Create and mark complete
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     source_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, source_id)
@@ -627,7 +622,7 @@ async def test_create_job_refined_from_valid(client, app_settings):
     resp = await client.post(
         "/clustering/jobs",
         json={
-            "embedding_set_ids": [],
+            "embedding_set_ids": [embedding_set_id],
             "refined_from_job_id": source_id,
         },
     )
@@ -637,17 +632,17 @@ async def test_create_job_refined_from_valid(client, app_settings):
     assert data["status"] == "queued"
 
 
-async def test_refinement_not_found(client):
+async def test_refinement_not_found(client, embedding_set_id):
     """Refinement for nonexistent job returns 404."""
     resp = await client.get("/clustering/jobs/nonexistent/refinement")
     assert resp.status_code == 404
 
 
-async def test_refinement_not_complete(client):
+async def test_refinement_not_complete(client, embedding_set_id):
     """Refinement for a queued job returns 400."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     resp = await client.get(f"/clustering/jobs/{job_id}/refinement")
@@ -655,11 +650,11 @@ async def test_refinement_not_complete(client):
     assert "not complete" in resp.json()["detail"].lower()
 
 
-async def test_refinement_no_file(client, app_settings):
+async def test_refinement_no_file(client, embedding_set_id, app_settings):
     """Refinement 404 when file doesn't exist for a complete job."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)
@@ -668,11 +663,11 @@ async def test_refinement_no_file(client, app_settings):
     assert resp.status_code == 404
 
 
-async def test_refinement_success(client, app_settings):
+async def test_refinement_success(client, embedding_set_id, app_settings):
     """Refinement endpoint returns stored refinement report."""
     create = await client.post(
         "/clustering/jobs",
-        json={"embedding_set_ids": []},
+        json={"embedding_set_ids": [embedding_set_id]},
     )
     job_id = create.json()["id"]
     await _mark_job_complete_with_metrics(app_settings, job_id)

@@ -345,7 +345,7 @@ re-clustering. Training uses GPU when available (`HUMPBACK_TF_FORCE_CPU` to over
 ## Workflow Queue
 
 Use SQL-backed queue semantics:
-- Workers select queued jobs with row-level locking / "claim" update
+- Workers claim queued jobs via atomic compare-and-set updates (`WHERE id=:candidate AND status='queued'`)
 - Status transitions:
   - queued -> running -> complete
   - queued -> running -> failed
@@ -356,6 +356,21 @@ Concurrency:
 - allow multiple clustering jobs in parallel (configurable)
 
 Worker priority order: processing -> clustering -> classifier training -> detection
+
+Queue safety note:
+- SQLite has no true row-level locks; correctness relies on atomic status updates,
+  not `SELECT ... FOR UPDATE`.
+
+---
+
+## API Validation Contracts
+
+- `POST /processing/jobs` requires an existing `audio_file_id` (missing ID -> 404).
+- `POST /clustering/jobs` requires `embedding_set_ids` to be non-empty.
+- `POST /classifier/hydrophone-detection-jobs` requires
+  `hop_seconds <= classifier window_size_seconds`.
+- `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.
+- `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---
 

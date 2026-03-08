@@ -149,3 +149,20 @@ Append-only record of significant design decisions. Do not edit historical entri
 - 7-day maximum time range per job
 - Added `boto3` dependency
 - Alembic migration `012_hydrophone_detection_columns.py`
+
+---
+
+## ADR-009: Atomic compare-and-set claims for all queue job types
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: SQLite does not provide true row-level locking semantics compatible with the prior claim flow. Under concurrent workers, selecting a queued job before status update can race and allow duplicate claims for the same job.
+
+**Decision**: Standardize queue claiming on a compare-and-set pattern for every job type. Each claimant selects a candidate queued job ID, then performs `UPDATE ... SET status='running' WHERE id=:candidate AND status='queued'`. A claim succeeds only when exactly one row is updated; otherwise the worker retries with the next candidate.
+
+**Consequences**:
+- Eliminates duplicate claims under concurrent worker sessions on SQLite
+- Provides consistent claim behavior across processing, clustering, training, detection, hydrophone detection, and extraction jobs
+- Reduces reliance on database locking features that differ by backend
+- Requires small retry loops in claimers but keeps queue behavior deterministic

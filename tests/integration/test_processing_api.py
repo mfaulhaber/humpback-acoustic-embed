@@ -15,6 +15,15 @@ async def test_create_processing_job(client, wav_bytes):
     assert data["skipped"] is False
 
 
+async def test_create_processing_job_audio_not_found(client):
+    resp = await client.post(
+        "/processing/jobs",
+        json={"audio_file_id": "does-not-exist"},
+    )
+    assert resp.status_code == 404
+    assert "audio file not found" in resp.json()["detail"].lower()
+
+
 async def test_list_processing_jobs(client, wav_bytes):
     upload = await client.post(
         "/audio/upload",

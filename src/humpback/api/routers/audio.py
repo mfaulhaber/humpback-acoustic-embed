@@ -16,7 +16,7 @@ from humpback.models.processing import EmbeddingSet
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.embeddings import read_embeddings
 from humpback.processing.features import extract_logmel
-from humpback.processing.windowing import slice_windows, count_windows
+from humpback.processing.windowing import slice_windows_with_metadata
 from humpback.schemas.audio import (
     AudioFileOut,
     AudioMetadataIn,
@@ -177,10 +177,46 @@ async def download_audio(
 
     range_header = request.headers.get("range")
     if range_header:
-        range_spec = range_header.strip().lower().removeprefix("bytes=")
+        range_spec = range_header.strip().lower()
+        if not range_spec.startswith("bytes="):
+            raise HTTPException(
+                416,
+                "Invalid Range header",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+        range_spec = range_spec.removeprefix("bytes=")
         parts = range_spec.split("-", 1)
-        start = int(parts[0]) if parts[0] else 0
-        end = int(parts[1]) if parts[1] else file_size - 1
+        if len(parts) != 2:
+            raise HTTPException(
+                416,
+                "Invalid Range header",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
+        try:
+            if parts[0] == "":
+                suffix_len = int(parts[1])
+                if suffix_len <= 0:
+                    raise ValueError
+                start = max(file_size - suffix_len, 0)
+                end = file_size - 1
+            else:
+                start = int(parts[0])
+                end = int(parts[1]) if parts[1] else file_size - 1
+        except ValueError:
+            raise HTTPException(
+                416,
+                "Invalid Range header",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
+        if start < 0 or end < start or start >= file_size:
+            raise HTTPException(
+                416,
+                "Range not satisfiable",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
         end = min(end, file_size - 1)
         length = end - start + 1
 
@@ -269,19 +305,18 @@ def _compute_spectrogram(
 
     audio, sr = decode_audio(file_path)
     audio = resample(audio, sr, target_sample_rate)
-    n_samples = len(audio)
-    total = count_windows(n_samples, target_sample_rate, window_size_seconds)
+    windows = list(
+        slice_windows_with_metadata(audio, target_sample_rate, window_size_seconds)
+    )
+    total = len(windows)
     if window_index >= total:
         raise ValueError(f"window_index {window_index} >= total windows {total}")
 
-    # Extract the raw window (without zero-padding short final windows)
-    window_samples = int(target_sample_rate * window_size_seconds)
-    start = window_index * window_samples
-    end = min(start + window_samples, n_samples)
-    raw_window = audio[start:end]
+    raw_window, metadata = windows[window_index]
 
     # For the spectrogram visualization, only pad to target_frames if the
     # window is full-length; short final windows use their natural frame count
+    window_samples = int(target_sample_rate * window_size_seconds)
     is_short = len(raw_window) < window_samples
     tf = None if is_short else target_frames
 
@@ -295,7 +330,7 @@ def _compute_spectrogram(
     y_hz = mel_frequencies[1:-1].tolist()
     # Compute time axis in seconds for x-axis
     n_frames = spec.shape[1]
-    time_offset = window_index * window_size_seconds
+    time_offset = metadata.offset_sec
     x_seconds = [time_offset + (j * hop_length / target_sample_rate) for j in range(n_frames)]
     return spec, target_sample_rate, total, y_hz, x_seconds
 

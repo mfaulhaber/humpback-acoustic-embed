@@ -233,3 +233,76 @@ async def test_content_endpoint_rejects_queued_job(client, app_settings):
     assert resp.status_code == 400
 
     await engine.dispose()
+
+
+async def test_save_labels_rejects_invalid_values(client, app_settings):
+    """PUT /labels rejects values outside {0, 1, null}."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+    tsv_path = tsv_dir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "humpback",
+        "ship",
+        "background",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "test.wav",
+                "start_sec": "0.0",
+                "end_sec": "5.0",
+                "avg_confidence": "0.8",
+                "peak_confidence": "0.9",
+                "n_windows": "1",
+                "humpback": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": "test.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "humpback": 2,
+            }
+        ],
+    )
+    assert resp.status_code == 422
+
+    await engine.dispose()

@@ -180,3 +180,22 @@ async def test_embeddings_wrong_audio_id(viz_client, viz_settings):
         params={"embedding_set_id": es_id},
     )
     assert resp.status_code == 404
+
+
+async def test_spectrogram_uses_overlap_back_window_offsets(viz_client):
+    """Final window x-axis reflects overlap-back offset, not linear index*window_size."""
+    wav_data = _make_wav_bytes(duration=12.5, sample_rate=16000)
+    upload = await viz_client.post(
+        "/audio/upload",
+        files={"file": ("overlap.wav", wav_data, "audio/wav")},
+    )
+    audio_id = upload.json()["id"]
+
+    resp = await viz_client.get(
+        f"/audio/{audio_id}/spectrogram",
+        params={"window_index": 2, "target_sample_rate": 16000, "window_size_seconds": 5.0},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_windows"] == 3
+    assert abs(data["x_axis_seconds"][0] - 7.5) < 0.01

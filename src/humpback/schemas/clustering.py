@@ -1,13 +1,19 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ClusteringJobCreate(BaseModel):
     embedding_set_ids: list[str]
     parameters: Optional[dict[str, Any]] = None
     refined_from_job_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_embedding_sets(self):
+        if not self.embedding_set_ids:
+            raise ValueError("At least one embedding set is required")
+        return self
 
 
 class ClusteringJobOut(BaseModel):

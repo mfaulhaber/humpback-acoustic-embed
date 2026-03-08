@@ -1,5 +1,7 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
+from humpback.database import create_session_factory
 from humpback.models.audio import AudioFile
 from humpback.models.clustering import ClusteringJob
 from humpback.models.processing import JobStatus, ProcessingJob
@@ -212,3 +214,33 @@ async def test_recover_stale_unblocks_queue(session):
     # After recovery, one of them can be claimed
     claimed = await claim_processing_job(session)
     assert claimed is not None
+
+
+async def test_claim_processing_job_is_atomic_across_sessions(session):
+    """Two concurrent claimers must not both claim the same queued job."""
+    af = AudioFile(filename="a.wav", checksum_sha256="q8")
+    session.add(af)
+    await session.flush()
+
+    job = ProcessingJob(
+        audio_file_id=af.id,
+        encoding_signature="sig_atomic",
+        model_version="v1",
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+    )
+    session.add(job)
+    await session.commit()
+
+    factory = create_session_factory(session.bind)
+
+    async def _claim_once() -> str | None:
+        async with factory() as claim_session:
+            claimed = await claim_processing_job(claim_session)
+            return claimed.id if claimed is not None else None
+
+    c1, c2 = await asyncio.gather(_claim_once(), _claim_once())
+    claimed_ids = [cid for cid in (c1, c2) if cid is not None]
+
+    assert len(claimed_ids) == 1
+    assert claimed_ids[0] == job.id

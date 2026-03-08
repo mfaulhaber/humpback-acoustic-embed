@@ -173,6 +173,11 @@ async def create_hydrophone_detection_job(
     if not 0.0 <= confidence_threshold <= 1.0:
         raise ValueError("confidence_threshold must be between 0.0 and 1.0")
 
+    if hop_seconds > cm.window_size_seconds:
+        raise ValueError(
+            f"hop_seconds ({hop_seconds}) must be <= window_size_seconds ({cm.window_size_seconds})"
+        )
+
     # Validate local cache path if provided
     if local_cache_path:
         from pathlib import Path

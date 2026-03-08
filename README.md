@@ -14,7 +14,7 @@ Project Goals:
 - Investigating state-of-the-art clustering/classification with TensorFlow2 audio embedings.
 
 Key features:
-- Asynchronous job queue (SQL-backed, restart-safe)
+- Asynchronous job queue (SQL-backed, restart-safe, atomic claim semantics)
 - Idempotent encoding (no reprocessing for same config)
 - Multi-model registry supporting TFLite and TF2 SavedModel formats
 - TF2 SavedModel support for raw waveform input (e.g., SurfPerch)
@@ -414,7 +414,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | PUT | `/audio/{id}/metadata` | Update metadata |
 | GET | `/audio/{id}/download` | Download original audio file (supports range requests) |
 | GET | `/audio/{id}/window` | Get a WAV segment (`?start_seconds=&duration_seconds=`) |
-| GET | `/audio/{id}/spectrogram` | Get log-mel spectrogram for a window (`?window_index=`) |
+| GET | `/audio/{id}/spectrogram` | Get log-mel spectrogram for a window (`?window_index=`, overlap-back aligned offsets) |
 | GET | `/audio/{id}/embeddings` | Get embedding vectors (`?embedding_set_id=`) |
 | POST | `/processing/jobs` | Create processing job |
 | GET | `/processing/jobs` | List processing jobs |
@@ -462,6 +462,13 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | DELETE | `/admin/models/{id}` | Delete model (fails if embeddings reference it) |
 | POST | `/admin/models/{id}/set-default` | Set model as default |
 | GET | `/admin/models/scan` | Scan `models/` dir for unregistered models (.tflite + SavedModel dirs) |
+
+Validation and error behavior notes:
+- `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.
+- `POST /clustering/jobs` requires at least one `embedding_set_id` (`422` on empty list).
+- `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`.
+- `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
+- `GET /audio/{id}/download` returns `416` for malformed or unsatisfiable `Range` headers.
 
 ---
 
@@ -657,4 +664,3 @@ We utilized the [ambient-sound-analysis](https://github.com/orcasound/ambient-so
 Our humpback whale detection/analysis models were trained using the [Humpback Whales Training Data](https://github.com) curated in the Orcadata wiki. This dataset includes:
 *   **Acoustic Bouts**: Catalogues of common vocalization types and patterned non-song sequences.
 *   **Attribution**: Data provided by the Orcasound and OrcaLab communities, including recordings from the 2020 and 2021 seasons.
-
