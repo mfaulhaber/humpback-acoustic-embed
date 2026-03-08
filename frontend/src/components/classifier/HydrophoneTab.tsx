@@ -27,8 +27,10 @@ import {
   useBulkDeleteDetectionJobs,
   useDetectionContent,
   useSaveDetectionLabels,
+  useBrowseDirectories,
 } from "@/hooks/queries/useClassifier";
 import { detectionTsvUrl, detectionAudioSliceUrl } from "@/api/client";
+import { Folder, Globe } from "lucide-react";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
 
@@ -74,6 +76,10 @@ export function HydrophoneTab() {
   const [hopSeconds, setHopSeconds] = useState(1.0);
   const [highThreshold, setHighThreshold] = useState(0.70);
   const [lowThreshold, setLowThreshold] = useState(0.45);
+  const [sourceType, setSourceType] = useState<"s3" | "local">("s3");
+  const [localCachePath, setLocalCachePath] = useState("");
+  const [browseRoot, setBrowseRoot] = useState<string | null>(null);
+  const { data: browseData } = useBrowseDirectories(browseRoot);
 
   // Table state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -89,6 +95,7 @@ export function HydrophoneTab() {
 
   const handleSubmit = () => {
     if (!selectedModelId || !selectedHydrophoneId || !startDatetime || !endDatetime) return;
+    if (sourceType === "local" && !localCachePath) return;
     const startTs = new Date(startDatetime).getTime() / 1000;
     const endTs = new Date(endDatetime).getTime() / 1000;
     createMutation.mutate({
@@ -100,6 +107,7 @@ export function HydrophoneTab() {
       hop_seconds: hopSeconds,
       high_threshold: highThreshold,
       low_threshold: lowThreshold,
+      ...(sourceType === "local" ? { local_cache_path: localCachePath } : {}),
     });
   };
 
@@ -196,6 +204,103 @@ export function HydrophoneTab() {
               </select>
             </div>
           </div>
+
+          {/* Audio Source */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Audio Source</label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={sourceType === "s3" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSourceType("s3")}
+              >
+                <Globe className="h-3.5 w-3.5 mr-1.5" />
+                S3 (Orcasound)
+              </Button>
+              <Button
+                type="button"
+                variant={sourceType === "local" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSourceType("local")}
+              >
+                <Folder className="h-3.5 w-3.5 mr-1.5" />
+                Local Cache
+              </Button>
+            </div>
+            {sourceType === "local" && (
+              <div className="space-y-1.5">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Path to local HLS cache folder…"
+                    value={localCachePath}
+                    onChange={(e) => {
+                      setLocalCachePath(e.target.value);
+                      setBrowseRoot(null);
+                    }}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setBrowseRoot(localCachePath || "/")}
+                  >
+                    Browse
+                  </Button>
+                </div>
+                {browseData && browseRoot !== null && (
+                  <div className="border rounded p-2 max-h-40 overflow-y-auto text-xs space-y-0.5">
+                    {browseRoot !== "/" && (
+                      <button
+                        className="block w-full text-left px-2 py-1 hover:bg-muted rounded text-muted-foreground"
+                        onClick={() => {
+                          const parent = browseRoot.replace(/\/[^/]+\/?$/, "") || "/";
+                          setBrowseRoot(parent);
+                        }}
+                      >
+                        ../ (up)
+                      </button>
+                    )}
+                    {browseData.subdirectories.map((d) => (
+                      <button
+                        key={d.path}
+                        className="block w-full text-left px-2 py-1 hover:bg-muted rounded"
+                        onClick={() => setBrowseRoot(d.path)}
+                        onDoubleClick={() => {
+                          setLocalCachePath(d.path);
+                          setBrowseRoot(null);
+                        }}
+                      >
+                        {d.name}/
+                      </button>
+                    ))}
+                    {browseData.subdirectories.length === 0 && (
+                      <p className="text-muted-foreground px-2 py-1">No subdirectories</p>
+                    )}
+                    <div className="pt-1 border-t mt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-full text-xs"
+                        onClick={() => {
+                          setLocalCachePath(browseData.path);
+                          setBrowseRoot(null);
+                        }}
+                      >
+                        Select: {browseData.path}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Expects S3-mirrored structure: <code>{"{path}"}/audio-orcasound-net/{"{hydrophone}"}/hls/…</code>
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium">Start Date/Time</label>
@@ -279,6 +384,7 @@ export function HydrophoneTab() {
               !selectedHydrophoneId ||
               !startDatetime ||
               !endDatetime ||
+              (sourceType === "local" && !localCachePath) ||
               createMutation.isPending
             }
           >
@@ -299,6 +405,9 @@ export function HydrophoneTab() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">
                 Active Job — {activeJob.hydrophone_name}
+                {activeJob.local_cache_path && (
+                  <Badge variant="outline" className="ml-2 text-[10px] py-0 align-middle">local</Badge>
+                )}
               </CardTitle>
               <Button
                 variant="destructive"
@@ -531,7 +640,12 @@ function HydrophoneJobRow({
         <td className="px-3 py-2">
           <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
         </td>
-        <td className="px-3 py-2 text-muted-foreground">{job.hydrophone_name}</td>
+        <td className="px-3 py-2 text-muted-foreground">
+          {job.hydrophone_name}
+          {job.local_cache_path && (
+            <Badge variant="outline" className="ml-1.5 text-[10px] py-0">local</Badge>
+          )}
+        </td>
         <td className="px-3 py-2 text-muted-foreground text-xs">
           {job.start_timestamp && job.end_timestamp
             ? formatDateRange(job.start_timestamp, job.end_timestamp)

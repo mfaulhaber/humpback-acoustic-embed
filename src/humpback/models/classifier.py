@@ -64,3 +64,4 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     segments_total: Mapped[Optional[int]] = mapped_column(default=None)
     time_covered_sec: Mapped[Optional[float]] = mapped_column(default=None)
     alerts: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    local_cache_path: Mapped[Optional[str]] = mapped_column(default=None)

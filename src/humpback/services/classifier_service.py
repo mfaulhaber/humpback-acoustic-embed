@@ -151,9 +151,10 @@ async def create_hydrophone_detection_job(
     hop_seconds: float = 1.0,
     high_threshold: float = 0.70,
     low_threshold: float = 0.45,
+    local_cache_path: str | None = None,
 ) -> DetectionJob:
     """Create a hydrophone detection job after validating inputs."""
-    from humpback.config import HYDROPHONE_IDS, ORCASOUND_HYDROPHONES
+    from humpback.config import HYDROPHONE_IDS, ORCASOUND_HYDROPHONES, ORCASOUND_S3_BUCKET
 
     # Validate classifier model exists
     result = await session.execute(
@@ -172,6 +173,16 @@ async def create_hydrophone_detection_job(
     if not 0.0 <= confidence_threshold <= 1.0:
         raise ValueError("confidence_threshold must be between 0.0 and 1.0")
 
+    # Validate local cache path if provided
+    if local_cache_path:
+        from pathlib import Path
+        cache_dir = Path(local_cache_path) / ORCASOUND_S3_BUCKET / hydrophone_id / "hls"
+        if not cache_dir.is_dir():
+            raise ValueError(
+                f"Local cache path does not contain expected HLS structure: "
+                f"{cache_dir} not found"
+            )
+
     job = DetectionJob(
         classifier_model_id=classifier_model_id,
         hydrophone_id=hydrophone_id,
@@ -182,6 +193,7 @@ async def create_hydrophone_detection_job(
         hop_seconds=hop_seconds,
         high_threshold=high_threshold,
         low_threshold=low_threshold,
+        local_cache_path=local_cache_path,
     )
     session.add(job)
     await session.commit()

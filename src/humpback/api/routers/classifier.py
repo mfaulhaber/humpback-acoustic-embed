@@ -96,6 +96,7 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         segments_total=job.segments_total,
         time_covered_sec=job.time_covered_sec,
         alerts=json.loads(job.alerts) if job.alerts else None,
+        local_cache_path=job.local_cache_path,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -246,6 +247,7 @@ async def create_hydrophone_detection_job(
             body.hop_seconds,
             body.high_threshold,
             body.low_threshold,
+            body.local_cache_path,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -800,11 +802,15 @@ async def get_detection_audio_slice(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    # Hydrophone jobs: re-fetch from S3 on demand
+    # Hydrophone jobs: re-fetch from S3 or local cache on demand
     if job.hydrophone_id:
         from datetime import datetime, timezone
 
-        from humpback.classifier.s3_stream import OrcasoundS3Client, decode_ts_bytes
+        from humpback.classifier.s3_stream import (
+            LocalHLSClient,
+            OrcasoundS3Client,
+            decode_ts_bytes,
+        )
 
         # Parse synthetic filename (e.g. "20260301T143000Z.wav") to get chunk start time
         basename = filename.replace(".wav", "")
@@ -820,11 +826,15 @@ async def get_detection_audio_slice(
         abs_start = chunk_start_ts + start_sec
         abs_end = abs_start + duration_sec
 
-        # Fetch relevant S3 segments
-        client = OrcasoundS3Client()
+        # Use local cache or S3
+        if job.local_cache_path:
+            client: OrcasoundS3Client | LocalHLSClient = LocalHLSClient(job.local_cache_path)
+        else:
+            client = OrcasoundS3Client()
+
         folders = client.list_hls_folders(job.hydrophone_id, abs_start, abs_end)
         if not folders:
-            raise HTTPException(404, "No S3 audio data found for this time range")
+            raise HTTPException(404, "No audio data found for this time range")
 
         # Fetch and decode segments that cover our range
         target_sr = 32000  # default

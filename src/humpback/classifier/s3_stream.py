@@ -1,4 +1,4 @@
-"""S3 HLS streaming client for Orcasound hydrophone audio."""
+"""S3 and local HLS streaming clients for Orcasound hydrophone audio."""
 
 import io
 import logging
@@ -6,6 +6,7 @@ import struct
 import subprocess
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -90,6 +91,72 @@ class OrcasoundS3Client:
         return total
 
 
+class LocalHLSClient:
+    """Local filesystem client mirroring OrcasoundS3Client interface.
+
+    Reads from a local cache directory that mirrors the S3 bucket structure:
+    {cache_root}/{bucket}/{hydrophone_id}/hls/{timestamp}/{segments}.ts
+    """
+
+    def __init__(self, cache_root: str):
+        self._root = Path(cache_root) / ORCASOUND_S3_BUCKET
+
+    def list_hls_folders(
+        self, hydrophone_id: str, start_ts: float, end_ts: float
+    ) -> list[str]:
+        """List HLS folder timestamps within time range from local cache.
+
+        Skips folders that contain only .404.json marker files (no real
+        .ts segments).  These markers indicate data that was missing on
+        S3 at download time.
+        """
+        hls_dir = self._root / hydrophone_id / "hls"
+        if not hls_dir.is_dir():
+            return []
+        folders: list[str] = []
+        for entry in hls_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            try:
+                ts = int(entry.name)
+            except ValueError:
+                continue
+            if ts <= end_ts and ts >= start_ts - 3600:
+                # Quick check: skip folders with no .ts files
+                has_ts = any(f.suffix == ".ts" for f in entry.iterdir())
+                if has_ts:
+                    folders.append(entry.name)
+        return sorted(folders, key=int)
+
+    def list_segments(self, hydrophone_id: str, folder_ts: str) -> list[str]:
+        """List .ts segment keys in an HLS folder from local cache."""
+        folder = self._root / hydrophone_id / "hls" / folder_ts
+        if not folder.is_dir():
+            return []
+        segments: list[str] = []
+        for entry in sorted(folder.iterdir()):
+            if entry.suffix == ".ts":
+                # Return key in S3-style format for consistency
+                segments.append(
+                    f"{hydrophone_id}/hls/{folder_ts}/{entry.name}"
+                )
+        return segments
+
+    def fetch_segment(self, key: str) -> bytes:
+        """Read a .ts segment from local filesystem."""
+        path = self._root / key
+        return path.read_bytes()
+
+    def count_segments(
+        self, hydrophone_id: str, folder_timestamps: list[str]
+    ) -> int:
+        """Count total .ts segments across folders."""
+        total = 0
+        for folder_ts in folder_timestamps:
+            total += len(self.list_segments(hydrophone_id, folder_ts))
+        return total
+
+
 def decode_ts_bytes(ts_bytes: bytes, target_sr: int = 32000) -> np.ndarray:
     """Decode HLS .ts segment bytes to float32 audio array via ffmpeg.
 
@@ -132,7 +199,7 @@ def decode_ts_bytes(ts_bytes: bytes, target_sr: int = 32000) -> np.ndarray:
 
 
 def iter_audio_chunks(
-    client: OrcasoundS3Client,
+    client: "OrcasoundS3Client | LocalHLSClient",
     hydrophone_id: str,
     start_ts: float,
     end_ts: float,

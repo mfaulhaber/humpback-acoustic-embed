@@ -56,12 +56,13 @@ Current state of the humpback acoustic embedding and clustering platform.
 
 ### Hydrophone Streaming Detection
 - S3 HLS streaming from Orcasound public hydrophone network (anonymous access)
+- Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
 - 4 configured hydrophones: Orcasound Lab, North San Juan Channel, Port Townsend, Bush Point
-- In-memory processing: S3 segments decoded via ffmpeg stdin/stdout, no disk I/O
+- In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
 - Streaming detection pipeline with per-chunk progress updates
 - Cancel support via threading.Event + DB polling
 - Flash alerts for segment decode failures (dismissable, color-coded)
-- Audio playback re-fetches from S3 on demand (~200ms latency)
+- Audio playback re-fetches from S3 or local cache on demand
 - Auto-save labels on each toggle (no explicit Save button)
 - Max 7-day time range per job
 
@@ -82,7 +83,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `012_hydrophone_detection_columns.py`
+- **Latest migration**: `013_hydrophone_local_cache.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs
 
 ---

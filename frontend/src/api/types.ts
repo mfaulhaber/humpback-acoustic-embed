@@ -417,6 +417,7 @@ export interface DetectionJob {
   segments_total: number | null;
   time_covered_sec: number | null;
   alerts: FlashAlert[] | null;
+  local_cache_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -442,6 +443,7 @@ export interface HydrophoneDetectionJobCreate {
   hop_seconds?: number;
   high_threshold?: number;
   low_threshold?: number;
+  local_cache_path?: string;
 }
 
 export interface ExtractionSettings {

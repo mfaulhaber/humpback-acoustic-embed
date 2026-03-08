@@ -388,6 +388,7 @@ async def run_hydrophone_detection_job(
             on_chunk_complete,
             on_alert,
             cancel_event.is_set,
+            job.local_cache_path,
         )
 
         cancel_task.cancel()

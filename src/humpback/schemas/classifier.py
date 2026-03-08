@@ -90,6 +90,7 @@ class DetectionJobOut(BaseModel):
     segments_total: Optional[int] = None
     time_covered_sec: Optional[float] = None
     alerts: Optional[list[dict[str, Any]]] = None
+    local_cache_path: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -114,6 +115,7 @@ class HydrophoneDetectionJobCreate(BaseModel):
     hop_seconds: float = 1.0
     high_threshold: float = 0.70
     low_threshold: float = 0.45
+    local_cache_path: Optional[str] = None
 
     @model_validator(mode="after")
     def _validate(self):
