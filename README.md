@@ -420,6 +420,8 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/processing/jobs` | List processing jobs |
 | GET | `/processing/jobs/{id}` | Get job status |
 | POST | `/processing/jobs/{id}/cancel` | Cancel job |
+| DELETE | `/processing/jobs/{id}` | Delete processing job |
+| POST | `/processing/jobs/bulk-delete` | Bulk delete processing jobs |
 | GET | `/processing/embedding-sets` | List embedding sets |
 | GET | `/processing/embedding-sets/{id}` | Get embedding set |
 | POST | `/clustering/jobs` | Create clustering job |

@@ -14,9 +14,10 @@ const ROOT_SENTINEL = "__root__";
 
 interface QueueJobFormProps {
   jobs: ProcessingJob[];
+  onModelUsed?: (model: string) => void;
 }
 
-export function QueueJobForm({ jobs }: QueueJobFormProps) {
+export function QueueJobForm({ jobs, onModelUsed }: QueueJobFormProps) {
   const { data: audioFiles = [] } = useAudioFiles();
   const { data: models = [] } = useModels();
   const createJob = useCreateProcessingJob();
@@ -146,7 +147,8 @@ export function QueueJobForm({ jobs }: QueueJobFormProps) {
       "success",
       `Queued ${done - skipped - failed} job(s), ${skipped} skipped, ${failed} failed`,
     );
-  }, [selectedFolder, modelVersion, windowSize, sampleRate, defaultModel]);
+    onModelUsed?.(mv);
+  }, [selectedFolder, modelVersion, windowSize, sampleRate, defaultModel, onModelUsed]);
 
   const handleQueueAll = useCallback(async () => {
     const mv = modelVersion || defaultModel?.name || "";
@@ -205,7 +207,8 @@ export function QueueJobForm({ jobs }: QueueJobFormProps) {
       "success",
       `Queued ${done - skipped - failed} job(s), ${skipped} skipped, ${failed} failed`,
     );
-  }, [selectedFolder, modelVersion, windowSize, sampleRate, defaultModel]);
+    onModelUsed?.(mv);
+  }, [selectedFolder, modelVersion, windowSize, sampleRate, defaultModel, onModelUsed]);
 
   const batchPct =
     batchProgress && batchProgress.total > 0

@@ -26,3 +26,4 @@ No active plans.
 - Overlapping window inference + hysteresis event detection (ADR-005)
 - Incremental detection rendering with per-file progress (ADR-006)
 - Fix escalating false positives: MLP classifier + diagnostics (ADR-007)
+- Multi-model support: grouping, filtering & validation

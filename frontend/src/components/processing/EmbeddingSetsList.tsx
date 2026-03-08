@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { FolderTree } from "@/components/shared/FolderTree";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { shortId, fmtDate } from "@/utils/format";
@@ -39,7 +40,7 @@ export function EmbeddingSetsList({ embeddingSets }: EmbeddingSetsListProps) {
               <div className="flex items-center gap-2 py-1 px-2 text-sm hover:bg-accent rounded">
                 <span className="font-mono text-xs text-muted-foreground">{shortId(es.id)}</span>
                 <span className="truncate">{es._filename}</span>
-                <span className="text-xs text-muted-foreground">{es.model_version}</span>
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">{es.model_version}</Badge>
                 <span className="text-xs text-muted-foreground">{es.vector_dim}d</span>
                 <span className="text-xs text-muted-foreground ml-auto">{fmtDate(es.created_at)}</span>
               </div>

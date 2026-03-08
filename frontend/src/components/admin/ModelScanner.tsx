@@ -50,12 +50,16 @@ function ModelFileCard({ file, onRegistered }: { file: AvailableModelFile; onReg
   const createModel = useCreateModel();
   const [name, setName] = useState(file.filename.replace(/\.[^.]+$/, ""));
   const [displayName, setDisplayName] = useState(file.filename.replace(/\.[^.]+$/, ""));
-  const [vectorDim, setVectorDim] = useState("1280");
+  const [vectorDim, setVectorDim] = useState(String(file.detected_vector_dim ?? 1280));
 
   return (
     <div className="border rounded-md p-3 space-y-2">
       <p className="text-sm font-medium">{file.filename}</p>
-      <p className="text-xs text-muted-foreground">{file.path} ({(file.size_bytes / 1024 / 1024).toFixed(1)} MB)</p>
+      <p className="text-xs text-muted-foreground">
+        {file.path} ({(file.size_bytes / 1024 / 1024).toFixed(1)} MB)
+        {" · "}{file.model_type} · {file.input_format}
+        {file.detected_vector_dim != null && ` · dim ${file.detected_vector_dim}`}
+      </p>
       <div className="grid grid-cols-3 gap-2">
         <div>
           <label className="text-xs text-muted-foreground">Name</label>

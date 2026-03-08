@@ -1,10 +1,11 @@
 import { useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { X } from "lucide-react";
+import { X, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { FolderTree } from "@/components/shared/FolderTree";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { useCancelProcessingJob } from "@/hooks/queries/useProcessing";
+import { useCancelProcessingJob, useDeleteProcessingJob, useBulkDeleteProcessingJobs } from "@/hooks/queries/useProcessing";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { shortId, fmtDate } from "@/utils/format";
 import { showMsg } from "@/components/shared/MessageToast";
@@ -16,6 +17,8 @@ interface ProcessingJobsListProps {
 
 export function ProcessingJobsList({ jobs }: ProcessingJobsListProps) {
   const cancelJob = useCancelProcessingJob();
+  const deleteJob = useDeleteProcessingJob();
+  const bulkDelete = useBulkDeleteProcessingJobs();
   const { data: audioFiles = [] } = useAudioFiles();
 
   const audioMap = new Map(audioFiles.map((af) => [af.id, af]));
@@ -28,6 +31,16 @@ export function ProcessingJobsList({ jobs }: ProcessingJobsListProps) {
       });
     },
     [cancelJob],
+  );
+
+  const handleDelete = useCallback(
+    (jobId: string) => {
+      deleteJob.mutate(jobId, {
+        onSuccess: () => showMsg("success", "Job deleted"),
+        onError: (e) => showMsg("error", `Delete failed: ${e.message}`),
+      });
+    },
+    [deleteJob],
   );
 
   // Enrich jobs with audio info for folder tree
@@ -54,6 +67,26 @@ export function ProcessingJobsList({ jobs }: ProcessingJobsListProps) {
             items={enriched}
             getPath={(j) => j._folderPath}
             stateKey="procTree"
+            renderFolderAction={(folderPath) => (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const ids = enriched
+                    .filter((j) => j._folderPath === folderPath || j._folderPath.startsWith(folderPath + "/"))
+                    .filter((j) => j.status !== "running" && j.status !== "queued")
+                    .map((j) => j.id);
+                  if (ids.length === 0) return;
+                  bulkDelete.mutate(ids, {
+                    onSuccess: (res) => showMsg("success", `Deleted ${res.count} job(s)`),
+                    onError: (e) => showMsg("error", `Delete failed: ${e.message}`),
+                  });
+                }}
+                className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                title={`Delete jobs in "${folderPath}"`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
             renderFolderExtra={(_path, items) => {
               const statuses = items.map((j) => j.status);
               let aggregate: string;
@@ -75,7 +108,7 @@ export function ProcessingJobsList({ jobs }: ProcessingJobsListProps) {
                 <span className="font-mono text-xs text-muted-foreground">{shortId(job.id)}</span>
                 <span className="truncate">{job._filename}</span>
                 <StatusBadge status={job.status} />
-                <span className="text-xs text-muted-foreground">{job.model_version}</span>
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">{job.model_version}</Badge>
                 <span className="text-xs text-muted-foreground">{job.window_size_seconds}s</span>
                 <span className="text-xs text-muted-foreground ml-auto">{fmtDate(job.created_at)}</span>
                 {(job.status === "queued" || job.status === "running") && (
@@ -86,6 +119,16 @@ export function ProcessingJobsList({ jobs }: ProcessingJobsListProps) {
                     onClick={() => handleCancel(job.id)}
                   >
                     <X className="h-3 w-3" />
+                  </Button>
+                )}
+                {(job.status === "failed" || job.status === "complete" || job.status === "canceled") && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => handleDelete(job.id)}
+                  >
+                    <Trash2 className="h-3 w-3" />
                   </Button>
                 )}
                 {job.warning_message && (

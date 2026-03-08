@@ -34,6 +34,11 @@ async def create_clustering_job(
             raise ValueError(
                 f"Cannot cluster embedding sets with different vector dimensions: {dims}"
             )
+        model_versions = {s.model_version for s in sets}
+        if len(model_versions) > 1:
+            raise ValueError(
+                f"Cannot cluster embedding sets from different models: {model_versions}"
+            )
 
     # Validate refined_from_job_id if provided
     if refined_from_job_id is not None:

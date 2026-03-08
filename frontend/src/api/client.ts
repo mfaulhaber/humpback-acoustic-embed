@@ -127,6 +127,12 @@ export const createProcessingJob = (body: ProcessingJobCreate) =>
 export const cancelProcessingJob = (jobId: string) =>
   api<ProcessingJob>(`/processing/jobs/${jobId}/cancel`, { method: "POST" });
 
+export const deleteProcessingJob = (jobId: string) =>
+  api<{ status: string }>(`/processing/jobs/${jobId}`, { method: "DELETE" });
+
+export const bulkDeleteProcessingJobs = (ids: string[]) =>
+  post<{ status: string; count: number }>("/processing/jobs/bulk-delete", { ids });
+
 export const fetchEmbeddingSets = () => api<EmbeddingSet[]>("/processing/embedding-sets");
 
 // ---- Clustering ----

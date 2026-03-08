@@ -550,6 +550,7 @@ export interface AvailableModelFile {
   registered: boolean;
   model_type: string;
   input_format: string;
+  detected_vector_dim?: number;
 }
 
 export interface TableInfo {

@@ -4,6 +4,8 @@ import {
   fetchEmbeddingSets,
   createProcessingJob,
   cancelProcessingJob,
+  deleteProcessingJob,
+  bulkDeleteProcessingJobs,
 } from "@/api/client";
 import type { ProcessingJobCreate } from "@/api/types";
 
@@ -37,6 +39,26 @@ export function useCancelProcessingJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (jobId: string) => cancelProcessingJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["processingJobs"] });
+    },
+  });
+}
+
+export function useDeleteProcessingJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteProcessingJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["processingJobs"] });
+    },
+  });
+}
+
+export function useBulkDeleteProcessingJobs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteProcessingJobs(ids),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["processingJobs"] });
     },

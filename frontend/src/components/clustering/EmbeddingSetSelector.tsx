@@ -1,12 +1,14 @@
 import { useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useCreateClusteringJob } from "@/hooks/queries/useClustering";
 import { ClusteringParamsForm, type ClusteringParams } from "./ClusteringParamsForm";
 import { showMsg } from "@/components/shared/MessageToast";
+import { ModelFilter } from "@/components/shared/ModelFilter";
 import type { EmbeddingSet } from "@/api/types";
 
 const ROOT_SENTINEL = "__root__";
@@ -31,17 +33,23 @@ interface EmbeddingSetSelectorProps {
 export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string> | null>(null);
+  const [modelFilter, setModelFilter] = useState("__all__");
   const { data: audioFiles = [] } = useAudioFiles();
   const createJob = useCreateClusteringJob();
 
   const audioMap = useMemo(() => new Map(audioFiles.map((af) => [af.id, af])), [audioFiles]);
+
+  const filteredSets = useMemo(
+    () => modelFilter === "__all__" ? embeddingSets : embeddingSets.filter((es) => es.model_version === modelFilter),
+    [embeddingSets, modelFilter],
+  );
 
   // Build two-level folder tree: parent → child → embedding sets
   const folderTree = useMemo(() => {
     // Map each embedding set to its parent/child folder via audioMap
     const tree = new Map<string, Map<string, EmbeddingSet[]>>();
 
-    for (const es of embeddingSets) {
+    for (const es of filteredSets) {
       const af = audioMap.get(es.audio_file_id);
       const folderPath = af?.folder_path || "";
       const slashIdx = folderPath.indexOf("/");
@@ -78,7 +86,7 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
     }
 
     return result;
-  }, [embeddingSets, audioMap]);
+  }, [filteredSets, audioMap]);
 
   const toggleChild = useCallback((sets: EmbeddingSet[]) => {
     setSelected((prev) => {
@@ -106,13 +114,13 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
   }, []);
 
   const toggleAll = useCallback(() => {
-    const allSelected = embeddingSets.length > 0 && embeddingSets.every((es) => selected.has(es.id));
+    const allSelected = filteredSets.length > 0 && filteredSets.every((es) => selected.has(es.id));
     if (allSelected) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(embeddingSets.map((es) => es.id)));
+      setSelected(new Set(filteredSets.map((es) => es.id)));
     }
-  }, [embeddingSets, selected]);
+  }, [filteredSets, selected]);
 
   // null = initial state (all collapsed); once user interacts, explicit Set
   const allParentKeys = useMemo(() => new Set(folderTree.map((n) => n.parent)), [folderTree]);
@@ -135,12 +143,19 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
         return;
       }
 
+      const selectedSets = embeddingSets.filter((es) => selected.has(es.id));
+
       // Dimension validation
-      const dims = new Set(
-        embeddingSets.filter((es) => selected.has(es.id)).map((es) => es.vector_dim),
-      );
+      const dims = new Set(selectedSets.map((es) => es.vector_dim));
       if (dims.size > 1) {
         showMsg("error", `Cannot cluster sets with mixed dimensions: ${[...dims].join(", ")}`);
+        return;
+      }
+
+      // Model version validation
+      const models = new Set(selectedSets.map((es) => es.model_version));
+      if (models.size > 1) {
+        showMsg("error", `Cannot cluster sets from different models: ${[...models].join(", ")}`);
         return;
       }
 
@@ -176,7 +191,7 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
     [selected, embeddingSets, createJob],
   );
 
-  const allSelected = embeddingSets.length > 0 && embeddingSets.every((es) => selected.has(es.id));
+  const allSelected = filteredSets.length > 0 && filteredSets.every((es) => selected.has(es.id));
   const displayName = (key: string) => (key === ROOT_SENTINEL ? "(root)" : key);
 
   return (
@@ -190,6 +205,7 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        <ModelFilter items={embeddingSets} value={modelFilter} onChange={setModelFilter} />
         {/* Two-level folder tree */}
         <div className="space-y-1 max-h-72 overflow-y-auto">
           {folderTree.map((node) => {
@@ -243,6 +259,9 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
                             onCheckedChange={() => toggleChild(child.sets)}
                           />
                           <span className="truncate">{displayName(child.child)}</span>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal shrink-0">
+                            {child.sets[0]?.model_version}
+                          </Badge>
                           <span className="text-xs text-muted-foreground ml-auto shrink-0">
                             {child.sets.length} {child.sets.length === 1 ? "set" : "sets"}
                           </span>
@@ -254,14 +273,14 @@ export function EmbeddingSetSelector({ embeddingSets }: EmbeddingSetSelectorProp
               </div>
             );
           })}
-          {embeddingSets.length === 0 && (
+          {filteredSets.length === 0 && (
             <p className="text-sm text-muted-foreground">No embedding sets available. Process some audio first.</p>
           )}
         </div>
 
         {selected.size > 0 && (
           <p className="text-xs text-muted-foreground">
-            {selected.size} of {embeddingSets.length} embedding sets selected
+            {selected.size} of {filteredSets.length} embedding sets selected
           </p>
         )}
 

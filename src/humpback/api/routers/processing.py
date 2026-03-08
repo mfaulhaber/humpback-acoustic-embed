@@ -1,10 +1,16 @@
 import json
+from typing import List
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from humpback.api.deps import SessionDep
 from humpback.schemas.processing import EmbeddingSetOut, ProcessingJobCreate, ProcessingJobOut
 from humpback.services import processing_service
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[str]
 
 router = APIRouter(prefix="/processing", tags=["processing"])
 
@@ -60,6 +66,23 @@ async def cancel_job(job_id: str, session: SessionDep) -> ProcessingJobOut:
     if job is None:
         raise HTTPException(404, "Processing job not found")
     return _job_to_out(job)
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, session: SessionDep) -> dict:
+    try:
+        deleted = await processing_service.delete_processing_job(session, job_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not deleted:
+        raise HTTPException(404, "Processing job not found")
+    return {"status": "deleted"}
+
+
+@router.post("/jobs/bulk-delete")
+async def bulk_delete_jobs(body: BulkDeleteRequest, session: SessionDep) -> dict:
+    count = await processing_service.bulk_delete_processing_jobs(session, body.ids)
+    return {"status": "deleted", "count": count}
 
 
 @router.get("/embedding-sets")

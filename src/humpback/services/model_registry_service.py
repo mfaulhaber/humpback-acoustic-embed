@@ -141,6 +141,29 @@ async def delete_model(session: AsyncSession, model_id: str) -> None:
     await session.commit()
 
 
+def _detect_tflite_info(model_path: str) -> tuple[str, int | None]:
+    """Detect input format and vector dim from a TFLite model.
+
+    Returns (input_format, vector_dim). vector_dim is None if detection fails.
+    2D input (batch, samples) → waveform; 3D input (batch, h, w) → spectrogram.
+    """
+    input_format = "spectrogram"
+    vector_dim = None
+    try:
+        import tensorflow as tf
+        interp = tf.lite.Interpreter(model_path=model_path)
+        interp.allocate_tensors()
+        input_details = interp.get_input_details()
+        output_details = interp.get_output_details()
+        if input_details and len(input_details[0]["shape"]) == 2:
+            input_format = "waveform"
+        if output_details and len(output_details[0]["shape"]) == 2:
+            vector_dim = int(output_details[0]["shape"][1])
+    except Exception:
+        pass
+    return input_format, vector_dim
+
+
 def scan_model_files(settings: Settings) -> list[dict]:
     """Scan models directory for .tflite files and TF2 SavedModel directories."""
     models_dir = Path(settings.models_dir)
@@ -148,13 +171,17 @@ def scan_model_files(settings: Settings) -> list[dict]:
     if models_dir.is_dir():
         # Scan for .tflite files
         for p in sorted(models_dir.glob("*.tflite")):
-            files.append({
+            input_format, detected_dim = _detect_tflite_info(str(p))
+            entry: dict = {
                 "filename": p.name,
                 "path": str(p),
                 "size_bytes": p.stat().st_size,
                 "model_type": "tflite",
-                "input_format": "spectrogram",
-            })
+                "input_format": input_format,
+            }
+            if detected_dim is not None:
+                entry["detected_vector_dim"] = detected_dim
+            files.append(entry)
         # Scan for TF2 SavedModel directories (contain saved_model.pb)
         for p in sorted(models_dir.iterdir()):
             if p.is_dir() and (p / "saved_model.pb").exists():

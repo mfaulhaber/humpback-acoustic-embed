@@ -13,7 +13,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Audio detail view with processing history
 
 ### Processing Pipeline
-- Configurable model registry (TFLite + TF2 SavedModel)
+- Configurable model registry (TFLite + TF2 SavedModel) with auto-detection of input format and vector dim
 - Audio decoding, resampling (32 kHz), overlap-back windowing (5s default)
 - Log-mel spectrogram extraction (128x128) for TFLite models
 - Raw waveform input for TF2 SavedModel models
@@ -22,6 +22,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Background worker with job queue (queued/running/complete/failed/canceled)
 
 ### Clustering
+- Model version validation: rejects clustering across different embedding models
 - HDBSCAN, K-Means, Agglomerative clustering algorithms
 - UMAP, PCA, or no dimensionality reduction
 - Euclidean and cosine distance metrics
@@ -51,6 +52,10 @@ Current state of the humpback acoustic embedding and clustering platform.
 
 ### Web UI
 - Tab-based SPA (Audio, Processing, Clustering, Classifier, Admin)
+- Model filter dropdown on Processing, Clustering, and Classifier pages
+- Model version badges on processing jobs, embedding sets, and folder tree rows
+- Cross-model warning banner on classifier training (prevents submission)
+- Processing job delete (per-row and folder-level bulk delete)
 - Model registry management and scanner
 - Folder browser for audio selection
 - UMAP visualization, cluster tables, evaluation panels

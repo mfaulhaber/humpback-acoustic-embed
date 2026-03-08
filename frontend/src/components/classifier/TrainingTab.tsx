@@ -16,9 +16,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, ChevronDown, Settings2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Settings2, AlertTriangle } from "lucide-react";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
+import { ModelFilter } from "@/components/shared/ModelFilter";
 import {
   useTrainingJobs,
   useClassifierModels,
@@ -58,6 +59,7 @@ export function TrainingTab() {
   const bulkDeleteModelsMutation = useBulkDeleteClassifierModels();
 
   const [name, setName] = useState("");
+  const [modelFilter, setModelFilter] = useState("__all__");
   const [posSelected, setPosSelected] = useState<Set<string>>(new Set());
   const [posCollapsed, setPosCollapsed] = useState<Set<string> | null>(null);
   const [negSelected, setNegSelected] = useState<Set<string>>(new Set());
@@ -89,11 +91,16 @@ export function TrainingTab() {
     [audioFiles],
   );
 
+  const filteredSets = useMemo(
+    () => modelFilter === "__all__" ? embeddingSets : embeddingSets.filter((es) => es.model_version === modelFilter),
+    [embeddingSets, modelFilter],
+  );
+
   // Build two-level folder tree: parent → child → embedding sets
   const folderTree = useMemo(() => {
     const tree = new Map<string, Map<string, EmbeddingSet[]>>();
 
-    for (const es of embeddingSets) {
+    for (const es of filteredSets) {
       const af = audioMap.get(es.audio_file_id);
       const folderPath = af?.folder_path || "";
       const slashIdx = folderPath.indexOf("/");
@@ -136,7 +143,7 @@ export function TrainingTab() {
     }
 
     return result;
-  }, [embeddingSets, audioMap]);
+  }, [filteredSets, audioMap]);
 
   const allParentKeys = useMemo(
     () => new Set(folderTree.map((n) => n.parent)),
@@ -181,10 +188,10 @@ export function TrainingTab() {
   ) =>
     () => {
       const allSel =
-        embeddingSets.length > 0 &&
-        embeddingSets.every((es) => sel.has(es.id));
+        filteredSets.length > 0 &&
+        filteredSets.every((es) => sel.has(es.id));
       if (allSel) setSel(new Set());
-      else setSel(new Set(embeddingSets.map((es) => es.id)));
+      else setSel(new Set(filteredSets.map((es) => es.id)));
     };
 
   const makeToggleCollapse = (
@@ -205,7 +212,7 @@ export function TrainingTab() {
   const togglePosParent = useCallback(makeToggleParent(setPosSelected), []);
   const togglePosAll = useCallback(
     makeToggleAll(posSelected, setPosSelected),
-    [embeddingSets, posSelected],
+    [filteredSets, posSelected],
   );
   const togglePosCollapse = useCallback(
     makeToggleCollapse(posCollapsed, setPosCollapsed),
@@ -216,12 +223,19 @@ export function TrainingTab() {
   const toggleNegParent = useCallback(makeToggleParent(setNegSelected), []);
   const toggleNegAll = useCallback(
     makeToggleAll(negSelected, setNegSelected),
-    [embeddingSets, negSelected],
+    [filteredSets, negSelected],
   );
   const toggleNegCollapse = useCallback(
     makeToggleCollapse(negCollapsed, setNegCollapsed),
     [allParentKeys],
   );
+
+  const selectedModels = useMemo(() => {
+    const ids = new Set([...posSelected, ...negSelected]);
+    return new Set(embeddingSets.filter((es) => ids.has(es.id)).map((es) => es.model_version));
+  }, [posSelected, negSelected, embeddingSets]);
+
+  const modelMismatch = selectedModels.size > 1;
 
   const handleSubmit = () => {
     if (!name || posSelected.size === 0 || negSelected.size === 0) return;
@@ -317,13 +331,15 @@ export function TrainingTab() {
             />
           </div>
 
+          <ModelFilter items={embeddingSets} value={modelFilter} onChange={setModelFilter} />
+
           {/* Positive Embedding Sets */}
           <EmbeddingSetPanel
             label="Positive Embedding Sets"
             selected={posSelected}
             collapsed={posCollapsed ?? allParentKeys}
             folderTree={folderTree}
-            embeddingSets={embeddingSets}
+            embeddingSets={filteredSets}
             onToggleChild={togglePosChild}
             onToggleParent={togglePosParent}
             onToggleAll={togglePosAll}
@@ -337,7 +353,7 @@ export function TrainingTab() {
             selected={negSelected}
             collapsed={negCollapsed ?? allParentKeys}
             folderTree={folderTree}
-            embeddingSets={embeddingSets}
+            embeddingSets={filteredSets}
             onToggleChild={toggleNegChild}
             onToggleParent={toggleNegParent}
             onToggleAll={toggleNegAll}
@@ -406,12 +422,20 @@ export function TrainingTab() {
             </CollapsibleContent>
           </Collapsible>
 
+          {modelMismatch && (
+            <div className="flex items-center gap-2 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Cannot train with embedding sets from different models: {[...selectedModels].join(", ")}
+            </div>
+          )}
+
           <Button
             onClick={handleSubmit}
             disabled={
               !name ||
               posSelected.size === 0 ||
               negSelected.size === 0 ||
+              modelMismatch ||
               createMutation.isPending
             }
           >
@@ -697,6 +721,9 @@ function EmbeddingSetPanel({
                         <span className="truncate">
                           {displayName(child.child)}
                         </span>
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal shrink-0">
+                          {child.sets[0]?.model_version}
+                        </Badge>
                         <span className="text-xs text-muted-foreground ml-auto shrink-0">
                           {child.sets.length}{" "}
                           {child.sets.length === 1 ? "set" : "sets"}

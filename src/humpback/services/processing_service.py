@@ -95,6 +95,37 @@ async def cancel_processing_job(
     return job
 
 
+async def delete_processing_job(
+    session: AsyncSession, job_id: str
+) -> bool:
+    """Delete a processing job. Only non-running jobs can be deleted."""
+    job = await get_processing_job(session, job_id)
+    if job is None:
+        return False
+    if job.status == JobStatus.running.value:
+        raise ValueError("Cannot delete a running job")
+    await session.delete(job)
+    await session.commit()
+    return True
+
+
+async def bulk_delete_processing_jobs(
+    session: AsyncSession, job_ids: list[str]
+) -> int:
+    """Delete multiple processing jobs. Skips running jobs. Returns count deleted."""
+    count = 0
+    for job_id in job_ids:
+        job = await get_processing_job(session, job_id)
+        if job is None:
+            continue
+        if job.status == JobStatus.running.value:
+            continue
+        await session.delete(job)
+        count += 1
+    await session.commit()
+    return count
+
+
 async def list_embedding_sets(session: AsyncSession) -> list[EmbeddingSet]:
     result = await session.execute(
         select(EmbeddingSet).order_by(EmbeddingSet.created_at.desc())
