@@ -179,6 +179,13 @@ Hydrophone labeled-sample extraction writes outputs under the hydrophone short l
 - positives: `{positive_output_path}/{hydrophone_id}/humpback/YYYY/MM/DD/*.wav`
 - negatives: `{negative_output_path}/{hydrophone_id}/{ship|background}/YYYY/MM/DD/*.wav`
 
+### 4.5 Hydrophone Timeline Assembly
+Hydrophone detection, playback, and extraction must use the same bounded stream timeline:
+- segment ordering must be numeric by segment suffix (never plain lexicographic)
+- playlist (`live.m3u8`) duration metadata should be used when available
+- processing/playback/extraction must stay within `[start_timestamp, end_timestamp]`
+- legacy playback compatibility for older jobs may fall back to `job.start_timestamp`
+
 ---
 
 ## 5. Testing Requirements (MANDATORY)

@@ -32,7 +32,7 @@ Key features:
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 - Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
-- Hydrophone detection UX: playback uses robust stream-offset mapping (first-folder anchor with legacy fallback), Extract activates from saved labels on the expanded completed job, and hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`)
+- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping (playlist durations + numeric segment ordering) with legacy anchor fallback for older jobs; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`)
 - Folder import: reference audio files in-place from local filesystem folders without copying
 
 ---
@@ -450,7 +450,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/classifier/detection-jobs/{id}` | Get detection job |
 | GET | `/classifier/detection-jobs/{id}/download` | Download detections TSV |
 | GET | `/classifier/detection-jobs/{id}/content` | Get detection TSV rows as JSON |
-| GET | `/classifier/detection-jobs/{id}/audio-slice` | Stream WAV slice (`?filename=&start_sec=&duration_sec=`); hydrophone jobs use stream-offset mapping with legacy fallback |
+| GET | `/classifier/detection-jobs/{id}/audio-slice` | Stream WAV slice (`?filename=&start_sec=&duration_sec=`); hydrophone jobs use range-bounded stream-timeline mapping with legacy fallback |
 | DELETE | `/classifier/training-jobs/{id}` | Delete training job (cascade-deletes model) |
 | POST | `/classifier/training-jobs/bulk-delete` | Bulk delete training jobs |
 | DELETE | `/classifier/detection-jobs/{id}` | Delete detection job + output files |

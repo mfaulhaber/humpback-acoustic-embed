@@ -10,6 +10,27 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection — Timeline-Correct Segment Assembly + End-Bounded Range
+
+## Outcome (2026-03-09)
+
+- Replaced lexicographic `.ts` ordering with numeric segment-suffix ordering across
+  S3/local/cache clients to prevent mixed-width key jumps (e.g. `live100` vs `live1000`).
+- Added playlist (`live.m3u8`) duration parsing and unified stream timeline construction
+  for hydrophone detection, playback (`/audio-slice`), and extraction.
+- Bounded timeline consumption to each job's `[start_timestamp, end_timestamp]` range so
+  detection/playback/extraction no longer spill past requested end times.
+- Kept legacy playback compatibility via `job.start_timestamp` anchor fallback for older jobs.
+- Added regression coverage for mixed-width ordering, end-bound clipping, and resolver continuity.
+
+## Verification
+
+- `uv run pytest tests/unit/test_s3_stream.py -q` passed (`15` passed).
+- `uv run pytest tests/integration/test_hydrophone_api.py -q` passed (`14` passed).
+- `uv run pytest tests/` passed (`395` passed).
+
+---
+
 # Plan: Classifier/Hydrophone Extract — Hydrophone-Partitioned Output Paths
 
 ## Outcome (2026-03-09)

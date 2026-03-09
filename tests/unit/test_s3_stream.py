@@ -1,6 +1,7 @@
 """Tests for S3 streaming module (mocked, no real S3 access)."""
 
 import io
+import re
 import struct
 
 import numpy as np
@@ -133,6 +134,55 @@ class TestIterAudioChunks:
         assert "network error" in errors[0]["message"]
         assert errors[0]["type"] == "warning"
 
+    def test_clips_segments_to_requested_end_timestamp(self):
+        """iter_audio_chunks should stop at end_ts within a long folder."""
+        from unittest.mock import patch
+
+        from humpback.classifier.s3_stream import iter_audio_chunks
+
+        class FakeClient:
+            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
+                return ["1000"]
+
+            def list_segments(self, _hydrophone_id, _folder_ts):
+                # Intentionally include beyond requested end range.
+                return [
+                    "hydro/hls/1000/live0.ts",
+                    "hydro/hls/1000/live1.ts",
+                    "hydro/hls/1000/live2.ts",
+                    "hydro/hls/1000/live3.ts",
+                ]
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+            def fetch_segment(self, key):
+                return key.encode()
+
+        def fake_decode(ts_bytes, sr):
+            # 10s per segment
+            _ = ts_bytes.decode()
+            return np.ones(sr * 10, dtype=np.float32)
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode):
+            chunks = list(
+                iter_audio_chunks(
+                    FakeClient(),
+                    "rpi_orcasound_lab",
+                    start_ts=1000.0,
+                    end_ts=1025.0,  # should include at most 25s of audio
+                    chunk_seconds=60.0,
+                    target_sr=10,
+                )
+            )
+
+        assert len(chunks) == 1
+        audio, chunk_utc, segs_done, segs_total = chunks[0]
+        assert chunk_utc.timestamp() == 1000.0
+        assert len(audio) == 250  # 25s * 10 Hz
+        assert segs_total == 3  # live0, live1, and clipped live2
+        assert segs_done == 3
+
 
 class TestMergeDetectionEvents:
     """Validate the hysteresis merge function used by hydrophone detector."""
@@ -247,6 +297,26 @@ class TestCachingS3Client:
         assert "rpi_orcasound_lab/hls/1700000000/live001.ts" in segs
         assert "rpi_orcasound_lab/hls/1700000000/live002.ts" in segs
 
+    def test_list_segments_uses_numeric_segment_order(self, tmp_path):
+        """Mixed-width segment names should sort numerically, not lexicographically."""
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        mock_s3.list_segments.return_value = [
+            "rpi_orcasound_lab/hls/1700000000/live099.ts",
+            "rpi_orcasound_lab/hls/1700000000/live100.ts",
+            "rpi_orcasound_lab/hls/1700000000/live1000.ts",
+            "rpi_orcasound_lab/hls/1700000000/live101.ts",
+        ]
+        client._s3 = mock_s3
+
+        segs = client.list_segments("rpi_orcasound_lab", "1700000000")
+        names = [s.split("/")[-1] for s in segs]
+        assert names == ["live099.ts", "live100.ts", "live101.ts", "live1000.ts"]
+
     def test_list_segments_404_folder_marker(self, tmp_path):
         """Folder with .404.json marker skips S3 call."""
         import json
@@ -349,3 +419,60 @@ class TestIterAudioChunksTimestamp:
         # Should be based on folder ts (1700010000), not start_ts (1700000000)
         expected = datetime.fromtimestamp(1700010000, tz=timezone.utc)
         assert chunk_utc == expected
+
+
+class TestResolveHydrophoneAudioSliceOrdering:
+    """Regression tests for segment ordering in hydrophone playback resolver."""
+
+    def test_resolver_does_not_jump_to_lexicographic_segment(self):
+        """Slice crossing live100->live101 boundary should never include live1000."""
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        from humpback.classifier.s3_stream import resolve_hydrophone_audio_slice
+
+        class FakeClient:
+            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
+                return ["1500"]
+
+            def list_segments(self, _hydrophone_id, _folder_ts):
+                # Deliberately unsorted and mixed-width.
+                return [
+                    "hydro/hls/1500/live99.ts",
+                    "hydro/hls/1500/live1000.ts",
+                    "hydro/hls/1500/live100.ts",
+                    "hydro/hls/1500/live101.ts",
+                ]
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+            def fetch_segment(self, key):
+                return key.encode()
+
+        def fake_decode(ts_bytes, sr):
+            key = ts_bytes.decode()
+            match = re.search(r"(\d+)(?=\.ts$)", key)
+            assert match is not None
+            value = float(int(match.group(1)))
+            return np.full(sr * 10, value, dtype=np.float32)
+
+        filename = datetime.fromtimestamp(1500, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode):
+            audio = resolve_hydrophone_audio_slice(
+                client=FakeClient(),
+                hydrophone_id="rpi_orcasound_lab",
+                stream_start_ts=1000.0,
+                stream_end_ts=3000.0,
+                filename=filename,
+                row_start_sec=19.0,  # 1s before boundary between live100 and live101
+                duration_sec=5.0,
+                target_sr=10,
+            )
+
+        # First 1s (10 samples) from live100, remaining 4s from live101.
+        assert len(audio) == 50
+        assert np.all(audio[:10] == 100.0)
+        assert np.all(audio[10:] == 101.0)
+        assert 1000.0 not in set(np.unique(audio))

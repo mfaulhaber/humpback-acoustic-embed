@@ -67,8 +67,11 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Cancel support via threading.Event + DB polling
 - Flash alerts for segment decode failures (dismissable, color-coded)
 - Audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
-- Hydrophone playback timestamp mapping uses stream-offset resolution with dual anchors:
-  first available folder timestamp, then legacy `job.start_timestamp`
+- Hydrophone timeline assembly uses numeric segment ordering plus playlist durations (when available),
+  with fallback to numeric/default-duration metadata when playlists are unavailable
+- Hydrophone detection/playback/extraction are bounded to job `[start_timestamp, end_timestamp]`
+- Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
+  with legacy fallback to `job.start_timestamp`
 - UTC range display in Detection Range column (replaces raw synthetic filenames)
 - WAV export for hydrophone jobs: fetches audio from HLS, writes labeled samples to positive/negative folders
 - Hydrophone extraction output paths include hydrophone short label partitioning:

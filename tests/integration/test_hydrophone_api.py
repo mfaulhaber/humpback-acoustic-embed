@@ -1,6 +1,7 @@
 """Integration tests for hydrophone detection API endpoints."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 import uuid
 
 import numpy as np
@@ -375,3 +376,146 @@ async def test_hydrophone_audio_slice_legacy_anchor_fallback_still_works(
     assert resp.content[:4] == b"RIFF"
 
     await engine.dispose()
+
+
+async def test_hydrophone_audio_slice_rejects_rows_beyond_job_end(
+    client, app_settings, monkeypatch
+):
+    """Rows timestamped beyond end_timestamp should not resolve audio."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1500.0,
+                end_timestamp=1525.0,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    def _list_hls_folders(_self, _hydrophone_id: str, start_ts: float, end_ts: float):
+        return ["1500"] if start_ts <= 1500 <= end_ts else []
+
+    def _list_segments(_self, _hydrophone_id: str, folder_ts: str):
+        if folder_ts != "1500":
+            return []
+        return [f"rpi_orcasound_lab/hls/1500/live{i}.ts" for i in range(4)]
+
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.list_hls_folders",
+        _list_hls_folders,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.list_segments",
+        _list_segments,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.LocalHLSClient.fetch_segment",
+        lambda _self, _key: b"fake-ts",
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.decode_ts_bytes",
+        lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
+    )
+
+    # Synthetic row starts after end_timestamp=1525.
+    filename = datetime.fromtimestamp(1530, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/audio-slice",
+        params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
+    )
+    assert resp.status_code == 404
+
+    await engine.dispose()
+
+
+def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
+    tmp_path, monkeypatch
+):
+    """Hydrophone detector should not emit detections beyond job end time."""
+    from humpback.classifier.hydrophone_detector import run_hydrophone_detection
+    from humpback.config import ORCASOUND_S3_BUCKET
+
+    hydrophone_id = "rpi_orcasound_lab"
+    folder_ts = "1000"
+    hls_dir = (
+        Path(tmp_path)
+        / ORCASOUND_S3_BUCKET
+        / hydrophone_id
+        / "hls"
+        / folder_ts
+    )
+    hls_dir.mkdir(parents=True)
+
+    # Four 10s segments exist, but requested range below should end at 25s.
+    for i in range(4):
+        (hls_dir / f"live{i}.ts").write_bytes(b"fake")
+    (hls_dir / "live.m3u8").write_text(
+        "\n".join(
+            [
+                "#EXTM3U",
+                "#EXT-X-VERSION:3",
+                "#EXTINF:10.0,",
+                "live0.ts",
+                "#EXTINF:10.0,",
+                "live1.ts",
+                "#EXTINF:10.0,",
+                "live2.ts",
+                "#EXTINF:10.0,",
+                "live3.ts",
+            ]
+        )
+    )
+
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.decode_ts_bytes",
+        lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
+    )
+
+    class FakeModel:
+        def embed(self, batch):
+            return np.zeros((len(batch), 1), dtype=np.float32)
+
+    class FakePipeline:
+        def predict_proba(self, emb):
+            n = len(emb)
+            return np.column_stack(
+                [np.full(n, 0.1, dtype=np.float32), np.full(n, 0.9, dtype=np.float32)]
+            )
+
+    detections, _summary = run_hydrophone_detection(
+        hydrophone_id=hydrophone_id,
+        start_timestamp=1000.0,
+        end_timestamp=1025.0,
+        pipeline=FakePipeline(),
+        model=FakeModel(),
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+        confidence_threshold=0.5,
+        input_format="waveform",
+        hop_seconds=5.0,
+        high_threshold=0.7,
+        low_threshold=0.45,
+        local_cache_path=str(tmp_path),
+        s3_cache_path=None,
+    )
+
+    assert detections
+    for det in detections:
+        chunk_ts = datetime.strptime(
+            det["filename"][:-4], "%Y%m%dT%H%M%SZ"
+        ).replace(tzinfo=timezone.utc).timestamp()
+        assert chunk_ts + float(det["end_sec"]) <= 1025.01

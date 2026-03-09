@@ -190,3 +190,28 @@ resolved.
 - Late timestamp rows that failed with per-row folder lookup are now decodable
 - Legacy jobs remain backward compatible via `job.start_timestamp` fallback
 - Extraction worker now passes stream start/end bounds so resolver behavior is deterministic
+
+---
+
+## ADR-011: Bounded hydrophone timeline assembly with numeric segment ordering
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Hydrophone HLS segment keys can include mixed-width numeric suffixes
+(e.g., `live100.ts`, `live1000.ts`, `live101.ts`). Lexicographic ordering of these keys
+caused non-chronological assembly and abrupt audio jumps in both detection playback and
+exported samples. Additionally, detection could process all segments in a selected folder,
+which could extend past the requested `end_timestamp`.
+
+**Decision**: Build hydrophone timelines using numeric segment ordering for `.ts` keys and
+use playlist (`live.m3u8`) duration metadata when available. Treat all hydrophone consumers
+(streaming detection, `/audio-slice` playback resolver, labeled-sample extraction resolver)
+as readers of the same bounded timeline clipped to `[start_timestamp, end_timestamp]`.
+Retain legacy playback fallback anchored to `job.start_timestamp` for older jobs.
+
+**Consequences**:
+- Eliminates lexicographic segment-order assembly errors (`...100 -> 1000 -> 101...`)
+- Keeps hydrophone detection/playback/extraction within requested job time bounds
+- Improves timestamp consistency between generated detection ranges and playback audio
+- Preserves backward compatibility for previously generated jobs via legacy anchor fallback

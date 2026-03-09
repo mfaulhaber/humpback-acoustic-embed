@@ -4,9 +4,11 @@ import io
 import json
 import logging
 import os
+import re
 import struct
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Generator, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,9 +18,152 @@ from humpback.config import ORCASOUND_S3_BUCKET
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SEGMENT_DURATION_SEC = 10.0
+STREAM_DISCONTINUITY_TOLERANCE_SEC = 0.25
+_SEGMENT_INDEX_RE = re.compile(r"(\d+)(?=\.ts$)", re.IGNORECASE)
+_SEGMENT_SUFFIX_RE = re.compile(r"^(.*?)(\d+)$")
+_EXTINF_RE = re.compile(r"#EXTINF:([0-9.]+)")
+
 
 class SegmentNotFoundError(Exception):
     """Raised when a segment is confirmed missing (404 cached)."""
+
+
+@dataclass(frozen=True)
+class StreamSegment:
+    """Timeline segment metadata for a single .ts object."""
+
+    key: str
+    start_ts: float
+    duration_sec: float
+
+    @property
+    def end_ts(self) -> float:
+        return self.start_ts + self.duration_sec
+
+
+def _segment_index_from_key(key: str) -> int | None:
+    """Extract trailing numeric segment index from a .ts key name."""
+    match = _SEGMENT_INDEX_RE.search(Path(key).name)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _segment_sort_key(key: str) -> tuple[int, str, int, str]:
+    """Sort key that prefers numeric segment suffix ordering when present."""
+    name = Path(key).name
+    stem = Path(key).stem
+    match = _SEGMENT_SUFFIX_RE.match(stem)
+    if not match:
+        return (1, stem, 0, name)
+    prefix, digits = match.groups()
+    idx = int(digits)
+    return (0, prefix, idx, name)
+
+
+def _sort_segment_keys(keys: Iterable[str]) -> list[str]:
+    """Sort segment keys chronologically by numeric suffix when available."""
+    return sorted(keys, key=_segment_sort_key)
+
+
+def _parse_playlist_segments(
+    playlist_text: str,
+    hydrophone_id: str,
+    folder_ts: str,
+    available_keys: set[str],
+    default_duration_sec: float = DEFAULT_SEGMENT_DURATION_SEC,
+) -> list[tuple[str, float]]:
+    """Parse HLS playlist lines into ordered (segment_key, duration_sec) pairs."""
+    ordered: list[tuple[str, float]] = []
+    pending_duration: float | None = None
+
+    for raw_line in playlist_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        duration_match = _EXTINF_RE.match(line)
+        if duration_match:
+            try:
+                pending_duration = float(duration_match.group(1))
+            except ValueError:
+                pending_duration = None
+            continue
+
+        if line.startswith("#"):
+            continue
+
+        if not line.lower().endswith(".ts"):
+            pending_duration = None
+            continue
+
+        segment_name = Path(line.split("?", 1)[0]).name
+        key = f"{hydrophone_id}/hls/{folder_ts}/{segment_name}"
+        if key not in available_keys and line in available_keys:
+            key = line
+        if key not in available_keys:
+            pending_duration = None
+            continue
+
+        duration = pending_duration if pending_duration and pending_duration > 0 else default_duration_sec
+        ordered.append((key, duration))
+        pending_duration = None
+
+    return ordered
+
+
+def _ordered_folder_segments(
+    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    hydrophone_id: str,
+    folder_ts: str,
+    default_duration_sec: float = DEFAULT_SEGMENT_DURATION_SEC,
+) -> list[tuple[str, float]]:
+    """Get ordered (segment_key, duration) pairs for one HLS folder."""
+    segment_keys = _sort_segment_keys(client.list_segments(hydrophone_id, folder_ts))
+    if not segment_keys:
+        return []
+
+    available_keys = set(segment_keys)
+    playlist_text: str | None = None
+    fetch_playlist = getattr(client, "fetch_playlist", None)
+    if callable(fetch_playlist):
+        try:
+            fetched = fetch_playlist(hydrophone_id, folder_ts)
+            if isinstance(fetched, str):
+                playlist_text = fetched
+        except Exception:
+            logger.debug(
+                "Failed to fetch playlist for %s/%s; falling back to key ordering",
+                hydrophone_id,
+                folder_ts,
+                exc_info=True,
+            )
+
+    if playlist_text:
+        playlist_entries = _parse_playlist_segments(
+            playlist_text,
+            hydrophone_id,
+            folder_ts,
+            available_keys,
+            default_duration_sec=default_duration_sec,
+        )
+        if playlist_entries:
+            # Keep numeric key ordering authoritative to avoid lexicographic
+            # ordering artifacts from object listings/playlists.
+            duration_by_key: dict[str, float] = {}
+            for key, duration in playlist_entries:
+                if key not in duration_by_key:
+                    duration_by_key[key] = duration
+            return [
+                (key, duration_by_key.get(key, default_duration_sec))
+                for key in segment_keys
+            ]
+
+    return [(key, default_duration_sec) for key in segment_keys]
 
 
 class OrcasoundS3Client:
@@ -79,7 +224,17 @@ class OrcasoundS3Client:
                 if key.endswith(".ts"):
                     segments.append(key)
 
-        return sorted(segments)
+        return _sort_segment_keys(segments)
+
+    def fetch_playlist(self, hydrophone_id: str, folder_ts: str) -> str | None:
+        """Fetch live.m3u8 playlist text for an HLS folder."""
+        key = f"{hydrophone_id}/hls/{folder_ts}/live.m3u8"
+        try:
+            resp = self._client.get_object(Bucket=self._bucket, Key=key)
+        except Exception:
+            return None
+        data = resp["Body"].read()
+        return data.decode("utf-8", errors="replace")
 
     def fetch_segment(self, key: str) -> bytes:
         """Download a single .ts segment as bytes."""
@@ -140,13 +295,20 @@ class LocalHLSClient:
         if not folder.is_dir():
             return []
         segments: list[str] = []
-        for entry in sorted(folder.iterdir()):
+        for entry in folder.iterdir():
             if entry.suffix == ".ts":
                 # Return key in S3-style format for consistency
                 segments.append(
                     f"{hydrophone_id}/hls/{folder_ts}/{entry.name}"
                 )
-        return segments
+        return _sort_segment_keys(segments)
+
+    def fetch_playlist(self, hydrophone_id: str, folder_ts: str) -> str | None:
+        """Read live.m3u8 playlist text from local filesystem cache."""
+        path = self._root / hydrophone_id / "hls" / folder_ts / "live.m3u8"
+        if not path.is_file():
+            return None
+        return path.read_text(errors="replace")
 
     def fetch_segment(self, key: str) -> bytes:
         """Read a .ts segment from local filesystem."""
@@ -221,7 +383,7 @@ class CachingS3Client:
 
         # If folder marked as 404, return local-only
         if marker_path.is_file():
-            return sorted(local_keys)
+            return _sort_segment_keys(local_keys)
 
         # Query S3
         try:
@@ -231,7 +393,7 @@ class CachingS3Client:
                 "S3 list_segments failed for %s/%s, using cache only",
                 hydrophone_id, folder_ts,
             )
-            return sorted(local_keys)
+            return _sort_segment_keys(local_keys)
 
         if not s3_keys and not local_keys:
             # Mark folder as empty
@@ -243,7 +405,26 @@ class CachingS3Client:
 
         # Merge and deduplicate
         all_keys = local_keys | set(s3_keys)
-        return sorted(all_keys)
+        return _sort_segment_keys(all_keys)
+
+    def fetch_playlist(self, hydrophone_id: str, folder_ts: str) -> str | None:
+        """Fetch playlist text, preferring local cache then S3 with write-through."""
+        local_path = self._root / hydrophone_id / "hls" / folder_ts / "live.m3u8"
+        if local_path.is_file():
+            return local_path.read_text(errors="replace")
+
+        try:
+            text = self._s3.fetch_playlist(hydrophone_id, folder_ts)
+        except Exception:
+            return None
+        if text is None:
+            return None
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = local_path.with_suffix(".tmp")
+        tmp_path.write_text(text)
+        os.replace(str(tmp_path), str(local_path))
+        return text
 
     def fetch_segment(self, key: str) -> bytes:
         """Fetch segment, using local cache or S3 with write-through."""
@@ -346,24 +527,68 @@ def _parse_chunk_start_timestamp(filename: str) -> float:
     return chunk_utc.timestamp()
 
 
-def _build_stream_segment_index(
+def _build_stream_timeline(
     client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
     hydrophone_id: str,
     stream_start_ts: float,
     stream_end_ts: float,
-) -> tuple[list[str], list[str]]:
-    """Build ordered folder and segment lists for a hydrophone job range."""
+) -> list[StreamSegment]:
+    """Build ordered stream segments for a hydrophone job range."""
     folders = client.list_hls_folders(hydrophone_id, stream_start_ts, stream_end_ts)
     if not folders:
         raise FileNotFoundError("No audio data found for this time range")
 
-    all_segments: list[str] = []
+    timeline: list[StreamSegment] = []
     for folder_ts in folders:
-        all_segments.extend(client.list_segments(hydrophone_id, folder_ts))
-    if not all_segments:
-        raise FileNotFoundError("No cached segments found")
+        ordered = _ordered_folder_segments(client, hydrophone_id, folder_ts)
+        if not ordered:
+            continue
+        cursor = float(folder_ts)
+        for key, duration_sec in ordered:
+            duration = duration_sec if duration_sec > 0 else DEFAULT_SEGMENT_DURATION_SEC
+            segment = StreamSegment(
+                key=key,
+                start_ts=cursor,
+                duration_sec=duration,
+            )
+            cursor += duration
+            if segment.end_ts <= stream_start_ts or segment.start_ts >= stream_end_ts:
+                continue
+            timeline.append(segment)
 
-    return folders, all_segments
+    if not timeline:
+        raise FileNotFoundError("No stream segments found in requested range")
+
+    timeline.sort(key=lambda seg: (seg.start_ts, _segment_sort_key(seg.key)))
+    return timeline
+
+
+def _decode_and_clip_segment(
+    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    segment: StreamSegment,
+    target_sr: int,
+    clip_start_ts: float,
+    clip_end_ts: float,
+) -> tuple[np.ndarray, float] | None:
+    """Decode one segment and clip it to the requested absolute time interval."""
+    seg_bytes = client.fetch_segment(segment.key)
+    audio = decode_ts_bytes(seg_bytes, target_sr)
+
+    if len(audio) == 0:
+        return None
+
+    decoded_end_ts = segment.start_ts + (len(audio) / target_sr)
+    start_ts = max(segment.start_ts, clip_start_ts)
+    end_ts = min(decoded_end_ts, clip_end_ts)
+    if end_ts <= start_ts:
+        return None
+
+    start_sample = max(0, int(round((start_ts - segment.start_ts) * target_sr)))
+    end_sample = min(len(audio), int(round((end_ts - segment.start_ts) * target_sr)))
+    if end_sample <= start_sample:
+        return None
+
+    return audio[start_sample:end_sample], start_ts
 
 
 def resolve_hydrophone_audio_slice(
@@ -376,31 +601,32 @@ def resolve_hydrophone_audio_slice(
     duration_sec: float,
     target_sr: int = 32000,
     legacy_anchor_start_ts: float | None = None,
-    est_seg_dur: float = 10.0,
+    est_seg_dur: float = 10.0,  # Kept for backward-compatible call sites; ignored.
 ) -> np.ndarray:
     """Resolve and decode a hydrophone audio slice using stream-offset mapping.
 
     Anchor order:
-    1. First available folder timestamp (current behavior)
+    1. First available stream sample in job range (current behavior)
     2. legacy_anchor_start_ts (old jobs where filenames were anchored to job start)
     """
     if duration_sec <= 0:
         raise ValueError("duration_sec must be > 0")
 
-    folders, all_segments = _build_stream_segment_index(
+    timeline = _build_stream_timeline(
         client, hydrophone_id, stream_start_ts, stream_end_ts
     )
+    processing_start_ts = max(stream_start_ts, timeline[0].start_ts)
     chunk_start_ts = _parse_chunk_start_timestamp(filename)
     abs_start_ts = chunk_start_ts + row_start_sec
 
-    anchors: list[float] = [float(folders[0])]
+    anchors: list[float] = [processing_start_ts]
     if legacy_anchor_start_ts is not None:
         legacy_anchor = float(legacy_anchor_start_ts)
         if all(abs(legacy_anchor - a) > 1e-6 for a in anchors):
             anchors.append(legacy_anchor)
 
-    n_needed = int((duration_sec + 4 * est_seg_dur) / est_seg_dur) + 4
     last_reason = "No matching stream offset"
+    max_timeline_ts = min(stream_end_ts, timeline[-1].end_ts)
 
     for anchor_ts in anchors:
         stream_offset = abs_start_ts - anchor_ts
@@ -408,40 +634,47 @@ def resolve_hydrophone_audio_slice(
             last_reason = "Computed negative stream offset"
             continue
 
-        start_idx = max(0, int(stream_offset / est_seg_dur) - 2)
-        if start_idx >= len(all_segments):
-            last_reason = "Computed segment index outside available stream range"
-            continue
-        end_idx = min(len(all_segments), start_idx + n_needed)
-        if end_idx <= start_idx:
-            last_reason = "No segments selected for decode window"
+        target_start_ts = processing_start_ts + stream_offset
+        target_end_ts = target_start_ts + duration_sec
+
+        if target_start_ts >= max_timeline_ts:
+            last_reason = "Resolved start timestamp outside available stream range"
             continue
 
-        decoded_segments: list[np.ndarray] = []
-        for seg_key in all_segments[start_idx:end_idx]:
+        candidates = [
+            seg for seg in timeline
+            if seg.end_ts > target_start_ts and seg.start_ts < target_end_ts
+        ]
+        if not candidates:
+            last_reason = "No segments selected for requested timestamp window"
+            continue
+
+        decoded_parts: list[np.ndarray] = []
+        for segment in candidates:
             try:
-                seg_bytes = client.fetch_segment(seg_key)
-                decoded_segments.append(decode_ts_bytes(seg_bytes, target_sr))
+                clipped = _decode_and_clip_segment(
+                    client=client,
+                    segment=segment,
+                    target_sr=target_sr,
+                    clip_start_ts=target_start_ts,
+                    clip_end_ts=target_end_ts,
+                )
             except Exception:
                 continue
+            if clipped is None:
+                continue
+            part, _ = clipped
+            if len(part) > 0:
+                decoded_parts.append(part)
 
-        if not decoded_segments:
+        if not decoded_parts:
             last_reason = "Failed to decode all candidate segments"
             continue
 
-        combined = np.concatenate(decoded_segments)
-        local_offset = max(0.0, stream_offset - start_idx * est_seg_dur)
-        start_sample = max(0, int(local_offset * target_sr))
-        end_sample = min(
-            len(combined),
-            start_sample + int(duration_sec * target_sr),
-        )
-
-        if end_sample <= start_sample:
-            last_reason = "Resolved sample window had no overlap with decoded audio"
-            continue
-
-        segment = combined[start_sample:end_sample]
+        segment = np.concatenate(decoded_parts)
+        max_samples = max(1, int(round(duration_sec * target_sr)))
+        if len(segment) > max_samples:
+            segment = segment[:max_samples]
         if len(segment) > 0:
             return segment
 
@@ -460,64 +693,81 @@ def iter_audio_chunks(
     chunk_seconds: float = 60.0,
     target_sr: int = 32000,
     on_error: Callable[[dict], None] | None = None,
-) -> "Generator":
+) -> Generator:
     """Yield audio chunks from HLS stream.
 
     Yields (chunk_audio, chunk_start_utc, segments_done, segments_total).
     """
-    folders = client.list_hls_folders(hydrophone_id, start_ts, end_ts)
-    if not folders:
-        logger.warning("No HLS folders found for %s in range", hydrophone_id)
-        return
-
-    # Count total segments for progress
-    segments_total = 0
-    folder_segment_map: list[tuple[str, list[str]]] = []
-    for folder_ts in folders:
-        segs = client.list_segments(hydrophone_id, folder_ts)
-        folder_segment_map.append((folder_ts, segs))
-        segments_total += len(segs)
-
-    if segments_total == 0:
-        logger.warning("No .ts segments found")
+    try:
+        timeline = _build_stream_timeline(client, hydrophone_id, start_ts, end_ts)
+    except FileNotFoundError:
+        logger.warning("No .ts segments found for %s in requested range", hydrophone_id)
         return
 
     chunk_samples = int(chunk_seconds * target_sr)
+    if chunk_samples <= 0:
+        raise ValueError("chunk_seconds must produce at least 1 sample")
+
+    segments_total = len(timeline)
     accumulator = np.array([], dtype=np.float32)
-    # Base chunk timestamps on the first folder's actual recording time,
-    # not the job's start_ts (which may precede available data by hours).
-    chunk_start_ts = float(folder_segment_map[0][0])
+    accumulator_start_ts: float | None = None
     segments_done = 0
 
-    for folder_ts, segments in folder_segment_map:
-        for seg_key in segments:
-            try:
-                seg_bytes = client.fetch_segment(seg_key)
-                audio = decode_ts_bytes(seg_bytes, target_sr)
-                accumulator = np.concatenate([accumulator, audio])
-                segments_done += 1
+    for segment in timeline:
+        try:
+            clipped = _decode_and_clip_segment(
+                client=client,
+                segment=segment,
+                target_sr=target_sr,
+                clip_start_ts=start_ts,
+                clip_end_ts=end_ts,
+            )
+            segments_done += 1
+            if clipped is None:
+                continue
 
-                # Yield chunks when we have enough audio
-                while len(accumulator) >= chunk_samples:
-                    chunk = accumulator[:chunk_samples]
+            audio, clip_start_ts = clipped
+            if len(audio) == 0:
+                continue
+
+            if len(accumulator) == 0:
+                accumulator = audio
+                accumulator_start_ts = clip_start_ts
+            else:
+                assert accumulator_start_ts is not None
+                expected_next_ts = accumulator_start_ts + (len(accumulator) / target_sr)
+                if abs(clip_start_ts - expected_next_ts) > STREAM_DISCONTINUITY_TOLERANCE_SEC:
+                    # Flush at detected timeline discontinuities (e.g., decode drops).
                     chunk_start_utc = datetime.fromtimestamp(
-                        chunk_start_ts, tz=timezone.utc
+                        accumulator_start_ts, tz=timezone.utc
                     )
-                    yield chunk, chunk_start_utc, segments_done, segments_total
-                    chunk_start_ts += chunk_seconds
-                    accumulator = accumulator[chunk_samples:]
+                    yield accumulator, chunk_start_utc, segments_done, segments_total
+                    accumulator = audio
+                    accumulator_start_ts = clip_start_ts
+                else:
+                    accumulator = np.concatenate([accumulator, audio])
 
-            except Exception as e:
-                segments_done += 1
-                logger.warning("Failed to decode segment %s: %s", seg_key, e)
-                if on_error:
-                    on_error({
-                        "type": "warning",
-                        "message": f"Failed to decode segment {seg_key}: {e}",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    })
+            while len(accumulator) >= chunk_samples:
+                assert accumulator_start_ts is not None
+                chunk = accumulator[:chunk_samples]
+                chunk_start_utc = datetime.fromtimestamp(
+                    accumulator_start_ts, tz=timezone.utc
+                )
+                yield chunk, chunk_start_utc, segments_done, segments_total
+                accumulator = accumulator[chunk_samples:]
+                accumulator_start_ts += chunk_samples / target_sr
+
+        except Exception as e:
+            segments_done += 1
+            logger.warning("Failed to decode segment %s: %s", segment.key, e)
+            if on_error:
+                on_error({
+                    "type": "warning",
+                    "message": f"Failed to decode segment {segment.key}: {e}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
 
     # Yield remaining audio
-    if len(accumulator) > 0:
-        chunk_start_utc = datetime.fromtimestamp(chunk_start_ts, tz=timezone.utc)
+    if len(accumulator) > 0 and accumulator_start_ts is not None:
+        chunk_start_utc = datetime.fromtimestamp(accumulator_start_ts, tz=timezone.utc)
         yield accumulator, chunk_start_utc, segments_done, segments_total

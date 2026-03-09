@@ -370,8 +370,9 @@ Queue safety note:
 - `POST /classifier/hydrophone-detection-jobs` requires
   `hop_seconds <= classifier window_size_seconds`.
 - `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.
-- `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using
-  first-available-folder anchor, with legacy fallback to `job.start_timestamp`.
+- `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using a
+  range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy
+  fallback to `job.start_timestamp` for older jobs.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---
