@@ -38,6 +38,7 @@ import {
 import { detectionTsvUrl, detectionAudioSliceUrl } from "@/api/client";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import { ExtractDialog } from "./ExtractDialog";
+import { DateRangePickerUtc } from "@/components/shared/DateRangePickerUtc";
 import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
 
 type SortKey = "filename" | "duration_sec" | "avg_confidence";
@@ -78,22 +79,6 @@ function formatCompactUtc(ms: number): string {
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
 }
 
-function parseDatetimeLocalAsUtcSeconds(value: string): number | null {
-  const match = value.match(
-    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/,
-  );
-  if (!match) return null;
-  const seconds = match[6] ? Number(match[6]) : 0;
-  const utcMs = Date.UTC(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5]),
-    seconds,
-  );
-  return Number.isFinite(utcMs) ? utcMs / 1000 : null;
-}
 
 function formatUtcDateTime(timestampSeconds: number): string {
   const date = new Date(timestampSeconds * 1000);
@@ -260,8 +245,8 @@ export function HydrophoneTab() {
   // Form state
   const [selectedModelId, setSelectedModelId] = useState("");
   const [selectedHydrophoneId, setSelectedHydrophoneId] = useState("");
-  const [startDatetime, setStartDatetime] = useState("");
-  const [endDatetime, setEndDatetime] = useState("");
+  const [startEpoch, setStartEpoch] = useState<number | null>(null);
+  const [endEpoch, setEndEpoch] = useState<number | null>(null);
   const [threshold, setThreshold] = useState(0.5);
   const [hopSeconds, setHopSeconds] = useState(1.0);
   const [highThreshold, setHighThreshold] = useState(0.70);
@@ -303,16 +288,13 @@ export function HydrophoneTab() {
   }, [expandedCompletedJobId, expandedHasSavedLabels]);
 
   const handleSubmit = () => {
-    if (!selectedModelId || !selectedHydrophoneId || !startDatetime || !endDatetime) return;
+    if (!selectedModelId || !selectedHydrophoneId || !startEpoch || !endEpoch) return;
     if (sourceType === "local" && !localCachePath) return;
-    const startTs = parseDatetimeLocalAsUtcSeconds(startDatetime);
-    const endTs = parseDatetimeLocalAsUtcSeconds(endDatetime);
-    if (startTs == null || endTs == null) return;
     createMutation.mutate({
       classifier_model_id: selectedModelId,
       hydrophone_id: selectedHydrophoneId,
-      start_timestamp: startTs,
-      end_timestamp: endTs,
+      start_timestamp: startEpoch,
+      end_timestamp: endEpoch,
       confidence_threshold: threshold,
       hop_seconds: hopSeconds,
       high_threshold: highThreshold,
@@ -534,37 +516,17 @@ export function HydrophoneTab() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium">Start Date/Time (UTC)</label>
-              <Input
-                type="text"
-                placeholder="YYYY-MM-DD HH:MM"
-                value={startDatetime}
-                onChange={(e) => setStartDatetime(e.target.value)}
-                className="mt-1 font-mono"
-              />
-              {startDatetime && !parseDatetimeLocalAsUtcSeconds(startDatetime) && (
-                <p className="text-xs text-red-500 mt-0.5">Format: YYYY-MM-DD HH:MM (24hr UTC)</p>
-              )}
-            </div>
-            <div>
-              <label className="text-sm font-medium">End Date/Time (UTC)</label>
-              <Input
-                type="text"
-                placeholder="YYYY-MM-DD HH:MM"
-                value={endDatetime}
-                onChange={(e) => setEndDatetime(e.target.value)}
-                className="mt-1 font-mono"
-              />
-              {endDatetime && !parseDatetimeLocalAsUtcSeconds(endDatetime) && (
-                <p className="text-xs text-red-500 mt-0.5">Format: YYYY-MM-DD HH:MM (24hr UTC)</p>
-              )}
-            </div>
+          <div>
+            <label className="text-sm font-medium">Date Range (UTC)</label>
+            <DateRangePickerUtc
+              value={{ startEpoch, endEpoch }}
+              onChange={({ startEpoch: s, endEpoch: e }) => {
+                setStartEpoch(s);
+                setEndEpoch(e);
+              }}
+              placeholder="Select date range (UTC)"
+            />
           </div>
-          <p className="text-xs text-muted-foreground">
-            All times are 24-hour UTC.
-          </p>
           <div>
             <label className="text-sm font-medium">
               Confidence Threshold (summary): {threshold.toFixed(2)}
@@ -626,8 +588,8 @@ export function HydrophoneTab() {
             disabled={
               !selectedModelId ||
               !selectedHydrophoneId ||
-              !startDatetime ||
-              !endDatetime ||
+              !startEpoch ||
+              !endEpoch ||
               (sourceType === "local" && !localCachePath) ||
               createMutation.isPending
             }

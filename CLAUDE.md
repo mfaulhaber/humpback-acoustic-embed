@@ -129,7 +129,7 @@ frontend/
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── classifier/          (ClassifierTab, TrainingTab, DetectionTab, BulkDeleteDialog)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
-    │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast)
+    │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc)
     └── utils/                   (format.ts, audio.ts)
 ```
 

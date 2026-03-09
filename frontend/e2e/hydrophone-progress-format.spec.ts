@@ -124,7 +124,8 @@ test.describe("Hydrophone progress display and tab structure", () => {
     expect(await activeCard.locator("text=5432s").count()).toBe(0);
   });
 
-  test("date picker accepts 24hr UTC format with space separator", async ({ page }) => {
+  test("date range picker shows UTC label and time inputs", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 1200 });
     await page.route("**/classifier/training-jobs", (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
     );
@@ -149,29 +150,22 @@ test.describe("Hydrophone progress display and tab structure", () => {
     await page.goto("/app/classifier");
     await page.locator("button", { hasText: "Hydrophone" }).click();
 
-    // Fill with valid 24hr format using space separator
-    const startInput = page
-      .locator("label", { hasText: "Start Date/Time (UTC)" })
-      .locator("..")
-      .locator("input");
-    await startInput.fill("2025-07-04 23:30");
+    // Date range picker trigger is present with placeholder
+    const trigger = page.getByTestId("date-range-trigger");
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toContainText("Select date range (UTC)");
 
-    // No validation error should appear
-    expect(
-      await page.locator("text=Format: YYYY-MM-DD HH:MM").count(),
-    ).toBe(0);
+    // Open the picker
+    await trigger.click();
 
-    // Fill with invalid format — should show validation error
-    await startInput.fill("07/04/2025 23:30");
-    await expect(
-      page.locator("text=Format: YYYY-MM-DD HH:MM (24hr UTC)").first(),
-    ).toBeVisible();
+    // Time inputs default to 00:00
+    await expect(page.getByTestId("start-time-input")).toHaveValue("00:00");
+    await expect(page.getByTestId("end-time-input")).toHaveValue("00:00");
 
-    // Placeholder should show expected format
-    const endInput = page
-      .locator("label", { hasText: "End Date/Time (UTC)" })
-      .locator("..")
-      .locator("input");
-    await expect(endInput).toHaveAttribute("placeholder", "YYYY-MM-DD HH:MM");
+    // UTC label is visible inside the popover
+    await expect(page.getByText("All times are UTC.")).toBeVisible();
+
+    // Apply is disabled when no dates selected
+    await expect(page.getByTestId("date-range-apply")).toBeDisabled();
   });
 });

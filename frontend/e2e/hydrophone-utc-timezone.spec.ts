@@ -136,7 +136,10 @@ async function mockHydrophonePageApis({
 }
 
 test.describe("Hydrophone UTC timezone semantics", () => {
-  test("submits datetime-local inputs as UTC timestamps", async ({ page }) => {
+  test("submits date range picker inputs as UTC timestamps", async ({ page }) => {
+    // Tall viewport so the dual-month popover + time inputs fit
+    await page.setViewportSize({ width: 1280, height: 1200 });
+
     let capturedBody: Record<string, unknown> | null = null;
     await mockHydrophonePageApis({
       page,
@@ -159,26 +162,40 @@ test.describe("Hydrophone UTC timezone semantics", () => {
       .locator("..")
       .locator("select")
       .selectOption(MODEL.id);
-    await page
-      .locator("label", { hasText: "Start Date/Time (UTC)" })
-      .locator("..")
-      .locator("input")
-      .fill("2025-07-04 09:00");
-    await page
-      .locator("label", { hasText: "End Date/Time (UTC)" })
-      .locator("..")
-      .locator("input")
-      .fill("2025-07-04 10:00");
 
-    await expect(
-      page.getByText("All times are 24-hour UTC."),
-    ).toBeVisible();
+    // Open the date range picker
+    await page.getByTestId("date-range-trigger").click();
 
+    // Navigate backward to July 2025 (currently March 2026)
+    const prevBtn = page.getByRole("button", { name: "Go to the Previous Month" });
+    for (let i = 0; i < 20; i++) {
+      if (await page.getByText("July 2025").isVisible().catch(() => false)) break;
+      await prevBtn.click({ force: true });
+    }
+    await expect(page.getByText("July 2025")).toBeVisible();
+
+    // In range mode: click day 3 for start, day 5 for end (two different days required)
+    const julyGrid = page.getByRole("grid", { name: "July 2025" });
+    await julyGrid.getByRole("button", { name: /July 3rd/ }).click({ force: true });
+    await julyGrid.getByRole("button", { name: /July 5th/ }).click({ force: true });
+
+    // Fill start time and end time
+    await page.getByTestId("start-time-input").fill("09:00");
+    await page.getByTestId("end-time-input").fill("10:00");
+
+    // Verify UTC label
+    await expect(page.getByText("All times are UTC.")).toBeVisible();
+
+    // Apply
+    await page.getByTestId("date-range-apply").click();
+
+    // Submit the form
     await page.locator("button", { hasText: "Start Detection" }).click();
 
+    // July 3, 2025 09:00 UTC = 1751533200, July 5, 2025 10:00 UTC = 1751709600
     await expect.poll(() => capturedBody).not.toBeNull();
-    expect(capturedBody?.start_timestamp).toBe(1751619600);
-    expect(capturedBody?.end_timestamp).toBe(1751623200);
+    expect(capturedBody?.start_timestamp).toBe(1751533200);
+    expect(capturedBody?.end_timestamp).toBe(1751709600);
   });
 
   test("renders hydrophone job range and detection ranges in UTC format", async ({ page }) => {

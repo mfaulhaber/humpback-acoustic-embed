@@ -10,6 +10,26 @@
 
 ## Recently Completed
 
+# Plan: Popover Date Range Picker for Hydrophone Tab
+
+## Outcome (2026-03-09)
+
+- Replaced two manual text `<Input>` fields (Start/End Date/Time UTC) with a single
+  `DateRangePickerUtc` popover component: dual-month calendar, HH:MM time inputs,
+  Apply/Cancel buttons, UTC-only semantics via fake-local Date strategy.
+- Added shadcn primitives `popover.tsx` and `calendar.tsx` (react-day-picker v9 +
+  @radix-ui/react-popover); composed `DateRangePickerUtc.tsx` in `shared/`.
+- Removed `parseDatetimeLocalAsUtcSeconds` from HydrophoneTab (replaced by epoch state).
+- Removed 11 broken Detect-tab UI Playwright tests (API-level tests retained).
+- Updated hydrophone UTC and progress-format Playwright tests for new picker interaction.
+
+## Verification
+
+- `cd frontend && npx tsc --noEmit` passed.
+- `cd frontend && npx playwright test e2e/hydrophone*` — 16 passed.
+- `uv run pytest tests/` — 410 passed.
+
+
 # Plan: Hydrophone Tab Improvements + Detect Tab Removal
 
 ## Outcome (2026-03-09)

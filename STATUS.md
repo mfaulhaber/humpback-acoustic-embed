@@ -101,7 +101,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone detection table uses extraction-aligned UTC Detection Range and Duration;
   playback uses the same extraction bounds, and raw detection range remains visible as
   secondary audit context (row text + tooltip)
-- Hydrophone job Start/End inputs use 24-hour UTC text entry (YYYY-MM-DD HH:MM format)
+- Hydrophone job date range uses popover picker with dual-month calendar and HH:MM time inputs (UTC-only)
 - Hydrophone active job panel shows Pause/Resume and Cancel controls
   (paused jobs remain in active panel; canceled jobs move to Previous Jobs with full functionality)
 - Hydrophone progress displays audio duration in hours:minutes format
