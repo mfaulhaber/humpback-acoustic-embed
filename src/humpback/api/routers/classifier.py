@@ -209,7 +209,7 @@ async def download_detections(
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status != "complete" or not job.output_tsv_path:
+    if job.status not in ("complete", "canceled") or not job.output_tsv_path:
         raise HTTPException(400, "Detection job not complete or no output available")
     from pathlib import Path
     tsv_path = Path(job.output_tsv_path)
@@ -273,6 +273,32 @@ async def cancel_hydrophone_detection_job(
     if job is None:
         raise HTTPException(404, "Hydrophone detection job not found")
     return {"status": "canceled"}
+
+
+@router.post("/hydrophone-detection-jobs/{job_id}/pause")
+async def pause_hydrophone_detection_job(
+    job_id: str, session: SessionDep
+) -> dict:
+    try:
+        job = await classifier_service.pause_hydrophone_detection_job(session, job_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if job is None:
+        raise HTTPException(404, "Hydrophone detection job not found")
+    return {"status": "paused"}
+
+
+@router.post("/hydrophone-detection-jobs/{job_id}/resume")
+async def resume_hydrophone_detection_job(
+    job_id: str, session: SessionDep
+) -> dict:
+    try:
+        job = await classifier_service.resume_hydrophone_detection_job(session, job_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if job is None:
+        raise HTTPException(404, "Hydrophone detection job not found")
+    return {"status": "running"}
 
 
 # ---- Diagnostics ----
@@ -485,7 +511,7 @@ async def extract_labeled_samples(
         raise HTTPException(404, f"Detection jobs not found: {missing}")
 
     for j in jobs:
-        if j.status != "complete":
+        if j.status not in ("complete", "canceled"):
             raise HTTPException(400, f"Detection job {j.id} is not complete (status={j.status})")
 
     pos_path = body.positive_output_path or settings.positive_sample_path
@@ -628,7 +654,7 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status not in ("running", "complete") or not job.output_tsv_path:
+    if job.status not in ("running", "complete", "canceled") or not job.output_tsv_path:
         raise HTTPException(400, "Detection job not ready or no output available")
     tsv_path = Path(job.output_tsv_path)
     if not tsv_path.is_file():
@@ -647,6 +673,7 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
                     "peak_confidence": float(row.get("peak_confidence", 0)),
                     "n_windows": int(row["n_windows"]) if row.get("n_windows") else None,
                     "extract_filename": (row.get("extract_filename", "").strip() or None),
+                    "hydrophone_name": (row.get("hydrophone_name", "").strip() or None),
                     "humpback": _parse_label(row.get("humpback")),
                     "ship": _parse_label(row.get("ship")),
                     "background": _parse_label(row.get("background")),
@@ -682,7 +709,7 @@ async def save_detection_labels(
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status != "complete" or not job.output_tsv_path:
+    if job.status not in ("complete", "canceled") or not job.output_tsv_path:
         raise HTTPException(400, "Detection job not complete or no output available")
     tsv_path = Path(job.output_tsv_path)
     if not tsv_path.is_file():

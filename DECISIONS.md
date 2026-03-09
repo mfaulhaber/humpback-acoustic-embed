@@ -293,3 +293,31 @@ zero windows, which obscured user-visible failure causes.
 - Hydrophone jobs with no overlapping audio now fail explicitly instead of silently
   completing with zero windows.
 - No API schema changes and no DB migration required.
+
+---
+
+## ADR-015: Hydrophone job pause/resume/cancel controls and Detect tab removal
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: The Classifier/Detect tab for local audio folder detection was no longer needed
+alongside the hydrophone workflow. Users running long hydrophone detection jobs had no way
+to temporarily pause processing without losing all progress, and canceled jobs with partial
+results were not accessible in the Previous Jobs panel.
+
+**Decision**:
+- Remove the Classifier/Detect sub-tab (frontend only; backend endpoints retained for data access).
+- Add `paused` job status with `pause`/`resume` API endpoints and worker-side `threading.Event`
+  pause gate that blocks the detection thread at chunk boundaries.
+- Make canceled jobs fully functional in Previous Jobs (expandable, downloadable, label-editable, extractable).
+- Replace `datetime-local` inputs with 24hr UTC text inputs (`YYYY-MM-DD HH:MM`).
+- Display processed audio duration as hours:minutes instead of raw seconds.
+- Add `hydrophone_name` column to hydrophone detection TSV output.
+
+**Consequences**:
+- Worker detection thread blocks via `pause_gate.wait()` when paused; unblocks on resume or cancel.
+- Stale paused jobs are recovered to `queued` by `recover_stale_jobs()`.
+- No DB migration required (`paused` is a status string value in existing column).
+- Canceled jobs now support content, download, labels, and extraction endpoints.
+- Hydrophone TSV includes 8 columns (added `hydrophone_name`).

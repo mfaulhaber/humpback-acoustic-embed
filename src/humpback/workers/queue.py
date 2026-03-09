@@ -114,7 +114,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     result4 = await session.execute(
         update(DetectionJob)
         .where(
-            DetectionJob.status == "running",
+            DetectionJob.status.in_(["running", "paused"]),
             DetectionJob.updated_at < cutoff,
         )
         .values(

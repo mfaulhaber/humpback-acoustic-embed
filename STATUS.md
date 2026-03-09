@@ -87,7 +87,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone job validation enforces `hop_seconds <= classifier window_size_seconds`
 
 ### Web UI
-- Tab-based SPA (Audio, Processing, Clustering, Classifier [Train/Detect/Hydrophone], Admin)
+- Tab-based SPA (Audio, Processing, Clustering, Classifier [Train/Hydrophone], Admin)
 - Model filter dropdown on Processing, Clustering, and Classifier pages
 - Model version badges on processing jobs, embedding sets, and folder tree rows
 - Cross-model warning banner on classifier training (prevents submission)
@@ -97,12 +97,15 @@ Current state of the humpback acoustic embedding and clustering platform.
 - UMAP visualization, cluster tables, evaluation panels
 - Bulk delete for training/detection jobs
 - Expandable detection rows with sortable TSV data
-- Hydrophone Extract button enablement is based on saved labels of the expanded completed job
+- Hydrophone Extract button enablement is based on saved labels of the expanded completed or canceled job
 - Hydrophone detection table uses extraction-aligned UTC Detection Range and Duration;
   playback uses the same extraction bounds, and raw detection range remains visible as
   secondary audit context (row text + tooltip)
-- Hydrophone job Start/End inputs are interpreted as UTC and displayed with explicit UTC labels
-  (Start Date/Time (UTC), End Date/Time (UTC), Date Range (UTC))
+- Hydrophone job Start/End inputs use 24-hour UTC text entry (YYYY-MM-DD HH:MM format)
+- Hydrophone active job panel shows Pause/Resume and Cancel controls
+  (paused jobs remain in active panel; canceled jobs move to Previous Jobs with full functionality)
+- Hydrophone progress displays audio duration in hours:minutes format
+- Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
 
 ---
 

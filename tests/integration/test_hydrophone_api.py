@@ -210,6 +210,140 @@ async def test_cancel_hydrophone_job_not_found(client):
     assert resp.status_code == 404
 
 
+async def test_pause_resume_cancel_lifecycle(client, app_settings):
+    """Pause/resume/cancel lifecycle works correctly."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="running",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_north_sjc",
+                hydrophone_name="North San Juan Channel",
+                start_timestamp=1751644800.0,
+                end_timestamp=1751648400.0,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    # Pause from running
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/pause")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "paused"
+
+    # Cannot pause again
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/pause")
+    assert resp.status_code == 400
+
+    # Resume from paused
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/resume")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
+
+    # Cannot resume from running
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/resume")
+    assert resp.status_code == 400
+
+    # Pause again then cancel from paused
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/pause")
+    assert resp.status_code == 200
+
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "canceled"
+
+    # Cannot pause/resume a canceled job
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/pause")
+    assert resp.status_code == 400
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/resume")
+    assert resp.status_code == 400
+
+    await engine.dispose()
+
+
+async def test_pause_resume_not_found(client):
+    """Pause/resume for nonexistent job returns 404."""
+    resp = await client.post("/classifier/hydrophone-detection-jobs/nonexistent/pause")
+    assert resp.status_code == 404
+    resp = await client.post("/classifier/hydrophone-detection-jobs/nonexistent/resume")
+    assert resp.status_code == 404
+
+
+async def test_canceled_job_content_and_download(client, app_settings):
+    """Canceled jobs with output TSV support content and download endpoints."""
+    import csv
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = [
+        "filename", "start_sec", "end_sec", "avg_confidence",
+        "peak_confidence", "n_windows", "extract_filename", "hydrophone_name",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow({
+            "filename": "20250704T160000Z.wav",
+            "start_sec": "10.0",
+            "end_sec": "16.0",
+            "avg_confidence": "0.82",
+            "peak_confidence": "0.86",
+            "n_windows": "2",
+            "extract_filename": "20250704T160010Z_20250704T160020Z.wav",
+            "hydrophone_name": "rpi_north_sjc",
+        })
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="canceled",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_north_sjc",
+                hydrophone_name="North San Juan Channel",
+                start_timestamp=1751644800.0,
+                end_timestamp=1751648400.0,
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    # Content endpoint works for canceled jobs
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["hydrophone_name"] == "rpi_north_sjc"
+    assert rows[0]["extract_filename"] == "20250704T160010Z_20250704T160020Z.wav"
+
+    # Download endpoint works for canceled jobs
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/download")
+    assert resp.status_code == 200
+
+    await engine.dispose()
+
+
 async def test_detection_job_out_has_hydrophone_fields(client, app_settings):
     """DetectionJobOut includes nullable hydrophone fields for local jobs."""
     from sqlalchemy import insert

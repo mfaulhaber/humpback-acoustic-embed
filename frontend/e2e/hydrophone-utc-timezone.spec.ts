@@ -163,15 +163,15 @@ test.describe("Hydrophone UTC timezone semantics", () => {
       .locator("label", { hasText: "Start Date/Time (UTC)" })
       .locator("..")
       .locator("input")
-      .fill("2025-07-04T09:00");
+      .fill("2025-07-04 09:00");
     await page
       .locator("label", { hasText: "End Date/Time (UTC)" })
       .locator("..")
       .locator("input")
-      .fill("2025-07-04T10:00");
+      .fill("2025-07-04 10:00");
 
     await expect(
-      page.getByText("Times are interpreted and displayed in UTC."),
+      page.getByText("All times are 24-hour UTC."),
     ).toBeVisible();
 
     await page.locator("button", { hasText: "Start Detection" }).click();

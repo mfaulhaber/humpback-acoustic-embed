@@ -43,6 +43,7 @@ HYDROPHONE_TSV_FIELDNAMES = [
     "peak_confidence",
     "n_windows",
     "extract_filename",
+    "hydrophone_name",
 ]
 
 
@@ -305,14 +306,18 @@ async def run_hydrophone_detection_job(
         )
         await session.commit()
 
-        # Cancel support
+        # Cancel and pause support
         cancel_event = threading.Event()
+        pause_gate = threading.Event()
+        pause_gate.set()  # Initially not paused (set = open gate)
         loop = asyncio.get_event_loop()
 
         def _fmt_utc(ts: float | None) -> str:
             if ts is None:
                 return "unknown"
             return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        hydrophone_short_name = job.hydrophone_id
 
         # Progress callback
         def on_chunk_complete(
@@ -322,6 +327,8 @@ async def run_hydrophone_detection_job(
             time_covered_sec: float,
         ):
             if chunk_detections:
+                for det in chunk_detections:
+                    det["hydrophone_name"] = hydrophone_short_name
                 append_detections_tsv(
                     chunk_detections,
                     tsv_path,
@@ -367,7 +374,7 @@ async def run_hydrophone_detection_job(
 
                 loop.call_soon_threadsafe(asyncio.ensure_future, _update_alerts())
 
-        # Poll for cancellation in background
+        # Poll for cancellation/pause in background
         async def _poll_cancel():
             while not cancel_event.is_set():
                 await asyncio.sleep(2)
@@ -382,7 +389,12 @@ async def run_hydrophone_detection_job(
                             status = result.scalar_one_or_none()
                             if status == "canceled":
                                 cancel_event.set()
+                                pause_gate.set()  # Unblock if paused so thread can exit
                                 return
+                            elif status == "paused":
+                                pause_gate.clear()  # Block the detection thread
+                            elif status == "running":
+                                pause_gate.set()  # Unblock the detection thread
                 except Exception:
                     pass
 
@@ -410,6 +422,7 @@ async def run_hydrophone_detection_job(
                 cancel_event.is_set,
                 job.local_cache_path,
                 settings.s3_cache_path,
+                pause_gate,
             )
         except FileNotFoundError as exc:
             raise FileNotFoundError(
@@ -422,6 +435,8 @@ async def run_hydrophone_detection_job(
 
         if cancel_event.is_set():
             # Write what we have
+            for det in detections:
+                det.setdefault("hydrophone_name", hydrophone_short_name)
             from humpback.classifier.detector import write_detections_tsv
             write_detections_tsv(
                 detections,
@@ -444,6 +459,8 @@ async def run_hydrophone_detection_job(
             return
 
         # Write final TSV
+        for det in detections:
+            det.setdefault("hydrophone_name", hydrophone_short_name)
         from humpback.classifier.detector import write_detections_tsv
         write_detections_tsv(
             detections,

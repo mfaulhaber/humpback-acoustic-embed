@@ -4,8 +4,6 @@ import {
   createTrainingJob,
   fetchClassifierModels,
   deleteClassifierModel,
-  fetchDetectionJobs,
-  createDetectionJob,
   browseDirectories,
   bulkDeleteTrainingJobs,
   bulkDeleteClassifierModels,
@@ -14,17 +12,16 @@ import {
   saveDetectionLabels,
   fetchExtractionSettings,
   extractLabeledSamples,
-  fetchDetectionDiagnostics,
-  fetchDetectionDiagnosticsSummary,
   fetchTrainingDataSummary,
   fetchHydrophones,
   fetchHydrophoneDetectionJobs,
   createHydrophoneDetectionJob,
   cancelHydrophoneDetectionJob,
+  pauseHydrophoneDetectionJob,
+  resumeHydrophoneDetectionJob,
 } from "@/api/client";
 import type {
   ClassifierTrainingJobCreate,
-  DetectionJobCreate,
   DetectionLabelRow,
   HydrophoneDetectionJobCreate,
 } from "@/api/types";
@@ -44,30 +41,12 @@ export function useClassifierModels() {
   });
 }
 
-export function useDetectionJobs(refetchInterval?: number) {
-  return useQuery({
-    queryKey: ["detectionJobs"],
-    queryFn: fetchDetectionJobs,
-    refetchInterval,
-  });
-}
-
 export function useCreateTrainingJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ClassifierTrainingJobCreate) => createTrainingJob(body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["trainingJobs"] });
-    },
-  });
-}
-
-export function useCreateDetectionJob() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: DetectionJobCreate) => createDetectionJob(body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["detectionJobs"] });
     },
   });
 }
@@ -166,27 +145,6 @@ export function useSaveDetectionLabels() {
   });
 }
 
-export function useDetectionDiagnostics(
-  jobId: string | null,
-  filename?: string,
-  offset = 0,
-  limit = 1000,
-) {
-  return useQuery({
-    queryKey: ["detectionDiagnostics", jobId, filename, offset, limit],
-    queryFn: () => fetchDetectionDiagnostics(jobId!, filename, offset, limit),
-    enabled: jobId !== null,
-  });
-}
-
-export function useDetectionDiagnosticsSummary(jobId: string | null) {
-  return useQuery({
-    queryKey: ["detectionDiagnosticsSummary", jobId],
-    queryFn: () => fetchDetectionDiagnosticsSummary(jobId!),
-    enabled: jobId !== null,
-  });
-}
-
 export function useTrainingDataSummary(modelId: string | null) {
   return useQuery({
     queryKey: ["trainingDataSummary", modelId],
@@ -227,6 +185,26 @@ export function useCancelHydrophoneDetectionJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (jobId: string) => cancelHydrophoneDetectionJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
+    },
+  });
+}
+
+export function usePauseHydrophoneDetectionJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => pauseHydrophoneDetectionJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
+    },
+  });
+}
+
+export function useResumeHydrophoneDetectionJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => resumeHydrophoneDetectionJob(jobId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
     },

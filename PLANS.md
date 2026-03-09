@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Tab Improvements + Detect Tab Removal
+
+## Outcome (2026-03-09)
+
+- Removed Classifier/Detect sub-tab; Classifier page now has Train + Hydrophone only.
+- Added pause/resume/cancel controls for hydrophone jobs with `threading.Event` pause gate.
+- Changed date picker to 24hr UTC text input (`YYYY-MM-DD HH:MM`), progress display to `Xh YYm`.
+- Added `hydrophone_name` column to hydrophone detection TSV output.
+- Made canceled jobs fully functional in Previous Jobs (expand, download, labels, extract).
+- Added ADR-015 for the combined changes.
+
+## Verification
+
+- `uv run pytest tests/` passed (`410` passed).
+- `cd frontend && npx tsc --noEmit` passed.
+- `cd frontend && npx playwright test` — 15 hydrophone tests passed.
+
+---
+
 # Plan: Hydrophone Detection UI — UTC-Only Input + Date Range Semantics
 
 ## Outcome (2026-03-09)

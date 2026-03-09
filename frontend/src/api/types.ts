@@ -382,18 +382,9 @@ export interface ClassifierModelInfo {
   updated_at: string;
 }
 
-export interface DetectionJobCreate {
-  classifier_model_id: string;
-  audio_folder: string;
-  confidence_threshold?: number;
-  hop_seconds?: number;
-  high_threshold?: number;
-  low_threshold?: number;
-}
-
 export interface DetectionJob {
   id: string;
-  status: "queued" | "running" | "complete" | "failed" | "canceled";
+  status: "queued" | "running" | "complete" | "failed" | "canceled" | "paused";
   classifier_model_id: string;
   audio_folder: string | null;
   confidence_threshold: number;
@@ -473,6 +464,7 @@ export interface DetectionRow {
   peak_confidence: number;
   n_windows: number | null;
   extract_filename?: string | null;
+  hydrophone_name?: string | null;
   humpback: number | null;
   ship: number | null;
   background: number | null;
@@ -485,50 +477,6 @@ export interface DetectionLabelRow {
   humpback: number | null;
   ship: number | null;
   background: number | null;
-}
-
-// ---- Detection Diagnostics ----
-
-export interface WindowDiagnosticRecord {
-  filename: string;
-  window_index: number;
-  offset_sec: number;
-  end_sec: number;
-  confidence: number;
-  is_overlapped: boolean;
-  overlap_sec: number;
-}
-
-export interface DiagnosticsResponse {
-  records: WindowDiagnosticRecord[];
-  total: number;
-  filenames: string[];
-}
-
-export interface PerFileDiagnosticSummary {
-  filename: string;
-  n_windows: number;
-  n_overlapped: number;
-  mean_confidence: number;
-  mean_confidence_overlapped: number | null;
-  mean_confidence_normal: number | null;
-}
-
-export interface ConfidenceHistogramBin {
-  bin_start: number;
-  bin_end: number;
-  count: number;
-  count_overlapped: number;
-}
-
-export interface DiagnosticsSummaryResponse {
-  total_windows: number;
-  total_overlapped: number;
-  overlapped_ratio: number;
-  confidence_histogram: ConfidenceHistogramBin[];
-  overlapped_mean_confidence: number | null;
-  normal_mean_confidence: number | null;
-  per_file: PerFileDiagnosticSummary[];
 }
 
 export interface TrainingSourceInfo {

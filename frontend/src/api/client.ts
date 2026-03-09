@@ -13,11 +13,8 @@ import type {
   ClusterOut,
   DendrogramData,
   DetectionJob,
-  DetectionJobCreate,
   DetectionLabelRow,
   DetectionRow,
-  DiagnosticsResponse,
-  DiagnosticsSummaryResponse,
   DirectoryListing,
   ExtractionSettings,
   EmbeddingSet,
@@ -200,12 +197,6 @@ export const fetchClassifierModel = (modelId: string) =>
 export const deleteClassifierModel = (modelId: string) =>
   api<{ status: string }>(`/classifier/models/${modelId}`, { method: "DELETE" });
 
-export const fetchDetectionJobs = () =>
-  api<DetectionJob[]>("/classifier/detection-jobs");
-
-export const createDetectionJob = (body: DetectionJobCreate) =>
-  post<DetectionJob>("/classifier/detection-jobs", body);
-
 export const fetchDetectionJob = (jobId: string) =>
   api<DetectionJob>(`/classifier/detection-jobs/${jobId}`);
 
@@ -279,25 +270,15 @@ export const cancelHydrophoneDetectionJob = (jobId: string) =>
     method: "POST",
   });
 
-// ---- Detection Diagnostics ----
+export const pauseHydrophoneDetectionJob = (jobId: string) =>
+  api<{ status: string }>(`/classifier/hydrophone-detection-jobs/${jobId}/pause`, {
+    method: "POST",
+  });
 
-export const fetchDetectionDiagnostics = (
-  jobId: string,
-  filename?: string,
-  offset = 0,
-  limit = 1000,
-) => {
-  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
-  if (filename) params.set("filename", filename);
-  return api<DiagnosticsResponse>(
-    `/classifier/detection-jobs/${jobId}/diagnostics?${params}`,
-  );
-};
-
-export const fetchDetectionDiagnosticsSummary = (jobId: string) =>
-  api<DiagnosticsSummaryResponse>(
-    `/classifier/detection-jobs/${jobId}/diagnostics/summary`,
-  );
+export const resumeHydrophoneDetectionJob = (jobId: string) =>
+  api<{ status: string }>(`/classifier/hydrophone-detection-jobs/${jobId}/resume`, {
+    method: "POST",
+  });
 
 export const fetchTrainingDataSummary = (modelId: string) =>
   api<TrainingDataSummaryResponse>(`/classifier/models/${modelId}/training-summary`);

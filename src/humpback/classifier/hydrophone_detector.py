@@ -2,6 +2,7 @@
 
 import logging
 import math
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -69,6 +70,7 @@ def run_hydrophone_detection(
     cancel_check: Callable[[], bool] | None = None,
     local_cache_path: str | None = None,
     s3_cache_path: str | None = None,
+    pause_gate: "threading.Event | None" = None,
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
@@ -108,6 +110,10 @@ def run_hydrophone_detection(
         target_sr=target_sample_rate,
         on_error=on_alert,
     ):
+        # Wait if paused (blocks until resumed or canceled)
+        if pause_gate is not None:
+            pause_gate.wait()
+
         if cancel_check and cancel_check():
             logger.info("Hydrophone detection canceled")
             break

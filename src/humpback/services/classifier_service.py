@@ -218,7 +218,30 @@ async def list_hydrophone_detection_jobs(session: AsyncSession) -> list[Detectio
 async def cancel_hydrophone_detection_job(
     session: AsyncSession, job_id: str
 ) -> Optional[DetectionJob]:
-    """Cancel a running hydrophone detection job. Returns job if found."""
+    """Cancel a running or paused hydrophone detection job. Returns job if found."""
+    result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+    if job.status not in ("running", "paused"):
+        raise ValueError(f"Job is not running or paused (status={job.status})")
+
+    from datetime import datetime, timezone
+    await session.execute(
+        update(DetectionJob)
+        .where(DetectionJob.id == job_id)
+        .values(status="canceled", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+    return job
+
+
+async def pause_hydrophone_detection_job(
+    session: AsyncSession, job_id: str
+) -> Optional[DetectionJob]:
+    """Pause a running hydrophone detection job. Returns job if found."""
     result = await session.execute(
         select(DetectionJob).where(DetectionJob.id == job_id)
     )
@@ -232,7 +255,30 @@ async def cancel_hydrophone_detection_job(
     await session.execute(
         update(DetectionJob)
         .where(DetectionJob.id == job_id)
-        .values(status="canceled", updated_at=datetime.now(timezone.utc))
+        .values(status="paused", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+    return job
+
+
+async def resume_hydrophone_detection_job(
+    session: AsyncSession, job_id: str
+) -> Optional[DetectionJob]:
+    """Resume a paused hydrophone detection job. Returns job if found."""
+    result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+    if job.status != "paused":
+        raise ValueError(f"Job is not paused (status={job.status})")
+
+    from datetime import datetime, timezone
+    await session.execute(
+        update(DetectionJob)
+        .where(DetectionJob.id == job_id)
+        .values(status="running", updated_at=datetime.now(timezone.utc))
     )
     await session.commit()
     return job

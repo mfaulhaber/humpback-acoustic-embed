@@ -207,7 +207,19 @@ Hydrophone detection, playback, and extraction must use the same bounded stream 
 Hydrophone detection TSV output should carry extraction-oriented metadata:
 - include `extract_filename` for hydrophone rows (`{start_utc}_{end_utc}.wav`)
 - `extract_filename` must be derived from snapped extraction bounds (window-size aligned)
+- include `hydrophone_name` for hydrophone rows (short form, e.g., `rpi_north_sjc`)
 - local (non-hydrophone) detection TSV output remains unchanged
+
+### 4.7 Hydrophone Job Lifecycle
+Hydrophone detection jobs support the following status transitions:
+- `queued` → `running` (worker claims job)
+- `running` → `paused` (user pauses via API/UI)
+- `paused` → `running` (user resumes via API/UI)
+- `running` or `paused` → `canceled` (user cancels; partial results preserved)
+- `running` → `complete` (normal completion)
+- `running` → `failed` (error during processing)
+- Paused jobs remain in the Active Job panel; the worker thread blocks until resumed or canceled
+- Canceled jobs are fully functional in the Previous Jobs panel (expandable, downloadable, label-editable, extractable)
 
 ---
 

@@ -14,7 +14,6 @@ import {
   Download,
   Save,
   PackageOpen,
-  Square,
   AlertTriangle,
   AlertCircle,
   Info,
@@ -28,6 +27,8 @@ import {
   useHydrophoneDetectionJobs,
   useCreateHydrophoneDetectionJob,
   useCancelHydrophoneDetectionJob,
+  usePauseHydrophoneDetectionJob,
+  useResumeHydrophoneDetectionJob,
   useBulkDeleteDetectionJobs,
   useDetectionContent,
   useSaveDetectionLabels,
@@ -65,6 +66,7 @@ function rowKey(row: { filename: string; start_sec: number; end_sec: number }): 
 const statusColor: Record<string, string> = {
   queued: "bg-yellow-100 text-yellow-800",
   running: "bg-blue-100 text-blue-800",
+  paused: "bg-amber-100 text-amber-800",
   complete: "bg-green-100 text-green-800",
   failed: "bg-red-100 text-red-800",
   canceled: "bg-gray-100 text-gray-800",
@@ -78,7 +80,7 @@ function formatCompactUtc(ms: number): string {
 
 function parseDatetimeLocalAsUtcSeconds(value: string): number | null {
   const match = value.match(
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/,
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/,
   );
   if (!match) return null;
   const seconds = match[6] ? Number(match[6]) : 0;
@@ -230,12 +232,20 @@ function formatUtcDateRange(startTs: number, endTs: number): string {
   return `${formatUtcDateTime(startTs)} — ${formatUtcDateTime(endTs)}`;
 }
 
+function formatDurationHM(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
 export function HydrophoneTab() {
   const { data: models = [] } = useClassifierModels();
   const { data: hydrophones = [] } = useHydrophones();
   const { data: jobs = [] } = useHydrophoneDetectionJobs(3000);
   const createMutation = useCreateHydrophoneDetectionJob();
   const cancelMutation = useCancelHydrophoneDetectionJob();
+  const pauseMutation = usePauseHydrophoneDetectionJob();
+  const resumeMutation = useResumeHydrophoneDetectionJob();
   const bulkDeleteMutation = useBulkDeleteDetectionJobs();
   const saveLabelsMutation = useSaveDetectionLabels();
   const extractMutation = useExtractLabeledSamples();
@@ -274,14 +284,14 @@ export function HydrophoneTab() {
     [models],
   );
 
-  const activeJob = jobs.find((j) => j.status === "running" || j.status === "queued");
-  const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued");
+  const activeJob = jobs.find((j) => j.status === "running" || j.status === "queued" || j.status === "paused");
+  const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued" && j.status !== "paused");
   const expandedJob = useMemo(
     () => previousJobs.find((j) => j.id === expandedJobId) ?? null,
     [previousJobs, expandedJobId],
   );
   const expandedCompletedJobId =
-    expandedJob && expandedJob.status === "complete" ? expandedJob.id : null;
+    expandedJob && (expandedJob.status === "complete" || expandedJob.status === "canceled") ? expandedJob.id : null;
   const { data: expandedRows = [] } = useDetectionContent(expandedCompletedJobId);
   const expandedHasSavedLabels = useMemo(
     () => expandedRows.some((r) => r.humpback === 1 || r.ship === 1 || r.background === 1),
@@ -528,24 +538,32 @@ export function HydrophoneTab() {
             <div>
               <label className="text-sm font-medium">Start Date/Time (UTC)</label>
               <Input
-                type="datetime-local"
+                type="text"
+                placeholder="YYYY-MM-DD HH:MM"
                 value={startDatetime}
                 onChange={(e) => setStartDatetime(e.target.value)}
-                className="mt-1"
+                className="mt-1 font-mono"
               />
+              {startDatetime && !parseDatetimeLocalAsUtcSeconds(startDatetime) && (
+                <p className="text-xs text-red-500 mt-0.5">Format: YYYY-MM-DD HH:MM (24hr UTC)</p>
+              )}
             </div>
             <div>
               <label className="text-sm font-medium">End Date/Time (UTC)</label>
               <Input
-                type="datetime-local"
+                type="text"
+                placeholder="YYYY-MM-DD HH:MM"
                 value={endDatetime}
                 onChange={(e) => setEndDatetime(e.target.value)}
-                className="mt-1"
+                className="mt-1 font-mono"
               />
+              {endDatetime && !parseDatetimeLocalAsUtcSeconds(endDatetime) && (
+                <p className="text-xs text-red-500 mt-0.5">Format: YYYY-MM-DD HH:MM (24hr UTC)</p>
+              )}
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Times are interpreted and displayed in UTC.
+            All times are 24-hour UTC.
           </p>
           <div>
             <label className="text-sm font-medium">
@@ -635,15 +653,42 @@ export function HydrophoneTab() {
                   <Badge variant="outline" className="ml-2 text-[10px] py-0 align-middle">local</Badge>
                 )}
               </CardTitle>
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={activeJob.status !== "running" || cancelMutation.isPending}
-                onClick={() => cancelMutation.mutate(activeJob.id)}
-              >
-                <Square className="h-3.5 w-3.5 mr-1" />
-                Stop
-              </Button>
+              <div className="flex gap-2">
+                {activeJob.status === "running" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pauseMutation.isPending}
+                    onClick={() => pauseMutation.mutate(activeJob.id)}
+                  >
+                    <Pause className="h-3.5 w-3.5 mr-1" />
+                    Pause
+                  </Button>
+                )}
+                {activeJob.status === "paused" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={resumeMutation.isPending}
+                    onClick={() => resumeMutation.mutate(activeJob.id)}
+                  >
+                    <Play className="h-3.5 w-3.5 mr-1" />
+                    Resume
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={
+                    (activeJob.status !== "running" && activeJob.status !== "paused") ||
+                    cancelMutation.isPending
+                  }
+                  onClick={() => cancelMutation.mutate(activeJob.id)}
+                >
+                  <X className="h-3.5 w-3.5 mr-1" />
+                  Cancel
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -659,7 +704,7 @@ export function HydrophoneTab() {
                   {activeJob.segments_total ?? "?"} segments
                   {activeJob.time_covered_sec != null && (
                     <span className="text-muted-foreground">
-                      {" "}({activeJob.time_covered_sec.toFixed(0)}s audio)
+                      {" "}({formatDurationHM(activeJob.time_covered_sec)} audio)
                     </span>
                   )}
                 </span>
@@ -899,7 +944,8 @@ function HydrophoneJobRow({
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
   const canExpand =
-    (job.status === "complete" || (isRunning && (job.segments_processed ?? 0) > 0)) &&
+    (job.status === "complete" || job.status === "canceled" ||
+     (isRunning && (job.segments_processed ?? 0) > 0)) &&
     !!job.output_tsv_path;
 
   return (
@@ -942,12 +988,12 @@ function HydrophoneJobRow({
             : "\u2014"}
           {job.time_covered_sec != null && (
             <span className="text-xs ml-1">
-              ({job.time_covered_sec.toFixed(0)}s)
+              ({formatDurationHM(job.time_covered_sec)})
             </span>
           )}
         </td>
         <td className="px-3 py-2">
-          {job.status === "complete" && job.output_tsv_path && (
+          {(job.status === "complete" || job.status === "canceled") && job.output_tsv_path && (
             <a
               href={detectionTsvUrl(job.id)}
               download
