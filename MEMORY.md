@@ -373,6 +373,9 @@ Queue safety note:
 - `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using a
   range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy
   fallback to `job.start_timestamp` for older jobs.
+- Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
+  jobs) is local-cache-authoritative (same cache root precedence as playback) and does not call S3;
+  rows missing local cache audio are skipped and counted in `n_skipped`.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---

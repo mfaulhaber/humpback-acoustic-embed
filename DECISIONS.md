@@ -241,3 +241,27 @@ in tooltip, and replace `Start/End` display with snapped `Duration`.
 - UI can display extraction-consistent context without changing playback keys
 - Label-save operations no longer strip non-label TSV columns
 - No DB migration required; behavior is file-format and API-row augmentation only
+
+---
+
+## ADR-013: Local-cache-authoritative hydrophone extraction with timeline reuse
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Hydrophone labeled-sample extraction previously used `CachingS3Client` when
+`job.local_cache_path` was unset. Even with local segment cache hits for `.ts` bytes,
+each labeled row rebuild could still trigger slow S3 `list_hls_folders`/`list_segments`
+metadata calls, causing long extraction latency.
+
+**Decision**: Make hydrophone extraction match playback cache authority:
+- always resolve hydrophone extraction through `LocalHLSClient` using
+  `job.local_cache_path` or `settings.s3_cache_path`
+- do not perform S3 fallback during extraction
+- build stream timeline metadata once per extraction run and reuse it across rows
+
+**Consequences**:
+- Hydrophone extraction avoids S3 metadata/object calls in normal operation
+- Extraction latency is dominated by local filesystem and decode work
+- Missing local-cache audio remains non-fatal: rows are skipped and counted in `n_skipped`
+- No API schema or DB migration changes

@@ -488,12 +488,10 @@ async def run_extraction_job(
 
         if job.hydrophone_id:
             from humpback.classifier.extractor import extract_hydrophone_labeled_samples
-            from humpback.classifier.s3_stream import CachingS3Client, LocalHLSClient
+            from humpback.classifier.s3_stream import LocalHLSClient
 
-            if job.local_cache_path:
-                extract_client = LocalHLSClient(job.local_cache_path)
-            else:
-                extract_client = CachingS3Client(settings.s3_cache_path)
+            cache_path = job.local_cache_path or settings.s3_cache_path
+            extract_client = LocalHLSClient(cache_path)
 
             summary = await asyncio.to_thread(
                 extract_hydrophone_labeled_samples,

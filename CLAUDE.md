@@ -185,6 +185,8 @@ Hydrophone detection, playback, and extraction must use the same bounded stream 
 - playlist (`live.m3u8`) duration metadata should be used when available
 - processing/playback/extraction must stay within `[start_timestamp, end_timestamp]`
 - legacy playback compatibility for older jobs may fall back to `job.start_timestamp`
+- hydrophone extraction is local-cache-authoritative (same as playback): resolve from local HLS cache only, with no S3 listing/fetch fallback
+- hydrophone extraction should build/reuse timeline metadata once per extraction run (avoid rebuilding per labeled row)
 
 ### 4.6 Hydrophone Detection TSV Metadata
 Hydrophone detection TSV output should carry extraction-oriented metadata:

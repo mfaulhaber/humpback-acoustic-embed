@@ -247,9 +247,32 @@ def extract_hydrophone_labeled_samples(
     use_stream_resolver = (
         stream_start_timestamp is not None and stream_end_timestamp is not None
     )
+    stream_timeline = None
+    processing_start_ts: float | None = None
 
     if use_stream_resolver:
-        from humpback.classifier.s3_stream import resolve_hydrophone_audio_slice
+        from humpback.classifier.s3_stream import (
+            build_hydrophone_stream_timeline,
+            resolve_hydrophone_audio_slice,
+        )
+
+        try:
+            stream_timeline = build_hydrophone_stream_timeline(
+                client=client,
+                hydrophone_id=hydrophone_id,
+                stream_start_ts=float(stream_start_timestamp),
+                stream_end_ts=float(stream_end_timestamp),
+            )
+            processing_start_ts = max(float(stream_start_timestamp), stream_timeline[0].start_ts)
+        except Exception as exc:
+            logger.warning(
+                "Hydrophone extraction timeline unavailable for %s [%.1f, %.1f]: %s",
+                hydrophone_id,
+                float(stream_start_timestamp),
+                float(stream_end_timestamp),
+                exc,
+            )
+            stream_timeline = []
 
     for source_filename, rows in by_file.items():
         recording_ts = parse_recording_timestamp(source_filename)
@@ -302,6 +325,9 @@ def extract_hydrophone_labeled_samples(
             segment: np.ndarray | None = None
 
             if use_stream_resolver:
+                if not stream_timeline:
+                    counts["n_skipped"] += len(pending_writes)
+                    continue
                 try:
                     segment = resolve_hydrophone_audio_slice(
                         client=client,
@@ -313,6 +339,8 @@ def extract_hydrophone_labeled_samples(
                         duration_sec=duration,
                         target_sr=target_sample_rate,
                         legacy_anchor_start_ts=float(stream_start_timestamp),
+                        timeline=stream_timeline,
+                        processing_start_ts=processing_start_ts,
                     )
                 except Exception as exc:
                     logger.warning(

@@ -563,6 +563,16 @@ def _build_stream_timeline(
     return timeline
 
 
+def build_hydrophone_stream_timeline(
+    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    hydrophone_id: str,
+    stream_start_ts: float,
+    stream_end_ts: float,
+) -> list[StreamSegment]:
+    """Build stream timeline for callers that need to reuse it across rows."""
+    return _build_stream_timeline(client, hydrophone_id, stream_start_ts, stream_end_ts)
+
+
 def _decode_and_clip_segment(
     client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
     segment: StreamSegment,
@@ -602,6 +612,8 @@ def resolve_hydrophone_audio_slice(
     target_sr: int = 32000,
     legacy_anchor_start_ts: float | None = None,
     est_seg_dur: float = 10.0,  # Kept for backward-compatible call sites; ignored.
+    timeline: list[StreamSegment] | None = None,
+    processing_start_ts: float | None = None,
 ) -> np.ndarray:
     """Resolve and decode a hydrophone audio slice using stream-offset mapping.
 
@@ -612,10 +624,17 @@ def resolve_hydrophone_audio_slice(
     if duration_sec <= 0:
         raise ValueError("duration_sec must be > 0")
 
-    timeline = _build_stream_timeline(
-        client, hydrophone_id, stream_start_ts, stream_end_ts
-    )
-    processing_start_ts = max(stream_start_ts, timeline[0].start_ts)
+    if timeline is None:
+        timeline = _build_stream_timeline(
+            client, hydrophone_id, stream_start_ts, stream_end_ts
+        )
+    if not timeline:
+        raise FileNotFoundError("No stream segments found in requested range")
+
+    if processing_start_ts is None:
+        processing_start_ts = max(stream_start_ts, timeline[0].start_ts)
+    else:
+        processing_start_ts = float(processing_start_ts)
     chunk_start_ts = _parse_chunk_start_timestamp(filename)
     abs_start_ts = chunk_start_ts + row_start_sec
 

@@ -487,3 +487,78 @@ class TestExtractHydrophoneLabeledSamples:
         assert summary["n_humpback"] == 1
         assert summary["n_skipped"] == 0
         assert len(list(pos_out.rglob("*.wav"))) == 1
+
+    def test_stream_timeline_built_once_for_multiple_rows(self, tmp_path):
+        """Stream timeline listing should happen once per extraction run."""
+        from unittest.mock import MagicMock, patch
+
+        sr = 32000
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "19700101T002500Z.wav",
+             "start_sec": "0.0", "end_sec": "5.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+            {"filename": "19700101T002500Z.wav",
+             "start_sec": "10.0", "end_sec": "15.0",
+             "avg_confidence": "0.88", "peak_confidence": "0.92",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1500"]
+        mock_client.list_segments.return_value = [f"rpi/hls/1500/seg{i:04d}.ts" for i in range(6)]
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        with patch(
+            "humpback.classifier.s3_stream.decode_ts_bytes",
+            return_value=np.ones(sr * 10, dtype=np.float32),
+        ):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path,
+                "rpi_orcasound_lab",
+                tmp_path / "pos",
+                tmp_path / "neg",
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
+                stream_start_timestamp=1000.0,
+                stream_end_timestamp=2000.0,
+            )
+
+        assert summary["n_humpback"] == 2
+        assert summary["n_skipped"] == 0
+        assert mock_client.list_hls_folders.call_count == 1
+        assert mock_client.list_segments.call_count == 1
+
+    def test_missing_local_timeline_skips_rows_without_failure(self, tmp_path):
+        """Missing local cache data should skip rows instead of failing extraction."""
+        from unittest.mock import MagicMock
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "20250615T080000Z.wav",
+             "start_sec": "0.0", "end_sec": "5.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "1", "ship": "", "background": ""},
+        ])
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = []
+
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            "rpi_orcasound_lab",
+            tmp_path / "pos",
+            tmp_path / "neg",
+            mock_client,
+            target_sample_rate=32000,
+            window_size_seconds=5.0,
+            stream_start_timestamp=1000.0,
+            stream_end_timestamp=2000.0,
+        )
+
+        assert summary["n_humpback"] == 0
+        assert summary["n_skipped"] == 1
+        mock_client.list_hls_folders.assert_called_once()
+        mock_client.list_segments.assert_not_called()

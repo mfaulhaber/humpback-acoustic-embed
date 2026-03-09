@@ -32,7 +32,7 @@ Key features:
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 - Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
-- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping (playlist durations + numeric segment ordering) with legacy anchor fallback for older jobs; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`); Hydrophone table shows raw UTC detection ranges with extraction-filename tooltip and snapped Duration column
+- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping (playlist durations + numeric segment ordering) with legacy anchor fallback for older jobs; hydrophone extraction is local-cache-authoritative (no S3 fallback during extract), skipping rows with missing cached audio; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`); Hydrophone table shows raw UTC detection ranges with extraction-filename tooltip and snapped Duration column
 - Folder import: reference audio files in-place from local filesystem folders without copying
 
 ---
@@ -469,6 +469,7 @@ Validation and error behavior notes:
 - `POST /clustering/jobs` requires at least one `embedding_set_id` (`422` on empty list).
 - `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`.
 - `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
+- Hydrophone extraction (queued via `POST /classifier/detection-jobs/extract`) reads local HLS cache only and skips missing-cache rows (reported via `n_skipped` in `extract_summary`).
 - `GET /audio/{id}/download` returns `416` for malformed or unsatisfiable `Range` headers.
 
 ---
