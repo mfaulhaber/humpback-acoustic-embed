@@ -321,3 +321,31 @@ results were not accessible in the Previous Jobs panel.
 - No DB migration required (`paused` is a status string value in existing column).
 - Canceled jobs now support content, download, labels, and extraction endpoints.
 - Hydrophone TSV includes 8 columns (added `hydrophone_name`).
+
+---
+
+## ADR-016: Automated retrain workflow for classifier models
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Users iteratively improve classifiers by adding labeled audio to their positive/negative
+folders, then retraining. This required manually reimporting folders, queuing processing, waiting for
+completion, and creating a new training job with the same parameters — four separate operations
+across multiple tabs.
+
+**Decision**: Add a `retrain_workflows` table with a backend-orchestrated state machine
+(`queued` → `importing` → `processing` → `training` → `complete`/`failed`). A single "Retrain"
+button on each trained model triggers the full pipeline. The workflow traces folder roots from the
+original training job's embedding set provenance, reimports those folders, queues processing for
+any unprocessed audio, then collects ALL embedding sets from the folder hierarchies (not just the
+original IDs) to include newly added files.
+
+**Consequences**:
+- New `retrain_workflows` table with Alembic migration `014_retrain_workflows.py`
+- Worker polls retrain workflows after extraction jobs in the main loop
+- Stale retrain workflows (importing/processing/training) are recovered to queued after timeout
+- Frontend adds retrain sub-panel to expanded model rows in Classifier/Train tab
+- 4 new API endpoints: `GET /retrain-info`, `POST /retrain`, `GET /retrain-workflows`, `GET /retrain-workflows/{id}`
+- Folder tracing resolves import roots by walking `source_folder` + `folder_path` hierarchy
+- Embedding set collection uses folder-path prefix matching to include all files under import roots

@@ -500,6 +500,49 @@ export interface TrainingDataSummaryResponse {
   negative_duration_sec: number | null;
 }
 
+// ---- Retrain Workflows ----
+
+export interface RetrainFolderInfo {
+  model_id: string;
+  model_name: string;
+  model_version: string;
+  window_size_seconds: number;
+  target_sample_rate: number;
+  feature_config: Record<string, unknown> | null;
+  positive_folder_roots: string[];
+  negative_folder_roots: string[];
+  parameters: Record<string, unknown>;
+}
+
+export interface RetrainWorkflowCreate {
+  source_model_id: string;
+  new_model_name: string;
+  parameters?: Record<string, unknown> | null;
+}
+
+export interface RetrainWorkflow {
+  id: string;
+  status: string;
+  source_model_id: string;
+  new_model_name: string;
+  model_version: string;
+  window_size_seconds: number;
+  target_sample_rate: number;
+  feature_config: Record<string, unknown> | null;
+  parameters: Record<string, unknown> | null;
+  positive_folder_roots: string[];
+  negative_folder_roots: string[];
+  import_summary: Record<string, unknown> | null;
+  processing_job_ids: string[] | null;
+  processing_total: number | null;
+  processing_complete: number | null;
+  training_job_id: string | null;
+  new_model_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ---- Admin ----
 
 export interface ModelConfig {

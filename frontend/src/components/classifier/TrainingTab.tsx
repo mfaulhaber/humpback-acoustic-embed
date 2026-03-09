@@ -16,7 +16,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, ChevronDown, Settings2, AlertTriangle } from "lucide-react";
+import { ChevronRight, ChevronDown, Settings2, AlertTriangle, RotateCcw, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import { ModelFilter } from "@/components/shared/ModelFilter";
@@ -27,12 +27,16 @@ import {
   useDeleteClassifierModel,
   useBulkDeleteTrainingJobs,
   useBulkDeleteClassifierModels,
+  useRetrainInfo,
+  useRetrainWorkflows,
+  useCreateRetrainWorkflow,
 } from "@/hooks/queries/useClassifier";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
   EmbeddingSet,
+  RetrainWorkflow as RetrainWorkflowType,
 } from "@/api/types";
 
 const ROOT_SENTINEL = "__root__";
@@ -57,6 +61,9 @@ export function TrainingTab() {
   const deleteMutation = useDeleteClassifierModel();
   const bulkDeleteJobsMutation = useBulkDeleteTrainingJobs();
   const bulkDeleteModelsMutation = useBulkDeleteClassifierModels();
+
+  // Retrain workflows — poll at 3s to track active workflows
+  const { data: retrainWorkflows = [] } = useRetrainWorkflows(3000);
 
   const [name, setName] = useState("");
   const [modelFilter, setModelFilter] = useState("__all__");
@@ -560,6 +567,9 @@ export function TrainingTab() {
                   checked={selectedModelIds.has(m.id)}
                   onToggle={() => toggleModelId(m.id)}
                   onDelete={() => deleteMutation.mutate(m.id)}
+                  retrainWorkflow={retrainWorkflows.find(
+                    (w) => w.source_model_id === m.id
+                  )}
                 />
               ))}
             </tbody>
@@ -797,16 +807,182 @@ function TrainingJobTableRow({
   );
 }
 
+function RetrainPanel({ model, workflow }: { model: ClassifierModelInfo; workflow?: RetrainWorkflowType }) {
+  const [showForm, setShowForm] = useState(false);
+  const [newName, setNewName] = useState(`${model.name}-retrained`);
+  const retrainInfo = useRetrainInfo(showForm ? model.id : null);
+  const createRetrain = useCreateRetrainWorkflow();
+
+  const handleSubmit = () => {
+    createRetrain.mutate(
+      {
+        source_model_id: model.id,
+        new_model_name: newName,
+        parameters: retrainInfo.data?.parameters ?? undefined,
+      },
+      { onSuccess: () => setShowForm(false) }
+    );
+  };
+
+  const stepLabels = ["Importing", "Processing", "Training", "Complete"];
+  const stepIndex = workflow
+    ? { importing: 0, processing: 1, training: 2, complete: 3, failed: -1 }[workflow.status] ?? -1
+    : -1;
+
+  if (workflow && !showForm) {
+    return (
+      <div className="mt-3 border-t pt-3">
+        <div className="flex items-center gap-2 text-xs font-medium mb-2">
+          <RotateCcw className="h-3.5 w-3.5" />
+          Retrain Workflow
+        </div>
+        {workflow.status === "failed" ? (
+          <div className="flex items-center gap-2 text-xs text-destructive">
+            <XCircle className="h-3.5 w-3.5" />
+            Failed: {workflow.error_message}
+          </div>
+        ) : workflow.status === "complete" ? (
+          <div className="flex items-center gap-2 text-xs text-green-700">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Complete — new model: {workflow.new_model_name}
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              {stepLabels.map((label, i) => (
+                <div key={label} className="flex items-center gap-1">
+                  <div
+                    className={`h-2 w-2 rounded-full ${
+                      i < stepIndex
+                        ? "bg-green-500"
+                        : i === stepIndex
+                        ? "bg-blue-500 animate-pulse"
+                        : "bg-muted"
+                    }`}
+                  />
+                  <span className={`text-[10px] ${i === stepIndex ? "font-medium" : "text-muted-foreground"}`}>
+                    {label}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {workflow.status === "processing" && workflow.processing_total != null && (
+              <div className="text-[10px] text-muted-foreground">
+                Processing: {workflow.processing_complete ?? 0}/{workflow.processing_total} jobs
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 border-t pt-3">
+      {!showForm ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1.5"
+          onClick={() => setShowForm(true)}
+        >
+          <RotateCcw className="h-3 w-3" />
+          Retrain
+        </Button>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <RotateCcw className="h-3.5 w-3.5" />
+            Retrain from {model.name}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-medium text-muted-foreground">
+                New Model Name
+              </label>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="h-7 text-xs mt-0.5"
+              />
+            </div>
+          </div>
+          {retrainInfo.isLoading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading folder info...
+            </div>
+          ) : retrainInfo.data ? (
+            <div className="text-[10px] space-y-1">
+              <div>
+                <span className="font-medium">Positive folders:</span>{" "}
+                <span className="text-muted-foreground">
+                  {retrainInfo.data.positive_folder_roots.map((r) => r.split("/").pop()).join(", ")}
+                </span>
+              </div>
+              <div>
+                <span className="font-medium">Negative folders:</span>{" "}
+                <span className="text-muted-foreground">
+                  {retrainInfo.data.negative_folder_roots.map((r) => r.split("/").pop()).join(", ")}
+                </span>
+              </div>
+              <div>
+                <span className="font-medium">Parameters:</span>{" "}
+                <span className="text-muted-foreground">
+                  {Object.entries(retrainInfo.data.parameters)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(", ") || "defaults"}
+                </span>
+              </div>
+            </div>
+          ) : retrainInfo.isError ? (
+            <div className="text-xs text-destructive">
+              Unable to load retrain info. Model may lack training provenance.
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              onClick={handleSubmit}
+              disabled={
+                !newName.trim() ||
+                createRetrain.isPending ||
+                !retrainInfo.data
+              }
+            >
+              {createRetrain.isPending && (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              )}
+              Start Retrain
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setShowForm(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModelTableRow({
   model,
   checked,
   onToggle,
   onDelete,
+  retrainWorkflow,
 }: {
   model: ClassifierModelInfo;
   checked: boolean;
   onToggle: () => void;
   onDelete: () => void;
+  retrainWorkflow?: RetrainWorkflowType;
 }) {
   const [expanded, setExpanded] = useState(false);
   const summary = model.training_summary as Record<string, unknown> | null;
@@ -936,6 +1112,7 @@ function ModelTableRow({
                 </div>
               )}
             </div>
+            <RetrainPanel model={model} workflow={retrainWorkflow} />
           </td>
         </tr>
       )}

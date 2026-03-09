@@ -4,7 +4,7 @@ Structured workflow for implementing changes safely.
 
 ## Steps
 
-1. **Restate the task** — confirm what you're building/fixing in one sentence
+1. **Restate the task** — validate current active plan in PLANS.md and confirm what you're building/fixing in one sentence
 
 2. **Identify affected files** — list files that need changes before editing
 

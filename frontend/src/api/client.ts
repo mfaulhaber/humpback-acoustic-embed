@@ -34,6 +34,9 @@ import type {
   ProcessingJobCreate,
   SpectrogramData,
   TableInfo,
+  RetrainFolderInfo,
+  RetrainWorkflow,
+  RetrainWorkflowCreate,
   TrainingDataSummaryResponse,
   VisualizationData,
 } from "./types";
@@ -282,6 +285,17 @@ export const resumeHydrophoneDetectionJob = (jobId: string) =>
 
 export const fetchTrainingDataSummary = (modelId: string) =>
   api<TrainingDataSummaryResponse>(`/classifier/models/${modelId}/training-summary`);
+
+// ---- Retrain Workflows ----
+
+export const fetchRetrainInfo = (modelId: string) =>
+  api<RetrainFolderInfo>(`/classifier/models/${modelId}/retrain-info`);
+
+export const createRetrainWorkflow = (body: RetrainWorkflowCreate) =>
+  post<RetrainWorkflow>("/classifier/retrain", body);
+
+export const fetchRetrainWorkflows = () =>
+  api<RetrainWorkflow[]>("/classifier/retrain-workflows");
 
 // ---- Admin ----
 

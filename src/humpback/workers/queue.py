@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from humpback.models.classifier import ClassifierTrainingJob, DetectionJob
 from humpback.models.clustering import ClusteringJob
 from humpback.models.processing import EmbeddingSet, JobStatus, ProcessingJob
+from humpback.models.retrain import RetrainWorkflow
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,22 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count4:
         logger.warning(f"Recovered {count4} stale detection job(s)")
 
-    total = count + count2 + count3 + count4
+    result5 = await session.execute(
+        update(RetrainWorkflow)
+        .where(
+            RetrainWorkflow.status.in_(["importing", "processing", "training"]),
+            RetrainWorkflow.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count5 = result5.rowcount
+    if count5:
+        logger.warning(f"Recovered {count5} stale retrain workflow(s)")
+
+    total = count + count2 + count3 + count4 + count5
     if total:
         await session.commit()
     return total
@@ -377,3 +393,24 @@ async def fail_extraction_job(
         )
     )
     await session.commit()
+
+
+# ---- Retrain Workflows ----
+
+
+async def claim_retrain_workflow(
+    session: AsyncSession,
+) -> Optional[RetrainWorkflow]:
+    """Claim a queued retrain workflow (queued → importing)."""
+    for _ in range(3):
+        wf = await _claim_next_job(
+            session,
+            RetrainWorkflow,
+            status_attr=RetrainWorkflow.status,
+            queued_value="queued",
+            running_value="importing",
+            order_attr=RetrainWorkflow.created_at,
+        )
+        if wf is not None:
+            return wf
+    return None

@@ -19,11 +19,15 @@ import {
   cancelHydrophoneDetectionJob,
   pauseHydrophoneDetectionJob,
   resumeHydrophoneDetectionJob,
+  fetchRetrainInfo,
+  createRetrainWorkflow,
+  fetchRetrainWorkflows,
 } from "@/api/client";
 import type {
   ClassifierTrainingJobCreate,
   DetectionLabelRow,
   HydrophoneDetectionJobCreate,
+  RetrainWorkflowCreate,
 } from "@/api/types";
 
 export function useTrainingJobs(refetchInterval?: number) {
@@ -207,6 +211,35 @@ export function useResumeHydrophoneDetectionJob() {
     mutationFn: (jobId: string) => resumeHydrophoneDetectionJob(jobId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
+    },
+  });
+}
+
+// ---- Retrain Workflows ----
+
+export function useRetrainInfo(modelId: string | null) {
+  return useQuery({
+    queryKey: ["retrainInfo", modelId],
+    queryFn: () => fetchRetrainInfo(modelId!),
+    enabled: modelId !== null,
+  });
+}
+
+export function useRetrainWorkflows(refetchInterval?: number) {
+  return useQuery({
+    queryKey: ["retrainWorkflows"],
+    queryFn: fetchRetrainWorkflows,
+    refetchInterval,
+  });
+}
+
+export function useCreateRetrainWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: RetrainWorkflowCreate) => createRetrainWorkflow(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["retrainWorkflows"] });
+      qc.invalidateQueries({ queryKey: ["classifierModels"] });
     },
   });
 }

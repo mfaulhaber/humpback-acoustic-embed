@@ -20,6 +20,7 @@ from humpback.workers.queue import (
     claim_training_job,
     recover_stale_jobs,
 )
+from humpback.workers.retrain_worker import poll_retrain_workflows
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,17 @@ async def run_worker(settings: Settings | None = None) -> None:
             logger.info(f"Extraction job {ejob.id}")
             async with session_factory() as session:
                 await run_extraction_job(session, ejob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then retrain workflows
+        async with session_factory() as session:
+            retrain_did_work = await poll_retrain_workflows(
+                session, settings, session_factory
+            )
+        if retrain_did_work:
             claimed = True
 
         if claimed:

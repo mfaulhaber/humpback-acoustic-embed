@@ -25,6 +25,9 @@ from humpback.schemas.classifier import (
     HydrophoneDetectionJobCreate,
     HydrophoneInfo,
     PerFileDiagnosticSummary,
+    RetrainFolderInfo,
+    RetrainWorkflowCreate,
+    RetrainWorkflowOut,
     TrainingDataSummaryResponse,
     TrainingSourceInfo,
     WindowDiagnosticRecord,
@@ -478,6 +481,77 @@ async def get_training_summary(
         positive_duration_sec=summary["positive_duration_sec"],
         negative_duration_sec=summary["negative_duration_sec"],
     )
+
+
+# ---- Retrain Workflows ----
+
+
+def _retrain_workflow_to_out(wf) -> RetrainWorkflowOut:
+    return RetrainWorkflowOut(
+        id=wf.id,
+        status=wf.status,
+        source_model_id=wf.source_model_id,
+        new_model_name=wf.new_model_name,
+        model_version=wf.model_version,
+        window_size_seconds=wf.window_size_seconds,
+        target_sample_rate=wf.target_sample_rate,
+        feature_config=json.loads(wf.feature_config) if wf.feature_config else None,
+        parameters=json.loads(wf.parameters) if wf.parameters else None,
+        positive_folder_roots=json.loads(wf.positive_folder_roots),
+        negative_folder_roots=json.loads(wf.negative_folder_roots),
+        import_summary=json.loads(wf.import_summary) if wf.import_summary else None,
+        processing_job_ids=json.loads(wf.processing_job_ids)
+        if wf.processing_job_ids
+        else None,
+        processing_total=wf.processing_total,
+        processing_complete=wf.processing_complete,
+        training_job_id=wf.training_job_id,
+        new_model_id=wf.new_model_id,
+        error_message=wf.error_message,
+        created_at=wf.created_at,
+        updated_at=wf.updated_at,
+    )
+
+
+@router.get("/models/{model_id}/retrain-info")
+async def get_retrain_info(
+    model_id: str, session: SessionDep
+) -> RetrainFolderInfo:
+    info = await classifier_service.get_retrain_info(session, model_id)
+    if info is None:
+        raise HTTPException(404, "Model or training job not found")
+    return RetrainFolderInfo(**info)
+
+
+@router.post("/retrain", status_code=201)
+async def create_retrain_workflow(
+    body: RetrainWorkflowCreate, session: SessionDep
+) -> RetrainWorkflowOut:
+    try:
+        wf = await classifier_service.create_retrain_workflow(
+            session, body.source_model_id, body.new_model_name, body.parameters
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _retrain_workflow_to_out(wf)
+
+
+@router.get("/retrain-workflows")
+async def list_retrain_workflows(
+    session: SessionDep,
+) -> list[RetrainWorkflowOut]:
+    wfs = await classifier_service.list_retrain_workflows(session)
+    return [_retrain_workflow_to_out(wf) for wf in wfs]
+
+
+@router.get("/retrain-workflows/{workflow_id}")
+async def get_retrain_workflow(
+    workflow_id: str, session: SessionDep
+) -> RetrainWorkflowOut:
+    wf = await classifier_service.get_retrain_workflow(session, workflow_id)
+    if wf is None:
+        raise HTTPException(404, "Retrain workflow not found")
+    return _retrain_workflow_to_out(wf)
 
 
 # ---- Extraction ----

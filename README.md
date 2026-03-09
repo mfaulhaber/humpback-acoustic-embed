@@ -457,6 +457,10 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | POST | `/classifier/detection-jobs/bulk-delete` | Bulk delete detection jobs |
 | POST | `/classifier/models/bulk-delete` | Bulk delete classifier models |
 | GET | `/classifier/browse-directories` | Browse server filesystem directories (`?root=`) |
+| GET | `/classifier/models/{id}/retrain-info` | Pre-flight folder info for retrain form |
+| POST | `/classifier/retrain` | Create retrain workflow (reimport → process → train) |
+| GET | `/classifier/retrain-workflows` | List retrain workflows |
+| GET | `/classifier/retrain-workflows/{id}` | Get retrain workflow status |
 | GET | `/admin/models` | List registered models |
 | POST | `/admin/models` | Register a new model |
 | PUT | `/admin/models/{id}` | Update model config |

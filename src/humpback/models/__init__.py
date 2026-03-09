@@ -2,6 +2,7 @@ from humpback.models.audio import AudioFile, AudioMetadata
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
 from humpback.models.processing import EmbeddingSet, ProcessingJob
+from humpback.models.retrain import RetrainWorkflow
 
 __all__ = [
     "AudioFile",
@@ -13,4 +14,5 @@ __all__ = [
     "ClusteringJob",
     "Cluster",
     "ClusterAssignment",
+    "RetrainWorkflow",
 ]

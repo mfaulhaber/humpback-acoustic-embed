@@ -10,6 +10,29 @@
 
 ## Recently Completed
 
+# Plan: Retrain Classifier Model
+
+## Outcome (2026-03-09)
+
+- Added `retrain_workflows` table (migration `014`) with backend state machine
+  (`queued` → `importing` → `processing` → `training` → `complete`/`failed`).
+- Implemented folder-tracing algorithm to resolve import roots from training job
+  embedding set provenance; embedding set collection gathers ALL sets from folder
+  hierarchies (includes newly added audio files).
+- Added 4 API endpoints: `GET /retrain-info`, `POST /retrain`,
+  `GET /retrain-workflows`, `GET /retrain-workflows/{id}`.
+- Worker integration: retrain polling in main loop after extraction jobs,
+  stale recovery for importing/processing/training states.
+- Frontend: `RetrainPanel` component in expanded model rows with step indicator,
+  progress tracking, and form for starting retrains.
+- ADR-016 documents the design.
+
+## Verification
+
+- `uv run pytest tests/` — 430 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- 12 unit tests + 8 integration tests + Playwright spec added.
+
 # Plan: Popover Date Range Picker for Hydrophone Tab
 
 ## Outcome (2026-03-09)

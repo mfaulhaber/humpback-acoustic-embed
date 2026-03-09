@@ -191,3 +191,49 @@ class TrainingDataSummaryResponse(BaseModel):
     window_size_seconds: float
     positive_duration_sec: Optional[float] = None
     negative_duration_sec: Optional[float] = None
+
+
+# ---- Retrain Workflows ----
+
+
+class RetrainFolderInfo(BaseModel):
+    model_id: str
+    model_name: str
+    model_version: str
+    window_size_seconds: float
+    target_sample_rate: int
+    feature_config: Optional[dict[str, Any]] = None
+    positive_folder_roots: list[str]
+    negative_folder_roots: list[str]
+    parameters: dict[str, Any]
+
+
+class RetrainWorkflowCreate(BaseModel):
+    source_model_id: str
+    new_model_name: str
+    parameters: Optional[dict[str, Any]] = None
+
+
+class RetrainWorkflowOut(BaseModel):
+    id: str
+    status: str
+    source_model_id: str
+    new_model_name: str
+    model_version: str
+    window_size_seconds: float
+    target_sample_rate: int
+    feature_config: Optional[dict[str, Any]] = None
+    parameters: Optional[dict[str, Any]] = None
+    positive_folder_roots: list[str]
+    negative_folder_roots: list[str]
+    import_summary: Optional[dict[str, Any]] = None
+    processing_job_ids: Optional[list[str]] = None
+    processing_total: Optional[int] = None
+    processing_complete: Optional[int] = None
+    training_job_id: Optional[str] = None
+    new_model_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

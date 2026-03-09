@@ -9,8 +9,10 @@ import pyarrow.parquet as pq
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.models.audio import AudioFile
 from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob, DetectionJob
 from humpback.models.processing import EmbeddingSet
+from humpback.models.retrain import RetrainWorkflow
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
 
@@ -500,3 +502,170 @@ async def get_training_data_summary(
         "positive_duration_sec": total_pos * cm.window_size_seconds if total_pos else None,
         "negative_duration_sec": total_neg * cm.window_size_seconds if total_neg else None,
     }
+
+
+# ---- Retrain Workflows ----
+
+
+async def trace_folder_roots(
+    session: AsyncSession, training_job: ClassifierTrainingJob
+) -> dict[str, list[str]]:
+    """Trace back from training job's embedding sets to import folder roots."""
+    pos_ids = json.loads(training_job.positive_embedding_set_ids)
+    neg_ids = json.loads(training_job.negative_embedding_set_ids)
+
+    async def _resolve_roots(es_ids: list[str]) -> list[str]:
+        if not es_ids:
+            return []
+        result = await session.execute(
+            select(EmbeddingSet.audio_file_id).where(EmbeddingSet.id.in_(es_ids))
+        )
+        audio_file_ids = list(set(result.scalars().all()))
+        if not audio_file_ids:
+            return []
+
+        result = await session.execute(
+            select(AudioFile.source_folder, AudioFile.folder_path).where(
+                AudioFile.id.in_(audio_file_ids),
+                AudioFile.source_folder.isnot(None),
+            )
+        )
+        rows = result.all()
+
+        roots = set()
+        for source_folder, folder_path in rows:
+            parts = folder_path.split("/")
+            import_root = Path(source_folder)
+            for _ in range(len(parts) - 1):
+                import_root = import_root.parent
+            roots.add(str(import_root))
+        return sorted(roots)
+
+    return {
+        "positive_folder_roots": await _resolve_roots(pos_ids),
+        "negative_folder_roots": await _resolve_roots(neg_ids),
+    }
+
+
+async def collect_embedding_sets_for_folders(
+    session: AsyncSession,
+    folder_roots: list[str],
+    model_version: str,
+) -> list[str]:
+    """Find all embedding set IDs for audio files under the given import roots."""
+    all_ids = []
+    for root in folder_roots:
+        base_name = Path(root).name
+        result = await session.execute(
+            select(AudioFile.id).where(
+                AudioFile.source_folder.isnot(None),
+                (AudioFile.folder_path == base_name)
+                | AudioFile.folder_path.startswith(f"{base_name}/"),
+            )
+        )
+        audio_ids = list(result.scalars().all())
+        if not audio_ids:
+            continue
+
+        result = await session.execute(
+            select(EmbeddingSet.id).where(
+                EmbeddingSet.audio_file_id.in_(audio_ids),
+                EmbeddingSet.model_version == model_version,
+            )
+        )
+        all_ids.extend(result.scalars().all())
+    return sorted(set(all_ids))
+
+
+async def get_retrain_info(
+    session: AsyncSession, model_id: str
+) -> Optional[dict[str, Any]]:
+    """Pre-flight info for retrain: folder roots and parameters."""
+    cm = await get_classifier_model(session, model_id)
+    if cm is None:
+        return None
+
+    if not cm.training_job_id:
+        return None
+
+    tj = await get_training_job(session, cm.training_job_id)
+    if tj is None:
+        return None
+
+    roots = await trace_folder_roots(session, tj)
+
+    parameters = json.loads(tj.parameters) if tj.parameters else {}
+    parameters.pop("_config_mismatch_warning", None)
+
+    return {
+        "model_id": cm.id,
+        "model_name": cm.name,
+        "model_version": cm.model_version,
+        "window_size_seconds": cm.window_size_seconds,
+        "target_sample_rate": cm.target_sample_rate,
+        "feature_config": json.loads(cm.feature_config) if cm.feature_config else None,
+        "positive_folder_roots": roots["positive_folder_roots"],
+        "negative_folder_roots": roots["negative_folder_roots"],
+        "parameters": parameters,
+    }
+
+
+async def create_retrain_workflow(
+    session: AsyncSession,
+    source_model_id: str,
+    new_model_name: str,
+    parameter_overrides: Optional[dict[str, Any]] = None,
+) -> RetrainWorkflow:
+    """Create a retrain workflow from an existing classifier model."""
+    cm = await get_classifier_model(session, source_model_id)
+    if cm is None:
+        raise ValueError(f"Source classifier model not found: {source_model_id}")
+
+    if not cm.training_job_id:
+        raise ValueError("Source model has no associated training job")
+
+    tj = await get_training_job(session, cm.training_job_id)
+    if tj is None:
+        raise ValueError("Source model's training job not found")
+
+    roots = await trace_folder_roots(session, tj)
+    if not roots["positive_folder_roots"]:
+        raise ValueError("Cannot trace positive folder roots from training data")
+    if not roots["negative_folder_roots"]:
+        raise ValueError("Cannot trace negative folder roots from training data")
+
+    base_params = json.loads(tj.parameters) if tj.parameters else {}
+    base_params.pop("_config_mismatch_warning", None)
+    if parameter_overrides:
+        base_params.update(parameter_overrides)
+
+    workflow = RetrainWorkflow(
+        source_model_id=source_model_id,
+        new_model_name=new_model_name,
+        model_version=cm.model_version,
+        window_size_seconds=cm.window_size_seconds,
+        target_sample_rate=cm.target_sample_rate,
+        feature_config=cm.feature_config,
+        parameters=json.dumps(base_params) if base_params else None,
+        positive_folder_roots=json.dumps(roots["positive_folder_roots"]),
+        negative_folder_roots=json.dumps(roots["negative_folder_roots"]),
+    )
+    session.add(workflow)
+    await session.commit()
+    return workflow
+
+
+async def list_retrain_workflows(session: AsyncSession) -> list[RetrainWorkflow]:
+    result = await session.execute(
+        select(RetrainWorkflow).order_by(RetrainWorkflow.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_retrain_workflow(
+    session: AsyncSession, workflow_id: str
+) -> Optional[RetrainWorkflow]:
+    result = await session.execute(
+        select(RetrainWorkflow).where(RetrainWorkflow.id == workflow_id)
+    )
+    return result.scalar_one_or_none()

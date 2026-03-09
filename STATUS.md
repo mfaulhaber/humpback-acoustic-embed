@@ -107,13 +107,23 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone progress displays audio duration in hours:minutes format
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
 
+### Retrain Workflow
+- Automated retrain pipeline: reimport folders, queue processing, create training job — all from a single "Retrain" button
+- Backend-orchestrated state machine: `queued` → `importing` → `processing` → `training` → `complete`
+- Folder tracing: resolves import root paths from training job's embedding set provenance
+- Embedding set collection: gathers ALL embedding sets from folder hierarchies (includes newly added audio)
+- Worker integration: polled alongside other job types in the main worker loop
+- Stale workflow recovery: importing/processing/training workflows reset to queued after timeout
+- Frontend: retrain sub-panel in expanded model rows with step indicator and progress tracking
+- API endpoints: retrain-info (pre-flight), create retrain, list/get workflows
+
 ---
 
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `013_hydrophone_local_cache.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs
+- **Latest migration**: `014_retrain_workflows.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows
 
 ---
 
