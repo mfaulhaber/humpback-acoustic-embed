@@ -1,0 +1,233 @@
+import { expect, test, type Page } from "@playwright/test";
+
+const MODEL = {
+  id: "model-utc-1",
+  name: "UTC Test Model",
+  model_path: "/tmp/model.joblib",
+  model_version: "perch_v1",
+  vector_dim: 1280,
+  window_size_seconds: 5,
+  target_sample_rate: 32000,
+  feature_config: null,
+  training_summary: null,
+  training_job_id: null,
+  created_at: "2026-03-09T00:00:00Z",
+  updated_at: "2026-03-09T00:00:00Z",
+};
+
+const HYDROPHONE = {
+  id: "rpi_north_sjc",
+  name: "North San Juan Channel",
+  location: "San Juan Channel",
+};
+
+function buildHydrophoneJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "job-utc-1",
+    status: "complete",
+    classifier_model_id: MODEL.id,
+    audio_folder: null,
+    confidence_threshold: 0.5,
+    hop_seconds: 1.0,
+    high_threshold: 0.7,
+    low_threshold: 0.45,
+    output_tsv_path: "/tmp/detections.tsv",
+    result_summary: { n_spans: 1, time_covered_sec: 60 },
+    error_message: null,
+    files_processed: null,
+    files_total: null,
+    extract_status: null,
+    extract_error: null,
+    extract_summary: null,
+    hydrophone_id: HYDROPHONE.id,
+    hydrophone_name: HYDROPHONE.name,
+    start_timestamp: 1751644800,
+    end_timestamp: 1751648400,
+    segments_processed: 12,
+    segments_total: 12,
+    time_covered_sec: 3600,
+    alerts: null,
+    local_cache_path: null,
+    created_at: "2026-03-09T00:00:00Z",
+    updated_at: "2026-03-09T00:00:00Z",
+    ...overrides,
+  };
+}
+
+async function mockHydrophonePageApis({
+  page,
+  jobs,
+  onCreate,
+  detectionRows,
+}: {
+  page: Page;
+  jobs: Array<Record<string, unknown>>;
+  onCreate?: (body: Record<string, unknown>) => void;
+  detectionRows?: Array<Record<string, unknown>>;
+}) {
+  let jobsState = [...jobs];
+
+  await page.route("**/classifier/training-jobs", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.route("**/classifier/models", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([MODEL]),
+    });
+  });
+
+  await page.route("**/classifier/hydrophones", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([HYDROPHONE]),
+    });
+  });
+
+  await page.route("**/classifier/hydrophone-detection-jobs", async (route) => {
+    const method = route.request().method();
+    if (method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(jobsState),
+      });
+      return;
+    }
+
+    if (method === "POST") {
+      const raw = route.request().postData() ?? "{}";
+      const body = JSON.parse(raw) as Record<string, unknown>;
+      onCreate?.(body);
+      const createdJob = buildHydrophoneJob({
+        id: "job-utc-created",
+        status: "queued",
+        output_tsv_path: null,
+        result_summary: null,
+        start_timestamp: body.start_timestamp,
+        end_timestamp: body.end_timestamp,
+      });
+      jobsState = [createdJob];
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(createdJob),
+      });
+      return;
+    }
+
+    await route.fallback();
+  });
+
+  await page.route(/\/classifier\/detection-jobs\/[^/]+\/content$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(detectionRows ?? []),
+    });
+  });
+}
+
+test.describe("Hydrophone UTC timezone semantics", () => {
+  test("submits datetime-local inputs as UTC timestamps", async ({ page }) => {
+    let capturedBody: Record<string, unknown> | null = null;
+    await mockHydrophonePageApis({
+      page,
+      jobs: [],
+      onCreate: (body) => {
+        capturedBody = body;
+      },
+    });
+
+    await page.goto("/app/classifier");
+    await page.locator("button", { hasText: "Hydrophone" }).click();
+
+    await page
+      .locator("label", { hasText: "Hydrophone" })
+      .locator("..")
+      .locator("select")
+      .selectOption(HYDROPHONE.id);
+    await page
+      .locator("label", { hasText: "Classifier Model" })
+      .locator("..")
+      .locator("select")
+      .selectOption(MODEL.id);
+    await page
+      .locator("label", { hasText: "Start Date/Time (UTC)" })
+      .locator("..")
+      .locator("input")
+      .fill("2025-07-04T09:00");
+    await page
+      .locator("label", { hasText: "End Date/Time (UTC)" })
+      .locator("..")
+      .locator("input")
+      .fill("2025-07-04T10:00");
+
+    await expect(
+      page.getByText("Times are interpreted and displayed in UTC."),
+    ).toBeVisible();
+
+    await page.locator("button", { hasText: "Start Detection" }).click();
+
+    await expect.poll(() => capturedBody).not.toBeNull();
+    expect(capturedBody?.start_timestamp).toBe(1751619600);
+    expect(capturedBody?.end_timestamp).toBe(1751623200);
+  });
+
+  test("renders hydrophone job range and detection ranges in UTC format", async ({ page }) => {
+    await mockHydrophonePageApis({
+      page,
+      jobs: [
+        buildHydrophoneJob({
+          id: "job-utc-display",
+          start_timestamp: 1751644800, // 2025-07-04 16:00:00Z
+          end_timestamp: 1751648400, // 2025-07-04 17:00:00Z
+        }),
+      ],
+      detectionRows: [
+        {
+          filename: "20250704T165000Z.wav",
+          start_sec: 10,
+          end_sec: 16,
+          avg_confidence: 0.82,
+          peak_confidence: 0.86,
+          n_windows: 2,
+          extract_filename: "20250704T165010Z_20250704T165020Z.wav",
+          humpback: null,
+          ship: null,
+          background: null,
+        },
+      ],
+    });
+
+    await page.goto("/app/classifier");
+    await page.locator("button", { hasText: "Hydrophone" }).click();
+
+    await expect(page.locator("th", { hasText: "Date Range (UTC)" })).toBeVisible();
+
+    const completedRow = page
+      .locator("table tbody tr")
+      .filter({ hasText: "complete" })
+      .first();
+    await expect(completedRow).toBeVisible();
+
+    const dateRangeCell = completedRow.locator("td").nth(4);
+    await expect(dateRangeCell).toContainText("2025-07-04 16:00 UTC");
+    await expect(dateRangeCell).toContainText("2025-07-04 17:00 UTC");
+
+    await completedRow.locator("td:nth-child(2) button").click();
+    const innerTable = page.locator("tr td[colspan] table");
+    await expect(innerTable).toBeVisible();
+
+    await expect(innerTable.locator(".clip-range").first()).toContainText("Z_");
+    await expect(innerTable.locator(".raw-range").first()).toContainText("raw:");
+    await expect(innerTable.locator(".raw-range").first()).toContainText("Z_");
+  });
+});

@@ -446,7 +446,7 @@ Binary Classifier:
 - Expandable detection job rows show sortable TSV detection data (default: avg_confidence desc)
 - Inline audio playback of detected segments via streaming WAV slice endpoint
 - Hydrophone tab Extract button activates from saved labels on the expanded completed job
-- Hydrophone Detection Range displays raw UTC span; tooltip uses extraction-style filename when available
+- Hydrophone Detection Range displays extraction-aligned UTC span; raw detection range remains visible as secondary audit context
 - Hydrophone detection content table uses `Duration` (window-snapped extraction length) instead of raw start/end columns
 - Server-side folder browser endpoint (`GET /classifier/browse-directories`) for selecting negative audio and detection audio folders
 

@@ -76,6 +76,29 @@ function formatCompactUtc(ms: number): string {
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
 }
 
+function parseDatetimeLocalAsUtcSeconds(value: string): number | null {
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/,
+  );
+  if (!match) return null;
+  const seconds = match[6] ? Number(match[6]) : 0;
+  const utcMs = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    seconds,
+  );
+  return Number.isFinite(utcMs) ? utcMs / 1000 : null;
+}
+
+function formatUtcDateTime(timestampSeconds: number): string {
+  const date = new Date(timestampSeconds * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())} ${p(date.getUTCHours())}:${p(date.getUTCMinutes())} UTC`;
+}
+
 function computeUtcRange(filename: string, startSec: number, endSec: number): string {
   const basename = filename.replace(".wav", "");
   const match = basename.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
@@ -203,12 +226,8 @@ function resolveClipTiming(
   };
 }
 
-function formatDateRange(startTs: number, endTs: number): string {
-  const start = new Date(startTs * 1000);
-  const end = new Date(endTs * 1000);
-  const fmt = (d: Date) =>
-    d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return `${fmt(start)} — ${fmt(end)}`;
+function formatUtcDateRange(startTs: number, endTs: number): string {
+  return `${formatUtcDateTime(startTs)} — ${formatUtcDateTime(endTs)}`;
 }
 
 export function HydrophoneTab() {
@@ -276,8 +295,9 @@ export function HydrophoneTab() {
   const handleSubmit = () => {
     if (!selectedModelId || !selectedHydrophoneId || !startDatetime || !endDatetime) return;
     if (sourceType === "local" && !localCachePath) return;
-    const startTs = new Date(startDatetime).getTime() / 1000;
-    const endTs = new Date(endDatetime).getTime() / 1000;
+    const startTs = parseDatetimeLocalAsUtcSeconds(startDatetime);
+    const endTs = parseDatetimeLocalAsUtcSeconds(endDatetime);
+    if (startTs == null || endTs == null) return;
     createMutation.mutate({
       classifier_model_id: selectedModelId,
       hydrophone_id: selectedHydrophoneId,
@@ -506,7 +526,7 @@ export function HydrophoneTab() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm font-medium">Start Date/Time</label>
+              <label className="text-sm font-medium">Start Date/Time (UTC)</label>
               <Input
                 type="datetime-local"
                 value={startDatetime}
@@ -515,7 +535,7 @@ export function HydrophoneTab() {
               />
             </div>
             <div>
-              <label className="text-sm font-medium">End Date/Time</label>
+              <label className="text-sm font-medium">End Date/Time (UTC)</label>
               <Input
                 type="datetime-local"
                 value={endDatetime}
@@ -524,6 +544,9 @@ export function HydrophoneTab() {
               />
             </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Times are interpreted and displayed in UTC.
+          </p>
           <div>
             <label className="text-sm font-medium">
               Confidence Threshold (summary): {threshold.toFixed(2)}
@@ -624,9 +647,9 @@ export function HydrophoneTab() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {activeJob.start_timestamp && activeJob.end_timestamp && (
+            {activeJob.start_timestamp != null && activeJob.end_timestamp != null && (
               <p className="text-sm text-muted-foreground">
-                {formatDateRange(activeJob.start_timestamp, activeJob.end_timestamp)}
+                {formatUtcDateRange(activeJob.start_timestamp, activeJob.end_timestamp)}
               </p>
             )}
             <div className="space-y-1">
@@ -745,7 +768,7 @@ export function HydrophoneTab() {
                 <th className="w-8 px-1 py-2" />
                 <th className="px-3 py-2 text-left font-medium">Status</th>
                 <th className="px-3 py-2 text-left font-medium">Hydrophone</th>
-                <th className="px-3 py-2 text-left font-medium">Date Range</th>
+                <th className="px-3 py-2 text-left font-medium">Date Range (UTC)</th>
                 <th className="px-3 py-2 text-left font-medium">Threshold</th>
                 <th className="px-3 py-2 text-left font-medium">Results</th>
                 <th className="px-3 py-2 text-left font-medium">Download</th>
@@ -906,8 +929,8 @@ function HydrophoneJobRow({
           )}
         </td>
         <td className="px-3 py-2 text-muted-foreground text-xs">
-          {job.start_timestamp && job.end_timestamp
-            ? formatDateRange(job.start_timestamp, job.end_timestamp)
+          {job.start_timestamp != null && job.end_timestamp != null
+            ? formatUtcDateRange(job.start_timestamp, job.end_timestamp)
             : "\u2014"}
         </td>
         <td className="px-3 py-2 text-muted-foreground">

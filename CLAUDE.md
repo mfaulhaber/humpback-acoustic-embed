@@ -151,6 +151,16 @@ uv run humpback-api           # serves SPA at / and API on :8000
 
 The FastAPI backend detects `static/dist/index.html` at startup. When present, it serves the built SPA at `/` and mounts `/assets` for JS/CSS bundles. When absent, it falls back to the legacy `static/index.html`.
 
+### 3.8 Timezone and Timestamp Standard (UTC-Only)
+All operational timestamps in this project must use UTC end-to-end.
+
+*   Backend must compute, compare, persist, and serialize timestamps in UTC.
+*   API timestamp fields should be UTC epoch seconds or ISO-like values with `Z` semantics.
+*   Frontend must parse and submit timestamp inputs as UTC for project workflows unless an endpoint explicitly requires local time.
+*   Frontend displays for operational time ranges must be labeled as UTC; avoid locale-time rendering for these values.
+*   Time-derived filenames/identifiers must use compact UTC format (`%Y%m%dT%H%M%SZ`), including detection/extraction naming paths.
+*   Tests touching timestamp behavior must assert UTC semantics explicitly.
+
 ---
 
 ## 4. Core Design Principles

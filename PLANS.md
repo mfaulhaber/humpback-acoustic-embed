@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection UI — UTC-Only Input + Date Range Semantics
+
+## Outcome (2026-03-09)
+
+- Interpreted Hydrophone `datetime-local` Start/End inputs as UTC at submit time
+  (no local-time conversion), matching backend/API timestamp semantics.
+- Updated Hydrophone date labels and displays to explicit UTC wording:
+  `Start Date/Time (UTC)`, `End Date/Time (UTC)`, and `Date Range (UTC)`.
+- Added a UTC regression Playwright spec that mocks Hydrophone APIs and verifies
+  submitted epoch values for `2025-07-04T09:00`/`10:00` and UTC-rendered job range text.
+
+## Verification
+
+- `cd frontend && npx tsc --noEmit` passed.
+- `cd frontend && npx playwright test e2e/hydrophone-utc-timezone.spec.ts` passed (`2` passed).
+- `uv run pytest tests/` passed (`407` passed).
+
+---
+
 # Plan: Hydrophone Detection — Configurable Lookback + Explicit No-Audio Failure
 
 ## Outcome (2026-03-09)

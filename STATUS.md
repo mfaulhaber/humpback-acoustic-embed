@@ -101,6 +101,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone detection table uses extraction-aligned UTC Detection Range and Duration;
   playback uses the same extraction bounds, and raw detection range remains visible as
   secondary audit context (row text + tooltip)
+- Hydrophone job Start/End inputs are interpreted as UTC and displayed with explicit UTC labels
+  (Start Date/Time (UTC), End Date/Time (UTC), Date Range (UTC))
 
 ---
 
