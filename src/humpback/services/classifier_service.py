@@ -466,6 +466,16 @@ async def get_training_data_summary(
             select(EmbeddingSet).where(EmbeddingSet.id.in_(es_ids))
         )
         sets = list(result.scalars().all())
+
+        # Batch-load audio files for folder_path + filename
+        audio_ids = [es.audio_file_id for es in sets if es.audio_file_id]
+        audio_map: dict[str, AudioFile] = {}
+        if audio_ids:
+            af_result = await session.execute(
+                select(AudioFile).where(AudioFile.id.in_(audio_ids))
+            )
+            audio_map = {af.id: af for af in af_result.scalars().all()}
+
         sources = []
         total = 0
         for es in sets:
@@ -477,9 +487,12 @@ async def get_training_data_summary(
                 pass
             total += n_vectors
             duration = n_vectors * cm.window_size_seconds if n_vectors else None
+            af = audio_map.get(es.audio_file_id) if es.audio_file_id else None
             sources.append({
                 "embedding_set_id": es.id,
                 "audio_file_id": es.audio_file_id,
+                "filename": af.filename if af else None,
+                "folder_path": af.folder_path if af else None,
                 "n_vectors": n_vectors,
                 "duration_represented_sec": duration,
             })

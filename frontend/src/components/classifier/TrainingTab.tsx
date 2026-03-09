@@ -30,12 +30,15 @@ import {
   useRetrainInfo,
   useRetrainWorkflows,
   useCreateRetrainWorkflow,
+  useTrainingDataSummary,
 } from "@/hooks/queries/useClassifier";
+import { Separator } from "@/components/ui/separator";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
   EmbeddingSet,
+  TrainingSourceInfo,
   RetrainWorkflow as RetrainWorkflowType,
 } from "@/api/types";
 
@@ -570,6 +573,7 @@ export function TrainingTab() {
                   retrainWorkflow={retrainWorkflows.find(
                     (w) => w.source_model_id === m.id
                   )}
+                  trainingJobs={trainingJobs}
                 />
               ))}
             </tbody>
@@ -977,12 +981,14 @@ function ModelTableRow({
   onToggle,
   onDelete,
   retrainWorkflow,
+  trainingJobs,
 }: {
   model: ClassifierModelInfo;
   checked: boolean;
   onToggle: () => void;
   onDelete: () => void;
   retrainWorkflow?: RetrainWorkflowType;
+  trainingJobs: ClassifierTrainingJob[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const summary = model.training_summary as Record<string, unknown> | null;
@@ -993,14 +999,42 @@ function ModelTableRow({
   const cvAccuracy = summary?.cv_accuracy as number | undefined;
   const cvRocAuc = summary?.cv_roc_auc as number | undefined;
   const cvPrecision = summary?.cv_precision as number | undefined;
+  const cvRecall = summary?.cv_recall as number | undefined;
   const cvF1 = summary?.cv_f1 as number | undefined;
+  const cvAccuracyStd = summary?.cv_accuracy_std as number | undefined;
+  const cvRocAucStd = summary?.cv_roc_auc_std as number | undefined;
+  const cvPrecisionStd = summary?.cv_precision_std as number | undefined;
+  const cvRecallStd = summary?.cv_recall_std as number | undefined;
+  const cvF1Std = summary?.cv_f1_std as number | undefined;
+  const nCvFolds = summary?.n_cv_folds as number | undefined;
+  const posMeanScore = summary?.pos_mean_score as number | undefined;
+  const negMeanScore = summary?.neg_mean_score as number | undefined;
   const scoreSeparation = summary?.score_separation as number | undefined;
   const classifierType = summary?.classifier_type as string | undefined;
+  const classWeightStrategy = summary?.class_weight_strategy as string | undefined;
   const trainConfusion = summary?.train_confusion as Record<string, number> | undefined;
   const effectiveWeights = summary?.effective_class_weights as Record<string, string> | undefined;
   const configWarning = summary?._config_mismatch_warning as string | undefined;
 
   const classifierTag = classifierType === "mlp" ? "MLP" : classifierType === "logistic_regression" ? "LR" : null;
+  const classifierLabel = classifierType === "mlp" ? "Neural Network (MLP)" : classifierType === "logistic_regression" ? "Logistic Regression" : classifierType ?? "—";
+
+  // Look up training job for regularization C
+  const trainingJob = model.training_job_id
+    ? trainingJobs.find(j => j.id === model.training_job_id)
+    : undefined;
+  const regularizationC = (trainingJob?.parameters as Record<string, unknown> | null)?.C as number | undefined;
+
+  // Lazy-load training data summary when expanded
+  const { data: dataSummary, isLoading: dataSummaryLoading, isError: dataSummaryError } =
+    useTrainingDataSummary(expanded ? model.id : null);
+
+  const fmtPct = (v: number | undefined) => v != null ? `${(v * 100).toFixed(1)}%` : "—";
+  const fmtStd = (v: number | undefined) => v != null ? `\u00B1${(v * 100).toFixed(1)}%` : "";
+
+  const sepColor = scoreSeparation != null
+    ? scoreSeparation >= 2 ? "text-green-700" : scoreSeparation >= 1 ? "text-amber-700" : "text-red-700"
+    : "";
 
   return (
     <>
@@ -1079,43 +1113,174 @@ function ModelTableRow({
       {expanded && (
         <tr className="border-b last:border-0 bg-muted/20">
           <td colSpan={9} className="px-6 py-3">
-            <div className="grid grid-cols-3 gap-4 text-xs">
-              {scoreSeparation != null && (
-                <div>
-                  <span className="font-medium">Score Separation:</span>{" "}
-                  <span className="text-muted-foreground">{scoreSeparation.toFixed(3)}</span>
+            {/* Two-column layout: Training Parameters | Performance */}
+            <div className="grid grid-cols-2 gap-6 text-xs">
+              {/* Left: Training Parameters */}
+              <div className="max-w-xs">
+                <h4 className="font-semibold text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Training Parameters</h4>
+                <div className="space-y-1.5">
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">Classifier Type</span>
+                    <span className="font-medium">{classifierLabel}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">Class Weight</span>
+                    <span className="font-medium">{classWeightStrategy ?? (effectiveWeights ? "balanced" : "—")}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">L2 Normalize</span>
+                    <span className="font-medium">{summary?.l2_normalize != null ? (summary.l2_normalize ? "Yes" : "No") : "—"}</span>
+                  </div>
+                  {classifierType !== "mlp" && (
+                    <div className="flex gap-2">
+                      <span className="text-muted-foreground whitespace-nowrap">Regularization C</span>
+                      <span className="font-medium">{regularizationC != null ? regularizationC : "1.0 (default)"}</span>
+                    </div>
+                  )}
+                  {effectiveWeights && (
+                    <div className="flex gap-2">
+                      <span className="text-muted-foreground whitespace-nowrap">Effective Weights</span>
+                      <span className="font-medium">neg={effectiveWeights["0"]}, pos={effectiveWeights["1"]}</span>
+                    </div>
+                  )}
                 </div>
-              )}
-              {effectiveWeights && (
-                <div>
-                  <span className="font-medium">Class Weights:</span>{" "}
-                  <span className="text-muted-foreground">neg={effectiveWeights["0"]}, pos={effectiveWeights["1"]}</span>
+              </div>
+
+              {/* Right: Performance */}
+              <div className="max-w-xs">
+                <h4 className="font-semibold text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Performance</h4>
+                <div className="space-y-1.5">
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">Accuracy</span>
+                    <span><span className="font-medium">{fmtPct(cvAccuracy)}</span> <span className="text-muted-foreground text-[10px]">{fmtStd(cvAccuracyStd)}</span></span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">ROC AUC</span>
+                    <span><span className="font-medium">{fmtPct(cvRocAuc)}</span> <span className="text-muted-foreground text-[10px]">{fmtStd(cvRocAucStd)}</span></span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">Precision</span>
+                    <span><span className="font-medium">{fmtPct(cvPrecision)}</span> <span className="text-muted-foreground text-[10px]">{fmtStd(cvPrecisionStd)}</span></span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">Recall</span>
+                    <span><span className="font-medium">{fmtPct(cvRecall)}</span> <span className="text-muted-foreground text-[10px]">{fmtStd(cvRecallStd)}</span></span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">F1</span>
+                    <span><span className="font-medium">{fmtPct(cvF1)}</span> <span className="text-muted-foreground text-[10px]">{fmtStd(cvF1Std)}</span></span>
+                  </div>
+                  {nCvFolds != null && (
+                    <div className="text-[10px] text-muted-foreground">{nCvFolds}-fold cross-validation</div>
+                  )}
+                  {scoreSeparation != null && (
+                    <div className="flex gap-2 pt-1">
+                      <span className="text-muted-foreground whitespace-nowrap">Score Separation</span>
+                      <span className={`font-medium ${sepColor}`}>{scoreSeparation.toFixed(3)}</span>
+                    </div>
+                  )}
+                  {posMeanScore != null && negMeanScore != null && (
+                    <div className="text-[10px] text-muted-foreground">
+                      Mean scores: pos={posMeanScore.toFixed(3)}, neg={negMeanScore.toFixed(3)}
+                    </div>
+                  )}
+                  {trainConfusion && (
+                    <div className="pt-1">
+                      <span className="text-muted-foreground block mb-1">Confusion Matrix</span>
+                      <div className="grid grid-cols-2 gap-px w-fit text-[10px]">
+                        <div className="bg-green-100 text-green-800 px-2 py-0.5 text-center rounded-tl" title="True Positive">
+                          TP {trainConfusion.tp}
+                        </div>
+                        <div className="bg-red-50 text-red-700 px-2 py-0.5 text-center rounded-tr" title="False Positive">
+                          FP {trainConfusion.fp}
+                        </div>
+                        <div className="bg-red-50 text-red-700 px-2 py-0.5 text-center rounded-bl" title="False Negative">
+                          FN {trainConfusion.fn}
+                        </div>
+                        <div className="bg-green-100 text-green-800 px-2 py-0.5 text-center rounded-br" title="True Negative">
+                          TN {trainConfusion.tn}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-              {summary?.l2_normalize != null && (
-                <div>
-                  <span className="font-medium">L2 Normalize:</span>{" "}
-                  <span className="text-muted-foreground">{summary.l2_normalize ? "Yes" : "No"}</span>
-                </div>
-              )}
-              {trainConfusion && (
-                <div className="col-span-3">
-                  <span className="font-medium">Train Confusion:</span>{" "}
-                  <span className="text-muted-foreground">
-                    TP={trainConfusion.tp} FP={trainConfusion.fp} TN={trainConfusion.tn} FN={trainConfusion.fn}
-                  </span>
-                </div>
-              )}
-              {configWarning && (
-                <div className="col-span-3">
-                  <Badge className="bg-amber-100 text-amber-800 text-[10px]">{configWarning}</Badge>
-                </div>
-              )}
+              </div>
             </div>
+
+            {/* Training Data Section */}
+            <Separator className="my-3" />
+            <div>
+              <h4 className="font-semibold text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Training Data</h4>
+              {dataSummaryLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading training data...
+                </div>
+              ) : dataSummaryError ? (
+                <div className="text-xs text-muted-foreground">Training data provenance unavailable</div>
+              ) : dataSummary ? (
+                <div className="grid grid-cols-2 gap-4 text-xs">
+                  <SourceList
+                    label="Positive"
+                    sources={dataSummary.positive_sources}
+                    total={dataSummary.total_positive}
+                  />
+                  <SourceList
+                    label="Negative"
+                    sources={dataSummary.negative_sources}
+                    total={dataSummary.total_negative}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            {/* Config mismatch warning */}
+            {configWarning && (
+              <>
+                <Separator className="my-3" />
+                <Badge className="bg-amber-100 text-amber-800 text-[10px]">{configWarning}</Badge>
+              </>
+            )}
+
             <RetrainPanel model={model} workflow={retrainWorkflow} />
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+function SourceList({ label, sources, total }: {
+  label: string;
+  sources: TrainingSourceInfo[];
+  total: number;
+}) {
+  // Unique top-level parent folder names
+  const folders = useMemo(() => {
+    const seen = new Set<string>();
+    for (const s of sources) {
+      const fp = s.folder_path ?? "";
+      const slashIdx = fp.indexOf("/");
+      const parent = fp ? (slashIdx >= 0 ? fp.slice(0, slashIdx) : fp) : "(root)";
+      seen.add(parent);
+    }
+    return [...seen].sort();
+  }, [sources]);
+
+  return (
+    <div>
+      <div className="font-medium">
+        {label}{" "}
+        <span className="text-muted-foreground font-normal">
+          ({sources.length} {sources.length === 1 ? "set" : "sets"}, {total} vectors)
+        </span>
+      </div>
+      <div className="text-muted-foreground mt-0.5">
+        <span className="font-medium text-foreground">Sets:</span>
+        {folders.map((folder) => (
+          <div key={folder} className="truncate">{folder}</div>
+        ))}
+      </div>
+    </div>
   );
 }

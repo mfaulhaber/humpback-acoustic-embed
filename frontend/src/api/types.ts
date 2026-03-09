@@ -483,6 +483,7 @@ export interface TrainingSourceInfo {
   embedding_set_id: string;
   audio_file_id: string | null;
   filename: string | null;
+  folder_path: string | null;
   n_vectors: number;
   duration_represented_sec: number | null;
 }

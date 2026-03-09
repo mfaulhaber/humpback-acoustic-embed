@@ -176,6 +176,7 @@ class TrainingSourceInfo(BaseModel):
     embedding_set_id: str
     audio_file_id: Optional[str] = None
     filename: Optional[str] = None
+    folder_path: Optional[str] = None
     n_vectors: int
     duration_represented_sec: Optional[float] = None
 

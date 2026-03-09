@@ -10,6 +10,24 @@
 
 ## Recently Completed
 
+# Plan: Enhanced Classifier/Train Expanded Model Details
+
+## Outcome (2026-03-09)
+
+- Restructured expanded model row into separated Training Parameters (classifier type,
+  class weight, L2 normalize, regularization C, effective weights) and Performance
+  (accuracy, ROC AUC, precision, recall, F1 with ±std, n-fold CV, score separation
+  with color hints, mean scores, 2x2 confusion matrix) sections.
+- Added lazy-loaded Training Data section via `useTrainingDataSummary` hook showing
+  positive/negative source folders grouped by top-level parent name with set/vector counts.
+- Backend: enriched `/models/{id}/training-summary` response with `filename` and
+  `folder_path` fields (joined from AudioFile).
+
+## Verification
+
+- `uv run pytest tests/` — 430 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+
 # Plan: Retrain Classifier Model
 
 ## Outcome (2026-03-09)
