@@ -3,6 +3,7 @@
 import io
 import json
 import logging
+import math
 import os
 import re
 import struct
@@ -10,16 +11,21 @@ import subprocess
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 
-from humpback.config import ORCASOUND_S3_BUCKET
+from humpback.config import ORCASOUND_S3_BUCKET, Settings
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEGMENT_DURATION_SEC = 10.0
 STREAM_DISCONTINUITY_TOLERANCE_SEC = 0.25
+DEFAULT_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS = 4
+DEFAULT_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS = 7 * 24
+FOLDER_LOOKBACK_STEP_SEC = DEFAULT_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS * 3600
+MAX_HYDROPHONE_RANGE_SEC = DEFAULT_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS * 3600
 _SEGMENT_INDEX_RE = re.compile(r"(\d+)(?=\.ts$)", re.IGNORECASE)
 _SEGMENT_SUFFIX_RE = re.compile(r"^(.*?)(\d+)$")
 _EXTINF_RE = re.compile(r"#EXTINF:([0-9.]+)")
@@ -68,6 +74,20 @@ def _segment_sort_key(key: str) -> tuple[int, str, int, str]:
 def _sort_segment_keys(keys: Iterable[str]) -> list[str]:
     """Sort segment keys chronologically by numeric suffix when available."""
     return sorted(keys, key=_segment_sort_key)
+
+
+def _folder_in_candidate_range(folder_ts: int, start_ts: float, end_ts: float) -> bool:
+    """Return True when folder timestamp is inside the requested folder range."""
+    return start_ts <= folder_ts < end_ts
+
+
+@lru_cache(maxsize=1)
+def _hydrophone_timeline_lookback_seconds() -> tuple[int, int]:
+    """Resolve hydrophone timeline lookback increment/max from runtime settings."""
+    settings = Settings()
+    increment_sec = int(settings.hydrophone_timeline_lookback_increment_hours) * 3600
+    max_sec = int(settings.hydrophone_timeline_max_lookback_hours) * 3600
+    return increment_sec, max_sec
 
 
 def _parse_playlist_segments(
@@ -206,8 +226,8 @@ class OrcasoundS3Client:
                 except ValueError:
                     continue
                 # Include folders that could contain audio in our range
-                # HLS folders typically span ~minutes, so include generously
-                if ts <= end_ts and ts >= start_ts - 3600:
+                # using a bounded 7-day lookback from requested start.
+                if _folder_in_candidate_range(ts, start_ts, end_ts):
                     folders.append(ts_str)
 
         return sorted(folders, key=int)
@@ -282,7 +302,7 @@ class LocalHLSClient:
                 ts = int(entry.name)
             except ValueError:
                 continue
-            if ts <= end_ts and ts >= start_ts - 3600:
+            if _folder_in_candidate_range(ts, start_ts, end_ts):
                 # Quick check: skip folders with no .ts files
                 has_ts = any(f.suffix == ".ts" for f in entry.iterdir())
                 if has_ts:
@@ -358,7 +378,7 @@ class CachingS3Client:
                     ts = int(entry.name)
                 except ValueError:
                     continue
-                if ts <= end_ts and ts >= start_ts - 3600:
+                if _folder_in_candidate_range(ts, start_ts, end_ts):
                     has_ts = any(f.suffix == ".ts" for f in entry.iterdir())
                     if has_ts:
                         local_folders.append(entry.name)
@@ -534,27 +554,46 @@ def _build_stream_timeline(
     stream_end_ts: float,
 ) -> list[StreamSegment]:
     """Build ordered stream segments for a hydrophone job range."""
-    folders = client.list_hls_folders(hydrophone_id, stream_start_ts, stream_end_ts)
-    if not folders:
-        raise FileNotFoundError("No audio data found for this time range")
-
     timeline: list[StreamSegment] = []
-    for folder_ts in folders:
-        ordered = _ordered_folder_segments(client, hydrophone_id, folder_ts)
-        if not ordered:
+    seen_folders: set[str] = set()
+    found_any_folders = False
+    lookback_step_sec, max_lookback_sec = _hydrophone_timeline_lookback_seconds()
+    max_lookback_steps = int(math.ceil(max_lookback_sec / lookback_step_sec))
+
+    for lookback_step in range(0, max_lookback_steps + 1):
+        lookback_sec = min(lookback_step * lookback_step_sec, max_lookback_sec)
+        window_start_ts = stream_start_ts - lookback_sec
+        folders = client.list_hls_folders(hydrophone_id, window_start_ts, stream_end_ts)
+        if not folders:
             continue
-        cursor = float(folder_ts)
-        for key, duration_sec in ordered:
-            duration = duration_sec if duration_sec > 0 else DEFAULT_SEGMENT_DURATION_SEC
-            segment = StreamSegment(
-                key=key,
-                start_ts=cursor,
-                duration_sec=duration,
-            )
-            cursor += duration
-            if segment.end_ts <= stream_start_ts or segment.start_ts >= stream_end_ts:
+        found_any_folders = True
+
+        for folder_ts in sorted(folders, key=int):
+            if folder_ts in seen_folders:
                 continue
-            timeline.append(segment)
+            seen_folders.add(folder_ts)
+
+            ordered = _ordered_folder_segments(client, hydrophone_id, folder_ts)
+            if not ordered:
+                continue
+            cursor = float(folder_ts)
+            for key, duration_sec in ordered:
+                duration = duration_sec if duration_sec > 0 else DEFAULT_SEGMENT_DURATION_SEC
+                segment = StreamSegment(
+                    key=key,
+                    start_ts=cursor,
+                    duration_sec=duration,
+                )
+                cursor += duration
+                if segment.end_ts <= stream_start_ts or segment.start_ts >= stream_end_ts:
+                    continue
+                timeline.append(segment)
+
+        if timeline:
+            break
+
+    if not found_any_folders:
+        raise FileNotFoundError("No audio data found for this time range")
 
     if not timeline:
         raise FileNotFoundError("No stream segments found in requested range")
@@ -717,11 +756,7 @@ def iter_audio_chunks(
 
     Yields (chunk_audio, chunk_start_utc, segments_done, segments_total).
     """
-    try:
-        timeline = _build_stream_timeline(client, hydrophone_id, start_ts, end_ts)
-    except FileNotFoundError:
-        logger.warning("No .ts segments found for %s in requested range", hydrophone_id)
-        return
+    timeline = _build_stream_timeline(client, hydrophone_id, start_ts, end_ts)
 
     chunk_samples = int(chunk_seconds * target_sr)
     if chunk_samples <= 0:

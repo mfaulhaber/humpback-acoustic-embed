@@ -183,10 +183,15 @@ Hydrophone labeled-sample extraction writes outputs under the hydrophone short l
 Hydrophone detection, playback, and extraction must use the same bounded stream timeline:
 - segment ordering must be numeric by segment suffix (never plain lexicographic)
 - playlist (`live.m3u8`) duration metadata should be used when available
+- folder discovery should start at the requested range and expand backward
+  by configurable hour increments (default 4h), up to configurable max
+  lookback (default 168h), stopping once overlap is found
 - processing/playback/extraction must stay within `[start_timestamp, end_timestamp]`
 - legacy playback compatibility for older jobs may fall back to `job.start_timestamp`
 - hydrophone extraction is local-cache-authoritative (same as playback): resolve from local HLS cache only, with no S3 listing/fetch fallback
 - hydrophone extraction should build/reuse timeline metadata once per extraction run (avoid rebuilding per labeled row)
+- hydrophone detection jobs with no overlapping stream audio in the requested range
+  must fail with an explicit error message (never silently complete with zero windows)
 
 ### 4.6 Hydrophone Detection TSV Metadata
 Hydrophone detection TSV output should carry extraction-oriented metadata:

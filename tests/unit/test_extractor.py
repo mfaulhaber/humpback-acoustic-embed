@@ -534,6 +534,10 @@ class TestExtractHydrophoneLabeledSamples:
     def test_missing_local_timeline_skips_rows_without_failure(self, tmp_path):
         """Missing local cache data should skip rows instead of failing extraction."""
         from unittest.mock import MagicMock
+        from humpback.classifier.s3_stream import (
+            FOLDER_LOOKBACK_STEP_SEC,
+            MAX_HYDROPHONE_RANGE_SEC,
+        )
 
         tsv_path = tmp_path / "detections.tsv"
         _make_tsv(tsv_path, [
@@ -560,5 +564,11 @@ class TestExtractHydrophoneLabeledSamples:
 
         assert summary["n_humpback"] == 0
         assert summary["n_skipped"] == 1
-        mock_client.list_hls_folders.assert_called_once()
+        expected_calls = int(MAX_HYDROPHONE_RANGE_SEC // FOLDER_LOOKBACK_STEP_SEC) + 1
+        assert mock_client.list_hls_folders.call_count == expected_calls
+        assert mock_client.list_hls_folders.call_args_list[0].args[1] == 1000.0
+        assert (
+            mock_client.list_hls_folders.call_args_list[-1].args[1]
+            == 1000.0 - MAX_HYDROPHONE_RANGE_SEC
+        )
         mock_client.list_segments.assert_not_called()

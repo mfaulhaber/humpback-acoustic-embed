@@ -369,6 +369,12 @@ Queue safety note:
 - `POST /clustering/jobs` requires `embedding_set_ids` to be non-empty.
 - `POST /classifier/hydrophone-detection-jobs` requires
   `hop_seconds <= classifier window_size_seconds`.
+- Hydrophone timeline folder discovery starts at the requested range and expands
+  backward in configurable hour increments (default 4h) up to configurable
+  max lookback (default 168h) until overlap is found; timeline clipping remains
+  authoritative for `[start_timestamp, end_timestamp]`.
+- Hydrophone detection jobs with no overlapping stream audio in the requested
+  range fail explicitly (status `failed`) with a user-visible error message.
 - `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.
 - `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using a
   range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy

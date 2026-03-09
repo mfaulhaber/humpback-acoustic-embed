@@ -265,3 +265,31 @@ metadata calls, causing long extraction latency.
 - Extraction latency is dominated by local filesystem and decode work
 - Missing local-cache audio remains non-fatal: rows are skipped and counted in `n_skipped`
 - No API schema or DB migration changes
+
+---
+
+## ADR-014: Configurable incremental hydrophone lookback + explicit no-audio failure
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Hydrophone folder discovery previously used a fixed short lookback window,
+which could miss valid overlapping audio when a request started hours after a folder
+timestamp. Separately, true no-audio ranges could silently finish as `complete` with
+zero windows, which obscured user-visible failure causes.
+
+**Decision**:
+- Replace fixed lookback with configurable timeline-expansion settings:
+  `hydrophone_timeline_lookback_increment_hours` (default `4`) and
+  `hydrophone_timeline_max_lookback_hours` (default `168`).
+- Keep stream assembly clipping authoritative for requested
+  `[start_timestamp, end_timestamp]` bounds.
+- Propagate no-overlap timeline outcomes as `FileNotFoundError` and let the
+  hydrophone worker mark jobs `failed` with a clear hydrophone/range message.
+
+**Consequences**:
+- Long-running folders that begin before the requested start can still be discovered
+  when they overlap the requested interval.
+- Hydrophone jobs with no overlapping audio now fail explicitly instead of silently
+  completing with zero windows.
+- No API schema changes and no DB migration required.

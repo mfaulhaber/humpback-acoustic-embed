@@ -69,7 +69,12 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
 - Hydrophone timeline assembly uses numeric segment ordering plus playlist durations (when available),
   with fallback to numeric/default-duration metadata when playlists are unavailable
+- Hydrophone folder selection starts at requested range and expands backward
+  using configurable hour increments (default 4h) up to configurable max
+  lookback (default 168h), then clips timeline to requested bounds
 - Hydrophone detection/playback/extraction are bounded to job `[start_timestamp, end_timestamp]`
+- Hydrophone detection jobs fail explicitly when no overlapping stream audio exists
+  in the requested time range (no silent complete-with-zero-windows)
 - Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
   with legacy fallback to `job.start_timestamp`
 - UTC range display in Detection Range column (replaces raw synthetic filenames)

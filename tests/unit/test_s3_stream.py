@@ -183,6 +183,89 @@ class TestIterAudioChunks:
         assert segs_total == 3  # live0, live1, and clipped live2
         assert segs_done == 3
 
+    def test_raises_when_no_audio_timeline_exists(self):
+        """Missing timeline should raise FileNotFoundError (not silently complete)."""
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import iter_audio_chunks
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = []
+
+        with pytest.raises(FileNotFoundError, match="No audio data found for this time range"):
+            list(
+                iter_audio_chunks(
+                    mock_client,
+                    "rpi_orcasound_lab",
+                    1700000000,
+                    1700003600,
+                )
+            )
+
+
+class TestFolderLookback:
+    """Regression tests for incremental lookback expansion."""
+
+    def test_build_timeline_expands_lookback_until_overlap(self):
+        from humpback.classifier.s3_stream import _build_stream_timeline
+
+        class FakeClient:
+            def __init__(self):
+                self.window_starts: list[float] = []
+
+            def list_hls_folders(self, _hydrophone_id, start_ts: float, end_ts: float):
+                self.window_starts.append(start_ts)
+                return ["1000"] if start_ts <= 1000 < end_ts else []
+
+            def list_segments(self, _hydrophone_id, folder_ts: str):
+                if folder_ts != "1000":
+                    return []
+                return [f"hydro/hls/1000/live{i}.ts" for i in range(120)]
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+        client = FakeClient()
+        timeline = _build_stream_timeline(
+            client=client,
+            hydrophone_id="rpi_orcasound_lab",
+            stream_start_ts=1500.0,
+            stream_end_ts=2000.0,
+        )
+
+        assert timeline
+        assert len(client.window_starts) == 2  # initial window, then first lookback step
+
+    def test_build_timeline_stops_expanding_when_initial_window_has_overlap(self):
+        from humpback.classifier.s3_stream import _build_stream_timeline
+
+        class FakeClient:
+            def __init__(self):
+                self.window_starts: list[float] = []
+
+            def list_hls_folders(self, _hydrophone_id, start_ts: float, end_ts: float):
+                self.window_starts.append(start_ts)
+                return ["1500"] if start_ts <= 1500 < end_ts else []
+
+            def list_segments(self, _hydrophone_id, folder_ts: str):
+                if folder_ts != "1500":
+                    return []
+                return [f"hydro/hls/1500/live{i}.ts" for i in range(60)]
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+        client = FakeClient()
+        timeline = _build_stream_timeline(
+            client=client,
+            hydrophone_id="rpi_orcasound_lab",
+            stream_start_ts=1500.0,
+            stream_end_ts=2000.0,
+        )
+
+        assert timeline
+        assert len(client.window_starts) == 1
+
 
 class TestMergeDetectionEvents:
     """Validate the hysteresis merge function used by hydrophone detector."""

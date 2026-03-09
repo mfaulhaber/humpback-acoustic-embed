@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -18,6 +19,24 @@ class Settings(BaseSettings):
     positive_sample_path: str = "/Users/michael/development/data-vocalizations/positives"
     negative_sample_path: str = "/Users/michael/development/data-vocalizations/negatives"
     s3_cache_path: str = "/Users/michael/development/orcasound_s3_cache"
+    hydrophone_timeline_lookback_increment_hours: int = 4
+    hydrophone_timeline_max_lookback_hours: int = 7 * 24
+
+    @model_validator(mode="after")
+    def _validate_hydrophone_timeline_lookback(self):
+        if self.hydrophone_timeline_lookback_increment_hours <= 0:
+            raise ValueError("hydrophone_timeline_lookback_increment_hours must be > 0")
+        if self.hydrophone_timeline_max_lookback_hours <= 0:
+            raise ValueError("hydrophone_timeline_max_lookback_hours must be > 0")
+        if (
+            self.hydrophone_timeline_max_lookback_hours
+            < self.hydrophone_timeline_lookback_increment_hours
+        ):
+            raise ValueError(
+                "hydrophone_timeline_max_lookback_hours must be >= "
+                "hydrophone_timeline_lookback_increment_hours"
+            )
+        return self
 
     model_config = {"env_prefix": "HUMPBACK_"}
 

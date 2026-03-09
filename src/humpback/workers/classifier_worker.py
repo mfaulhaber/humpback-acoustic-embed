@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
@@ -308,6 +309,11 @@ async def run_hydrophone_detection_job(
         cancel_event = threading.Event()
         loop = asyncio.get_event_loop()
 
+        def _fmt_utc(ts: float | None) -> str:
+            if ts is None:
+                return "unknown"
+            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         # Progress callback
         def on_chunk_complete(
             chunk_detections: list[dict],
@@ -381,32 +387,38 @@ async def run_hydrophone_detection_job(
                     pass
 
         cancel_task = asyncio.ensure_future(_poll_cancel())
+        try:
+            from humpback.classifier.hydrophone_detector import run_hydrophone_detection
 
-        from humpback.classifier.hydrophone_detector import run_hydrophone_detection
-
-        detections, summary = await asyncio.to_thread(
-            run_hydrophone_detection,
-            job.hydrophone_id,
-            job.start_timestamp,
-            job.end_timestamp,
-            pipeline,
-            model,
-            cm.window_size_seconds,
-            cm.target_sample_rate,
-            job.confidence_threshold,
-            input_format,
-            feature_config,
-            job.hop_seconds,
-            job.high_threshold,
-            job.low_threshold,
-            on_chunk_complete,
-            on_alert,
-            cancel_event.is_set,
-            job.local_cache_path,
-            settings.s3_cache_path,
-        )
-
-        cancel_task.cancel()
+            detections, summary = await asyncio.to_thread(
+                run_hydrophone_detection,
+                job.hydrophone_id,
+                job.start_timestamp,
+                job.end_timestamp,
+                pipeline,
+                model,
+                cm.window_size_seconds,
+                cm.target_sample_rate,
+                job.confidence_threshold,
+                input_format,
+                feature_config,
+                job.hop_seconds,
+                job.high_threshold,
+                job.low_threshold,
+                on_chunk_complete,
+                on_alert,
+                cancel_event.is_set,
+                job.local_cache_path,
+                settings.s3_cache_path,
+            )
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                "No hydrophone audio segments found for hydrophone "
+                f"'{job.hydrophone_id}' in requested UTC range "
+                f"[{_fmt_utc(job.start_timestamp)}, {_fmt_utc(job.end_timestamp)}]"
+            ) from exc
+        finally:
+            cancel_task.cancel()
 
         if cancel_event.is_set():
             # Write what we have

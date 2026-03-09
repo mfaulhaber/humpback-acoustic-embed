@@ -10,6 +10,31 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection — Configurable Lookback + Explicit No-Audio Failure
+
+## Outcome (2026-03-09)
+
+- Replaced the fixed hydrophone folder-lookback heuristic with configurable
+  timeline expansion (`4h` increment, `168h` max by default), so ranges that
+  start hours after a folder timestamp can still load overlapping audio.
+- Kept timeline clipping authoritative for `[start_timestamp, end_timestamp]`
+  while switching true no-overlap outcomes to explicit failures.
+- Propagated no-audio timeline misses as `FileNotFoundError` and updated the
+  hydrophone worker to persist a clear `error_message` with hydrophone ID and
+  requested UTC range.
+- Added regression coverage for long-folder overlap, bounded clipping, explicit
+  no-audio failure, and hydrophone worker failure/success progress behavior.
+
+## Verification
+
+- `uv run pytest tests/unit/test_s3_stream.py -q` passed.
+- `uv run pytest tests/unit/test_extractor.py -q` passed.
+- `uv run pytest tests/unit/test_classifier_worker.py -q` passed.
+- `uv run pytest tests/integration/test_hydrophone_api.py -q` passed.
+- `uv run pytest tests/` passed (`407` passed).
+
+---
+
 # Plan: Hydrophone Detection UI — Clip Timing Consistency (Display + Playback + Extract)
 
 ## Outcome (2026-03-09)
@@ -163,6 +188,8 @@
 - Add WebSocket push for real-time job status updates (replace polling)
 - Investigate multi-model ensemble clustering
 - Optimize `/audio/{id}/spectrogram` window fetch path to avoid materializing all windows when only one index is requested (reduce memory/time on long files)
+- Optimize hydrophone incremental lookback discovery to avoid repeated full S3
+  folder scans at each lookback step (reduce first-segment startup latency)
 
 ---
 
