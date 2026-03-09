@@ -409,6 +409,7 @@ export interface DetectionJob {
   time_covered_sec: number | null;
   alerts: FlashAlert[] | null;
   local_cache_path: string | null;
+  has_humpback_labels: boolean | null;
   created_at: string;
   updated_at: string;
 }

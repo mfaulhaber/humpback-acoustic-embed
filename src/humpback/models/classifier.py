@@ -65,3 +65,4 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     time_covered_sec: Mapped[Optional[float]] = mapped_column(default=None)
     alerts: Mapped[Optional[str]] = mapped_column(Text, default=None)
     local_cache_path: Mapped[Optional[str]] = mapped_column(default=None)
+    has_humpback_labels: Mapped[Optional[bool]] = mapped_column(default=None)

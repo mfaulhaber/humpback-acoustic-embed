@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Humpback Label Indicator ("Whale" Badge)
+
+## Outcome (2026-03-09)
+
+- Added `has_humpback_labels` nullable Boolean column to `detection_jobs` (migration `015`).
+- SQLAlchemy model, Pydantic schema, and API response converter updated to expose the field.
+- Label save endpoint (`PUT /detection-jobs/{job_id}/labels`) now computes the flag from the
+  full merged TSV state and persists it to the DB on each save.
+- Frontend `DetectionJob` type extended with `has_humpback_labels`.
+- `useSaveDetectionLabels` now also invalidates `hydrophoneDetectionJobs` query on success.
+- "Whale" outline badge rendered next to job status in `HydrophoneJobRow` when flag is true.
+
+## Verification
+
+- `uv run alembic upgrade head` — migration applied cleanly.
+- `uv run pytest tests/` — 443 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- 3 integration tests added: set flag true, clear flag to false, partial save preserves flag.
+
 # Plan: Detection Spectrogram Popup
 
 ## Outcome (2026-03-09)

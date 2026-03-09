@@ -91,6 +91,7 @@ class DetectionJobOut(BaseModel):
     time_covered_sec: Optional[float] = None
     alerts: Optional[list[dict[str, Any]]] = None
     local_cache_path: Optional[str] = None
+    has_humpback_labels: Optional[bool] = None
     created_at: datetime
     updated_at: datetime
 

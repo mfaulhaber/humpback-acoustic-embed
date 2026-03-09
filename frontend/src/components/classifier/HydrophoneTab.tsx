@@ -930,6 +930,11 @@ function HydrophoneJobRow({
         </td>
         <td className="px-3 py-2">
           <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
+          {job.has_humpback_labels && (
+            <Badge variant="outline" className="ml-1.5 text-[10px] py-0">
+              Whale
+            </Badge>
+          )}
         </td>
         <td className="px-3 py-2 text-muted-foreground">
           {job.hydrophone_name}

@@ -100,6 +100,7 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         time_covered_sec=job.time_covered_sec,
         alerts=json.loads(job.alerts) if job.alerts else None,
         local_cache_path=job.local_cache_path,
+        has_humpback_labels=job.has_humpback_labels,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -859,6 +860,11 @@ async def save_detection_labels(
         except OSError:
             pass
         raise
+
+    # Persist has_humpback_labels flag from full merged TSV state
+    has_humpback = any(row.get("humpback") == "1" for row in updated_rows)
+    job.has_humpback_labels = has_humpback
+    await session.commit()
 
     return {"status": "ok", "updated": len(label_map)}
 

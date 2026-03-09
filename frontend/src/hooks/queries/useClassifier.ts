@@ -145,6 +145,7 @@ export function useSaveDetectionLabels() {
       saveDetectionLabels(jobId, rows),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["detectionContent", variables.jobId] });
+      qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
     },
   });
 }

@@ -107,6 +107,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone progress displays audio duration in hours:minutes format
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
 - Detection spectrogram popup: Alt+click any detection row to view an STFT spectrogram (cached PNG, configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
+- "Whale" badge on hydrophone jobs that have confirmed humpback labels (`has_humpback_labels` flag persisted on label save)
 
 ### Retrain Workflow
 - Automated retrain pipeline: reimport folders, queue processing, create training job — all from a single "Retrain" button
@@ -123,7 +124,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `014_retrain_workflows.py`
+- **Latest migration**: `015_has_humpback_labels.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows
 
 ---
