@@ -35,9 +35,10 @@ import {
   useExtractLabeledSamples,
   useBrowseDirectories,
 } from "@/hooks/queries/useClassifier";
-import { detectionTsvUrl, detectionAudioSliceUrl } from "@/api/client";
+import { detectionTsvUrl, detectionAudioSliceUrl, detectionSpectrogramUrl } from "@/api/client";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import { ExtractDialog } from "./ExtractDialog";
+import { SpectrogramPopup } from "./SpectrogramPopup";
 import { DateRangePickerUtc } from "@/components/shared/DateRangePickerUtc";
 import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
 
@@ -1027,6 +1028,10 @@ function HydrophoneContentTable({
   const [sortDir, setSortDir] = useState<SortDir>(isRunning ? "asc" : "desc");
   const prevRunning = useRef(isRunning);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [spectrogramPopup, setSpectrogramPopup] = useState<{
+    imageUrl: string;
+    position: { x: number; y: number };
+  } | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
   const hydratedRows = useMemo<HydratedDetectionRow[]>(
@@ -1201,7 +1206,23 @@ function HydrophoneContentTable({
                 className={`border-b last:border-0 cursor-pointer ${
                   isFocused ? "bg-blue-100 dark:bg-blue-900/30" : "hover:bg-muted/30"
                 }`}
-                onClick={() => setFocusedIndex(i)}
+                onClick={(e) => {
+                  if (e.altKey) {
+                    e.preventDefault();
+                    const url = detectionSpectrogramUrl(
+                      jobId,
+                      row.filename,
+                      row._clipStartSec,
+                      Math.max(0.1, row._clipDurationSec),
+                    );
+                    setSpectrogramPopup({
+                      imageUrl: url,
+                      position: { x: e.clientX, y: e.clientY },
+                    });
+                    return;
+                  }
+                  setFocusedIndex(i);
+                }}
               >
                 <td className="px-3 py-1.5">
                   <button
@@ -1260,6 +1281,13 @@ function HydrophoneContentTable({
           })}
         </tbody>
       </table>
+      {spectrogramPopup && (
+        <SpectrogramPopup
+          imageUrl={spectrogramPopup.imageUrl}
+          position={spectrogramPopup.position}
+          onClose={() => setSpectrogramPopup(null)}
+        />
+      )}
     </div>
   );
 }

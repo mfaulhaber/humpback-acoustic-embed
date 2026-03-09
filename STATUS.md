@@ -106,6 +106,7 @@ Current state of the humpback acoustic embedding and clustering platform.
   (paused jobs remain in active panel; canceled jobs move to Previous Jobs with full functionality)
 - Hydrophone progress displays audio duration in hours:minutes format
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
+- Detection spectrogram popup: Alt+click any detection row to view an STFT spectrogram (cached PNG, configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
 
 ### Retrain Workflow
 - Automated retrain pipeline: reimport folders, queue processing, create training job — all from a single "Retrain" button

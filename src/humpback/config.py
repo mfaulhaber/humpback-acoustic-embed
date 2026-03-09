@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     hydrophone_timeline_lookback_increment_hours: int = 4
     hydrophone_timeline_max_lookback_hours: int = 7 * 24
 
+    # Spectrogram popup settings
+    spectrogram_hop_length: int = 256
+    spectrogram_dynamic_range_db: float = 80.0
+    spectrogram_width_px: int = 640
+    spectrogram_height_px: int = 320
+    spectrogram_cache_max_items: int = 1000
+
     @model_validator(mode="after")
     def _validate_hydrophone_timeline_lookback(self):
         if self.hydrophone_timeline_lookback_increment_hours <= 0:

@@ -391,3 +391,57 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     assert rows[0]["humpback"] == "1"
 
     await engine.dispose()
+
+
+# ---- Spectrogram Endpoint ----
+
+
+async def test_spectrogram_not_found(client):
+    """404 for nonexistent job."""
+    resp = await client.get(
+        "/classifier/detection-jobs/nonexistent/spectrogram",
+        params={"filename": "test.wav", "start_sec": 0, "duration_sec": 5},
+    )
+    assert resp.status_code == 404
+
+
+async def test_spectrogram_returns_png(client, app_settings, wav_bytes):
+    """Spectrogram endpoint returns valid PNG for a local detection job."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    # Write a WAV file to a temp audio folder
+    audio_folder = Path(app_settings.storage_root) / "audio_test"
+    audio_folder.mkdir(parents=True)
+    wav_path = audio_folder / "test.wav"
+    wav_path.write_bytes(wav_bytes)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder=str(audio_folder),
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/spectrogram",
+        params={"filename": "test.wav", "start_sec": 0, "duration_sec": 1},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content[:4] == b"\x89PNG"
+
+    await engine.dispose()

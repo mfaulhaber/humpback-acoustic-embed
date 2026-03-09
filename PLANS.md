@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: Detection Spectrogram Popup
+
+## Outcome (2026-03-09)
+
+- Added `matplotlib>=3.8` dependency and spectrogram config settings
+  (`spectrogram_hop_length`, `spectrogram_dynamic_range_db`, `spectrogram_width_px`,
+  `spectrogram_height_px`, `spectrogram_cache_max_items`) to `Settings`.
+- Created `processing/spectrogram.py` (STFT via scipy, matplotlib Agg rendering to PNG)
+  and `processing/spectrogram_cache.py` (FIFO disk cache with atomic writes).
+- Refactored `get_detection_audio_slice` into shared `_resolve_detection_audio()` helper
+  for both audio-slice and spectrogram endpoints.
+- Added `GET /classifier/detection-jobs/{job_id}/spectrogram` endpoint returning cached PNG.
+- Frontend: `SpectrogramPopup` component with loading spinner, viewport-aware positioning,
+  click-to-dismiss overlay. Alt+click on detection rows in `HydrophoneContentTable` triggers popup.
+- Added `detectionSpectrogramUrl()` to API client.
+
+## Verification
+
+- `uv run pytest tests/` — 440 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- 8 unit tests (generator + cache) + 2 integration tests (404 + PNG response) added.
+
 # Plan: Enhanced Classifier/Train Expanded Model Details
 
 ## Outcome (2026-03-09)

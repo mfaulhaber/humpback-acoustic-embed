@@ -895,24 +895,14 @@ def _encode_wav_response(segment: "np.ndarray", sr: int, normalize: bool) -> Res
     )
 
 
-@router.get("/detection-jobs/{job_id}/audio-slice")
-async def get_detection_audio_slice(
-    job_id: str,
-    session: SessionDep,
-    settings: SettingsDep,
-    filename: str = Query(...),
-    start_sec: float = Query(..., ge=0),
-    duration_sec: float = Query(..., gt=0),
-    normalize: bool = Query(True),
-):
-    """Stream a WAV slice from a detection job's audio folder or S3."""
+async def _resolve_detection_audio(
+    job, settings, filename: str, start_sec: float, duration_sec: float
+) -> tuple:
+    """Decode audio for a detection row. Returns (audio_array, sample_rate)."""
     import asyncio
 
-    job = await classifier_service.get_detection_job(session, job_id)
-    if job is None:
-        raise HTTPException(404, "Detection job not found")
+    import numpy as np
 
-    # Hydrophone jobs: reconstruct audio from cached HLS segments
     if job.hydrophone_id:
         from humpback.classifier.s3_stream import (
             LocalHLSClient,
@@ -922,7 +912,6 @@ async def get_detection_audio_slice(
         if job.start_timestamp is None or job.end_timestamp is None:
             raise HTTPException(400, "Hydrophone job missing start/end timestamps")
 
-        # Read from local cache (segments are cached by CachingS3Client during detection)
         cache_path = job.local_cache_path or settings.s3_cache_path
         local = LocalHLSClient(cache_path)
         target_sr = 32000
@@ -945,7 +934,7 @@ async def get_detection_audio_slice(
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc))
 
-        return _encode_wav_response(segment, target_sr, normalize)
+        return segment, target_sr
 
     # Local audio folder path
     from humpback.processing.audio_io import decode_audio
@@ -953,7 +942,6 @@ async def get_detection_audio_slice(
     audio_folder = Path(job.audio_folder)
     file_path = audio_folder / filename
 
-    # Path traversal check
     try:
         file_path.resolve().relative_to(audio_folder.resolve())
     except ValueError:
@@ -975,4 +963,85 @@ async def get_detection_audio_slice(
     end_sample = min(end_sample, len(audio))
     segment = audio[start_sample:end_sample]
 
+    return np.asarray(segment), sr
+
+
+@router.get("/detection-jobs/{job_id}/audio-slice")
+async def get_detection_audio_slice(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    filename: str = Query(...),
+    start_sec: float = Query(..., ge=0),
+    duration_sec: float = Query(..., gt=0),
+    normalize: bool = Query(True),
+):
+    """Stream a WAV slice from a detection job's audio folder or S3."""
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+
+    segment, sr = await _resolve_detection_audio(job, settings, filename, start_sec, duration_sec)
     return _encode_wav_response(segment, sr, normalize)
+
+
+# ---- Spectrogram ----
+
+def _get_spectrogram_cache(settings) -> "SpectrogramCache":
+    from humpback.processing.spectrogram_cache import SpectrogramCache
+
+    cache_dir = settings.storage_root / "spectrogram_cache"
+    return SpectrogramCache(cache_dir, settings.spectrogram_cache_max_items)
+
+
+@router.get("/detection-jobs/{job_id}/spectrogram")
+async def get_detection_spectrogram(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    filename: str = Query(...),
+    start_sec: float = Query(..., ge=0),
+    duration_sec: float = Query(..., gt=0),
+):
+    """Return a PNG spectrogram for a detection clip."""
+    import asyncio
+
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+
+    from humpback.processing.spectrogram_cache import SpectrogramCache
+
+    cache = _get_spectrogram_cache(settings)
+    cache_key = SpectrogramCache._make_key(
+        job_id,
+        filename,
+        start_sec,
+        duration_sec,
+        settings.spectrogram_hop_length,
+        settings.spectrogram_dynamic_range_db,
+        2048,
+        settings.spectrogram_width_px,
+        settings.spectrogram_height_px,
+    )
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="image/png")
+
+    segment, sr = await _resolve_detection_audio(job, settings, filename, start_sec, duration_sec)
+
+    from humpback.processing.spectrogram import generate_spectrogram_png
+
+    png_bytes = await asyncio.to_thread(
+        generate_spectrogram_png,
+        segment,
+        sr,
+        hop_length=settings.spectrogram_hop_length,
+        dynamic_range_db=settings.spectrogram_dynamic_range_db,
+        width_px=settings.spectrogram_width_px,
+        height_px=settings.spectrogram_height_px,
+    )
+
+    cache.put(cache_key, png_bytes)
+    return Response(content=png_bytes, media_type="image/png")

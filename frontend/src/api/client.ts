@@ -257,6 +257,15 @@ export function detectionAudioSliceUrl(
   return `/classifier/detection-jobs/${jobId}/audio-slice?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&duration_sec=${durationSec}`;
 }
 
+export function detectionSpectrogramUrl(
+  jobId: string,
+  filename: string,
+  startSec: number,
+  durationSec: number,
+) {
+  return `/classifier/detection-jobs/${jobId}/spectrogram?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&duration_sec=${durationSec}`;
+}
+
 // ---- Hydrophone Detection ----
 
 export const fetchHydrophones = () =>
