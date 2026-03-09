@@ -403,6 +403,11 @@ Queue safety note:
   {detection_job_id}/run_summary.json
 ```
 
+Hydrophone labeled-sample extraction output layout:
+- Positive labels: `{positive_sample_path}/{hydrophone_id}/humpback/YYYY/MM/DD/{start}_{end}.wav`
+- Negative labels: `{negative_sample_path}/{hydrophone_id}/{ship|background}/YYYY/MM/DD/{start}_{end}.wav`
+- Local (non-hydrophone) extraction remains unchanged (`{positive_sample_path}/humpback/...`, `{negative_sample_path}/{ship|background}/...`)
+
 ---
 
 ## Web UI Requirements

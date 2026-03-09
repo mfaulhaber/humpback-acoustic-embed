@@ -71,6 +71,8 @@ Current state of the humpback acoustic embedding and clustering platform.
   first available folder timestamp, then legacy `job.start_timestamp`
 - UTC range display in Detection Range column (replaces raw synthetic filenames)
 - WAV export for hydrophone jobs: fetches audio from HLS, writes labeled samples to positive/negative folders
+- Hydrophone extraction output paths include hydrophone short label partitioning:
+  `{positive|negative}_root/{hydrophone_id}/{label}/YYYY/MM/DD/*.wav`
 - Hydrophone labeled-sample extraction reuses the same stream-offset resolver as playback
 - Max 7-day time range per job
 - Hydrophone job validation enforces `hop_seconds <= classifier window_size_seconds`

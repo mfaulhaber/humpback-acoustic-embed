@@ -294,7 +294,6 @@ class TestExtractHydrophoneLabeledSamples:
 
     def test_basic_hydrophone_extraction(self, tmp_path):
         """Extract labeled hydrophone samples using a mock client."""
-        from io import BytesIO
         from unittest.mock import MagicMock, patch
 
         # Create TSV with a labeled detection
@@ -329,7 +328,60 @@ class TestExtractHydrophoneLabeledSamples:
 
         humpback_files = list(pos_out.rglob("*.wav"))
         assert len(humpback_files) == 1
-        assert "2025/06/15" in str(humpback_files[0])
+        rel = humpback_files[0].relative_to(pos_out)
+        assert rel.parts[:2] == ("rpi_orcasound_lab", "humpback")
+        assert rel.parts[2:5] == ("2025", "06", "15")
+
+    def test_hydrophone_negative_paths_include_hydrophone_id(self, tmp_path):
+        """Hydrophone negatives write under {negative_root}/{hydrophone_id}/{label}/..."""
+        from unittest.mock import MagicMock, patch
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 220, sr * 60)).astype(np.float32)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [
+            {"filename": "20250615T080000Z.wav",
+             "start_sec": "0.0", "end_sec": "5.0",
+             "avg_confidence": "0.9", "peak_confidence": "0.95",
+             "humpback": "", "ship": "1", "background": ""},
+            {"filename": "20250615T080000Z.wav",
+             "start_sec": "5.0", "end_sec": "10.0",
+             "avg_confidence": "0.8", "peak_confidence": "0.85",
+             "humpback": "", "ship": "", "background": "1"},
+        ])
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1718438400"]
+        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path, "rpi_orcasound_lab",
+                pos_out, neg_out, mock_client,
+                target_sample_rate=sr, window_size_seconds=5.0,
+            )
+
+        assert summary["n_ship"] == 1
+        assert summary["n_background"] == 1
+
+        ship_files = list((neg_out / "rpi_orcasound_lab" / "ship").rglob("*.wav"))
+        background_files = list((neg_out / "rpi_orcasound_lab" / "background").rglob("*.wav"))
+        assert len(ship_files) == 1
+        assert len(background_files) == 1
+
+        for path in ship_files + background_files:
+            rel = path.relative_to(neg_out)
+            assert rel.parts[0] == "rpi_orcasound_lab"
+            assert rel.parts[2:5] == ("2025", "06", "15")
+
+        # Old layout should remain unused for hydrophone extraction.
+        assert not list((neg_out / "ship").rglob("*.wav"))
+        assert not list((neg_out / "background").rglob("*.wav"))
 
     def test_no_labeled_rows(self, tmp_path):
         from unittest.mock import MagicMock

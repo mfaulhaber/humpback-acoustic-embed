@@ -32,7 +32,7 @@ Key features:
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 - Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
-- Hydrophone detection UX: playback uses robust stream-offset mapping (first-folder anchor with legacy fallback), and Extract activates from saved labels on the expanded completed job
+- Hydrophone detection UX: playback uses robust stream-offset mapping (first-folder anchor with legacy fallback), Extract activates from saved labels on the expanded completed job, and hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`)
 - Folder import: reference audio files in-place from local filesystem folders without copying
 
 ---

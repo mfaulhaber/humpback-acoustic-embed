@@ -174,6 +174,11 @@ All steps are recorded in SQL. Workers must be restart-safe:
 Jobs are queued and executed in the background by workers.
 UI can monitor via polling or a push channel.
 
+### 4.4 Hydrophone Extraction Path Convention
+Hydrophone labeled-sample extraction writes outputs under the hydrophone short label:
+- positives: `{positive_output_path}/{hydrophone_id}/humpback/YYYY/MM/DD/*.wav`
+- negatives: `{negative_output_path}/{hydrophone_id}/{ship|background}/YYYY/MM/DD/*.wav`
+
 ---
 
 ## 5. Testing Requirements (MANDATORY)

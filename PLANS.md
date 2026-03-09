@@ -10,6 +10,24 @@
 
 ## Recently Completed
 
+# Plan: Classifier/Hydrophone Extract — Hydrophone-Partitioned Output Paths
+
+## Outcome (2026-03-09)
+
+- Updated hydrophone labeled-sample extraction paths to include hydrophone short label
+  (`hydrophone_id`) under both positive and negative roots:
+  `{positive|negative}_root/{hydrophone_id}/{label}/YYYY/MM/DD/*.wav`.
+- Preserved local (non-hydrophone) extraction path behavior.
+- Added unit coverage for hydrophone positive/negative path routing, including a guard
+  that old non-partitioned hydrophone negative paths are no longer used.
+
+## Verification
+
+- `uv run pytest tests/unit/test_extractor.py -q` passed (`21` passed).
+- `uv run pytest tests/` passed (`390` passed).
+
+---
+
 # Plan: Hydrophone Tab — Playback Timestamp Mapping + Saved-Label Extract Activation
 
 ## Outcome (2026-03-08)

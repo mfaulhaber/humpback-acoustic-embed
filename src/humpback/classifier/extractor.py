@@ -278,13 +278,13 @@ def extract_hydrophone_labeled_samples(
             # Route to label-specific folders
             labels_to_write: list[tuple[Path, str]] = []
             if row.get("humpback", "").strip() == "1":
-                out_dir = positive_output_path / "humpback" / date_folder
+                out_dir = positive_output_path / hydrophone_id / "humpback" / date_folder
                 labels_to_write.append((out_dir, "humpback"))
             if row.get("ship", "").strip() == "1":
-                out_dir = negative_output_path / "ship" / date_folder
+                out_dir = negative_output_path / hydrophone_id / "ship" / date_folder
                 labels_to_write.append((out_dir, "ship"))
             if row.get("background", "").strip() == "1":
-                out_dir = negative_output_path / "background" / date_folder
+                out_dir = negative_output_path / hydrophone_id / "background" / date_folder
                 labels_to_write.append((out_dir, "background"))
 
             pending_writes: list[tuple[Path, str]] = []
