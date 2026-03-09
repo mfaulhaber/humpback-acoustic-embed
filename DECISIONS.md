@@ -215,3 +215,29 @@ Retain legacy playback fallback anchored to `job.start_timestamp` for older jobs
 - Keeps hydrophone detection/playback/extraction within requested job time bounds
 - Improves timestamp consistency between generated detection ranges and playback audio
 - Preserves backward compatibility for previously generated jobs via legacy anchor fallback
+
+---
+
+## ADR-012: Hydrophone detection metadata includes extraction-aligned filename
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Hydrophone detection rows were displayed as UTC spans derived from
+`filename + start_sec/end_sec`, while extracted WAV outputs use window-snapped
+bounds to build final filenames. This made it harder to visually reconcile table
+rows with exported sample names and encouraged brittle client-side assumptions.
+
+**Decision**: Add an `extract_filename` column to hydrophone detection TSV rows
+and surface it through the detection content API as an optional field.
+Derive this value from extraction-snapped bounds using the classifier window size.
+Keep local (non-hydrophone) TSV format unchanged. Preserve unknown TSV columns in
+label-save rewrite logic so metadata is retained across annotation updates.
+Update Hydrophone UI to keep raw UTC `Detection Range`, show `extract_filename`
+in tooltip, and replace `Start/End` display with snapped `Duration`.
+
+**Consequences**:
+- Hydrophone TSV downloads now carry explicit extraction basename metadata
+- UI can display extraction-consistent context without changing playback keys
+- Label-save operations no longer strip non-label TSV columns
+- No DB migration required; behavior is file-format and API-row augmentation only

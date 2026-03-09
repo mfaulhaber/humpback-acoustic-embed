@@ -1,14 +1,15 @@
 """Streaming detection pipeline for Orcasound hydrophone audio."""
 
 import logging
+import math
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 from sklearn.pipeline import Pipeline
 
 from humpback.classifier.detector import (
-    append_detections_tsv,
     merge_detection_events,
 )
 from humpback.classifier.s3_stream import (
@@ -22,6 +23,31 @@ from humpback.processing.inference import EmbeddingModel
 from humpback.processing.windowing import slice_windows_with_metadata
 
 logger = logging.getLogger(__name__)
+
+_TS_FORMAT = "%Y%m%dT%H%M%SZ"
+
+
+def _build_extract_filename(
+    chunk_filename: str,
+    start_sec: float,
+    end_sec: float,
+    window_size_seconds: float,
+) -> str | None:
+    """Build extraction-style filename from chunk filename and snapped bounds."""
+    if window_size_seconds <= 0:
+        return None
+
+    basename = chunk_filename[:-4] if chunk_filename.endswith(".wav") else chunk_filename
+    try:
+        chunk_start = datetime.strptime(basename, _TS_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+    snapped_start = math.floor(start_sec / window_size_seconds) * window_size_seconds
+    snapped_end = math.ceil(end_sec / window_size_seconds) * window_size_seconds
+    abs_start = chunk_start + timedelta(seconds=snapped_start)
+    abs_end = chunk_start + timedelta(seconds=snapped_end)
+    return f"{abs_start.strftime(_TS_FORMAT)}_{abs_end.strftime(_TS_FORMAT)}.wav"
 
 
 def run_hydrophone_detection(
@@ -158,6 +184,12 @@ def run_hydrophone_detection(
         synthetic_filename = chunk_start_utc.strftime("%Y%m%dT%H%M%SZ") + ".wav"
         for event in events:
             event["filename"] = synthetic_filename
+            event["extract_filename"] = _build_extract_filename(
+                synthetic_filename,
+                event["start_sec"],
+                event["end_sec"],
+                window_size_seconds,
+            )
             all_detections.append(event)
 
         total_positive += sum(1 for c in window_confidences if c >= confidence_threshold)

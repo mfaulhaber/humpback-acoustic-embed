@@ -312,6 +312,97 @@ def test_append_detections_tsv_noop_on_empty():
         assert not tsv_path.exists()
 
 
+def test_write_tsv_with_hydrophone_extract_filename_column(tmp_path):
+    """write_detections_tsv supports hydrophone-only extract_filename column."""
+    import csv
+
+    from humpback.classifier.detector import write_detections_tsv
+
+    tsv_path = tmp_path / "hydrophone_detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "extract_filename",
+    ]
+    detections = [
+        {
+            "filename": "20250702T080118Z.wav",
+            "start_sec": 37.0,
+            "end_sec": 45.0,
+            "avg_confidence": 0.95,
+            "peak_confidence": 0.97,
+            "n_windows": 4,
+            "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
+        },
+    ]
+
+    write_detections_tsv(detections, tsv_path, fieldnames=fieldnames)
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert reader.fieldnames == fieldnames
+
+
+def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
+    """append_detections_tsv writes and appends rows with extract_filename."""
+    import csv
+
+    from humpback.classifier.detector import append_detections_tsv
+
+    tsv_path = tmp_path / "hydrophone_detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "extract_filename",
+    ]
+    det1 = [
+        {
+            "filename": "20250702T080118Z.wav",
+            "start_sec": 37.0,
+            "end_sec": 45.0,
+            "avg_confidence": 0.95,
+            "peak_confidence": 0.97,
+            "n_windows": 4,
+            "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
+        },
+    ]
+    det2 = [
+        {
+            "filename": "20250702T080218Z.wav",
+            "start_sec": 8.0,
+            "end_sec": 14.0,
+            "avg_confidence": 0.91,
+            "peak_confidence": 0.93,
+            "n_windows": 3,
+            "extract_filename": "20250702T080225Z_20250702T080235Z.wav",
+        },
+    ]
+
+    append_detections_tsv(det1, tsv_path, fieldnames=fieldnames)
+    append_detections_tsv(det2, tsv_path, fieldnames=fieldnames)
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        rows = list(reader)
+
+    assert len(rows) == 2
+    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[1]["extract_filename"] == "20250702T080225Z_20250702T080235Z.wav"
+    assert reader.fieldnames == fieldnames
+
+
 def test_events_backward_compat_equivalence():
     """When hop == window and high == low == threshold, matches merge_detection_spans."""
     import numpy as np

@@ -400,7 +400,7 @@ Queue safety note:
   {classifier_model_id}/model.joblib              (StandardScaler + LogisticRegression pipeline)
   {classifier_model_id}/training_summary.json
 /detections/
-  {detection_job_id}/detections.tsv               (filename, start_sec, end_sec, avg_confidence, peak_confidence)
+  {detection_job_id}/detections.tsv               (local: filename/start/end/confidence fields; hydrophone adds extract_filename)
   {detection_job_id}/run_summary.json
 ```
 
@@ -437,6 +437,8 @@ Binary Classifier:
 - Expandable detection job rows show sortable TSV detection data (default: avg_confidence desc)
 - Inline audio playback of detected segments via streaming WAV slice endpoint
 - Hydrophone tab Extract button activates from saved labels on the expanded completed job
+- Hydrophone Detection Range displays raw UTC span; tooltip uses extraction-style filename when available
+- Hydrophone detection content table uses `Duration` (window-snapped extraction length) instead of raw start/end columns
 - Server-side folder browser endpoint (`GET /classifier/browse-directories`) for selecting negative audio and detection audio folders
 
 Editing:

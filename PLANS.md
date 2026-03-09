@@ -10,6 +10,26 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection UI Label Clarity + Extract Filename Metadata
+
+## Outcome (2026-03-09)
+
+- Kept Hydrophone `Detection Range` as raw UTC span while adding extraction basename
+  (`extract_filename`) to hydrophone TSV rows and content API responses.
+- Updated Hydrophone content table to replace `Start (s)` + `End (s)` with
+  `Duration (s)` computed from snapped extraction bounds; tooltip now shows
+  extraction filename (with legacy fallback derivation when missing).
+- Made label-save TSV rewrites preserve unknown/extra columns so `extract_filename`
+  is not dropped during annotation updates.
+
+## Verification
+
+- `uv run pytest tests/` passed (`399` passed).
+- `cd frontend && npx tsc --noEmit` passed.
+- `cd frontend && npx playwright test e2e/hydrophone-extract.spec.ts` passed (`1` passed).
+
+---
+
 # Plan: Hydrophone Detection — Timeline-Correct Segment Assembly + End-Bounded Range
 
 ## Outcome (2026-03-09)

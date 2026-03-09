@@ -323,28 +323,38 @@ def run_detection(
 TSV_FIELDNAMES = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
 
 
-def write_detections_tsv(detections: list[dict], path: Path) -> None:
+def write_detections_tsv(
+    detections: list[dict],
+    path: Path,
+    fieldnames: list[str] | None = None,
+) -> None:
     """Write detections to a TSV file (overwrites)."""
+    tsv_fieldnames = fieldnames or TSV_FIELDNAMES
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=TSV_FIELDNAMES, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=tsv_fieldnames, delimiter="\t")
         writer.writeheader()
         for det in detections:
-            writer.writerow({k: det[k] for k in TSV_FIELDNAMES})
+            writer.writerow({k: det.get(k, "") for k in tsv_fieldnames})
 
 
-def append_detections_tsv(detections: list[dict], path: Path) -> None:
+def append_detections_tsv(
+    detections: list[dict],
+    path: Path,
+    fieldnames: list[str] | None = None,
+) -> None:
     """Append detections to an existing TSV file (creates with header if needed)."""
     if not detections:
         return
+    tsv_fieldnames = fieldnames or TSV_FIELDNAMES
     path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not path.exists() or path.stat().st_size == 0
     with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=TSV_FIELDNAMES, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=tsv_fieldnames, delimiter="\t")
         if write_header:
             writer.writeheader()
         for det in detections:
-            writer.writerow({k: det[k] for k in TSV_FIELDNAMES})
+            writer.writerow({k: det.get(k, "") for k in tsv_fieldnames})
 
 
 def write_window_diagnostics(records: list[dict], path: Path) -> None:

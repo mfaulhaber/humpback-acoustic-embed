@@ -245,6 +245,71 @@ async def test_detection_job_out_has_hydrophone_fields(client, app_settings):
     await engine.dispose()
 
 
+async def test_hydrophone_content_includes_extract_filename(client, app_settings):
+    """Hydrophone detection content surfaces extract_filename when present in TSV."""
+    import csv
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "extract_filename",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": "37.0",
+                "end_sec": "45.0",
+                "avg_confidence": "0.951",
+                "peak_confidence": "0.970",
+                "n_windows": "4",
+                "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1751439600.0,
+                end_timestamp=1751461200.0,
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+
+    await engine.dispose()
+
+
 async def test_hydrophone_audio_slice_late_row_uses_first_folder_anchor(
     client, app_settings, monkeypatch
 ):

@@ -39,7 +39,7 @@ import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import { ExtractDialog } from "./ExtractDialog";
 import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
 
-type SortKey = "filename" | "start_sec" | "end_sec" | "avg_confidence";
+type SortKey = "filename" | "duration_sec" | "avg_confidence";
 type SortDir = "asc" | "desc";
 type LabelField = "humpback" | "ship" | "background";
 
@@ -68,6 +68,63 @@ function computeUtcRange(filename: string, startSec: number, endSec: number): st
     return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
   };
   return `${fmt(chunkDate.getTime() + startSec * 1000)}_${fmt(chunkDate.getTime() + endSec * 1000)}`;
+}
+
+function parseCompactUtcMs(value: string): number | null {
+  const match = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) return null;
+  return Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+  );
+}
+
+function computeSnappedExtractFilename(
+  filename: string,
+  startSec: number,
+  endSec: number,
+  windowSizeSeconds: number | null,
+): string | null {
+  const baseTs = parseCompactUtcMs(filename.replace(".wav", ""));
+  if (baseTs === null) return null;
+  if (windowSizeSeconds == null || windowSizeSeconds <= 0) return null;
+
+  const snappedStartSec = Math.floor(startSec / windowSizeSeconds) * windowSizeSeconds;
+  const snappedEndSec = Math.ceil(endSec / windowSizeSeconds) * windowSizeSeconds;
+  const fmt = (ms: number): string => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+  };
+  return `${fmt(baseTs + snappedStartSec * 1000)}_${fmt(baseTs + snappedEndSec * 1000)}.wav`;
+}
+
+function durationFromExtractFilename(extractFilename: string | null): number | null {
+  if (!extractFilename) return null;
+  const base = extractFilename.replace(".wav", "");
+  const parts = base.split("_");
+  if (parts.length !== 2) return null;
+  const startMs = parseCompactUtcMs(parts[0]);
+  const endMs = parseCompactUtcMs(parts[1]);
+  if (startMs === null || endMs === null || endMs < startMs) return null;
+  return (endMs - startMs) / 1000;
+}
+
+function computeSnappedDurationSeconds(
+  startSec: number,
+  endSec: number,
+  windowSizeSeconds: number | null,
+): number {
+  if (windowSizeSeconds == null || windowSizeSeconds <= 0) {
+    return Math.max(0, endSec - startSec);
+  }
+  const snappedStartSec = Math.floor(startSec / windowSizeSeconds) * windowSizeSeconds;
+  const snappedEndSec = Math.ceil(endSec / windowSizeSeconds) * windowSizeSeconds;
+  return Math.max(0, snappedEndSec - snappedStartSec);
 }
 
 function formatDateRange(startTs: number, endTs: number): string {
@@ -117,6 +174,10 @@ export function HydrophoneTab() {
   // Audio
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const modelWindowSizeById = useMemo(
+    () => new Map(models.map((model) => [model.id, model.window_size_seconds])),
+    [models],
+  );
 
   const activeJob = jobs.find((j) => j.status === "running" || j.status === "queued");
   const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued");
@@ -531,6 +592,7 @@ export function HydrophoneTab() {
               <HydrophoneContentTable
                 jobId={activeJob.id}
                 isRunning={true}
+                windowSizeSeconds={modelWindowSizeById.get(activeJob.classifier_model_id) ?? null}
                 playingKey={playingKey}
                 onPlay={handlePlay}
                 onLabelChange={handleLabelChange}
@@ -629,6 +691,7 @@ export function HydrophoneTab() {
                   onPlay={handlePlay}
                   onLabelChange={handleLabelChange}
                   labelEdits={labelEdits.get(job.id) ?? null}
+                  windowSizeSeconds={modelWindowSizeById.get(job.classifier_model_id) ?? null}
                 />
               ))}
             </tbody>
@@ -720,6 +783,7 @@ function HydrophoneJobRow({
   onPlay,
   onLabelChange,
   labelEdits,
+  windowSizeSeconds,
 }: {
   job: DetectionJob;
   checked: boolean;
@@ -730,6 +794,7 @@ function HydrophoneJobRow({
   onPlay: (jobId: string, row: DetectionRow) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
+  windowSizeSeconds: number | null;
 }) {
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
@@ -816,6 +881,7 @@ function HydrophoneJobRow({
             <HydrophoneContentTable
               jobId={job.id}
               isRunning={isRunning}
+              windowSizeSeconds={windowSizeSeconds}
               playingKey={playingKey}
               onPlay={onPlay}
               onLabelChange={onLabelChange}
@@ -831,6 +897,7 @@ function HydrophoneJobRow({
 function HydrophoneContentTable({
   jobId,
   isRunning,
+  windowSizeSeconds,
   playingKey,
   onPlay,
   onLabelChange,
@@ -838,6 +905,7 @@ function HydrophoneContentTable({
 }: {
   jobId: string;
   isRunning: boolean;
+  windowSizeSeconds: number | null;
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
@@ -852,6 +920,31 @@ function HydrophoneContentTable({
   const prevRunning = useRef(isRunning);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
+
+  const hydratedRows = useMemo(
+    () =>
+      rows.map((row) => {
+        const fallbackExtractFilename = computeSnappedExtractFilename(
+          row.filename,
+          row.start_sec,
+          row.end_sec,
+          windowSizeSeconds,
+        );
+        const extractFilename =
+          (typeof row.extract_filename === "string" && row.extract_filename.trim()) ||
+          fallbackExtractFilename ||
+          null;
+        const durationSec =
+          durationFromExtractFilename(extractFilename) ??
+          computeSnappedDurationSeconds(row.start_sec, row.end_sec, windowSizeSeconds);
+        return {
+          ...row,
+          _extractFilename: extractFilename,
+          _durationSec: durationSec,
+        };
+      }),
+    [rows, windowSizeSeconds],
+  );
 
   // Switch to confidence desc when job completes
   useEffect(() => {
@@ -872,9 +965,12 @@ function HydrophoneContentTable({
   };
 
   const sorted = useMemo(() => {
-    return [...rows].sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
+    return [...hydratedRows].sort((a, b) => {
+      if (sortKey === "duration_sec") {
+        return sortDir === "asc" ? a._durationSec - b._durationSec : b._durationSec - a._durationSec;
+      }
+      const av = sortKey === "avg_confidence" ? a.avg_confidence : a.filename;
+      const bv = sortKey === "avg_confidence" ? b.avg_confidence : b.filename;
       if (typeof av === "number" && typeof bv === "number") {
         return sortDir === "asc" ? av - bv : bv - av;
       }
@@ -882,7 +978,7 @@ function HydrophoneContentTable({
       const sb = String(bv);
       return sortDir === "asc" ? sa.localeCompare(sb) : sb.localeCompare(sa);
     });
-  }, [rows, sortKey, sortDir]);
+  }, [hydratedRows, sortKey, sortDir]);
 
   const getEffectiveLabel = useCallback(
     (row: DetectionRow, field: LabelField): number | null => {
@@ -953,7 +1049,7 @@ function HydrophoneContentTable({
   if (isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">Loading detections…</div>;
   }
-  if (rows.length === 0) {
+  if (hydratedRows.length === 0) {
     return <div className="p-4 text-sm text-muted-foreground">No detections</div>;
   }
 
@@ -981,8 +1077,7 @@ function HydrophoneContentTable({
           <tr className="border-b">
             <th className="w-8 px-3 py-1.5" />
             <SortHeader label="Detection Range" field="filename" />
-            <SortHeader label="Start (s)" field="start_sec" />
-            <SortHeader label="End (s)" field="end_sec" />
+            <SortHeader label="Duration (s)" field="duration_sec" />
             <SortHeader label="Confidence" field="avg_confidence" />
             <th className="px-3 py-1.5 text-center font-medium">Humpback</th>
             <th className="px-3 py-1.5 text-center font-medium">Ship</th>
@@ -1014,11 +1109,13 @@ function HydrophoneContentTable({
                     {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                   </button>
                 </td>
-                <td className="px-3 py-1.5 truncate max-w-64" title={computeUtcRange(row.filename, row.start_sec, row.end_sec)}>
+                <td
+                  className="px-3 py-1.5 truncate max-w-64"
+                  title={row._extractFilename ?? "No extracted filename available"}
+                >
                   {computeUtcRange(row.filename, row.start_sec, row.end_sec)}
                 </td>
-                <td className="px-3 py-1.5">{row.start_sec.toFixed(1)}</td>
-                <td className="px-3 py-1.5">{row.end_sec.toFixed(1)}</td>
+                <td className="px-3 py-1.5">{row._durationSec.toFixed(1)}</td>
                 <td className="px-3 py-1.5">{row.avg_confidence.toFixed(3)}</td>
                 <td className="px-3 py-1.5 text-center">
                   <input

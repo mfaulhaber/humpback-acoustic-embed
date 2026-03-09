@@ -472,6 +472,7 @@ export interface DetectionRow {
   avg_confidence: number;
   peak_confidence: number;
   n_windows: number | null;
+  extract_filename?: string | null;
   humpback: number | null;
   ship: number | null;
   background: number | null;

@@ -646,6 +646,7 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
                     "avg_confidence": float(row.get("avg_confidence", 0)),
                     "peak_confidence": float(row.get("peak_confidence", 0)),
                     "n_windows": int(row["n_windows"]) if row.get("n_windows") else None,
+                    "extract_filename": (row.get("extract_filename", "").strip() or None),
                     "humpback": _parse_label(row.get("humpback")),
                     "ship": _parse_label(row.get("ship")),
                     "background": _parse_label(row.get("background")),
@@ -694,13 +695,16 @@ async def save_detection_labels(
 
     # Read existing TSV
     existing_rows = []
+    fieldnames: list[str] = []
     with open(tsv_path, newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
+        if reader.fieldnames:
+            fieldnames = list(reader.fieldnames)
         for row in reader:
             existing_rows.append(row)
 
-    # Merge labels
-    fieldnames = [
+    # Merge labels, preserving unknown columns (for example extract_filename).
+    required_fields = [
         "filename",
         "start_sec",
         "end_sec",
@@ -711,6 +715,13 @@ async def save_detection_labels(
         "ship",
         "background",
     ]
+    if not fieldnames:
+        fieldnames = list(required_fields)
+    else:
+        for field in required_fields:
+            if field not in fieldnames:
+                fieldnames.append(field)
+
     updated_rows = []
     for row in existing_rows:
         key = (
@@ -719,17 +730,16 @@ async def save_detection_labels(
             float(row.get("end_sec", 0)),
         )
         update = label_map.get(key)
-        out_row = {
-            "filename": row.get("filename", ""),
-            "start_sec": row.get("start_sec", "0"),
-            "end_sec": row.get("end_sec", "0"),
-            "avg_confidence": row.get("avg_confidence", "0"),
-            "peak_confidence": row.get("peak_confidence", "0"),
-            "n_windows": row.get("n_windows", ""),
-            "humpback": _serialize_label(update.humpback) if update else row.get("humpback", ""),
-            "ship": _serialize_label(update.ship) if update else row.get("ship", ""),
-            "background": _serialize_label(update.background) if update else row.get("background", ""),
-        }
+        out_row = {field: row.get(field, "") for field in fieldnames}
+        out_row["humpback"] = (
+            _serialize_label(update.humpback) if update else row.get("humpback", "")
+        )
+        out_row["ship"] = (
+            _serialize_label(update.ship) if update else row.get("ship", "")
+        )
+        out_row["background"] = (
+            _serialize_label(update.background) if update else row.get("background", "")
+        )
         updated_rows.append(out_row)
 
     # Write atomically via temp file

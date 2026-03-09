@@ -186,6 +186,12 @@ Hydrophone detection, playback, and extraction must use the same bounded stream 
 - processing/playback/extraction must stay within `[start_timestamp, end_timestamp]`
 - legacy playback compatibility for older jobs may fall back to `job.start_timestamp`
 
+### 4.6 Hydrophone Detection TSV Metadata
+Hydrophone detection TSV output should carry extraction-oriented metadata:
+- include `extract_filename` for hydrophone rows (`{start_utc}_{end_utc}.wav`)
+- `extract_filename` must be derived from snapped extraction bounds (window-size aligned)
+- local (non-hydrophone) detection TSV output remains unchanged
+
 ---
 
 ## 5. Testing Requirements (MANDATORY)

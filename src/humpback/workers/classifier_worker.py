@@ -34,6 +34,16 @@ from humpback.workers.queue import (
 
 logger = logging.getLogger(__name__)
 
+HYDROPHONE_TSV_FIELDNAMES = [
+    "filename",
+    "start_sec",
+    "end_sec",
+    "avg_confidence",
+    "peak_confidence",
+    "n_windows",
+    "extract_filename",
+]
+
 
 async def run_training_job(
     session: AsyncSession,
@@ -306,7 +316,11 @@ async def run_hydrophone_detection_job(
             time_covered_sec: float,
         ):
             if chunk_detections:
-                append_detections_tsv(chunk_detections, tsv_path)
+                append_detections_tsv(
+                    chunk_detections,
+                    tsv_path,
+                    fieldnames=HYDROPHONE_TSV_FIELDNAMES,
+                )
 
             if session_factory is not None:
                 async def _update_progress():
@@ -397,7 +411,11 @@ async def run_hydrophone_detection_job(
         if cancel_event.is_set():
             # Write what we have
             from humpback.classifier.detector import write_detections_tsv
-            write_detections_tsv(detections, tsv_path)
+            write_detections_tsv(
+                detections,
+                tsv_path,
+                fieldnames=HYDROPHONE_TSV_FIELDNAMES,
+            )
             await session.execute(
                 update(DetectionJob)
                 .where(DetectionJob.id == job.id)
@@ -415,7 +433,11 @@ async def run_hydrophone_detection_job(
 
         # Write final TSV
         from humpback.classifier.detector import write_detections_tsv
-        write_detections_tsv(detections, tsv_path)
+        write_detections_tsv(
+            detections,
+            tsv_path,
+            fieldnames=HYDROPHONE_TSV_FIELDNAMES,
+        )
 
         summary_path = ddir / "run_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2))

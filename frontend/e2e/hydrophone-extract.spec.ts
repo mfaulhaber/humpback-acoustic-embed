@@ -47,6 +47,8 @@ test.describe("Hydrophone extract activation", () => {
       return;
     }
 
+    await expect(innerTable.locator("thead")).toContainText("Duration (s)");
+
     const firstDataRow = innerTable.locator("tbody tr").first();
     const hasDataRow = (await firstDataRow.count()) > 0;
     if (!hasDataRow) {
@@ -54,8 +56,12 @@ test.describe("Hydrophone extract activation", () => {
       return;
     }
 
+    const detectionRangeCell = firstDataRow.locator("td:nth-child(2)");
+    const rangeTitle = await detectionRangeCell.getAttribute("title");
+    expect(rangeTitle).toContain(".wav");
+
     const humpbackCheckbox = firstDataRow.locator(
-      'td:nth-child(6) input[type="checkbox"]',
+      'td:nth-child(5) input[type="checkbox"]',
     );
     const hasCheckbox = (await humpbackCheckbox.count()) > 0;
     if (!hasCheckbox) {

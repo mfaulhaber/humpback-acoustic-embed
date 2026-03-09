@@ -73,6 +73,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
   with legacy fallback to `job.start_timestamp`
 - UTC range display in Detection Range column (replaces raw synthetic filenames)
+- Hydrophone TSV rows include `extract_filename` (window-snapped extraction basename)
 - WAV export for hydrophone jobs: fetches audio from HLS, writes labeled samples to positive/negative folders
 - Hydrophone extraction output paths include hydrophone short label partitioning:
   `{positive|negative}_root/{hydrophone_id}/{label}/YYYY/MM/DD/*.wav`
@@ -92,6 +93,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Bulk delete for training/detection jobs
 - Expandable detection rows with sortable TSV data
 - Hydrophone Extract button enablement is based on saved labels of the expanded completed job
+- Hydrophone detection table uses raw UTC Detection Range + extraction filename tooltip and a snapped Duration column
 
 ---
 

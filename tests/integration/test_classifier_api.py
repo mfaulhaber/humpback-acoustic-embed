@@ -306,3 +306,88 @@ async def test_save_labels_rejects_invalid_values(client, app_settings):
     assert resp.status_code == 422
 
     await engine.dispose()
+
+
+async def test_save_labels_preserves_extract_filename_column(client, app_settings):
+    """PUT /labels preserves extra TSV columns such as extract_filename."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+    tsv_path = tsv_dir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "extract_filename",
+        "humpback",
+        "ship",
+        "background",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": "37.0",
+                "end_sec": "45.0",
+                "avg_confidence": "0.951",
+                "peak_confidence": "0.970",
+                "n_windows": "4",
+                "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
+                "humpback": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": 37.0,
+                "end_sec": 45.0,
+                "humpback": 1,
+            }
+        ],
+    )
+    assert resp.status_code == 200
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        rows = list(reader)
+
+    assert reader.fieldnames is not None
+    assert "extract_filename" in reader.fieldnames
+    assert len(rows) == 1
+    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[0]["humpback"] == "1"
+
+    await engine.dispose()
