@@ -10,6 +10,27 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection UI — Clip Timing Consistency (Display + Playback + Extract)
+
+## Outcome (2026-03-09)
+
+- Added a single Hydrophone clip-timing resolver with precedence:
+  `extract_filename` -> snapped window bounds -> raw detection span.
+- Switched Hydrophone Detection Range primary display to extraction-aligned UTC range,
+  with raw detection range retained as secondary audit text/tooltip.
+- Updated Hydrophone playback to use resolved extraction-aligned clip start/duration so
+  play length now matches displayed Duration and extraction output.
+- This supersedes the earlier Hydrophone UI behavior that showed raw range as the
+  primary Detection Range value.
+
+## Verification
+
+- `cd frontend && npx tsc --noEmit` passed.
+- `cd frontend && npx playwright test e2e/hydrophone-extract.spec.ts` passed (`1` passed).
+- `uv run pytest tests/` passed (`399` passed).
+
+---
+
 # Plan: Hydrophone Detection UI Label Clarity + Extract Filename Metadata
 
 ## Outcome (2026-03-09)

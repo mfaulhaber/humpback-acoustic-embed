@@ -42,6 +42,21 @@ import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "
 type SortKey = "filename" | "duration_sec" | "avg_confidence";
 type SortDir = "asc" | "desc";
 type LabelField = "humpback" | "ship" | "background";
+type ClipSource = "extract_filename" | "snapped" | "raw";
+type PlayClip = {
+  startSec: number;
+  durationSec: number;
+};
+type HydratedDetectionRow = DetectionRow & {
+  _extractFilename: string | null;
+  _clipSource: ClipSource;
+  _clipStartSec: number;
+  _clipEndSec: number;
+  _clipDurationSec: number;
+  _clipRange: string;
+  _rawRange: string;
+  _playKey: string;
+};
 
 function rowKey(row: { filename: string; start_sec: number; end_sec: number }): string {
   return `${row.filename}:${row.start_sec}:${row.end_sec}`;
@@ -55,19 +70,18 @@ const statusColor: Record<string, string> = {
   canceled: "bg-gray-100 text-gray-800",
 };
 
+function formatCompactUtc(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+}
+
 function computeUtcRange(filename: string, startSec: number, endSec: number): string {
   const basename = filename.replace(".wav", "");
   const match = basename.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (!match) return filename;
-  const chunkDate = new Date(
-    Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6])
-  );
-  const fmt = (ms: number): string => {
-    const d = new Date(ms);
-    const p = (n: number) => String(n).padStart(2, "0");
-    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
-  };
-  return `${fmt(chunkDate.getTime() + startSec * 1000)}_${fmt(chunkDate.getTime() + endSec * 1000)}`;
+  const chunkMs = Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6]);
+  return `${formatCompactUtc(chunkMs + startSec * 1000)}_${formatCompactUtc(chunkMs + endSec * 1000)}`;
 }
 
 function parseCompactUtcMs(value: string): number | null {
@@ -95,36 +109,98 @@ function computeSnappedExtractFilename(
 
   const snappedStartSec = Math.floor(startSec / windowSizeSeconds) * windowSizeSeconds;
   const snappedEndSec = Math.ceil(endSec / windowSizeSeconds) * windowSizeSeconds;
-  const fmt = (ms: number): string => {
-    const d = new Date(ms);
-    const p = (n: number) => String(n).padStart(2, "0");
-    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
-  };
-  return `${fmt(baseTs + snappedStartSec * 1000)}_${fmt(baseTs + snappedEndSec * 1000)}.wav`;
+  return `${formatCompactUtc(baseTs + snappedStartSec * 1000)}_${formatCompactUtc(baseTs + snappedEndSec * 1000)}.wav`;
 }
 
-function durationFromExtractFilename(extractFilename: string | null): number | null {
-  if (!extractFilename) return null;
+function parseExtractFilenameRange(extractFilename: string): { startMs: number; endMs: number } | null {
   const base = extractFilename.replace(".wav", "");
   const parts = base.split("_");
   if (parts.length !== 2) return null;
   const startMs = parseCompactUtcMs(parts[0]);
   const endMs = parseCompactUtcMs(parts[1]);
-  if (startMs === null || endMs === null || endMs < startMs) return null;
-  return (endMs - startMs) / 1000;
+  if (startMs === null || endMs === null || endMs <= startMs) return null;
+  return { startMs, endMs };
 }
 
-function computeSnappedDurationSeconds(
+function buildPlaybackKey(
+  jobId: string,
+  filename: string,
   startSec: number,
-  endSec: number,
+  durationSec: number,
+): string {
+  return `${jobId}:${filename}:${startSec.toFixed(3)}:${durationSec.toFixed(3)}`;
+}
+
+function resolveClipTiming(
+  row: DetectionRow,
   windowSizeSeconds: number | null,
-): number {
-  if (windowSizeSeconds == null || windowSizeSeconds <= 0) {
-    return Math.max(0, endSec - startSec);
+): Omit<HydratedDetectionRow, keyof DetectionRow | "_playKey"> {
+  const rawStartSec = row.start_sec;
+  const rawEndSec = row.end_sec;
+  const rawDurationSec = Math.max(0, rawEndSec - rawStartSec);
+  const rawRange = computeUtcRange(row.filename, rawStartSec, rawEndSec);
+
+  const directExtractFilename =
+    typeof row.extract_filename === "string" && row.extract_filename.trim()
+      ? row.extract_filename.trim()
+      : null;
+  const snappedExtractFilename = computeSnappedExtractFilename(
+    row.filename,
+    row.start_sec,
+    row.end_sec,
+    windowSizeSeconds,
+  );
+  const extractFilename = directExtractFilename ?? snappedExtractFilename ?? null;
+
+  const baseTs = parseCompactUtcMs(row.filename.replace(".wav", ""));
+  if (baseTs !== null && directExtractFilename) {
+    const extracted = parseExtractFilenameRange(directExtractFilename);
+    if (extracted) {
+      const clipStartSec = (extracted.startMs - baseTs) / 1000;
+      const clipEndSec = (extracted.endMs - baseTs) / 1000;
+      if (clipEndSec > clipStartSec) {
+        return {
+          _extractFilename: extractFilename,
+          _clipSource: "extract_filename",
+          _clipStartSec: clipStartSec,
+          _clipEndSec: clipEndSec,
+          _clipDurationSec: clipEndSec - clipStartSec,
+          _clipRange: `${formatCompactUtc(extracted.startMs)}_${formatCompactUtc(extracted.endMs)}`,
+          _rawRange: rawRange,
+        };
+      }
+    }
   }
-  const snappedStartSec = Math.floor(startSec / windowSizeSeconds) * windowSizeSeconds;
-  const snappedEndSec = Math.ceil(endSec / windowSizeSeconds) * windowSizeSeconds;
-  return Math.max(0, snappedEndSec - snappedStartSec);
+
+  if (windowSizeSeconds != null && windowSizeSeconds > 0) {
+    const snappedStartSec = Math.floor(rawStartSec / windowSizeSeconds) * windowSizeSeconds;
+    const snappedEndSec = Math.ceil(rawEndSec / windowSizeSeconds) * windowSizeSeconds;
+    if (snappedEndSec > snappedStartSec) {
+      const clipRange =
+        baseTs !== null
+          ? `${formatCompactUtc(baseTs + snappedStartSec * 1000)}_${formatCompactUtc(baseTs + snappedEndSec * 1000)}`
+          : rawRange;
+      return {
+        _extractFilename: extractFilename,
+        _clipSource: "snapped",
+        _clipStartSec: snappedStartSec,
+        _clipEndSec: snappedEndSec,
+        _clipDurationSec: snappedEndSec - snappedStartSec,
+        _clipRange: clipRange,
+        _rawRange: rawRange,
+      };
+    }
+  }
+
+  return {
+    _extractFilename: extractFilename,
+    _clipSource: "raw",
+    _clipStartSec: rawStartSec,
+    _clipEndSec: rawEndSec,
+    _clipDurationSec: rawDurationSec,
+    _clipRange: rawRange,
+    _rawRange: rawRange,
+  };
 }
 
 function formatDateRange(startTs: number, endTs: number): string {
@@ -226,16 +302,17 @@ export function HydrophoneTab() {
   };
 
   const handlePlay = useCallback(
-    (jobId: string, row: DetectionRow) => {
-      const key = `${jobId}:${row.filename}:${row.start_sec}`;
+    (jobId: string, row: DetectionRow, clip?: PlayClip) => {
+      const startSec = clip?.startSec ?? row.start_sec;
+      const requestedDurationSec = clip?.durationSec ?? row.end_sec - row.start_sec;
+      const durationSec = Math.max(0.1, requestedDurationSec);
+      const key = buildPlaybackKey(jobId, row.filename, startSec, durationSec);
       if (playingKey === key) {
         audioRef.current?.pause();
         setPlayingKey(null);
         return;
       }
-      const spanDuration = row.end_sec - row.start_sec;
-      const duration = Math.max(spanDuration, 5);
-      const url = detectionAudioSliceUrl(jobId, row.filename, row.start_sec, duration);
+      const url = detectionAudioSliceUrl(jobId, row.filename, startSec, durationSec);
       if (audioRef.current) {
         const audio = audioRef.current;
         audio.src = url;
@@ -791,7 +868,7 @@ function HydrophoneJobRow({
   expanded: boolean;
   onExpand: () => void;
   playingKey: string | null;
-  onPlay: (jobId: string, row: DetectionRow) => void;
+  onPlay: (jobId: string, row: DetectionRow, clip?: PlayClip) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
   windowSizeSeconds: number | null;
@@ -907,7 +984,7 @@ function HydrophoneContentTable({
   isRunning: boolean;
   windowSizeSeconds: number | null;
   playingKey: string | null;
-  onPlay: (jobId: string, row: DetectionRow) => void;
+  onPlay: (jobId: string, row: DetectionRow, clip?: PlayClip) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
 }) {
@@ -921,29 +998,22 @@ function HydrophoneContentTable({
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
-  const hydratedRows = useMemo(
+  const hydratedRows = useMemo<HydratedDetectionRow[]>(
     () =>
       rows.map((row) => {
-        const fallbackExtractFilename = computeSnappedExtractFilename(
-          row.filename,
-          row.start_sec,
-          row.end_sec,
-          windowSizeSeconds,
-        );
-        const extractFilename =
-          (typeof row.extract_filename === "string" && row.extract_filename.trim()) ||
-          fallbackExtractFilename ||
-          null;
-        const durationSec =
-          durationFromExtractFilename(extractFilename) ??
-          computeSnappedDurationSeconds(row.start_sec, row.end_sec, windowSizeSeconds);
+        const resolved = resolveClipTiming(row, windowSizeSeconds);
         return {
           ...row,
-          _extractFilename: extractFilename,
-          _durationSec: durationSec,
+          ...resolved,
+          _playKey: buildPlaybackKey(
+            jobId,
+            row.filename,
+            resolved._clipStartSec,
+            Math.max(0.1, resolved._clipDurationSec),
+          ),
         };
       }),
-    [rows, windowSizeSeconds],
+    [rows, windowSizeSeconds, jobId],
   );
 
   // Switch to confidence desc when job completes
@@ -967,7 +1037,9 @@ function HydrophoneContentTable({
   const sorted = useMemo(() => {
     return [...hydratedRows].sort((a, b) => {
       if (sortKey === "duration_sec") {
-        return sortDir === "asc" ? a._durationSec - b._durationSec : b._durationSec - a._durationSec;
+        return sortDir === "asc"
+          ? a._clipDurationSec - b._clipDurationSec
+          : b._clipDurationSec - a._clipDurationSec;
       }
       const av = sortKey === "avg_confidence" ? a.avg_confidence : a.filename;
       const bv = sortKey === "avg_confidence" ? b.avg_confidence : b.filename;
@@ -1027,7 +1099,11 @@ function HydrophoneContentTable({
       }
       if (e.key === " " && focusedIndex !== null && focusedIndex < sorted.length) {
         e.preventDefault();
-        onPlay(jobId, sorted[focusedIndex]);
+        const focused = sorted[focusedIndex];
+        onPlay(jobId, focused, {
+          startSec: focused._clipStartSec,
+          durationSec: focused._clipDurationSec,
+        });
         return;
       }
       const field = keyMap[e.key.toLowerCase()];
@@ -1086,8 +1162,7 @@ function HydrophoneContentTable({
         </thead>
         <tbody>
           {sorted.map((row, i) => {
-            const key = `${jobId}:${row.filename}:${row.start_sec}`;
-            const isPlaying = playingKey === key;
+            const isPlaying = playingKey === row._playKey;
             const isFocused = focusedIndex === i;
             return (
               <tr
@@ -1102,7 +1177,10 @@ function HydrophoneContentTable({
                     className="p-0.5 hover:bg-muted rounded"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onPlay(jobId, row);
+                      onPlay(jobId, row, {
+                        startSec: row._clipStartSec,
+                        durationSec: row._clipDurationSec,
+                      });
                     }}
                     title={isPlaying ? "Pause" : "Play"}
                   >
@@ -1110,12 +1188,17 @@ function HydrophoneContentTable({
                   </button>
                 </td>
                 <td
-                  className="px-3 py-1.5 truncate max-w-64"
-                  title={row._extractFilename ?? "No extracted filename available"}
+                  className="px-3 py-1.5 max-w-80"
+                  title={`Extract range: ${row._clipRange}\nRaw detection: ${row._rawRange}${row._extractFilename ? `\nExtract filename: ${row._extractFilename}` : ""}`}
                 >
-                  {computeUtcRange(row.filename, row.start_sec, row.end_sec)}
+                  <div className="space-y-0.5 leading-tight">
+                    <div className="font-mono clip-range">{row._clipRange}</div>
+                    <div className="text-[10px] text-muted-foreground raw-range">
+                      raw: {row._rawRange}
+                    </div>
+                  </div>
                 </td>
-                <td className="px-3 py-1.5">{row._durationSec.toFixed(1)}</td>
+                <td className="px-3 py-1.5 clip-duration">{row._clipDurationSec.toFixed(1)}</td>
                 <td className="px-3 py-1.5">{row.avg_confidence.toFixed(3)}</td>
                 <td className="px-3 py-1.5 text-center">
                   <input

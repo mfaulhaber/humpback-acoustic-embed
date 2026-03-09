@@ -93,7 +93,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Bulk delete for training/detection jobs
 - Expandable detection rows with sortable TSV data
 - Hydrophone Extract button enablement is based on saved labels of the expanded completed job
-- Hydrophone detection table uses raw UTC Detection Range + extraction filename tooltip and a snapped Duration column
+- Hydrophone detection table uses extraction-aligned UTC Detection Range and Duration;
+  playback uses the same extraction bounds, and raw detection range remains visible as
+  secondary audit context (row text + tooltip)
 
 ---
 

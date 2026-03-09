@@ -1,5 +1,27 @@
 import { test, expect } from "@playwright/test";
 
+function parseCompactUtcMs(value: string): number | null {
+  const match = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) return null;
+  return Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+  );
+}
+
+function parseCompactRangeMs(value: string): { startMs: number; endMs: number } | null {
+  const parts = value.trim().split("_");
+  if (parts.length !== 2) return null;
+  const startMs = parseCompactUtcMs(parts[0]);
+  const endMs = parseCompactUtcMs(parts[1]);
+  if (startMs === null || endMs === null || endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
 test.describe("Hydrophone extract activation", () => {
   test("Extract enables from saved labels on expanded completed job", async ({ page }) => {
     await page.goto("/app/classifier");
@@ -57,8 +79,49 @@ test.describe("Hydrophone extract activation", () => {
     }
 
     const detectionRangeCell = firstDataRow.locator("td:nth-child(2)");
+    const clipRangeText = (await detectionRangeCell.locator(".clip-range").innerText()).trim();
+    const clipRange = parseCompactRangeMs(clipRangeText);
+    expect(clipRange).toBeTruthy();
+    if (!clipRange) {
+      test.skip(true, "Could not parse displayed clip range");
+      return;
+    }
+    const durationText = (await firstDataRow.locator("td:nth-child(3)").innerText()).trim();
+    const displayedDurationSec = Number.parseFloat(durationText);
+    expect(Number.isFinite(displayedDurationSec)).toBe(true);
+    expect(displayedDurationSec).toBeCloseTo((clipRange.endMs - clipRange.startMs) / 1000, 1);
+
+    const rawRangeRow = detectionRangeCell.locator(".raw-range");
+    await expect(rawRangeRow).toContainText("raw:");
     const rangeTitle = await detectionRangeCell.getAttribute("title");
-    expect(rangeTitle).toContain(".wav");
+    expect(rangeTitle).toContain("Extract range:");
+    expect(rangeTitle).toContain("Raw detection:");
+
+    await firstDataRow.locator("td:nth-child(1) button").click();
+    await page.waitForTimeout(300);
+    const audioInfo = await page.evaluate(() => {
+      const audio = document.querySelector("audio");
+      if (!audio?.src) return null;
+      const url = new URL(audio.src);
+      return {
+        filename: url.searchParams.get("filename"),
+        startSec: Number.parseFloat(url.searchParams.get("start_sec") || "NaN"),
+        durationSec: Number.parseFloat(url.searchParams.get("duration_sec") || "NaN"),
+      };
+    });
+    expect(audioInfo).toBeTruthy();
+    const filename = audioInfo?.filename;
+    expect(filename).toBeTruthy();
+    const fileStartMs = parseCompactUtcMs((filename ?? "").replace(".wav", ""));
+    expect(fileStartMs).not.toBeNull();
+    if (fileStartMs === null) {
+      test.skip(true, "Playback filename is not compact UTC format");
+      return;
+    }
+    const expectedStartSec = (clipRange.startMs - fileStartMs) / 1000;
+    const expectedDurationSec = (clipRange.endMs - clipRange.startMs) / 1000;
+    expect(audioInfo?.startSec).toBeCloseTo(expectedStartSec, 3);
+    expect(audioInfo?.durationSec).toBeCloseTo(expectedDurationSec, 3);
 
     const humpbackCheckbox = firstDataRow.locator(
       'td:nth-child(5) input[type="checkbox"]',
