@@ -81,8 +81,8 @@ Current state of the humpback acoustic embedding and clustering platform.
   in the requested time range (no silent complete-with-zero-windows)
 - Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
   with legacy fallback to `job.start_timestamp`
-- UTC range display in Detection Range column (replaces raw synthetic filenames)
-- Hydrophone TSV rows include `extract_filename` (window-snapped extraction basename)
+- Hydrophone TSV rows include canonical `detection_filename` plus legacy `extract_filename` alias
+- UTC range display in Detection Range column uses exact `detection_filename` (single value)
 - WAV export for hydrophone jobs: reads from local HLS cache (no S3 calls during extraction), writes labeled samples to positive/negative folders; missing cached rows are skipped and counted in `n_skipped`
 - Hydrophone extraction output paths include hydrophone short label partitioning:
   `{positive|negative}_root/{hydrophone_id}/{label}/YYYY/MM/DD/*.wav`
@@ -106,9 +106,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Bulk delete for training/detection jobs
 - Expandable detection rows with sortable TSV data
 - Hydrophone Extract button enablement is based on saved labels of the expanded completed or canceled job
-- Hydrophone detection table uses extraction-aligned UTC Detection Range and Duration;
-  playback uses the same extraction bounds, and raw detection range remains visible as
-  secondary audit context (row text + tooltip)
+- Hydrophone detection table uses exact UTC Detection Range and Duration from canonical
+  `detection_filename` (no secondary raw-range row)
+- Hydrophone playback and extraction use the same exact clip bounds shown in Detection Range
 - Hydrophone job date range uses popover picker with dual-month calendar and HH:MM time inputs (UTC-only)
 - Hydrophone active job panel shows Pause/Resume and Cancel controls
   (paused jobs remain in active panel; canceled jobs move to Previous Jobs with full functionality)

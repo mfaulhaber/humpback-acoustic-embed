@@ -11,6 +11,22 @@ from humpback.classifier.detector import read_detections_tsv, write_detections_t
 
 
 # ------------------------------------------------------------------
+# hydrophone detection filename
+# ------------------------------------------------------------------
+
+
+def test_build_detection_filename_uses_exact_bounds():
+    """Exact raw event bounds should produce unique detection filenames."""
+    from humpback.classifier.hydrophone_detector import _build_detection_filename
+
+    f1 = _build_detection_filename("20250712T011600Z.wav", 15.0, 22.0)
+    f2 = _build_detection_filename("20250712T011600Z.wav", 19.0, 25.0)
+    assert f1 == "20250712T011615Z_20250712T011622Z.wav"
+    assert f2 == "20250712T011619Z_20250712T011625Z.wav"
+    assert f1 != f2
+
+
+# ------------------------------------------------------------------
 # read_detections_tsv
 # ------------------------------------------------------------------
 
@@ -22,6 +38,7 @@ HYDROPHONE_FIELDNAMES = [
     "avg_confidence",
     "peak_confidence",
     "n_windows",
+    "detection_filename",
     "extract_filename",
     "hydrophone_name",
 ]
@@ -43,6 +60,7 @@ def test_read_detections_tsv(tmp_path: Path):
             "avg_confidence": "0.85",
             "peak_confidence": "0.92",
             "n_windows": "3",
+            "detection_filename": "20250712T070005Z_20250712T070010Z.wav",
             "extract_filename": "20250712T070005Z_20250712T070010Z.wav",
             "hydrophone_name": "rpi_north_sjc",
         },
@@ -53,6 +71,7 @@ def test_read_detections_tsv(tmp_path: Path):
             "avg_confidence": "0.78",
             "peak_confidence": "0.80",
             "n_windows": "2",
+            "detection_filename": "20250712T070100Z_20250712T070105Z.wav",
             "extract_filename": "20250712T070100Z_20250712T070105Z.wav",
             "hydrophone_name": "rpi_north_sjc",
         },

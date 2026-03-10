@@ -218,6 +218,7 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
             "avg_confidence": 0.9,
             "peak_confidence": 0.95,
             "n_windows": 1,
+            "detection_filename": "20250702T070018Z_20250702T070023Z.wav",
             "extract_filename": "20250702T070018Z_20250702T070023Z.wav",
         }
         on_chunk_complete([det], 1, 1, 60.0)

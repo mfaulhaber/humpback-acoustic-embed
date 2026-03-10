@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection Range Collision Fix (Exact-Range Canonicalization)
+
+## Outcome (2026-03-10)
+
+- Added canonical hydrophone `detection_filename` (exact event UTC range) and preserved
+  `extract_filename` as a compatibility alias for new rows.
+- Updated Hydrophone UI Detection Range to a single exact value and aligned playback +
+  extraction to the same exact clip bounds used for labeling.
+- Added legacy-read fallback to derive `detection_filename` from `filename + start_sec/end_sec`
+  when older TSV rows do not contain the new field.
+- Updated tests (unit/integration/playwright) and docs (`CLAUDE.md`, `MEMORY.md`,
+  `README.md`, `STATUS.md`) and added ADR-017 in `DECISIONS.md`.
+
+## Verification
+
+- `uv run pytest tests/` — 466 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `cd frontend && npx playwright test e2e/hydrophone-extract.spec.ts e2e/hydrophone-utc-timezone.spec.ts e2e/hydrophone-canceled-job.spec.ts` — 7 passed.
+
 # Plan: Hydrophone Timeline Start-Boundary Lookback Fix
 
 ## Outcome (2026-03-10)

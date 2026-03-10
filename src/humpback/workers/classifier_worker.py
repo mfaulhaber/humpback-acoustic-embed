@@ -43,6 +43,7 @@ HYDROPHONE_TSV_FIELDNAMES = [
     "avg_confidence",
     "peak_confidence",
     "n_windows",
+    "detection_filename",
     "extract_filename",
     "hydrophone_name",
 ]

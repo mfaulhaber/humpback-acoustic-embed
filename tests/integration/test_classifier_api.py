@@ -331,6 +331,7 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
         "avg_confidence",
         "peak_confidence",
         "n_windows",
+        "detection_filename",
         "extract_filename",
         "humpback",
         "ship",
@@ -347,6 +348,7 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
                 "avg_confidence": "0.951",
                 "peak_confidence": "0.970",
                 "n_windows": "4",
+                "detection_filename": "20250702T080155Z_20250702T080203Z.wav",
                 "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
                 "humpback": "",
                 "ship": "",
@@ -385,8 +387,10 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
         rows = list(reader)
 
     assert reader.fieldnames is not None
+    assert "detection_filename" in reader.fieldnames
     assert "extract_filename" in reader.fieldnames
     assert len(rows) == 1
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.wav"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
     assert rows[0]["humpback"] == "1"
 

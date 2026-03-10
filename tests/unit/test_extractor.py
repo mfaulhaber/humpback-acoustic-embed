@@ -332,6 +332,72 @@ class TestExtractHydrophoneLabeledSamples:
         assert rel.parts[:2] == ("rpi_orcasound_lab", "humpback")
         assert rel.parts[2:5] == ("2025", "06", "15")
 
+    def test_hydrophone_extraction_uses_detection_filename_exact_bounds(self, tmp_path):
+        """Hydrophone extraction should use exact detection_filename bounds (no snapping)."""
+        from unittest.mock import MagicMock, patch
+
+        tsv_path = tmp_path / "detections.tsv"
+        fieldnames = [
+            "filename",
+            "start_sec",
+            "end_sec",
+            "avg_confidence",
+            "peak_confidence",
+            "detection_filename",
+            "humpback",
+            "ship",
+            "background",
+        ]
+        with open(tsv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "2.0",
+                    "end_sec": "7.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "detection_filename": "20250615T080003Z_20250615T080006Z.wav",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            )
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1718438400"]
+        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path, "rpi_orcasound_lab",
+                pos_out, neg_out, mock_client,
+                target_sample_rate=sr, window_size_seconds=5.0,
+            )
+
+        assert summary["n_humpback"] == 1
+        out = (
+            pos_out
+            / "rpi_orcasound_lab"
+            / "humpback"
+            / "2025"
+            / "06"
+            / "15"
+            / "20250615T080003Z_20250615T080006Z.wav"
+        )
+        assert out.exists()
+        with wave.open(str(out), "r") as wf:
+            duration = wf.getnframes() / wf.getframerate()
+        assert abs(duration - 3.0) < 0.1
+
     def test_hydrophone_negative_paths_include_hydrophone_id(self, tmp_path):
         """Hydrophone negatives write under {negative_root}/{hydrophone_id}/{label}/..."""
         from unittest.mock import MagicMock, patch

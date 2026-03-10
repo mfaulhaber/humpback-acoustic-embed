@@ -349,3 +349,33 @@ original IDs) to include newly added files.
 - 4 new API endpoints: `GET /retrain-info`, `POST /retrain`, `GET /retrain-workflows`, `GET /retrain-workflows/{id}`
 - Folder tracing resolves import roots by walking `source_folder` + `folder_path` hierarchy
 - Embedding set collection uses folder-path prefix matching to include all files under import roots
+
+---
+
+## ADR-017: Canonical exact hydrophone detection filename and preview/extraction parity
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Hydrophone `extract_filename` values were derived from snapped extraction bounds.
+Overlapping raw detections could collapse to the same snapped range, which produced duplicate
+Detection Range values in the UI and ambiguity during label review. The labeling workflow requires
+that what users preview is exactly what gets extracted for training.
+
+**Decision**:
+- Add canonical `detection_filename` to hydrophone detection rows using exact event bounds
+  (`filename + start_sec/end_sec`) formatted as compact UTC range.
+- Keep `extract_filename` for backward compatibility, but emit it as a legacy alias of
+  `detection_filename` for new hydrophone rows.
+- Supersede ADR-012 snapped-`extract_filename` semantics for new hydrophone jobs.
+- Render a single Hydrophone Detection Range in the UI from `detection_filename`.
+- Make hydrophone playback and hydrophone extraction use the same exact clip bounds as
+  displayed in Detection Range.
+- For legacy TSV rows without `detection_filename`, derive it at content-read time from
+  `filename + start_sec/end_sec`.
+
+**Consequences**:
+- Removes snapped-range collisions in Hydrophone Detection Range display
+- Guarantees preview/extraction parity for hydrophone labeling workflows
+- Preserves backward compatibility for existing TSV consumers via `extract_filename`
+- No database migration required (TSV/API/UI behavior change only)

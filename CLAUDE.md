@@ -205,9 +205,9 @@ Hydrophone detection, playback, and extraction must use the same bounded stream 
   must fail with an explicit error message (never silently complete with zero windows)
 
 ### 4.6 Hydrophone Detection TSV Metadata
-Hydrophone detection TSV output should carry extraction-oriented metadata:
-- include `extract_filename` for hydrophone rows (`{start_utc}_{end_utc}.wav`)
-- `extract_filename` must be derived from snapped extraction bounds (window-size aligned)
+Hydrophone detection TSV output should carry canonical event metadata:
+- include `detection_filename` for hydrophone rows (`{start_utc}_{end_utc}.wav`, exact event bounds)
+- keep `extract_filename` as a legacy alias to the same exact filename for compatibility
 - include `hydrophone_name` for hydrophone rows (short form, e.g., `rpi_north_sjc`)
 - local (non-hydrophone) detection TSV output remains unchanged
 

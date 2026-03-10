@@ -6,6 +6,7 @@ import json
 import os
 import struct
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -723,6 +724,23 @@ def _parse_label(value: str | None) -> int | None:
     return None
 
 
+_COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
+
+
+def _derive_detection_filename(filename: str, start_sec: float, end_sec: float) -> str | None:
+    """Derive canonical detection filename from row filename + bounds."""
+    if end_sec <= start_sec:
+        return None
+    base = filename[:-4] if filename.endswith(".wav") else filename
+    try:
+        chunk_start = datetime.strptime(base, _COMPACT_TS_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    abs_start = chunk_start + timedelta(seconds=start_sec)
+    abs_end = chunk_start + timedelta(seconds=end_sec)
+    return f"{abs_start.strftime(_COMPACT_TS_FORMAT)}_{abs_end.strftime(_COMPACT_TS_FORMAT)}.wav"
+
+
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     """Parse detection TSV and return rows as JSON."""
@@ -739,15 +757,28 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     with open(tsv_path, newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
+            start_sec = float(row.get("start_sec", 0))
+            end_sec = float(row.get("end_sec", 0))
+            detection_filename = (row.get("detection_filename", "").strip() or None)
+            if detection_filename is None:
+                detection_filename = _derive_detection_filename(
+                    row.get("filename", ""),
+                    start_sec,
+                    end_sec,
+                )
+            extract_filename = (row.get("extract_filename", "").strip() or None)
+            if extract_filename is None and job.hydrophone_id is not None:
+                extract_filename = detection_filename
             rows.append(
                 {
                     "filename": row.get("filename", ""),
-                    "start_sec": float(row.get("start_sec", 0)),
-                    "end_sec": float(row.get("end_sec", 0)),
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
                     "avg_confidence": float(row.get("avg_confidence", 0)),
                     "peak_confidence": float(row.get("peak_confidence", 0)),
                     "n_windows": int(row["n_windows"]) if row.get("n_windows") else None,
-                    "extract_filename": (row.get("extract_filename", "").strip() or None),
+                    "detection_filename": detection_filename,
+                    "extract_filename": extract_filename,
                     "hydrophone_name": (row.get("hydrophone_name", "").strip() or None),
                     "humpback": _parse_label(row.get("humpback")),
                     "ship": _parse_label(row.get("ship")),

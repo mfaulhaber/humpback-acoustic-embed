@@ -380,6 +380,8 @@ Queue safety note:
 - `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using a
   range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy
   fallback to `job.start_timestamp` for older jobs.
+- `GET /classifier/detection-jobs/{id}/content` (hydrophone jobs) returns canonical
+  `detection_filename`; when absent in legacy TSV rows it is derived from `filename + start_sec/end_sec`.
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
   jobs) is local-cache-authoritative (same cache root precedence as playback) and does not call S3;
   rows missing local cache audio are skipped and counted in `n_skipped`.
@@ -410,7 +412,7 @@ Queue safety note:
   {classifier_model_id}/model.joblib              (StandardScaler + LogisticRegression pipeline)
   {classifier_model_id}/training_summary.json
 /detections/
-  {detection_job_id}/detections.tsv               (local: filename/start/end/confidence fields; hydrophone adds extract_filename)
+  {detection_job_id}/detections.tsv               (local: filename/start/end/confidence fields; hydrophone adds detection_filename + extract_filename alias)
   {detection_job_id}/run_summary.json
 ```
 
@@ -447,8 +449,9 @@ Binary Classifier:
 - Expandable detection job rows show sortable TSV detection data (default: avg_confidence desc)
 - Inline audio playback of detected segments via streaming WAV slice endpoint
 - Hydrophone tab Extract button activates from saved labels on the expanded completed job
-- Hydrophone Detection Range displays extraction-aligned UTC span; raw detection range remains visible as secondary audit context
-- Hydrophone detection content table uses `Duration` (window-snapped extraction length) instead of raw start/end columns
+- Hydrophone Detection Range displays canonical exact UTC span (`detection_filename`) as a single value
+- Hydrophone playback and hydrophone extraction use the same exact clip bounds shown in Detection Range
+- Hydrophone detection content table uses `Duration` derived from the same exact clip bounds
 - Server-side folder browser endpoint (`GET /classifier/browse-directories`) for selecting negative audio and detection audio folders
 
 Editing:

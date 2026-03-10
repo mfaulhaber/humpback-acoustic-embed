@@ -464,6 +464,7 @@ export interface DetectionRow {
   avg_confidence: number;
   peak_confidence: number;
   n_windows: number | null;
+  detection_filename?: string | null;
   extract_filename?: string | null;
   hydrophone_name?: string | null;
   humpback: number | null;

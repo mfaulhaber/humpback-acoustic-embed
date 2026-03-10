@@ -326,6 +326,7 @@ def test_write_tsv_with_hydrophone_extract_filename_column(tmp_path):
         "avg_confidence",
         "peak_confidence",
         "n_windows",
+        "detection_filename",
         "extract_filename",
     ]
     detections = [
@@ -336,6 +337,7 @@ def test_write_tsv_with_hydrophone_extract_filename_column(tmp_path):
             "avg_confidence": 0.95,
             "peak_confidence": 0.97,
             "n_windows": 4,
+            "detection_filename": "20250702T080155Z_20250702T080205Z.wav",
             "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
         },
     ]
@@ -347,6 +349,7 @@ def test_write_tsv_with_hydrophone_extract_filename_column(tmp_path):
         rows = list(reader)
 
     assert len(rows) == 1
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
     assert reader.fieldnames == fieldnames
 
@@ -365,6 +368,7 @@ def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
         "avg_confidence",
         "peak_confidence",
         "n_windows",
+        "detection_filename",
         "extract_filename",
     ]
     det1 = [
@@ -375,6 +379,7 @@ def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
             "avg_confidence": 0.95,
             "peak_confidence": 0.97,
             "n_windows": 4,
+            "detection_filename": "20250702T080155Z_20250702T080205Z.wav",
             "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
         },
     ]
@@ -386,6 +391,7 @@ def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
             "avg_confidence": 0.91,
             "peak_confidence": 0.93,
             "n_windows": 3,
+            "detection_filename": "20250702T080225Z_20250702T080235Z.wav",
             "extract_filename": "20250702T080225Z_20250702T080235Z.wav",
         },
     ]
@@ -398,6 +404,8 @@ def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
         rows = list(reader)
 
     assert len(rows) == 2
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[1]["detection_filename"] == "20250702T080225Z_20250702T080235Z.wav"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
     assert rows[1]["extract_filename"] == "20250702T080225Z_20250702T080235Z.wav"
     assert reader.fieldnames == fieldnames

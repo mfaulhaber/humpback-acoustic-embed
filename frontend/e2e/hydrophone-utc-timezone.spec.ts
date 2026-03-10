@@ -216,6 +216,7 @@ test.describe("Hydrophone UTC timezone semantics", () => {
           avg_confidence: 0.82,
           peak_confidence: 0.86,
           n_windows: 2,
+          detection_filename: "20250704T165010Z_20250704T165016Z.wav",
           extract_filename: "20250704T165010Z_20250704T165020Z.wav",
           humpback: null,
           ship: null,
@@ -244,7 +245,6 @@ test.describe("Hydrophone UTC timezone semantics", () => {
     await expect(innerTable).toBeVisible();
 
     await expect(innerTable.locator(".clip-range").first()).toContainText("Z_");
-    await expect(innerTable.locator(".raw-range").first()).toContainText("raw:");
-    await expect(innerTable.locator(".raw-range").first()).toContainText("Z_");
+    await expect(innerTable.locator(".raw-range")).toHaveCount(0);
   });
 });

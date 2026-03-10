@@ -91,11 +91,8 @@ test.describe("Hydrophone extract activation", () => {
     expect(Number.isFinite(displayedDurationSec)).toBe(true);
     expect(displayedDurationSec).toBeCloseTo((clipRange.endMs - clipRange.startMs) / 1000, 1);
 
-    const rawRangeRow = detectionRangeCell.locator(".raw-range");
-    await expect(rawRangeRow).toContainText("raw:");
     const rangeTitle = await detectionRangeCell.getAttribute("title");
-    expect(rangeTitle).toContain("Extract range:");
-    expect(rangeTitle).toContain("Raw detection:");
+    expect(rangeTitle).toContain("Z_");
 
     await firstDataRow.locator("td:nth-child(1) button").click();
     await page.waitForTimeout(300);

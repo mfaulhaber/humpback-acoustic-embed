@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _TS_PATTERN = re.compile(
     r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z"
 )
+_COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
 def parse_recording_timestamp(filename: str) -> datetime | None:
@@ -201,6 +202,24 @@ def _format_compact_ts(dt: datetime) -> str:
     return dt.strftime("%Y%m%dT%H%M%SZ")
 
 
+def _parse_compact_range_filename(
+    filename: str,
+) -> tuple[datetime, datetime] | None:
+    """Parse compact UTC range filename into (start, end) datetimes."""
+    base = filename[:-4] if filename.endswith(".wav") else filename
+    parts = base.split("_")
+    if len(parts) != 2:
+        return None
+    try:
+        start = datetime.strptime(parts[0], _COMPACT_TS_FORMAT).replace(tzinfo=timezone.utc)
+        end = datetime.strptime(parts[1], _COMPACT_TS_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if end <= start:
+        return None
+    return start, end
+
+
 def extract_hydrophone_labeled_samples(
     tsv_path: str | Path,
     hydrophone_id: str,
@@ -283,19 +302,39 @@ def extract_hydrophone_labeled_samples(
         for row in rows:
             start_sec = float(row.get("start_sec", 0))
             end_sec = float(row.get("end_sec", 0))
+            detection_filename = (
+                row.get("detection_filename", "").strip()
+                or None
+            )
+            parsed_detection_range = (
+                _parse_compact_range_filename(detection_filename)
+                if detection_filename
+                else None
+            )
 
-            # Snap to window_size multiples for clean training samples
-            start_sec = math.floor(start_sec / window_size_seconds) * window_size_seconds
-            end_sec = math.ceil(end_sec / window_size_seconds) * window_size_seconds
+            # Prefer canonical detection filename bounds when available so playback and
+            # extracted samples stay aligned for labeling.
+            if parsed_detection_range is not None:
+                abs_start, abs_end = parsed_detection_range
+                start_sec = (abs_start - recording_ts).total_seconds()
+                end_sec = (abs_end - recording_ts).total_seconds()
+            else:
+                abs_start = recording_ts + timedelta(seconds=start_sec)
+                abs_end = recording_ts + timedelta(seconds=end_sec)
+                detection_filename = (
+                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}.wav"
+                )
 
-            # Compute absolute UTC times
-            abs_start = recording_ts + timedelta(seconds=start_sec)
-            abs_end = recording_ts + timedelta(seconds=end_sec)
+            if abs_end <= abs_start:
+                counts["n_skipped"] += 1
+                continue
+
             abs_start_ts = abs_start.timestamp()
             abs_end_ts = abs_end.timestamp()
 
             # Output filename and folder
-            wav_name = f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}.wav"
+            assert detection_filename is not None
+            wav_name = detection_filename
             date_folder = _date_folder(abs_start)
 
             # Route to label-specific folders
@@ -321,7 +360,7 @@ def extract_hydrophone_labeled_samples(
             if not pending_writes:
                 continue
 
-            duration = end_sec - start_sec
+            duration = (abs_end - abs_start).total_seconds()
             segment: np.ndarray | None = None
 
             if use_stream_resolver:
