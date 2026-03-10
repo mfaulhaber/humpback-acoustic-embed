@@ -2,6 +2,7 @@
 
 import csv
 import logging
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -123,6 +124,76 @@ def merge_detection_events(
         )
 
     return events
+
+
+def snap_event_bounds(
+    start_sec: float,
+    end_sec: float,
+    window_size_seconds: float,
+) -> tuple[float, float]:
+    """Snap event bounds outward to window-size multiples."""
+    if window_size_seconds <= 0:
+        raise ValueError("window_size_seconds must be > 0")
+    if end_sec <= start_sec:
+        return start_sec, end_sec
+    snapped_start = math.floor(start_sec / window_size_seconds) * window_size_seconds
+    snapped_end = math.ceil(end_sec / window_size_seconds) * window_size_seconds
+    if snapped_end <= snapped_start:
+        snapped_end = snapped_start + window_size_seconds
+    return float(snapped_start), float(snapped_end)
+
+
+def snap_and_merge_detection_events(
+    events: list[dict],
+    window_size_seconds: float,
+) -> list[dict]:
+    """Snap events to canonical bounds and merge snapped-range collisions."""
+    if not events:
+        return []
+
+    grouped: dict[tuple[float, float], dict] = {}
+    for event in events:
+        raw_start = float(event["start_sec"])
+        raw_end = float(event["end_sec"])
+        snap_start, snap_end = snap_event_bounds(
+            raw_start, raw_end, window_size_seconds
+        )
+        key = (snap_start, snap_end)
+
+        n_windows = int(event.get("n_windows", 1) or 1)
+        avg_conf = float(event.get("avg_confidence", 0.0))
+        peak_conf = float(event.get("peak_confidence", 0.0))
+
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = {
+                "start_sec": snap_start,
+                "end_sec": snap_end,
+                "avg_confidence": avg_conf,
+                "peak_confidence": peak_conf,
+                "n_windows": n_windows,
+                "raw_start_sec": raw_start,
+                "raw_end_sec": raw_end,
+                "merged_event_count": 1,
+                "_weighted_sum": avg_conf * n_windows,
+                "_weight": n_windows,
+            }
+            continue
+
+        existing["_weighted_sum"] += avg_conf * n_windows
+        existing["_weight"] += n_windows
+        existing["avg_confidence"] = existing["_weighted_sum"] / existing["_weight"]
+        existing["peak_confidence"] = max(existing["peak_confidence"], peak_conf)
+        existing["n_windows"] += n_windows
+        existing["raw_start_sec"] = min(existing["raw_start_sec"], raw_start)
+        existing["raw_end_sec"] = max(existing["raw_end_sec"], raw_end)
+        existing["merged_event_count"] += 1
+
+    merged = sorted(grouped.values(), key=lambda e: (e["start_sec"], e["end_sec"]))
+    for event in merged:
+        event.pop("_weighted_sum", None)
+        event.pop("_weight", None)
+    return merged
 
 
 def run_detection(
@@ -278,10 +349,11 @@ def run_detection(
                         }
                     )
 
-            # Merge events using hysteresis
+            # Merge events using hysteresis, then canonicalize snapped bounds.
             events = merge_detection_events(
                 window_records, high_threshold, low_threshold
             )
+            events = snap_and_merge_detection_events(events, window_size_seconds)
 
             for event in events:
                 event["filename"] = rel_path
@@ -356,6 +428,9 @@ TSV_FIELDNAMES = [
     "avg_confidence",
     "peak_confidence",
     "n_windows",
+    "raw_start_sec",
+    "raw_end_sec",
+    "merged_event_count",
 ]
 
 

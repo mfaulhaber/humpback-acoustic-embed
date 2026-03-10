@@ -11,6 +11,7 @@ from sklearn.pipeline import Pipeline
 
 from humpback.classifier.detector import (
     merge_detection_events,
+    snap_and_merge_detection_events,
 )
 from humpback.classifier.s3_stream import (
     CachingS3Client,
@@ -32,7 +33,7 @@ def _build_detection_filename(
     start_sec: float,
     end_sec: float,
 ) -> str | None:
-    """Build exact detection filename from chunk filename and raw event bounds."""
+    """Build canonical detection filename from chunk filename and event bounds."""
     if end_sec <= start_sec:
         return None
 
@@ -210,8 +211,9 @@ def run_hydrophone_detection(
             for meta, conf in zip(window_metas, window_confidences)
         ]
 
-        # Merge events
+        # Merge events, then canonicalize to snapped ranges.
         events = merge_detection_events(window_records, high_threshold, low_threshold)
+        events = snap_and_merge_detection_events(events, window_size_seconds)
 
         # Synthetic filename from chunk UTC time
         synthetic_filename = chunk_start_utc.strftime("%Y%m%dT%H%M%SZ") + ".wav"

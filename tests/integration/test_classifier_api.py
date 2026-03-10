@@ -194,6 +194,9 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
     assert len(rows) == 1
     assert rows[0]["filename"] == "test.wav"
     assert rows[0]["avg_confidence"] == 0.85
+    assert rows[0]["raw_start_sec"] == 1.0
+    assert rows[0]["raw_end_sec"] == 6.0
+    assert rows[0]["merged_event_count"] == 1
 
     # Job list should include progress fields
     resp = await client.get(f"/classifier/detection-jobs/{job_id}")

@@ -208,10 +208,12 @@ Hydrophone detection, playback, and extraction must use the same bounded stream 
 
 ### 4.6 Hydrophone Detection TSV Metadata
 Hydrophone detection TSV output should carry canonical event metadata:
-- include `detection_filename` for hydrophone rows (`{start_utc}_{end_utc}.wav`, exact event bounds)
-- keep `extract_filename` as a legacy alias to the same exact filename for compatibility
+- canonical `start_sec`/`end_sec` represent snapped clip bounds (window-size multiples)
+- include `raw_start_sec`/`raw_end_sec` and `merged_event_count` for audit/debug provenance
+- include `detection_filename` for hydrophone rows (`{start_utc}_{end_utc}.wav`, snapped canonical bounds)
+- keep `extract_filename` as a legacy alias to the same canonical filename for compatibility
 - include `hydrophone_name` for hydrophone rows (short form, e.g., `rpi_north_sjc`)
-- local (non-hydrophone) detection TSV output remains unchanged
+- local detection TSV rows follow the same canonical snapped bounds + raw audit metadata
 
 ### 4.7 Hydrophone Job Lifecycle
 Hydrophone detection jobs support the following status transitions:

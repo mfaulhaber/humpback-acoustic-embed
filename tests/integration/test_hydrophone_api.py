@@ -461,7 +461,7 @@ async def test_hydrophone_content_includes_extract_filename(client, app_settings
 async def test_hydrophone_content_derives_detection_filename_for_legacy_rows(
     client, app_settings
 ):
-    """Legacy hydrophone TSV rows without detection_filename should derive exact range."""
+    """Legacy rows without detection_filename should reuse extract_filename when available."""
     import csv
 
     from sqlalchemy import insert
@@ -520,8 +520,169 @@ async def test_hydrophone_content_derives_detection_filename_for_legacy_rows(
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.wav"
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[0]["raw_start_sec"] == 37.0
+    assert rows[0]["raw_end_sec"] == 45.0
+    assert rows[0]["merged_event_count"] == 1
+
+    await engine.dispose()
+
+
+async def test_hydrophone_download_normalizes_legacy_detection_filename(
+    client, app_settings
+):
+    """Download endpoint should normalize legacy rows without rewriting source TSV."""
+    import csv
+    import io
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "extract_filename",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": "37.0",
+                "end_sec": "45.0",
+                "avg_confidence": "0.951",
+                "peak_confidence": "0.970",
+                "n_windows": "4",
+                "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1751439600.0,
+                end_timestamp=1751461200.0,
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/download")
+    assert resp.status_code == 200
+
+    reader = csv.DictReader(io.StringIO(resp.text), delimiter="\t")
+    rows = list(reader)
+    assert len(rows) == 1
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[0]["raw_start_sec"] == "37.0"
+    assert rows[0]["raw_end_sec"] == "45.0"
+    assert rows[0]["merged_event_count"] == "1"
+
+    await engine.dispose()
+
+
+async def test_hydrophone_download_returns_streaming_response(client, app_settings):
+    """Download route should stream normalized TSV content."""
+    import csv
+    import io
+
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy import insert
+
+    from humpback.api.routers.classifier import download_detections
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "extract_filename",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": "37.0",
+                "end_sec": "45.0",
+                "avg_confidence": "0.951",
+                "peak_confidence": "0.970",
+                "n_windows": "4",
+                "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1751439600.0,
+                end_timestamp=1751461200.0,
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    async with sf() as session:
+        response = await download_detections(job_id, session)
+
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, str):
+            chunks.append(chunk.encode())
+        else:
+            chunks.append(chunk)
+    text = b"".join(chunks).decode()
+    reader = csv.DictReader(io.StringIO(text), delimiter="\t")
+    rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[0]["raw_start_sec"] == "37.0"
+    assert rows[0]["raw_end_sec"] == "45.0"
+    assert rows[0]["merged_event_count"] == "1"
 
     await engine.dispose()
 

@@ -84,6 +84,8 @@ def extract_labeled_samples(
     audio_folder = Path(audio_folder)
     positive_output_path = Path(positive_output_path)
     negative_output_path = Path(negative_output_path)
+    if window_size_seconds <= 0:
+        raise ValueError("window_size_seconds must be > 0")
 
     # Read TSV and filter to labeled rows
     labeled_rows: list[dict] = []
@@ -120,12 +122,6 @@ def extract_labeled_samples(
         for row in rows:
             start_sec = float(row.get("start_sec", 0))
             end_sec = float(row.get("end_sec", 0))
-
-            # Snap to window_size multiples for clean training samples
-            start_sec = (
-                math.floor(start_sec / window_size_seconds) * window_size_seconds
-            )
-            end_sec = math.ceil(end_sec / window_size_seconds) * window_size_seconds
 
             start_sample = int(start_sec * sr)
             end_sample = int(end_sec * sr)
@@ -223,6 +219,23 @@ def _parse_compact_range_filename(
     return start, end
 
 
+def _snap_range_for_window(
+    start_sec: float,
+    end_sec: float,
+    window_size_seconds: float,
+) -> tuple[float, float]:
+    """Snap bounds outward to window-size multiples."""
+    if window_size_seconds <= 0:
+        raise ValueError("window_size_seconds must be > 0")
+    if end_sec <= start_sec:
+        return start_sec, end_sec
+    start_sec = math.floor(start_sec / window_size_seconds) * window_size_seconds
+    end_sec = math.ceil(end_sec / window_size_seconds) * window_size_seconds
+    if end_sec <= start_sec:
+        end_sec = start_sec + window_size_seconds
+    return float(start_sec), float(end_sec)
+
+
 def extract_hydrophone_labeled_samples(
     tsv_path: str | Path,
     hydrophone_id: str,
@@ -308,19 +321,35 @@ def extract_hydrophone_labeled_samples(
             start_sec = float(row.get("start_sec", 0))
             end_sec = float(row.get("end_sec", 0))
             detection_filename = row.get("detection_filename", "").strip() or None
+            extract_filename = row.get("extract_filename", "").strip() or None
             parsed_detection_range = (
                 _parse_compact_range_filename(detection_filename)
                 if detection_filename
                 else None
             )
+            parsed_extract_range = (
+                _parse_compact_range_filename(extract_filename)
+                if extract_filename
+                else None
+            )
 
-            # Prefer canonical detection filename bounds when available so playback and
-            # extracted samples stay aligned for labeling.
+            # Resolve bounds with precedence:
+            # detection_filename -> extract_filename -> snapped start/end fallback.
             if parsed_detection_range is not None:
                 abs_start, abs_end = parsed_detection_range
                 start_sec = (abs_start - recording_ts).total_seconds()
                 end_sec = (abs_end - recording_ts).total_seconds()
+            elif parsed_extract_range is not None:
+                abs_start, abs_end = parsed_extract_range
+                start_sec = (abs_start - recording_ts).total_seconds()
+                end_sec = (abs_end - recording_ts).total_seconds()
+                detection_filename = (
+                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}.wav"
+                )
             else:
+                start_sec, end_sec = _snap_range_for_window(
+                    start_sec, end_sec, window_size_seconds
+                )
                 abs_start = recording_ts + timedelta(seconds=start_sec)
                 abs_end = recording_ts + timedelta(seconds=end_sec)
                 detection_filename = (

@@ -4,11 +4,29 @@
 
 ## Active
 
-(none)
+- None
 
 ---
 
 ## Recently Completed
+
+# Plan: Snapped Canonical Detection Ranges
+
+## Outcome (2026-03-10)
+
+- Canonicalized detection ranges to snapped window-aligned bounds before labeling for local
+  and hydrophone workflows, while preserving unsnapped audit metadata
+  (`raw_start_sec`, `raw_end_sec`, `merged_event_count`).
+- Aligned preview/label/extract behavior by using canonical bounds end-to-end, with
+  hydrophone legacy normalization precedence:
+  `detection_filename -> extract_filename -> snapped-from-range`.
+- Fixed download scalability regression by streaming normalized TSV rows instead of buffering
+  full files in memory.
+
+## Verification
+
+- `uv run pytest tests/` — 471 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
 
 # Plan: Hydrophone Detection Range Collision Fix (Exact-Range Canonicalization)
 

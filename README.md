@@ -32,7 +32,7 @@ Key features:
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 - Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
-- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping (playlist durations + numeric segment ordering) with legacy anchor fallback for older jobs; folder discovery starts at requested range and expands backward using configurable hour-based increments (default `4h`) up to configurable max lookback (default `168h`) until overlap at the requested start boundary is found (or max lookback is reached), then timeline clipping is applied; hydrophone extraction is local-cache-authoritative (no S3 fallback during extract), skipping rows with missing cached audio; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`); Hydrophone table shows exact UTC detection ranges/durations from canonical `detection_filename` (single displayed range); Hydrophone playback and extraction use those same exact bounds; Hydrophone Start/End inputs and Date Range displays are UTC-only
+- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping (playlist durations + numeric segment ordering) with legacy anchor fallback for older jobs; folder discovery starts at requested range and expands backward using configurable hour-based increments (default `4h`) up to configurable max lookback (default `168h`) until overlap at the requested start boundary is found (or max lookback is reached), then timeline clipping is applied; hydrophone extraction is local-cache-authoritative (no S3 fallback during extract), skipping rows with missing cached audio; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`); detection rows use canonical snapped clip bounds for preview/label/extract parity and preserve unsnapped audit bounds (`raw_start_sec`, `raw_end_sec`, `merged_event_count`); Hydrophone Start/End inputs and Date Range displays are UTC-only
 - Folder import: reference audio files in-place from local filesystem folders without copying
 
 ---
@@ -450,7 +450,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/classifier/detection-jobs` | List detection jobs |
 | GET | `/classifier/detection-jobs/{id}` | Get detection job |
 | GET | `/classifier/detection-jobs/{id}/download` | Download detections TSV |
-| GET | `/classifier/detection-jobs/{id}/content` | Get detection TSV rows as JSON (hydrophone rows include canonical `detection_filename`, plus `extract_filename` alias) |
+| GET | `/classifier/detection-jobs/{id}/content` | Get normalized detection rows as JSON (canonical snapped clip metadata + raw audit fields; hydrophone rows include `detection_filename` with `extract_filename` compatibility alias) |
 | GET | `/classifier/detection-jobs/{id}/audio-slice` | Stream WAV slice (`?filename=&start_sec=&duration_sec=`); hydrophone jobs use range-bounded stream-timeline mapping with legacy fallback |
 | DELETE | `/classifier/training-jobs/{id}` | Delete training job (cascade-deletes model) |
 | POST | `/classifier/training-jobs/bulk-delete` | Bulk delete training jobs |
@@ -498,7 +498,7 @@ data/
   clusters/{clustering_job_id}/refined_embeddings.parquet (opt-in, for re-clustering)
   classifiers/{classifier_model_id}/model.joblib         (binary classifier pipeline)
   classifiers/{classifier_model_id}/training_summary.json
-  detections/{detection_job_id}/detections.tsv            (detection output; hydrophone rows include detection_filename + extract_filename alias)
+  detections/{detection_job_id}/detections.tsv            (detection output; canonical snapped start/end + raw audit fields; hydrophone rows include detection_filename + extract_filename alias)
   detections/{detection_job_id}/run_summary.json
 ```
 

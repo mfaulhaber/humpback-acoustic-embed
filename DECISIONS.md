@@ -379,3 +379,33 @@ that what users preview is exactly what gets extracted for training.
 - Guarantees preview/extraction parity for hydrophone labeling workflows
 - Preserves backward compatibility for existing TSV consumers via `extract_filename`
 - No database migration required (TSV/API/UI behavior change only)
+
+---
+
+## ADR-018: Canonical snapped clip ranges for detection labeling and extraction parity
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Users label detections from previewed audio, then extract labeled clips for
+training. Exact hysteresis event bounds (for example 7s) caused ambiguity about whether
+clips should be window-aligned for model training. Applying snapping only at extraction
+time created mismatch risk between what users labeled and what was exported.
+
+**Decision**:
+- Canonicalize detection rows to snapped clip bounds (`start_sec`, `end_sec`) before
+  labeling for both local and hydrophone jobs.
+- Preserve raw unsnapped event bounds in TSV/API metadata (`raw_start_sec`, `raw_end_sec`)
+  plus `merged_event_count` when multiple raw events collapse to one snapped clip.
+- Merge snapped-range collisions deterministically (weighted average confidence by
+  `n_windows`, max peak confidence, summed `n_windows`).
+- Align preview and extraction to the same canonical snapped clip bounds.
+- Keep `detection_filename` canonical for hydrophone rows and `extract_filename` as a
+  compatibility alias; for legacy rows missing `detection_filename`, normalization prefers
+  valid `extract_filename`, then derives snapped canonical filename from row bounds.
+
+**Consequences**:
+- Prevents preview/label/extract mismatches for both hydrophone and local workflows
+- Restores clean window-aligned clip exports without post-label widening
+- Retains raw event precision for audit/debugging without changing label keys
+- No database migration required (TSV/API/UI behavior change only)

@@ -57,6 +57,7 @@ type HydratedDetectionRow = DetectionRow & {
   _clipEndSec: number;
   _clipDurationSec: number;
   _clipRange: string;
+  _rawRange: string | null;
   _playKey: string;
 };
 
@@ -140,6 +141,13 @@ function resolveClipTiming(
       ? row.detection_filename.trim()
       : null;
   const detectionFilename = directDetectionFilename ?? derivedDetectionFilename;
+  const auditStartSec =
+    typeof row.raw_start_sec === "number" ? row.raw_start_sec : rawStartSec;
+  const auditEndSec = typeof row.raw_end_sec === "number" ? row.raw_end_sec : rawEndSec;
+  const rawRange =
+    auditStartSec !== rawStartSec || auditEndSec !== rawEndSec
+      ? computeUtcRange(row.filename, auditStartSec, auditEndSec)
+      : null;
 
   const baseTs = parseCompactUtcMs(row.filename.replace(".wav", ""));
   if (baseTs !== null && detectionFilename) {
@@ -155,19 +163,21 @@ function resolveClipTiming(
           _clipEndSec: clipEndSec,
           _clipDurationSec: clipEndSec - clipStartSec,
           _clipRange: `${formatCompactUtc(detected.startMs)}_${formatCompactUtc(detected.endMs)}`,
+          _rawRange: rawRange,
         };
       }
     }
   }
 
-  const rawRange = computeUtcRange(row.filename, rawStartSec, rawEndSec);
+  const rawClipRange = computeUtcRange(row.filename, rawStartSec, rawEndSec);
   return {
     _detectionFilename: detectionFilename,
     _clipSource: "raw",
     _clipStartSec: rawStartSec,
     _clipEndSec: rawEndSec,
     _clipDurationSec: rawDurationSec,
-    _clipRange: rawRange,
+    _clipRange: rawClipRange,
+    _rawRange: null,
   };
 }
 
@@ -1192,7 +1202,11 @@ function HydrophoneContentTable({
                 </td>
                 <td
                   className="px-3 py-1.5 max-w-80"
-                  title={row._detectionFilename ?? row._clipRange}
+                  title={
+                    row._rawRange
+                      ? `${row._detectionFilename ?? row._clipRange}\nRaw: ${row._rawRange}`
+                      : row._detectionFilename ?? row._clipRange
+                  }
                 >
                   <div className="font-mono clip-range">{row._clipRange}</div>
                 </td>

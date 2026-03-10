@@ -282,9 +282,9 @@ class TestExtractLabeledSamples:
         assert summary["n_ship"] == 1
 
 
-class TestExtractionSnapping:
-    def test_extraction_snaps_to_window_multiples(self, tmp_path):
-        """Event [2.5, 10.0] with window_size=5.0 snaps to [0.0, 10.0]."""
+class TestExtractionBounds:
+    def test_extraction_uses_exact_tsv_bounds(self, tmp_path):
+        """Local extraction should use labeled bounds directly (no extra snapping)."""
         audio_folder = tmp_path / "audio"
         audio_folder.mkdir()
         _make_wav(audio_folder / "test.wav", duration=15.0)
@@ -314,12 +314,12 @@ class TestExtractionSnapping:
 
         humpback_files = list(pos_out.rglob("*.wav"))
         assert len(humpback_files) == 1
-        # Snapped to [0.0, 10.0] = 10.0s
+        # Exact [2.5, 10.0] = 7.5s
         import wave
 
         with wave.open(str(humpback_files[0]), "r") as wf:
             duration = wf.getnframes() / wf.getframerate()
-        assert abs(duration - 10.0) < 0.1
+        assert abs(duration - 7.5) < 0.1
 
     def test_extraction_exact_multiple_unchanged(self, tmp_path):
         """Event [5.0, 15.0] stays [5.0, 15.0] = 10.0s."""
@@ -358,8 +358,8 @@ class TestExtractionSnapping:
             duration = wf.getnframes() / wf.getframerate()
         assert abs(duration - 10.0) < 0.1
 
-    def test_extraction_backward_compat_default(self, tmp_path):
-        """No window_size param defaults to 5.0."""
+    def test_extraction_default_window_param_does_not_widen_bounds(self, tmp_path):
+        """Default window_size parameter should not widen local extraction clips."""
         audio_folder = tmp_path / "audio"
         audio_folder.mkdir()
         _make_wav(audio_folder / "test.wav", duration=15.0)
@@ -383,7 +383,7 @@ class TestExtractionSnapping:
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        # No window_size_seconds → defaults to 5.0 → [2.5, 7.5] snaps to [0.0, 10.0]
+        # No window_size_seconds argument: extract exact [2.5, 7.5] clip.
         extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
 
         humpback_files = list(pos_out.rglob("*.wav"))
@@ -392,7 +392,7 @@ class TestExtractionSnapping:
 
         with wave.open(str(humpback_files[0]), "r") as wf:
             duration = wf.getnframes() / wf.getframerate()
-        assert abs(duration - 10.0) < 0.1
+        assert abs(duration - 5.0) < 0.1
 
 
 class TestExtractHydrophoneLabeledSamples:
@@ -478,6 +478,78 @@ class TestExtractHydrophoneLabeledSamples:
                     "avg_confidence": "0.9",
                     "peak_confidence": "0.95",
                     "detection_filename": "20250615T080003Z_20250615T080006Z.wav",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            )
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1718438400"]
+        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
+            )
+
+        assert summary["n_humpback"] == 1
+        out = (
+            pos_out
+            / "rpi_orcasound_lab"
+            / "humpback"
+            / "2025"
+            / "06"
+            / "15"
+            / "20250615T080003Z_20250615T080006Z.wav"
+        )
+        assert out.exists()
+        with wave.open(str(out), "r") as wf:
+            duration = wf.getnframes() / wf.getframerate()
+        assert abs(duration - 3.0) < 0.1
+
+    def test_hydrophone_extraction_uses_extract_filename_when_detection_missing(
+        self, tmp_path
+    ):
+        """Legacy rows should use extract_filename bounds when detection_filename is missing."""
+        from unittest.mock import MagicMock, patch
+
+        tsv_path = tmp_path / "detections.tsv"
+        fieldnames = [
+            "filename",
+            "start_sec",
+            "end_sec",
+            "avg_confidence",
+            "peak_confidence",
+            "extract_filename",
+            "humpback",
+            "ship",
+            "background",
+        ]
+        with open(tsv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "2.0",
+                    "end_sec": "7.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "extract_filename": "20250615T080003Z_20250615T080006Z.wav",
                     "humpback": "1",
                     "ship": "",
                     "background": "",

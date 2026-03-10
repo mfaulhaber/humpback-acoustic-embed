@@ -467,6 +467,9 @@ export interface DetectionRow {
   detection_filename?: string | null;
   extract_filename?: string | null;
   hydrophone_name?: string | null;
+  raw_start_sec?: number | null;
+  raw_end_sec?: number | null;
+  merged_event_count?: number | null;
   humpback: number | null;
   ship: number | null;
   background: number | null;

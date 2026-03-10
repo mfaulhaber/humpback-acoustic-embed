@@ -51,9 +51,11 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Detection job: scan audio folder with configurable `hop_seconds` (default 1.0s)
 - Hysteresis event merging with dual thresholds (`high_threshold`/`low_threshold`)
 - Per-event `n_windows` count in TSV output
+- Canonical snapped detection bounds (`start_sec`/`end_sec`) before labeling/extraction
+- Raw event audit metadata in TSV (`raw_start_sec`, `raw_end_sec`, `merged_event_count`)
 - Incremental detection results: file-by-file progress with live UI updates during job execution
 - Inline audio playback and label annotation available while detection is still running
-- Extraction boundary snapping to `window_size` multiples
+- Local extraction uses canonical labeled bounds directly (no extraction-time widening)
 - Inline audio playback of detected segments
 - Detection label annotation with keyboard shortcuts
 - Detection label API enforces label values in `{0, 1, null}`
@@ -81,8 +83,9 @@ Current state of the humpback acoustic embedding and clustering platform.
   in the requested time range (no silent complete-with-zero-windows)
 - Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
   with legacy fallback to `job.start_timestamp`
-- Hydrophone TSV rows include canonical `detection_filename` plus legacy `extract_filename` alias
-- UTC range display in Detection Range column uses exact `detection_filename` (single value)
+- Hydrophone TSV rows include canonical snapped `detection_filename` plus legacy `extract_filename` alias
+- Legacy TSV normalization for content/download prefers `extract_filename` when `detection_filename` is missing, otherwise derives snapped canonical ranges
+- Detection TSV download streams normalized rows incrementally (avoids full-file in-memory buffering)
 - WAV export for hydrophone jobs: reads from local HLS cache (no S3 calls during extraction), writes labeled samples to positive/negative folders; missing cached rows are skipped and counted in `n_skipped`
 - Hydrophone extraction output paths include hydrophone short label partitioning:
   `{positive|negative}_root/{hydrophone_id}/{label}/YYYY/MM/DD/*.wav`
@@ -106,9 +109,10 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Bulk delete for training/detection jobs
 - Expandable detection rows with sortable TSV data
 - Hydrophone Extract button enablement is based on saved labels of the expanded completed or canceled job
-- Hydrophone detection table uses exact UTC Detection Range and Duration from canonical
+- Hydrophone detection table uses canonical snapped UTC Detection Range and Duration from
   `detection_filename` (no secondary raw-range row)
-- Hydrophone playback and extraction use the same exact clip bounds shown in Detection Range
+- Hydrophone playback and extraction use the same canonical bounds shown in Detection Range
+- Hydrophone row tooltip exposes unsnapped raw audit range when it differs from canonical bounds
 - Hydrophone job date range uses popover picker with dual-month calendar and HH:MM time inputs (UTC-only)
 - Hydrophone active job panel shows Pause/Resume and Cancel controls
   (paused jobs remain in active panel; canceled jobs move to Previous Jobs with full functionality)

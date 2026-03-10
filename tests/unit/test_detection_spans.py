@@ -1,6 +1,11 @@
 """Exhaustive tests for merge_detection_spans and merge_detection_events."""
 
-from humpback.classifier.detector import merge_detection_events, merge_detection_spans
+from humpback.classifier.detector import (
+    merge_detection_events,
+    merge_detection_spans,
+    snap_and_merge_detection_events,
+    snap_event_bounds,
+)
 
 
 def test_all_negative():
@@ -241,6 +246,9 @@ def test_write_tsv_preserves_n_windows():
             "avg_confidence",
             "peak_confidence",
             "n_windows",
+            "raw_start_sec",
+            "raw_end_sec",
+            "merged_event_count",
         }
 
 
@@ -276,6 +284,9 @@ def test_append_detections_tsv_creates_with_header(tmp_path):
         "avg_confidence",
         "peak_confidence",
         "n_windows",
+        "raw_start_sec",
+        "raw_end_sec",
+        "merged_event_count",
     }
 
 
@@ -449,3 +460,42 @@ def test_events_backward_compat_equivalence():
         assert old["end_sec"] == new["end_sec"]
         assert abs(old["avg_confidence"] - new["avg_confidence"]) < 1e-6
         assert old["peak_confidence"] == new["peak_confidence"]
+
+
+def test_snap_event_bounds_outward_to_window():
+    """Bounds snap outward to enclosing window-size multiples."""
+    start, end = snap_event_bounds(2.0, 11.0, 5.0)
+    assert start == 0.0
+    assert end == 15.0
+
+
+def test_snap_and_merge_detection_events_merges_collisions():
+    """Events that snap to the same range are merged deterministically."""
+    events = [
+        {
+            "start_sec": 15.0,
+            "end_sec": 22.0,
+            "avg_confidence": 0.9,
+            "peak_confidence": 0.95,
+            "n_windows": 3,
+        },
+        {
+            "start_sec": 19.0,
+            "end_sec": 25.0,
+            "avg_confidence": 0.8,
+            "peak_confidence": 0.9,
+            "n_windows": 2,
+        },
+    ]
+    result = snap_and_merge_detection_events(events, window_size_seconds=5.0)
+    assert len(result) == 1
+    merged = result[0]
+    assert merged["start_sec"] == 15.0
+    assert merged["end_sec"] == 25.0
+    # Weighted mean by n_windows: (0.9*3 + 0.8*2)/5
+    assert abs(merged["avg_confidence"] - 0.86) < 1e-6
+    assert merged["peak_confidence"] == 0.95
+    assert merged["n_windows"] == 5
+    assert merged["raw_start_sec"] == 15.0
+    assert merged["raw_end_sec"] == 25.0
+    assert merged["merged_event_count"] == 2

@@ -13,15 +13,35 @@ from humpback.classifier.detector import read_detections_tsv, write_detections_t
 # ------------------------------------------------------------------
 
 
-def test_build_detection_filename_uses_exact_bounds():
-    """Exact raw event bounds should produce unique detection filenames."""
+def test_hydrophone_detection_filename_uses_canonical_snapped_bounds():
+    """Snapped canonical bounds should collapse raw-event collisions."""
     from humpback.classifier.hydrophone_detector import _build_detection_filename
+    from humpback.classifier.detector import snap_and_merge_detection_events
 
-    f1 = _build_detection_filename("20250712T011600Z.wav", 15.0, 22.0)
-    f2 = _build_detection_filename("20250712T011600Z.wav", 19.0, 25.0)
-    assert f1 == "20250712T011615Z_20250712T011622Z.wav"
-    assert f2 == "20250712T011619Z_20250712T011625Z.wav"
-    assert f1 != f2
+    raw_events = [
+        {
+            "start_sec": 15.0,
+            "end_sec": 22.0,
+            "avg_confidence": 0.9,
+            "peak_confidence": 0.95,
+            "n_windows": 3,
+        },
+        {
+            "start_sec": 19.0,
+            "end_sec": 25.0,
+            "avg_confidence": 0.8,
+            "peak_confidence": 0.9,
+            "n_windows": 2,
+        },
+    ]
+    canonical = snap_and_merge_detection_events(raw_events, window_size_seconds=5.0)
+    assert len(canonical) == 1
+    f = _build_detection_filename(
+        "20250712T011600Z.wav",
+        canonical[0]["start_sec"],
+        canonical[0]["end_sec"],
+    )
+    assert f == "20250712T011615Z_20250712T011625Z.wav"
 
 
 # ------------------------------------------------------------------

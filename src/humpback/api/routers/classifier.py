@@ -6,12 +6,13 @@ import json
 import os
 import struct
 import tempfile
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from humpback.api.deps import SessionDep, SettingsDep
@@ -211,21 +212,49 @@ async def get_detection_job(job_id: str, session: SessionDep) -> DetectionJobOut
 
 
 @router.get("/detection-jobs/{job_id}/download")
-async def download_detections(job_id: str, session: SessionDep) -> FileResponse:
+async def download_detections(job_id: str, session: SessionDep) -> Response:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
     if job.status not in ("complete", "canceled") or not job.output_tsv_path:
         raise HTTPException(400, "Detection job not complete or no output available")
-    from pathlib import Path
 
     tsv_path = Path(job.output_tsv_path)
     if not tsv_path.is_file():
         raise HTTPException(404, "TSV file not found on disk")
-    return FileResponse(
-        tsv_path,
+
+    window_size_seconds = await _get_classifier_window_size(
+        session, job.classifier_model_id
+    )
+    is_hydrophone = job.hydrophone_id is not None
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        source_fieldnames = list(reader.fieldnames or [])
+
+    output_fieldnames = list(source_fieldnames)
+    for field in (
+        "detection_filename",
+        "extract_filename",
+        "raw_start_sec",
+        "raw_end_sec",
+        "merged_event_count",
+    ):
+        if field not in output_fieldnames:
+            output_fieldnames.append(field)
+
+    return StreamingResponse(
+        _stream_normalized_download_tsv(
+            tsv_path=tsv_path,
+            source_fieldnames=source_fieldnames,
+            output_fieldnames=output_fieldnames,
+            is_hydrophone=is_hydrophone,
+            window_size_seconds=window_size_seconds,
+        ),
         media_type="text/tab-separated-values",
-        filename=f"detections_{job_id}.tsv",
+        headers={
+            "Content-Disposition": f'attachment; filename="detections_{job_id}.tsv"'
+        },
     )
 
 
@@ -736,6 +765,63 @@ def _parse_label(value: str | None) -> int | None:
 _COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
+def _safe_float(value: str | None, default: float = 0.0) -> float:
+    """Parse float values from TSV, falling back to default."""
+    try:
+        return float(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: str | None, default: int | None = None) -> int | None:
+    """Parse integer values from TSV, falling back to default."""
+    try:
+        return int(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_compact_range_filename(
+    filename: str | None,
+) -> tuple[datetime, datetime] | None:
+    """Parse compact UTC range filename into (start, end) datetimes."""
+    if not filename:
+        return None
+    base = filename[:-4] if filename.endswith(".wav") else filename
+    parts = base.split("_")
+    if len(parts) != 2:
+        return None
+    try:
+        start = datetime.strptime(parts[0], _COMPACT_TS_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
+        end = datetime.strptime(parts[1], _COMPACT_TS_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    if end <= start:
+        return None
+    return start, end
+
+
+def _snap_bounds_to_window(
+    start_sec: float,
+    end_sec: float,
+    window_size_seconds: float,
+) -> tuple[float, float]:
+    """Snap bounds outward to window-size multiples."""
+    import math
+
+    if end_sec <= start_sec or window_size_seconds <= 0:
+        return start_sec, end_sec
+    snap_start = math.floor(start_sec / window_size_seconds) * window_size_seconds
+    snap_end = math.ceil(end_sec / window_size_seconds) * window_size_seconds
+    if snap_end <= snap_start:
+        snap_end = snap_start + window_size_seconds
+    return float(snap_start), float(snap_end)
+
+
 def _derive_detection_filename(
     filename: str, start_sec: float, end_sec: float
 ) -> str | None:
@@ -754,6 +840,118 @@ def _derive_detection_filename(
     return f"{abs_start.strftime(_COMPACT_TS_FORMAT)}_{abs_end.strftime(_COMPACT_TS_FORMAT)}.wav"
 
 
+async def _get_classifier_window_size(
+    session: SessionDep, classifier_model_id: str
+) -> float:
+    """Resolve window size from classifier model; default to 5.0 when missing."""
+    from sqlalchemy import select
+
+    from humpback.models.classifier import ClassifierModel
+
+    result = await session.execute(
+        select(ClassifierModel.window_size_seconds).where(
+            ClassifierModel.id == classifier_model_id
+        )
+    )
+    ws = result.scalar_one_or_none()
+    return float(ws) if ws is not None else 5.0
+
+
+def _normalize_detection_row(
+    row: dict[str, str],
+    *,
+    is_hydrophone: bool,
+    window_size_seconds: float,
+) -> dict:
+    """Normalize detection metadata while preserving original start/end bounds."""
+    filename = (row.get("filename", "") or "").strip()
+    start_sec = _safe_float(row.get("start_sec"), 0.0)
+    end_sec = _safe_float(row.get("end_sec"), 0.0)
+    avg_confidence = _safe_float(row.get("avg_confidence"), 0.0)
+    peak_confidence = _safe_float(row.get("peak_confidence"), 0.0)
+    n_windows = _safe_int(row.get("n_windows"), None)
+
+    detection_filename = (row.get("detection_filename", "") or "").strip() or None
+    extract_filename = (row.get("extract_filename", "") or "").strip() or None
+
+    if detection_filename is None:
+        # Legacy precedence: reuse extract filename when valid, else derive from snapped bounds.
+        if _parse_compact_range_filename(extract_filename) is not None:
+            detection_filename = extract_filename
+        else:
+            snap_start, snap_end = _snap_bounds_to_window(
+                start_sec, end_sec, window_size_seconds
+            )
+            detection_filename = _derive_detection_filename(
+                filename, snap_start, snap_end
+            )
+
+    if extract_filename is None and is_hydrophone:
+        extract_filename = detection_filename
+
+    raw_start_sec = _safe_float(row.get("raw_start_sec"), start_sec)
+    raw_end_sec = _safe_float(row.get("raw_end_sec"), end_sec)
+    merged_event_count = _safe_int(row.get("merged_event_count"), 1)
+
+    return {
+        "filename": filename,
+        "start_sec": start_sec,
+        "end_sec": end_sec,
+        "avg_confidence": avg_confidence,
+        "peak_confidence": peak_confidence,
+        "n_windows": n_windows,
+        "detection_filename": detection_filename,
+        "extract_filename": extract_filename,
+        "hydrophone_name": (row.get("hydrophone_name", "").strip() or None),
+        "raw_start_sec": raw_start_sec,
+        "raw_end_sec": raw_end_sec,
+        "merged_event_count": merged_event_count,
+        "humpback": _parse_label(row.get("humpback")),
+        "ship": _parse_label(row.get("ship")),
+        "background": _parse_label(row.get("background")),
+    }
+
+
+def _stream_normalized_download_tsv(
+    *,
+    tsv_path: Path,
+    source_fieldnames: list[str],
+    output_fieldnames: list[str],
+    is_hydrophone: bool,
+    window_size_seconds: float,
+) -> Iterator[str]:
+    """Yield normalized TSV content incrementally for download responses."""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=output_fieldnames, delimiter="\t")
+    writer.writeheader()
+    yield buf.getvalue()
+    buf.seek(0)
+    buf.truncate(0)
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            normalized = _normalize_detection_row(
+                row,
+                is_hydrophone=is_hydrophone,
+                window_size_seconds=window_size_seconds,
+            )
+            out_row = {field: row.get(field, "") for field in source_fieldnames}
+            out_row["detection_filename"] = normalized[
+                "detection_filename"
+            ] or out_row.get("detection_filename", "")
+            out_row["extract_filename"] = normalized["extract_filename"] or out_row.get(
+                "extract_filename", ""
+            )
+            out_row["raw_start_sec"] = str(normalized["raw_start_sec"])
+            out_row["raw_end_sec"] = str(normalized["raw_end_sec"])
+            out_row["merged_event_count"] = str(normalized["merged_event_count"])
+            writer.writerow(out_row)
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     """Parse detection TSV and return rows as JSON."""
@@ -766,39 +964,21 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     if not tsv_path.is_file():
         raise HTTPException(404, "TSV file not found on disk")
 
+    window_size_seconds = await _get_classifier_window_size(
+        session, job.classifier_model_id
+    )
+    is_hydrophone = job.hydrophone_id is not None
+
     rows = []
     with open(tsv_path, newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
-            start_sec = float(row.get("start_sec", 0))
-            end_sec = float(row.get("end_sec", 0))
-            detection_filename = row.get("detection_filename", "").strip() or None
-            if detection_filename is None:
-                detection_filename = _derive_detection_filename(
-                    row.get("filename", ""),
-                    start_sec,
-                    end_sec,
-                )
-            extract_filename = row.get("extract_filename", "").strip() or None
-            if extract_filename is None and job.hydrophone_id is not None:
-                extract_filename = detection_filename
             rows.append(
-                {
-                    "filename": row.get("filename", ""),
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "avg_confidence": float(row.get("avg_confidence", 0)),
-                    "peak_confidence": float(row.get("peak_confidence", 0)),
-                    "n_windows": int(row["n_windows"])
-                    if row.get("n_windows")
-                    else None,
-                    "detection_filename": detection_filename,
-                    "extract_filename": extract_filename,
-                    "hydrophone_name": (row.get("hydrophone_name", "").strip() or None),
-                    "humpback": _parse_label(row.get("humpback")),
-                    "ship": _parse_label(row.get("ship")),
-                    "background": _parse_label(row.get("background")),
-                }
+                _normalize_detection_row(
+                    row,
+                    is_hydrophone=is_hydrophone,
+                    window_size_seconds=window_size_seconds,
+                )
             )
     return rows
 
