@@ -1,6 +1,7 @@
-# Debug Workflow
-
-Structured root-cause debugging for issues.
+---
+name: debug
+description: Checklist for structured root-cause debugging for issues.
+---
 
 ## Steps
 

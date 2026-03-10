@@ -1,6 +1,8 @@
-# Session Start Workflow
+---
+name: start
+description: Checklist for starting every session by loading project context. Do NOT write code during this checklist.
+---
 
-Begin every session by loading project context. Do NOT write code during this workflow.
 
 ## Steps
 

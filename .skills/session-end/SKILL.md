@@ -1,6 +1,7 @@
-# Session Handoff Workflow
-
-Complete a work session by persisting state for the next session.
+---
+name: handoff
+description: Checklist for completing a work session by persisting state for the next session.
+---
 
 ## Steps
 

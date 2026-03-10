@@ -1,6 +1,8 @@
-# Implementation Workflow
+---
+name: implement
+description: Checklist for implementing planned changes safely.
+---
 
-Structured workflow for implementing changes safely.
 
 ## Steps
 

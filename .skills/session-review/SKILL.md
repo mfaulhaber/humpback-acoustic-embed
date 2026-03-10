@@ -1,6 +1,7 @@
-# Review Workflow
-
-Systematic review checklist for changes before committing.
+---
+name: review-workflow
+description: Systematic review checklist for changes before committing.
+---
 
 ## Checklist
 

@@ -1,1 +1,0 @@
-Read and execute the workflow defined in .agents/workflows/implement.md
