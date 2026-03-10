@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from humpback.classifier.detector import (
     AUDIO_EXTENSIONS,
     append_detections_tsv,
+    read_detections_tsv,
     run_detection,
     write_detections_tsv,
     write_window_diagnostics,
@@ -179,6 +180,10 @@ async def run_detection_job(
         )
         files_total = len(audio_files)
 
+        # Remove stale TSV from prior run to prevent duplicate appends
+        if tsv_path.exists():
+            tsv_path.unlink()
+
         await session.execute(
             update(DetectionJob)
             .where(DetectionJob.id == job.id)
@@ -306,6 +311,25 @@ async def run_hydrophone_detection_job(
         )
         await session.commit()
 
+        # Resume support: if segments were already processed, read prior detections
+        skip_segments = 0
+        prior_detections: list[dict] = []
+        if job.segments_processed and job.segments_processed > 0 and tsv_path.exists():
+            prior_detections = read_detections_tsv(
+                tsv_path, fieldnames=HYDROPHONE_TSV_FIELDNAMES
+            )
+            skip_segments = job.segments_processed
+            # Rewrite TSV cleanly with prior detections only (removes partial appends)
+            write_detections_tsv(
+                prior_detections, tsv_path, fieldnames=HYDROPHONE_TSV_FIELDNAMES
+            )
+            logger.info(
+                "Resuming hydrophone job %s from segment %d with %d prior detections",
+                job.id,
+                skip_segments,
+                len(prior_detections),
+            )
+
         # Cancel and pause support
         cancel_event = threading.Event()
         pause_gate = threading.Event()
@@ -423,6 +447,8 @@ async def run_hydrophone_detection_job(
                 job.local_cache_path,
                 settings.s3_cache_path,
                 pause_gate,
+                skip_segments,
+                prior_detections,
             )
         except FileNotFoundError as exc:
             raise FileNotFoundError(
@@ -437,7 +463,6 @@ async def run_hydrophone_detection_job(
             # Write what we have
             for det in detections:
                 det.setdefault("hydrophone_name", hydrophone_short_name)
-            from humpback.classifier.detector import write_detections_tsv
             write_detections_tsv(
                 detections,
                 tsv_path,
@@ -461,7 +486,6 @@ async def run_hydrophone_detection_job(
         # Write final TSV
         for det in detections:
             det.setdefault("hydrophone_name", hydrophone_short_name)
-        from humpback.classifier.detector import write_detections_tsv
         write_detections_tsv(
             detections,
             tsv_path,

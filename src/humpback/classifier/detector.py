@@ -323,6 +323,15 @@ def run_detection(
 TSV_FIELDNAMES = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
 
 
+def read_detections_tsv(path: Path, fieldnames: list[str] | None = None) -> list[dict]:
+    """Read detections from a TSV file. Returns empty list if file missing/empty."""
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        return list(reader)
+
+
 def write_detections_tsv(
     detections: list[dict],
     path: Path,

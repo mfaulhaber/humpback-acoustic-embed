@@ -382,6 +382,15 @@ class LocalHLSClient:
         path = self._root / key
         return path.read_bytes()
 
+    def invalidate_cached_segment(self, key: str) -> bool:
+        """Delete a cached segment file. Returns True if file was deleted."""
+        path = self._root / key
+        if path.is_file():
+            path.unlink()
+            logger.info("Invalidated cached segment: %s", key)
+            return True
+        return False
+
     def count_segments(
         self, hydrophone_id: str, folder_timestamps: list[str]
     ) -> int:
@@ -530,6 +539,15 @@ class CachingS3Client:
         os.replace(str(tmp_path), str(local_path))
 
         return data
+
+    def invalidate_cached_segment(self, key: str) -> bool:
+        """Delete a cached segment file so it can be re-fetched from S3."""
+        local_path = self._root / key
+        if local_path.is_file():
+            local_path.unlink()
+            logger.info("Invalidated cached segment: %s", key)
+            return True
+        return False
 
     def count_segments(
         self, hydrophone_id: str, folder_timestamps: list[str]
@@ -798,12 +816,32 @@ def iter_audio_chunks(
     chunk_seconds: float = 60.0,
     target_sr: int = 32000,
     on_error: Callable[[dict], None] | None = None,
+    skip_segments: int = 0,
 ) -> Generator:
     """Yield audio chunks from HLS stream.
 
     Yields (chunk_audio, chunk_start_utc, segments_done, segments_total).
+
+    When skip_segments > 0, skips that many segments from the start of the
+    timeline (for resume after worker restart). If skip_segments exceeds the
+    timeline length, resets to 0 and processes all segments.
     """
     timeline = _build_stream_timeline(client, hydrophone_id, start_ts, end_ts)
+
+    if skip_segments > 0:
+        if skip_segments > len(timeline):
+            logger.warning(
+                "skip_segments=%d exceeds timeline length=%d; resetting to 0",
+                skip_segments,
+                len(timeline),
+            )
+            skip_segments = 0
+        else:
+            logger.info(
+                "Resuming: skipping %d/%d segments",
+                skip_segments,
+                len(timeline),
+            )
 
     chunk_samples = int(chunk_seconds * target_sr)
     if chunk_samples <= 0:
@@ -812,9 +850,9 @@ def iter_audio_chunks(
     segments_total = len(timeline)
     accumulator = np.array([], dtype=np.float32)
     accumulator_start_ts: float | None = None
-    segments_done = 0
+    segments_done = skip_segments
 
-    for segment in timeline:
+    for segment in timeline[skip_segments:]:
         try:
             clipped = _decode_and_clip_segment(
                 client=client,
@@ -860,6 +898,55 @@ def iter_audio_chunks(
 
         except Exception as e:
             segments_done += 1
+            # If client supports cache invalidation, delete the cached segment
+            # and retry once — the cached file may be corrupted/truncated.
+            invalidate = getattr(client, "invalidate_cached_segment", None)
+            if callable(invalidate) and invalidate(segment.key):
+                try:
+                    clipped = _decode_and_clip_segment(
+                        client=client,
+                        segment=segment,
+                        target_sr=target_sr,
+                        clip_start_ts=start_ts,
+                        clip_end_ts=end_ts,
+                    )
+                    if clipped is not None:
+                        audio, clip_start_ts = clipped
+                        if len(audio) > 0:
+                            if len(accumulator) == 0:
+                                accumulator = audio
+                                accumulator_start_ts = clip_start_ts
+                            else:
+                                assert accumulator_start_ts is not None
+                                expected_next_ts = accumulator_start_ts + (len(accumulator) / target_sr)
+                                if abs(clip_start_ts - expected_next_ts) > STREAM_DISCONTINUITY_TOLERANCE_SEC:
+                                    chunk_start_utc = datetime.fromtimestamp(
+                                        accumulator_start_ts, tz=timezone.utc
+                                    )
+                                    yield accumulator, chunk_start_utc, segments_done, segments_total
+                                    accumulator = audio
+                                    accumulator_start_ts = clip_start_ts
+                                else:
+                                    accumulator = np.concatenate([accumulator, audio])
+
+                            while len(accumulator) >= chunk_samples:
+                                assert accumulator_start_ts is not None
+                                chunk = accumulator[:chunk_samples]
+                                chunk_start_utc = datetime.fromtimestamp(
+                                    accumulator_start_ts, tz=timezone.utc
+                                )
+                                yield chunk, chunk_start_utc, segments_done, segments_total
+                                accumulator = accumulator[chunk_samples:]
+                                accumulator_start_ts += chunk_samples / target_sr
+                    logger.info("Retry after cache invalidation succeeded for %s", segment.key)
+                    continue
+                except Exception as e2:
+                    logger.warning(
+                        "Retry after cache invalidation also failed for %s: %s",
+                        segment.key,
+                        e2,
+                    )
+
             logger.warning("Failed to decode segment %s: %s", segment.key, e)
             if on_error:
                 on_error({

@@ -10,6 +10,30 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection Job Resume After Worker Restart
+
+## Outcome (2026-03-09)
+
+- Hydrophone detection jobs now resume from `segments_processed` checkpoint after worker
+  restart: reads prior detections from TSV, skips already-processed segments, appends new
+  detections. Guards against timeline changes (clears prior detections if skip is invalidated).
+- Added `read_detections_tsv()` to `detector.py` for reading existing TSV into memory.
+- Added `skip_segments` parameter to `iter_audio_chunks()` in `s3_stream.py`.
+- Added cache invalidation on decode failure: `invalidate_cached_segment()` on
+  `LocalHLSClient` and `CachingS3Client` deletes corrupted cached `.ts` files;
+  `iter_audio_chunks()` retries once after invalidation.
+- Fixed local detection job TSV stale-append: existing TSV deleted before reprocessing.
+- Added periodic stale job recovery every 60s in worker loop (previously startup-only).
+- Fixed `UnboundLocalError` from redundant local `write_detections_tsv` imports in
+  `run_hydrophone_detection_job`.
+
+## Verification
+
+- `uv run pytest tests/` — 462 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- 12 unit tests added: TSV read, skip segments, resume detection, skip invalidation,
+  cache invalidation + retry, TSV cleanup.
+
 # Plan: Retry Transient S3 Errors in Hydrophone Segment Fetching
 
 ## Outcome (2026-03-09)

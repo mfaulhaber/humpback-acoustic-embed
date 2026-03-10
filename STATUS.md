@@ -24,6 +24,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Incremental Parquet embedding output with atomic writes
 - Idempotent encoding via `encoding_signature`
 - Background worker with job queue (queued/running/complete/failed/canceled) and atomic compare-and-set claim updates
+- Periodic stale job recovery every 60s in worker loop (previously startup-only); prevents jobs stuck in `running` after quick restarts
+- Local detection job TSV cleanup on restart (prevents duplicate appends from stale prior runs)
 
 ### Clustering
 - Model version validation: rejects clustering across different embedding models
@@ -84,6 +86,10 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone extraction output paths include hydrophone short label partitioning:
   `{positive|negative}_root/{hydrophone_id}/{label}/YYYY/MM/DD/*.wav`
 - Hydrophone labeled-sample extraction reuses the same stream-offset resolver as playback
+- Hydrophone detection job resume after worker restart: skips already-processed segments,
+  preserves prior detections, guards against timeline changes between runs
+- Cache invalidation on decode failure: corrupted cached segments are deleted and re-fetched
+  from S3 (single retry) instead of failing permanently
 - Max 7-day time range per job
 - Hydrophone job validation enforces `hop_seconds <= classifier window_size_seconds`
 

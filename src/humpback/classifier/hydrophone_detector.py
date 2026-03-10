@@ -71,6 +71,8 @@ def run_hydrophone_detection(
     local_cache_path: str | None = None,
     s3_cache_path: str | None = None,
     pause_gate: "threading.Event | None" = None,
+    skip_segments: int = 0,
+    prior_detections: list[dict] | None = None,
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
@@ -78,6 +80,10 @@ def run_hydrophone_detection(
     1. local_cache_path → LocalHLSClient (pre-downloaded cache)
     2. s3_cache_path → CachingS3Client (write-through S3 cache)
     3. fallback → OrcasoundS3Client (direct S3, no caching)
+
+    Resume support:
+    - skip_segments: number of timeline segments to skip (already processed)
+    - prior_detections: detections from previous run to preserve
 
     Returns (all_detections, summary).
     """
@@ -92,7 +98,8 @@ def run_hydrophone_detection(
     else:
         client = OrcasoundS3Client()
 
-    all_detections: list[dict] = []
+    all_detections: list[dict] = list(prior_detections) if prior_detections else []
+    skip_invalidated = False
     all_confidences: list[float] = []
     total_windows = 0
     total_positive = 0
@@ -100,6 +107,7 @@ def run_hydrophone_detection(
     t_features_total = 0.0
     t_inference_total = 0.0
     time_covered = 0.0
+    is_first_chunk = True
 
     for chunk_audio, chunk_start_utc, segs_done, segs_total in iter_audio_chunks(
         client,
@@ -109,7 +117,23 @@ def run_hydrophone_detection(
         chunk_seconds=60.0,
         target_sr=target_sample_rate,
         on_error=on_alert,
+        skip_segments=skip_segments,
     ):
+        # On first yielded chunk, detect if skip was invalidated (timeline changed)
+        if is_first_chunk and skip_segments > 0:
+            is_first_chunk = False
+            if segs_done < skip_segments:
+                # Timeline shrank — skip was reset; clear prior detections
+                logger.warning(
+                    "Skip invalidated (segs_done=%d < skip_segments=%d); "
+                    "clearing prior detections",
+                    segs_done,
+                    skip_segments,
+                )
+                all_detections.clear()
+                skip_invalidated = True
+        else:
+            is_first_chunk = False
         # Wait if paused (blocks until resumed or canceled)
         if pause_gate is not None:
             pause_gate.wait()
@@ -216,6 +240,8 @@ def run_hydrophone_detection(
         "hydrophone_id": hydrophone_id,
         "time_covered_sec": time_covered,
     }
+    if skip_segments > 0 and not skip_invalidated:
+        summary["resumed_from_segment"] = skip_segments
 
     if all_confidences:
         conf_arr = np.array(all_confidences)

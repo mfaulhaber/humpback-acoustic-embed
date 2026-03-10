@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
@@ -59,7 +60,20 @@ async def run_worker(settings: Settings | None = None) -> None:
     async with session_factory() as session:
         await recover_stale_jobs(session)
 
+    # Periodic stale recovery interval (seconds)
+    stale_recovery_interval = 60.0
+    last_stale_check = time.monotonic()
+
     while not shutdown.is_set():
+        # Periodically re-check for stale jobs (handles jobs that became stale
+        # after startup, e.g., if worker crashed and restarted within the
+        # stale timeout window)
+        now = time.monotonic()
+        if now - last_stale_check >= stale_recovery_interval:
+            async with session_factory() as session:
+                await recover_stale_jobs(session)
+            last_stale_check = now
+
         claimed = False
         job = cjob = tjob = djob = None
 
