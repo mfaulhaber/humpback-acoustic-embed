@@ -11,12 +11,13 @@ Example:
 This script:
 1. Converts the requested time range to epoch seconds.
 2. Lists top-level timestamp prefixes under the given S3 prefix.
-3. Filters prefixes whose directory name is an integer epoch in range.
+3. Uses coarse epoch filtering, then refines matches by object LastModified overlap.
 4. Builds an s5cmd command file.
 5. Optionally executes the command file.
 
 This version is tightened for public buckets:
 - always uses AWS CLI with --no-sign-request
+- always uses s5cmd with --no-sign-request
 - no credential/profile handling
 - defaults to us-west-2
 """
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import json
 import shlex
 import subprocess
 import sys
@@ -38,6 +40,20 @@ from shutil import which
 class TimestampPrefix:
     epoch: int
     name: str
+
+
+@dataclass(frozen=True)
+class PrefixSelection:
+    coarse_matches: list[TimestampPrefix]
+    overlap_candidates: list[TimestampPrefix]
+    final_matches: list[TimestampPrefix]
+    overlap_inspected: int
+    overlap_filter_used: bool
+    overlap_error: str | None = None
+
+
+class S3ObjectListingError(RuntimeError):
+    """Raised when object-level overlap checks cannot be completed."""
 
 
 def require_binary(name: str) -> None:
@@ -136,6 +152,203 @@ def select_in_range(
     left = bisect.bisect_left(epochs, start_epoch)
     right = bisect.bisect_left(epochs, end_epoch)
     return prefixes[left:right]
+
+
+def parse_s3_last_modified(value: str) -> int | None:
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return to_epoch(dt.astimezone(timezone.utc))
+
+
+def infer_prefix_cadence_seconds(prefixes: list[TimestampPrefix]) -> int | None:
+    if len(prefixes) < 2:
+        return None
+
+    deltas = [
+        right.epoch - left.epoch
+        for left, right in zip(prefixes, prefixes[1:])
+        if right.epoch > left.epoch
+    ]
+    if not deltas:
+        return None
+
+    deltas.sort()
+    return deltas[len(deltas) // 2]
+
+
+def _dedupe_sorted_prefixes(prefixes: list[TimestampPrefix]) -> list[TimestampPrefix]:
+    by_epoch = {item.epoch: item for item in prefixes}
+    return [by_epoch[epoch] for epoch in sorted(by_epoch)]
+
+
+def build_overlap_candidates(
+    prefixes: list[TimestampPrefix],
+    coarse_matches: list[TimestampPrefix],
+    start_epoch: int,
+    end_epoch: int,
+    cadence_seconds: int | None,
+) -> list[TimestampPrefix]:
+    if cadence_seconds is None or cadence_seconds <= 0:
+        return _dedupe_sorted_prefixes(coarse_matches)
+
+    window_start = start_epoch - cadence_seconds
+    window_end = end_epoch + cadence_seconds
+    expanded_matches = select_in_range(prefixes, window_start, window_end)
+    return _dedupe_sorted_prefixes([*coarse_matches, *expanded_matches])
+
+
+def _aws_list_objects_page(
+    bucket: str,
+    key_prefix: str,
+    region: str,
+    continuation_token: str | None = None,
+) -> dict:
+    cmd = [
+        "aws",
+        "--region",
+        region,
+        "--no-sign-request",
+        "s3api",
+        "list-objects-v2",
+        "--bucket",
+        bucket,
+        "--prefix",
+        key_prefix,
+    ]
+    if continuation_token:
+        cmd.extend(["--continuation-token", continuation_token])
+
+    try:
+        result = subprocess.run(cmd, text=True, capture_output=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        details = exc.stderr.strip() if exc.stderr else "command failed"
+        raise S3ObjectListingError(
+            f"aws s3api list-objects-v2 failed for {key_prefix}: {details}"
+        ) from exc
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise S3ObjectListingError(
+            f"Failed to parse aws s3api JSON for {key_prefix}"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise S3ObjectListingError(
+            f"Unexpected aws s3api payload for {key_prefix}: not a JSON object"
+        )
+
+    return payload
+
+
+def prefix_overlaps_range(
+    bucket: str,
+    prefix: str,
+    ts_name: str,
+    region: str,
+    start_epoch: int,
+    end_epoch: int,
+) -> bool:
+    key_prefix = f"{normalize_prefix(prefix)}/{ts_name}/"
+    continuation_token: str | None = None
+
+    while True:
+        payload = _aws_list_objects_page(
+            bucket=bucket,
+            key_prefix=key_prefix,
+            region=region,
+            continuation_token=continuation_token,
+        )
+
+        contents = payload.get("Contents")
+        if isinstance(contents, list):
+            for entry in contents:
+                if not isinstance(entry, dict):
+                    continue
+                last_modified = entry.get("LastModified")
+                if not isinstance(last_modified, str):
+                    continue
+                last_modified_epoch = parse_s3_last_modified(last_modified)
+                if last_modified_epoch is None:
+                    continue
+                if start_epoch <= last_modified_epoch < end_epoch:
+                    return True
+
+        if not payload.get("IsTruncated"):
+            break
+        next_token = payload.get("NextContinuationToken")
+        if not isinstance(next_token, str) or not next_token:
+            break
+        continuation_token = next_token
+
+    return False
+
+
+def resolve_matching_prefixes(
+    prefixes: list[TimestampPrefix],
+    bucket: str,
+    prefix: str,
+    region: str,
+    start_epoch: int,
+    end_epoch: int,
+) -> PrefixSelection:
+    coarse_matches = select_in_range(prefixes, start_epoch, end_epoch)
+    cadence_seconds = infer_prefix_cadence_seconds(prefixes)
+    overlap_candidates = build_overlap_candidates(
+        prefixes=prefixes,
+        coarse_matches=coarse_matches,
+        start_epoch=start_epoch,
+        end_epoch=end_epoch,
+        cadence_seconds=cadence_seconds,
+    )
+
+    if not overlap_candidates:
+        return PrefixSelection(
+            coarse_matches=coarse_matches,
+            overlap_candidates=[],
+            final_matches=coarse_matches,
+            overlap_inspected=0,
+            overlap_filter_used=False,
+        )
+
+    overlap_matches: list[TimestampPrefix] = []
+    overlap_inspected = 0
+    try:
+        for item in overlap_candidates:
+            overlap_inspected += 1
+            if prefix_overlaps_range(
+                bucket=bucket,
+                prefix=prefix,
+                ts_name=item.name,
+                region=region,
+                start_epoch=start_epoch,
+                end_epoch=end_epoch,
+            ):
+                overlap_matches.append(item)
+    except S3ObjectListingError as exc:
+        return PrefixSelection(
+            coarse_matches=coarse_matches,
+            overlap_candidates=overlap_candidates,
+            final_matches=coarse_matches,
+            overlap_inspected=overlap_inspected,
+            overlap_filter_used=False,
+            overlap_error=str(exc),
+        )
+
+    return PrefixSelection(
+        coarse_matches=coarse_matches,
+        overlap_candidates=overlap_candidates,
+        final_matches=overlap_matches,
+        overlap_inspected=overlap_inspected,
+        overlap_filter_used=True,
+    )
 
 
 def local_dir_for_prefix(local_root: Path, prefix: str, ts_name: str) -> Path:
@@ -298,11 +511,31 @@ def main() -> int:
         print("No numeric epoch-style prefixes found.", file=sys.stderr)
         return 1
 
-    selected = select_in_range(all_prefixes, start_epoch, end_epoch)
+    selection = resolve_matching_prefixes(
+        prefixes=all_prefixes,
+        bucket=args.bucket,
+        prefix=args.prefix,
+        region=args.region,
+        start_epoch=start_epoch,
+        end_epoch=end_epoch,
+    )
+    selected = selection.final_matches
 
     print(f"Requested range: [{iso_utc(start_epoch)} .. {iso_utc(end_epoch)})")
     print(f"Discovered numeric prefixes: {len(all_prefixes)}")
-    print(f"Matched prefixes in range: {len(selected)}")
+    print(f"Coarse epoch matches: {len(selection.coarse_matches)}")
+    print(f"Overlap candidates considered: {len(selection.overlap_candidates)}")
+    print(f"Overlap prefixes inspected: {selection.overlap_inspected}")
+    if selection.overlap_filter_used:
+        print("Overlap refinement: applied")
+    else:
+        print("Overlap refinement: unavailable (using coarse epoch matches)")
+    if selection.overlap_error:
+        print(
+            f"WARNING: Overlap refinement failed: {selection.overlap_error}",
+            file=sys.stderr,
+        )
+    print(f"Final matched prefixes: {len(selected)}")
 
     write_lines(matched_file, [p.name for p in selected])
 
@@ -330,11 +563,16 @@ def main() -> int:
 
     s5cmd_cmd = [
         "s5cmd",
+        "--no-sign-request",
         "--numworkers",
         str(args.numworkers),
+        "--log",
+        "error",
         "run",
         str(commands_file),
     ]
+
+    print(s5cmd_cmd)
 
     if args.log_file:
         log_path = Path(args.log_file).expanduser().resolve()

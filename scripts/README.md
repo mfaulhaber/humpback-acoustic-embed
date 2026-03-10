@@ -8,7 +8,7 @@ This tool is designed for datasets organized with **Unix epoch timestamps as dir
 s3://audio-orcasound-net/rpi_north_sjc/hls/1752303617/
 ```
 
-It allows you to download **only the directories that fall within a requested time range**, which is useful when working with large audio archives where the full dataset cannot be mirrored locally.
+It allows you to download **only the directories that overlap a requested UTC time range**, which is useful when working with large audio archives where the full dataset cannot be mirrored locally.
 
 Typical use cases:
 
@@ -21,7 +21,7 @@ The script:
 
 1. Converts a requested time range into **epoch seconds**
 2. Lists timestamp directories under a given S3 prefix
-3. Filters those directories by the requested range
+3. Uses a coarse epoch match, then refines using object `LastModified` overlap
 4. Generates an **s5cmd command file**
 5. Optionally executes downloads in **parallel**
 
@@ -33,6 +33,8 @@ This approach avoids scanning the entire S3 dataset while maximizing throughput.
 
 * Designed for **public S3 buckets**
 * Uses `--no-sign-request` (no AWS credentials required)
+* Automatically runs `s5cmd` with `--no-sign-request`
+* Handles coarse/misaligned epoch partitions via object-overlap refinement
 * High-performance downloads using **s5cmd**
 * Generates reproducible command manifests
 * Supports **resume behavior** via `--skip-existing`
@@ -150,9 +152,9 @@ The script assumes timestamp directories under a prefix:
 s3://audio-orcasound-net/
   rpi_north_sjc/
     hls/
+      1752217217/
       1752303617/
-      1752303677/
-      1752303737/
+      1752390017/
 ```
 
 Each directory contains files such as:
@@ -164,6 +166,10 @@ playlist.m3u8
 ```
 
 The numeric directory name represents a **Unix epoch timestamp**.
+
+Some datasets use coarse partitions (for example, daily directories). In that case, the
+directory timestamp itself may not fall inside a short query window, so the script
+also checks object `LastModified` timestamps inside candidate directories.
 
 ---
 
@@ -203,6 +209,10 @@ This will:
 2. Generate an `s5cmd` command file
 3. Download matching directories into the local cache
 
+For `audio-orcasound-net/rpi_north_sjc/hls`, a request like
+`2025-07-12T00:00:00Z` to `2025-07-12T01:00:00Z` can legitimately match the
+directory `1752303617/` because object times (not just directory name) are used.
+
 ---
 
 # Explicit Time Window
@@ -210,7 +220,7 @@ This will:
 Instead of `--hours`, you can specify an end time.
 
 ```bash
-python uv run stage_s3_epoch_cache.py \
+uv run python stage_s3_epoch_cache.py \
   --bucket audio-orcasound-net \
   --prefix rpi_north_sjc/hls \
   --start "2025-07-12T00:00:00Z" \
@@ -298,7 +308,7 @@ These provide:
 Manual execution example:
 
 ```bash
-s5cmd run commands_rpi_north_sjc_hls.txt
+s5cmd --no-sign-request run commands_rpi_north_sjc_hls.txt
 ```
 
 ---
@@ -323,11 +333,10 @@ This avoids repeated S3 reads and significantly improves throughput.
 
 # Limitations
 
-Directory selection is based on **epoch directory names only**.
+Downloads are **prefix-level**. If any object in a matched prefix overlaps the requested
+window, the script downloads the entire prefix directory.
 
-If files inside a directory contain timestamps outside the requested window, the entire directory will still be downloaded.
-
-For most timestamp-partitioned datasets this approximation is sufficient.
+Object-level filtering is not implemented in this tool.
 
 ---
 
