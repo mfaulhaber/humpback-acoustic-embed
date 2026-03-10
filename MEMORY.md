@@ -24,7 +24,7 @@ For behavioral rules and development constraints, see `CLAUDE.md`.
 | Frontend | React 18 + Vite + TypeScript + Tailwind + shadcn/ui |
 | Charts | react-plotly.js |
 | Server State | TanStack Query |
-| Testing | pytest (backend), Playwright (frontend) |
+| Testing | pytest + pre-commit/Ruff (backend), Playwright (frontend) |
 
 ## Repository Layout
 

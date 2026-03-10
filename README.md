@@ -53,6 +53,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/), plus Node.js 18+ for
 ```bash
 # Backend
 uv sync --all-extras
+uv run pre-commit install   # one-time per clone
 
 # Frontend
 cd frontend && npm install
@@ -504,6 +505,14 @@ data/
 ---
 
 ## Testing
+
+### Lint and format checks (required before commit)
+
+```bash
+uv run pre-commit run --all-files
+```
+
+Commits run Ruff hooks automatically. If hooks auto-fix files, re-stage those files and commit again.
 
 ### Run all tests
 

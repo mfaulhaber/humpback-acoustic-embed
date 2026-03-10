@@ -51,7 +51,7 @@ All components run locally for MVP but should be designed so workers can scale h
 
 ### 3.2 Environment Commands
 Use these commands for managing dependencies:
-*   Install/synchronize all dependencies: `uv sync`
+*   Install/synchronize all dependencies (including dev tools): `uv sync --all-extras`
 *   Add a new package (e.g., `requests`): `uv add requests`
 *   Remove a package: `uv remove <package>`
 *   Compile a new lock file: `uv pip compile pyproject.toml -o uv.lock`
@@ -60,10 +60,12 @@ Use these commands for managing dependencies:
 ### 3.3 Running Python Code and Tools
 *   Run a Python script: `uv run <script-name>.py`
 *   Run Python tools/tests (e.g., `pytest`): `uv run pytest tests/`
-*   Run pre-commit hooks: `uv run pre-commit install`
+*   Install pre-commit hooks once per clone: `uv run pre-commit install`
+*   Run all pre-commit hooks manually: `uv run pre-commit run --all-files`
 
 ### 3.4 Best Practices
 *   Prefer `uv run` over manually activating a virtual environment and running commands directly.
+*   Python edits must pass pre-commit Ruff hooks before commit (`ruff-check --fix --exit-non-zero-on-fix`, `ruff-format`).
 *   When troubleshooting, use `uv cache clean` as a last resort.
 
 ### 3.5 Database Migrations
