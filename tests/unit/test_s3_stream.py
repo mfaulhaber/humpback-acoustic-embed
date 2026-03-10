@@ -236,6 +236,46 @@ class TestFolderLookback:
         assert timeline
         assert len(client.window_starts) == 2  # initial window, then first lookback step
 
+    def test_build_timeline_keeps_expanding_until_start_boundary_is_covered(self):
+        from humpback.classifier.s3_stream import _build_stream_timeline
+
+        class FakeClient:
+            def __init__(self):
+                self.window_starts: list[float] = []
+
+            def list_hls_folders(self, _hydrophone_id, start_ts: float, end_ts: float):
+                self.window_starts.append(start_ts)
+                if start_ts <= 1100 < end_ts:
+                    return ["1100", "1600"]
+                if start_ts <= 1600 < end_ts:
+                    return ["1600"]
+                return []
+
+            def list_segments(self, _hydrophone_id, folder_ts: str):
+                if folder_ts == "1100":
+                    return [f"hydro/hls/1100/live{i}.ts" for i in range(60)]
+                if folder_ts == "1600":
+                    return [f"hydro/hls/1600/live{i}.ts" for i in range(60)]
+                return []
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+        client = FakeClient()
+        stream_start_ts = 1500.0
+        timeline = _build_stream_timeline(
+            client=client,
+            hydrophone_id="rpi_orcasound_lab",
+            stream_start_ts=stream_start_ts,
+            stream_end_ts=2000.0,
+        )
+
+        assert timeline
+        assert len(client.window_starts) == 2
+        assert any(
+            seg.start_ts <= stream_start_ts < seg.end_ts for seg in timeline
+        )
+
     def test_build_timeline_stops_expanding_when_initial_window_has_overlap(self):
         from humpback.classifier.s3_stream import _build_stream_timeline
 

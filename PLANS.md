@@ -10,6 +10,23 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Timeline Start-Boundary Lookback Fix
+
+## Outcome (2026-03-10)
+
+- Fixed `_build_stream_timeline()` so lookback does not stop on first in-range overlap;
+  it now continues until overlap at the requested start boundary is found (or max
+  lookback is reached), preventing undercounted hydrophone coverage windows.
+- Added a regression test for the boundary-coverage failure mode where an in-range
+  folder exists but earlier overlap is only discovered after additional lookback.
+- Updated workflow semantics in `CLAUDE.md`, `MEMORY.md`, `README.md`, and `STATUS.md`
+  to match the corrected start-boundary lookback behavior.
+
+## Verification
+
+- `uv run pytest tests/unit/test_s3_stream.py -q` — 26 passed.
+- `uv run pytest tests/` — 463 passed.
+
 # Plan: Hydrophone Detection Job Resume After Worker Restart
 
 ## Outcome (2026-03-09)

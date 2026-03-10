@@ -622,14 +622,17 @@ def _build_stream_timeline(
     timeline: list[StreamSegment] = []
     seen_folders: set[str] = set()
     found_any_folders = False
+    start_boundary_covered = False
     lookback_step_sec, max_lookback_sec = _hydrophone_timeline_lookback_seconds()
     max_lookback_steps = int(math.ceil(max_lookback_sec / lookback_step_sec))
-
-    for lookback_step in range(0, max_lookback_steps + 1):
+    lookback_step = 0
+    jumped_to_max_lookback = False
+    while lookback_step <= max_lookback_steps:
         lookback_sec = min(lookback_step * lookback_step_sec, max_lookback_sec)
         window_start_ts = stream_start_ts - lookback_sec
         folders = client.list_hls_folders(hydrophone_id, window_start_ts, stream_end_ts)
         if not folders:
+            lookback_step += 1
             continue
         found_any_folders = True
 
@@ -653,9 +656,20 @@ def _build_stream_timeline(
                 if segment.end_ts <= stream_start_ts or segment.start_ts >= stream_end_ts:
                     continue
                 timeline.append(segment)
+                if segment.start_ts <= stream_start_ts < segment.end_ts:
+                    start_boundary_covered = True
 
-        if timeline:
+        if start_boundary_covered:
             break
+
+        if timeline and not jumped_to_max_lookback and lookback_step < max_lookback_steps:
+            # We found overlap in-range but not at the requested start boundary.
+            # Jump straight to max lookback to avoid N incremental list calls.
+            lookback_step = max_lookback_steps
+            jumped_to_max_lookback = True
+            continue
+
+        lookback_step += 1
 
     if not found_any_folders:
         raise FileNotFoundError("No audio data found for this time range")

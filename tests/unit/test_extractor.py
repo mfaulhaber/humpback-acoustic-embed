@@ -489,7 +489,7 @@ class TestExtractHydrophoneLabeledSamples:
         assert len(list(pos_out.rglob("*.wav"))) == 1
 
     def test_stream_timeline_built_once_for_multiple_rows(self, tmp_path):
-        """Stream timeline listing should happen once per extraction run."""
+        """Stream timeline should be built once and reused across extraction rows."""
         from unittest.mock import MagicMock, patch
 
         sr = 32000
@@ -528,7 +528,8 @@ class TestExtractHydrophoneLabeledSamples:
 
         assert summary["n_humpback"] == 2
         assert summary["n_skipped"] == 0
-        assert mock_client.list_hls_folders.call_count == 1
+        # Initial range lookup plus a single max-lookback boundary-coverage check.
+        assert mock_client.list_hls_folders.call_count == 2
         assert mock_client.list_segments.call_count == 1
 
     def test_missing_local_timeline_skips_rows_without_failure(self, tmp_path):
