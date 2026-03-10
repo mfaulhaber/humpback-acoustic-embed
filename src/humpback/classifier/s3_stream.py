@@ -133,7 +133,11 @@ def _parse_playlist_segments(
             pending_duration = None
             continue
 
-        duration = pending_duration if pending_duration and pending_duration > 0 else default_duration_sec
+        duration = (
+            pending_duration
+            if pending_duration and pending_duration > 0
+            else default_duration_sec
+        )
         ordered.append((key, duration))
         pending_duration = None
 
@@ -291,11 +295,11 @@ class OrcasoundS3Client:
                 OSError,
             ) as e:
                 last_exc = e
-            except Exception as e:
+            except Exception:
                 raise
 
             if attempt < _SEGMENT_FETCH_RETRIES - 1:
-                wait = _SEGMENT_FETCH_BACKOFF_BASE * (2 ** attempt)
+                wait = _SEGMENT_FETCH_BACKOFF_BASE * (2**attempt)
                 logger.warning(
                     "Retrying segment %s (attempt %d/%d) after error: %s",
                     key,
@@ -308,9 +312,7 @@ class OrcasoundS3Client:
         assert last_exc is not None
         raise last_exc
 
-    def count_segments(
-        self, hydrophone_id: str, folder_timestamps: list[str]
-    ) -> int:
+    def count_segments(self, hydrophone_id: str, folder_timestamps: list[str]) -> int:
         """Count total .ts segments across folders (for progress estimation)."""
         total = 0
         for folder_ts in folder_timestamps:
@@ -365,9 +367,7 @@ class LocalHLSClient:
         for entry in folder.iterdir():
             if entry.suffix == ".ts":
                 # Return key in S3-style format for consistency
-                segments.append(
-                    f"{hydrophone_id}/hls/{folder_ts}/{entry.name}"
-                )
+                segments.append(f"{hydrophone_id}/hls/{folder_ts}/{entry.name}")
         return _sort_segment_keys(segments)
 
     def fetch_playlist(self, hydrophone_id: str, folder_ts: str) -> str | None:
@@ -391,9 +391,7 @@ class LocalHLSClient:
             return True
         return False
 
-    def count_segments(
-        self, hydrophone_id: str, folder_timestamps: list[str]
-    ) -> int:
+    def count_segments(self, hydrophone_id: str, folder_timestamps: list[str]) -> int:
         """Count total .ts segments across folders."""
         total = 0
         for folder_ts in folder_timestamps:
@@ -453,9 +451,7 @@ class CachingS3Client:
         if folder_dir.is_dir():
             for entry in folder_dir.iterdir():
                 if entry.suffix == ".ts":
-                    local_keys.add(
-                        f"{hydrophone_id}/hls/{folder_ts}/{entry.name}"
-                    )
+                    local_keys.add(f"{hydrophone_id}/hls/{folder_ts}/{entry.name}")
 
         # If folder marked as 404, return local-only
         if marker_path.is_file():
@@ -467,7 +463,8 @@ class CachingS3Client:
         except Exception:
             logger.warning(
                 "S3 list_segments failed for %s/%s, using cache only",
-                hydrophone_id, folder_ts,
+                hydrophone_id,
+                folder_ts,
             )
             return _sort_segment_keys(local_keys)
 
@@ -527,7 +524,9 @@ class CachingS3Client:
             if code in ("NoSuchKey", "404"):
                 local_path.parent.mkdir(parents=True, exist_ok=True)
                 marker_path.write_text(
-                    json.dumps({"cached_at_utc": datetime.now(timezone.utc).isoformat()})
+                    json.dumps(
+                        {"cached_at_utc": datetime.now(timezone.utc).isoformat()}
+                    )
                 )
                 raise SegmentNotFoundError(f"Segment not found on S3: {key}") from e
             raise
@@ -549,9 +548,7 @@ class CachingS3Client:
             return True
         return False
 
-    def count_segments(
-        self, hydrophone_id: str, folder_timestamps: list[str]
-    ) -> int:
+    def count_segments(self, hydrophone_id: str, folder_timestamps: list[str]) -> int:
         """Count total .ts segments across folders."""
         total = 0
         for folder_ts in folder_timestamps:
@@ -566,9 +563,17 @@ def decode_ts_bytes(ts_bytes: bytes, target_sr: int = 32000) -> np.ndarray:
     """
     result = subprocess.run(
         [
-            "ffmpeg", "-i", "pipe:0",
-            "-f", "wav", "-acodec", "pcm_s16le",
-            "-ac", "1", "-ar", str(target_sr),
+            "ffmpeg",
+            "-i",
+            "pipe:0",
+            "-f",
+            "wav",
+            "-acodec",
+            "pcm_s16le",
+            "-ac",
+            "1",
+            "-ar",
+            str(target_sr),
             "pipe:1",
         ],
         input=ts_bytes,
@@ -646,14 +651,19 @@ def _build_stream_timeline(
                 continue
             cursor = float(folder_ts)
             for key, duration_sec in ordered:
-                duration = duration_sec if duration_sec > 0 else DEFAULT_SEGMENT_DURATION_SEC
+                duration = (
+                    duration_sec if duration_sec > 0 else DEFAULT_SEGMENT_DURATION_SEC
+                )
                 segment = StreamSegment(
                     key=key,
                     start_ts=cursor,
                     duration_sec=duration,
                 )
                 cursor += duration
-                if segment.end_ts <= stream_start_ts or segment.start_ts >= stream_end_ts:
+                if (
+                    segment.end_ts <= stream_start_ts
+                    or segment.start_ts >= stream_end_ts
+                ):
                     continue
                 timeline.append(segment)
                 if segment.start_ts <= stream_start_ts < segment.end_ts:
@@ -662,7 +672,11 @@ def _build_stream_timeline(
         if start_boundary_covered:
             break
 
-        if timeline and not jumped_to_max_lookback and lookback_step < max_lookback_steps:
+        if (
+            timeline
+            and not jumped_to_max_lookback
+            and lookback_step < max_lookback_steps
+        ):
             # We found overlap in-range but not at the requested start boundary.
             # Jump straight to max lookback to avoid N incremental list calls.
             lookback_step = max_lookback_steps
@@ -779,7 +793,8 @@ def resolve_hydrophone_audio_slice(
             continue
 
         candidates = [
-            seg for seg in timeline
+            seg
+            for seg in timeline
             if seg.end_ts > target_start_ts and seg.start_ts < target_end_ts
         ]
         if not candidates:
@@ -889,7 +904,10 @@ def iter_audio_chunks(
             else:
                 assert accumulator_start_ts is not None
                 expected_next_ts = accumulator_start_ts + (len(accumulator) / target_sr)
-                if abs(clip_start_ts - expected_next_ts) > STREAM_DISCONTINUITY_TOLERANCE_SEC:
+                if (
+                    abs(clip_start_ts - expected_next_ts)
+                    > STREAM_DISCONTINUITY_TOLERANCE_SEC
+                ):
                     # Flush at detected timeline discontinuities (e.g., decode drops).
                     chunk_start_utc = datetime.fromtimestamp(
                         accumulator_start_ts, tz=timezone.utc
@@ -932,12 +950,22 @@ def iter_audio_chunks(
                                 accumulator_start_ts = clip_start_ts
                             else:
                                 assert accumulator_start_ts is not None
-                                expected_next_ts = accumulator_start_ts + (len(accumulator) / target_sr)
-                                if abs(clip_start_ts - expected_next_ts) > STREAM_DISCONTINUITY_TOLERANCE_SEC:
+                                expected_next_ts = accumulator_start_ts + (
+                                    len(accumulator) / target_sr
+                                )
+                                if (
+                                    abs(clip_start_ts - expected_next_ts)
+                                    > STREAM_DISCONTINUITY_TOLERANCE_SEC
+                                ):
                                     chunk_start_utc = datetime.fromtimestamp(
                                         accumulator_start_ts, tz=timezone.utc
                                     )
-                                    yield accumulator, chunk_start_utc, segments_done, segments_total
+                                    yield (
+                                        accumulator,
+                                        chunk_start_utc,
+                                        segments_done,
+                                        segments_total,
+                                    )
                                     accumulator = audio
                                     accumulator_start_ts = clip_start_ts
                                 else:
@@ -949,10 +977,17 @@ def iter_audio_chunks(
                                 chunk_start_utc = datetime.fromtimestamp(
                                     accumulator_start_ts, tz=timezone.utc
                                 )
-                                yield chunk, chunk_start_utc, segments_done, segments_total
+                                yield (
+                                    chunk,
+                                    chunk_start_utc,
+                                    segments_done,
+                                    segments_total,
+                                )
                                 accumulator = accumulator[chunk_samples:]
                                 accumulator_start_ts += chunk_samples / target_sr
-                    logger.info("Retry after cache invalidation succeeded for %s", segment.key)
+                    logger.info(
+                        "Retry after cache invalidation succeeded for %s", segment.key
+                    )
                     continue
                 except Exception as e2:
                     logger.warning(
@@ -963,11 +998,13 @@ def iter_audio_chunks(
 
             logger.warning("Failed to decode segment %s: %s", segment.key, e)
             if on_error:
-                on_error({
-                    "type": "warning",
-                    "message": f"Failed to decode segment {segment.key}: {e}",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                on_error(
+                    {
+                        "type": "warning",
+                        "message": f"Failed to decode segment {segment.key}: {e}",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
 
     # Yield remaining audio
     if len(accumulator) > 0 and accumulator_start_ts is not None:

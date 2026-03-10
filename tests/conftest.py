@@ -1,5 +1,4 @@
 import struct
-import tempfile
 import wave
 from pathlib import Path
 
@@ -51,7 +50,10 @@ def test_wav(tmp_path) -> Path:
     n_samples = int(sample_rate * duration)
     import math
 
-    samples = [int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n_samples)]
+    samples = [
+        int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate))
+        for i in range(n_samples)
+    ]
     with wave.open(str(path), "w") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)

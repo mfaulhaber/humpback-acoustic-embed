@@ -29,7 +29,9 @@ def upgrade():
         batch_op.add_column(sa.Column("start_timestamp", sa.Float(), nullable=True))
         batch_op.add_column(sa.Column("end_timestamp", sa.Float(), nullable=True))
         # Progress tracking for streaming
-        batch_op.add_column(sa.Column("segments_processed", sa.Integer(), nullable=True))
+        batch_op.add_column(
+            sa.Column("segments_processed", sa.Integer(), nullable=True)
+        )
         batch_op.add_column(sa.Column("segments_total", sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column("time_covered_sec", sa.Float(), nullable=True))
         # Alerts (JSON array)

@@ -162,7 +162,11 @@ def test_deterministic_reduction_perfect_stability():
 
     result = run_stability_evaluation(
         embeddings,
-        {"reduction_method": "pca", "clustering_algorithm": "hdbscan", "min_cluster_size": 5},
+        {
+            "reduction_method": "pca",
+            "clustering_algorithm": "hdbscan",
+            "min_cluster_size": 5,
+        },
         None,
         n_runs=3,
     )
@@ -181,7 +185,11 @@ def test_no_reduction_hdbscan_perfect_stability():
 
     result = run_stability_evaluation(
         embeddings,
-        {"reduction_method": "none", "clustering_algorithm": "hdbscan", "min_cluster_size": 5},
+        {
+            "reduction_method": "none",
+            "clustering_algorithm": "hdbscan",
+            "min_cluster_size": 5,
+        },
         None,
         n_runs=3,
     )

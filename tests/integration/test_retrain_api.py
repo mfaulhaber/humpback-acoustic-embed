@@ -3,13 +3,11 @@
 import json
 import uuid
 
-from sqlalchemy import insert
 
 from humpback.database import create_engine, create_session_factory
 from humpback.models.audio import AudioFile
 from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob
 from humpback.models.processing import EmbeddingSet
-from humpback.models.retrain import RetrainWorkflow
 
 
 async def _seed_model_with_training(app_settings, tmp_path_factory):
@@ -173,9 +171,7 @@ async def test_list_retrain_workflows_empty(client):
     assert resp.json() == []
 
 
-async def test_list_and_get_retrain_workflow(
-    client, app_settings, tmp_path_factory
-):
+async def test_list_and_get_retrain_workflow(client, app_settings, tmp_path_factory):
     model_id = await _seed_model_with_training(app_settings, tmp_path_factory)
 
     # Create a workflow

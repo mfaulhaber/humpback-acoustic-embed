@@ -132,7 +132,9 @@ async def test_hydrophone_detection_no_audio_marks_job_failed_with_range_message
     async def _fake_get_model_by_version(_session, _model_version, _settings):
         class DummyModel:
             def embed(self, _batch):
-                raise AssertionError("embed() should not be called when no timeline exists")
+                raise AssertionError(
+                    "embed() should not be called when no timeline exists"
+                )
 
         return DummyModel(), "waveform"
 
@@ -154,7 +156,10 @@ async def test_hydrophone_detection_no_audio_marks_job_failed_with_range_message
 
     assert job.status == "failed"
     assert job.error_message is not None
-    assert "No hydrophone audio segments found for hydrophone 'rpi_north_sjc'" in job.error_message
+    assert (
+        "No hydrophone audio segments found for hydrophone 'rpi_north_sjc'"
+        in job.error_message
+    )
     assert "[2025-07-02T13:00:00Z, 2025-07-02T19:00:00Z]" in job.error_message
 
 

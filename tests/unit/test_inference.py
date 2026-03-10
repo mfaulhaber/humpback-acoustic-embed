@@ -108,9 +108,13 @@ def test_configure_tf_gpu_idempotent():
         mock_gpu = MagicMock()
         mock_gpu.name = "GPU:0"
 
-        with patch.object(inf, "logger") as mock_logger:
-            with patch("tensorflow.config.list_physical_devices", return_value=[mock_gpu]):
-                with patch("tensorflow.config.experimental.set_memory_growth") as mock_growth:
+        with patch.object(inf, "logger"):
+            with patch(
+                "tensorflow.config.list_physical_devices", return_value=[mock_gpu]
+            ):
+                with patch(
+                    "tensorflow.config.experimental.set_memory_growth"
+                ) as mock_growth:
                     inf.configure_tf_gpu()
                     assert inf._tf_gpu_configured is True
                     assert mock_growth.call_count == 1
@@ -160,7 +164,7 @@ def test_tf2_saved_model_gpu_failed_class_default():
 def _make_saved_model_pb(tmp_path: Path, xla_must_compile: bool) -> Path:
     """Create a minimal saved_model.pb with or without _XlaMustCompile."""
     from tensorflow.core.protobuf import saved_model_pb2
-    from tensorflow.core.framework import graph_pb2, attr_value_pb2
+    from tensorflow.core.framework import attr_value_pb2
 
     sm = saved_model_pb2.SavedModel()
     meta = sm.meta_graphs.add()
@@ -168,9 +172,7 @@ def _make_saved_model_pb(tmp_path: Path, xla_must_compile: bool) -> Path:
     node.name = "StatefulPartitionedCall"
     node.op = "StatefulPartitionedCall"
     if xla_must_compile:
-        node.attr["_XlaMustCompile"].CopyFrom(
-            attr_value_pb2.AttrValue(b=True)
-        )
+        node.attr["_XlaMustCompile"].CopyFrom(attr_value_pb2.AttrValue(b=True))
 
     model_dir = tmp_path / "test_model"
     model_dir.mkdir()
@@ -329,7 +331,9 @@ def test_tflite_batch_embed_empty():
 def test_tflite_batch_fallback_on_resize_failure():
     """When resize raises, model should fall back to sequential with warning logged."""
     model = _make_batch_tflite_model(vector_dim=128)
-    model._interpreter.resize_tensor_input.side_effect = RuntimeError("resize not supported")
+    model._interpreter.resize_tensor_input.side_effect = RuntimeError(
+        "resize not supported"
+    )
 
     # For sequential fallback, get_tensor returns single-item output
     model._interpreter.get_tensor.side_effect = lambda idx: np.zeros(

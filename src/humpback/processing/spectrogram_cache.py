@@ -27,7 +27,17 @@ class SpectrogramCache:
         height_px: int,
     ) -> str:
         blob = json.dumps(
-            [job_id, filename, start_sec, duration_sec, hop_length, dynamic_range_db, n_fft, width_px, height_px],
+            [
+                job_id,
+                filename,
+                start_sec,
+                duration_sec,
+                hop_length,
+                dynamic_range_db,
+                n_fft,
+                width_px,
+                height_px,
+            ],
             sort_keys=False,
         ).encode()
         return hashlib.sha256(blob).hexdigest()

@@ -44,22 +44,26 @@ def merge_detection_spans(
             span_confidences.append(conf)
         else:
             if in_span:
-                spans.append({
-                    "start_sec": span_start * window_size_seconds,
-                    "end_sec": (i) * window_size_seconds,
-                    "avg_confidence": float(np.mean(span_confidences)),
-                    "peak_confidence": float(np.max(span_confidences)),
-                })
+                spans.append(
+                    {
+                        "start_sec": span_start * window_size_seconds,
+                        "end_sec": (i) * window_size_seconds,
+                        "avg_confidence": float(np.mean(span_confidences)),
+                        "peak_confidence": float(np.max(span_confidences)),
+                    }
+                )
                 in_span = False
 
     # Close final span
     if in_span:
-        spans.append({
-            "start_sec": span_start * window_size_seconds,
-            "end_sec": len(window_confidences) * window_size_seconds,
-            "avg_confidence": float(np.mean(span_confidences)),
-            "peak_confidence": float(np.max(span_confidences)),
-        })
+        spans.append(
+            {
+                "start_sec": span_start * window_size_seconds,
+                "end_sec": len(window_confidences) * window_size_seconds,
+                "avg_confidence": float(np.mean(span_confidences)),
+                "peak_confidence": float(np.max(span_confidences)),
+            }
+        )
 
     return spans
 
@@ -95,24 +99,28 @@ def merge_detection_events(
                 event_end = rec["end_sec"]
                 event_confidences.append(conf)
             else:
-                events.append({
-                    "start_sec": event_start,
-                    "end_sec": event_end,
-                    "avg_confidence": float(np.mean(event_confidences)),
-                    "peak_confidence": float(np.max(event_confidences)),
-                    "n_windows": len(event_confidences),
-                })
+                events.append(
+                    {
+                        "start_sec": event_start,
+                        "end_sec": event_end,
+                        "avg_confidence": float(np.mean(event_confidences)),
+                        "peak_confidence": float(np.max(event_confidences)),
+                        "n_windows": len(event_confidences),
+                    }
+                )
                 in_event = False
 
     # Close final event
     if in_event:
-        events.append({
-            "start_sec": event_start,
-            "end_sec": event_end,
-            "avg_confidence": float(np.mean(event_confidences)),
-            "peak_confidence": float(np.max(event_confidences)),
-            "n_windows": len(event_confidences),
-        })
+        events.append(
+            {
+                "start_sec": event_start,
+                "end_sec": event_end,
+                "avg_confidence": float(np.mean(event_confidences)),
+                "peak_confidence": float(np.max(event_confidences)),
+                "n_windows": len(event_confidences),
+            }
+        )
 
     return events
 
@@ -173,7 +181,9 @@ def run_detection(
             if len(audio) < window_samples:
                 logger.warning(
                     "Skipping %s: audio too short (%.3fs < %.1fs window)",
-                    audio_path.name, len(audio) / target_sample_rate, window_size_seconds,
+                    audio_path.name,
+                    len(audio) / target_sample_rate,
+                    window_size_seconds,
                 )
                 n_skipped_short += 1
                 files_done += 1
@@ -185,7 +195,9 @@ def run_detection(
             raw_windows: list[np.ndarray] = []
             window_metas: list[WindowMetadata] = []
             for window, meta in slice_windows_with_metadata(
-                audio, target_sample_rate, window_size_seconds,
+                audio,
+                target_sample_rate,
+                window_size_seconds,
                 hop_seconds=hop_seconds,
             ):
                 window_metas.append(meta)
@@ -204,8 +216,11 @@ def run_detection(
             else:
                 t0 = time.monotonic()
                 batch_items = extract_logmel_batch(
-                    raw_windows, target_sample_rate,
-                    n_mels=128, hop_length=1252, target_frames=128,
+                    raw_windows,
+                    target_sample_rate,
+                    n_mels=128,
+                    hop_length=1252,
+                    target_frames=128,
                     normalization=normalization,
                 )
                 t_features_total += time.monotonic() - t0
@@ -241,21 +256,27 @@ def run_detection(
 
             # Collect per-window diagnostics
             if emit_diagnostics:
-                for i_meta, (meta, conf) in enumerate(zip(window_metas, window_confidences)):
+                for i_meta, (meta, conf) in enumerate(
+                    zip(window_metas, window_confidences)
+                ):
                     if meta.is_overlapped and i_meta > 0:
-                        prev_end = window_metas[i_meta - 1].offset_sec + window_size_seconds
+                        prev_end = (
+                            window_metas[i_meta - 1].offset_sec + window_size_seconds
+                        )
                         overlap_sec = prev_end - meta.offset_sec
                     else:
                         overlap_sec = 0.0
-                    diagnostics_records.append({
-                        "filename": rel_path,
-                        "window_index": meta.window_index,
-                        "offset_sec": meta.offset_sec,
-                        "end_sec": meta.offset_sec + window_size_seconds,
-                        "confidence": conf,
-                        "is_overlapped": meta.is_overlapped,
-                        "overlap_sec": overlap_sec,
-                    })
+                    diagnostics_records.append(
+                        {
+                            "filename": rel_path,
+                            "window_index": meta.window_index,
+                            "offset_sec": meta.offset_sec,
+                            "end_sec": meta.offset_sec + window_size_seconds,
+                            "confidence": conf,
+                            "is_overlapped": meta.is_overlapped,
+                            "overlap_sec": overlap_sec,
+                        }
+                    )
 
             # Merge events using hysteresis
             events = merge_detection_events(
@@ -266,7 +287,9 @@ def run_detection(
                 event["filename"] = rel_path
                 all_detections.append(event)
 
-            total_positive += sum(1 for c in window_confidences if c >= confidence_threshold)
+            total_positive += sum(
+                1 for c in window_confidences if c >= confidence_threshold
+            )
             all_confidences.extend(window_confidences)
 
             files_done += 1
@@ -309,18 +332,31 @@ def run_detection(
 
     logger.info(
         "Detection complete: %d files, %d windows, %d detections, %d spans, %d skipped (short)",
-        summary["n_files"], summary["n_windows"],
-        summary["n_detections"], summary["n_spans"], summary["n_skipped_short"],
+        summary["n_files"],
+        summary["n_windows"],
+        summary["n_detections"],
+        summary["n_spans"],
+        summary["n_skipped_short"],
     )
     logger.info(
         "Detection timing: decode=%.3fs, features=%.3fs (%d windows), inference=%.3fs",
-        t_decode_total, t_features_total, n_windows_total, t_inference_total,
+        t_decode_total,
+        t_features_total,
+        n_windows_total,
+        t_inference_total,
     )
 
     return all_detections, summary, diagnostics_records
 
 
-TSV_FIELDNAMES = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
+TSV_FIELDNAMES = [
+    "filename",
+    "start_sec",
+    "end_sec",
+    "avg_confidence",
+    "peak_confidence",
+    "n_windows",
+]
 
 
 def read_detections_tsv(path: Path, fieldnames: list[str] | None = None) -> list[dict]:
@@ -369,22 +405,27 @@ def append_detections_tsv(
 def write_window_diagnostics(records: list[dict], path: Path) -> None:
     """Write per-window diagnostic records to a Parquet file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    schema = pa.schema([
-        ("filename", pa.string()),
-        ("window_index", pa.int32()),
-        ("offset_sec", pa.float32()),
-        ("end_sec", pa.float32()),
-        ("confidence", pa.float32()),
-        ("is_overlapped", pa.bool_()),
-        ("overlap_sec", pa.float32()),
-    ])
-    table = pa.table({
-        "filename": [r["filename"] for r in records],
-        "window_index": [r["window_index"] for r in records],
-        "offset_sec": [r["offset_sec"] for r in records],
-        "end_sec": [r["end_sec"] for r in records],
-        "confidence": [r["confidence"] for r in records],
-        "is_overlapped": [r["is_overlapped"] for r in records],
-        "overlap_sec": [r["overlap_sec"] for r in records],
-    }, schema=schema)
+    schema = pa.schema(
+        [
+            ("filename", pa.string()),
+            ("window_index", pa.int32()),
+            ("offset_sec", pa.float32()),
+            ("end_sec", pa.float32()),
+            ("confidence", pa.float32()),
+            ("is_overlapped", pa.bool_()),
+            ("overlap_sec", pa.float32()),
+        ]
+    )
+    table = pa.table(
+        {
+            "filename": [r["filename"] for r in records],
+            "window_index": [r["window_index"] for r in records],
+            "offset_sec": [r["offset_sec"] for r in records],
+            "end_sec": [r["end_sec"] for r in records],
+            "confidence": [r["confidence"] for r in records],
+            "is_overlapped": [r["is_overlapped"] for r in records],
+            "overlap_sec": [r["overlap_sec"] for r in records],
+        },
+        schema=schema,
+    )
     pq.write_table(table, path)

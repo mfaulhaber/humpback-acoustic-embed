@@ -15,18 +15,12 @@ ModelConfig = ModelConfig
 
 
 async def list_models(session: AsyncSession) -> list[ModelConfig]:
-    result = await session.execute(
-        select(ModelConfig).order_by(ModelConfig.name)
-    )
+    result = await session.execute(select(ModelConfig).order_by(ModelConfig.name))
     return list(result.scalars().all())
 
 
-async def get_model_by_name(
-    session: AsyncSession, name: str
-) -> Optional[ModelConfig]:
-    result = await session.execute(
-        select(ModelConfig).where(ModelConfig.name == name)
-    )
+async def get_model_by_name(session: AsyncSession, name: str) -> Optional[ModelConfig]:
+    result = await session.execute(select(ModelConfig).where(ModelConfig.name == name))
     return result.scalar_one_or_none()
 
 
@@ -151,6 +145,7 @@ def _detect_tflite_info(model_path: str) -> tuple[str, int | None]:
     vector_dim = None
     try:
         import tensorflow as tf
+
         interp = tf.lite.Interpreter(model_path=model_path)
         interp.allocate_tensors()
         input_details = interp.get_input_details()
@@ -171,6 +166,7 @@ def _detect_tf2_vector_dim(model_dir: str) -> int | None:
     """
     try:
         import tensorflow as tf
+
         model = tf.saved_model.load(model_dir)
         serving_fn = model.signatures["serving_default"]
         shape = serving_fn.structured_outputs["embedding"].shape

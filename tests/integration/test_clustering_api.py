@@ -133,7 +133,9 @@ async def test_visualization_success(client, embedding_set_id, app_settings):
     async_session = async_sessionmaker(engine)
     async with async_session() as session:
         await session.execute(
-            update(ClusteringJob).where(ClusteringJob.id == job_id).values(status="complete")
+            update(ClusteringJob)
+            .where(ClusteringJob.id == job_id)
+            .values(status="complete")
         )
         await session.commit()
     await engine.dispose()
@@ -143,13 +145,17 @@ async def test_visualization_success(client, embedding_set_id, app_settings):
     cluster_path.mkdir(parents=True, exist_ok=True)
 
     n = 5
-    table = pa.table({
-        "x": pa.array(np.random.randn(n).astype(np.float32), type=pa.float32()),
-        "y": pa.array(np.random.randn(n).astype(np.float32), type=pa.float32()),
-        "cluster_label": pa.array([0, 0, 1, 1, -1], type=pa.int32()),
-        "embedding_set_id": pa.array(["es1", "es1", "es2", "es2", "es1"], type=pa.string()),
-        "embedding_row_index": pa.array([0, 1, 0, 1, 2], type=pa.int32()),
-    })
+    table = pa.table(
+        {
+            "x": pa.array(np.random.randn(n).astype(np.float32), type=pa.float32()),
+            "y": pa.array(np.random.randn(n).astype(np.float32), type=pa.float32()),
+            "cluster_label": pa.array([0, 0, 1, 1, -1], type=pa.int32()),
+            "embedding_set_id": pa.array(
+                ["es1", "es1", "es2", "es2", "es1"], type=pa.string()
+            ),
+            "embedding_row_index": pa.array([0, 1, 0, 1, 2], type=pa.int32()),
+        }
+    )
     pq.write_table(table, str(cluster_path / "umap_coords.parquet"))
 
     resp = await client.get(f"/clustering/jobs/{job_id}/visualization")
@@ -180,7 +186,9 @@ async def test_visualization_no_umap_file(client, embedding_set_id, app_settings
     async_session = async_sessionmaker(engine)
     async with async_session() as session:
         await session.execute(
-            update(ClusteringJob).where(ClusteringJob.id == job_id).values(status="complete")
+            update(ClusteringJob)
+            .where(ClusteringJob.id == job_id)
+            .values(status="complete")
         )
         await session.commit()
     await engine.dispose()
@@ -305,8 +313,18 @@ async def test_parameter_sweep_success(client, embedding_set_id, app_settings):
     cluster_path = Path(app_settings.storage_root) / "clusters" / job_id
     cluster_path.mkdir(parents=True, exist_ok=True)
     sweep_data = [
-        {"min_cluster_size": 2, "silhouette_score": 0.6, "n_clusters": 5, "noise_fraction": 0.1},
-        {"min_cluster_size": 3, "silhouette_score": 0.7, "n_clusters": 3, "noise_fraction": 0.05},
+        {
+            "min_cluster_size": 2,
+            "silhouette_score": 0.6,
+            "n_clusters": 5,
+            "noise_fraction": 0.1,
+        },
+        {
+            "min_cluster_size": 3,
+            "silhouette_score": 0.7,
+            "n_clusters": 3,
+            "noise_fraction": 0.05,
+        },
     ]
     (cluster_path / "parameter_sweep.json").write_text(json.dumps(sweep_data))
 
@@ -393,9 +411,16 @@ async def test_stability_success(client, embedding_set_id, app_settings):
             "n_clusters_max": 6.0,
         },
         "per_run": [
-            {"run_index": 0, "seed": 42, "n_clusters": 5, "noise_fraction": 0.0,
-             "silhouette_score": 0.5, "adjusted_rand_index": None,
-             "normalized_mutual_info": None, "fragmentation_index": None},
+            {
+                "run_index": 0,
+                "seed": 42,
+                "n_clusters": 5,
+                "noise_fraction": 0.0,
+                "silhouette_score": 0.5,
+                "adjusted_rand_index": None,
+                "normalized_mutual_info": None,
+                "fragmentation_index": None,
+            },
         ],
     }
     (cluster_path / "stability_summary.json").write_text(json.dumps(stability_data))
@@ -461,10 +486,25 @@ async def test_classifier_success(client, embedding_set_id, app_settings):
         "categories_excluded": [],
         "overall_accuracy": 0.85,
         "per_class": {
-            "Grunt": {"precision": 0.9, "recall": 0.85, "f1_score": 0.87, "support": 40},
+            "Grunt": {
+                "precision": 0.9,
+                "recall": 0.85,
+                "f1_score": 0.87,
+                "support": 40,
+            },
         },
-        "macro_avg": {"precision": 0.84, "recall": 0.83, "f1_score": 0.83, "support": 100},
-        "weighted_avg": {"precision": 0.85, "recall": 0.85, "f1_score": 0.85, "support": 100},
+        "macro_avg": {
+            "precision": 0.84,
+            "recall": 0.83,
+            "f1_score": 0.83,
+            "support": 100,
+        },
+        "weighted_avg": {
+            "precision": 0.85,
+            "recall": 0.85,
+            "f1_score": 0.85,
+            "support": 100,
+        },
         "confusion_matrix": {"Grunt": {"Grunt": 34, "Buzz": 6}},
     }
     (cluster_path / "classifier_report.json").write_text(json.dumps(classifier_data))
@@ -578,7 +618,9 @@ async def test_create_job_refined_from_incomplete(client, embedding_set_id):
     assert "not complete" in resp.json()["detail"].lower()
 
 
-async def test_create_job_refined_from_no_parquet(client, embedding_set_id, app_settings):
+async def test_create_job_refined_from_no_parquet(
+    client, embedding_set_id, app_settings
+):
     """Creating a job from a complete source without refined parquet should fail."""
     # Create and mark complete (no refined_embeddings.parquet)
     create = await client.post(
@@ -612,11 +654,13 @@ async def test_create_job_refined_from_valid(client, embedding_set_id, app_setti
     # Write a refined_embeddings.parquet
     cluster_path = Path(app_settings.storage_root) / "clusters" / source_id
     cluster_path.mkdir(parents=True, exist_ok=True)
-    table = pa.table({
-        "embedding_set_id": pa.array(["es1", "es1"], type=pa.string()),
-        "embedding_row_index": pa.array([0, 1], type=pa.int32()),
-        "embedding": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
-    })
+    table = pa.table(
+        {
+            "embedding_set_id": pa.array(["es1", "es1"], type=pa.string()),
+            "embedding_row_index": pa.array([0, 1], type=pa.int32()),
+            "embedding": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+        }
+    )
     pq.write_table(table, str(cluster_path / "refined_embeddings.parquet"))
 
     resp = await client.post(

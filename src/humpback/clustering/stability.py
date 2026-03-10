@@ -105,9 +105,7 @@ def _compute_pairwise_ari(all_labels: list[np.ndarray]) -> dict[str, float | Non
     }
 
 
-def _aggregate_metric(
-    runs: list[dict[str, Any]], key: str
-) -> dict[str, float | None]:
+def _aggregate_metric(runs: list[dict[str, Any]], key: str) -> dict[str, float | None]:
     """Compute mean/std/min/max for a named metric across runs, skipping None."""
     values = [r[key] for r in runs if r.get(key) is not None]
     if not values:

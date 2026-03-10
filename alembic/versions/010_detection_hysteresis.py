@@ -16,9 +16,17 @@ depends_on = None
 
 def upgrade():
     with op.batch_alter_table("detection_jobs") as batch_op:
-        batch_op.add_column(sa.Column("hop_seconds", sa.Float(), nullable=True, server_default="1.0"))
-        batch_op.add_column(sa.Column("high_threshold", sa.Float(), nullable=True, server_default="0.70"))
-        batch_op.add_column(sa.Column("low_threshold", sa.Float(), nullable=True, server_default="0.45"))
+        batch_op.add_column(
+            sa.Column("hop_seconds", sa.Float(), nullable=True, server_default="1.0")
+        )
+        batch_op.add_column(
+            sa.Column(
+                "high_threshold", sa.Float(), nullable=True, server_default="0.70"
+            )
+        )
+        batch_op.add_column(
+            sa.Column("low_threshold", sa.Float(), nullable=True, server_default="0.45")
+        )
 
 
 def downgrade():

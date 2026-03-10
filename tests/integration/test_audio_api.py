@@ -56,7 +56,10 @@ async def test_update_metadata(client, wav_bytes):
     audio_id = upload.json()["id"]
     resp = await client.put(
         f"/audio/{audio_id}/metadata",
-        json={"tag_data": {"species": "humpback"}, "visual_observations": {"breaching": True}},
+        json={
+            "tag_data": {"species": "humpback"},
+            "visual_observations": {"breaching": True},
+        },
     )
     assert resp.status_code == 200
     assert resp.json()["tag_data"] == {"species": "humpback"}

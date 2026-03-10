@@ -10,7 +10,11 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.audio import AudioFile
-from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob, DetectionJob
+from humpback.models.classifier import (
+    ClassifierModel,
+    ClassifierTrainingJob,
+    DetectionJob,
+)
 from humpback.models.processing import EmbeddingSet
 from humpback.models.retrain import RetrainWorkflow
 
@@ -33,7 +37,9 @@ async def create_training_job(
     # Reject overlap between positive and negative sets
     overlap = set(positive_embedding_set_ids) & set(negative_embedding_set_ids)
     if overlap:
-        raise ValueError(f"Embedding sets cannot be both positive and negative: {overlap}")
+        raise ValueError(
+            f"Embedding sets cannot be both positive and negative: {overlap}"
+        )
 
     # Load and validate positive embedding sets
     result = await session.execute(
@@ -59,11 +65,15 @@ async def create_training_job(
     all_sets = pos_sets + neg_sets
     model_versions = {es.model_version for es in all_sets}
     if len(model_versions) > 1:
-        raise ValueError(f"Embedding sets use different model versions: {model_versions}")
+        raise ValueError(
+            f"Embedding sets use different model versions: {model_versions}"
+        )
 
     vector_dims = {es.vector_dim for es in all_sets}
     if len(vector_dims) > 1:
-        raise ValueError(f"Embedding sets have different vector dimensions: {vector_dims}")
+        raise ValueError(
+            f"Embedding sets have different vector dimensions: {vector_dims}"
+        )
 
     # Check encoding signature consistency
     encoding_sigs = {es.encoding_signature for es in all_sets if es.encoding_signature}
@@ -116,9 +126,7 @@ async def create_detection_job(
     if not folder.is_dir():
         raise ValueError(f"Audio folder not found: {audio_folder}")
 
-    audio_files = [
-        p for p in folder.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS
-    ]
+    audio_files = [p for p in folder.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS]
     if not audio_files:
         raise ValueError(f"No audio files found in {audio_folder}")
 
@@ -156,7 +164,11 @@ async def create_hydrophone_detection_job(
     local_cache_path: str | None = None,
 ) -> DetectionJob:
     """Create a hydrophone detection job after validating inputs."""
-    from humpback.config import HYDROPHONE_IDS, ORCASOUND_HYDROPHONES, ORCASOUND_S3_BUCKET
+    from humpback.config import (
+        HYDROPHONE_IDS,
+        ORCASOUND_HYDROPHONES,
+        ORCASOUND_S3_BUCKET,
+    )
 
     # Validate classifier model exists
     result = await session.execute(
@@ -183,6 +195,7 @@ async def create_hydrophone_detection_job(
     # Validate local cache path if provided
     if local_cache_path:
         from pathlib import Path
+
         cache_dir = Path(local_cache_path) / ORCASOUND_S3_BUCKET / hydrophone_id / "hls"
         if not cache_dir.is_dir():
             raise ValueError(
@@ -231,6 +244,7 @@ async def cancel_hydrophone_detection_job(
         raise ValueError(f"Job is not running or paused (status={job.status})")
 
     from datetime import datetime, timezone
+
     await session.execute(
         update(DetectionJob)
         .where(DetectionJob.id == job_id)
@@ -254,6 +268,7 @@ async def pause_hydrophone_detection_job(
         raise ValueError(f"Job is not running (status={job.status})")
 
     from datetime import datetime, timezone
+
     await session.execute(
         update(DetectionJob)
         .where(DetectionJob.id == job_id)
@@ -277,6 +292,7 @@ async def resume_hydrophone_detection_job(
         raise ValueError(f"Job is not paused (status={job.status})")
 
     from datetime import datetime, timezone
+
     await session.execute(
         update(DetectionJob)
         .where(DetectionJob.id == job_id)
@@ -331,6 +347,7 @@ async def delete_classifier_model(
 
     # Delete files
     from humpback.storage import classifier_dir
+
     cdir = classifier_dir(storage_root, model_id)
     if cdir.is_dir():
         shutil.rmtree(cdir)
@@ -450,7 +467,9 @@ async def get_training_data_summary(
     if not cm.training_job_id:
         return None
     result = await session.execute(
-        select(ClassifierTrainingJob).where(ClassifierTrainingJob.id == cm.training_job_id)
+        select(ClassifierTrainingJob).where(
+            ClassifierTrainingJob.id == cm.training_job_id
+        )
     )
     tj = result.scalar_one_or_none()
     if tj is None:
@@ -488,14 +507,16 @@ async def get_training_data_summary(
             total += n_vectors
             duration = n_vectors * cm.window_size_seconds if n_vectors else None
             af = audio_map.get(es.audio_file_id) if es.audio_file_id else None
-            sources.append({
-                "embedding_set_id": es.id,
-                "audio_file_id": es.audio_file_id,
-                "filename": af.filename if af else None,
-                "folder_path": af.folder_path if af else None,
-                "n_vectors": n_vectors,
-                "duration_represented_sec": duration,
-            })
+            sources.append(
+                {
+                    "embedding_set_id": es.id,
+                    "audio_file_id": es.audio_file_id,
+                    "filename": af.filename if af else None,
+                    "folder_path": af.folder_path if af else None,
+                    "n_vectors": n_vectors,
+                    "duration_represented_sec": duration,
+                }
+            )
         return sources, total
 
     pos_sources, total_pos = await _resolve_sources(pos_ids)
@@ -512,8 +533,12 @@ async def get_training_data_summary(
         "total_negative": total_neg,
         "balance_ratio": balance,
         "window_size_seconds": cm.window_size_seconds,
-        "positive_duration_sec": total_pos * cm.window_size_seconds if total_pos else None,
-        "negative_duration_sec": total_neg * cm.window_size_seconds if total_neg else None,
+        "positive_duration_sec": total_pos * cm.window_size_seconds
+        if total_pos
+        else None,
+        "negative_duration_sec": total_neg * cm.window_size_seconds
+        if total_neg
+        else None,
     }
 
 

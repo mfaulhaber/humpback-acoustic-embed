@@ -1,5 +1,4 @@
 import os
-import shutil
 from pathlib import Path
 
 
@@ -14,13 +13,19 @@ def embedding_dir(storage_root: Path, model_version: str, audio_file_id: str) ->
 def embedding_path(
     storage_root: Path, model_version: str, audio_file_id: str, encoding_signature: str
 ) -> Path:
-    return embedding_dir(storage_root, model_version, audio_file_id) / f"{encoding_signature}.parquet"
+    return (
+        embedding_dir(storage_root, model_version, audio_file_id)
+        / f"{encoding_signature}.parquet"
+    )
 
 
 def embedding_tmp_path(
     storage_root: Path, model_version: str, audio_file_id: str, encoding_signature: str
 ) -> Path:
-    return embedding_dir(storage_root, model_version, audio_file_id) / f"{encoding_signature}.tmp.parquet"
+    return (
+        embedding_dir(storage_root, model_version, audio_file_id)
+        / f"{encoding_signature}.tmp.parquet"
+    )
 
 
 def cluster_dir(storage_root: Path, clustering_job_id: str) -> Path:

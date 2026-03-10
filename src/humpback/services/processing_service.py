@@ -102,9 +102,7 @@ async def cancel_processing_job(
     return job
 
 
-async def delete_processing_job(
-    session: AsyncSession, job_id: str
-) -> bool:
+async def delete_processing_job(session: AsyncSession, job_id: str) -> bool:
     """Delete a processing job. Only non-running jobs can be deleted."""
     job = await get_processing_job(session, job_id)
     if job is None:
@@ -116,9 +114,7 @@ async def delete_processing_job(
     return True
 
 
-async def bulk_delete_processing_jobs(
-    session: AsyncSession, job_ids: list[str]
-) -> int:
+async def bulk_delete_processing_jobs(session: AsyncSession, job_ids: list[str]) -> int:
     """Delete multiple processing jobs. Skips running jobs. Returns count deleted."""
     count = 0
     for job_id in job_ids:
@@ -143,7 +139,5 @@ async def list_embedding_sets(session: AsyncSession) -> list[EmbeddingSet]:
 async def get_embedding_set(
     session: AsyncSession, es_id: str
 ) -> Optional[EmbeddingSet]:
-    result = await session.execute(
-        select(EmbeddingSet).where(EmbeddingSet.id == es_id)
-    )
+    result = await session.execute(select(EmbeddingSet).where(EmbeddingSet.id == es_id))
     return result.scalar_one_or_none()

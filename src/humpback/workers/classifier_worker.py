@@ -21,7 +21,11 @@ from humpback.classifier.detector import (
 from humpback.classifier.extractor import extract_labeled_samples
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
-from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob, DetectionJob
+from humpback.models.classifier import (
+    ClassifierModel,
+    ClassifierTrainingJob,
+    DetectionJob,
+)
 from humpback.processing.embeddings import read_embeddings
 from humpback.storage import classifier_dir, detection_dir, ensure_dir
 from humpback.workers.model_cache import get_model_by_version
@@ -176,7 +180,8 @@ async def run_detection_job(
 
         # Count audio files and set initial progress in DB
         audio_files = sorted(
-            p for p in Path(job.audio_folder).rglob("*")
+            p
+            for p in Path(job.audio_folder).rglob("*")
             if p.suffix.lower() in AUDIO_EXTENSIONS
         )
         files_total = len(audio_files)
@@ -206,6 +211,7 @@ async def run_detection_job(
 
             # Schedule async DB progress update on the event loop
             if session_factory is not None:
+
                 async def _update_progress():
                     try:
                         async with session_factory() as progress_session:
@@ -216,7 +222,9 @@ async def run_detection_job(
                             )
                             await progress_session.commit()
                     except Exception:
-                        logger.debug("Failed to update detection progress", exc_info=True)
+                        logger.debug(
+                            "Failed to update detection progress", exc_info=True
+                        )
 
                 loop.call_soon_threadsafe(asyncio.ensure_future, _update_progress())
 
@@ -340,7 +348,9 @@ async def run_hydrophone_detection_job(
         def _fmt_utc(ts: float | None) -> str:
             if ts is None:
                 return "unknown"
-            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
 
         hydrophone_short_name = job.hydrophone_id
 
@@ -361,6 +371,7 @@ async def run_hydrophone_detection_job(
                 )
 
             if session_factory is not None:
+
                 async def _update_progress():
                     try:
                         async with session_factory() as progress_session:
@@ -375,7 +386,9 @@ async def run_hydrophone_detection_job(
                             )
                             await progress_session.commit()
                     except Exception:
-                        logger.debug("Failed to update hydrophone progress", exc_info=True)
+                        logger.debug(
+                            "Failed to update hydrophone progress", exc_info=True
+                        )
 
                 loop.call_soon_threadsafe(asyncio.ensure_future, _update_progress())
 
@@ -385,6 +398,7 @@ async def run_hydrophone_detection_job(
         def on_alert(alert: dict):
             alerts_list.append(alert)
             if session_factory is not None:
+
                 async def _update_alerts():
                     try:
                         async with session_factory() as alert_session:
@@ -534,8 +548,11 @@ async def run_extraction_job(
 
         # Look up window_size_seconds from the classifier model
         from sqlalchemy import select as sa_select
+
         cm_result = await session.execute(
-            sa_select(ClassifierModel).where(ClassifierModel.id == job.classifier_model_id)
+            sa_select(ClassifierModel).where(
+                ClassifierModel.id == job.classifier_model_id
+            )
         )
         cm = cm_result.scalar_one_or_none()
         ws = cm.window_size_seconds if cm else 5.0

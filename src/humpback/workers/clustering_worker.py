@@ -18,7 +18,11 @@ from humpback.clustering.metrics import (
     extract_category_from_folder_path,
     run_parameter_sweep,
 )
-from humpback.clustering.pipeline import ClusteringResult, compute_cluster_sizes, run_clustering_pipeline
+from humpback.clustering.pipeline import (
+    ClusteringResult,
+    compute_cluster_sizes,
+    run_clustering_pipeline,
+)
 from humpback.config import Settings
 from humpback.models.audio import AudioFile
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
@@ -86,7 +90,9 @@ async def run_clustering_job(
                 )
             refined_table = pq.read_table(str(refined_path))
             refined_es_ids = refined_table.column("embedding_set_id").to_pylist()
-            refined_row_indices = refined_table.column("embedding_row_index").to_pylist()
+            refined_row_indices = refined_table.column(
+                "embedding_row_index"
+            ).to_pylist()
             refined_vectors = refined_table.column("embedding").to_pylist()
             embeddings_array = np.array(refined_vectors, dtype=np.float32)
             all_es_ids = refined_es_ids
@@ -110,13 +116,17 @@ async def run_clustering_job(
         # Write UMAP coordinates if dimensionality reduction was performed
         output_dir = ensure_dir(cluster_dir(settings.storage_root, job.id))
         if reduced is not None:
-            umap_table = pa.table({
-                "x": pa.array(reduced[:, 0], type=pa.float32()),
-                "y": pa.array(reduced[:, 1], type=pa.float32()),
-                "cluster_label": pa.array([int(l) for l in labels], type=pa.int32()),
-                "embedding_set_id": pa.array(all_es_ids, type=pa.string()),
-                "embedding_row_index": pa.array(all_row_indices, type=pa.int32()),
-            })
+            umap_table = pa.table(
+                {
+                    "x": pa.array(reduced[:, 0], type=pa.float32()),
+                    "y": pa.array(reduced[:, 1], type=pa.float32()),
+                    "cluster_label": pa.array(
+                        [int(lb) for lb in labels], type=pa.int32()
+                    ),
+                    "embedding_set_id": pa.array(all_es_ids, type=pa.string()),
+                    "embedding_row_index": pa.array(all_row_indices, type=pa.int32()),
+                }
+            )
             pq.write_table(umap_table, str(output_dir / "umap_coords.parquet"))
 
         # --- Compute evaluation metrics ---
@@ -214,7 +224,9 @@ async def run_clustering_job(
             if (params or {}).get("enable_metric_learning", False) and any(
                 c is not None for c in category_labels
             ):
-                from humpback.clustering.metric_learning import run_metric_learning_refinement
+                from humpback.clustering.metric_learning import (
+                    run_metric_learning_refinement,
+                )
 
                 refinement_result = await asyncio.to_thread(
                     run_metric_learning_refinement,
@@ -230,13 +242,29 @@ async def run_clustering_job(
                         json.dumps(refinement_result, indent=2)
                     )
                     if refined_emb is not None:
-                        refined_table = pa.table({
-                            "embedding_set_id": pa.array(all_es_ids, type=pa.string()),
-                            "embedding_row_index": pa.array(all_row_indices, type=pa.int32()),
-                            "embedding": [refined_emb[i].tolist() for i in range(len(refined_emb))],
-                        })
-                        pq.write_table(refined_table, str(output_dir / "refined_embeddings.parquet"))
-                        logger.info("Saved refined embeddings (%d rows) to %s", len(refined_emb), output_dir / "refined_embeddings.parquet")
+                        refined_table = pa.table(
+                            {
+                                "embedding_set_id": pa.array(
+                                    all_es_ids, type=pa.string()
+                                ),
+                                "embedding_row_index": pa.array(
+                                    all_row_indices, type=pa.int32()
+                                ),
+                                "embedding": [
+                                    refined_emb[i].tolist()
+                                    for i in range(len(refined_emb))
+                                ],
+                            }
+                        )
+                        pq.write_table(
+                            refined_table,
+                            str(output_dir / "refined_embeddings.parquet"),
+                        )
+                        logger.info(
+                            "Saved refined embeddings (%d rows) to %s",
+                            len(refined_emb),
+                            output_dir / "refined_embeddings.parquet",
+                        )
         except Exception:
             logger.exception("Failed to run metric learning refinement")
 
@@ -269,12 +297,14 @@ async def run_clustering_job(
                 embedding_row_index=all_row_indices[i],
             )
             session.add(assignment)
-            assignments_data.append({
-                "cluster_id": cluster.id,
-                "cluster_label": label_int,
-                "embedding_set_id": all_es_ids[i],
-                "embedding_row_index": all_row_indices[i],
-            })
+            assignments_data.append(
+                {
+                    "cluster_id": cluster.id,
+                    "cluster_label": label_int,
+                    "embedding_set_id": all_es_ids[i],
+                    "embedding_row_index": all_row_indices[i],
+                }
+            )
 
         # Write output files
         clusters_json = {
@@ -284,7 +314,7 @@ async def run_clustering_job(
                 {"label": int(label), "size": size, "id": c.id}
                 for label, (size, c) in zip(
                     sizes.keys(),
-                    zip(sizes.values(), [cluster_map[l] for l in sizes.keys()]),
+                    zip(sizes.values(), [cluster_map[lb] for lb in sizes.keys()]),
                 )
             ],
         }
@@ -292,12 +322,18 @@ async def run_clustering_job(
 
         # Write assignments parquet
         if assignments_data:
-            table = pa.table({
-                "cluster_id": [a["cluster_id"] for a in assignments_data],
-                "cluster_label": [a["cluster_label"] for a in assignments_data],
-                "embedding_set_id": [a["embedding_set_id"] for a in assignments_data],
-                "embedding_row_index": [a["embedding_row_index"] for a in assignments_data],
-            })
+            table = pa.table(
+                {
+                    "cluster_id": [a["cluster_id"] for a in assignments_data],
+                    "cluster_label": [a["cluster_label"] for a in assignments_data],
+                    "embedding_set_id": [
+                        a["embedding_set_id"] for a in assignments_data
+                    ],
+                    "embedding_row_index": [
+                        a["embedding_row_index"] for a in assignments_data
+                    ],
+                }
+            )
             pq.write_table(table, str(output_dir / "assignments.parquet"))
 
         await complete_clustering_job(session, job.id)

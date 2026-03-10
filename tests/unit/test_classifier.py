@@ -1,7 +1,6 @@
 """Tests for classifier baseline and active learning queue."""
 
 import numpy as np
-import pytest
 
 from humpback.clustering.classifier import run_classifier_baseline
 
@@ -9,6 +8,7 @@ from humpback.clustering.classifier import run_classifier_baseline
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_separable(n_per_class=30, n_classes=3, dim=32, seed=42):
     """Create well-separated clusters with category labels."""
@@ -75,8 +75,14 @@ def test_report_structure():
     assert result is not None
     report = result["classifier_report"]
     expected_keys = {
-        "n_samples", "n_categories", "n_folds", "categories_excluded",
-        "overall_accuracy", "per_class", "macro_avg", "weighted_avg",
+        "n_samples",
+        "n_categories",
+        "n_folds",
+        "categories_excluded",
+        "overall_accuracy",
+        "per_class",
+        "macro_avg",
+        "weighted_avg",
         "confusion_matrix",
     }
     assert expected_keys == set(report.keys())
@@ -113,9 +119,17 @@ def test_label_queue_structure():
     result = run_classifier_baseline(embeddings, labels)
     assert result is not None
     expected_keys = {
-        "rank", "global_index", "embedding_set_id", "embedding_row_index",
-        "current_category", "predicted_category", "entropy", "margin",
-        "max_prob", "fragmentation_boost", "priority",
+        "rank",
+        "global_index",
+        "embedding_set_id",
+        "embedding_row_index",
+        "current_category",
+        "predicted_category",
+        "entropy",
+        "margin",
+        "max_prob",
+        "fragmentation_boost",
+        "priority",
     }
     for entry in result["label_queue"]:
         assert expected_keys == set(entry.keys())

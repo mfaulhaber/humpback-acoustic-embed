@@ -55,7 +55,9 @@ async def list_jobs(session: SessionDep) -> list[ClusteringJobOut]:
 
 
 @router.post("/jobs", status_code=201)
-async def create_job(body: ClusteringJobCreate, session: SessionDep, settings: SettingsDep) -> ClusteringJobOut:
+async def create_job(
+    body: ClusteringJobCreate, session: SessionDep, settings: SettingsDep
+) -> ClusteringJobOut:
     try:
         job = await clustering_service.create_clustering_job(
             session,
@@ -202,7 +204,9 @@ async def get_stability(job_id: str, session: SessionDep, settings: SettingsDep)
     if job.status != "complete":
         raise HTTPException(400, "Clustering job is not complete")
 
-    stability_path = cluster_dir(Path(settings.storage_root), job_id) / "stability_summary.json"
+    stability_path = (
+        cluster_dir(Path(settings.storage_root), job_id) / "stability_summary.json"
+    )
     if not stability_path.exists():
         raise HTTPException(404, "Stability data not available for this job")
 
@@ -218,7 +222,9 @@ async def get_classifier(job_id: str, session: SessionDep, settings: SettingsDep
     if job.status != "complete":
         raise HTTPException(400, "Clustering job is not complete")
 
-    report_path = cluster_dir(Path(settings.storage_root), job_id) / "classifier_report.json"
+    report_path = (
+        cluster_dir(Path(settings.storage_root), job_id) / "classifier_report.json"
+    )
     if not report_path.exists():
         raise HTTPException(404, "Classifier report not available for this job")
 
@@ -250,7 +256,9 @@ async def get_refinement(job_id: str, session: SessionDep, settings: SettingsDep
     if job.status != "complete":
         raise HTTPException(400, "Clustering job is not complete")
 
-    report_path = cluster_dir(Path(settings.storage_root), job_id) / "refinement_report.json"
+    report_path = (
+        cluster_dir(Path(settings.storage_root), job_id) / "refinement_report.json"
+    )
     if not report_path.exists():
         raise HTTPException(404, "Refinement report not available for this job")
 
@@ -266,7 +274,9 @@ async def get_parameter_sweep(job_id: str, session: SessionDep, settings: Settin
     if job.status != "complete":
         raise HTTPException(400, "Clustering job is not complete")
 
-    sweep_path = cluster_dir(Path(settings.storage_root), job_id) / "parameter_sweep.json"
+    sweep_path = (
+        cluster_dir(Path(settings.storage_root), job_id) / "parameter_sweep.json"
+    )
     if not sweep_path.exists():
         raise HTTPException(404, "Parameter sweep data not available for this job")
 
@@ -285,6 +295,8 @@ async def delete_job(job_id: str, session: SessionDep, settings: SettingsDep):
 
 
 @router.get("/clusters/{cluster_id}/assignments")
-async def get_assignments(cluster_id: str, session: SessionDep) -> list[ClusterAssignmentOut]:
+async def get_assignments(
+    cluster_id: str, session: SessionDep
+) -> list[ClusterAssignmentOut]:
     assignments = await clustering_service.get_cluster_assignments(session, cluster_id)
     return [ClusterAssignmentOut.model_validate(a) for a in assignments]

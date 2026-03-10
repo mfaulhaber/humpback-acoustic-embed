@@ -1,11 +1,9 @@
 """Tests for hydrophone detection job resume after worker restart."""
 
-import csv
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 from humpback.classifier.detector import read_detections_tsv, write_detections_tsv
 
@@ -132,8 +130,12 @@ def test_iter_audio_chunks_skip_segments(mock_decode, mock_timeline):
     client = MagicMock()
     chunks = list(
         iter_audio_chunks(
-            client, "hydro", 1000.0, 1100.0,
-            chunk_seconds=60.0, target_sr=32000,
+            client,
+            "hydro",
+            1000.0,
+            1100.0,
+            chunk_seconds=60.0,
+            target_sr=32000,
             skip_segments=5,
         )
     )
@@ -162,8 +164,12 @@ def test_iter_audio_chunks_skip_exceeds_total(mock_decode, mock_timeline):
     client = MagicMock()
     chunks = list(
         iter_audio_chunks(
-            client, "hydro", 1000.0, 1030.0,
-            chunk_seconds=60.0, target_sr=32000,
+            client,
+            "hydro",
+            1000.0,
+            1030.0,
+            chunk_seconds=60.0,
+            target_sr=32000,
             skip_segments=10,  # exceeds timeline of 3
         )
     )
@@ -190,7 +196,16 @@ def test_hydrophone_detection_resume(mock_iter):
     from datetime import datetime, timezone
 
     chunk_utc = datetime(2025, 7, 12, 7, 5, 0, tzinfo=timezone.utc)
-    mock_iter.return_value = iter([(chunk_audio, chunk_utc, 8, 10, )])
+    mock_iter.return_value = iter(
+        [
+            (
+                chunk_audio,
+                chunk_utc,
+                8,
+                10,
+            )
+        ]
+    )
 
     # Mock model and pipeline
     mock_model = MagicMock()
@@ -199,8 +214,14 @@ def test_hydrophone_detection_resume(mock_iter):
     mock_pipeline.predict_proba.return_value = np.array([[0.1, 0.9]])  # high confidence
 
     prior = [
-        {"filename": "20250712T070000Z.wav", "start_sec": 0.0, "end_sec": 5.0,
-         "avg_confidence": 0.85, "peak_confidence": 0.92, "n_windows": 3},
+        {
+            "filename": "20250712T070000Z.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+            "avg_confidence": 0.85,
+            "peak_confidence": 0.92,
+            "n_windows": 3,
+        },
     ]
 
     detections, summary = run_hydrophone_detection(
@@ -243,8 +264,14 @@ def test_hydrophone_detection_resume_timeline_changed(mock_iter):
     mock_pipeline.predict_proba.return_value = np.array([[0.1, 0.9]])
 
     prior = [
-        {"filename": "old.wav", "start_sec": 0.0, "end_sec": 5.0,
-         "avg_confidence": 0.85, "peak_confidence": 0.92, "n_windows": 3},
+        {
+            "filename": "old.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+            "avg_confidence": 0.85,
+            "peak_confidence": 0.92,
+            "n_windows": 3,
+        },
     ]
 
     detections, summary = run_hydrophone_detection(
@@ -330,8 +357,12 @@ def test_iter_audio_chunks_invalidate_and_retry(mock_decode, mock_timeline):
 
     chunks = list(
         iter_audio_chunks(
-            client, "hydro", 1000.0, 1020.0,
-            chunk_seconds=60.0, target_sr=32000,
+            client,
+            "hydro",
+            1000.0,
+            1020.0,
+            chunk_seconds=60.0,
+            target_sr=32000,
         )
     )
 
@@ -362,8 +393,12 @@ def test_iter_audio_chunks_no_invalidation_without_method(mock_decode, mock_time
 
     chunks = list(
         iter_audio_chunks(
-            client, "hydro", 1000.0, 1020.0,
-            chunk_seconds=60.0, target_sr=32000,
+            client,
+            "hydro",
+            1000.0,
+            1020.0,
+            chunk_seconds=60.0,
+            target_sr=32000,
         )
     )
 

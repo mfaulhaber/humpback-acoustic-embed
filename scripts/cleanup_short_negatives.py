@@ -19,6 +19,7 @@ def get_duration(path: Path) -> float | None:
     """Decode audio and return duration in seconds, or None on failure."""
     try:
         from humpback.processing.audio_io import decode_audio
+
         audio, sr = decode_audio(path)
         return len(audio) / sr
     except Exception as e:
@@ -27,12 +28,19 @@ def get_duration(path: Path) -> float | None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Remove short audio clips from negatives folder")
+    parser = argparse.ArgumentParser(
+        description="Remove short audio clips from negatives folder"
+    )
     parser.add_argument("folder", type=Path, help="Path to negatives folder")
-    parser.add_argument("--min-duration", type=float, default=4.5,
-                        help="Minimum duration in seconds (default: 4.5)")
-    parser.add_argument("--delete", action="store_true",
-                        help="Actually delete files (default: dry run)")
+    parser.add_argument(
+        "--min-duration",
+        type=float,
+        default=4.5,
+        help="Minimum duration in seconds (default: 4.5)",
+    )
+    parser.add_argument(
+        "--delete", action="store_true", help="Actually delete files (default: dry run)"
+    )
     args = parser.parse_args()
 
     if not args.folder.is_dir():
@@ -77,7 +85,9 @@ def main():
         print(f"Files that failed to decode: {len(failed)}")
     print()
 
-    for folder in sorted(set(list(delete_by_folder.keys()) + list(keep_by_folder.keys()))):
+    for folder in sorted(
+        set(list(delete_by_folder.keys()) + list(keep_by_folder.keys()))
+    ):
         n_del = len(delete_by_folder.get(folder, []))
         n_keep = len(keep_by_folder.get(folder, []))
         print(f"  {folder}/: delete {n_del}, keep {n_keep}")
@@ -90,7 +100,9 @@ def main():
             print(f"  Deleted: {p} ({dur:.3f}s)")
         print(f"\nDone. Deleted {len(to_delete)} files.")
     elif to_delete:
-        print(f"\nDry run complete. Re-run with --delete to remove {len(to_delete)} files.")
+        print(
+            f"\nDry run complete. Re-run with --delete to remove {len(to_delete)} files."
+        )
 
 
 if __name__ == "__main__":

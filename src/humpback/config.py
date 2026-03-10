@@ -16,8 +16,12 @@ class Settings(BaseSettings):
     model_path: str = "models/multispecies_whale_fp16_flex.tflite"
     models_dir: str = "models"
     tf_force_cpu: bool = False
-    positive_sample_path: str = "/Users/michael/development/data-vocalizations/positives"
-    negative_sample_path: str = "/Users/michael/development/data-vocalizations/negatives"
+    positive_sample_path: str = (
+        "/Users/michael/development/data-vocalizations/positives"
+    )
+    negative_sample_path: str = (
+        "/Users/michael/development/data-vocalizations/negatives"
+    )
     s3_cache_path: str = "/Users/michael/development/orcasound_s3_cache"
     hydrophone_timeline_lookback_increment_hours: int = 4
     hydrophone_timeline_max_lookback_hours: int = 7 * 24
@@ -51,8 +55,16 @@ class Settings(BaseSettings):
 # ---- Orcasound Hydrophone Configuration ----
 
 ORCASOUND_HYDROPHONES = [
-    {"id": "rpi_orcasound_lab", "name": "Orcasound Lab", "location": "San Juan Islands"},
-    {"id": "rpi_north_sjc", "name": "North San Juan Channel", "location": "San Juan Channel"},
+    {
+        "id": "rpi_orcasound_lab",
+        "name": "Orcasound Lab",
+        "location": "San Juan Islands",
+    },
+    {
+        "id": "rpi_north_sjc",
+        "name": "North San Juan Channel",
+        "location": "San Juan Channel",
+    },
     {"id": "rpi_port_townsend", "name": "Port Townsend", "location": "Puget Sound"},
     {"id": "rpi_bush_point", "name": "Bush Point", "location": "Whidbey Island"},
 ]

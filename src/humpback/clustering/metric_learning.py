@@ -38,6 +38,7 @@ def _get_tf_device() -> str:
     logger.info("Metric learning: no GPU found, using CPU (%s)", device)
     return device
 
+
 # Metric direction constants for comparison
 _HIGHER_IS_BETTER = {
     "silhouette_score",
@@ -81,7 +82,7 @@ def generate_triplets(
 
     rng = np.random.RandomState(random_state)
     unique_labels = np.unique(labels)
-    label_to_indices = {int(l): np.where(labels == l)[0] for l in unique_labels}
+    label_to_indices = {int(lb): np.where(labels == lb)[0] for lb in unique_labels}
 
     # Pre-compute projected distances for hard/semi-hard
     proj_dists = None
@@ -117,7 +118,7 @@ def generate_triplets(
         positives[i] = p_idx
 
         # Pick negative (different class)
-        neg_labels = [l for l in unique_labels if l != a_label]
+        neg_labels = [lb for lb in unique_labels if lb != a_label]
         neg_label = neg_labels[rng.randint(0, len(neg_labels))]
         neg_pool = label_to_indices[int(neg_label)]
 
@@ -126,7 +127,7 @@ def generate_triplets(
         elif strategy == "hard":
             # Closest negative
             all_neg_idx = np.concatenate(
-                [label_to_indices[int(l)] for l in neg_labels]
+                [label_to_indices[int(lb)] for lb in neg_labels]
             )
             dists = proj_dists[a_idx, all_neg_idx]
             negatives[i] = all_neg_idx[np.argmin(dists)]
@@ -134,7 +135,7 @@ def generate_triplets(
             # Semi-hard: d_ap < d_an < d_ap + margin; fallback to random
             d_ap = proj_dists[a_idx, p_idx]
             all_neg_idx = np.concatenate(
-                [label_to_indices[int(l)] for l in neg_labels]
+                [label_to_indices[int(lb)] for lb in neg_labels]
             )
             dists = proj_dists[a_idx, all_neg_idx]
             semi_hard_mask = (dists > d_ap) & (dists < d_ap + margin)
@@ -276,7 +277,9 @@ def _compute_summary(
     # Cluster count and noise
     mask = labels != -1
     n_clusters = len(set(labels[mask].tolist())) if mask.any() else 0
-    noise_fraction = float((labels == -1).sum()) / len(labels) if len(labels) > 0 else 0.0
+    noise_fraction = (
+        float((labels == -1).sum()) / len(labels) if len(labels) > 0 else 0.0
+    )
     summary["n_clusters"] = float(n_clusters)
     summary["noise_fraction"] = noise_fraction
 
@@ -385,9 +388,7 @@ def run_metric_learning_refinement(
     refined_summary = _compute_summary(refined_all, category_labels, params)
 
     # Build comparison
-    all_keys = sorted(
-        set(list(base_summary.keys()) + list(refined_summary.keys()))
-    )
+    all_keys = sorted(set(list(base_summary.keys()) + list(refined_summary.keys())))
     key_to_label = {
         "silhouette_score": "Silhouette Score",
         "davies_bouldin_index": "Davies-Bouldin Index",
@@ -435,12 +436,11 @@ def run_metric_learning_refinement(
         "n_categories": len(categories_used),
         "n_total_samples": n_total,
         "categories_used": categories_used,
-        "loss_history": [round(l, 6) for l in loss_history],
+        "loss_history": [round(val, 6) for val in loss_history],
         "final_loss": round(loss_history[-1], 6) if loss_history else None,
         "comparison": comparison,
         "base_summary": {
-            k: round(v, 6) if v is not None else None
-            for k, v in base_summary.items()
+            k: round(v, 6) if v is not None else None for k, v in base_summary.items()
         },
         "refined_summary": {
             k: round(v, 6) if v is not None else None

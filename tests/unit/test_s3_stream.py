@@ -45,7 +45,9 @@ class TestDecodeWavBytes:
         mock_result.returncode = 0
         mock_result.stdout = wav_bytes
 
-        with patch("humpback.classifier.s3_stream.subprocess.run", return_value=mock_result):
+        with patch(
+            "humpback.classifier.s3_stream.subprocess.run", return_value=mock_result
+        ):
             audio = decode_ts_bytes(b"fake-ts-data", sr)
 
         assert audio.dtype == np.float32
@@ -63,7 +65,9 @@ class TestDecodeWavBytes:
         mock_result.returncode = 1
         mock_result.stderr = b"Error decoding"
 
-        with patch("humpback.classifier.s3_stream.subprocess.run", return_value=mock_result):
+        with patch(
+            "humpback.classifier.s3_stream.subprocess.run", return_value=mock_result
+        ):
             with pytest.raises(RuntimeError, match="ffmpeg decode failed"):
                 decode_ts_bytes(b"bad-data")
 
@@ -91,15 +95,19 @@ class TestIterAudioChunks:
         mock_result.returncode = 0
         mock_result.stdout = wav_bytes
 
-        with patch("humpback.classifier.s3_stream.subprocess.run", return_value=mock_result):
-            chunks = list(iter_audio_chunks(
-                mock_client,
-                "rpi_orcasound_lab",
-                1700000000,
-                1700003600,
-                chunk_seconds=60.0,
-                target_sr=sr,
-            ))
+        with patch(
+            "humpback.classifier.s3_stream.subprocess.run", return_value=mock_result
+        ):
+            chunks = list(
+                iter_audio_chunks(
+                    mock_client,
+                    "rpi_orcasound_lab",
+                    1700000000,
+                    1700003600,
+                    chunk_seconds=60.0,
+                    target_sr=sr,
+                )
+            )
 
         # Should get one remainder chunk with 2s of audio
         assert len(chunks) == 1
@@ -110,7 +118,7 @@ class TestIterAudioChunks:
 
     def test_error_callback(self):
         """Segment decode failures should call on_error and continue."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         from humpback.classifier.s3_stream import iter_audio_chunks
 
@@ -121,13 +129,15 @@ class TestIterAudioChunks:
 
         errors = []
 
-        chunks = list(iter_audio_chunks(
-            mock_client,
-            "rpi_orcasound_lab",
-            1700000000,
-            1700003600,
-            on_error=lambda e: errors.append(e),
-        ))
+        chunks = list(
+            iter_audio_chunks(
+                mock_client,
+                "rpi_orcasound_lab",
+                1700000000,
+                1700003600,
+                on_error=lambda e: errors.append(e),
+            )
+        )
 
         assert len(chunks) == 0  # no audio decoded
         assert len(errors) == 1
@@ -164,7 +174,9 @@ class TestIterAudioChunks:
             _ = ts_bytes.decode()
             return np.ones(sr * 10, dtype=np.float32)
 
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode):
+        with patch(
+            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
+        ):
             chunks = list(
                 iter_audio_chunks(
                     FakeClient(),
@@ -192,7 +204,9 @@ class TestIterAudioChunks:
         mock_client = MagicMock()
         mock_client.list_hls_folders.return_value = []
 
-        with pytest.raises(FileNotFoundError, match="No audio data found for this time range"):
+        with pytest.raises(
+            FileNotFoundError, match="No audio data found for this time range"
+        ):
             list(
                 iter_audio_chunks(
                     mock_client,
@@ -234,7 +248,9 @@ class TestFolderLookback:
         )
 
         assert timeline
-        assert len(client.window_starts) == 2  # initial window, then first lookback step
+        assert (
+            len(client.window_starts) == 2
+        )  # initial window, then first lookback step
 
     def test_build_timeline_keeps_expanding_until_start_boundary_is_covered(self):
         from humpback.classifier.s3_stream import _build_stream_timeline
@@ -272,9 +288,7 @@ class TestFolderLookback:
 
         assert timeline
         assert len(client.window_starts) == 2
-        assert any(
-            seg.start_ts <= stream_start_ts < seg.end_ts for seg in timeline
-        )
+        assert any(seg.start_ts <= stream_start_ts < seg.end_ts for seg in timeline)
 
     def test_build_timeline_stops_expanding_when_initial_window_has_overlap(self):
         from humpback.classifier.s3_stream import _build_stream_timeline
@@ -384,7 +398,11 @@ class TestCachingS3Client:
             client.fetch_segment(key)
 
         # Verify .404.json marker was created
-        marker = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000/live999.ts.404.json"
+        marker = (
+            tmp_path
+            / ORCASOUND_S3_BUCKET
+            / "rpi_orcasound_lab/hls/1700000000/live999.ts.404.json"
+        )
         assert marker.exists()
         content = json.loads(marker.read_text())
         assert "cached_at_utc" in content
@@ -527,15 +545,19 @@ class TestIterAudioChunksTimestamp:
         mock_result.returncode = 0
         mock_result.stdout = wav_bytes
 
-        with patch("humpback.classifier.s3_stream.subprocess.run", return_value=mock_result):
-            chunks = list(iter_audio_chunks(
-                mock_client,
-                "rpi_orcasound_lab",
-                1700000000,  # start_ts much earlier than folder
-                1700020000,
-                chunk_seconds=60.0,
-                target_sr=sr,
-            ))
+        with patch(
+            "humpback.classifier.s3_stream.subprocess.run", return_value=mock_result
+        ):
+            chunks = list(
+                iter_audio_chunks(
+                    mock_client,
+                    "rpi_orcasound_lab",
+                    1700000000,  # start_ts much earlier than folder
+                    1700020000,
+                    chunk_seconds=60.0,
+                    target_sr=sr,
+                )
+            )
 
         assert len(chunks) == 1
         _, chunk_utc, _, _ = chunks[0]
@@ -580,9 +602,14 @@ class TestResolveHydrophoneAudioSliceOrdering:
             value = float(int(match.group(1)))
             return np.full(sr * 10, value, dtype=np.float32)
 
-        filename = datetime.fromtimestamp(1500, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+        filename = (
+            datetime.fromtimestamp(1500, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + ".wav"
+        )
 
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode):
+        with patch(
+            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
+        ):
             audio = resolve_hydrophone_audio_slice(
                 client=FakeClient(),
                 hydrophone_id="rpi_orcasound_lab",

@@ -32,5 +32,7 @@ def upgrade():
 
 def downgrade():
     with op.batch_alter_table("classifier_training_jobs") as batch_op:
-        batch_op.add_column(sa.Column("negative_audio_folder", sa.String(), nullable=True))
+        batch_op.add_column(
+            sa.Column("negative_audio_folder", sa.String(), nullable=True)
+        )
         batch_op.drop_column("negative_embedding_set_ids")

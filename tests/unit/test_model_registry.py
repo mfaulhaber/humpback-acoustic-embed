@@ -2,9 +2,7 @@ import os
 import tempfile
 
 import pytest
-from sqlalchemy import select
 
-from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
 from humpback.models.processing import EmbeddingSet
 from humpback.services import model_registry_service
 
@@ -74,10 +72,17 @@ async def test_default_toggling(session):
 
 async def test_set_default_model(session):
     m1 = await model_registry_service.create_model(
-        session, name="x", display_name="X", path="x.tflite", is_default=True,
+        session,
+        name="x",
+        display_name="X",
+        path="x.tflite",
+        is_default=True,
     )
     m2 = await model_registry_service.create_model(
-        session, name="y", display_name="Y", path="y.tflite",
+        session,
+        name="y",
+        display_name="Y",
+        path="y.tflite",
     )
     result = await model_registry_service.set_default_model(session, m2.id)
     assert result.is_default is True
@@ -111,7 +116,10 @@ async def test_list_models(session, sample_model):
 
 async def test_update_model(session, sample_model):
     updated = await model_registry_service.update_model(
-        session, sample_model.id, display_name="Updated Name", vector_dim=256,
+        session,
+        sample_model.id,
+        display_name="Updated Name",
+        vector_dim=256,
     )
     assert updated.display_name == "Updated Name"
     assert updated.vector_dim == 256

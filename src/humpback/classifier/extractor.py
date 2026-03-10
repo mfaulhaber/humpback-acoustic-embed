@@ -1,12 +1,9 @@
 """Extract labeled audio samples from detection TSV files."""
 
 import csv
-import io
 import logging
 import math
-import os
 import re
-import struct
 import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,9 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Regex patterns for parsing timestamps from filenames
 # e.g. "20250115T143022Z_..." or "20250115T143022.123456Z_..."
-_TS_PATTERN = re.compile(
-    r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z"
-)
+_TS_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z")
 _COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
@@ -41,7 +36,9 @@ def parse_recording_timestamp(filename: str) -> datetime | None:
         # Pad or truncate to 6 digits
         frac_str = frac_str[:6].ljust(6, "0")
         microsecond = int(frac_str)
-    return datetime(year, month, day, hour, minute, second, microsecond, tzinfo=timezone.utc)
+    return datetime(
+        year, month, day, hour, minute, second, microsecond, tzinfo=timezone.utc
+    )
 
 
 def _format_ts(dt: datetime) -> str:
@@ -125,7 +122,9 @@ def extract_labeled_samples(
             end_sec = float(row.get("end_sec", 0))
 
             # Snap to window_size multiples for clean training samples
-            start_sec = math.floor(start_sec / window_size_seconds) * window_size_seconds
+            start_sec = (
+                math.floor(start_sec / window_size_seconds) * window_size_seconds
+            )
             end_sec = math.ceil(end_sec / window_size_seconds) * window_size_seconds
 
             start_sample = int(start_sec * sr)
@@ -211,8 +210,12 @@ def _parse_compact_range_filename(
     if len(parts) != 2:
         return None
     try:
-        start = datetime.strptime(parts[0], _COMPACT_TS_FORMAT).replace(tzinfo=timezone.utc)
-        end = datetime.strptime(parts[1], _COMPACT_TS_FORMAT).replace(tzinfo=timezone.utc)
+        start = datetime.strptime(parts[0], _COMPACT_TS_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
+        end = datetime.strptime(parts[1], _COMPACT_TS_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
     except ValueError:
         return None
     if end <= start:
@@ -282,7 +285,9 @@ def extract_hydrophone_labeled_samples(
                 stream_start_ts=float(stream_start_timestamp),
                 stream_end_ts=float(stream_end_timestamp),
             )
-            processing_start_ts = max(float(stream_start_timestamp), stream_timeline[0].start_ts)
+            processing_start_ts = max(
+                float(stream_start_timestamp), stream_timeline[0].start_ts
+            )
         except Exception as exc:
             logger.warning(
                 "Hydrophone extraction timeline unavailable for %s [%.1f, %.1f]: %s",
@@ -302,10 +307,7 @@ def extract_hydrophone_labeled_samples(
         for row in rows:
             start_sec = float(row.get("start_sec", 0))
             end_sec = float(row.get("end_sec", 0))
-            detection_filename = (
-                row.get("detection_filename", "").strip()
-                or None
-            )
+            detection_filename = row.get("detection_filename", "").strip() or None
             parsed_detection_range = (
                 _parse_compact_range_filename(detection_filename)
                 if detection_filename
@@ -340,13 +342,17 @@ def extract_hydrophone_labeled_samples(
             # Route to label-specific folders
             labels_to_write: list[tuple[Path, str]] = []
             if row.get("humpback", "").strip() == "1":
-                out_dir = positive_output_path / hydrophone_id / "humpback" / date_folder
+                out_dir = (
+                    positive_output_path / hydrophone_id / "humpback" / date_folder
+                )
                 labels_to_write.append((out_dir, "humpback"))
             if row.get("ship", "").strip() == "1":
                 out_dir = negative_output_path / hydrophone_id / "ship" / date_folder
                 labels_to_write.append((out_dir, "ship"))
             if row.get("background", "").strip() == "1":
-                out_dir = negative_output_path / hydrophone_id / "background" / date_folder
+                out_dir = (
+                    negative_output_path / hydrophone_id / "background" / date_folder
+                )
                 labels_to_write.append((out_dir, "background"))
 
             pending_writes: list[tuple[Path, str]] = []

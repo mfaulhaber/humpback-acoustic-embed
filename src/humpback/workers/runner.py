@@ -3,13 +3,17 @@
 import asyncio
 import logging
 import signal
-import sys
 import time
 
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
 from humpback.services.model_registry_service import seed_default_model
-from humpback.workers.classifier_worker import run_detection_job, run_extraction_job, run_hydrophone_detection_job, run_training_job
+from humpback.workers.classifier_worker import (
+    run_detection_job,
+    run_extraction_job,
+    run_hydrophone_detection_job,
+    run_training_job,
+)
 from humpback.workers.clustering_worker import run_clustering_job
 from humpback.workers.processing_worker import run_processing_job
 from humpback.workers.queue import (
@@ -119,7 +123,9 @@ async def run_worker(settings: Settings | None = None) -> None:
         if djob:
             logger.info(f"Detection job {djob.id}")
             async with session_factory() as session:
-                await run_detection_job(session, djob, settings, session_factory=session_factory)
+                await run_detection_job(
+                    session, djob, settings, session_factory=session_factory
+                )
             claimed = True
 
         if claimed:
@@ -132,7 +138,9 @@ async def run_worker(settings: Settings | None = None) -> None:
         if hjob:
             logger.info(f"Hydrophone detection job {hjob.id}")
             async with session_factory() as session:
-                await run_hydrophone_detection_job(session, hjob, settings, session_factory=session_factory)
+                await run_hydrophone_detection_job(
+                    session, hjob, settings, session_factory=session_factory
+                )
             claimed = True
 
         if claimed:

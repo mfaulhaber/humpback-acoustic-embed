@@ -47,7 +47,9 @@ def _decode_mp3(path: Path) -> tuple[np.ndarray, int]:
     try:
         import librosa
     except ImportError:
-        raise ImportError("librosa is required for MP3 decoding. Install with: pip install librosa")
+        raise ImportError(
+            "librosa is required for MP3 decoding. Install with: pip install librosa"
+        )
     audio, sr = librosa.load(str(path), sr=None, mono=True)
     return audio, sr
 
@@ -56,7 +58,9 @@ def _decode_flac(path: Path) -> tuple[np.ndarray, int]:
     try:
         import librosa
     except ImportError:
-        raise ImportError("librosa is required for FLAC decoding. Install with: uv add librosa")
+        raise ImportError(
+            "librosa is required for FLAC decoding. Install with: uv add librosa"
+        )
     audio, sr = librosa.load(str(path), sr=None, mono=True)
     return audio, sr
 

@@ -1,6 +1,3 @@
-import pytest
-
-
 async def test_list_models_empty(client):
     """On startup, seed model should exist."""
     resp = await client.get("/admin/models")
@@ -12,12 +9,15 @@ async def test_list_models_empty(client):
 
 
 async def test_create_model(client):
-    resp = await client.post("/admin/models", json={
-        "name": "test_new_model",
-        "display_name": "Test New Model",
-        "path": "models/test.tflite",
-        "vector_dim": 512,
-    })
+    resp = await client.post(
+        "/admin/models",
+        json={
+            "name": "test_new_model",
+            "display_name": "Test New Model",
+            "path": "models/test.tflite",
+            "vector_dim": 512,
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "test_new_model"
@@ -26,49 +26,67 @@ async def test_create_model(client):
 
 
 async def test_create_duplicate_name(client):
-    await client.post("/admin/models", json={
-        "name": "dup_model",
-        "display_name": "Dup Model",
-        "path": "models/dup.tflite",
-    })
-    resp = await client.post("/admin/models", json={
-        "name": "dup_model",
-        "display_name": "Dup Model 2",
-        "path": "models/dup2.tflite",
-    })
+    await client.post(
+        "/admin/models",
+        json={
+            "name": "dup_model",
+            "display_name": "Dup Model",
+            "path": "models/dup.tflite",
+        },
+    )
+    resp = await client.post(
+        "/admin/models",
+        json={
+            "name": "dup_model",
+            "display_name": "Dup Model 2",
+            "path": "models/dup2.tflite",
+        },
+    )
     assert resp.status_code == 400
 
 
 async def test_update_model(client):
-    create = await client.post("/admin/models", json={
-        "name": "upd_model",
-        "display_name": "Update Me",
-        "path": "models/upd.tflite",
-    })
+    create = await client.post(
+        "/admin/models",
+        json={
+            "name": "upd_model",
+            "display_name": "Update Me",
+            "path": "models/upd.tflite",
+        },
+    )
     model_id = create.json()["id"]
 
-    resp = await client.put(f"/admin/models/{model_id}", json={
-        "display_name": "Updated Name",
-        "vector_dim": 256,
-    })
+    resp = await client.put(
+        f"/admin/models/{model_id}",
+        json={
+            "display_name": "Updated Name",
+            "vector_dim": 256,
+        },
+    )
     assert resp.status_code == 200
     assert resp.json()["display_name"] == "Updated Name"
     assert resp.json()["vector_dim"] == 256
 
 
 async def test_update_model_not_found(client):
-    resp = await client.put("/admin/models/nonexistent", json={
-        "display_name": "X",
-    })
+    resp = await client.put(
+        "/admin/models/nonexistent",
+        json={
+            "display_name": "X",
+        },
+    )
     assert resp.status_code == 404
 
 
 async def test_set_default(client):
-    create = await client.post("/admin/models", json={
-        "name": "new_default",
-        "display_name": "New Default",
-        "path": "models/nd.tflite",
-    })
+    create = await client.post(
+        "/admin/models",
+        json={
+            "name": "new_default",
+            "display_name": "New Default",
+            "path": "models/nd.tflite",
+        },
+    )
     model_id = create.json()["id"]
 
     resp = await client.post(f"/admin/models/{model_id}/set-default")
@@ -83,11 +101,14 @@ async def test_set_default(client):
 
 
 async def test_delete_model(client):
-    create = await client.post("/admin/models", json={
-        "name": "del_model",
-        "display_name": "Delete Me",
-        "path": "models/del.tflite",
-    })
+    create = await client.post(
+        "/admin/models",
+        json={
+            "name": "del_model",
+            "display_name": "Delete Me",
+            "path": "models/del.tflite",
+        },
+    )
     model_id = create.json()["id"]
 
     resp = await client.delete(f"/admin/models/{model_id}")
@@ -107,14 +128,17 @@ async def test_scan_models(client, app_settings):
 
 async def test_create_tf2_saved_model(client):
     """Creating a model with model_type=tf2_saved_model should persist correctly."""
-    resp = await client.post("/admin/models", json={
-        "name": "surfperch_tf2",
-        "display_name": "SurfPerch TF2",
-        "path": "models/surfperch-tensorflow2",
-        "vector_dim": 1280,
-        "model_type": "tf2_saved_model",
-        "input_format": "waveform",
-    })
+    resp = await client.post(
+        "/admin/models",
+        json={
+            "name": "surfperch_tf2",
+            "display_name": "SurfPerch TF2",
+            "path": "models/surfperch-tensorflow2",
+            "vector_dim": 1280,
+            "model_type": "tf2_saved_model",
+            "input_format": "waveform",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["model_type"] == "tf2_saved_model"
@@ -131,11 +155,14 @@ async def test_create_tf2_saved_model(client):
 
 async def test_default_model_type_in_response(client):
     """Models created without explicit model_type should return tflite defaults."""
-    resp = await client.post("/admin/models", json={
-        "name": "plain_tflite",
-        "display_name": "Plain TFLite",
-        "path": "models/plain.tflite",
-    })
+    resp = await client.post(
+        "/admin/models",
+        json={
+            "name": "plain_tflite",
+            "display_name": "Plain TFLite",
+            "path": "models/plain.tflite",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["model_type"] == "tflite"
@@ -147,15 +174,20 @@ def test_available_model_file_schema_includes_detected_dim():
     from humpback.schemas.model_registry import AvailableModelFile
 
     with_dim = AvailableModelFile(
-        filename="model.tflite", path="/tmp/model.tflite",
-        size_bytes=1000, registered=False, detected_vector_dim=1536,
+        filename="model.tflite",
+        path="/tmp/model.tflite",
+        size_bytes=1000,
+        registered=False,
+        detected_vector_dim=1536,
     )
     assert with_dim.detected_vector_dim == 1536
     assert with_dim.model_dump()["detected_vector_dim"] == 1536
 
     without_dim = AvailableModelFile(
-        filename="model.tflite", path="/tmp/model.tflite",
-        size_bytes=1000, registered=False,
+        filename="model.tflite",
+        path="/tmp/model.tflite",
+        size_bytes=1000,
+        registered=False,
     )
     assert without_dim.detected_vector_dim is None
 

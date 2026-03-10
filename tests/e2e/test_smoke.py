@@ -1,7 +1,6 @@
 """End-to-end smoke test: upload → process → cluster → verify."""
 
 import io
-import json
 import math
 import struct
 import wave
@@ -27,7 +26,9 @@ from humpback.workers.queue import (
 
 def make_wav_bytes(duration: float = 10.0, sample_rate: int = 16000) -> bytes:
     n = int(sample_rate * duration)
-    samples = [int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n)]
+    samples = [
+        int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n)
+    ]
     buf = io.BytesIO()
     with wave.open(buf, "w") as wf:
         wf.setnchannels(1)
@@ -212,7 +213,7 @@ async def test_classifier_workflow(e2e_settings, e2e_client, tmp_path):
         },
     )
     assert resp.status_code == 201
-    pjob_id = resp.json()["id"]
+    resp.json()["id"]
 
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
@@ -299,7 +300,9 @@ async def test_classifier_workflow(e2e_settings, e2e_client, tmp_path):
     # 7. Create detection job (scan the negative folder itself)
     detect_dir = tmp_path / "detect_audio"
     detect_dir.mkdir()
-    (detect_dir / "test.wav").write_bytes(make_wav_bytes(duration=5.0, sample_rate=16000))
+    (detect_dir / "test.wav").write_bytes(
+        make_wav_bytes(duration=5.0, sample_rate=16000)
+    )
 
     resp = await client.post(
         "/classifier/detection-jobs",

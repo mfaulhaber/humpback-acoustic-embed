@@ -1,14 +1,12 @@
 """Unit tests for retrain workflow: folder tracing, embedding collection, state machine."""
 
 import json
-from pathlib import Path
 
 import pytest
 
 from humpback.models.audio import AudioFile
 from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob
 from humpback.models.processing import EmbeddingSet
-from humpback.models.retrain import RetrainWorkflow
 from humpback.services.classifier_service import (
     collect_embedding_sets_for_folders,
     create_retrain_workflow,

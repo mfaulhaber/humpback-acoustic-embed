@@ -17,7 +17,10 @@ def _write_wav(path: Path, duration: float = 2.0, sample_rate: int = 16000):
     import math
 
     n_samples = int(sample_rate * duration)
-    samples = [int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n_samples)]
+    samples = [
+        int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate))
+        for i in range(n_samples)
+    ]
     with wave.open(str(path), "w") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
@@ -130,7 +133,7 @@ def test_embed_audio_folder_mixed_short_and_long(tmp_path):
     audio_dir.mkdir()
 
     _write_wav(audio_dir / "short.wav", duration=2.0)  # skipped
-    _write_wav(audio_dir / "long.wav", duration=10.0)   # 2 windows
+    _write_wav(audio_dir / "long.wav", duration=10.0)  # 2 windows
 
     model = FakeTFLiteModel(vector_dim=64)
     result = embed_audio_folder(
@@ -169,7 +172,18 @@ def test_confidence_stats_in_summary(tmp_path):
 
     assert "confidence_stats" in summary
     stats = summary["confidence_stats"]
-    expected_keys = {"mean", "median", "std", "min", "max", "p10", "p25", "p75", "p90", "pct_above_threshold"}
+    expected_keys = {
+        "mean",
+        "median",
+        "std",
+        "min",
+        "max",
+        "p10",
+        "p25",
+        "p75",
+        "p90",
+        "pct_above_threshold",
+    }
     assert expected_keys == set(stats.keys())
     assert 0.0 <= stats["pct_above_threshold"] <= 1.0
     assert stats["min"] <= stats["mean"] <= stats["max"]
@@ -232,11 +246,13 @@ def test_run_detection_on_file_complete_callback(tmp_path):
     calls = []
 
     def on_file_complete(file_detections, files_done, files_total):
-        calls.append({
-            "detections": list(file_detections),
-            "files_done": files_done,
-            "files_total": files_total,
-        })
+        calls.append(
+            {
+                "detections": list(file_detections),
+                "files_done": files_done,
+                "files_total": files_total,
+            }
+        )
 
     run_detection(
         audio_folder=audio_dir,

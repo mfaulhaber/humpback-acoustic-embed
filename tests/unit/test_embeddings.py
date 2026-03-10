@@ -35,7 +35,9 @@ def test_atomic_rename(tmp_path):
 
 
 def test_total_rows(tmp_path):
-    writer = IncrementalParquetWriter(tmp_path / "t.parquet", vector_dim=2, batch_size=100)
+    writer = IncrementalParquetWriter(
+        tmp_path / "t.parquet", vector_dim=2, batch_size=100
+    )
     assert writer.total_rows == 0
     writer.add(np.array([1.0, 2.0], dtype=np.float32))
     assert writer.total_rows == 1

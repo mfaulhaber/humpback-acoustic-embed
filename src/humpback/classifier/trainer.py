@@ -59,7 +59,9 @@ def embed_audio_folder(
             if len(audio) < window_samples:
                 logger.warning(
                     "Skipping %s: audio too short (%.3fs < %.1fs window)",
-                    audio_path.name, len(audio) / target_sample_rate, window_size_seconds,
+                    audio_path.name,
+                    len(audio) / target_sample_rate,
+                    window_size_seconds,
                 )
                 continue
 
@@ -78,8 +80,11 @@ def embed_audio_folder(
             else:
                 t0 = time.monotonic()
                 batch_items = extract_logmel_batch(
-                    raw_windows, target_sample_rate,
-                    n_mels=128, hop_length=1252, target_frames=128,
+                    raw_windows,
+                    target_sample_rate,
+                    n_mels=128,
+                    hop_length=1252,
+                    target_frames=128,
                     normalization=normalization,
                 )
                 t_features_total += time.monotonic() - t0
@@ -102,7 +107,10 @@ def embed_audio_folder(
 
     logger.info(
         "Embedding timing: decode=%.3fs, features=%.3fs (%d windows), inference=%.3fs",
-        t_decode_total, t_features_total, n_windows_total, t_inference_total,
+        t_decode_total,
+        t_features_total,
+        n_windows_total,
+        t_inference_total,
     )
 
     return np.vstack(all_embeddings)
@@ -129,10 +137,12 @@ def train_binary_classifier(
         )
 
     X = np.vstack([positive_embeddings, negative_embeddings])
-    y = np.concatenate([
-        np.ones(len(positive_embeddings), dtype=int),
-        np.zeros(len(negative_embeddings), dtype=int),
-    ])
+    y = np.concatenate(
+        [
+            np.ones(len(positive_embeddings), dtype=int),
+            np.zeros(len(negative_embeddings), dtype=int),
+        ]
+    )
 
     classifier_type = parameters.get("classifier_type", "logistic_regression")
     l2_normalize = parameters.get("l2_normalize", False)
@@ -145,19 +155,29 @@ def train_binary_classifier(
     steps.append(("scaler", StandardScaler()))
 
     if classifier_type == "mlp":
-        steps.append(("classifier", MLPClassifier(
-            hidden_layer_sizes=(128,),
-            max_iter=parameters.get("max_iter", 500),
-            early_stopping=True,
-            random_state=42,
-        )))
+        steps.append(
+            (
+                "classifier",
+                MLPClassifier(
+                    hidden_layer_sizes=(128,),
+                    max_iter=parameters.get("max_iter", 500),
+                    early_stopping=True,
+                    random_state=42,
+                ),
+            )
+        )
     else:
-        steps.append(("classifier", LogisticRegression(
-            solver=parameters.get("solver", "lbfgs"),
-            max_iter=parameters.get("max_iter", 1000),
-            C=parameters.get("C", 1.0),
-            class_weight=class_weight,
-        )))
+        steps.append(
+            (
+                "classifier",
+                LogisticRegression(
+                    solver=parameters.get("solver", "lbfgs"),
+                    max_iter=parameters.get("max_iter", 1000),
+                    C=parameters.get("C", 1.0),
+                    class_weight=class_weight,
+                ),
+            )
+        )
 
     pipeline = Pipeline(steps)
 
@@ -170,7 +190,10 @@ def train_binary_classifier(
 
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     cv_results = cross_validate(
-        pipeline, X, y, cv=cv,
+        pipeline,
+        X,
+        y,
+        cv=cv,
         scoring=["accuracy", "roc_auc", "precision", "recall", "f1"],
         return_train_score=False,
         error_score="raise",
@@ -193,11 +216,18 @@ def train_binary_classifier(
     neg_scores = scores[y == 0]
     pos_mean = float(np.mean(pos_scores))
     neg_mean = float(np.mean(neg_scores))
-    pooled_std = float(np.sqrt(
-        (np.var(pos_scores) * len(pos_scores) + np.var(neg_scores) * len(neg_scores))
-        / (len(pos_scores) + len(neg_scores))
-    ))
-    score_separation = float((pos_mean - neg_mean) / pooled_std) if pooled_std > 0 else 0.0
+    pooled_std = float(
+        np.sqrt(
+            (
+                np.var(pos_scores) * len(pos_scores)
+                + np.var(neg_scores) * len(neg_scores)
+            )
+            / (len(pos_scores) + len(neg_scores))
+        )
+    )
+    score_separation = (
+        float((pos_mean - neg_mean) / pooled_std) if pooled_std > 0 else 0.0
+    )
 
     train_preds = pipeline.predict(X)
     cm = confusion_matrix(y, train_preds, labels=[0, 1])
@@ -208,8 +238,12 @@ def train_binary_classifier(
     effective_class_weights = None
     if hasattr(clf, "class_weight") and clf.class_weight == "balanced":
         from sklearn.utils.class_weight import compute_class_weight
+
         weights = compute_class_weight("balanced", classes=np.array([0, 1]), y=y)
-        effective_class_weights = {"0": round(float(weights[0]), 4), "1": round(float(weights[1]), 4)}
+        effective_class_weights = {
+            "0": round(float(weights[0]), 4),
+            "1": round(float(weights[1]), 4),
+        }
 
     summary = {
         "n_positive": int(n_pos),
@@ -244,13 +278,17 @@ def train_binary_classifier(
         )
         logger.warning(
             "Class imbalance: %d positive vs %d negative (ratio %.1f:1)",
-            n_pos, n_neg, balance_ratio,
+            n_pos,
+            n_neg,
+            balance_ratio,
         )
 
     logger.info(
         "Trained classifier: accuracy=%.3f (+-%.3f), AUC=%.3f (+-%.3f)",
-        summary["cv_accuracy"], summary["cv_accuracy_std"],
-        summary["cv_roc_auc"], summary["cv_roc_auc_std"],
+        summary["cv_accuracy"],
+        summary["cv_accuracy_std"],
+        summary["cv_roc_auc"],
+        summary["cv_roc_auc_std"],
     )
 
     return pipeline, summary

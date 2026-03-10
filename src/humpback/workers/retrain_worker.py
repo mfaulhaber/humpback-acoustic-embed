@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
 from humpback.models.classifier import ClassifierTrainingJob
-from humpback.models.processing import EmbeddingSet, ProcessingJob
+from humpback.models.processing import ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
 from humpback.services import classifier_service
 from humpback.services.audio_service import import_folder
@@ -46,9 +46,7 @@ async def poll_retrain_workflows(
 
     # 2. Load all active workflows
     result = await session.execute(
-        select(RetrainWorkflow).where(
-            RetrainWorkflow.status.in_(ACTIVE_STATUSES)
-        )
+        select(RetrainWorkflow).where(RetrainWorkflow.status.in_(ACTIVE_STATUSES))
     )
     active = list(result.scalars().all())
 
@@ -182,8 +180,7 @@ async def _create_processing_jobs(
 
     total = len(job_ids)
     logger.info(
-        f"Retrain {wf.id}: created {total} processing jobs, "
-        f"{skipped} already complete"
+        f"Retrain {wf.id}: created {total} processing jobs, {skipped} already complete"
     )
 
     async with session_factory() as session:
@@ -196,12 +193,12 @@ async def _create_processing_jobs(
         # If no new jobs needed, skip straight to training
         if total == 0:
             values["status"] = "training"
-            logger.info(f"Retrain {wf.id}: all audio already processed, skipping to training")
+            logger.info(
+                f"Retrain {wf.id}: all audio already processed, skipping to training"
+            )
 
         await session.execute(
-            update(RetrainWorkflow)
-            .where(RetrainWorkflow.id == wf.id)
-            .values(**values)
+            update(RetrainWorkflow).where(RetrainWorkflow.id == wf.id).values(**values)
         )
         await session.commit()
 
@@ -260,7 +257,9 @@ async def _poll_processing_jobs(wf: RetrainWorkflow, session_factory) -> bool:
                 )
             )
             await session.commit()
-            logger.info(f"Retrain {wf.id}: processing complete, transitioning to training")
+            logger.info(
+                f"Retrain {wf.id}: processing complete, transitioning to training"
+            )
             return True
 
         # Still in progress — update count
@@ -292,9 +291,7 @@ async def _create_training_job(wf: RetrainWorkflow, session_factory) -> bool:
     # but crashed before updating the workflow (crash between two commits).
     async with session_factory() as session:
         result = await session.execute(
-            select(RetrainWorkflow.training_job_id).where(
-                RetrainWorkflow.id == wf.id
-            )
+            select(RetrainWorkflow.training_job_id).where(RetrainWorkflow.id == wf.id)
         )
         existing_tj_id = result.scalar_one_or_none()
     if existing_tj_id:
@@ -430,9 +427,7 @@ async def _poll_training_job(wf: RetrainWorkflow, session_factory) -> bool:
                 )
             )
             await session.commit()
-        logger.info(
-            f"Retrain {wf.id}: complete, new model {tj.classifier_model_id}"
-        )
+        logger.info(f"Retrain {wf.id}: complete, new model {tj.classifier_model_id}")
         return True
 
     return False

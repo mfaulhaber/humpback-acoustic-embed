@@ -24,7 +24,12 @@ def test_custom_params_return_valid_png():
     sr = 16000
     audio = np.random.randn(sr * 3).astype(np.float32)
     png = generate_spectrogram_png(
-        audio, sr, hop_length=256, dynamic_range_db=60.0, width_px=320, height_px=160,
+        audio,
+        sr,
+        hop_length=256,
+        dynamic_range_db=60.0,
+        width_px=320,
+        height_px=160,
     )
     assert png[:4] == b"\x89PNG"
 
@@ -60,7 +65,9 @@ def test_fifo_eviction(cache):
     """Oldest items evicted when count exceeds max_items (max_items=3)."""
     keys = []
     for i in range(5):
-        key = SpectrogramCache._make_key(f"j{i}", "f.wav", 0.0, 5.0, 128, 80.0, 2048, 640, 320)
+        key = SpectrogramCache._make_key(
+            f"j{i}", "f.wav", 0.0, 5.0, 128, 80.0, 2048, 640, 320
+        )
         cache.put(key, f"data{i}".encode())
         keys.append(key)
 

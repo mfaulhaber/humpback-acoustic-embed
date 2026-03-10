@@ -5,7 +5,6 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.processing import EmbeddingSet
@@ -55,7 +54,10 @@ async def create_clustering_job(
                 f"Source clustering job is not complete (status={source_job.status})"
             )
         if storage_root is not None:
-            refined_path = cluster_dir(storage_root, refined_from_job_id) / "refined_embeddings.parquet"
+            refined_path = (
+                cluster_dir(storage_root, refined_from_job_id)
+                / "refined_embeddings.parquet"
+            )
             if not refined_path.exists():
                 raise ValueError(
                     f"Source job {refined_from_job_id} has no refined embeddings"
@@ -87,9 +89,7 @@ async def get_clustering_job(
     return result.scalar_one_or_none()
 
 
-async def list_clusters(
-    session: AsyncSession, job_id: str
-) -> list[Cluster]:
+async def list_clusters(session: AsyncSession, job_id: str) -> list[Cluster]:
     result = await session.execute(
         select(Cluster)
         .where(Cluster.clustering_job_id == job_id)

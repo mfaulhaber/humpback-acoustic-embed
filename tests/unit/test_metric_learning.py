@@ -1,7 +1,6 @@
 """Tests for metric learning refinement."""
 
 import numpy as np
-import pytest
 
 from humpback.clustering.metric_learning import (
     _build_projection_head,
@@ -69,11 +68,13 @@ def test_generate_triplets_hard_closer():
     """Hard negatives should be closer (on average) than random negatives."""
     rng = np.random.RandomState(42)
     # Three clusters with varying separation
-    embeddings = np.vstack([
-        rng.randn(30, 16).astype(np.float32) + np.array([5.0] + [0.0] * 15),
-        rng.randn(30, 16).astype(np.float32) + np.array([-5.0] + [0.0] * 15),
-        rng.randn(30, 16).astype(np.float32) + np.array([0.0, 5.0] + [0.0] * 14),
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(30, 16).astype(np.float32) + np.array([5.0] + [0.0] * 15),
+            rng.randn(30, 16).astype(np.float32) + np.array([-5.0] + [0.0] * 15),
+            rng.randn(30, 16).astype(np.float32) + np.array([0.0, 5.0] + [0.0] * 14),
+        ]
+    )
     labels = np.array([0] * 30 + [1] * 30 + [2] * 30)
 
     # Use same random_state so anchors are identical
@@ -159,16 +160,25 @@ def test_train_projection_loss_decreases():
     """Final loss should be less than initial loss on overlapping data."""
     rng = np.random.RandomState(42)
     # Overlapping clusters so initial loss is positive
-    embeddings = np.vstack([
-        rng.randn(30, 32).astype(np.float32) + 1,
-        rng.randn(30, 32).astype(np.float32) - 1,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(30, 32).astype(np.float32) + 1,
+            rng.randn(30, 32).astype(np.float32) - 1,
+        ]
+    )
     labels = np.array([0] * 30 + [1] * 30)
 
     result = train_projection(
-        embeddings, labels,
-        output_dim=16, hidden_dim=32, n_epochs=30, lr=0.01,
-        margin=2.0, batch_size=64, mining_strategy="random", random_state=42,
+        embeddings,
+        labels,
+        output_dim=16,
+        hidden_dim=32,
+        n_epochs=30,
+        lr=0.01,
+        margin=2.0,
+        batch_size=64,
+        mining_strategy="random",
+        random_state=42,
     )
     # With overlapping data and large margin, initial loss should be positive
     # and training should reduce it
@@ -179,15 +189,23 @@ def test_train_projection_loss_decreases():
 def test_train_projection_output_shape():
     """Refined embeddings shape is (N, output_dim)."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(20, 32).astype(np.float32) + 5,
-        rng.randn(20, 32).astype(np.float32) - 5,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(20, 32).astype(np.float32) + 5,
+            rng.randn(20, 32).astype(np.float32) - 5,
+        ]
+    )
     labels = np.array([0] * 20 + [1] * 20)
 
     result = train_projection(
-        embeddings, labels, output_dim=16, hidden_dim=32, n_epochs=5,
-        batch_size=32, mining_strategy="random", random_state=42,
+        embeddings,
+        labels,
+        output_dim=16,
+        hidden_dim=32,
+        n_epochs=5,
+        batch_size=32,
+        mining_strategy="random",
+        random_state=42,
     )
     assert result["refined_embeddings"].shape == (40, 16)
 
@@ -195,15 +213,23 @@ def test_train_projection_output_shape():
 def test_train_projection_output_structure():
     """Returned dict has all expected keys."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(20, 16).astype(np.float32) + 3,
-        rng.randn(20, 16).astype(np.float32) - 3,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(20, 16).astype(np.float32) + 3,
+            rng.randn(20, 16).astype(np.float32) - 3,
+        ]
+    )
     labels = np.array([0] * 20 + [1] * 20)
 
     result = train_projection(
-        embeddings, labels, output_dim=8, hidden_dim=16, n_epochs=3,
-        batch_size=20, mining_strategy="random", random_state=42,
+        embeddings,
+        labels,
+        output_dim=8,
+        hidden_dim=16,
+        n_epochs=3,
+        batch_size=20,
+        mining_strategy="random",
+        random_state=42,
     )
     assert "model" in result
     assert "refined_embeddings" in result
@@ -223,20 +249,14 @@ def test_refinement_returns_none_insufficient():
     embeddings = rng.randn(20, 16).astype(np.float32)
 
     # Single category
-    assert run_metric_learning_refinement(
-        embeddings, ["catA"] * 20
-    ) is None
+    assert run_metric_learning_refinement(embeddings, ["catA"] * 20) is None
 
     # No categories
-    assert run_metric_learning_refinement(
-        embeddings, [None] * 20
-    ) is None
+    assert run_metric_learning_refinement(embeddings, [None] * 20) is None
 
     # One category with enough samples, one too rare
     labels = ["catA"] * 15 + ["catB"] * 3 + [None] * 2
-    assert run_metric_learning_refinement(
-        embeddings, labels
-    ) is None
+    assert run_metric_learning_refinement(embeddings, labels) is None
 
 
 def test_refinement_report_structure():
@@ -261,9 +281,16 @@ def test_refinement_report_structure():
 
     # Top-level keys
     expected_keys = {
-        "training_params", "n_labeled_samples", "n_categories",
-        "n_total_samples", "categories_used", "loss_history",
-        "final_loss", "comparison", "base_summary", "refined_summary",
+        "training_params",
+        "n_labeled_samples",
+        "n_categories",
+        "n_total_samples",
+        "categories_used",
+        "loss_history",
+        "final_loss",
+        "comparison",
+        "base_summary",
+        "refined_summary",
         "_refined_embeddings",
     }
     assert expected_keys == set(result.keys())

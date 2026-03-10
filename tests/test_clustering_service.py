@@ -49,7 +49,9 @@ async def test_clustering_rejects_mixed_model_versions(session: AsyncSession):
     es1 = await _make_embedding_set(session, model_version="perch_v1")
     es2 = await _make_embedding_set(session, model_version="perch_v2")
 
-    with pytest.raises(ValueError, match="Cannot cluster embedding sets from different models"):
+    with pytest.raises(
+        ValueError, match="Cannot cluster embedding sets from different models"
+    ):
         await create_clustering_job(session, [es1.id, es2.id])
 
 

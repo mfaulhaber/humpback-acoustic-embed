@@ -40,7 +40,9 @@ def generate_spectrogram_png(
         audio = np.pad(audio, (0, n_fft - len(audio)))
 
     noverlap = n_fft - hop_length
-    f, t, Zxx = stft(audio, fs=sample_rate, window="hann", nperseg=n_fft, noverlap=noverlap)
+    f, t, Zxx = stft(
+        audio, fs=sample_rate, window="hann", nperseg=n_fft, noverlap=noverlap
+    )
 
     power = np.abs(Zxx) ** 2
     # Avoid log10(0)
@@ -57,7 +59,9 @@ def generate_spectrogram_png(
     f = f[freq_mask]
     power_db = power_db[freq_mask, :]
 
-    ax.pcolormesh(t, f, power_db, vmin=vmin, vmax=vmax, cmap="inferno", shading="gouraud")
+    ax.pcolormesh(
+        t, f, power_db, vmin=vmin, vmax=vmax, cmap="inferno", shading="gouraud"
+    )
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Frequency (Hz)")
     fig.tight_layout(pad=0.5)

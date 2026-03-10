@@ -1,6 +1,10 @@
 import numpy as np
 
-from humpback.processing.windowing import count_windows, slice_windows, slice_windows_with_metadata
+from humpback.processing.windowing import (
+    count_windows,
+    slice_windows,
+    slice_windows_with_metadata,
+)
 
 
 def test_exact_division():
@@ -181,6 +185,10 @@ def test_hop_exact_fit_no_overlap_back():
     """When audio fits exactly into hop-aligned windows, no overlap-back."""
     sr = 16000
     # 10s audio, 5s window, 5s hop → 2 windows, no overlap-back
-    results = list(slice_windows_with_metadata(np.ones(sr * 10, dtype=np.float32), sr, 5.0, hop_seconds=5.0))
+    results = list(
+        slice_windows_with_metadata(
+            np.ones(sr * 10, dtype=np.float32), sr, 5.0, hop_seconds=5.0
+        )
+    )
     assert len(results) == 2
     assert not any(meta.is_overlapped for _, meta in results)

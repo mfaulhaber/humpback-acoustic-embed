@@ -70,7 +70,9 @@ def run_classifier_baseline(
 
     # --- 4. Classification report ---
     target_names = [str(c) for c in le.classes_]
-    report_dict = classification_report(y, y_pred, target_names=target_names, output_dict=True)
+    report_dict = classification_report(
+        y, y_pred, target_names=target_names, output_dict=True
+    )
 
     per_class: dict[str, dict] = {}
     for name in target_names:
@@ -151,24 +153,28 @@ def run_classifier_baseline(
             pred_cat = None
 
         frag_boost = frag_cats.get(cat, 0.0) if cat is not None else 0.0
-        priority = min(1.0, unc + 0.3 * frag_boost) if cat is None else unc + 0.3 * frag_boost
+        priority = (
+            min(1.0, unc + 0.3 * frag_boost) if cat is None else unc + 0.3 * frag_boost
+        )
 
         # Cap priority for unlabeled at 1.0
         if cat is None:
             priority = 1.0
 
-        queue.append({
-            "global_index": gi,
-            "embedding_set_id": es_id,
-            "embedding_row_index": row_idx,
-            "current_category": cat,
-            "predicted_category": pred_cat,
-            "entropy": round(ent_val, 6) if ent_val is not None else None,
-            "margin": round(mar_val, 6) if mar_val is not None else None,
-            "max_prob": round(mp_val, 6) if mp_val is not None else None,
-            "fragmentation_boost": round(frag_boost, 6),
-            "priority": round(priority, 6),
-        })
+        queue.append(
+            {
+                "global_index": gi,
+                "embedding_set_id": es_id,
+                "embedding_row_index": row_idx,
+                "current_category": cat,
+                "predicted_category": pred_cat,
+                "entropy": round(ent_val, 6) if ent_val is not None else None,
+                "margin": round(mar_val, 6) if mar_val is not None else None,
+                "max_prob": round(mp_val, 6) if mp_val is not None else None,
+                "fragmentation_boost": round(frag_boost, 6),
+                "priority": round(priority, 6),
+            }
+        )
 
     # Sort by priority descending, assign ranks
     queue.sort(key=lambda e: e["priority"], reverse=True)

@@ -5,12 +5,17 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from humpback.api.deps import SessionDep
-from humpback.schemas.processing import EmbeddingSetOut, ProcessingJobCreate, ProcessingJobOut
+from humpback.schemas.processing import (
+    EmbeddingSetOut,
+    ProcessingJobCreate,
+    ProcessingJobOut,
+)
 from humpback.services import processing_service
 
 
 class BulkDeleteRequest(BaseModel):
     ids: List[str]
+
 
 router = APIRouter(prefix="/processing", tags=["processing"])
 
@@ -34,7 +39,9 @@ def _job_to_out(job, skipped: bool = False) -> ProcessingJobOut:
 
 
 @router.post("/jobs", status_code=201)
-async def create_job(body: ProcessingJobCreate, session: SessionDep) -> ProcessingJobOut:
+async def create_job(
+    body: ProcessingJobCreate, session: SessionDep
+) -> ProcessingJobOut:
     try:
         job, skipped = await processing_service.create_processing_job(
             session,

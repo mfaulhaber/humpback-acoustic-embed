@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.classifier import ClassifierTrainingJob, DetectionJob
 from humpback.models.clustering import ClusteringJob
-from humpback.models.processing import EmbeddingSet, JobStatus, ProcessingJob
+from humpback.models.processing import JobStatus, ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
 
 logger = logging.getLogger(__name__)
@@ -189,16 +189,12 @@ async def complete_processing_job(
     if warning_message is not None:
         values["warning_message"] = warning_message
     await session.execute(
-        update(ProcessingJob)
-        .where(ProcessingJob.id == job_id)
-        .values(**values)
+        update(ProcessingJob).where(ProcessingJob.id == job_id).values(**values)
     )
     await session.commit()
 
 
-async def fail_processing_job(
-    session: AsyncSession, job_id: str, error: str
-) -> None:
+async def fail_processing_job(session: AsyncSession, job_id: str, error: str) -> None:
     await session.execute(
         update(ProcessingJob)
         .where(ProcessingJob.id == job_id)
@@ -235,9 +231,7 @@ async def complete_clustering_job(session: AsyncSession, job_id: str) -> None:
     await session.commit()
 
 
-async def fail_clustering_job(
-    session: AsyncSession, job_id: str, error: str
-) -> None:
+async def fail_clustering_job(session: AsyncSession, job_id: str, error: str) -> None:
     await session.execute(
         update(ClusteringJob)
         .where(ClusteringJob.id == job_id)
@@ -277,9 +271,7 @@ async def complete_training_job(session: AsyncSession, job_id: str) -> None:
     await session.commit()
 
 
-async def fail_training_job(
-    session: AsyncSession, job_id: str, error: str
-) -> None:
+async def fail_training_job(session: AsyncSession, job_id: str, error: str) -> None:
     await session.execute(
         update(ClassifierTrainingJob)
         .where(ClassifierTrainingJob.id == job_id)
@@ -312,7 +304,9 @@ async def claim_detection_job(session: AsyncSession) -> Optional[DetectionJob]:
     return None
 
 
-async def claim_hydrophone_detection_job(session: AsyncSession) -> Optional[DetectionJob]:
+async def claim_hydrophone_detection_job(
+    session: AsyncSession,
+) -> Optional[DetectionJob]:
     """Claim a queued hydrophone detection job."""
     for _ in range(3):
         job = await _claim_next_job(
@@ -338,9 +332,7 @@ async def complete_detection_job(session: AsyncSession, job_id: str) -> None:
     await session.commit()
 
 
-async def fail_detection_job(
-    session: AsyncSession, job_id: str, error: str
-) -> None:
+async def fail_detection_job(session: AsyncSession, job_id: str, error: str) -> None:
     await session.execute(
         update(DetectionJob)
         .where(DetectionJob.id == job_id)
@@ -380,9 +372,7 @@ async def complete_extraction_job(session: AsyncSession, job_id: str) -> None:
     await session.commit()
 
 
-async def fail_extraction_job(
-    session: AsyncSession, job_id: str, error: str
-) -> None:
+async def fail_extraction_job(session: AsyncSession, job_id: str, error: str) -> None:
     await session.execute(
         update(DetectionJob)
         .where(DetectionJob.id == job_id)

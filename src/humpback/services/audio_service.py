@@ -115,6 +115,7 @@ async def import_folder(
         sample_rate = None
         try:
             from humpback.processing.audio_io import decode_audio
+
             audio_data, sr = decode_audio(audio_file)
             duration = len(audio_data) / sr
             sample_rate = sr
@@ -144,7 +145,9 @@ async def import_folder(
 
 async def list_audio(session: AsyncSession) -> list[AudioFile]:
     result = await session.execute(
-        select(AudioFile).options(selectinload(AudioFile.metadata_)).order_by(AudioFile.created_at.desc())
+        select(AudioFile)
+        .options(selectinload(AudioFile.metadata_))
+        .order_by(AudioFile.created_at.desc())
     )
     return list(result.scalars().all())
 

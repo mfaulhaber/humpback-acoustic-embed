@@ -1,7 +1,6 @@
 """Integration tests for classifier API endpoints."""
 
 import csv
-import json
 import uuid
 
 
@@ -120,7 +119,9 @@ async def test_diagnostics_not_found(client):
 
 
 async def test_diagnostics_summary_not_found(client):
-    resp = await client.get("/classifier/detection-jobs/nonexistent/diagnostics/summary")
+    resp = await client.get(
+        "/classifier/detection-jobs/nonexistent/diagnostics/summary"
+    )
     assert resp.status_code == 404
 
 
@@ -149,14 +150,27 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
     ddir = storage_root / "detection" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
-    fieldnames = ["filename", "start_sec", "end_sec", "avg_confidence", "peak_confidence", "n_windows"]
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+    ]
     with open(tsv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
-        writer.writerow({
-            "filename": "test.wav", "start_sec": "1.0", "end_sec": "6.0",
-            "avg_confidence": "0.85", "peak_confidence": "0.9", "n_windows": "2",
-        })
+        writer.writerow(
+            {
+                "filename": "test.wav",
+                "start_sec": "1.0",
+                "end_sec": "6.0",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.9",
+                "n_windows": "2",
+            }
+        )
 
     async with sf() as session:
         await session.execute(
@@ -458,7 +472,7 @@ async def test_save_labels_sets_has_humpback_labels_true(client, app_settings):
     """Saving labels with humpback=1 sets has_humpback_labels to True."""
     from pathlib import Path
 
-    from sqlalchemy import insert, select
+    from sqlalchemy import insert
 
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
@@ -471,29 +485,54 @@ async def test_save_labels_sets_has_humpback_labels_true(client, app_settings):
     tsv_dir.mkdir(parents=True)
     tsv_path = tsv_dir / "detections.tsv"
     fieldnames = [
-        "filename", "start_sec", "end_sec", "avg_confidence",
-        "peak_confidence", "n_windows", "humpback", "ship", "background",
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "humpback",
+        "ship",
+        "background",
     ]
     with open(tsv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
-        writer.writerow({
-            "filename": "a.wav", "start_sec": "0.0", "end_sec": "5.0",
-            "avg_confidence": "0.8", "peak_confidence": "0.9",
-            "n_windows": "1", "humpback": "", "ship": "", "background": "",
-        })
-        writer.writerow({
-            "filename": "a.wav", "start_sec": "5.0", "end_sec": "10.0",
-            "avg_confidence": "0.7", "peak_confidence": "0.8",
-            "n_windows": "1", "humpback": "", "ship": "", "background": "",
-        })
+        writer.writerow(
+            {
+                "filename": "a.wav",
+                "start_sec": "0.0",
+                "end_sec": "5.0",
+                "avg_confidence": "0.8",
+                "peak_confidence": "0.9",
+                "n_windows": "1",
+                "humpback": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+        writer.writerow(
+            {
+                "filename": "a.wav",
+                "start_sec": "5.0",
+                "end_sec": "10.0",
+                "avg_confidence": "0.7",
+                "peak_confidence": "0.8",
+                "n_windows": "1",
+                "humpback": "",
+                "ship": "",
+                "background": "",
+            }
+        )
 
     async with sf() as session:
         await session.execute(
             insert(DetectionJob).values(
-                id=job_id, status="complete",
+                id=job_id,
+                status="complete",
                 classifier_model_id="fake-model-id",
-                audio_folder="/tmp/fake", confidence_threshold=0.5,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -531,24 +570,41 @@ async def test_save_labels_clears_has_humpback_labels(client, app_settings):
     tsv_dir.mkdir(parents=True)
     tsv_path = tsv_dir / "detections.tsv"
     fieldnames = [
-        "filename", "start_sec", "end_sec", "avg_confidence",
-        "peak_confidence", "n_windows", "humpback", "ship", "background",
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "humpback",
+        "ship",
+        "background",
     ]
     with open(tsv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
-        writer.writerow({
-            "filename": "a.wav", "start_sec": "0.0", "end_sec": "5.0",
-            "avg_confidence": "0.8", "peak_confidence": "0.9",
-            "n_windows": "1", "humpback": "1", "ship": "", "background": "",
-        })
+        writer.writerow(
+            {
+                "filename": "a.wav",
+                "start_sec": "0.0",
+                "end_sec": "5.0",
+                "avg_confidence": "0.8",
+                "peak_confidence": "0.9",
+                "n_windows": "1",
+                "humpback": "1",
+                "ship": "",
+                "background": "",
+            }
+        )
 
     async with sf() as session:
         await session.execute(
             insert(DetectionJob).values(
-                id=job_id, status="complete",
+                id=job_id,
+                status="complete",
                 classifier_model_id="fake-model-id",
-                audio_folder="/tmp/fake", confidence_threshold=0.5,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
                 output_tsv_path=str(tsv_path),
                 has_humpback_labels=True,
             )
@@ -558,7 +614,9 @@ async def test_save_labels_clears_has_humpback_labels(client, app_settings):
     # Clear the humpback label
     resp = await client.put(
         f"/classifier/detection-jobs/{job_id}/labels",
-        json=[{"filename": "a.wav", "start_sec": 0.0, "end_sec": 5.0, "humpback": None}],
+        json=[
+            {"filename": "a.wav", "start_sec": 0.0, "end_sec": 5.0, "humpback": None}
+        ],
     )
     assert resp.status_code == 200
 
@@ -570,7 +628,9 @@ async def test_save_labels_clears_has_humpback_labels(client, app_settings):
     await engine.dispose()
 
 
-async def test_partial_save_preserves_humpback_flag_from_other_rows(client, app_settings):
+async def test_partial_save_preserves_humpback_flag_from_other_rows(
+    client, app_settings
+):
     """Partial save updating non-humpback labels preserves flag from other rows."""
     from pathlib import Path
 
@@ -587,29 +647,54 @@ async def test_partial_save_preserves_humpback_flag_from_other_rows(client, app_
     tsv_dir.mkdir(parents=True)
     tsv_path = tsv_dir / "detections.tsv"
     fieldnames = [
-        "filename", "start_sec", "end_sec", "avg_confidence",
-        "peak_confidence", "n_windows", "humpback", "ship", "background",
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "humpback",
+        "ship",
+        "background",
     ]
     with open(tsv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
-        writer.writerow({
-            "filename": "a.wav", "start_sec": "0.0", "end_sec": "5.0",
-            "avg_confidence": "0.8", "peak_confidence": "0.9",
-            "n_windows": "1", "humpback": "1", "ship": "", "background": "",
-        })
-        writer.writerow({
-            "filename": "a.wav", "start_sec": "5.0", "end_sec": "10.0",
-            "avg_confidence": "0.6", "peak_confidence": "0.7",
-            "n_windows": "1", "humpback": "", "ship": "", "background": "",
-        })
+        writer.writerow(
+            {
+                "filename": "a.wav",
+                "start_sec": "0.0",
+                "end_sec": "5.0",
+                "avg_confidence": "0.8",
+                "peak_confidence": "0.9",
+                "n_windows": "1",
+                "humpback": "1",
+                "ship": "",
+                "background": "",
+            }
+        )
+        writer.writerow(
+            {
+                "filename": "a.wav",
+                "start_sec": "5.0",
+                "end_sec": "10.0",
+                "avg_confidence": "0.6",
+                "peak_confidence": "0.7",
+                "n_windows": "1",
+                "humpback": "",
+                "ship": "",
+                "background": "",
+            }
+        )
 
     async with sf() as session:
         await session.execute(
             insert(DetectionJob).values(
-                id=job_id, status="complete",
+                id=job_id,
+                status="complete",
                 classifier_model_id="fake-model-id",
-                audio_folder="/tmp/fake", confidence_threshold=0.5,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
                 output_tsv_path=str(tsv_path),
             )
         )

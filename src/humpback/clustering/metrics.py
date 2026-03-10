@@ -78,8 +78,12 @@ def compute_cluster_metrics(
 
     return {
         "silhouette_score": float(silhouette_score(clean_embeddings, clean_labels)),
-        "davies_bouldin_index": float(davies_bouldin_score(clean_embeddings, clean_labels)),
-        "calinski_harabasz_score": float(calinski_harabasz_score(clean_embeddings, clean_labels)),
+        "davies_bouldin_index": float(
+            davies_bouldin_score(clean_embeddings, clean_labels)
+        ),
+        "calinski_harabasz_score": float(
+            calinski_harabasz_score(clean_embeddings, clean_labels)
+        ),
         "n_clusters": n_clusters,
         "noise_count": int((~mask).sum()),
     }
@@ -134,7 +138,9 @@ def compute_category_metrics(
 
     return {
         "adjusted_rand_index": float(adjusted_rand_score(cat_vals, cluster_vals)),
-        "normalized_mutual_info": float(normalized_mutual_info_score(cat_vals, cluster_vals)),
+        "normalized_mutual_info": float(
+            normalized_mutual_info_score(cat_vals, cluster_vals)
+        ),
         "n_categories": n_categories,
     }
 
@@ -228,7 +234,9 @@ def compute_dendrogram_data(
     cluster_set: set[str] = set()
     for counts in confusion_matrix.values():
         cluster_set.update(counts.keys())
-    cluster_labels = sorted(cluster_set, key=lambda x: int(x) if x.lstrip("-").isdigit() else x)
+    cluster_labels = sorted(
+        cluster_set, key=lambda x: int(x) if x.lstrip("-").isdigit() else x
+    )
 
     if len(categories) < 2 or len(cluster_labels) < 2:
         return None
@@ -412,9 +420,13 @@ def compute_global_fragmentation(
         cat_noise_rate.append(m["noise_rate"])
 
     total_cat_w = sum(cat_weights) or 1.0
-    mean_entropy_norm = sum(w * v for w, v in zip(cat_weights, cat_entropy_norm)) / total_cat_w
+    mean_entropy_norm = (
+        sum(w * v for w, v in zip(cat_weights, cat_entropy_norm)) / total_cat_w
+    )
     mean_neff = sum(w * v for w, v in zip(cat_weights, cat_neff)) / total_cat_w
-    mean_noise_rate = sum(w * v for w, v in zip(cat_weights, cat_noise_rate)) / total_cat_w
+    mean_noise_rate = (
+        sum(w * v for w, v in zip(cat_weights, cat_noise_rate)) / total_cat_w
+    )
 
     # Cluster-weighted average (weight = size)
     cl_weights = []
@@ -424,7 +436,9 @@ def compute_global_fragmentation(
         cl_entropy_norm.append(m["cluster_entropy_norm"])
 
     total_cl_w = sum(cl_weights) or 1.0
-    mean_cluster_entropy_norm = sum(w * v for w, v in zip(cl_weights, cl_entropy_norm)) / total_cl_w
+    mean_cluster_entropy_norm = (
+        sum(w * v for w, v in zip(cl_weights, cl_entropy_norm)) / total_cl_w
+    )
 
     return {
         "mean_entropy_norm": mean_entropy_norm,
@@ -449,7 +463,9 @@ def compute_fragmentation_report(
     labels = np.asarray(labels)
     cat_frag = compute_category_fragmentation(labels, category_labels)
     cl_frag = compute_cluster_fragmentation(labels, category_labels)
-    global_frag = compute_global_fragmentation(cat_frag, cl_frag, labels, category_labels)
+    global_frag = compute_global_fragmentation(
+        cat_frag, cl_frag, labels, category_labels
+    )
 
     n_total = len(labels)
     n_noise_total = int((labels == -1).sum())

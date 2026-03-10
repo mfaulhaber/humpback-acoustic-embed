@@ -29,7 +29,8 @@ async def get_model_by_version(
     if model_version in _model_cache:
         logger.info(
             "Using cached model for %s (type=%s)",
-            model_version, type(_model_cache[model_version]).__name__,
+            model_version,
+            type(_model_cache[model_version]).__name__,
         )
         return _model_cache[model_version], input_format
 
@@ -47,12 +48,24 @@ async def get_model_by_version(
         if model_type == "tf2_saved_model":
             from humpback.processing.inference import TF2SavedModel
 
-            logger.info("Loading TF2SavedModel: path=%s, dim=%d", model_config.path, model_config.vector_dim)
-            model = TF2SavedModel(model_config.path, model_config.vector_dim, force_cpu=settings.tf_force_cpu)
+            logger.info(
+                "Loading TF2SavedModel: path=%s, dim=%d",
+                model_config.path,
+                model_config.vector_dim,
+            )
+            model = TF2SavedModel(
+                model_config.path,
+                model_config.vector_dim,
+                force_cpu=settings.tf_force_cpu,
+            )
         else:
             from humpback.processing.inference import TFLiteModel
 
-            logger.info("Loading TFLiteModel: path=%s, dim=%d", model_config.path, model_config.vector_dim)
+            logger.info(
+                "Loading TFLiteModel: path=%s, dim=%d",
+                model_config.path,
+                model_config.vector_dim,
+            )
             model = TFLiteModel(model_config.path, model_config.vector_dim)
     else:
         from humpback.processing.inference import TFLiteModel

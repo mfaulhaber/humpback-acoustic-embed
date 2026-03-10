@@ -296,23 +296,32 @@ async def test_canceled_job_content_and_download(client, app_settings):
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
     fieldnames = [
-        "filename", "start_sec", "end_sec", "avg_confidence",
-        "peak_confidence", "n_windows", "detection_filename", "extract_filename", "hydrophone_name",
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "detection_filename",
+        "extract_filename",
+        "hydrophone_name",
     ]
     with open(tsv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
-        writer.writerow({
-            "filename": "20250704T160000Z.wav",
-            "start_sec": "10.0",
-            "end_sec": "16.0",
-            "avg_confidence": "0.82",
-            "peak_confidence": "0.86",
-            "n_windows": "2",
-            "detection_filename": "20250704T160010Z_20250704T160016Z.wav",
-            "extract_filename": "20250704T160010Z_20250704T160020Z.wav",
-            "hydrophone_name": "rpi_north_sjc",
-        })
+        writer.writerow(
+            {
+                "filename": "20250704T160000Z.wav",
+                "start_sec": "10.0",
+                "end_sec": "16.0",
+                "avg_confidence": "0.82",
+                "peak_confidence": "0.86",
+                "n_windows": "2",
+                "detection_filename": "20250704T160010Z_20250704T160016Z.wav",
+                "extract_filename": "20250704T160010Z_20250704T160020Z.wav",
+                "hydrophone_name": "rpi_north_sjc",
+            }
+        )
 
     async with sf() as session:
         await session.execute(
@@ -449,7 +458,9 @@ async def test_hydrophone_content_includes_extract_filename(client, app_settings
     await engine.dispose()
 
 
-async def test_hydrophone_content_derives_detection_filename_for_legacy_rows(client, app_settings):
+async def test_hydrophone_content_derives_detection_filename_for_legacy_rows(
+    client, app_settings
+):
     """Legacy hydrophone TSV rows without detection_filename should derive exact range."""
     import csv
 
@@ -569,7 +580,10 @@ async def test_hydrophone_audio_slice_late_row_uses_first_folder_anchor(
     )
 
     # 2350 is too far from job.start (legacy anchor), but valid from first folder (1500)
-    filename = datetime.fromtimestamp(2350, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+    filename = (
+        datetime.fromtimestamp(2350, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + ".wav"
+    )
 
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/audio-slice",
@@ -636,7 +650,10 @@ async def test_hydrophone_audio_slice_legacy_anchor_fallback_still_works(
 
     # 1200 is before first folder (1500) so first-anchor offset is negative.
     # Legacy job.start anchor should resolve this row.
-    filename = datetime.fromtimestamp(1200, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+    filename = (
+        datetime.fromtimestamp(1200, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + ".wav"
+    )
 
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/audio-slice",
@@ -702,7 +719,10 @@ async def test_hydrophone_audio_slice_rejects_rows_beyond_job_end(
     )
 
     # Synthetic row starts after end_timestamp=1525.
-    filename = datetime.fromtimestamp(1530, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".wav"
+    filename = (
+        datetime.fromtimestamp(1530, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + ".wav"
+    )
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/audio-slice",
         params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
@@ -721,13 +741,7 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
 
     hydrophone_id = "rpi_orcasound_lab"
     folder_ts = "1000"
-    hls_dir = (
-        Path(tmp_path)
-        / ORCASOUND_S3_BUCKET
-        / hydrophone_id
-        / "hls"
-        / folder_ts
-    )
+    hls_dir = Path(tmp_path) / ORCASOUND_S3_BUCKET / hydrophone_id / "hls" / folder_ts
     hls_dir.mkdir(parents=True)
 
     # Four 10s segments exist, but requested range below should end at 25s.
@@ -785,7 +799,9 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
 
     assert detections
     for det in detections:
-        chunk_ts = datetime.strptime(
-            det["filename"][:-4], "%Y%m%dT%H%M%SZ"
-        ).replace(tzinfo=timezone.utc).timestamp()
+        chunk_ts = (
+            datetime.strptime(det["filename"][:-4], "%Y%m%dT%H%M%SZ")
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
         assert chunk_ts + float(det["end_sec"]) <= 1025.01

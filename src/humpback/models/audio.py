@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import ForeignKey, Text, UniqueConstraint

@@ -49,7 +49,8 @@ def test_train_with_parameters():
     negative = rng.randn(50, 16) - 1.5
 
     pipeline, summary = train_binary_classifier(
-        positive, negative,
+        positive,
+        negative,
         parameters={"C": 0.1, "max_iter": 500, "solver": "lbfgs"},
     )
 
@@ -131,7 +132,8 @@ def test_class_weight_none_override():
     negative = rng.randn(50, 16) - 2.0
 
     pipeline, summary = train_binary_classifier(
-        positive, negative,
+        positive,
+        negative,
         parameters={"class_weight": None},
     )
 
@@ -176,7 +178,8 @@ def test_mlp_classifier_type():
     negative = rng.randn(50, 16) - 2.0
 
     pipeline, summary = train_binary_classifier(
-        positive, negative,
+        positive,
+        negative,
         parameters={"classifier_type": "mlp"},
     )
 
@@ -204,11 +207,13 @@ def test_mlp_reduces_fps_on_overlapping_data():
     neg = rng.randn(n, dim) * 0.5  # centered at origin, small spread
 
     _, lr_summary = train_binary_classifier(
-        pos, neg,
+        pos,
+        neg,
         parameters={"classifier_type": "logistic_regression"},
     )
     _, mlp_summary = train_binary_classifier(
-        pos, neg,
+        pos,
+        neg,
         parameters={"classifier_type": "mlp"},
     )
 
@@ -226,7 +231,8 @@ def test_l2_normalize_pipeline():
     negative = rng.randn(30, 16) - 2.0
 
     pipeline, _ = train_binary_classifier(
-        positive, negative,
+        positive,
+        negative,
         parameters={"l2_normalize": True},
     )
 
@@ -245,7 +251,14 @@ def test_extended_cv_metrics():
 
     _, summary = train_binary_classifier(positive, negative)
 
-    for key in ["cv_precision", "cv_precision_std", "cv_recall", "cv_recall_std", "cv_f1", "cv_f1_std"]:
+    for key in [
+        "cv_precision",
+        "cv_precision_std",
+        "cv_recall",
+        "cv_recall_std",
+        "cv_f1",
+        "cv_f1_std",
+    ]:
         assert key in summary, f"Missing key: {key}"
         assert isinstance(summary[key], float)
 
@@ -292,13 +305,15 @@ def test_classifier_type_in_summary():
     negative = rng.randn(30, 16) - 2.0
 
     _, lr_summary = train_binary_classifier(
-        positive, negative,
+        positive,
+        negative,
         parameters={"classifier_type": "logistic_regression"},
     )
     assert lr_summary["classifier_type"] == "logistic_regression"
 
     _, mlp_summary = train_binary_classifier(
-        positive, negative,
+        positive,
+        negative,
         parameters={"classifier_type": "mlp"},
     )
     assert mlp_summary["classifier_type"] == "mlp"

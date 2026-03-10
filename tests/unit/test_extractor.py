@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from humpback.classifier.extractor import (
     extract_hydrophone_labeled_samples,
@@ -56,9 +55,14 @@ def _make_wav(path: Path, duration: float = 1.0, sr: int = 16000) -> None:
 def _make_tsv(path: Path, rows: list[dict]) -> None:
     """Write a detection TSV file."""
     fieldnames = [
-        "filename", "start_sec", "end_sec",
-        "avg_confidence", "peak_confidence",
-        "humpback", "ship", "background",
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "humpback",
+        "ship",
+        "background",
     ]
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
@@ -85,14 +89,31 @@ class TestExtractLabeledSamples:
         _make_wav(audio_folder / "test.wav", duration=10.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "test.wav", "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-            {"filename": "test.wav", "start_sec": "5.0", "end_sec": "10.0",
-             "avg_confidence": "0.8", "peak_confidence": "0.85",
-             "humpback": "", "ship": "1", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+                {
+                    "filename": "test.wav",
+                    "start_sec": "5.0",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.8",
+                    "peak_confidence": "0.85",
+                    "humpback": "",
+                    "ship": "1",
+                    "background": "",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
@@ -112,11 +133,21 @@ class TestExtractLabeledSamples:
 
     def test_no_labeled_rows(self, tmp_path):
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "test.wav", "start_sec": "0", "end_sec": "5",
-             "avg_confidence": "0.5", "peak_confidence": "0.6",
-             "humpback": "", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "0",
+                    "end_sec": "5",
+                    "avg_confidence": "0.5",
+                    "peak_confidence": "0.6",
+                    "humpback": "",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         summary = extract_labeled_samples(
             tsv_path, tmp_path, tmp_path / "pos", tmp_path / "neg"
@@ -131,11 +162,21 @@ class TestExtractLabeledSamples:
         _make_wav(audio_folder / "test.wav", duration=5.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "test.wav", "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
@@ -155,12 +196,21 @@ class TestExtractLabeledSamples:
         _make_wav(audio_folder / "20250615T080000Z_hydrophone.wav", duration=10.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "20250615T080000Z_hydrophone.wav",
-             "start_sec": "2.5", "end_sec": "7.5",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z_hydrophone.wav",
+                    "start_sec": "2.5",
+                    "end_sec": "7.5",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
@@ -177,12 +227,21 @@ class TestExtractLabeledSamples:
         _make_wav(audio_folder / "recording_001.wav", duration=5.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "recording_001.wav",
-             "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "", "ship": "", "background": "1"},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "recording_001.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "",
+                    "ship": "",
+                    "background": "1",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
@@ -200,11 +259,21 @@ class TestExtractLabeledSamples:
         _make_wav(audio_folder / "test.wav", duration=5.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "test.wav", "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "1", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "1",
+                    "background": "",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
@@ -221,20 +290,33 @@ class TestExtractionSnapping:
         _make_wav(audio_folder / "test.wav", duration=15.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "test.wav", "start_sec": "2.5", "end_sec": "10.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "2.5",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0)
+        extract_labeled_samples(
+            tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0
+        )
 
         humpback_files = list(pos_out.rglob("*.wav"))
         assert len(humpback_files) == 1
         # Snapped to [0.0, 10.0] = 10.0s
         import wave
+
         with wave.open(str(humpback_files[0]), "r") as wf:
             duration = wf.getnframes() / wf.getframerate()
         assert abs(duration - 10.0) < 0.1
@@ -246,19 +328,32 @@ class TestExtractionSnapping:
         _make_wav(audio_folder / "test.wav", duration=20.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "test.wav", "start_sec": "5.0", "end_sec": "15.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "5.0",
+                    "end_sec": "15.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0)
+        extract_labeled_samples(
+            tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0
+        )
 
         humpback_files = list(pos_out.rglob("*.wav"))
         assert len(humpback_files) == 1
         import wave
+
         with wave.open(str(humpback_files[0]), "r") as wf:
             duration = wf.getnframes() / wf.getframerate()
         assert abs(duration - 10.0) < 0.1
@@ -270,11 +365,21 @@ class TestExtractionSnapping:
         _make_wav(audio_folder / "test.wav", duration=15.0)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "test.wav", "start_sec": "2.5", "end_sec": "7.5",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "2.5",
+                    "end_sec": "7.5",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
@@ -284,6 +389,7 @@ class TestExtractionSnapping:
         humpback_files = list(pos_out.rglob("*.wav"))
         assert len(humpback_files) == 1
         import wave
+
         with wave.open(str(humpback_files[0]), "r") as wf:
             duration = wf.getnframes() / wf.getframerate()
         assert abs(duration - 10.0) < 0.1
@@ -298,12 +404,21 @@ class TestExtractHydrophoneLabeledSamples:
 
         # Create TSV with a labeled detection
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "20250615T080000Z.wav",
-             "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
@@ -318,9 +433,13 @@ class TestExtractHydrophoneLabeledSamples:
 
         with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
             summary = extract_hydrophone_labeled_samples(
-                tsv_path, "rpi_orcasound_lab",
-                pos_out, neg_out, mock_client,
-                target_sample_rate=sr, window_size_seconds=5.0,
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
             )
 
         assert summary["n_humpback"] == 1
@@ -378,9 +497,13 @@ class TestExtractHydrophoneLabeledSamples:
 
         with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
             summary = extract_hydrophone_labeled_samples(
-                tsv_path, "rpi_orcasound_lab",
-                pos_out, neg_out, mock_client,
-                target_sample_rate=sr, window_size_seconds=5.0,
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
             )
 
         assert summary["n_humpback"] == 1
@@ -406,16 +529,31 @@ class TestExtractHydrophoneLabeledSamples:
         audio = np.sin(np.linspace(0, 2 * np.pi * 220, sr * 60)).astype(np.float32)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "20250615T080000Z.wav",
-             "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "", "ship": "1", "background": ""},
-            {"filename": "20250615T080000Z.wav",
-             "start_sec": "5.0", "end_sec": "10.0",
-             "avg_confidence": "0.8", "peak_confidence": "0.85",
-             "humpback": "", "ship": "", "background": "1"},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "",
+                    "ship": "1",
+                    "background": "",
+                },
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "5.0",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.8",
+                    "peak_confidence": "0.85",
+                    "humpback": "",
+                    "ship": "",
+                    "background": "1",
+                },
+            ],
+        )
 
         mock_client = MagicMock()
         mock_client.list_hls_folders.return_value = ["1718438400"]
@@ -427,16 +565,22 @@ class TestExtractHydrophoneLabeledSamples:
 
         with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
             summary = extract_hydrophone_labeled_samples(
-                tsv_path, "rpi_orcasound_lab",
-                pos_out, neg_out, mock_client,
-                target_sample_rate=sr, window_size_seconds=5.0,
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
             )
 
         assert summary["n_ship"] == 1
         assert summary["n_background"] == 1
 
         ship_files = list((neg_out / "rpi_orcasound_lab" / "ship").rglob("*.wav"))
-        background_files = list((neg_out / "rpi_orcasound_lab" / "background").rglob("*.wav"))
+        background_files = list(
+            (neg_out / "rpi_orcasound_lab" / "background").rglob("*.wav")
+        )
         assert len(ship_files) == 1
         assert len(background_files) == 1
 
@@ -453,18 +597,30 @@ class TestExtractHydrophoneLabeledSamples:
         from unittest.mock import MagicMock
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "20250615T080000Z.wav",
-             "start_sec": "0", "end_sec": "5",
-             "avg_confidence": "0.5", "peak_confidence": "0.6",
-             "humpback": "", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0",
+                    "end_sec": "5",
+                    "avg_confidence": "0.5",
+                    "peak_confidence": "0.6",
+                    "humpback": "",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         mock_client = MagicMock()
 
         summary = extract_hydrophone_labeled_samples(
-            tsv_path, "rpi_orcasound_lab",
-            tmp_path / "pos", tmp_path / "neg", mock_client,
+            tsv_path,
+            "rpi_orcasound_lab",
+            tmp_path / "pos",
+            tmp_path / "neg",
+            mock_client,
         )
         assert summary["n_humpback"] == 0
         mock_client.list_hls_folders.assert_not_called()
@@ -477,12 +633,21 @@ class TestExtractHydrophoneLabeledSamples:
         audio = np.zeros(sr * 60, dtype=np.float32)
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "20250615T080000Z.wav",
-             "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         mock_client = MagicMock()
         mock_client.list_hls_folders.return_value = ["1718438400"]
@@ -494,10 +659,18 @@ class TestExtractHydrophoneLabeledSamples:
 
         with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
             s1 = extract_hydrophone_labeled_samples(
-                tsv_path, "rpi_orcasound_lab", pos_out, neg_out, mock_client,
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
             )
             s2 = extract_hydrophone_labeled_samples(
-                tsv_path, "rpi_orcasound_lab", pos_out, neg_out, mock_client,
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
             )
 
         assert s1["n_humpback"] == 1
@@ -510,12 +683,21 @@ class TestExtractHydrophoneLabeledSamples:
 
         sr = 32000
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "19700101T003910Z.wav",
-             "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "19700101T003910Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         mock_client = MagicMock()
 
@@ -560,20 +742,37 @@ class TestExtractHydrophoneLabeledSamples:
 
         sr = 32000
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "19700101T002500Z.wav",
-             "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-            {"filename": "19700101T002500Z.wav",
-             "start_sec": "10.0", "end_sec": "15.0",
-             "avg_confidence": "0.88", "peak_confidence": "0.92",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "19700101T002500Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+                {
+                    "filename": "19700101T002500Z.wav",
+                    "start_sec": "10.0",
+                    "end_sec": "15.0",
+                    "avg_confidence": "0.88",
+                    "peak_confidence": "0.92",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         mock_client = MagicMock()
         mock_client.list_hls_folders.return_value = ["1500"]
-        mock_client.list_segments.return_value = [f"rpi/hls/1500/seg{i:04d}.ts" for i in range(6)]
+        mock_client.list_segments.return_value = [
+            f"rpi/hls/1500/seg{i:04d}.ts" for i in range(6)
+        ]
         mock_client.fetch_segment.return_value = b"fake-ts"
 
         with patch(
@@ -607,12 +806,21 @@ class TestExtractHydrophoneLabeledSamples:
         )
 
         tsv_path = tmp_path / "detections.tsv"
-        _make_tsv(tsv_path, [
-            {"filename": "20250615T080000Z.wav",
-             "start_sec": "0.0", "end_sec": "5.0",
-             "avg_confidence": "0.9", "peak_confidence": "0.95",
-             "humpback": "1", "ship": "", "background": ""},
-        ])
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
 
         mock_client = MagicMock()
         mock_client.list_hls_folders.return_value = []

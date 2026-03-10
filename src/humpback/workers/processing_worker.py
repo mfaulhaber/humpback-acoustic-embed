@@ -17,7 +17,7 @@ from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel, FakeTF2Model, FakeTFLiteModel
 from humpback.processing.windowing import slice_windows
 from humpback.services.model_registry_service import get_model_by_name
-from humpback.storage import embedding_path, ensure_dir, resolve_audio_path
+from humpback.storage import embedding_path, resolve_audio_path
 from humpback.workers.queue import complete_processing_job, fail_processing_job
 
 logger = logging.getLogger(__name__)
@@ -43,13 +43,15 @@ async def get_model_for_job(
     """
     cache_key = job.model_version
     model_config = await get_model_by_name(session, job.model_version)
-    input_format = (
-        model_config.input_format if model_config else "spectrogram"
-    )
+    input_format = model_config.input_format if model_config else "spectrogram"
     model_type = model_config.model_type if model_config else "tflite"
 
     if cache_key in _model_cache:
-        logger.info("Using cached model for %s (type=%s)", cache_key, type(_model_cache[cache_key]).__name__)
+        logger.info(
+            "Using cached model for %s (type=%s)",
+            cache_key,
+            type(_model_cache[cache_key]).__name__,
+        )
         return _model_cache[cache_key], input_format
 
     if not settings.use_real_model:
@@ -66,12 +68,24 @@ async def get_model_for_job(
         if model_type == "tf2_saved_model":
             from humpback.processing.inference import TF2SavedModel
 
-            logger.info("Loading TF2SavedModel: path=%s, dim=%d", model_config.path, model_config.vector_dim)
-            model = TF2SavedModel(model_config.path, model_config.vector_dim, force_cpu=settings.tf_force_cpu)
+            logger.info(
+                "Loading TF2SavedModel: path=%s, dim=%d",
+                model_config.path,
+                model_config.vector_dim,
+            )
+            model = TF2SavedModel(
+                model_config.path,
+                model_config.vector_dim,
+                force_cpu=settings.tf_force_cpu,
+            )
         else:
             from humpback.processing.inference import TFLiteModel
 
-            logger.info("Loading TFLiteModel: path=%s, dim=%d", model_config.path, model_config.vector_dim)
+            logger.info(
+                "Loading TFLiteModel: path=%s, dim=%d",
+                model_config.path,
+                model_config.vector_dim,
+            )
             model = TFLiteModel(model_config.path, model_config.vector_dim)
     else:
         # Fallback to settings for unregistered model versions
@@ -99,7 +113,9 @@ async def run_processing_job(
             )
         )
         if existing.scalar_one_or_none():
-            logger.info(f"Embedding set already exists for signature {job.encoding_signature}, skipping")
+            logger.info(
+                f"Embedding set already exists for signature {job.encoding_signature}, skipping"
+            )
             await complete_processing_job(session, job.id)
             return
 
@@ -213,7 +229,9 @@ def _process_audio(
     if len(audio) < window_samples:
         logger.warning(
             "Audio too short for window size (%.3fs < %.1fs), producing 0 embeddings for job %s",
-            len(audio) / job.target_sample_rate, job.window_size_seconds, job.id,
+            len(audio) / job.target_sample_rate,
+            job.window_size_seconds,
+            job.id,
         )
 
     t_features = 0.0
@@ -233,8 +251,11 @@ def _process_audio(
         else:
             t0 = time.monotonic()
             batch_items = extract_logmel_batch(
-                raw_windows, job.target_sample_rate,
-                n_mels=128, hop_length=1252, target_frames=128,
+                raw_windows,
+                job.target_sample_rate,
+                n_mels=128,
+                hop_length=1252,
+                target_frames=128,
                 normalization=normalization,
             )
             t_features = time.monotonic() - t0
@@ -253,7 +274,10 @@ def _process_audio(
 
     logger.info(
         "Processing timing: decode=%.3fs, features=%.3fs (%d windows), inference=%.3fs",
-        t_decode, t_features, n_windows, t_inference,
+        t_decode,
+        t_features,
+        n_windows,
+        t_inference,
     )
 
     return writer.total_rows

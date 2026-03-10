@@ -132,8 +132,8 @@ def test_events_hysteresis_basic():
     records = _make_records([0.3, 0.8, 0.5, 0.3, 0.2])
     result = merge_detection_events(records, high_threshold=0.7, low_threshold=0.4)
     assert len(result) == 1
-    assert result[0]["start_sec"] == 5.0   # window index 1
-    assert result[0]["end_sec"] == 15.0    # window index 2 end
+    assert result[0]["start_sec"] == 5.0  # window index 1
+    assert result[0]["end_sec"] == 15.0  # window index 2 end
     assert result[0]["n_windows"] == 2
 
 
@@ -235,15 +235,18 @@ def test_write_tsv_preserves_n_windows():
         assert rows[1]["n_windows"] == "5"
         # All expected fieldnames present
         assert set(reader.fieldnames) == {
-            "filename", "start_sec", "end_sec",
-            "avg_confidence", "peak_confidence", "n_windows",
+            "filename",
+            "start_sec",
+            "end_sec",
+            "avg_confidence",
+            "peak_confidence",
+            "n_windows",
         }
 
 
 def test_append_detections_tsv_creates_with_header(tmp_path):
     """append_detections_tsv creates file with header on first call."""
     import csv
-    from pathlib import Path
 
     from humpback.classifier.detector import append_detections_tsv
 
@@ -267,8 +270,12 @@ def test_append_detections_tsv_creates_with_header(tmp_path):
     assert len(rows) == 1
     assert rows[0]["filename"] == "a.wav"
     assert set(reader.fieldnames) == {
-        "filename", "start_sec", "end_sec",
-        "avg_confidence", "peak_confidence", "n_windows",
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
     }
 
 
@@ -279,14 +286,26 @@ def test_append_detections_tsv_appends_without_duplicate_header(tmp_path):
     from humpback.classifier.detector import append_detections_tsv
 
     tsv_path = tmp_path / "detections.tsv"
-    det1 = [{
-        "filename": "a.wav", "start_sec": 0.0, "end_sec": 5.0,
-        "avg_confidence": 0.8, "peak_confidence": 0.9, "n_windows": 2,
-    }]
-    det2 = [{
-        "filename": "b.wav", "start_sec": 1.0, "end_sec": 6.0,
-        "avg_confidence": 0.7, "peak_confidence": 0.85, "n_windows": 3,
-    }]
+    det1 = [
+        {
+            "filename": "a.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+            "avg_confidence": 0.8,
+            "peak_confidence": 0.9,
+            "n_windows": 2,
+        }
+    ]
+    det2 = [
+        {
+            "filename": "b.wav",
+            "start_sec": 1.0,
+            "end_sec": 6.0,
+            "avg_confidence": 0.7,
+            "peak_confidence": 0.85,
+            "n_windows": 3,
+        }
+    ]
     append_detections_tsv(det1, tsv_path)
     append_detections_tsv(det2, tsv_path)
 
@@ -413,7 +432,6 @@ def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
 
 def test_events_backward_compat_equivalence():
     """When hop == window and high == low == threshold, matches merge_detection_spans."""
-    import numpy as np
 
     confs = [0.8, 0.2, 0.9, 0.7, 0.1, 0.6]
     threshold = 0.5
@@ -421,7 +439,9 @@ def test_events_backward_compat_equivalence():
 
     old_result = merge_detection_spans(confs, threshold, window_size)
     records = _make_records(confs, window_size=window_size, hop=window_size)
-    new_result = merge_detection_events(records, high_threshold=threshold, low_threshold=threshold)
+    new_result = merge_detection_events(
+        records, high_threshold=threshold, low_threshold=threshold
+    )
 
     assert len(old_result) == len(new_result)
     for old, new in zip(old_result, new_result):

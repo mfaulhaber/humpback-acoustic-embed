@@ -36,9 +36,13 @@ def _build_detection_filename(
     if end_sec <= start_sec:
         return None
 
-    basename = chunk_filename[:-4] if chunk_filename.endswith(".wav") else chunk_filename
+    basename = (
+        chunk_filename[:-4] if chunk_filename.endswith(".wav") else chunk_filename
+    )
     try:
-        chunk_start = datetime.strptime(basename, _TS_FORMAT).replace(tzinfo=timezone.utc)
+        chunk_start = datetime.strptime(basename, _TS_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
     except ValueError:
         return None
 
@@ -150,7 +154,9 @@ def run_hydrophone_detection(
         raw_windows = []
         window_metas = []
         for window, meta in slice_windows_with_metadata(
-            chunk_audio, target_sample_rate, window_size_seconds,
+            chunk_audio,
+            target_sample_rate,
+            window_size_seconds,
             hop_seconds=hop_seconds,
         ):
             window_metas.append(meta)
@@ -168,8 +174,11 @@ def run_hydrophone_detection(
         else:
             t1 = time.monotonic()
             batch_items = extract_logmel_batch(
-                raw_windows, target_sample_rate,
-                n_mels=128, hop_length=1252, target_frames=128,
+                raw_windows,
+                target_sample_rate,
+                n_mels=128,
+                hop_length=1252,
+                target_frames=128,
                 normalization=normalization,
             )
             t_features_total += time.monotonic() - t1
@@ -202,9 +211,7 @@ def run_hydrophone_detection(
         ]
 
         # Merge events
-        events = merge_detection_events(
-            window_records, high_threshold, low_threshold
-        )
+        events = merge_detection_events(window_records, high_threshold, low_threshold)
 
         # Synthetic filename from chunk UTC time
         synthetic_filename = chunk_start_utc.strftime("%Y%m%dT%H%M%SZ") + ".wav"
@@ -220,7 +227,9 @@ def run_hydrophone_detection(
             event["extract_filename"] = detection_filename
             all_detections.append(event)
 
-        total_positive += sum(1 for c in window_confidences if c >= confidence_threshold)
+        total_positive += sum(
+            1 for c in window_confidences if c >= confidence_threshold
+        )
         all_confidences.extend(window_confidences)
         time_covered += len(chunk_audio) / target_sample_rate
         t_decode_total += time.monotonic() - t0
@@ -254,11 +263,15 @@ def run_hydrophone_detection(
 
     logger.info(
         "Hydrophone detection complete: %d windows, %d spans, %.1fs audio",
-        total_windows, len(all_detections), time_covered,
+        total_windows,
+        len(all_detections),
+        time_covered,
     )
     logger.info(
         "Timing: total=%.3fs, features=%.3fs, inference=%.3fs",
-        t_decode_total, t_features_total, t_inference_total,
+        t_decode_total,
+        t_features_total,
+        t_inference_total,
     )
 
     return all_detections, summary

@@ -19,10 +19,12 @@ from humpback.clustering.metrics import (
 def test_compute_cluster_metrics_two_clusters():
     """Well-separated clusters should have positive silhouette score."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(20, 8).astype(np.float32) + 10,
-        rng.randn(20, 8).astype(np.float32) - 10,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(20, 8).astype(np.float32) + 10,
+            rng.randn(20, 8).astype(np.float32) - 10,
+        ]
+    )
     labels = np.array([0] * 20 + [1] * 20)
 
     result = compute_cluster_metrics(embeddings, labels)
@@ -64,7 +66,10 @@ def test_compute_cluster_metrics_all_noise():
 
 def test_extract_category_from_folder_path():
     """Last path component is used as category label."""
-    assert extract_category_from_folder_path("Emily-Vierling-Orcasound-data/Grunt") == "Grunt"
+    assert (
+        extract_category_from_folder_path("Emily-Vierling-Orcasound-data/Grunt")
+        == "Grunt"
+    )
     assert extract_category_from_folder_path("social-sounds/calls") == "calls"
     assert extract_category_from_folder_path("data/social-sounds/moans") == "moans"
     assert extract_category_from_folder_path("Upsweep") == "Upsweep"
@@ -163,10 +168,12 @@ def test_compute_detailed_category_metrics_with_noise():
 def test_run_parameter_sweep_basic():
     """Sweep should return valid results with expected keys."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(30, 4).astype(np.float32) + 5,
-        rng.randn(30, 4).astype(np.float32) - 5,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(30, 4).astype(np.float32) + 5,
+            rng.randn(30, 4).astype(np.float32) - 5,
+        ]
+    )
 
     results = run_parameter_sweep(embeddings)
 
@@ -201,10 +208,12 @@ def test_run_parameter_sweep_too_small():
 def test_run_parameter_sweep_with_category_labels():
     """Sweep with category labels should include ARI and NMI."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(15, 4).astype(np.float32) + 5,
-        rng.randn(15, 4).astype(np.float32) - 5,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(15, 4).astype(np.float32) + 5,
+            rng.randn(15, 4).astype(np.float32) - 5,
+        ]
+    )
     categories = ["A"] * 15 + ["B"] * 15
 
     results = run_parameter_sweep(embeddings, category_labels=categories)

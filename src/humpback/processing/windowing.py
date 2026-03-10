@@ -15,7 +15,9 @@ class WindowMetadata:
 
 
 def slice_windows(
-    audio: np.ndarray, sample_rate: int, window_seconds: float,
+    audio: np.ndarray,
+    sample_rate: int,
+    window_seconds: float,
     hop_seconds: float | None = None,
 ) -> Iterator[np.ndarray]:
     """Slice audio into fixed-length windows.
@@ -62,7 +64,9 @@ def slice_windows(
 
 
 def slice_windows_with_metadata(
-    audio: np.ndarray, sample_rate: int, window_seconds: float,
+    audio: np.ndarray,
+    sample_rate: int,
+    window_seconds: float,
     hop_seconds: float | None = None,
 ) -> Iterator[tuple[np.ndarray, WindowMetadata]]:
     """Slice audio into windows, yielding (window, metadata) tuples.
@@ -113,8 +117,12 @@ def slice_windows_with_metadata(
         idx += 1
 
 
-def count_windows(n_samples: int, sample_rate: int, window_seconds: float,
-                  hop_seconds: float | None = None) -> int:
+def count_windows(
+    n_samples: int,
+    sample_rate: int,
+    window_seconds: float,
+    hop_seconds: float | None = None,
+) -> int:
     """Return number of windows for given audio length."""
     window_samples = int(sample_rate * window_seconds)
     if window_samples <= 0:

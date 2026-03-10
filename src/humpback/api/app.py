@@ -8,7 +8,12 @@ from fastapi.staticfiles import StaticFiles
 
 from humpback.api.routers import admin, audio, classifier, clustering, processing
 from humpback.config import Settings
-from humpback.database import Base, create_engine, create_session_factory, setup_sqlite_pragmas
+from humpback.database import (
+    Base,
+    create_engine,
+    create_session_factory,
+    setup_sqlite_pragmas,
+)
 from humpback.services.model_registry_service import seed_default_model
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"

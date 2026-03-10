@@ -21,9 +21,7 @@ def upgrade():
     with op.batch_alter_table(
         "audio_files", naming_convention=naming_convention
     ) as batch_op:
-        batch_op.drop_constraint(
-            "uq_audio_files_checksum_sha256", type_="unique"
-        )
+        batch_op.drop_constraint("uq_audio_files_checksum_sha256", type_="unique")
         batch_op.create_unique_constraint(
             "uq_checksum_folder", ["checksum_sha256", "folder_path"]
         )

@@ -28,7 +28,7 @@ from humpback.schemas.audio import (
     SpectrogramOut,
 )
 from humpback.services import audio_service
-from humpback.storage import audio_raw_dir, resolve_audio_path
+from humpback.storage import resolve_audio_path
 
 router = APIRouter(prefix="/audio", tags=["audio"])
 
@@ -41,9 +41,15 @@ def _audio_to_out(af) -> AudioFileOut:
             id=m.id,
             audio_file_id=m.audio_file_id,
             tag_data=json.loads(m.tag_data) if m.tag_data else None,
-            visual_observations=json.loads(m.visual_observations) if m.visual_observations else None,
-            group_composition=json.loads(m.group_composition) if m.group_composition else None,
-            prey_density_proxy=json.loads(m.prey_density_proxy) if m.prey_density_proxy else None,
+            visual_observations=json.loads(m.visual_observations)
+            if m.visual_observations
+            else None,
+            group_composition=json.loads(m.group_composition)
+            if m.group_composition
+            else None,
+            prey_density_proxy=json.loads(m.prey_density_proxy)
+            if m.prey_density_proxy
+            else None,
         )
     return AudioFileOut(
         id=af.id,
@@ -76,7 +82,10 @@ async def upload_audio(
     data = await file.read()
     normalized_path = _normalize_folder_path(folder_path)
     af, created = await audio_service.upload_audio(
-        session, settings.storage_root, file.filename or "unknown.wav", data,
+        session,
+        settings.storage_root,
+        file.filename or "unknown.wav",
+        data,
         folder_path=normalized_path,
     )
     return _audio_to_out(af)
@@ -151,9 +160,15 @@ async def update_metadata(
         id=meta.id,
         audio_file_id=meta.audio_file_id,
         tag_data=json.loads(meta.tag_data) if meta.tag_data else None,
-        visual_observations=json.loads(meta.visual_observations) if meta.visual_observations else None,
-        group_composition=json.loads(meta.group_composition) if meta.group_composition else None,
-        prey_density_proxy=json.loads(meta.prey_density_proxy) if meta.prey_density_proxy else None,
+        visual_observations=json.loads(meta.visual_observations)
+        if meta.visual_observations
+        else None,
+        group_composition=json.loads(meta.group_composition)
+        if meta.group_composition
+        else None,
+        prey_density_proxy=json.loads(meta.prey_density_proxy)
+        if meta.prey_density_proxy
+        else None,
     )
 
 
@@ -321,17 +336,24 @@ def _compute_spectrogram(
     tf = None if is_short else target_frames
 
     spec = extract_logmel(
-        raw_window, target_sample_rate,
-        n_mels=n_mels, n_fft=n_fft,
-        hop_length=hop_length, target_frames=tf,
+        raw_window,
+        target_sample_rate,
+        n_mels=n_mels,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        target_frames=tf,
     )
     # Compute mel center frequencies in Hz for y-axis
-    mel_frequencies = librosa.mel_frequencies(n_mels=n_mels + 2, fmin=0, fmax=target_sample_rate / 2)
+    mel_frequencies = librosa.mel_frequencies(
+        n_mels=n_mels + 2, fmin=0, fmax=target_sample_rate / 2
+    )
     y_hz = mel_frequencies[1:-1].tolist()
     # Compute time axis in seconds for x-axis
     n_frames = spec.shape[1]
     time_offset = metadata.offset_sec
-    x_seconds = [time_offset + (j * hop_length / target_sample_rate) for j in range(n_frames)]
+    x_seconds = [
+        time_offset + (j * hop_length / target_sample_rate) for j in range(n_frames)
+    ]
     return spec, target_sample_rate, total, y_hz, x_seconds
 
 
@@ -358,9 +380,15 @@ async def get_spectrogram(
 
     try:
         spec, sr, total, y_hz, x_seconds = await asyncio.to_thread(
-            _compute_spectrogram, file_path, window_index,
-            window_size_seconds, target_sample_rate,
-            n_mels, n_fft, hop_length, target_frames,
+            _compute_spectrogram,
+            file_path,
+            window_index,
+            window_size_seconds,
+            target_sample_rate,
+            n_mels,
+            n_fft,
+            hop_length,
+            target_frames,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

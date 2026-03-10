@@ -91,7 +91,9 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         files_total=job.files_total,
         extract_status=job.extract_status,
         extract_error=job.extract_error,
-        extract_summary=json.loads(job.extract_summary) if job.extract_summary else None,
+        extract_summary=json.loads(job.extract_summary)
+        if job.extract_summary
+        else None,
         hydrophone_id=job.hydrophone_id,
         hydrophone_name=job.hydrophone_name,
         start_timestamp=job.start_timestamp,
@@ -108,6 +110,7 @@ def _detection_job_to_out(job) -> DetectionJobOut:
 
 
 # ---- Training Jobs ----
+
 
 @router.post("/training-jobs", status_code=201)
 async def create_training_job(
@@ -144,6 +147,7 @@ async def get_training_job(
 
 # ---- Classifier Models ----
 
+
 @router.get("/models")
 async def list_models(session: SessionDep) -> list[ClassifierModelOut]:
     models = await classifier_service.list_classifier_models(session)
@@ -172,6 +176,7 @@ async def delete_model(
 
 # ---- Detection Jobs ----
 
+
 @router.post("/detection-jobs", status_code=201)
 async def create_detection_job(
     body: DetectionJobCreate, session: SessionDep
@@ -198,9 +203,7 @@ async def list_detection_jobs(session: SessionDep) -> list[DetectionJobOut]:
 
 
 @router.get("/detection-jobs/{job_id}")
-async def get_detection_job(
-    job_id: str, session: SessionDep
-) -> DetectionJobOut:
+async def get_detection_job(job_id: str, session: SessionDep) -> DetectionJobOut:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
@@ -208,15 +211,14 @@ async def get_detection_job(
 
 
 @router.get("/detection-jobs/{job_id}/download")
-async def download_detections(
-    job_id: str, session: SessionDep
-) -> FileResponse:
+async def download_detections(job_id: str, session: SessionDep) -> FileResponse:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
     if job.status not in ("complete", "canceled") or not job.output_tsv_path:
         raise HTTPException(400, "Detection job not complete or no output available")
     from pathlib import Path
+
     tsv_path = Path(job.output_tsv_path)
     if not tsv_path.is_file():
         raise HTTPException(404, "TSV file not found on disk")
@@ -234,6 +236,7 @@ async def download_detections(
 async def list_hydrophones() -> list[HydrophoneInfo]:
     """List configured hydrophone locations."""
     from humpback.config import ORCASOUND_HYDROPHONES
+
     return [HydrophoneInfo(**h) for h in ORCASOUND_HYDROPHONES]
 
 
@@ -268,9 +271,7 @@ async def list_hydrophone_detection_jobs(
 
 
 @router.post("/hydrophone-detection-jobs/{job_id}/cancel")
-async def cancel_hydrophone_detection_job(
-    job_id: str, session: SessionDep
-) -> dict:
+async def cancel_hydrophone_detection_job(job_id: str, session: SessionDep) -> dict:
     try:
         job = await classifier_service.cancel_hydrophone_detection_job(session, job_id)
     except ValueError as e:
@@ -281,9 +282,7 @@ async def cancel_hydrophone_detection_job(
 
 
 @router.post("/hydrophone-detection-jobs/{job_id}/pause")
-async def pause_hydrophone_detection_job(
-    job_id: str, session: SessionDep
-) -> dict:
+async def pause_hydrophone_detection_job(job_id: str, session: SessionDep) -> dict:
     try:
         job = await classifier_service.pause_hydrophone_detection_job(session, job_id)
     except ValueError as e:
@@ -294,9 +293,7 @@ async def pause_hydrophone_detection_job(
 
 
 @router.post("/hydrophone-detection-jobs/{job_id}/resume")
-async def resume_hydrophone_detection_job(
-    job_id: str, session: SessionDep
-) -> dict:
+async def resume_hydrophone_detection_job(job_id: str, session: SessionDep) -> dict:
     try:
         job = await classifier_service.resume_hydrophone_detection_job(session, job_id)
     except ValueError as e:
@@ -354,7 +351,9 @@ async def get_detection_diagnostics(
             filename=page.column("filename")[i].as_py(),
             window_index=page.column("window_index")[i].as_py(),
             offset_sec=page.column("offset_sec")[i].as_py(),
-            end_sec=page.column("end_sec")[i].as_py() if has_end_sec else page.column("offset_sec")[i].as_py() + 5.0,
+            end_sec=page.column("end_sec")[i].as_py()
+            if has_end_sec
+            else page.column("offset_sec")[i].as_py() + 5.0,
             confidence=page.column("confidence")[i].as_py(),
             is_overlapped=page.column("is_overlapped")[i].as_py(),
             overlap_sec=page.column("overlap_sec")[i].as_py(),
@@ -399,7 +398,9 @@ async def get_detection_diagnostics_summary(
     normal_mask = pc.invert(overlapped_mask)
     normal_conf = pc.filter(confidence, normal_mask)
 
-    overlapped_mean = float(pc.mean(overlapped_conf).as_py()) if len(overlapped_conf) > 0 else None
+    overlapped_mean = (
+        float(pc.mean(overlapped_conf).as_py()) if len(overlapped_conf) > 0 else None
+    )
     normal_mean = float(pc.mean(normal_conf).as_py()) if len(normal_conf) > 0 else None
 
     # Confidence histogram (10 bins from 0 to 1)
@@ -415,12 +416,14 @@ async def get_detection_diagnostics_summary(
         else:
             bin_mask = (conf_arr >= bin_edges[i]) & (conf_arr < bin_edges[i + 1])
         n_overlapped_in_bin = int(is_overlapped_arr[bin_mask].sum())
-        histogram.append({
-            "bin_start": float(bin_edges[i]),
-            "bin_end": float(bin_edges[i + 1]),
-            "count": int(hist_all[i]),
-            "count_overlapped": n_overlapped_in_bin,
-        })
+        histogram.append(
+            {
+                "bin_start": float(bin_edges[i]),
+                "bin_end": float(bin_edges[i + 1]),
+                "count": int(hist_all[i]),
+                "count_overlapped": n_overlapped_in_bin,
+            }
+        )
 
     # Per-file summaries
     unique_files = sorted(pc.unique(filenames_col).to_pylist())
@@ -442,8 +445,12 @@ async def get_detection_diagnostics_summary(
             n_windows=file_table.num_rows,
             n_overlapped=n_overlapped,
             mean_confidence=float(pc.mean(file_conf).as_py()),
-            mean_confidence_overlapped=float(pc.mean(overlapped_c).as_py()) if len(overlapped_c) > 0 else None,
-            mean_confidence_normal=float(pc.mean(normal_c).as_py()) if len(normal_c) > 0 else None,
+            mean_confidence_overlapped=float(pc.mean(overlapped_c).as_py())
+            if len(overlapped_c) > 0
+            else None,
+            mean_confidence_normal=float(pc.mean(normal_c).as_py())
+            if len(normal_c) > 0
+            else None,
         )
         per_file.append(pf_summary)
 
@@ -516,9 +523,7 @@ def _retrain_workflow_to_out(wf) -> RetrainWorkflowOut:
 
 
 @router.get("/models/{model_id}/retrain-info")
-async def get_retrain_info(
-    model_id: str, session: SessionDep
-) -> RetrainFolderInfo:
+async def get_retrain_info(model_id: str, session: SessionDep) -> RetrainFolderInfo:
     info = await classifier_service.get_retrain_info(session, model_id)
     if info is None:
         raise HTTPException(404, "Model or training job not found")
@@ -588,11 +593,15 @@ async def extract_labeled_samples(
 
     for j in jobs:
         if j.status not in ("complete", "canceled"):
-            raise HTTPException(400, f"Detection job {j.id} is not complete (status={j.status})")
+            raise HTTPException(
+                400, f"Detection job {j.id} is not complete (status={j.status})"
+            )
 
     pos_path = body.positive_output_path or settings.positive_sample_path
     neg_path = body.negative_output_path or settings.negative_sample_path
-    config = json.dumps({"positive_output_path": pos_path, "negative_output_path": neg_path})
+    config = json.dumps(
+        {"positive_output_path": pos_path, "negative_output_path": neg_path}
+    )
 
     for j in jobs:
         await session.execute(
@@ -727,13 +736,17 @@ def _parse_label(value: str | None) -> int | None:
 _COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
-def _derive_detection_filename(filename: str, start_sec: float, end_sec: float) -> str | None:
+def _derive_detection_filename(
+    filename: str, start_sec: float, end_sec: float
+) -> str | None:
     """Derive canonical detection filename from row filename + bounds."""
     if end_sec <= start_sec:
         return None
     base = filename[:-4] if filename.endswith(".wav") else filename
     try:
-        chunk_start = datetime.strptime(base, _COMPACT_TS_FORMAT).replace(tzinfo=timezone.utc)
+        chunk_start = datetime.strptime(base, _COMPACT_TS_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
     except ValueError:
         return None
     abs_start = chunk_start + timedelta(seconds=start_sec)
@@ -759,14 +772,14 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
         for row in reader:
             start_sec = float(row.get("start_sec", 0))
             end_sec = float(row.get("end_sec", 0))
-            detection_filename = (row.get("detection_filename", "").strip() or None)
+            detection_filename = row.get("detection_filename", "").strip() or None
             if detection_filename is None:
                 detection_filename = _derive_detection_filename(
                     row.get("filename", ""),
                     start_sec,
                     end_sec,
                 )
-            extract_filename = (row.get("extract_filename", "").strip() or None)
+            extract_filename = row.get("extract_filename", "").strip() or None
             if extract_filename is None and job.hydrophone_id is not None:
                 extract_filename = detection_filename
             rows.append(
@@ -776,7 +789,9 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
                     "end_sec": end_sec,
                     "avg_confidence": float(row.get("avg_confidence", 0)),
                     "peak_confidence": float(row.get("peak_confidence", 0)),
-                    "n_windows": int(row["n_windows"]) if row.get("n_windows") else None,
+                    "n_windows": int(row["n_windows"])
+                    if row.get("n_windows")
+                    else None,
                     "detection_filename": detection_filename,
                     "extract_filename": extract_filename,
                     "hydrophone_name": (row.get("hydrophone_name", "").strip() or None),
@@ -903,7 +918,7 @@ async def save_detection_labels(
 # ---- Audio Slice Streaming ----
 
 
-def _encode_wav_response(segment: "np.ndarray", sr: int, normalize: bool) -> Response:
+def _encode_wav_response(segment: "np.ndarray", sr: int, normalize: bool) -> Response:  # noqa: F821
     """Encode audio segment as WAV response."""
     import numpy as np
 
@@ -1018,13 +1033,16 @@ async def get_detection_audio_slice(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    segment, sr = await _resolve_detection_audio(job, settings, filename, start_sec, duration_sec)
+    segment, sr = await _resolve_detection_audio(
+        job, settings, filename, start_sec, duration_sec
+    )
     return _encode_wav_response(segment, sr, normalize)
 
 
 # ---- Spectrogram ----
 
-def _get_spectrogram_cache(settings) -> "SpectrogramCache":
+
+def _get_spectrogram_cache(settings) -> "SpectrogramCache":  # noqa: F821
     from humpback.processing.spectrogram_cache import SpectrogramCache
 
     cache_dir = settings.storage_root / "spectrogram_cache"
@@ -1066,7 +1084,9 @@ async def get_detection_spectrogram(
     if cached is not None:
         return Response(content=cached, media_type="image/png")
 
-    segment, sr = await _resolve_detection_audio(job, settings, filename, start_sec, duration_sec)
+    segment, sr = await _resolve_detection_audio(
+        job, settings, filename, start_sec, duration_sec
+    )
 
     from humpback.processing.spectrogram import generate_spectrogram_png
 

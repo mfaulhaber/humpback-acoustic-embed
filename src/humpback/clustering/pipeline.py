@@ -6,7 +6,11 @@ from typing import Any
 
 import numpy as np
 
-from humpback.clustering.clusterer import cluster_agglomerative, cluster_hdbscan, cluster_kmeans
+from humpback.clustering.clusterer import (
+    cluster_agglomerative,
+    cluster_hdbscan,
+    cluster_kmeans,
+)
 from humpback.clustering.reducer import reduce_pca, reduce_umap
 
 
@@ -55,11 +59,19 @@ def run_clustering_pipeline(
 
         if reduction_method == "pca":
             if cluster_n_components == 2:
-                reduced = reduce_pca(embeddings, n_components=2, random_state=random_state)
+                reduced = reduce_pca(
+                    embeddings, n_components=2, random_state=random_state
+                )
                 cluster_input = reduced
             else:
-                cluster_input = reduce_pca(embeddings, n_components=cluster_n_components, random_state=random_state)
-                reduced = reduce_pca(embeddings, n_components=2, random_state=random_state)
+                cluster_input = reduce_pca(
+                    embeddings,
+                    n_components=cluster_n_components,
+                    random_state=random_state,
+                )
+                reduced = reduce_pca(
+                    embeddings, n_components=2, random_state=random_state
+                )
         else:
             # UMAP (default)
             n_neighbors = params.get("umap_n_neighbors", 15)
@@ -76,7 +88,9 @@ def run_clustering_pipeline(
                 cluster_input = reduced
             else:
                 cluster_input = reduce_umap(
-                    embeddings, n_components=cluster_n_components, **umap_kwargs,
+                    embeddings,
+                    n_components=cluster_n_components,
+                    **umap_kwargs,
                 )
                 reduced = reduce_umap(embeddings, n_components=2, **umap_kwargs)
 
@@ -85,7 +99,9 @@ def run_clustering_pipeline(
 
     if algorithm == "kmeans":
         n_clusters = params.get("n_clusters", 15)
-        labels = cluster_kmeans(cluster_input, n_clusters=n_clusters, random_state=random_state)
+        labels = cluster_kmeans(
+            cluster_input, n_clusters=n_clusters, random_state=random_state
+        )
     elif algorithm == "agglomerative":
         n_clusters = params.get("n_clusters", 15)
         linkage = params.get("linkage", "ward")

@@ -1,5 +1,3 @@
-import json
-
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 

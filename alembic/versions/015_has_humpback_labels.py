@@ -16,7 +16,9 @@ depends_on = None
 
 def upgrade():
     with op.batch_alter_table("detection_jobs") as batch_op:
-        batch_op.add_column(sa.Column("has_humpback_labels", sa.Boolean(), nullable=True))
+        batch_op.add_column(
+            sa.Column("has_humpback_labels", sa.Boolean(), nullable=True)
+        )
 
 
 def downgrade():

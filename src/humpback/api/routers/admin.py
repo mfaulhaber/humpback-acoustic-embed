@@ -63,9 +63,7 @@ async def create_model(body: ModelConfigCreate, session: SessionDep):
 
 
 @router.put("/models/{model_id}", response_model=ModelConfigOut)
-async def update_model(
-    model_id: str, body: ModelConfigUpdate, session: SessionDep
-):
+async def update_model(model_id: str, body: ModelConfigUpdate, session: SessionDep):
     model = await model_registry_service.update_model(
         session,
         model_id,
@@ -100,9 +98,7 @@ async def set_default_model(model_id: str, session: SessionDep):
 
 @router.get("/models/scan", response_model=list[AvailableModelFile])
 async def scan_models(session: SessionDep, settings: SettingsDep):
-    files = await model_registry_service.scan_model_files_with_status(
-        settings, session
-    )
+    files = await model_registry_service.scan_model_files_with_status(settings, session)
     return [AvailableModelFile(**f) for f in files]
 
 

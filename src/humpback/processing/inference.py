@@ -109,7 +109,9 @@ def _suppress_tflite_stderr(fn):
 class TFLiteModel:
     """Real TFLite model wrapper. Only used when USE_REAL_MODEL=true."""
 
-    def __init__(self, model_path: str, vector_dim: int = 512, num_threads: int | None = None):
+    def __init__(
+        self, model_path: str, vector_dim: int = 512, num_threads: int | None = None
+    ):
         import tensorflow as tf
 
         if num_threads is None:
@@ -135,7 +137,10 @@ class TFLiteModel:
         if actual_dim is not None and actual_dim != vector_dim:
             logger.warning(
                 "Model %s: configured vector_dim=%d but actual output dim=%d; using %d",
-                model_path, vector_dim, actual_dim, actual_dim,
+                model_path,
+                vector_dim,
+                actual_dim,
+                actual_dim,
             )
             self._vector_dim = actual_dim
         else:
@@ -180,7 +185,8 @@ class TFLiteModel:
         except Exception as e:
             if not self._batch_resize_failed:
                 logger.warning(
-                    "Batch resize/invoke failed, falling back to sequential inference: %s", e
+                    "Batch resize/invoke failed, falling back to sequential inference: %s",
+                    e,
                 )
                 self._batch_resize_failed = True
             return self._embed_sequential(spectrograms)
@@ -323,7 +329,9 @@ class TF2SavedModel:
 
     gpu_failed: bool = False
 
-    def __init__(self, model_dir: str, vector_dim: int = 1280, *, force_cpu: bool = False):
+    def __init__(
+        self, model_dir: str, vector_dim: int = 1280, *, force_cpu: bool = False
+    ):
         import tensorflow as tf
 
         self._vector_dim = vector_dim
@@ -420,8 +428,7 @@ class TF2SavedModel:
 
         # Fallback to CPU
         logger.warning(
-            "GPU validation FAILED — outputs differ from CPU. "
-            "Falling back to CPU: %s",
+            "GPU validation FAILED — outputs differ from CPU. Falling back to CPU: %s",
             cpu_device,
         )
         self.gpu_failed = True
@@ -440,7 +447,10 @@ class TF2SavedModel:
                 if actual_dim != self._vector_dim:
                     logger.warning(
                         "Model %s: configured vector_dim=%d but actual output dim=%d; using %d",
-                        model_dir, self._vector_dim, actual_dim, actual_dim,
+                        model_dir,
+                        self._vector_dim,
+                        actual_dim,
+                        actual_dim,
                     )
                     self._vector_dim = actual_dim
         except (KeyError, IndexError, TypeError, AttributeError):

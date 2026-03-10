@@ -2,7 +2,11 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from humpback.clustering.pipeline import ClusteringResult, compute_cluster_sizes, run_clustering_pipeline
+from humpback.clustering.pipeline import (
+    ClusteringResult,
+    compute_cluster_sizes,
+    run_clustering_pipeline,
+)
 
 
 def test_pipeline_basic():
@@ -56,13 +60,15 @@ def test_umap_coords_parquet_schema(tmp_path):
     es_ids = [f"es-{i % 3}" for i in range(n)]
     row_indices = list(range(n))
 
-    table = pa.table({
-        "x": pa.array(reduced[:, 0], type=pa.float32()),
-        "y": pa.array(reduced[:, 1], type=pa.float32()),
-        "cluster_label": pa.array(labels.tolist(), type=pa.int32()),
-        "embedding_set_id": pa.array(es_ids, type=pa.string()),
-        "embedding_row_index": pa.array(row_indices, type=pa.int32()),
-    })
+    table = pa.table(
+        {
+            "x": pa.array(reduced[:, 0], type=pa.float32()),
+            "y": pa.array(reduced[:, 1], type=pa.float32()),
+            "cluster_label": pa.array(labels.tolist(), type=pa.int32()),
+            "embedding_set_id": pa.array(es_ids, type=pa.string()),
+            "embedding_row_index": pa.array(row_indices, type=pa.int32()),
+        }
+    )
 
     path = tmp_path / "umap_coords.parquet"
     pq.write_table(table, str(path))
@@ -70,7 +76,13 @@ def test_umap_coords_parquet_schema(tmp_path):
     # Roundtrip
     loaded = pq.read_table(str(path))
     assert loaded.num_rows == n
-    assert set(loaded.column_names) == {"x", "y", "cluster_label", "embedding_set_id", "embedding_row_index"}
+    assert set(loaded.column_names) == {
+        "x",
+        "y",
+        "cluster_label",
+        "embedding_set_id",
+        "embedding_row_index",
+    }
     assert loaded.column("x").type == pa.float32()
     assert loaded.column("y").type == pa.float32()
     assert loaded.column("cluster_label").type == pa.int32()
@@ -84,14 +96,20 @@ def test_umap_coords_parquet_schema(tmp_path):
 def test_pipeline_explicit_cluster_dims():
     """Explicit umap_cluster_n_components controls cluster_input dimensions."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(20, 64).astype(np.float32) + 5,
-        rng.randn(20, 64).astype(np.float32) - 5,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(20, 64).astype(np.float32) + 5,
+            rng.randn(20, 64).astype(np.float32) - 5,
+        ]
+    )
 
     result = run_clustering_pipeline(
         embeddings,
-        parameters={"use_umap": True, "umap_cluster_n_components": 8, "min_cluster_size": 5},
+        parameters={
+            "use_umap": True,
+            "umap_cluster_n_components": 8,
+            "min_cluster_size": 5,
+        },
     )
 
     assert result.cluster_input.shape == (40, 8)
@@ -101,10 +119,12 @@ def test_pipeline_explicit_cluster_dims():
 def test_pipeline_backward_compat_umap_n_components():
     """Old umap_n_components param is used when umap_cluster_n_components is absent."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(20, 64).astype(np.float32) + 5,
-        rng.randn(20, 64).astype(np.float32) - 5,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(20, 64).astype(np.float32) + 5,
+            rng.randn(20, 64).astype(np.float32) - 5,
+        ]
+    )
 
     result = run_clustering_pipeline(
         embeddings,
@@ -122,7 +142,11 @@ def test_pipeline_cluster_dims_clamped_to_input():
 
     result = run_clustering_pipeline(
         embeddings,
-        parameters={"use_umap": True, "umap_cluster_n_components": 20, "min_cluster_size": 5},
+        parameters={
+            "use_umap": True,
+            "umap_cluster_n_components": 20,
+            "min_cluster_size": 5,
+        },
     )
 
     # Clamped to min(20, 6) = 6, but 6 == input dim so UMAP still runs
@@ -133,14 +157,20 @@ def test_pipeline_cluster_dims_clamped_to_input():
 def test_pipeline_single_pass_when_cluster_dims_2():
     """When cluster dims == 2, single UMAP pass; cluster_input == reduced_embeddings."""
     rng = np.random.RandomState(42)
-    embeddings = np.vstack([
-        rng.randn(20, 64).astype(np.float32) + 5,
-        rng.randn(20, 64).astype(np.float32) - 5,
-    ])
+    embeddings = np.vstack(
+        [
+            rng.randn(20, 64).astype(np.float32) + 5,
+            rng.randn(20, 64).astype(np.float32) - 5,
+        ]
+    )
 
     result = run_clustering_pipeline(
         embeddings,
-        parameters={"use_umap": True, "umap_cluster_n_components": 2, "min_cluster_size": 5},
+        parameters={
+            "use_umap": True,
+            "umap_cluster_n_components": 2,
+            "min_cluster_size": 5,
+        },
     )
 
     assert result.cluster_input.shape == (40, 2)
@@ -300,11 +330,19 @@ def test_pipeline_different_random_state_umap():
 
     r1 = run_clustering_pipeline(
         embeddings,
-        parameters={"reduction_method": "umap", "random_state": 42, "min_cluster_size": 5},
+        parameters={
+            "reduction_method": "umap",
+            "random_state": 42,
+            "min_cluster_size": 5,
+        },
     )
     r2 = run_clustering_pipeline(
         embeddings,
-        parameters={"reduction_method": "umap", "random_state": 99, "min_cluster_size": 5},
+        parameters={
+            "reduction_method": "umap",
+            "random_state": 99,
+            "min_cluster_size": 5,
+        },
     )
 
     # UMAP is stochastic — different seeds should give different reductions
@@ -337,7 +375,11 @@ def test_pipeline_default_random_state_backward_compat():
     )
     r2 = run_clustering_pipeline(
         embeddings,
-        parameters={"reduction_method": "umap", "random_state": 42, "min_cluster_size": 5},
+        parameters={
+            "reduction_method": "umap",
+            "random_state": 42,
+            "min_cluster_size": 5,
+        },
     )
 
     np.testing.assert_array_equal(r1.labels, r2.labels)

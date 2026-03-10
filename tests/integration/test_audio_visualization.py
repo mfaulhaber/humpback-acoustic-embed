@@ -18,7 +18,9 @@ from humpback.workers.queue import claim_processing_job
 
 def _make_wav_bytes(duration: float = 2.0, sample_rate: int = 16000) -> bytes:
     n = int(sample_rate * duration)
-    samples = [int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n)]
+    samples = [
+        int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n)
+    ]
     buf = io.BytesIO()
     with wave.open(buf, "w") as wf:
         wf.setnchannels(1)
@@ -72,7 +74,7 @@ async def _upload_and_process(client, settings):
         },
     )
     assert resp.status_code == 201
-    job_id = resp.json()["id"]
+    resp.json()["id"]
 
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
@@ -102,7 +104,11 @@ async def test_spectrogram_returns_correct_shape(viz_client, viz_settings):
 
     resp = await viz_client.get(
         f"/audio/{audio_id}/spectrogram",
-        params={"window_index": 0, "target_sample_rate": 16000, "window_size_seconds": 1.0},
+        params={
+            "window_index": 0,
+            "target_sample_rate": 16000,
+            "window_size_seconds": 1.0,
+        },
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -126,7 +132,11 @@ async def test_spectrogram_window_out_of_range(viz_client, viz_settings):
 
     resp = await viz_client.get(
         f"/audio/{audio_id}/spectrogram",
-        params={"window_index": 999, "target_sample_rate": 16000, "window_size_seconds": 1.0},
+        params={
+            "window_index": 999,
+            "target_sample_rate": 16000,
+            "window_size_seconds": 1.0,
+        },
     )
     assert resp.status_code == 400
 
@@ -160,7 +170,10 @@ async def test_embeddings_returns_similarity_matrix(viz_client, viz_settings):
     # Matrix should be symmetric
     for i in range(n):
         for j in range(n):
-            assert abs(data["similarity_matrix"][i][j] - data["similarity_matrix"][j][i]) < 1e-5
+            assert (
+                abs(data["similarity_matrix"][i][j] - data["similarity_matrix"][j][i])
+                < 1e-5
+            )
     # Values should be in [-1, 1]
     for row in data["similarity_matrix"]:
         for v in row:
@@ -193,7 +206,11 @@ async def test_spectrogram_uses_overlap_back_window_offsets(viz_client):
 
     resp = await viz_client.get(
         f"/audio/{audio_id}/spectrogram",
-        params={"window_index": 2, "target_sample_rate": 16000, "window_size_seconds": 5.0},
+        params={
+            "window_index": 2,
+            "target_sample_rate": 16000,
+            "window_size_seconds": 5.0,
+        },
     )
     assert resp.status_code == 200
     data = resp.json()

@@ -80,9 +80,7 @@ def extract_logmel_batch(
     import librosa
     from scipy.signal import get_window
 
-    mel_basis = librosa.filters.mel(
-        sr=sample_rate, n_fft=n_fft, n_mels=n_mels
-    )
+    mel_basis = librosa.filters.mel(sr=sample_rate, n_fft=n_fft, n_mels=n_mels)
     # Periodic Hann window — same as librosa.stft uses internally
     fft_window = get_window("hann", n_fft, fftbins=True)
 
@@ -155,4 +153,6 @@ def _fit_time_frames(spec: np.ndarray, target_frames: int) -> np.ndarray:
         return spec[:, :target_frames]
     # Pad with minimum value (silence in dB scale)
     pad_width = target_frames - n_frames
-    return np.pad(spec, ((0, 0), (0, pad_width)), mode="constant", constant_values=spec.min())
+    return np.pad(
+        spec, ((0, 0), (0, pad_width)), mode="constant", constant_values=spec.min()
+    )
