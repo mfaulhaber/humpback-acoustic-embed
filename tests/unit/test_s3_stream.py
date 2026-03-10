@@ -559,3 +559,182 @@ class TestResolveHydrophoneAudioSliceOrdering:
         assert np.all(audio[:10] == 100.0)
         assert np.all(audio[10:] == 101.0)
         assert 1000.0 not in set(np.unique(audio))
+
+
+class TestOrcasoundS3ClientRetry:
+    """Test retry logic in OrcasoundS3Client.fetch_segment."""
+
+    def test_retries_on_incomplete_read(self):
+        """IncompleteRead should be retried and succeed on later attempt."""
+        from unittest.mock import MagicMock, patch
+
+        from urllib3.exceptions import IncompleteRead
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client
+
+        with patch("humpback.classifier.s3_stream.time.sleep") as mock_sleep:
+            client = OrcasoundS3Client.__new__(OrcasoundS3Client)
+            mock_boto = MagicMock()
+            client._client = mock_boto
+            client._bucket = "test-bucket"
+
+            # First call raises IncompleteRead, second succeeds
+            body1 = MagicMock()
+            body1.read.side_effect = IncompleteRead(partial=0, expected=109416)
+            resp1 = {"Body": body1}
+
+            body2 = MagicMock()
+            body2.read.return_value = b"segment-data"
+            resp2 = {"Body": body2}
+
+            mock_boto.get_object.side_effect = [resp1, resp2]
+
+            result = client.fetch_segment("hydro/hls/1000/live0.ts")
+
+            assert result == b"segment-data"
+            assert mock_boto.get_object.call_count == 2
+            mock_sleep.assert_called_once_with(1.0)
+
+    def test_retries_on_read_timeout(self):
+        """ReadTimeoutError should be retried."""
+        from unittest.mock import MagicMock, patch
+
+        from botocore.exceptions import ReadTimeoutError
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client
+
+        with patch("humpback.classifier.s3_stream.time.sleep") as mock_sleep:
+            client = OrcasoundS3Client.__new__(OrcasoundS3Client)
+            mock_boto = MagicMock()
+            client._client = mock_boto
+            client._bucket = "test-bucket"
+
+            # First two calls timeout, third succeeds
+            mock_boto.get_object.side_effect = [
+                ReadTimeoutError(endpoint_url="https://s3"),
+                ReadTimeoutError(endpoint_url="https://s3"),
+                {"Body": MagicMock(read=MagicMock(return_value=b"ok"))},
+            ]
+
+            result = client.fetch_segment("hydro/hls/1000/live0.ts")
+
+            assert result == b"ok"
+            assert mock_boto.get_object.call_count == 3
+            assert mock_sleep.call_count == 2
+            # Exponential backoff: 1s, 2s
+            mock_sleep.assert_any_call(1.0)
+            mock_sleep.assert_any_call(2.0)
+
+    def test_no_retry_on_not_found(self):
+        """NoSuchKey / 404 should raise immediately without retry."""
+        from unittest.mock import MagicMock, patch
+
+        from botocore.exceptions import ClientError
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client
+
+        with patch("humpback.classifier.s3_stream.time.sleep") as mock_sleep:
+            client = OrcasoundS3Client.__new__(OrcasoundS3Client)
+            mock_boto = MagicMock()
+            client._client = mock_boto
+            client._bucket = "test-bucket"
+
+            error_response = {"Error": {"Code": "NoSuchKey", "Message": "Not found"}}
+            mock_boto.get_object.side_effect = ClientError(error_response, "GetObject")
+
+            with pytest.raises(ClientError):
+                client.fetch_segment("hydro/hls/1000/missing.ts")
+
+            assert mock_boto.get_object.call_count == 1
+            mock_sleep.assert_not_called()
+
+    def test_no_retry_on_access_denied(self):
+        """AccessDenied should raise immediately without retry."""
+        from unittest.mock import MagicMock, patch
+
+        from botocore.exceptions import ClientError
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client
+
+        with patch("humpback.classifier.s3_stream.time.sleep") as mock_sleep:
+            client = OrcasoundS3Client.__new__(OrcasoundS3Client)
+            mock_boto = MagicMock()
+            client._client = mock_boto
+            client._bucket = "test-bucket"
+
+            error_response = {"Error": {"Code": "AccessDenied", "Message": "Forbidden"}}
+            mock_boto.get_object.side_effect = ClientError(error_response, "GetObject")
+
+            with pytest.raises(ClientError):
+                client.fetch_segment("hydro/hls/1000/live0.ts")
+
+            assert mock_boto.get_object.call_count == 1
+            mock_sleep.assert_not_called()
+
+    def test_raises_after_all_retries_exhausted(self):
+        """Should raise the last exception after all retry attempts fail."""
+        from unittest.mock import MagicMock, patch
+
+        from urllib3.exceptions import IncompleteRead
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client
+
+        with patch("humpback.classifier.s3_stream.time.sleep"):
+            client = OrcasoundS3Client.__new__(OrcasoundS3Client)
+            mock_boto = MagicMock()
+            client._client = mock_boto
+            client._bucket = "test-bucket"
+
+            body = MagicMock()
+            body.read.side_effect = IncompleteRead(partial=0, expected=100)
+            mock_boto.get_object.return_value = {"Body": body}
+
+            with pytest.raises(IncompleteRead):
+                client.fetch_segment("hydro/hls/1000/live0.ts")
+
+            assert mock_boto.get_object.call_count == 3  # _SEGMENT_FETCH_RETRIES
+
+    def test_retries_on_connection_reset(self):
+        """ConnectionResetError should be retried."""
+        from unittest.mock import MagicMock, patch
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client
+
+        with patch("humpback.classifier.s3_stream.time.sleep"):
+            client = OrcasoundS3Client.__new__(OrcasoundS3Client)
+            mock_boto = MagicMock()
+            client._client = mock_boto
+            client._bucket = "test-bucket"
+
+            mock_boto.get_object.side_effect = [
+                ConnectionResetError("Connection reset by peer"),
+                {"Body": MagicMock(read=MagicMock(return_value=b"recovered"))},
+            ]
+
+            result = client.fetch_segment("hydro/hls/1000/live0.ts")
+            assert result == b"recovered"
+            assert mock_boto.get_object.call_count == 2
+
+    def test_retryable_client_error_is_retried(self):
+        """Transient ClientError (e.g., InternalError) should be retried."""
+        from unittest.mock import MagicMock, patch
+
+        from botocore.exceptions import ClientError
+
+        from humpback.classifier.s3_stream import OrcasoundS3Client
+
+        with patch("humpback.classifier.s3_stream.time.sleep"):
+            client = OrcasoundS3Client.__new__(OrcasoundS3Client)
+            mock_boto = MagicMock()
+            client._client = mock_boto
+            client._bucket = "test-bucket"
+
+            error_response = {"Error": {"Code": "InternalError", "Message": "Retry me"}}
+            mock_boto.get_object.side_effect = [
+                ClientError(error_response, "GetObject"),
+                {"Body": MagicMock(read=MagicMock(return_value=b"ok"))},
+            ]
+
+            result = client.fetch_segment("hydro/hls/1000/live0.ts")
+            assert result == b"ok"
+            assert mock_boto.get_object.call_count == 2

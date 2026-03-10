@@ -62,6 +62,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
 - Client priority: local_cache_path > s3_cache_path > direct S3
 - 4 configured hydrophones: Orcasound Lab, North San Juan Channel, Port Townsend, Bush Point
+- Segment fetch retry: transient S3 errors (IncompleteRead, ReadTimeoutError, ConnectionError) retried up to 3× with exponential backoff (1s/2s/4s); explicit `connect_timeout=10`, `read_timeout=30`
 - In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
 - Streaming detection pipeline with per-chunk progress updates
 - Cancel support via threading.Event + DB polling

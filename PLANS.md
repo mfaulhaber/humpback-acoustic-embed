@@ -10,6 +10,22 @@
 
 ## Recently Completed
 
+# Plan: Retry Transient S3 Errors in Hydrophone Segment Fetching
+
+## Outcome (2026-03-09)
+
+- Added segment-level retry with exponential backoff (3 attempts, 1s/2s/4s) to
+  `OrcasoundS3Client.fetch_segment()` for transient errors: `IncompleteRead`,
+  `ReadTimeoutError`, `ConnectionError`, `EndpointConnectionError`, `ConnectionResetError`, `OSError`.
+- Non-retryable errors (`NoSuchKey`, `404`, `AccessDenied`) raise immediately.
+- Set explicit boto3 timeouts: `connect_timeout=10`, `read_timeout=30`.
+- `CachingS3Client` benefits automatically (delegates to `OrcasoundS3Client.fetch_segment`).
+
+## Verification
+
+- `uv run pytest tests/` — 450 passed.
+- 7 unit tests added covering retry success, exhausted retries, and no-retry for non-transient errors.
+
 # Plan: Humpback Label Indicator ("Whale" Badge)
 
 ## Outcome (2026-03-09)

@@ -8,6 +8,7 @@ import os
 import re
 import struct
 import subprocess
+import time
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,6 +27,9 @@ DEFAULT_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS = 4
 DEFAULT_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS = 7 * 24
 FOLDER_LOOKBACK_STEP_SEC = DEFAULT_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS * 3600
 MAX_HYDROPHONE_RANGE_SEC = DEFAULT_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS * 3600
+_SEGMENT_FETCH_RETRIES = 3
+_SEGMENT_FETCH_BACKOFF_BASE = 1.0  # seconds
+
 _SEGMENT_INDEX_RE = re.compile(r"(\d+)(?=\.ts$)", re.IGNORECASE)
 _SEGMENT_SUFFIX_RE = re.compile(r"^(.*?)(\d+)$")
 _EXTINF_RE = re.compile(r"#EXTINF:([0-9.]+)")
@@ -199,6 +203,8 @@ class OrcasoundS3Client:
             config=Config(
                 signature_version=UNSIGNED,
                 retries={"max_attempts": 5, "mode": "adaptive"},
+                connect_timeout=10,
+                read_timeout=30,
             ),
         )
         self._bucket = ORCASOUND_S3_BUCKET
@@ -257,9 +263,50 @@ class OrcasoundS3Client:
         return data.decode("utf-8", errors="replace")
 
     def fetch_segment(self, key: str) -> bytes:
-        """Download a single .ts segment as bytes."""
-        resp = self._client.get_object(Bucket=self._bucket, Key=key)
-        return resp["Body"].read()
+        """Download a single .ts segment as bytes, with retry for transient errors."""
+        from botocore.exceptions import (
+            ClientError,
+            ConnectionError as BotoConnectionError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+        )
+        from urllib3.exceptions import IncompleteRead
+
+        last_exc: Exception | None = None
+        for attempt in range(_SEGMENT_FETCH_RETRIES):
+            try:
+                resp = self._client.get_object(Bucket=self._bucket, Key=key)
+                return resp["Body"].read()
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in ("NoSuchKey", "404", "AccessDenied"):
+                    raise
+                last_exc = e
+            except (
+                IncompleteRead,
+                ReadTimeoutError,
+                BotoConnectionError,
+                EndpointConnectionError,
+                ConnectionResetError,
+                OSError,
+            ) as e:
+                last_exc = e
+            except Exception as e:
+                raise
+
+            if attempt < _SEGMENT_FETCH_RETRIES - 1:
+                wait = _SEGMENT_FETCH_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    "Retrying segment %s (attempt %d/%d) after error: %s",
+                    key,
+                    attempt + 1,
+                    _SEGMENT_FETCH_RETRIES,
+                    last_exc,
+                )
+                time.sleep(wait)
+
+        assert last_exc is not None
+        raise last_exc
 
     def count_segments(
         self, hydrophone_id: str, folder_timestamps: list[str]
