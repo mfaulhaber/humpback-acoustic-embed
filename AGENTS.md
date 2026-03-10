@@ -27,4 +27,5 @@ Before coding, read `STATUS.md`, `PLANS.md`, and `DECISIONS.md` to understand cu
 
 ## Workflows
 
-Shared workflow definitions are in `.agents/workflows/`. Skills reference these files.
+Project skill workflows live in `.agents/skills/<name>/SKILL.md`.
+Claude command wrappers in `.claude/commands/` point directly to those skill files.

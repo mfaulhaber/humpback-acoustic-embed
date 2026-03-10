@@ -1,5 +1,5 @@
 ---
-name: review-workflow
+name: session-review
 description: Systematic review checklist for changes before committing.
 ---
 

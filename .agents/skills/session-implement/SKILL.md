@@ -1,5 +1,5 @@
 ---
-name: implement
+name: session-implement
 description: Checklist for implementing planned changes safely.
 ---
 

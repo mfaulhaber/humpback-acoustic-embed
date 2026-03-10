@@ -570,7 +570,7 @@ jobs in the database).
 
 ## Agent Workflows
 
-The project includes structured workflows for AI coding agents (Claude Code and Codex App). Workflow logic lives in `.agents/workflows/` as the single source of truth, with thin wrappers for each platform.
+The project includes structured workflows for AI coding agents (Claude Code and Codex App). Workflow definitions live in `.agents/skills/` as the single source of truth, with thin wrappers for each platform.
 
 ### Claude Code Commands
 
@@ -584,7 +584,7 @@ Available as `/project:<name>` in Claude Code sessions:
 | `/handoff` | End-of-session: update STATUS.md, PLANS.md, DECISIONS.md for next session. |
 | `/debug` | Root-cause debugging: symptom, reproduce, fix, regression test. |
 
-Command files are in `.claude/commands/` and reference the shared workflows.
+Command files are in `.claude/commands/` and each points to `.agents/skills/<name>/SKILL.md`.
 
 
 /start     → initialized session
@@ -603,7 +603,7 @@ Available as skills in Codex:
 | `review` | Same as `/project:review` above |
 | `debug` | Same as `/project:debug` above |
 
-Skill definitions are in `.agents/skills/<name>/SKILL.md` and reference the same shared workflows. Codex also reads `AGENTS.md` as its entry point, which points to `CLAUDE.md` as the authoritative spec.
+Skill definitions are in `.agents/skills/<name>/SKILL.md`. Codex also reads `AGENTS.md` as its entry point, which points to `CLAUDE.md` as the authoritative spec.
 
 ### Memory Files
 

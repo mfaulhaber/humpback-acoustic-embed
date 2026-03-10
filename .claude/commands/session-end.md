@@ -1,1 +1,1 @@
-Read and execute the workflow defined in .agents/workflows/handoff.md
+Read and execute the workflow defined in .agents/skills/session-end/SKILL.md

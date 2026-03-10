@@ -1,5 +1,5 @@
 ---
-name: debug
+name: session-debug
 description: Checklist for structured root-cause debugging for issues.
 ---
 

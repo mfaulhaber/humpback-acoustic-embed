@@ -1,5 +1,5 @@
 ---
-name: start
+name: session-start
 description: Checklist for starting every session by loading project context. Do NOT write code during this checklist.
 ---
 

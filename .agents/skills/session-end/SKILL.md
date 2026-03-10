@@ -1,5 +1,5 @@
 ---
-name: handoff
+name: session-end
 description: Checklist for completing a work session by persisting state for the next session.
 ---
 

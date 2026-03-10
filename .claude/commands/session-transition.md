@@ -1,1 +1,1 @@
-Read and execute the workflow defined in .skills/session-transition/SKILL.md
+Read and execute the workflow defined in .agents/skills/session-transition/SKILL.md

@@ -1,1 +1,1 @@
-Read and execute the workflow defined in .agents/workflows/debug.md
+Read and execute the workflow defined in .agents/skills/session-debug/SKILL.md
