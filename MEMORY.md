@@ -379,11 +379,14 @@ Queue safety note:
 - `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.
 - `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using a
   range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy
-  fallback to `job.start_timestamp` for older jobs.
+  fallback to `job.start_timestamp` for older jobs. Sparse local cache ranges preserve
+  playlist-derived offsets (for example `live6118..` windows) so local playback and
+  spectrogram lookups stay aligned.
 - `GET /classifier/detection-jobs/{id}/content` normalizes detection metadata:
   canonical snapped `detection_filename` (legacy fallback prefers `extract_filename`, then snapped
   derivation from `filename + start_sec/end_sec`) plus raw audit fields
-  (`raw_start_sec`, `raw_end_sec`, `merged_event_count`).
+  (`raw_start_sec`, `raw_end_sec`, `merged_event_count`). Jobs in `running`, `paused`,
+  `complete`, and `canceled` states can read content when `output_tsv_path` exists.
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
   jobs) is local-cache-authoritative (same cache root precedence as playback) and does not call S3;
   rows missing local cache audio are skipped and counted in `n_skipped`.

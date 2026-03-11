@@ -628,6 +628,73 @@ class TestResolveHydrophoneAudioSliceOrdering:
         assert 1000.0 not in set(np.unique(audio))
 
 
+class TestSparseLocalCacheTimeline:
+    """Regression tests for sparse local cache timeline reconstruction."""
+
+    def test_sparse_local_segments_use_playlist_offsets_for_resolution(
+        self, tmp_path, monkeypatch
+    ):
+        """Local-only playback should resolve sparse mid-sequence cached segments."""
+        from datetime import datetime, timezone
+
+        from humpback.classifier.s3_stream import (
+            LocalHLSClient,
+            ORCASOUND_S3_BUCKET,
+            build_hydrophone_stream_timeline,
+            resolve_hydrophone_audio_slice,
+        )
+
+        hydrophone_id = "rpi_orcasound_lab"
+        folder_ts = "1000"
+        hls_dir = tmp_path / ORCASOUND_S3_BUCKET / hydrophone_id / "hls" / folder_ts
+        hls_dir.mkdir(parents=True)
+
+        playlist_lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
+        for i in range(100):
+            playlist_lines.extend(["#EXTINF:10.0,", f"live{i:03d}.ts"])
+        (hls_dir / "live.m3u8").write_text("\n".join(playlist_lines))
+
+        # Simulate partial cache that starts far into the playlist.
+        for i in range(80, 90):
+            (hls_dir / f"live{i:03d}.ts").write_bytes(b"fake-ts")
+
+        monkeypatch.setattr(
+            "humpback.classifier.s3_stream.decode_ts_bytes",
+            lambda _ts_bytes, sr: np.ones(sr * 10, dtype=np.float32),
+        )
+
+        client = LocalHLSClient(str(tmp_path))
+        timeline = build_hydrophone_stream_timeline(
+            client=client,
+            hydrophone_id=hydrophone_id,
+            stream_start_ts=1800.0,
+            stream_end_ts=1900.0,
+        )
+
+        assert len(timeline) == 10
+        assert timeline[0].key.endswith("live080.ts")
+        assert timeline[0].start_ts == pytest.approx(1800.0, abs=1e-3)
+        assert timeline[-1].key.endswith("live089.ts")
+
+        filename = (
+            datetime.fromtimestamp(1800, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + ".wav"
+        )
+        audio = resolve_hydrophone_audio_slice(
+            client=client,
+            hydrophone_id=hydrophone_id,
+            stream_start_ts=1800.0,
+            stream_end_ts=1900.0,
+            filename=filename,
+            row_start_sec=0.0,
+            duration_sec=5.0,
+            target_sr=10,
+            legacy_anchor_start_ts=1800.0,
+            timeline=timeline,
+        )
+        assert len(audio) == 50
+
+
 class TestOrcasoundS3ClientRetry:
     """Test retry logic in OrcasoundS3Client.fetch_segment."""
 

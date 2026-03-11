@@ -74,6 +74,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
 - Hydrophone timeline assembly uses numeric segment ordering plus playlist durations (when available),
   with fallback to numeric/default-duration metadata when playlists are unavailable
+- Sparse local-cache segment sets preserve playlist timeline offsets (for example, cached
+  mid-sequence `live6118..` ranges) so playback/spectrogram resolution stays aligned
+  without S3 fallback
 - Hydrophone folder selection starts at requested range and expands backward
   using configurable hour increments (default 4h) up to configurable max
   lookback (default 168h) until overlap at requested start boundary is found
@@ -116,6 +119,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone job date range uses popover picker with dual-month calendar and HH:MM time inputs (UTC-only)
 - Hydrophone active job panel shows Pause/Resume and Cancel controls
   (paused jobs remain in active panel; canceled jobs move to Previous Jobs with full functionality)
+- Paused hydrophone jobs with partial TSV output keep detection content available via
+  `/classifier/detection-jobs/{id}/content`
 - Hydrophone progress displays audio duration in hours:minutes format
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
 - Detection spectrogram popup: Alt+click any detection row to view an STFT spectrogram (cached PNG, configurable via `HUMPBACK_SPECTROGRAM_*` env vars)

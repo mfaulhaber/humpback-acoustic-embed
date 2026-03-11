@@ -195,6 +195,8 @@ Hydrophone labeled-sample extraction writes outputs under the hydrophone short l
 Hydrophone detection, playback, and extraction must use the same bounded stream timeline:
 - segment ordering must be numeric by segment suffix (never plain lexicographic)
 - playlist (`live.m3u8`) duration metadata should be used when available
+- sparse local cache segment sets must preserve playlist timeline offsets
+  (do not assume the first cached segment starts at folder timestamp)
 - folder discovery should start at the requested range and expand backward
   by configurable hour increments (default 4h), up to configurable max
   lookback (default 168h), stopping once overlap at the requested start
@@ -224,6 +226,8 @@ Hydrophone detection jobs support the following status transitions:
 - `running` → `complete` (normal completion)
 - `running` → `failed` (error during processing)
 - Paused jobs remain in the Active Job panel; the worker thread blocks until resumed or canceled
+- Paused jobs with partial TSV output remain readable through
+  `/classifier/detection-jobs/{id}/content`
 - Canceled jobs are fully functional in the Previous Jobs panel (expandable, downloadable, label-editable, extractable)
 
 ---

@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Paused Hydrophone Playback + Spectrogram Resolution Fix
+
+## Outcome (2026-03-11)
+
+- Fixed `/classifier/detection-jobs/{id}/content` status gating to allow paused jobs
+  with partial TSV output (`running|paused|complete|canceled`).
+- Fixed sparse local-cache timeline reconstruction in `s3_stream.py` by preserving
+  playlist-derived segment offsets (instead of assuming first cached segment starts at
+  folder timestamp), restoring local playback/spectrogram resolution for paused jobs.
+- Updated Hydrophone active table behavior to treat paused jobs as non-running in UI
+  content polling/sorting mode, and added unit/integration regressions.
+
+## Verification
+
+- `uv run pytest tests/unit/test_s3_stream.py tests/integration/test_hydrophone_api.py -q` — 49 passed.
+- `uv run pytest tests/` — 473 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `cd frontend && npx playwright test e2e/hydrophone-pause-resume.spec.ts` — 6 passed.
+
 # Plan: Snapped Canonical Detection Ranges
 
 ## Outcome (2026-03-10)

@@ -662,7 +662,7 @@ export function HydrophoneTab() {
             {(activeJob.segments_processed ?? 0) > 0 && activeJob.output_tsv_path && (
               <HydrophoneContentTable
                 jobId={activeJob.id}
-                isRunning={true}
+                isRunning={activeJob.status === "running"}
                 playingKey={playingKey}
                 onPlay={handlePlay}
                 onLabelChange={handleLabelChange}

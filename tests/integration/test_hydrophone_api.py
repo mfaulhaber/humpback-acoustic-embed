@@ -271,6 +271,69 @@ async def test_pause_resume_cancel_lifecycle(client, app_settings):
     await engine.dispose()
 
 
+async def test_paused_job_content_endpoint_returns_rows(client, app_settings):
+    """Paused hydrophone jobs with TSV output should support content endpoint."""
+    import csv
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250706T002900Z.wav",
+                "start_sec": "20.0",
+                "end_sec": "25.0",
+                "avg_confidence": "0.93",
+                "peak_confidence": "0.94",
+                "n_windows": "1",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="paused",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1751760000.0,
+                end_timestamp=1751846400.0,
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "20250706T002900Z.wav"
+
+    await engine.dispose()
+
+
 async def test_pause_resume_not_found(client):
     """Pause/resume for nonexistent job returns 404."""
     resp = await client.post("/classifier/hydrophone-detection-jobs/nonexistent/pause")

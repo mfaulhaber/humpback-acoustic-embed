@@ -100,10 +100,11 @@ def _parse_playlist_segments(
     folder_ts: str,
     available_keys: set[str],
     default_duration_sec: float = DEFAULT_SEGMENT_DURATION_SEC,
-) -> list[tuple[str, float]]:
-    """Parse HLS playlist lines into ordered (segment_key, duration_sec) pairs."""
-    ordered: list[tuple[str, float]] = []
+) -> list[tuple[str, float, float]]:
+    """Parse playlist into (segment_key, duration_sec, offset_from_folder_start_sec)."""
+    ordered: list[tuple[str, float, float]] = []
     pending_duration: float | None = None
+    offset_sec = 0.0
 
     for raw_line in playlist_text.splitlines():
         line = raw_line.strip()
@@ -129,16 +130,15 @@ def _parse_playlist_segments(
         key = f"{hydrophone_id}/hls/{folder_ts}/{segment_name}"
         if key not in available_keys and line in available_keys:
             key = line
-        if key not in available_keys:
-            pending_duration = None
-            continue
 
         duration = (
             pending_duration
             if pending_duration and pending_duration > 0
             else default_duration_sec
         )
-        ordered.append((key, duration))
+        if key in available_keys:
+            ordered.append((key, duration, offset_sec))
+        offset_sec += duration
         pending_duration = None
 
     return ordered
@@ -149,8 +149,8 @@ def _ordered_folder_segments(
     hydrophone_id: str,
     folder_ts: str,
     default_duration_sec: float = DEFAULT_SEGMENT_DURATION_SEC,
-) -> list[tuple[str, float]]:
-    """Get ordered (segment_key, duration) pairs for one HLS folder."""
+) -> list[tuple[str, float, float | None]]:
+    """Get ordered (segment_key, duration, optional offset) tuples for one folder."""
     segment_keys = _sort_segment_keys(client.list_segments(hydrophone_id, folder_ts))
     if not segment_keys:
         return []
@@ -183,15 +183,21 @@ def _ordered_folder_segments(
             # Keep numeric key ordering authoritative to avoid lexicographic
             # ordering artifacts from object listings/playlists.
             duration_by_key: dict[str, float] = {}
-            for key, duration in playlist_entries:
+            offset_by_key: dict[str, float] = {}
+            for key, duration, offset_sec in playlist_entries:
                 if key not in duration_by_key:
                     duration_by_key[key] = duration
+                    offset_by_key[key] = offset_sec
             return [
-                (key, duration_by_key.get(key, default_duration_sec))
+                (
+                    key,
+                    duration_by_key.get(key, default_duration_sec),
+                    offset_by_key.get(key),
+                )
                 for key in segment_keys
             ]
 
-    return [(key, default_duration_sec) for key in segment_keys]
+    return [(key, default_duration_sec, None) for key in segment_keys]
 
 
 class OrcasoundS3Client:
@@ -649,17 +655,23 @@ def _build_stream_timeline(
             ordered = _ordered_folder_segments(client, hydrophone_id, folder_ts)
             if not ordered:
                 continue
-            cursor = float(folder_ts)
-            for key, duration_sec in ordered:
+            folder_start_ts = float(folder_ts)
+            cursor = folder_start_ts
+            for key, duration_sec, offset_sec in ordered:
                 duration = (
                     duration_sec if duration_sec > 0 else DEFAULT_SEGMENT_DURATION_SEC
                 )
+                if offset_sec is not None:
+                    segment_start_ts = folder_start_ts + offset_sec
+                    cursor = segment_start_ts + duration
+                else:
+                    segment_start_ts = cursor
+                    cursor += duration
                 segment = StreamSegment(
                     key=key,
-                    start_ts=cursor,
+                    start_ts=segment_start_ts,
                     duration_sec=duration,
                 )
-                cursor += duration
                 if (
                     segment.end_ts <= stream_start_ts
                     or segment.start_ts >= stream_end_ts

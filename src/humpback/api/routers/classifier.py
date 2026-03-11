@@ -958,7 +958,10 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status not in ("running", "complete", "canceled") or not job.output_tsv_path:
+    if (
+        job.status not in ("running", "paused", "complete", "canceled")
+        or not job.output_tsv_path
+    ):
         raise HTTPException(400, "Detection job not ready or no output available")
     tsv_path = Path(job.output_tsv_path)
     if not tsv_path.is_file():
