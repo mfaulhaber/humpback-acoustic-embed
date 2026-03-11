@@ -67,10 +67,12 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Client priority: local_cache_path > s3_cache_path > direct S3
 - 4 configured hydrophones: Orcasound Lab, North San Juan Channel, Port Townsend, Bush Point
 - Segment fetch retry: transient S3 errors (IncompleteRead, ReadTimeoutError, ConnectionError) retried up to 3× with exponential backoff (1s/2s/4s); explicit `connect_timeout=10`, `read_timeout=30`
+- Ordered concurrent S3 segment prefetch for hydrophone detection (configurable workers + in-flight bound), while preserving timeline order and existing retry/alert behavior
 - In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
 - Streaming detection pipeline with per-chunk progress updates
 - Cancel support via threading.Event + DB polling
 - Flash alerts for segment decode failures (dismissable, color-coded)
+- Hydrophone run summaries now include timing breakdown fields (`fetch_sec`, `decode_sec`, `features_sec`, `inference_sec`, `pipeline_total_sec`) plus prefetch flags/limits
 - Audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
 - Hydrophone timeline assembly uses numeric segment ordering plus playlist durations (when available),
   with fallback to numeric/default-duration metadata when playlists are unavailable

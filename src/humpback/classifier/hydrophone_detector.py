@@ -15,6 +15,8 @@ from humpback.classifier.detector import (
 )
 from humpback.classifier.s3_stream import (
     CachingS3Client,
+    DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
+    DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
     LocalHLSClient,
     OrcasoundS3Client,
     iter_audio_chunks,
@@ -74,6 +76,9 @@ def run_hydrophone_detection(
     pause_gate: "threading.Event | None" = None,
     skip_segments: int = 0,
     prior_detections: list[dict] | None = None,
+    prefetch_enabled: bool = True,
+    prefetch_workers: int = DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
+    prefetch_inflight_segments: int = DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
@@ -98,17 +103,30 @@ def run_hydrophone_detection(
         client = CachingS3Client(s3_cache_path)
     else:
         client = OrcasoundS3Client()
+    use_prefetch = (
+        prefetch_enabled
+        and isinstance(client, (CachingS3Client, OrcasoundS3Client))
+        and prefetch_workers > 1
+        and prefetch_inflight_segments > 1
+    )
 
     all_detections: list[dict] = list(prior_detections) if prior_detections else []
     skip_invalidated = False
     all_confidences: list[float] = []
     total_windows = 0
     total_positive = 0
-    t_decode_total = 0.0
+    t_pipeline_total = 0.0
+    t_fetch_total = 0.0
+    t_audio_decode_total = 0.0
     t_features_total = 0.0
     t_inference_total = 0.0
     time_covered = 0.0
     is_first_chunk = True
+
+    def _on_segment_timing(fetch_sec: float, decode_sec: float) -> None:
+        nonlocal t_fetch_total, t_audio_decode_total
+        t_fetch_total += fetch_sec
+        t_audio_decode_total += decode_sec
 
     for chunk_audio, chunk_start_utc, segs_done, segs_total in iter_audio_chunks(
         client,
@@ -119,6 +137,10 @@ def run_hydrophone_detection(
         target_sr=target_sample_rate,
         on_error=on_alert,
         skip_segments=skip_segments,
+        prefetch_enabled=use_prefetch,
+        prefetch_workers=prefetch_workers,
+        prefetch_inflight_segments=prefetch_inflight_segments,
+        on_segment_timing=_on_segment_timing,
     ):
         # On first yielded chunk, detect if skip was invalidated (timeline changed)
         if is_first_chunk and skip_segments > 0:
@@ -234,7 +256,7 @@ def run_hydrophone_detection(
         )
         all_confidences.extend(window_confidences)
         time_covered += len(chunk_audio) / target_sample_rate
-        t_decode_total += time.monotonic() - t0
+        t_pipeline_total += time.monotonic() - t0
 
         if on_chunk_complete:
             on_chunk_complete(list(events), segs_done, segs_total, time_covered)
@@ -248,7 +270,16 @@ def run_hydrophone_detection(
         "low_threshold": low_threshold,
         "hydrophone_id": hydrophone_id,
         "time_covered_sec": time_covered,
+        "prefetch_enabled": use_prefetch,
+        "fetch_sec": t_fetch_total,
+        "decode_sec": t_audio_decode_total,
+        "features_sec": t_features_total,
+        "inference_sec": t_inference_total,
+        "pipeline_total_sec": t_pipeline_total,
     }
+    if use_prefetch:
+        summary["prefetch_workers"] = int(prefetch_workers)
+        summary["prefetch_inflight_segments"] = int(prefetch_inflight_segments)
     if skip_segments > 0 and not skip_invalidated:
         summary["resumed_from_segment"] = skip_segments
 
@@ -270,10 +301,12 @@ def run_hydrophone_detection(
         time_covered,
     )
     logger.info(
-        "Timing: total=%.3fs, features=%.3fs, inference=%.3fs",
-        t_decode_total,
+        "Timing: fetch=%.3fs, decode=%.3fs, features=%.3fs, inference=%.3fs, pipeline_total=%.3fs",
+        t_fetch_total,
+        t_audio_decode_total,
         t_features_total,
         t_inference_total,
+        t_pipeline_total,
     )
 
     return all_detections, summary

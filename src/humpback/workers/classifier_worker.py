@@ -467,6 +467,9 @@ async def run_hydrophone_detection_job(
                 pause_gate,
                 skip_segments,
                 prior_detections,
+                settings.hydrophone_prefetch_enabled,
+                settings.hydrophone_prefetch_workers,
+                settings.hydrophone_prefetch_inflight_segments,
             )
         except FileNotFoundError as exc:
             raise FileNotFoundError(

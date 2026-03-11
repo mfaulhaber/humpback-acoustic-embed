@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     s3_cache_path: str = "/Users/michael/development/orcasound_s3_cache"
     hydrophone_timeline_lookback_increment_hours: int = 4
     hydrophone_timeline_max_lookback_hours: int = 7 * 24
+    hydrophone_prefetch_enabled: bool = True
+    hydrophone_prefetch_workers: int = 4
+    hydrophone_prefetch_inflight_segments: int = 16
 
     # Spectrogram popup settings
     spectrogram_hop_length: int = 256
@@ -47,6 +50,10 @@ class Settings(BaseSettings):
                 "hydrophone_timeline_max_lookback_hours must be >= "
                 "hydrophone_timeline_lookback_increment_hours"
             )
+        if self.hydrophone_prefetch_workers <= 0:
+            raise ValueError("hydrophone_prefetch_workers must be > 0")
+        if self.hydrophone_prefetch_inflight_segments <= 0:
+            raise ValueError("hydrophone_prefetch_inflight_segments must be > 0")
         return self
 
     model_config = {"env_prefix": "HUMPBACK_"}

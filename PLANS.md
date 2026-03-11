@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: Hydrophone Detection Ordered S3 Prefetch + Timing Telemetry
+
+## Outcome (2026-03-11)
+
+- Added ordered bounded concurrent segment prefetch to hydrophone streaming
+  (`iter_audio_chunks`) with configurable worker/in-flight limits while preserving
+  timeline order and existing warning/retry behavior.
+- Enabled prefetch for S3-backed hydrophone detection runs only (direct S3 and
+  write-through cache clients), with local-cache detection behavior unchanged.
+- Added hydrophone run-summary timing fields (`fetch_sec`, `decode_sec`,
+  `features_sec`, `inference_sec`, `pipeline_total_sec`) plus prefetch metadata.
+- Added new runtime settings:
+  `hydrophone_prefetch_enabled`, `hydrophone_prefetch_workers`,
+  `hydrophone_prefetch_inflight_segments`.
+- Added unit regressions for prefetch ordering, in-flight bound enforcement, and
+  error continuation behavior.
+
+## Verification
+
+- `uv run pytest tests/unit/test_s3_stream.py tests/unit/test_hydrophone_resume.py tests/unit/test_classifier_worker.py -q` — 46 passed.
+- `uv run pytest tests/` — 476 passed.
+
 # Plan: Paused Hydrophone Playback + Spectrogram Resolution Fix
 
 ## Outcome (2026-03-11)
@@ -443,6 +465,8 @@
 - Optimize `/audio/{id}/spectrogram` window fetch path to avoid materializing all windows when only one index is requested (reduce memory/time on long files)
 - Optimize hydrophone incremental lookback discovery to avoid repeated full S3
   folder scans at each lookback step (reduce first-segment startup latency)
+- Add integration/perf harness for hydrophone S3 prefetch (verify worker-level
+  prefetch settings on real S3-backed runs and tune default worker/in-flight values)
 
 ---
 

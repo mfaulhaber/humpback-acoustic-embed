@@ -3,6 +3,8 @@
 import io
 import re
 import struct
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -215,6 +217,184 @@ class TestIterAudioChunks:
                     1700003600,
                 )
             )
+
+
+class TestIterAudioChunksPrefetch:
+    """Test concurrent prefetch behavior in iter_audio_chunks."""
+
+    def test_prefetch_matches_sequential_ordering(self):
+        """Prefetch mode should preserve exact timeline ordering."""
+        from unittest.mock import patch
+
+        from humpback.classifier.s3_stream import iter_audio_chunks
+
+        class FakeClient:
+            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
+                return ["1000"]
+
+            def list_segments(self, _hydrophone_id, _folder_ts):
+                return [f"hydro/hls/1000/live{i}.ts" for i in range(6)]
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+            def fetch_segment(self, key):
+                idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+                if idx % 2 == 0:
+                    time.sleep(0.01)
+                return key.encode()
+
+        def fake_decode(ts_bytes, sr):
+            key = ts_bytes.decode()
+            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            return np.full(sr * 10, idx, dtype=np.float32)
+
+        client = FakeClient()
+        with patch(
+            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
+        ):
+            sequential = list(
+                iter_audio_chunks(
+                    client,
+                    "rpi_orcasound_lab",
+                    1000.0,
+                    1060.0,
+                    chunk_seconds=10.0,
+                    target_sr=10,
+                    prefetch_enabled=False,
+                )
+            )
+            prefetched = list(
+                iter_audio_chunks(
+                    client,
+                    "rpi_orcasound_lab",
+                    1000.0,
+                    1060.0,
+                    chunk_seconds=10.0,
+                    target_sr=10,
+                    prefetch_enabled=True,
+                    prefetch_workers=3,
+                    prefetch_inflight_segments=3,
+                )
+            )
+
+        seq_values = [int(chunk[0][0]) for chunk in sequential]
+        pre_values = [int(chunk[0][0]) for chunk in prefetched]
+        assert seq_values == [0, 1, 2, 3, 4, 5]
+        assert pre_values == seq_values
+        assert [c[1].timestamp() for c in prefetched] == [
+            1000,
+            1010,
+            1020,
+            1030,
+            1040,
+            1050,
+        ]
+
+    def test_prefetch_respects_inflight_bound(self):
+        """Concurrent fetches should not exceed prefetch_inflight_segments."""
+        from unittest.mock import patch
+
+        from humpback.classifier.s3_stream import iter_audio_chunks
+
+        class FakeClient:
+            def __init__(self):
+                self._lock = threading.Lock()
+                self.active = 0
+                self.max_active = 0
+
+            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
+                return ["1000"]
+
+            def list_segments(self, _hydrophone_id, _folder_ts):
+                return [f"hydro/hls/1000/live{i}.ts" for i in range(8)]
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+            def fetch_segment(self, key):
+                with self._lock:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                time.sleep(0.02)
+                with self._lock:
+                    self.active -= 1
+                return key.encode()
+
+        def fake_decode(_ts_bytes, sr):
+            return np.zeros(sr * 10, dtype=np.float32)
+
+        client = FakeClient()
+        with patch(
+            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
+        ):
+            _ = list(
+                iter_audio_chunks(
+                    client,
+                    "rpi_orcasound_lab",
+                    1000.0,
+                    1080.0,
+                    chunk_seconds=10.0,
+                    target_sr=10,
+                    prefetch_enabled=True,
+                    prefetch_workers=8,
+                    prefetch_inflight_segments=2,
+                )
+            )
+
+        assert client.max_active <= 2
+
+    def test_prefetch_fetch_error_reports_and_continues(self):
+        """Fetch errors in prefetch mode should emit alerts and continue processing."""
+        from unittest.mock import patch
+
+        from humpback.classifier.s3_stream import iter_audio_chunks
+
+        class FakeClient:
+            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
+                return ["1000"]
+
+            def list_segments(self, _hydrophone_id, _folder_ts):
+                return [f"hydro/hls/1000/live{i}.ts" for i in range(3)]
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+            def fetch_segment(self, key):
+                idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+                if idx == 1:
+                    raise RuntimeError("boom")
+                return key.encode()
+
+        def fake_decode(ts_bytes, sr):
+            key = ts_bytes.decode()
+            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            return np.full(sr * 10, idx, dtype=np.float32)
+
+        errors = []
+        with patch(
+            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
+        ):
+            chunks = list(
+                iter_audio_chunks(
+                    FakeClient(),
+                    "rpi_orcasound_lab",
+                    1000.0,
+                    1030.0,
+                    chunk_seconds=10.0,
+                    target_sr=10,
+                    prefetch_enabled=True,
+                    prefetch_workers=3,
+                    prefetch_inflight_segments=3,
+                    on_error=errors.append,
+                )
+            )
+
+        assert len(errors) == 1
+        assert "boom" in errors[0]["message"]
+        assert [int(chunk[0][0]) for chunk in chunks] == [0, 2]
+        assert chunks[-1][2] == 3
+        assert chunks[-1][3] == 3
 
 
 class TestFolderLookback:

@@ -182,7 +182,7 @@ only store indexing/assignment references.
 - high_threshold (float, default 0.70 — confidence to start an event)
 - low_threshold (float, default 0.45 — confidence to continue an event)
 - output_tsv_path (nullable, set on completion)
-- result_summary (JSON, nullable — n_files, n_windows, n_detections, n_spans, n_skipped_short, hop_seconds, high_threshold, low_threshold)
+- result_summary (JSON, nullable — local detection: n_files, n_windows, n_detections, n_spans, n_skipped_short, hop_seconds, high_threshold, low_threshold; hydrophone detection additionally includes prefetch/timing fields such as prefetch_enabled, fetch_sec, decode_sec, features_sec, inference_sec, pipeline_total_sec)
 - error_message (nullable)
 - extract_status, extract_error, extract_summary, extract_config (extraction columns)
 - created_at, updated_at
@@ -374,6 +374,10 @@ Queue safety note:
   max lookback (default 168h) until overlap at the requested start boundary is
   found; timeline clipping remains authoritative for
   `[start_timestamp, end_timestamp]`.
+- Hydrophone detection supports ordered bounded segment prefetch for S3-backed runs
+  (`hydrophone_prefetch_enabled`, `hydrophone_prefetch_workers`,
+  `hydrophone_prefetch_inflight_segments`). Prefetch preserves timeline order and
+  uses the same per-segment retry/error handling path as sequential reads.
 - Hydrophone detection jobs with no overlapping stream audio in the requested
   range fail explicitly (status `failed`) with a user-visible error message.
 - `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.

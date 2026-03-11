@@ -263,6 +263,9 @@ def test_hydrophone_detection_resume(mock_iter):
     assert len(detections) >= 1
     # Summary should indicate resume
     assert summary.get("resumed_from_segment") == 5
+    assert "prefetch_enabled" in summary
+    assert "fetch_sec" in summary
+    assert "decode_sec" in summary
 
 
 @patch("humpback.classifier.hydrophone_detector.iter_audio_chunks")
@@ -311,6 +314,7 @@ def test_hydrophone_detection_resume_timeline_changed(mock_iter):
     assert not any(d.get("filename") == "old.wav" for d in detections)
     # No resume marker in summary since skip was invalidated
     assert "resumed_from_segment" not in summary
+    assert "prefetch_enabled" in summary
 
 
 # ------------------------------------------------------------------

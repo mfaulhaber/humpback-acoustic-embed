@@ -409,3 +409,36 @@ time created mismatch risk between what users labeled and what was exported.
 - Restores clean window-aligned clip exports without post-label widening
 - Retains raw event precision for audit/debugging without changing label keys
 - No database migration required (TSV/API/UI behavior change only)
+
+---
+
+## ADR-019: Ordered bounded S3 segment prefetch for hydrophone detection
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Hydrophone detection decodes one `.ts` segment at a time. On cold cache
+jobs, per-segment S3 `get_object` latency can dominate throughput because network fetch
+and decode/inference are serialized.
+
+**Decision**:
+- Add optional concurrent segment prefetch in `iter_audio_chunks()` with bounded
+  in-flight fetches and configurable worker count.
+- Keep timeline-order consumption deterministic (results are consumed in segment order
+  even when fetched concurrently).
+- Reuse existing retry/error behavior: fetch failures still surface through warning
+  alerts and cache invalidation retry logic remains intact.
+- Enable prefetch for S3-backed hydrophone detection clients (`OrcasoundS3Client` and
+  `CachingS3Client`) and keep local-cache-only detection behavior unchanged.
+- Expose runtime controls via settings:
+  `hydrophone_prefetch_enabled`, `hydrophone_prefetch_workers`,
+  `hydrophone_prefetch_inflight_segments`.
+- Extend hydrophone `run_summary` timing telemetry with
+  `fetch_sec`, `decode_sec`, `features_sec`, `inference_sec`, and `pipeline_total_sec`.
+
+**Consequences**:
+- Improves cold-cache hydrophone detection throughput by overlapping S3 fetch with
+  decode/inference work.
+- Bounds extra network and memory pressure through a fixed in-flight queue.
+- Preserves deterministic segment ordering and existing API/TSV/DB schemas.
+- Adds only configuration + runtime behavior changes (no migration required).

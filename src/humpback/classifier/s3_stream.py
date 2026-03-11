@@ -9,7 +9,9 @@ import re
 import struct
 import subprocess
 import time
+from collections import deque
 from collections.abc import Callable, Generator, Iterable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -25,6 +27,8 @@ DEFAULT_SEGMENT_DURATION_SEC = 10.0
 STREAM_DISCONTINUITY_TOLERANCE_SEC = 0.25
 DEFAULT_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS = 4
 DEFAULT_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS = 7 * 24
+DEFAULT_HYDROPHONE_PREFETCH_WORKERS = 4
+DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS = 16
 FOLDER_LOOKBACK_STEP_SEC = DEFAULT_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS * 3600
 MAX_HYDROPHONE_RANGE_SEC = DEFAULT_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS * 3600
 _SEGMENT_FETCH_RETRIES = 3
@@ -723,10 +727,37 @@ def _decode_and_clip_segment(
     target_sr: int,
     clip_start_ts: float,
     clip_end_ts: float,
+    prefetched_bytes: bytes | None = None,
+    prefetched_fetch_sec: float = 0.0,
+    timing_callback: Callable[[float, float], None] | None = None,
 ) -> tuple[np.ndarray, float] | None:
     """Decode one segment and clip it to the requested absolute time interval."""
-    seg_bytes = client.fetch_segment(segment.key)
-    audio = decode_ts_bytes(seg_bytes, target_sr)
+    fetch_sec = max(0.0, float(prefetched_fetch_sec))
+
+    if prefetched_bytes is None:
+        t_fetch = time.monotonic()
+        try:
+            seg_bytes = client.fetch_segment(segment.key)
+        except Exception:
+            fetch_sec = time.monotonic() - t_fetch
+            if timing_callback is not None:
+                timing_callback(fetch_sec, 0.0)
+            raise
+        fetch_sec = time.monotonic() - t_fetch
+    else:
+        seg_bytes = prefetched_bytes
+
+    t_decode = time.monotonic()
+    try:
+        audio = decode_ts_bytes(seg_bytes, target_sr)
+    except Exception:
+        decode_sec = time.monotonic() - t_decode
+        if timing_callback is not None:
+            timing_callback(fetch_sec, decode_sec)
+        raise
+    decode_sec = time.monotonic() - t_decode
+    if timing_callback is not None:
+        timing_callback(fetch_sec, decode_sec)
 
     if len(audio) == 0:
         return None
@@ -743,6 +774,63 @@ def _decode_and_clip_segment(
         return None
 
     return audio[start_sample:end_sample], start_ts
+
+
+def _iter_prefetched_segments(
+    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    segments: Iterable[StreamSegment],
+    workers: int,
+    inflight: int,
+) -> Generator[tuple[StreamSegment, bytes | None, float, Exception | None], None, None]:
+    """Yield segments with optionally prefetched bytes in timeline order."""
+    max_workers = max(1, int(workers))
+    max_inflight = max(1, int(inflight))
+    pending_limit = max_inflight
+
+    def _timed_fetch(
+        segment: StreamSegment,
+    ) -> tuple[bytes | None, float, Exception | None]:
+        t_fetch = time.monotonic()
+        try:
+            data = client.fetch_segment(segment.key)
+            return data, time.monotonic() - t_fetch, None
+        except Exception as exc:
+            return None, time.monotonic() - t_fetch, exc
+
+    executor = ThreadPoolExecutor(
+        max_workers=max_workers,
+        thread_name_prefix="hydrophone-prefetch",
+    )
+    pending: deque[
+        tuple[StreamSegment, Future[tuple[bytes | None, float, Exception | None]]]
+    ] = deque()
+    segment_iter = iter(segments)
+
+    def _schedule_one() -> bool:
+        try:
+            segment = next(segment_iter)
+        except StopIteration:
+            return False
+        pending.append((segment, executor.submit(_timed_fetch, segment)))
+        return True
+
+    try:
+        while len(pending) < pending_limit and _schedule_one():
+            pass
+
+        while pending:
+            segment, future = pending.popleft()
+            try:
+                data, fetch_sec, fetch_exc = future.result()
+            except Exception as exc:
+                data, fetch_sec, fetch_exc = None, 0.0, exc
+
+            yield segment, data, fetch_sec, fetch_exc
+
+            while len(pending) < pending_limit and _schedule_one():
+                pass
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def resolve_hydrophone_audio_slice(
@@ -858,6 +946,10 @@ def iter_audio_chunks(
     target_sr: int = 32000,
     on_error: Callable[[dict], None] | None = None,
     skip_segments: int = 0,
+    prefetch_enabled: bool = False,
+    prefetch_workers: int = DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
+    prefetch_inflight_segments: int = DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
+    on_segment_timing: Callable[[float, float], None] | None = None,
 ) -> Generator:
     """Yield audio chunks from HLS stream.
 
@@ -892,15 +984,43 @@ def iter_audio_chunks(
     accumulator = np.array([], dtype=np.float32)
     accumulator_start_ts: float | None = None
     segments_done = skip_segments
+    use_prefetch = (
+        prefetch_enabled and prefetch_workers > 1 and prefetch_inflight_segments > 1
+    )
 
-    for segment in timeline[skip_segments:]:
+    if use_prefetch:
+        segment_source = _iter_prefetched_segments(
+            client,
+            timeline[skip_segments:],
+            workers=prefetch_workers,
+            inflight=prefetch_inflight_segments,
+        )
+    else:
+        segment_source = (
+            (segment, None, 0.0, None) for segment in timeline[skip_segments:]
+        )
+
+    for (
+        segment,
+        prefetched_bytes,
+        prefetched_fetch_sec,
+        prefetched_exc,
+    ) in segment_source:
         try:
+            if prefetched_exc is not None:
+                if on_segment_timing is not None:
+                    on_segment_timing(prefetched_fetch_sec, 0.0)
+                raise prefetched_exc
+
             clipped = _decode_and_clip_segment(
                 client=client,
                 segment=segment,
                 target_sr=target_sr,
                 clip_start_ts=start_ts,
                 clip_end_ts=end_ts,
+                prefetched_bytes=prefetched_bytes,
+                prefetched_fetch_sec=prefetched_fetch_sec,
+                timing_callback=on_segment_timing,
             )
             segments_done += 1
             if clipped is None:
@@ -953,6 +1073,7 @@ def iter_audio_chunks(
                         target_sr=target_sr,
                         clip_start_ts=start_ts,
                         clip_end_ts=end_ts,
+                        timing_callback=on_segment_timing,
                     )
                     if clipped is not None:
                         audio, clip_start_ts = clipped
