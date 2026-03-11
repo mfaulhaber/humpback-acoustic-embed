@@ -1120,6 +1120,7 @@ dependencies = [
     { name = "tensorflow", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
     { name = "tensorflow-macos", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "tensorflow-metal", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "tqdm" },
     { name = "umap-learn" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1169,6 +1170,7 @@ requires-dist = [
     { name = "tensorflow", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'", specifier = ">=2.16" },
     { name = "tensorflow-macos", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=2.16" },
     { name = "tensorflow-metal", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=1.1" },
+    { name = "tqdm", specifier = ">=4.67.3" },
     { name = "umap-learn", specifier = ">=0.5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]

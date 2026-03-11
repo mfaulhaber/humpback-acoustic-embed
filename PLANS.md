@@ -4,11 +4,38 @@
 
 ## Active
 
-(none)
+- None currently.
 
 ---
 
 ## Recently Completed
+
+# Plan: Stage S3 Epoch Cache Progress + Dry-Run + README
+
+## Outcome (2026-03-11)
+
+- Updated `scripts/stage_s3_epoch_cache.py` CLI semantics from `--run` to
+  `--dry-run` (downloads execute by default when `--dry-run` is not provided).
+- Optimized prefix discovery with `aws s3api list-objects-v2` using
+  `--start-after` and end-boundary early stop for lower startup latency on narrow
+  windows.
+- Added optional pre-count/pre-size pass (`--pre-count` default enabled) and
+  internal progress rendering with fixed totals using `tqdm`.
+- Switched download progress source from `s5cmd --show-progress` to parsing
+  structured `s5cmd --json` copy events to avoid unstable/growing totals.
+- Improved UX output: print planned prefix list before execution and include
+  `current=<prefix>` in progress postfix during active downloads.
+- Updated `scripts/README.md` with an explicit input-arguments section and
+  execution behavior details.
+
+## Verification
+
+- `uv run pytest tests/unit/test_stage_s3_epoch_cache.py -q` — 11 passed.
+- `uv run pytest tests/` — 487 passed.
+- Dry-run verification command:
+  `uv run python scripts/stage_s3_epoch_cache.py --bucket audio-orcasound-net --prefix rpi_north_sjc/hls --start "2025-07-12T00:00:00Z" --hours 10 --local-root /Users/michael/development/test-s3-cache --dry-run`
+  reported 2 planned prefixes (`1752217217`, `1752303617`) with corresponding
+  local target directories.
 
 # Plan: POC: NOAA GCS Passive Bioacoustic Client
 

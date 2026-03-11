@@ -138,6 +138,19 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Frontend: retrain sub-panel in expanded model rows with step indicator and progress tracking
 - API endpoints: retrain-info (pre-flight), create retrain, list/get workflows
 
+### Data Staging Utilities
+- `scripts/stage_s3_epoch_cache.py` stages epoch-style public S3 prefixes with
+  object `LastModified` overlap refinement against requested UTC ranges.
+- Prefix discovery uses `s3api list-objects-v2` with `start-after` and
+  end-boundary early stop to reduce startup latency for narrow windows.
+- CLI uses `--dry-run` for manifest-only planning; downloads execute by default
+  when `--dry-run` is omitted.
+- Optional pre-count/pre-size pass (`--pre-count`, default enabled) estimates
+  files/bytes totals and per-prefix breakdown.
+- Download progress is script-owned (`tqdm`) using structured `s5cmd --json`
+  copy events with fixed totals; planned prefix list is printed up front and
+  progress postfix includes `current=<prefix>`.
+
 ---
 
 ## Database Schema

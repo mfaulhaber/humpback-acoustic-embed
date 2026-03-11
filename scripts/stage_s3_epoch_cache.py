@@ -13,7 +13,7 @@ This script:
 2. Lists top-level timestamp prefixes under the given S3 prefix.
 3. Uses coarse epoch filtering, then refines matches by object LastModified overlap.
 4. Builds an s5cmd command file.
-5. Optionally executes the command file.
+5. Executes per-prefix downloads (or skips execution in dry-run mode).
 
 This version is tightened for public buckets:
 - always uses AWS CLI with --no-sign-request
@@ -34,6 +34,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import which
+
+from tqdm import tqdm
 
 
 @dataclass(frozen=True)
@@ -104,45 +106,89 @@ def normalize_prefix(prefix: str) -> str:
 
 
 def aws_ls_prefixes(bucket: str, prefix: str, region: str) -> list[TimestampPrefix]:
-    """
-    Run:
-      aws --region <region> --no-sign-request s3 ls s3://bucket/prefix/
+    return aws_ls_prefixes_optimized(
+        bucket=bucket,
+        prefix=prefix,
+        region=region,
+        start_epoch=None,
+        end_epoch=None,
+    )
 
-    Parse lines like:
-      PRE 1752303617/
-    """
-    s3_uri = f"s3://{bucket}/{normalize_prefix(prefix)}/"
-    cmd = [
-        "aws",
-        "--region",
-        region,
-        "--no-sign-request",
-        "s3",
-        "ls",
-        s3_uri,
-    ]
 
-    try:
-        result = subprocess.run(cmd, text=True, capture_output=True, check=True)
-    except subprocess.CalledProcessError as exc:
-        print("ERROR: Failed to list S3 prefixes.", file=sys.stderr)
-        if exc.stderr:
-            print(exc.stderr.strip(), file=sys.stderr)
-        else:
-            print(" ".join(shlex.quote(x) for x in cmd), file=sys.stderr)
-        sys.exit(exc.returncode or 1)
+def aws_ls_prefixes_optimized(
+    bucket: str,
+    prefix: str,
+    region: str,
+    start_epoch: int | None,
+    end_epoch: int | None,
+    start_after_lookback_seconds: int = 86_400,
+) -> list[TimestampPrefix]:
+    """
+    List top-level numeric timestamp prefixes via s3api list-objects-v2.
+
+    Uses:
+    - delimiter='/' to return CommonPrefixes (top-level "directories")
+    - start-after near requested start to reduce scan time
+    - early stop once numeric prefixes reach/exceed requested end
+    """
+    root_prefix = f"{normalize_prefix(prefix)}/"
+    continuation_token: str | None = None
+    start_after: str | None = None
+
+    if start_epoch is not None:
+        start_after_epoch = max(0, start_epoch - max(0, start_after_lookback_seconds))
+        start_after = f"{root_prefix}{start_after_epoch}/"
 
     prefixes: list[TimestampPrefix] = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("PRE "):
-            continue
-        name = line[4:].rstrip("/")
-        if name.isdigit():
-            prefixes.append(TimestampPrefix(epoch=int(name), name=name))
+    stop_early = False
 
-    prefixes.sort(key=lambda p: p.epoch)
-    return prefixes
+    while True:
+        try:
+            payload = _aws_list_objects_page(
+                bucket=bucket,
+                key_prefix=root_prefix,
+                region=region,
+                continuation_token=continuation_token,
+                delimiter="/",
+                start_after=start_after,
+            )
+        except S3ObjectListingError as exc:
+            print("ERROR: Failed to list S3 prefixes.", file=sys.stderr)
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+
+        # StartAfter applies to the initial listing position only.
+        start_after = None
+
+        common_prefixes = payload.get("CommonPrefixes")
+        if isinstance(common_prefixes, list):
+            for entry in common_prefixes:
+                if not isinstance(entry, dict):
+                    continue
+                raw_prefix = entry.get("Prefix")
+                if not isinstance(raw_prefix, str):
+                    continue
+                if not raw_prefix.startswith(root_prefix):
+                    continue
+                ts_name = raw_prefix[len(root_prefix) :].strip("/")
+                if not ts_name.isdigit():
+                    continue
+
+                epoch = int(ts_name)
+                prefixes.append(TimestampPrefix(epoch=epoch, name=ts_name))
+                if end_epoch is not None and epoch >= end_epoch:
+                    stop_early = True
+
+        if stop_early:
+            break
+        if not payload.get("IsTruncated"):
+            break
+        next_token = payload.get("NextContinuationToken")
+        if not isinstance(next_token, str) or not next_token:
+            break
+        continuation_token = next_token
+
+    return _dedupe_sorted_prefixes(prefixes)
 
 
 def select_in_range(
@@ -209,6 +255,8 @@ def _aws_list_objects_page(
     key_prefix: str,
     region: str,
     continuation_token: str | None = None,
+    delimiter: str | None = None,
+    start_after: str | None = None,
 ) -> dict:
     cmd = [
         "aws",
@@ -222,6 +270,10 @@ def _aws_list_objects_page(
         "--prefix",
         key_prefix,
     ]
+    if delimiter:
+        cmd.extend(["--delimiter", delimiter])
+    if start_after and continuation_token is None:
+        cmd.extend(["--start-after", start_after])
     if continuation_token:
         cmd.extend(["--continuation-token", continuation_token])
 
@@ -390,6 +442,315 @@ def write_lines(path: Path, lines: list[str]) -> None:
             f.write("\n")
 
 
+def _parse_s5cmd_cp_json_line(line: str) -> tuple[int, int] | None:
+    """
+    Parse a single JSON log line emitted by `s5cmd --json --log info`.
+
+    Returns:
+    - (files_delta, bytes_delta) when this line represents a successful `cp` object copy
+    - None for non-JSON lines, non-cp lines, or unsuccessful copy events
+    """
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("operation") != "cp":
+        return None
+    if payload.get("success") is not True:
+        return None
+
+    size_bytes = 0
+    object_meta = payload.get("object")
+    if isinstance(object_meta, dict):
+        size = object_meta.get("size")
+        if isinstance(size, int) and size > 0:
+            size_bytes = size
+    return (1, size_bytes)
+
+
+def _extract_ts_name_from_copy_command(command_line: str) -> str | None:
+    tokens = shlex.split(command_line)
+    if len(tokens) < 2 or tokens[0] != "cp":
+        return None
+    src = tokens[1]
+    if not src.startswith("s3://"):
+        return None
+    src_no_glob = src[:-2] if src.endswith("/*") else src
+    ts_name = src_no_glob.rstrip("/").split("/")[-1]
+    return ts_name if ts_name.isdigit() else None
+
+
+def _safe_update_bar(bar: tqdm, delta: int) -> None:
+    if delta <= 0:
+        return
+    total = bar.total
+    if total is None:
+        bar.update(delta)
+        return
+    remaining = int(total - bar.n)
+    if remaining <= 0:
+        return
+    bar.update(min(delta, remaining))
+
+
+def estimate_prefix_object_totals(
+    bucket: str,
+    prefix: str,
+    ts_name: str,
+    region: str,
+) -> tuple[int, int]:
+    key_prefix = f"{normalize_prefix(prefix)}/{ts_name}/"
+    continuation_token: str | None = None
+    object_count = 0
+    total_bytes = 0
+
+    while True:
+        payload = _aws_list_objects_page(
+            bucket=bucket,
+            key_prefix=key_prefix,
+            region=region,
+            continuation_token=continuation_token,
+        )
+        contents = payload.get("Contents")
+        if isinstance(contents, list):
+            for entry in contents:
+                if not isinstance(entry, dict):
+                    continue
+                object_count += 1
+                size = entry.get("Size")
+                if isinstance(size, int) and size > 0:
+                    total_bytes += size
+
+        if not payload.get("IsTruncated"):
+            break
+        next_token = payload.get("NextContinuationToken")
+        if not isinstance(next_token, str) or not next_token:
+            break
+        continuation_token = next_token
+
+    return object_count, total_bytes
+
+
+def estimate_transfer_totals_with_breakdown(
+    selected: list[TimestampPrefix],
+    bucket: str,
+    prefix: str,
+    region: str,
+) -> tuple[int, int, dict[str, tuple[int, int]]] | None:
+    if not selected:
+        return (0, 0, {})
+
+    total_files = 0
+    total_bytes = 0
+    by_prefix: dict[str, tuple[int, int]] = {}
+    with tqdm(total=len(selected), desc="Pre-counting objects", unit="prefix") as bar:
+        for item in selected:
+            try:
+                n_files, n_bytes = estimate_prefix_object_totals(
+                    bucket=bucket,
+                    prefix=prefix,
+                    ts_name=item.name,
+                    region=region,
+                )
+            except S3ObjectListingError as exc:
+                print(
+                    f"WARNING: Pre-count failed for prefix {item.name}: {exc}",
+                    file=sys.stderr,
+                )
+                return None
+            total_files += n_files
+            total_bytes += n_bytes
+            by_prefix[item.name] = (n_files, n_bytes)
+            bar.update(1)
+
+    return total_files, total_bytes, by_prefix
+
+
+def estimate_transfer_totals(
+    selected: list[TimestampPrefix],
+    bucket: str,
+    prefix: str,
+    region: str,
+) -> tuple[int, int] | None:
+    result = estimate_transfer_totals_with_breakdown(
+        selected=selected,
+        bucket=bucket,
+        prefix=prefix,
+        region=region,
+    )
+    if result is None:
+        return None
+    total_files, total_bytes, _ = result
+    return total_files, total_bytes
+
+
+def run_s5cmd_copy_commands(
+    commands: list[str],
+    numworkers: int,
+    log_path: Path | None = None,
+    expected_files_total: int | None = None,
+    expected_bytes_total: int | None = None,
+    expected_by_prefix: dict[str, tuple[int, int]] | None = None,
+) -> int:
+    if not commands:
+        return 0
+
+    base_cmd = [
+        "s5cmd",
+        "--no-sign-request",
+        "--numworkers",
+        str(numworkers),
+        "--json",
+        "--log",
+        "info",
+    ]
+
+    log_handle = None
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = log_path.open("w", encoding="utf-8")
+
+    progress_by_bytes = bool(expected_bytes_total and expected_bytes_total > 0)
+    progress_by_files = bool(
+        not progress_by_bytes and expected_files_total and expected_files_total > 0
+    )
+    if progress_by_bytes:
+        total_value = int(expected_bytes_total)
+        unit = "B"
+        unit_scale = True
+    elif progress_by_files:
+        total_value = int(expected_files_total)
+        unit = "file"
+        unit_scale = False
+    else:
+        total_value = len(commands)
+        unit = "prefix"
+        unit_scale = False
+
+    try:
+        with tqdm(
+            total=total_value,
+            desc="Downloading",
+            unit=unit,
+            unit_scale=unit_scale,
+        ) as bar:
+            copied_files_total = 0
+            copied_bytes_total = 0
+            completed_prefixes = 0
+
+            def _set_download_postfix(current_prefix: str | None) -> None:
+                current = current_prefix if current_prefix else "-"
+                bar.set_postfix_str(
+                    (
+                        f"current={current} prefixes={completed_prefixes}/{len(commands)} "
+                        f"files={copied_files_total} bytes={copied_bytes_total}"
+                    )
+                )
+
+            for index, command_line in enumerate(commands, start=1):
+                command_tokens = shlex.split(command_line)
+                cmd = [*base_cmd, *command_tokens]
+                ts_name = _extract_ts_name_from_copy_command(command_line)
+                current_prefix_label = ts_name or f"command-{index}"
+                expected_cmd_files = (
+                    expected_by_prefix.get(ts_name, (0, 0))[0]
+                    if expected_by_prefix and ts_name
+                    else 0
+                )
+                expected_cmd_bytes = (
+                    expected_by_prefix.get(ts_name, (0, 0))[1]
+                    if expected_by_prefix and ts_name
+                    else 0
+                )
+
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                cmd_bytes = 0
+                cmd_files = 0
+                last_output_line: str | None = None
+
+                if log_handle is not None:
+                    cmd_line = f"$ {' '.join(shlex.quote(part) for part in cmd)}\n"
+                    log_handle.write(cmd_line)
+                    log_handle.flush()
+
+                _set_download_postfix(current_prefix_label)
+
+                if proc.stdout is not None:
+                    for raw_line in proc.stdout:
+                        if log_handle is not None:
+                            log_handle.write(raw_line)
+                            log_handle.flush()
+                        stripped_line = raw_line.strip()
+                        if stripped_line:
+                            last_output_line = stripped_line
+                        parsed = _parse_s5cmd_cp_json_line(raw_line)
+                        if parsed is None:
+                            continue
+                        delta_files, delta_bytes = parsed
+                        cmd_files += delta_files
+                        cmd_bytes += delta_bytes
+                        copied_files_total += delta_files
+                        copied_bytes_total += delta_bytes
+                        if progress_by_bytes and delta_bytes > 0:
+                            _safe_update_bar(bar, delta_bytes)
+                        if progress_by_files and delta_files > 0:
+                            _safe_update_bar(bar, delta_files)
+                        _set_download_postfix(current_prefix_label)
+
+                return_code = proc.wait()
+                if log_handle is not None:
+                    log_handle.write("\n")
+                    log_handle.flush()
+
+                if return_code != 0:
+                    print(
+                        (
+                            "s5cmd failed for prefix command "
+                            f"{index}/{len(commands)}: {command_line}"
+                        ),
+                        file=sys.stderr,
+                    )
+                    if last_output_line:
+                        print(last_output_line, file=sys.stderr)
+                    return return_code
+
+                if expected_cmd_bytes > cmd_bytes:
+                    missing_bytes = expected_cmd_bytes - cmd_bytes
+                    copied_bytes_total += missing_bytes
+                    if progress_by_bytes:
+                        _safe_update_bar(bar, missing_bytes)
+                if expected_cmd_files > cmd_files:
+                    missing_files = expected_cmd_files - cmd_files
+                    copied_files_total += missing_files
+                    if progress_by_files:
+                        _safe_update_bar(bar, missing_files)
+
+                completed_prefixes += 1
+                if not progress_by_bytes and not progress_by_files:
+                    _safe_update_bar(bar, 1)
+                _set_download_postfix(None)
+    finally:
+        if log_handle is not None:
+            log_handle.close()
+
+    return 0
+
+
 def positive_int(value: str) -> int:
     try:
         n = int(value)
@@ -448,9 +809,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="AWS region for aws cli calls. Default: us-west-2",
     )
     parser.add_argument(
-        "--run",
+        "--dry-run",
         action="store_true",
-        help="Execute s5cmd after generating the command file",
+        help="Generate manifest files only; do not execute s5cmd downloads",
     )
     parser.add_argument(
         "--numworkers",
@@ -466,7 +827,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-file",
         default=None,
-        help="Optional log file for s5cmd output when --run is used",
+        help="Optional log file for s5cmd output when execution is enabled",
+    )
+    parser.add_argument(
+        "--pre-count",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Pre-count selected prefixes to estimate files/bytes for download progress "
+            "(default: enabled)"
+        ),
     )
     return parser
 
@@ -476,7 +846,7 @@ def main() -> int:
     args = parser.parse_args()
 
     require_binary("aws")
-    if args.run:
+    if not args.dry_run:
         require_binary("s5cmd")
 
     start_dt = parse_dt(args.start)
@@ -505,7 +875,13 @@ def main() -> int:
     )
 
     print(f"Listing prefixes under s3://{args.bucket}/{normalize_prefix(args.prefix)}/")
-    all_prefixes = aws_ls_prefixes(args.bucket, args.prefix, args.region)
+    all_prefixes = aws_ls_prefixes_optimized(
+        bucket=args.bucket,
+        prefix=args.prefix,
+        region=args.region,
+        start_epoch=start_epoch,
+        end_epoch=end_epoch,
+    )
 
     if not all_prefixes:
         print("No numeric epoch-style prefixes found.", file=sys.stderr)
@@ -552,41 +928,64 @@ def main() -> int:
     print(f"Commands file: {commands_file}")
     print(f"Copy commands to run: {len(commands)}")
     print(f"Local cache root: {local_root}")
+    planned_prefixes = [
+        ts_name
+        for command in commands
+        if (ts_name := _extract_ts_name_from_copy_command(command)) is not None
+    ]
+    print(f"Planned prefixes to download ({len(planned_prefixes)}):")
+    for ts_name in planned_prefixes:
+        local_dir = local_dir_for_prefix(local_root, args.prefix, ts_name)
+        print(f"  - {ts_name} -> {local_dir}")
 
     if not selected:
         print("Nothing matched the requested time range.")
         return 0
 
-    if not args.run:
-        print("Dry run only. Add --run to execute s5cmd.")
+    if args.dry_run:
+        if commands:
+            print("Dry-run copy commands:")
+            for command in commands:
+                print(command)
+        else:
+            print("Dry-run copy commands: (none)")
+        print("Dry run requested. Skipping s5cmd execution.")
         return 0
 
-    s5cmd_cmd = [
-        "s5cmd",
-        "--no-sign-request",
-        "--numworkers",
-        str(args.numworkers),
-        "--log",
-        "error",
-        "run",
-        str(commands_file),
-    ]
-
-    print(s5cmd_cmd)
-
-    if args.log_file:
-        log_path = Path(args.log_file).expanduser().resolve()
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("w", encoding="utf-8") as f:
-            proc = subprocess.run(
-                s5cmd_cmd, text=True, stdout=f, stderr=subprocess.STDOUT
+    resolved_log_path = (
+        Path(args.log_file).expanduser().resolve() if args.log_file else None
+    )
+    expected_files_total: int | None = None
+    expected_bytes_total: int | None = None
+    expected_by_prefix: dict[str, tuple[int, int]] | None = None
+    if args.pre_count and commands:
+        totals = estimate_transfer_totals_with_breakdown(
+            selected=selected,
+            bucket=args.bucket,
+            prefix=args.prefix,
+            region=args.region,
+        )
+        if totals is not None:
+            expected_files_total, expected_bytes_total, expected_by_prefix = totals
+            print(
+                "Estimated download totals: "
+                f"files={expected_files_total} bytes={expected_bytes_total}"
             )
-    else:
-        proc = subprocess.run(s5cmd_cmd)
-
-    if proc.returncode != 0:
-        print(f"s5cmd failed with exit code {proc.returncode}", file=sys.stderr)
-        return proc.returncode
+        else:
+            print(
+                "WARNING: Pre-count failed; falling back to non-estimated progress.",
+                file=sys.stderr,
+            )
+    exit_code = run_s5cmd_copy_commands(
+        commands=commands,
+        numworkers=args.numworkers,
+        log_path=resolved_log_path,
+        expected_files_total=expected_files_total,
+        expected_bytes_total=expected_bytes_total,
+        expected_by_prefix=expected_by_prefix,
+    )
+    if exit_code != 0:
+        return exit_code
 
     print("s5cmd completed successfully.")
     return 0

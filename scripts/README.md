@@ -23,7 +23,7 @@ The script:
 2. Lists timestamp directories under a given S3 prefix
 3. Uses a coarse epoch match, then refines using object `LastModified` overlap
 4. Generates an **s5cmd command file**
-5. Optionally executes downloads in **parallel**
+5. Executes downloads in **parallel** by default (or can run in dry-run mode)
 
 This approach avoids scanning the entire S3 dataset while maximizing throughput.
 
@@ -36,8 +36,11 @@ This approach avoids scanning the entire S3 dataset while maximizing throughput.
 * Automatically runs `s5cmd` with `--no-sign-request`
 * Handles coarse/misaligned epoch partitions via object-overlap refinement
 * High-performance downloads using **s5cmd**
+* Prefix-level progress bar during downloads
 * Generates reproducible command manifests
 * Supports **resume behavior** via `--skip-existing`
+* Supports plan-only mode via `--dry-run`
+* Prefix discovery uses `list-objects-v2` with `start-after` and end-boundary early stop for faster narrow-window startup
 * Compatible with large **NVMe staging volumes**
 
 ---
@@ -199,15 +202,49 @@ uv run python stage_s3_epoch_cache.py \
   --prefix rpi_north_sjc/hls \
   --start "2025-07-12T00:00:00Z" \
   --hours 24 \
-  --local-root /workspace/data_cache \
-  --run
+  --local-root /workspace/data_cache
 ```
 
 This will:
 
 1. Discover matching timestamp directories
 2. Generate an `s5cmd` command file
-3. Download matching directories into the local cache
+3. Download matching directories into the local cache (with a per-prefix progress bar)
+
+---
+
+# Input Arguments
+
+## Required
+
+* `--bucket`: S3 bucket name
+* `--prefix`: Root prefix containing epoch directories (for example `rpi_north_sjc/hls`)
+* `--start`: Inclusive UTC start datetime (ISO-8601, for example `2025-07-12T00:00:00Z`)
+* One of:
+  * `--end`: Exclusive UTC end datetime
+  * `--hours`: Positive integer number of hours after `--start`
+
+## Optional
+
+* `--local-root` (default: `/workspace/data_cache`): local cache root path
+* `--commands-file`: output path for generated s5cmd commands
+* `--matched-prefixes-file`: output path for matched epoch prefixes
+* `--region` (default: `us-west-2`): AWS region for `aws` CLI listing calls
+* `--dry-run`: generate manifests and print summary only; skip all downloads
+* `--numworkers` (default: `64`): s5cmd worker count for each prefix copy command
+* `--skip-existing`: skip prefixes whose local directory is already non-empty
+* `--log-file`: optional path to write s5cmd output when execution is enabled
+* `--pre-count` / `--no-pre-count` (default: `--pre-count`): enable/disable pre-count pass for object/file totals used by progress calculation
+
+## Execution behavior
+
+* Downloads run by default when `--dry-run` is not provided.
+* Manifest files are always generated:
+  * `matched_prefixes_<prefix>.txt`
+  * `commands_<prefix>.txt`
+* By default, a pre-count pass estimates total files/bytes across selected prefixes and uses those fixed totals as the progress denominator.
+* Download-time progress is rendered by the script (tqdm) from structured `s5cmd --json` copy events, so totals do not grow during transfer.
+* Use `--dry-run` to validate selection and manifests without downloading; generated copy commands are also printed to the console.
 
 For `audio-orcasound-net/rpi_north_sjc/hls`, a request like
 `2025-07-12T00:00:00Z` to `2025-07-12T01:00:00Z` can legitimately match the
@@ -225,8 +262,7 @@ uv run python stage_s3_epoch_cache.py \
   --prefix rpi_north_sjc/hls \
   --start "2025-07-12T00:00:00Z" \
   --end "2025-07-13T00:00:00Z" \
-  --local-root /workspace/data_cache \
-  --run
+  --local-root /workspace/data_cache
 ```
 
 ---
@@ -247,8 +283,7 @@ uv run python stage_s3_epoch_cache.py \
   --prefix rpi_north_sjc/hls \
   --start "2025-07-12T00:00:00Z" \
   --hours 24 \
-  --skip-existing \
-  --run
+  --skip-existing
 ```
 
 ---
@@ -277,8 +312,23 @@ python stage_s3_epoch_cache.py \
   --prefix rpi_north_sjc/hls \
   --start "2025-07-12T00:00:00Z" \
   --hours 24 \
-  --numworkers 128 \
-  --run
+  --numworkers 128
+```
+
+---
+
+# Dry Run Example
+
+Use `--dry-run` to generate matched-prefix and command manifests without executing downloads:
+
+```bash
+uv run python stage_s3_epoch_cache.py \
+  --bucket audio-orcasound-net \
+  --prefix rpi_north_sjc/hls \
+  --start "2025-07-12T00:00:00Z" \
+  --hours 24 \
+  --local-root /workspace/data_cache \
+  --dry-run
 ```
 
 ---

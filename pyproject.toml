@@ -25,6 +25,7 @@ dependencies = [
     "joblib>=1.5.3",
     "boto3>=1.42.63",
     "matplotlib>=3.8",
+    "tqdm>=4.67.3",
 ]
 
 [project.optional-dependencies]
