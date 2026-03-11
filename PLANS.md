@@ -4,11 +4,32 @@
 
 ## Active
 
-- None
+(none)
 
 ---
 
 ## Recently Completed
+
+# Plan: POC: NOAA GCS Passive Bioacoustic Client
+
+## Outcome (2026-03-11)
+
+- Created `scripts/noaa_gcs_poc.py` — standalone POC validating anonymous GCS access
+  to NOAA's public passive bioacoustic dataset (`gs://noaa-passive-bioacoustic`).
+- Implemented `NoaaGCSClient` class satisfying the same 5-method duck-typed interface
+  as `OrcasoundS3Client`/`LocalHLSClient`/`CachingS3Client`.
+- Interface mapping: `.aif` files grouped into virtual date-folders (midnight UTC epoch),
+  no playlists, same ffmpeg decode pattern with longer timeout for ~20MB files.
+- Added `google-cloud-storage` as dev dependency.
+- Dataset: 24,152 .aif files, 86 date-folders, 5-min intervals, ~20MB each at 44.1kHz,
+  Jul–Oct 2015, Glacier Bay Bartlett Cove.
+
+## Verification
+
+- `uv run python scripts/noaa_gcs_poc.py --skip-download` — listing + interface demo passed.
+- `uv run python scripts/noaa_gcs_poc.py --hours 1` — full demo with download+decode passed
+  (19.8MB .aif → 300.19s at 32kHz, shape=(9606003,)).
+- `uv run pytest tests/` — 476 passed.
 
 # Plan: Hydrophone Detection Ordered S3 Prefetch + Timing Telemetry
 

@@ -59,6 +59,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 
 [dependency-groups]
 dev = [
+    "google-cloud-storage>=3.9.0",
     "httpx>=0.28.1",
     "pre-commit>=4.3.0",
     "pytest>=9.0.2",
