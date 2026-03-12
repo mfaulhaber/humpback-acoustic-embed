@@ -134,24 +134,23 @@ def _make_fake_timeline(n_segments: int):
     ]
 
 
-@patch("humpback.classifier.s3_stream._build_stream_timeline")
 @patch("humpback.classifier.s3_stream._decode_and_clip_segment")
-def test_iter_audio_chunks_skip_segments(mock_decode, mock_timeline):
+def test_iter_audio_chunks_skip_segments(mock_decode):
     """Skips N segments; segments_done starts at N."""
     from humpback.classifier.s3_stream import iter_audio_chunks
 
     timeline = _make_fake_timeline(10)
-    mock_timeline.return_value = timeline
 
     # Each segment decodes to 1 second of audio at 32 kHz
     samples = np.zeros(32000, dtype=np.float32)
     mock_decode.side_effect = lambda **kw: (samples, kw["segment"].start_ts)
 
-    client = MagicMock()
+    provider = MagicMock()
+    provider.build_timeline.return_value = timeline
+    provider.invalidate_cached_segment.return_value = False
     chunks = list(
         iter_audio_chunks(
-            client,
-            "hydro",
+            provider,
             1000.0,
             1100.0,
             chunk_seconds=60.0,
@@ -169,23 +168,22 @@ def test_iter_audio_chunks_skip_segments(mock_decode, mock_timeline):
     assert chunks[0][3] == 10
 
 
-@patch("humpback.classifier.s3_stream._build_stream_timeline")
 @patch("humpback.classifier.s3_stream._decode_and_clip_segment")
-def test_iter_audio_chunks_skip_exceeds_total(mock_decode, mock_timeline):
+def test_iter_audio_chunks_skip_exceeds_total(mock_decode):
     """Falls back to all segments when skip > timeline length; segments_done starts at 0."""
     from humpback.classifier.s3_stream import iter_audio_chunks
 
     timeline = _make_fake_timeline(3)
-    mock_timeline.return_value = timeline
 
     samples = np.zeros(32000, dtype=np.float32)
     mock_decode.side_effect = lambda **kw: (samples, kw["segment"].start_ts)
 
-    client = MagicMock()
+    provider = MagicMock()
+    provider.build_timeline.return_value = timeline
+    provider.invalidate_cached_segment.return_value = False
     chunks = list(
         iter_audio_chunks(
-            client,
-            "hydro",
+            provider,
             1000.0,
             1030.0,
             chunk_seconds=60.0,
@@ -357,14 +355,12 @@ def test_cache_invalidation_caching_client(tmp_path: Path):
     assert not seg_path.exists()
 
 
-@patch("humpback.classifier.s3_stream._build_stream_timeline")
 @patch("humpback.classifier.s3_stream._decode_and_clip_segment")
-def test_iter_audio_chunks_invalidate_and_retry(mock_decode, mock_timeline):
+def test_iter_audio_chunks_invalidate_and_retry(mock_decode):
     """When decode fails, cached segment is invalidated and retried once."""
     from humpback.classifier.s3_stream import iter_audio_chunks
 
     timeline = _make_fake_timeline(2)
-    mock_timeline.return_value = timeline
 
     # 10 seconds of audio per segment (matching segment duration) to avoid
     # discontinuity flushes between segments
@@ -376,13 +372,13 @@ def test_iter_audio_chunks_invalidate_and_retry(mock_decode, mock_timeline):
         (samples, 1010.0),
     ]
 
-    client = MagicMock()
-    client.invalidate_cached_segment.return_value = True
+    provider = MagicMock()
+    provider.build_timeline.return_value = timeline
+    provider.invalidate_cached_segment.return_value = True
 
     chunks = list(
         iter_audio_chunks(
-            client,
-            "hydro",
+            provider,
             1000.0,
             1020.0,
             chunk_seconds=60.0,
@@ -391,21 +387,19 @@ def test_iter_audio_chunks_invalidate_and_retry(mock_decode, mock_timeline):
     )
 
     # invalidate should have been called for the first segment
-    client.invalidate_cached_segment.assert_called_once_with("hydro/hls/123/live0.ts")
+    provider.invalidate_cached_segment.assert_called_once_with("hydro/hls/123/live0.ts")
     # decode should be called 3 times: fail + retry + second segment
     assert mock_decode.call_count == 3
     # Should get output (both segments accumulated into one chunk)
     assert len(chunks) == 1
 
 
-@patch("humpback.classifier.s3_stream._build_stream_timeline")
 @patch("humpback.classifier.s3_stream._decode_and_clip_segment")
-def test_iter_audio_chunks_no_invalidation_without_method(mock_decode, mock_timeline):
-    """When client has no invalidate method, decode failure is just logged."""
+def test_iter_audio_chunks_no_invalidation_without_method(mock_decode):
+    """When provider.invalidate_cached_segment returns False, error is just logged."""
     from humpback.classifier.s3_stream import iter_audio_chunks
 
     timeline = _make_fake_timeline(2)
-    mock_timeline.return_value = timeline
 
     samples = np.zeros(32000, dtype=np.float32)
     mock_decode.side_effect = [
@@ -413,12 +407,13 @@ def test_iter_audio_chunks_no_invalidation_without_method(mock_decode, mock_time
         (samples, 1010.0),
     ]
 
-    client = MagicMock(spec=[])  # No invalidate_cached_segment method
+    provider = MagicMock()
+    provider.build_timeline.return_value = timeline
+    provider.invalidate_cached_segment.return_value = False
 
     chunks = list(
         iter_audio_chunks(
-            client,
-            "hydro",
+            provider,
             1000.0,
             1020.0,
             chunk_seconds=60.0,

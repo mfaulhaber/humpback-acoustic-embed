@@ -4,11 +4,44 @@
 
 ## Active
 
-- None currently.
+None currently.
 
 ---
 
 ## Recently Completed
+
+# Plan: ArchiveProvider Abstraction — Phase 1 & 2
+
+[Full plan](/Users/michael/.claude/plans/peaceful-herding-rossum.md)
+
+## Outcome (2026-03-12)
+
+**Phase 1: Protocol + HLS Providers (non-breaking)**
+- Created `src/humpback/classifier/archive.py` with `StreamSegment` dataclass and
+  `ArchiveProvider` `typing.Protocol` (runtime_checkable, 7 methods).
+- Created `src/humpback/classifier/providers/` package with `orcasound_hls.py`
+  containing three thin provider wrappers: `OrcasoundHLSProvider`, `CachingHLSProvider`,
+  `LocalHLSCacheProvider` — each delegating to existing S3/local clients.
+- Re-exported `StreamSegment` from `s3_stream.py` for backward compat.
+- Added 24 unit tests: Protocol conformance, property accessors, delegation, non-conformance.
+
+**Phase 2: Adapt `s3_stream.py` consumers to `ArchiveProvider`**
+- Refactored `_decode_and_clip_segment`, `_iter_prefetched_segments`, and core
+  `_iter_audio_chunks` to accept `ArchiveProvider` instead of raw client + hydrophone_id.
+- Added backward-compat dispatcher to `iter_audio_chunks` that detects old-style
+  `(client, hydrophone_id, start_ts, end_ts)` vs new-style `(provider, start_ts, end_ts)`
+  signatures (positional and keyword).
+- Added `_ClientAdapter` internal adapter wrapping `client + hydrophone_id` as `ArchiveProvider`.
+- Added `build_stream_timeline` and `resolve_audio_slice` provider-based functions;
+  kept `build_hydrophone_stream_timeline` and `resolve_hydrophone_audio_slice` as
+  backward-compat wrappers.
+- Rewrote `test_s3_stream.py` iter_audio_chunks tests to use `_FakeProvider` helper
+  (no more internal mocking); updated `test_hydrophone_resume.py` to use mock providers.
+
+## Verification
+
+- `uv run pytest tests/` — 511 passed.
+- `uv run ruff check` on all modified files — passed.
 
 # Plan: Stage S3 Epoch Cache Progress + Dry-Run + README
 
@@ -507,6 +540,8 @@
 
 ## Backlog
 
+- [ArchiveProvider Phase 3: Adapt upstream consumers](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — migrate `hydrophone_detector.py`, `extractor.py`, `classifier_worker.py`, and API router to construct and pass `ArchiveProvider` instances instead of raw clients + hydrophone_id. Remove backward-compat wrappers in `s3_stream.py` once all callers are migrated.
+- [ArchiveProvider Phase 4: Promote NOAA GCS provider](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — move NOAA GCS POC into `providers/noaa_gcs.py` as a proper `ArchiveProvider` implementation, wire into worker/router, add tests.
 - Explore GPU-accelerated batch processing for large audio libraries
 - Add WebSocket push for real-time job status updates (replace polling)
 - Investigate multi-model ensemble clustering

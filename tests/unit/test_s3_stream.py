@@ -26,6 +26,71 @@ def _make_wav_bytes(samples: np.ndarray, sr: int = 32000) -> bytes:
     return buf.getvalue()
 
 
+class _FakeProvider:
+    """Minimal ArchiveProvider for iter_audio_chunks / resolve_audio_slice tests.
+
+    Accepts a pre-built timeline and optional fetch/decode callables.
+    """
+
+    from humpback.classifier.archive import StreamSegment as _SS
+
+    def __init__(
+        self,
+        timeline: list,
+        *,
+        fetch_fn=None,
+        decode_fn=None,
+        invalidate_fn=None,
+    ):
+        self._timeline = timeline
+        self._fetch_fn = fetch_fn
+        self._decode_fn = decode_fn
+        self._invalidate_fn = invalidate_fn
+
+    @property
+    def name(self) -> str:
+        return "FakeProvider"
+
+    @property
+    def source_id(self) -> str:
+        return "fake_source"
+
+    def build_timeline(self, start_ts: float, end_ts: float) -> list:
+        return self._timeline
+
+    def count_segments(self, start_ts: float, end_ts: float) -> int:
+        return len(self._timeline)
+
+    def fetch_segment(self, key: str) -> bytes:
+        if self._fetch_fn is not None:
+            return self._fetch_fn(key)
+        return key.encode()
+
+    def decode_segment(self, raw_bytes: bytes, target_sr: int) -> np.ndarray:
+        if self._decode_fn is not None:
+            return self._decode_fn(raw_bytes, target_sr)
+        return np.zeros(target_sr * 10, dtype=np.float32)
+
+    def invalidate_cached_segment(self, key: str) -> bool:
+        if self._invalidate_fn is not None:
+            return self._invalidate_fn(key)
+        return False
+
+
+def _make_timeline(n_segments: int, folder_ts: float = 1000.0, seg_dur: float = 10.0):
+    """Build a simple sequential timeline of StreamSegments."""
+    from humpback.classifier.archive import StreamSegment
+
+    return [
+        StreamSegment(
+            key=f"hydro/hls/{int(folder_ts)}/live{i}.ts",
+            start_ts=folder_ts + i * seg_dur,
+            duration_sec=seg_dur,
+        )
+        for i in range(n_segments)
+    ]
+
+
 class TestDecodeWavBytes:
     """Test the WAV parsing logic in decode_ts_bytes (via mock ffmpeg)."""
 
@@ -75,144 +140,105 @@ class TestDecodeWavBytes:
 
 
 class TestIterAudioChunks:
-    """Test the chunk iterator with mocked S3 client."""
+    """Test the chunk iterator with ArchiveProvider."""
 
     def test_yields_chunks(self):
-        """Should yield audio chunks from mocked segments."""
-        from unittest.mock import MagicMock, patch
-
+        """Should yield audio chunks from a provider with one segment."""
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        sr = 32000
-        # 2-second segment → should accumulate below 60s threshold, yielded as remainder
-        segment_audio = np.zeros(sr * 2, dtype=np.float32)
-        wav_bytes = _make_wav_bytes(segment_audio, sr)
+        sr = 10
+        timeline = _make_timeline(1, folder_ts=1700000000.0, seg_dur=20.0)
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1700000000"]
-        mock_client.list_segments.return_value = ["hydro/hls/1700000000/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = wav_bytes
-
-        with patch(
-            "humpback.classifier.s3_stream.subprocess.run", return_value=mock_result
-        ):
-            chunks = list(
-                iter_audio_chunks(
-                    mock_client,
-                    "rpi_orcasound_lab",
-                    1700000000,
-                    1700003600,
-                    chunk_seconds=60.0,
-                    target_sr=sr,
-                )
+        provider = _FakeProvider(
+            timeline,
+            decode_fn=lambda _raw, sr: np.zeros(sr * 20, dtype=np.float32),
+        )
+        chunks = list(
+            iter_audio_chunks(
+                provider,
+                1700000000,
+                1700003600,
+                chunk_seconds=60.0,
+                target_sr=sr,
             )
+        )
 
-        # Should get one remainder chunk with 2s of audio
         assert len(chunks) == 1
         audio, utc, segs_done, segs_total = chunks[0]
-        assert len(audio) == sr * 2
+        assert len(audio) == sr * 20
         assert segs_done == 1
         assert segs_total == 1
 
     def test_error_callback(self):
         """Segment decode failures should call on_error and continue."""
-        from unittest.mock import MagicMock
-
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1700000000"]
-        mock_client.list_segments.return_value = ["seg0.ts"]
-        mock_client.fetch_segment.side_effect = Exception("network error")
+        timeline = _make_timeline(1, folder_ts=1700000000.0)
 
-        errors = []
-
+        provider = _FakeProvider(
+            timeline,
+            fetch_fn=lambda _key: (_ for _ in ()).throw(Exception("network error")),
+        )
+        errors: list = []
         chunks = list(
             iter_audio_chunks(
-                mock_client,
-                "rpi_orcasound_lab",
+                provider,
                 1700000000,
                 1700003600,
                 on_error=lambda e: errors.append(e),
             )
         )
 
-        assert len(chunks) == 0  # no audio decoded
+        assert len(chunks) == 0
         assert len(errors) == 1
         assert "network error" in errors[0]["message"]
         assert errors[0]["type"] == "warning"
 
     def test_clips_segments_to_requested_end_timestamp(self):
-        """iter_audio_chunks should stop at end_ts within a long folder."""
-        from unittest.mock import patch
-
+        """iter_audio_chunks should clip audio at end_ts."""
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        class FakeClient:
-            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
-                return ["1000"]
+        # 3 segments [1000,1010), [1010,1020), [1020,1030) — timeline already
+        # clipped by provider to the overlapping range for end_ts=1025
+        timeline = _make_timeline(3, folder_ts=1000.0, seg_dur=10.0)
 
-            def list_segments(self, _hydrophone_id, _folder_ts):
-                # Intentionally include beyond requested end range.
-                return [
-                    "hydro/hls/1000/live0.ts",
-                    "hydro/hls/1000/live1.ts",
-                    "hydro/hls/1000/live2.ts",
-                    "hydro/hls/1000/live3.ts",
-                ]
-
-            def fetch_playlist(self, _hydrophone_id, _folder_ts):
-                return None
-
-            def fetch_segment(self, key):
-                return key.encode()
-
-        def fake_decode(ts_bytes, sr):
-            # 10s per segment
-            _ = ts_bytes.decode()
-            return np.ones(sr * 10, dtype=np.float32)
-
-        with patch(
-            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
-        ):
-            chunks = list(
-                iter_audio_chunks(
-                    FakeClient(),
-                    "rpi_orcasound_lab",
-                    start_ts=1000.0,
-                    end_ts=1025.0,  # should include at most 25s of audio
-                    chunk_seconds=60.0,
-                    target_sr=10,
-                )
+        provider = _FakeProvider(
+            timeline,
+            decode_fn=lambda _raw, sr: np.ones(sr * 10, dtype=np.float32),
+        )
+        chunks = list(
+            iter_audio_chunks(
+                provider,
+                start_ts=1000.0,
+                end_ts=1025.0,
+                chunk_seconds=60.0,
+                target_sr=10,
             )
+        )
 
         assert len(chunks) == 1
         audio, chunk_utc, segs_done, segs_total = chunks[0]
         assert chunk_utc.timestamp() == 1000.0
         assert len(audio) == 250  # 25s * 10 Hz
-        assert segs_total == 3  # live0, live1, and clipped live2
+        assert segs_total == 3
         assert segs_done == 3
 
     def test_raises_when_no_audio_timeline_exists(self):
-        """Missing timeline should raise FileNotFoundError (not silently complete)."""
-        from unittest.mock import MagicMock
-
+        """Missing timeline should raise FileNotFoundError."""
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = []
+        def _raise_no_data(_start, _end):
+            raise FileNotFoundError("No audio data found for this time range")
+
+        provider = _FakeProvider([])
+        provider.build_timeline = _raise_no_data  # type: ignore[assignment]
 
         with pytest.raises(
             FileNotFoundError, match="No audio data found for this time range"
         ):
             list(
                 iter_audio_chunks(
-                    mock_client,
-                    "rpi_orcasound_lab",
+                    provider,
                     1700000000,
                     1700003600,
                 )
@@ -224,59 +250,45 @@ class TestIterAudioChunksPrefetch:
 
     def test_prefetch_matches_sequential_ordering(self):
         """Prefetch mode should preserve exact timeline ordering."""
-        from unittest.mock import patch
-
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        class FakeClient:
-            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
-                return ["1000"]
+        timeline = _make_timeline(6, folder_ts=1000.0, seg_dur=10.0)
 
-            def list_segments(self, _hydrophone_id, _folder_ts):
-                return [f"hydro/hls/1000/live{i}.ts" for i in range(6)]
+        def _fetch(key):
+            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            if idx % 2 == 0:
+                time.sleep(0.01)
+            return key.encode()
 
-            def fetch_playlist(self, _hydrophone_id, _folder_ts):
-                return None
-
-            def fetch_segment(self, key):
-                idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
-                if idx % 2 == 0:
-                    time.sleep(0.01)
-                return key.encode()
-
-        def fake_decode(ts_bytes, sr):
-            key = ts_bytes.decode()
+        def _decode(raw_bytes, sr):
+            key = raw_bytes.decode()
             idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
             return np.full(sr * 10, idx, dtype=np.float32)
 
-        client = FakeClient()
-        with patch(
-            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
-        ):
-            sequential = list(
-                iter_audio_chunks(
-                    client,
-                    "rpi_orcasound_lab",
-                    1000.0,
-                    1060.0,
-                    chunk_seconds=10.0,
-                    target_sr=10,
-                    prefetch_enabled=False,
-                )
+        provider = _FakeProvider(timeline, fetch_fn=_fetch, decode_fn=_decode)
+
+        sequential = list(
+            iter_audio_chunks(
+                provider,
+                1000.0,
+                1060.0,
+                chunk_seconds=10.0,
+                target_sr=10,
+                prefetch_enabled=False,
             )
-            prefetched = list(
-                iter_audio_chunks(
-                    client,
-                    "rpi_orcasound_lab",
-                    1000.0,
-                    1060.0,
-                    chunk_seconds=10.0,
-                    target_sr=10,
-                    prefetch_enabled=True,
-                    prefetch_workers=3,
-                    prefetch_inflight_segments=3,
-                )
+        )
+        prefetched = list(
+            iter_audio_chunks(
+                provider,
+                1000.0,
+                1060.0,
+                chunk_seconds=10.0,
+                target_sr=10,
+                prefetch_enabled=True,
+                prefetch_workers=3,
+                prefetch_inflight_segments=3,
             )
+        )
 
         seq_values = [int(chunk[0][0]) for chunk in sequential]
         pre_values = [int(chunk[0][0]) for chunk in prefetched]
@@ -293,102 +305,74 @@ class TestIterAudioChunksPrefetch:
 
     def test_prefetch_respects_inflight_bound(self):
         """Concurrent fetches should not exceed prefetch_inflight_segments."""
-        from unittest.mock import patch
-
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        class FakeClient:
-            def __init__(self):
-                self._lock = threading.Lock()
-                self.active = 0
-                self.max_active = 0
+        timeline = _make_timeline(8, folder_ts=1000.0, seg_dur=10.0)
+        lock = threading.Lock()
+        active = [0]
+        max_active = [0]
 
-            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
-                return ["1000"]
+        def _fetch(key):
+            with lock:
+                active[0] += 1
+                max_active[0] = max(max_active[0], active[0])
+            time.sleep(0.02)
+            with lock:
+                active[0] -= 1
+            return key.encode()
 
-            def list_segments(self, _hydrophone_id, _folder_ts):
-                return [f"hydro/hls/1000/live{i}.ts" for i in range(8)]
-
-            def fetch_playlist(self, _hydrophone_id, _folder_ts):
-                return None
-
-            def fetch_segment(self, key):
-                with self._lock:
-                    self.active += 1
-                    self.max_active = max(self.max_active, self.active)
-                time.sleep(0.02)
-                with self._lock:
-                    self.active -= 1
-                return key.encode()
-
-        def fake_decode(_ts_bytes, sr):
-            return np.zeros(sr * 10, dtype=np.float32)
-
-        client = FakeClient()
-        with patch(
-            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
-        ):
-            _ = list(
-                iter_audio_chunks(
-                    client,
-                    "rpi_orcasound_lab",
-                    1000.0,
-                    1080.0,
-                    chunk_seconds=10.0,
-                    target_sr=10,
-                    prefetch_enabled=True,
-                    prefetch_workers=8,
-                    prefetch_inflight_segments=2,
-                )
+        provider = _FakeProvider(
+            timeline,
+            fetch_fn=_fetch,
+            decode_fn=lambda _raw, sr: np.zeros(sr * 10, dtype=np.float32),
+        )
+        _ = list(
+            iter_audio_chunks(
+                provider,
+                1000.0,
+                1080.0,
+                chunk_seconds=10.0,
+                target_sr=10,
+                prefetch_enabled=True,
+                prefetch_workers=8,
+                prefetch_inflight_segments=2,
             )
+        )
 
-        assert client.max_active <= 2
+        assert max_active[0] <= 2
 
     def test_prefetch_fetch_error_reports_and_continues(self):
         """Fetch errors in prefetch mode should emit alerts and continue processing."""
-        from unittest.mock import patch
-
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        class FakeClient:
-            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
-                return ["1000"]
+        timeline = _make_timeline(3, folder_ts=1000.0, seg_dur=10.0)
 
-            def list_segments(self, _hydrophone_id, _folder_ts):
-                return [f"hydro/hls/1000/live{i}.ts" for i in range(3)]
+        def _fetch(key):
+            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            if idx == 1:
+                raise RuntimeError("boom")
+            return key.encode()
 
-            def fetch_playlist(self, _hydrophone_id, _folder_ts):
-                return None
-
-            def fetch_segment(self, key):
-                idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
-                if idx == 1:
-                    raise RuntimeError("boom")
-                return key.encode()
-
-        def fake_decode(ts_bytes, sr):
-            key = ts_bytes.decode()
+        def _decode(raw_bytes, sr):
+            key = raw_bytes.decode()
             idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
             return np.full(sr * 10, idx, dtype=np.float32)
 
-        errors = []
-        with patch(
-            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
-        ):
-            chunks = list(
-                iter_audio_chunks(
-                    FakeClient(),
-                    "rpi_orcasound_lab",
-                    1000.0,
-                    1030.0,
-                    chunk_seconds=10.0,
-                    target_sr=10,
-                    prefetch_enabled=True,
-                    prefetch_workers=3,
-                    prefetch_inflight_segments=3,
-                    on_error=errors.append,
-                )
+        provider = _FakeProvider(timeline, fetch_fn=_fetch, decode_fn=_decode)
+        errors: list = []
+        chunks = list(
+            iter_audio_chunks(
+                provider,
+                1000.0,
+                1030.0,
+                chunk_seconds=10.0,
+                target_sr=10,
+                prefetch_enabled=True,
+                prefetch_workers=3,
+                prefetch_inflight_segments=3,
+                on_error=errors.append,
             )
+        )
 
         assert len(errors) == 1
         assert "boom" in errors[0]["message"]
@@ -702,46 +686,34 @@ class TestCachingS3Client:
 
 
 class TestIterAudioChunksTimestamp:
-    """Verify chunk_start_ts uses first folder timestamp, not start_ts."""
+    """Verify chunk_start_ts uses segment start_ts, not caller start_ts."""
 
-    def test_chunk_timestamp_from_folder(self):
-        """Chunk timestamp should be based on first folder's timestamp."""
+    def test_chunk_timestamp_from_segment(self):
+        """Chunk timestamp should be based on segment's start_ts."""
         from datetime import datetime, timezone
-        from unittest.mock import MagicMock, patch
 
         from humpback.classifier.s3_stream import iter_audio_chunks
 
-        sr = 32000
-        segment_audio = np.zeros(sr * 2, dtype=np.float32)
-        wav_bytes = _make_wav_bytes(segment_audio, sr)
+        sr = 10
+        # Timeline starts at 1700010000, not the caller's start_ts (1700000000)
+        timeline = _make_timeline(1, folder_ts=1700010000.0, seg_dur=20.0)
 
-        mock_client = MagicMock()
-        # Folder timestamp is 1700010000, but start_ts is 1700000000
-        mock_client.list_hls_folders.return_value = ["1700010000"]
-        mock_client.list_segments.return_value = ["hydro/hls/1700010000/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = wav_bytes
-
-        with patch(
-            "humpback.classifier.s3_stream.subprocess.run", return_value=mock_result
-        ):
-            chunks = list(
-                iter_audio_chunks(
-                    mock_client,
-                    "rpi_orcasound_lab",
-                    1700000000,  # start_ts much earlier than folder
-                    1700020000,
-                    chunk_seconds=60.0,
-                    target_sr=sr,
-                )
+        provider = _FakeProvider(
+            timeline,
+            decode_fn=lambda _raw, sr: np.zeros(sr * 20, dtype=np.float32),
+        )
+        chunks = list(
+            iter_audio_chunks(
+                provider,
+                1700000000,  # start_ts much earlier than segment
+                1700020000,
+                chunk_seconds=60.0,
+                target_sr=sr,
             )
+        )
 
         assert len(chunks) == 1
         _, chunk_utc, _, _ = chunks[0]
-        # Should be based on folder ts (1700010000), not start_ts (1700000000)
         expected = datetime.fromtimestamp(1700010000, tz=timezone.utc)
         assert chunk_utc == expected
 
