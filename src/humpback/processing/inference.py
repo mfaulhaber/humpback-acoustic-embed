@@ -335,9 +335,9 @@ class TF2SavedModel:
         import tensorflow as tf
 
         self._vector_dim = vector_dim
+        self._gpu_warmup_attempted = False
 
-        cpus = tf.config.list_logical_devices("CPU")
-        cpu_device = cpus[0].name if cpus else "/device:CPU:0"
+        cpu_device = "/device:CPU:0"
 
         # --- Force-CPU escape hatch ---
         if force_cpu:
@@ -354,6 +354,9 @@ class TF2SavedModel:
             return
 
         # --- Attempt GPU ---
+        # Configure memory growth before logical-device queries. Listing logical
+        # devices can initialize TF runtime, after which memory-growth settings
+        # can no longer be changed.
         configure_tf_gpu()
 
         gpus = tf.config.list_logical_devices("GPU")
@@ -417,8 +420,8 @@ class TF2SavedModel:
                 self._model = gpu_model
                 self._serving_fn = gpu_fn
                 self._device = gpu_device
-                del cpu_model
                 self._auto_correct_vector_dim(model_dir)
+                self._warmup_gpu()
                 return
         except Exception:
             logger.exception(
@@ -437,6 +440,32 @@ class TF2SavedModel:
         self._device = cpu_device
         self._auto_correct_vector_dim(model_dir)
         del gpu_model
+
+    def _warmup_gpu(self) -> None:
+        """Run one-time GPU warmup calls to stabilize first real inference."""
+        import tensorflow as tf
+
+        if self._gpu_warmup_attempted or not self._device.startswith("/device:GPU:"):
+            return
+
+        self._gpu_warmup_attempted = True
+
+        # Warm both typical full and tail-batch shapes used by processing jobs.
+        warmup_batches = (64, 1)
+        try:
+            with tf.device(self._device):
+                for batch_size in warmup_batches:
+                    warmup = tf.zeros((batch_size, 160_000), dtype=tf.float32)
+                    _ = self._serving_fn(inputs=warmup)["embedding"].numpy()
+            logger.info(
+                "Completed GPU warmup for TF2 SavedModel (%s) with batch sizes %s",
+                self._device,
+                warmup_batches,
+            )
+        except Exception:
+            # Keep running on GPU even if warmup is unstable. Real inference may
+            # still succeed and we avoid silently falling back to CPU.
+            logger.exception("GPU warmup failed; continuing with GPU inference.")
 
     def _auto_correct_vector_dim(self, model_dir: str) -> None:
         """Detect actual output dim from the serving function and correct if needed."""
@@ -474,8 +503,18 @@ class TF2SavedModel:
         with tf.device(gpu_device):
             gpu_result = gpu_fn(inputs=tensor_input)["embedding"].numpy()
 
-        with tf.device(cpu_device):
-            cpu_result = cpu_fn(inputs=tensor_input)["embedding"].numpy()
+        try:
+            with tf.device(cpu_device):
+                cpu_result = cpu_fn(inputs=tensor_input)["embedding"].numpy()
+        except Exception as e:
+            if TF2SavedModel._is_cuda_only_platform_error(e):
+                logger.warning(
+                    "Skipping CPU validation: model appears CUDA-only (%s). "
+                    "Proceeding with GPU inference.",
+                    e,
+                )
+                return True
+            raise
 
         if np.allclose(gpu_result, cpu_result, atol=1e-4, rtol=1e-3):
             return True
@@ -487,6 +526,16 @@ class TF2SavedModel:
         )
         return False
 
+    @staticmethod
+    def _is_cuda_only_platform_error(exc: Exception) -> bool:
+        """Return True when error text indicates a CUDA-only compiled module."""
+        msg = str(exc)
+        return (
+            "not among the platforms required by the module: [CUDA]" in msg
+            or "XlaCallModule" in msg
+            and "required by the module" in msg
+        )
+
     @property
     def vector_dim(self) -> int:
         return self._vector_dim
@@ -495,7 +544,21 @@ class TF2SavedModel:
         """Embed raw waveform windows. Input: (batch, n_samples). Output: (batch, vector_dim)."""
         import tensorflow as tf
 
+        if self._device.startswith("/device:GPU:"):
+            self._warmup_gpu()
+
         inputs = tf.constant(waveforms, dtype=tf.float32)
-        with tf.device(self._device):
-            result = self._serving_fn(inputs=inputs)
+        try:
+            with tf.device(self._device):
+                result = self._serving_fn(inputs=inputs)
+        except Exception as e:
+            if self._device.startswith("/device:GPU:"):
+                logger.warning(
+                    "GPU inference failed once (%s). Retrying once on GPU.",
+                    e,
+                )
+                with tf.device(self._device):
+                    result = self._serving_fn(inputs=inputs)
+            else:
+                raise
         return result["embedding"].numpy()

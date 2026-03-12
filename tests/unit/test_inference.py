@@ -1,7 +1,9 @@
 from pathlib import Path
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from humpback.processing.inference import (
     FakeTF2Model,
@@ -156,6 +158,214 @@ def test_configure_tf_gpu_handles_runtime_error():
 def test_tf2_saved_model_gpu_failed_class_default():
     """TF2SavedModel.gpu_failed class attribute should default to False."""
     assert TF2SavedModel.gpu_failed is False
+
+
+def test_tf2_saved_model_configures_gpu_before_logical_device_query():
+    """Non-force path configures memory growth before logical device listing."""
+    import humpback.processing.inference as inf
+
+    events: list[str] = []
+
+    gpu = MagicMock()
+    gpu.name = "/device:GPU:0"
+
+    cpu_model = MagicMock()
+    cpu_model.signatures = {"serving_default": MagicMock()}
+    gpu_model = MagicMock()
+    gpu_model.signatures = {"serving_default": MagicMock()}
+
+    def _list_logical_devices(device_type: str):
+        events.append(f"list_logical_devices_{device_type}")
+        if device_type == "GPU":
+            return [gpu]
+        raise AssertionError(f"Unexpected logical device query: {device_type}")
+
+    with patch.object(
+        inf, "configure_tf_gpu", side_effect=lambda: events.append("configure_tf_gpu")
+    ) as mock_configure:
+        with patch(
+            "tensorflow.config.list_logical_devices", side_effect=_list_logical_devices
+        ):
+            with patch("tensorflow.device", side_effect=lambda _d: nullcontext()):
+                with patch(
+                    "tensorflow.saved_model.load", side_effect=[cpu_model, gpu_model]
+                ):
+                    with patch.object(inf, "_has_xla_must_compile", return_value=False):
+                        with patch.object(
+                            inf.TF2SavedModel, "_validate_gpu", return_value=True
+                        ):
+                            with patch.object(
+                                inf.TF2SavedModel,
+                                "_auto_correct_vector_dim",
+                                return_value=None,
+                            ):
+                                inf.TF2SavedModel("dummy_model", force_cpu=False)
+
+    mock_configure.assert_called_once()
+    assert events[0] == "configure_tf_gpu"
+    assert events[1] == "list_logical_devices_GPU"
+
+
+def test_tf2_saved_model_force_cpu_skips_gpu_configuration():
+    """force_cpu path should not configure GPU and should load under CPU device."""
+    import humpback.processing.inference as inf
+
+    model_obj = MagicMock()
+    model_obj.signatures = {"serving_default": MagicMock()}
+    device_calls: list[str] = []
+
+    def _device(device_name: str):
+        device_calls.append(device_name)
+        return nullcontext()
+
+    with patch.object(inf, "configure_tf_gpu") as mock_configure:
+        with patch("tensorflow.config.list_logical_devices") as mock_list_devices:
+            with patch("tensorflow.device", side_effect=_device):
+                with patch("tensorflow.saved_model.load", return_value=model_obj):
+                    with patch.object(
+                        inf.TF2SavedModel,
+                        "_auto_correct_vector_dim",
+                        return_value=None,
+                    ):
+                        model = inf.TF2SavedModel("dummy_model", force_cpu=True)
+
+    mock_configure.assert_not_called()
+    mock_list_devices.assert_not_called()
+    assert device_calls == ["/device:CPU:0"]
+    assert model._device == "/device:CPU:0"
+
+
+def test_tf2_saved_model_warms_up_gpu_after_validation_success():
+    """Successful GPU validation should trigger one-time GPU warmup."""
+    import humpback.processing.inference as inf
+
+    gpu = MagicMock()
+    gpu.name = "/device:GPU:0"
+
+    cpu_model = MagicMock()
+    cpu_model.signatures = {"serving_default": MagicMock()}
+    gpu_model = MagicMock()
+    gpu_model.signatures = {"serving_default": MagicMock()}
+
+    with patch.object(inf, "configure_tf_gpu"):
+        with patch("tensorflow.config.list_logical_devices", return_value=[gpu]):
+            with patch("tensorflow.device", side_effect=lambda _d: nullcontext()):
+                with patch(
+                    "tensorflow.saved_model.load", side_effect=[cpu_model, gpu_model]
+                ):
+                    with patch.object(inf, "_has_xla_must_compile", return_value=False):
+                        with patch.object(
+                            inf.TF2SavedModel, "_validate_gpu", return_value=True
+                        ):
+                            with patch.object(
+                                inf.TF2SavedModel,
+                                "_auto_correct_vector_dim",
+                                return_value=None,
+                            ):
+                                with patch.object(
+                                    inf.TF2SavedModel, "_warmup_gpu"
+                                ) as mock_warmup:
+                                    inf.TF2SavedModel("dummy_model", force_cpu=False)
+
+    mock_warmup.assert_called_once()
+
+
+def test_tf2_saved_model_embed_gpu_runtime_failure_retries_on_gpu():
+    """Runtime GPU errors should retry once on GPU without CPU fallback."""
+    model = object.__new__(TF2SavedModel)
+    model._vector_dim = 4
+    model._device = "/device:GPU:0"
+    model._warmup_gpu = MagicMock()
+
+    class _FakeTensor:
+        def __init__(self, value):
+            self._value = value
+
+        def numpy(self):
+            return self._value
+
+    expected = np.ones((2, 4), dtype=np.float32)
+    model._serving_fn = MagicMock(
+        side_effect=[
+            RuntimeError("CUDA runtime failure"),
+            {"embedding": _FakeTensor(expected)},
+        ]
+    )
+
+    with patch("tensorflow.constant", side_effect=lambda x, dtype=None: x):
+        with patch("tensorflow.device", side_effect=lambda _d: nullcontext()):
+            out = model.embed(np.zeros((2, 160000), dtype=np.float32))
+
+    np.testing.assert_array_equal(out, expected)
+    assert model._device == "/device:GPU:0"
+    model._warmup_gpu.assert_called_once()
+    assert model._serving_fn.call_count == 2
+
+
+def test_tf2_saved_model_embed_gpu_runtime_failure_raises_after_retry():
+    """If GPU retry also fails, embed should raise and remain on GPU."""
+    model = object.__new__(TF2SavedModel)
+    model._vector_dim = 4
+    model._device = "/device:GPU:0"
+    model._warmup_gpu = MagicMock()
+    model._serving_fn = MagicMock(
+        side_effect=[
+            RuntimeError("first GPU failure"),
+            RuntimeError("second GPU failure"),
+        ]
+    )
+
+    with patch("tensorflow.constant", side_effect=lambda x, dtype=None: x):
+        with patch("tensorflow.device", side_effect=lambda _d: nullcontext()):
+            with pytest.raises(RuntimeError, match="second GPU failure"):
+                model.embed(np.zeros((2, 160000), dtype=np.float32))
+
+    assert model._device == "/device:GPU:0"
+    model._warmup_gpu.assert_called_once()
+    assert model._serving_fn.call_count == 2
+
+
+def test_tf2_saved_model_cuda_only_platform_error_detection():
+    """Recognizes CUDA-only platform mismatch errors from XlaCallModule."""
+    err = RuntimeError(
+        "NOT_FOUND: The current platform CPU is not among the platforms "
+        "required by the module: [CUDA]"
+    )
+    assert TF2SavedModel._is_cuda_only_platform_error(err) is True
+
+    other = RuntimeError("some unrelated runtime error")
+    assert TF2SavedModel._is_cuda_only_platform_error(other) is False
+
+
+def test_validate_gpu_skips_cpu_compare_for_cuda_only_module():
+    """GPU validation should pass when CPU path fails due to CUDA-only module."""
+
+    class _FakeTensor:
+        def __init__(self, value):
+            self._value = value
+
+        def numpy(self):
+            return self._value
+
+    expected = np.zeros((2, 4), dtype=np.float32)
+
+    def _gpu_fn(*_args, **_kwargs):
+        return {"embedding": _FakeTensor(expected)}
+
+    def _cpu_fn(*_args, **_kwargs):
+        raise RuntimeError(
+            "NOT_FOUND: {{node XlaCallModule}} The current platform CPU is not "
+            "among the platforms required by the module: [CUDA]"
+        )
+
+    with patch("tensorflow.constant", side_effect=lambda x, dtype=None: x):
+        with patch("tensorflow.device", side_effect=lambda _d: nullcontext()):
+            assert TF2SavedModel._validate_gpu(
+                _gpu_fn,
+                _cpu_fn,
+                "/device:GPU:0",
+                "/device:CPU:0",
+            )
 
 
 # ---- _has_xla_must_compile / _strip_xla_must_compile tests ----
