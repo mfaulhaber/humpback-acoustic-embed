@@ -64,4 +64,5 @@ def test_dev_dependency_group_contains_project_tooling() -> None:
         "pytest-cov>=6.0",
         "pytest-watch>=4.2",
         "ruff>=0.15.5",
+        "supervisor>=4.3.0",
     ]

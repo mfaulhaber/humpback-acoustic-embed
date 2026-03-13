@@ -103,6 +103,18 @@ to the legacy `static/index.html`.
 For Linux GPU deployments that do not need developer tools, use
 `uv sync --extra tf-linux-gpu`.
 
+If you want to manage the API and worker with Supervisor on the host, install it
+with:
+
+```bash
+uv tool install supervisor
+```
+
+The checked-in [`supervisord.conf`](/Users/michael/development/humpback-acoustic-embed/supervisord.conf)
+manages only `humpback-api` and `humpback-worker`. Build the frontend during
+deploy with `cd frontend && npm ci && npm run build`, then let the API serve the
+compiled SPA.
+
 ---
 
 ## Architecture

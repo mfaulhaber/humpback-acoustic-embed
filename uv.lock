@@ -89,8 +89,8 @@ name = "astunparse"
 version = "1.6.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "six", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
-    { name = "wheel", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "six" },
+    { name = "wheel" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/af/4182184d3c338792894f34a62672919db7ca008c89abee9b564dd34d8029/astunparse-1.6.3.tar.gz", hash = "sha256:5ad93a8456f0d084c3456d059fd9a92cce667963232cbf763eac3bc5b7940872", size = 18290, upload-time = "2019-12-22T18:12:13.129Z" }
 wheels = [
@@ -563,7 +563,7 @@ name = "google-pasta"
 version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "six", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "six" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/35/4a/0bd53b36ff0323d10d5f24ebd67af2de10a1117f5cf4d7add90df92756f1/google-pasta-0.2.0.tar.gz", hash = "sha256:c9f2c8dfc8f96d0d5808299920721be30c9eec37f2389f28904f454565c8a16e", size = 40430, upload-time = "2020-03-13T18:57:50.34Z" }
 wheels = [
@@ -626,7 +626,7 @@ name = "grpcio"
 version = "1.78.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/8a/3d098f35c143a89520e568e6539cc098fcd294495910e359889ce8741c84/grpcio-1.78.0.tar.gz", hash = "sha256:7382b95189546f375c174f53a5fa873cef91c4b8005faa05cc5b3beea9c4f1c5", size = 12852416, upload-time = "2026-02-06T09:57:18.093Z" }
 wheels = [
@@ -666,7 +666,7 @@ name = "h5py"
 version = "3.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4d/6a/0d79de0b025aa85dc8864de8e97659c94cf3d23148394a954dc5ca52f8c8/h5py-3.15.1.tar.gz", hash = "sha256:c86e3ed45c4473564de55aa83b6fc9e5ead86578773dfbd93047380042e26b69", size = 426236, upload-time = "2025-10-16T10:35:27.404Z" }
 wheels = [
@@ -805,6 +805,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-watch" },
     { name = "ruff" },
+    { name = "supervisor" },
 ]
 
 [package.metadata]
@@ -846,6 +847,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "pytest-watch", specifier = ">=4.2" },
     { name = "ruff", specifier = ">=0.15.5" },
+    { name = "supervisor", specifier = ">=4.3.0" },
 ]
 
 [[package]]
@@ -898,15 +900,15 @@ name = "keras"
 version = "3.13.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
-    { name = "h5py", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "absl-py" },
+    { name = "h5py" },
     { name = "ml-dtypes", version = "0.3.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' and extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu') or (extra != 'extra-23-humpback-acoustic-embed-tf-linux-gpu' and extra == 'extra-23-humpback-acoustic-embed-tf-macos') or (extra != 'extra-23-humpback-acoustic-embed-tf-linux-cpu' and extra == 'extra-23-humpback-acoustic-embed-tf-macos')" },
     { name = "ml-dtypes", version = "0.5.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu'" },
-    { name = "namex", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
-    { name = "numpy", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
-    { name = "optree", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
-    { name = "packaging", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
-    { name = "rich", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "namex" },
+    { name = "numpy" },
+    { name = "optree" },
+    { name = "packaging" },
+    { name = "rich" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/09/e9/400582e5f3dbd815d2a373f7de7717dd1bc8349274e9ac1b9ac47410b123/keras-3.13.2.tar.gz", hash = "sha256:62f0123488ac87c929c988617e14f293f7bc993811837d08bb37eff77adc85a9", size = 1155875, upload-time = "2026-01-30T00:35:13.796Z" }
 wheels = [
@@ -1055,7 +1057,7 @@ name = "markdown-it-py"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mdurl", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "mdurl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5b/f5/4ec618ed16cc4f8fb3b701563655a69816155e79e24a17b651541804721d/markdown_it_py-4.0.0.tar.gz", hash = "sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3", size = 73070, upload-time = "2025-08-11T12:57:52.854Z" }
 wheels = [
@@ -1420,7 +1422,7 @@ name = "optree"
 version = "0.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3d/63/7b078bc36d5a206c21b03565a818ede38ff0fbf014e92085ec467ef10adb/optree-0.19.0.tar.gz", hash = "sha256:bc1991a948590756409e76be4e29efd4a487a185056d35db6c67619c19ea27a1", size = 175199, upload-time = "2026-02-23T01:56:37.752Z" }
 wheels = [
@@ -1915,8 +1917,8 @@ name = "rich"
 version = "14.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "markdown-it-py", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
-    { name = "pygments", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "markdown-it-py" },
+    { name = "pygments" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b3/c6/f3b320c27991c46f43ee9d856302c70dc2d0fb2dba4842ff739d5f46b393/rich-14.3.3.tar.gz", hash = "sha256:b8daa0b9e4eef54dd8cf7c86c03713f53241884e814f4e2f5fb342fe520f639b", size = 230582, upload-time = "2026-02-19T17:23:12.474Z" }
 wheels = [
@@ -2130,6 +2132,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/0d/13d1d239a25cbfb19e740db83143e95c772a1fe10202dda4b76792b114dd/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74", size = 74272, upload-time = "2026-01-18T13:34:09.188Z" },
+]
+
+[[package]]
+name = "supervisor"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/b5/37e7a3706de436a8a2d75334711dad1afb4ddffab09f25e31d89e467542f/supervisor-4.3.0.tar.gz", hash = "sha256:4a2bf149adf42997e1bb44b70c43b613275ec9852c3edacca86a9166b27e945e", size = 468912, upload-time = "2025-08-23T18:25:02.418Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0e/65/5e726c372da8a5e35022a94388b12252710aad0c2351699c3d76ae8dba78/supervisor-4.3.0-py2.py3-none-any.whl", hash = "sha256:0bcb763fddafba410f35cbde226aa7f8514b9fb82eb05a0c85f6588d1c13f8db", size = 320736, upload-time = "2025-08-23T18:25:00.767Z" },
 ]
 
 [[package]]
@@ -2631,7 +2642,7 @@ name = "werkzeug"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "markupsafe", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "markupsafe" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/f1/ee81806690a87dab5f5653c1f146c92bc066d7f4cebc603ef88eb9e13957/werkzeug-3.1.6.tar.gz", hash = "sha256:210c6bede5a420a913956b4791a7f4d6843a43b6fcee4dfa08a65e93007d0d25", size = 864736, upload-time = "2026-02-19T15:17:18.884Z" }
 wheels = [
@@ -2643,7 +2654,7 @@ name = "wheel"
 version = "0.46.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", marker = "extra == 'extra-23-humpback-acoustic-embed-tf-linux-cpu' or extra == 'extra-23-humpback-acoustic-embed-tf-linux-gpu' or extra == 'extra-23-humpback-acoustic-embed-tf-macos'" },
+    { name = "packaging" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/89/24/a2eb353a6edac9a0303977c4cb048134959dd2a51b48a269dfc9dde00c8a/wheel-0.46.3.tar.gz", hash = "sha256:e3e79874b07d776c40bd6033f8ddf76a7dad46a7b8aa1b2787a83083519a1803", size = 60605, upload-time = "2026-01-22T12:39:49.136Z" }
 wheels = [

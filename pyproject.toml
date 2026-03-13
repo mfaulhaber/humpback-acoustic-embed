@@ -87,4 +87,5 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-watch>=4.2",
     "ruff>=0.15.5",
+    "supervisor>=4.3.0",
 ]
