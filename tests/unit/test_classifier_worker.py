@@ -17,7 +17,7 @@ async def test_hydrophone_extraction_uses_local_hls_client_with_default_cache_pa
     tmp_path,
     monkeypatch,
 ):
-    """Hydrophone extraction should use LocalHLSClient(settings.s3_cache_path)."""
+    """Hydrophone extraction should use the local-cache provider builder."""
     tsv_path = tmp_path / "detections.tsv"
     tsv_path.write_text(
         "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
@@ -27,33 +27,29 @@ async def test_hydrophone_extraction_uses_local_hls_client_with_default_cache_pa
     settings.s3_cache_path = str(tmp_path / "cache-root")
     capture: dict[str, object] = {}
 
-    class DummyLocalHLSClient:
-        def __init__(self, cache_path: str):
-            capture["cache_path"] = cache_path
-
-    class DummyCachingS3Client:
-        def __init__(self, _cache_path: str):
-            raise AssertionError("CachingS3Client should not be used for extraction")
+    class DummyProvider:
+        source_id = "rpi_orcasound_lab"
 
     def _fake_extract_hydrophone_labeled_samples(
         _tsv_path,
-        _hydrophone_id,
+        provider,
         _positive_output_path,
         _negative_output_path,
-        client,
         *_args,
         **_kwargs,
     ):
-        capture["client"] = client
+        capture["provider"] = provider
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
+    def _fake_build_local_provider(source_id: str, name: str, cache_path: str):
+        capture["source_id"] = source_id
+        capture["name"] = name
+        capture["cache_path"] = cache_path
+        return DummyProvider()
+
     monkeypatch.setattr(
-        "humpback.classifier.s3_stream.LocalHLSClient",
-        DummyLocalHLSClient,
-    )
-    monkeypatch.setattr(
-        "humpback.classifier.s3_stream.CachingS3Client",
-        DummyCachingS3Client,
+        "humpback.workers.classifier_worker.build_orcasound_local_cache_provider",
+        _fake_build_local_provider,
     )
     monkeypatch.setattr(
         "humpback.classifier.extractor.extract_hydrophone_labeled_samples",
@@ -85,7 +81,9 @@ async def test_hydrophone_extraction_uses_local_hls_client_with_default_cache_pa
     await session.refresh(job)
 
     assert capture["cache_path"] == settings.s3_cache_path
-    assert isinstance(capture["client"], DummyLocalHLSClient)
+    assert capture["source_id"] == "rpi_orcasound_lab"
+    assert capture["name"] == "Orcasound Lab"
+    assert isinstance(capture["provider"], DummyProvider)
     assert job.extract_status == "complete"
     assert job.extract_summary is not None
 
@@ -214,7 +212,31 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
         _fake_get_model_by_version,
     )
 
+    class DummyProvider:
+        source_id = "rpi_orcasound_lab"
+
+    capture: dict[str, object] = {}
+
+    def _fake_build_detection_provider(
+        source_id: str,
+        name: str,
+        *,
+        local_cache_path: str | None,
+        s3_cache_path: str | None,
+    ):
+        capture["source_id"] = source_id
+        capture["name"] = name
+        capture["local_cache_path"] = local_cache_path
+        capture["s3_cache_path"] = s3_cache_path
+        return DummyProvider()
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.build_orcasound_detection_provider",
+        _fake_build_detection_provider,
+    )
+
     def _fake_run_hydrophone_detection(*args, **_kwargs):
+        capture["provider"] = args[0]
         on_chunk_complete = args[13]
         det = {
             "filename": "20250702T070018Z.wav",
@@ -254,3 +276,6 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
     assert job.result_summary is not None
     assert job.segments_processed == 1
     assert job.segments_total == 1
+    assert capture["source_id"] == "rpi_orcasound_lab"
+    assert capture["name"] == "Orcasound Lab"
+    assert capture["provider"] is not None

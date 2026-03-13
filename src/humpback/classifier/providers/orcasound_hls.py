@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from humpback.classifier.archive import StreamSegment
+from humpback.classifier.archive import ArchiveProvider, StreamSegment
 from humpback.classifier.s3_stream import (
     CachingS3Client,
     LocalHLSClient,
@@ -111,3 +111,27 @@ class LocalHLSCacheProvider:
 
     def invalidate_cached_segment(self, key: str) -> bool:
         return self._client.invalidate_cached_segment(key)
+
+
+def build_orcasound_detection_provider(
+    source_id: str,
+    name: str,
+    *,
+    local_cache_path: str | None,
+    s3_cache_path: str | None,
+) -> ArchiveProvider:
+    """Build the provider used by hydrophone detection jobs."""
+    if local_cache_path:
+        return LocalHLSCacheProvider(local_cache_path, source_id, name)
+    if s3_cache_path:
+        return CachingHLSProvider(s3_cache_path, source_id, name)
+    return OrcasoundHLSProvider(source_id, name)
+
+
+def build_orcasound_local_cache_provider(
+    source_id: str,
+    name: str,
+    cache_root: str,
+) -> LocalHLSCacheProvider:
+    """Build the local-cache-authoritative provider for playback/extraction."""
+    return LocalHLSCacheProvider(cache_root, source_id, name)

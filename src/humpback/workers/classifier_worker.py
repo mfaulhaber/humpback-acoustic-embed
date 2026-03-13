@@ -20,6 +20,10 @@ from humpback.classifier.detector import (
     write_window_diagnostics,
 )
 from humpback.classifier.extractor import extract_labeled_samples
+from humpback.classifier.providers import (
+    build_orcasound_detection_provider,
+    build_orcasound_local_cache_provider,
+)
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
 from humpback.models.classifier import (
@@ -368,7 +372,14 @@ async def run_hydrophone_detection_job(
         hydrophone_id = job.hydrophone_id
         start_timestamp = job.start_timestamp
         end_timestamp = job.end_timestamp
-        hydrophone_short_name = hydrophone_id
+        provider_name = job.hydrophone_name or hydrophone_id
+        hydrophone_provider = build_orcasound_detection_provider(
+            hydrophone_id,
+            provider_name,
+            local_cache_path=job.local_cache_path,
+            s3_cache_path=settings.s3_cache_path,
+        )
+        hydrophone_short_name = hydrophone_provider.source_id
 
         # Progress callback
         def on_chunk_complete(
@@ -459,7 +470,7 @@ async def run_hydrophone_detection_job(
 
             detections, summary = await asyncio.to_thread(
                 run_hydrophone_detection,
-                hydrophone_id,
+                hydrophone_provider,
                 start_timestamp,
                 end_timestamp,
                 pipeline,
@@ -475,8 +486,6 @@ async def run_hydrophone_detection_job(
                 on_chunk_complete,
                 on_alert,
                 cancel_event.is_set,
-                job.local_cache_path,
-                settings.s3_cache_path,
                 pause_gate,
                 skip_segments,
                 prior_detections,
@@ -578,22 +587,25 @@ async def run_extraction_job(
 
         if job.hydrophone_id:
             from humpback.classifier.extractor import extract_hydrophone_labeled_samples
-            from humpback.classifier.s3_stream import LocalHLSClient
 
             cache_path = job.local_cache_path or settings.s3_cache_path
             if cache_path is None:
                 raise ValueError(
                     "Hydrophone extraction requires a configured cache path"
                 )
-            extract_client = LocalHLSClient(cache_path)
+            provider_name = job.hydrophone_name or job.hydrophone_id
+            extract_provider = build_orcasound_local_cache_provider(
+                job.hydrophone_id,
+                provider_name,
+                cache_path,
+            )
 
             summary = await asyncio.to_thread(
                 extract_hydrophone_labeled_samples,
                 job.output_tsv_path,
-                job.hydrophone_id,
+                extract_provider,
                 pos_path,
                 neg_path,
-                extract_client,
                 cm.target_sample_rate if cm else 32000,
                 ws,
                 job.start_timestamp,

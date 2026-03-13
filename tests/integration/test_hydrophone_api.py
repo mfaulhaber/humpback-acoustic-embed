@@ -800,7 +800,7 @@ async def test_hydrophone_audio_slice_late_row_uses_first_folder_anchor(
         lambda _self, _key: b"fake-ts",
     )
     monkeypatch.setattr(
-        "humpback.classifier.s3_stream.decode_ts_bytes",
+        "humpback.classifier.providers.orcasound_hls.decode_ts_bytes",
         lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
     )
 
@@ -869,7 +869,7 @@ async def test_hydrophone_audio_slice_legacy_anchor_fallback_still_works(
         lambda _self, _key: b"fake-ts",
     )
     monkeypatch.setattr(
-        "humpback.classifier.s3_stream.decode_ts_bytes",
+        "humpback.classifier.providers.orcasound_hls.decode_ts_bytes",
         lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
     )
 
@@ -939,7 +939,7 @@ async def test_hydrophone_audio_slice_rejects_rows_beyond_job_end(
         lambda _self, _key: b"fake-ts",
     )
     monkeypatch.setattr(
-        "humpback.classifier.s3_stream.decode_ts_bytes",
+        "humpback.classifier.providers.orcasound_hls.decode_ts_bytes",
         lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
     )
 
@@ -962,6 +962,7 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
 ):
     """Hydrophone detector should not emit detections beyond job end time."""
     from humpback.classifier.hydrophone_detector import run_hydrophone_detection
+    from humpback.classifier.providers import LocalHLSCacheProvider
     from humpback.config import ORCASOUND_S3_BUCKET
 
     hydrophone_id = "rpi_orcasound_lab"
@@ -990,7 +991,7 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
     )
 
     monkeypatch.setattr(
-        "humpback.classifier.s3_stream.decode_ts_bytes",
+        "humpback.classifier.providers.orcasound_hls.decode_ts_bytes",
         lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
     )
 
@@ -1009,8 +1010,9 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
                 [np.full(n, 0.1, dtype=np.float32), np.full(n, 0.9, dtype=np.float32)]
             )
 
+    provider = LocalHLSCacheProvider(str(tmp_path), hydrophone_id, hydrophone_id)
     detections, _summary = run_hydrophone_detection(
-        hydrophone_id=hydrophone_id,
+        provider=provider,
         start_timestamp=1000.0,
         end_timestamp=1025.0,
         pipeline=cast(Any, FakePipeline()),
@@ -1022,8 +1024,6 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
         hop_seconds=5.0,
         high_threshold=0.7,
         low_threshold=0.45,
-        local_cache_path=str(tmp_path),
-        s3_cache_path=None,
     )
 
     assert detections

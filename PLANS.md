@@ -10,6 +10,31 @@
 
 ## Recently Completed
 
+# Plan: ArchiveProvider Abstraction — Phase 3: Adapt Upstream Consumers
+
+[Full plan](/Users/michael/.claude/plans/peaceful-herding-rossum.md)
+
+## Outcome (2026-03-13)
+
+- Migrated `hydrophone_detector.py`, `extractor.py`, `classifier_worker.py`, and the
+  classifier API router to construct and pass `ArchiveProvider` instances instead of
+  raw clients plus `hydrophone_id`.
+- Added Orcasound provider factory helpers so detection uses the existing
+  local-cache -> S3-cache -> direct-S3 priority while playback and extraction remain
+  local-cache-authoritative.
+- Removed the temporary backward-compat wrappers from `s3_stream.py`
+  (`build_hydrophone_stream_timeline`, `resolve_hydrophone_audio_slice`,
+  `_ClientAdapter`, and the legacy `iter_audio_chunks` signature).
+- Updated provider, stream, extractor, worker, and hydrophone API tests to exercise
+  the provider-only path end to end.
+
+## Verification
+
+- `uv run ruff check` on modified backend/tests — passed.
+- `uv run pyright` — passed.
+- `uv run pytest tests/unit/test_archive_providers.py tests/unit/test_s3_stream.py tests/unit/test_hydrophone_resume.py tests/unit/test_extractor.py tests/unit/test_classifier_worker.py tests/integration/test_hydrophone_api.py tests/integration/test_classifier_api.py -q` — 159 passed.
+- `uv run pytest tests/` — 552 passed.
+
 # Plan: Refactor Classifier/Detection Active Job UI and Backend
 
 [Full plan](/Users/michael/.claude/plans/fizzy-seeking-valley.md)
@@ -703,7 +728,6 @@
 - Expand Pyright enforcement beyond `src/humpback` to `scripts/`, then `tests/`,
   after clearing the remaining type-checking backlog in those areas.
 - Smoke-test `tf-linux-gpu` on a real Ubuntu/NVIDIA host — verify `uv sync --extra tf-linux-gpu`, TensorFlow import, and GPU device visibility/runtime behavior.
-- [ArchiveProvider Phase 3: Adapt upstream consumers](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — migrate `hydrophone_detector.py`, `extractor.py`, `classifier_worker.py`, and API router to construct and pass `ArchiveProvider` instances instead of raw clients + hydrophone_id. Remove backward-compat wrappers in `s3_stream.py` once all callers are migrated.
 - [ArchiveProvider Phase 4: Promote NOAA GCS provider](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — move NOAA GCS POC into `providers/noaa_gcs.py` as a proper `ArchiveProvider` implementation, wire into worker/router, add tests.
 - Explore GPU-accelerated batch processing for large audio libraries
 - Add WebSocket push for real-time job status updates (replace polling)

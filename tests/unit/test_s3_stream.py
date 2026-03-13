@@ -730,28 +730,9 @@ class TestResolveHydrophoneAudioSliceOrdering:
     def test_resolver_does_not_jump_to_lexicographic_segment(self):
         """Slice crossing live100->live101 boundary should never include live1000."""
         from datetime import datetime, timezone
-        from unittest.mock import patch
 
-        from humpback.classifier.s3_stream import resolve_hydrophone_audio_slice
-
-        class FakeClient:
-            def list_hls_folders(self, _hydrophone_id, _start_ts, _end_ts):
-                return ["1500"]
-
-            def list_segments(self, _hydrophone_id, _folder_ts):
-                # Deliberately unsorted and mixed-width.
-                return [
-                    "hydro/hls/1500/live99.ts",
-                    "hydro/hls/1500/live1000.ts",
-                    "hydro/hls/1500/live100.ts",
-                    "hydro/hls/1500/live101.ts",
-                ]
-
-            def fetch_playlist(self, _hydrophone_id, _folder_ts):
-                return None
-
-            def fetch_segment(self, key):
-                return key.encode()
+        from humpback.classifier.archive import StreamSegment
+        from humpback.classifier.s3_stream import resolve_audio_slice
 
         def fake_decode(ts_bytes, sr):
             key = ts_bytes.decode()
@@ -760,24 +741,31 @@ class TestResolveHydrophoneAudioSliceOrdering:
             value = float(int(match.group(1)))
             return np.full(sr * 10, value, dtype=np.float32)
 
+        provider = _FakeProvider(
+            [
+                StreamSegment("hydro/hls/1500/live99.ts", 1500.0, 10.0),
+                StreamSegment("hydro/hls/1500/live100.ts", 1510.0, 10.0),
+                StreamSegment("hydro/hls/1500/live101.ts", 1520.0, 10.0),
+                StreamSegment("hydro/hls/1500/live1000.ts", 1530.0, 10.0),
+            ],
+            fetch_fn=lambda key: key.encode(),
+            decode_fn=fake_decode,
+        )
+
         filename = (
             datetime.fromtimestamp(1500, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             + ".wav"
         )
 
-        with patch(
-            "humpback.classifier.s3_stream.decode_ts_bytes", side_effect=fake_decode
-        ):
-            audio = resolve_hydrophone_audio_slice(
-                client=FakeClient(),
-                hydrophone_id="rpi_orcasound_lab",
-                stream_start_ts=1000.0,
-                stream_end_ts=3000.0,
-                filename=filename,
-                row_start_sec=19.0,  # 1s before boundary between live100 and live101
-                duration_sec=5.0,
-                target_sr=10,
-            )
+        audio = resolve_audio_slice(
+            provider=provider,
+            stream_start_ts=1000.0,
+            stream_end_ts=3000.0,
+            filename=filename,
+            row_start_sec=19.0,  # 1s before boundary between live100 and live101
+            duration_sec=5.0,
+            target_sr=10,
+        )
 
         # First 1s (10 samples) from live100, remaining 4s from live101.
         assert len(audio) == 50
@@ -795,11 +783,11 @@ class TestSparseLocalCacheTimeline:
         """Local-only playback should resolve sparse mid-sequence cached segments."""
         from datetime import datetime, timezone
 
+        from humpback.classifier.providers import LocalHLSCacheProvider
         from humpback.classifier.s3_stream import (
-            LocalHLSClient,
             ORCASOUND_S3_BUCKET,
-            build_hydrophone_stream_timeline,
-            resolve_hydrophone_audio_slice,
+            build_stream_timeline,
+            resolve_audio_slice,
         )
 
         hydrophone_id = "rpi_orcasound_lab"
@@ -817,14 +805,13 @@ class TestSparseLocalCacheTimeline:
             (hls_dir / f"live{i:03d}.ts").write_bytes(b"fake-ts")
 
         monkeypatch.setattr(
-            "humpback.classifier.s3_stream.decode_ts_bytes",
+            "humpback.classifier.providers.orcasound_hls.decode_ts_bytes",
             lambda _ts_bytes, sr: np.ones(sr * 10, dtype=np.float32),
         )
 
-        client = LocalHLSClient(str(tmp_path))
-        timeline = build_hydrophone_stream_timeline(
-            client=client,
-            hydrophone_id=hydrophone_id,
+        provider = LocalHLSCacheProvider(str(tmp_path), hydrophone_id, hydrophone_id)
+        timeline = build_stream_timeline(
+            provider=provider,
             stream_start_ts=1800.0,
             stream_end_ts=1900.0,
         )
@@ -838,9 +825,8 @@ class TestSparseLocalCacheTimeline:
             datetime.fromtimestamp(1800, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             + ".wav"
         )
-        audio = resolve_hydrophone_audio_slice(
-            client=client,
-            hydrophone_id=hydrophone_id,
+        audio = resolve_audio_slice(
+            provider=provider,
             stream_start_ts=1800.0,
             stream_end_ts=1900.0,
             filename=filename,

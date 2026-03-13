@@ -5,6 +5,8 @@ from humpback.classifier.providers.orcasound_hls import (
     CachingHLSProvider,
     LocalHLSCacheProvider,
     OrcasoundHLSProvider,
+    build_orcasound_detection_provider,
+    build_orcasound_local_cache_provider,
 )
 
 __all__ = [
@@ -13,4 +15,6 @@ __all__ = [
     "LocalHLSCacheProvider",
     "OrcasoundHLSProvider",
     "StreamSegment",
+    "build_orcasound_detection_provider",
+    "build_orcasound_local_cache_provider",
 ]

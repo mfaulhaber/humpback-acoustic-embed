@@ -66,6 +66,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Write-through S3 cache (`CachingS3Client`): fetches from S3 on first access, caches segments locally with atomic writes, 404 markers for missing segments
 - Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
 - Client priority: local_cache_path > s3_cache_path > direct S3
+- ArchiveProvider abstraction now spans detection, playback, extraction, and worker/router
+  orchestration; upstream hydrophone consumers pass providers instead of raw clients plus
+  `hydrophone_id`
 - 4 configured hydrophones: Orcasound Lab, North San Juan Channel, Port Townsend, Bush Point
 - Segment fetch retry: transient S3 errors (IncompleteRead, ReadTimeoutError, ConnectionError) retried up to 3× with exponential backoff (1s/2s/4s); explicit `connect_timeout=10`, `read_timeout=30`
 - Ordered concurrent S3 segment prefetch for hydrophone detection (configurable workers + in-flight bound), while preserving timeline order and existing retry/alert behavior

@@ -10,6 +10,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from humpback.classifier.archive import ArchiveProvider
+from humpback.classifier.s3_stream import build_stream_timeline, resolve_audio_slice
 from humpback.processing.audio_io import decode_audio
 
 logger = logging.getLogger(__name__)
@@ -207,26 +209,34 @@ def extract_labeled_samples(
 
 
 def _fetch_audio_range(
-    client,
-    hydrophone_id: str,
+    provider: ArchiveProvider,
     abs_start_ts: float,
     abs_end_ts: float,
     target_sr: int,
 ) -> np.ndarray | None:
-    """Fetch and decode HLS segments covering a time range, return audio array."""
-    from humpback.classifier.s3_stream import decode_ts_bytes
-
-    folders = client.list_hls_folders(hydrophone_id, abs_start_ts, abs_end_ts)
+    """Fetch and decode provider audio covering a time range."""
+    timeline = provider.build_timeline(abs_start_ts, abs_end_ts)
     all_audio: list[np.ndarray] = []
-    for folder_ts in folders:
-        segs = client.list_segments(hydrophone_id, folder_ts)
-        for seg_key in segs:
-            try:
-                seg_bytes = client.fetch_segment(seg_key)
-                audio = decode_ts_bytes(seg_bytes, target_sr)
-                all_audio.append(audio)
-            except Exception:
-                continue
+    for segment in timeline:
+        try:
+            seg_bytes = provider.fetch_segment(segment.key)
+            audio = provider.decode_segment(seg_bytes, target_sr)
+        except Exception:
+            continue
+        if len(audio) == 0:
+            continue
+        decoded_end_ts = segment.start_ts + (len(audio) / target_sr)
+        start_ts = max(segment.start_ts, abs_start_ts)
+        end_ts = min(decoded_end_ts, abs_end_ts)
+        if end_ts <= start_ts:
+            continue
+        start_sample = max(0, int(round((start_ts - segment.start_ts) * target_sr)))
+        end_sample = min(
+            len(audio), int(round((end_ts - segment.start_ts) * target_sr))
+        )
+        if end_sample <= start_sample:
+            continue
+        all_audio.append(audio[start_sample:end_sample])
     if not all_audio:
         return None
     return np.concatenate(all_audio)
@@ -278,10 +288,9 @@ def _snap_range_for_window(
 
 def extract_hydrophone_labeled_samples(
     tsv_path: str | Path,
-    hydrophone_id: str,
+    provider: ArchiveProvider,
     positive_output_path: str | Path,
     negative_output_path: str | Path,
-    client,
     target_sample_rate: int = 32000,
     window_size_seconds: float = 5.0,
     stream_start_timestamp: float | None = None,
@@ -339,24 +348,17 @@ def extract_hydrophone_labeled_samples(
     processing_start_ts: float | None = None
     stream_start_ts_value: float | None = None
     stream_end_ts_value: float | None = None
-    resolve_hydrophone_audio_slice_fn = None
 
     if use_stream_resolver:
         assert stream_start_timestamp is not None
         assert stream_end_timestamp is not None
-        from humpback.classifier.s3_stream import (
-            build_hydrophone_stream_timeline,
-            resolve_hydrophone_audio_slice,
-        )
 
         stream_start_ts_value = float(stream_start_timestamp)
         stream_end_ts_value = float(stream_end_timestamp)
-        resolve_hydrophone_audio_slice_fn = resolve_hydrophone_audio_slice
 
         try:
-            stream_timeline = build_hydrophone_stream_timeline(
-                client=client,
-                hydrophone_id=hydrophone_id,
+            stream_timeline = build_stream_timeline(
+                provider=provider,
                 stream_start_ts=stream_start_ts_value,
                 stream_end_ts=stream_end_ts_value,
             )
@@ -366,7 +368,7 @@ def extract_hydrophone_labeled_samples(
         except Exception as exc:
             logger.warning(
                 "Hydrophone extraction timeline unavailable for %s [%.1f, %.1f]: %s",
-                hydrophone_id,
+                provider.source_id,
                 stream_start_ts_value,
                 stream_end_ts_value,
                 exc,
@@ -436,18 +438,25 @@ def extract_hydrophone_labeled_samples(
             labels_to_write: list[tuple[Path, str]] = []
             if row.get("humpback", "").strip() == "1":
                 out_dir = (
-                    positive_output_path / "humpback" / hydrophone_id / date_folder
+                    positive_output_path / "humpback" / provider.source_id / date_folder
                 )
                 labels_to_write.append((out_dir, "humpback"))
             if row.get("orca", "").strip() == "1":
-                out_dir = positive_output_path / "orca" / hydrophone_id / date_folder
+                out_dir = (
+                    positive_output_path / "orca" / provider.source_id / date_folder
+                )
                 labels_to_write.append((out_dir, "orca"))
             if row.get("ship", "").strip() == "1":
-                out_dir = negative_output_path / "ship" / hydrophone_id / date_folder
+                out_dir = (
+                    negative_output_path / "ship" / provider.source_id / date_folder
+                )
                 labels_to_write.append((out_dir, "ship"))
             if row.get("background", "").strip() == "1":
                 out_dir = (
-                    negative_output_path / "background" / hydrophone_id / date_folder
+                    negative_output_path
+                    / "background"
+                    / provider.source_id
+                    / date_folder
                 )
                 labels_to_write.append((out_dir, "background"))
 
@@ -469,13 +478,11 @@ def extract_hydrophone_labeled_samples(
                 if not stream_timeline:
                     counts["n_skipped"] += len(pending_writes)
                     continue
-                assert resolve_hydrophone_audio_slice_fn is not None
                 assert stream_start_ts_value is not None
                 assert stream_end_ts_value is not None
                 try:
-                    segment = resolve_hydrophone_audio_slice_fn(
-                        client=client,
-                        hydrophone_id=hydrophone_id,
+                    segment = resolve_audio_slice(
+                        provider=provider,
                         stream_start_ts=stream_start_ts_value,
                         stream_end_ts=stream_end_ts_value,
                         filename=source_filename,
@@ -498,7 +505,7 @@ def extract_hydrophone_labeled_samples(
                 # Backward-compatible fallback for direct callers that do not
                 # provide stream bounds.
                 combined = _fetch_audio_range(
-                    client, hydrophone_id, abs_start_ts, abs_end_ts, target_sample_rate
+                    provider, abs_start_ts, abs_end_ts, target_sample_rate
                 )
                 if combined is not None:
                     end_sample = min(int(duration * target_sample_rate), len(combined))

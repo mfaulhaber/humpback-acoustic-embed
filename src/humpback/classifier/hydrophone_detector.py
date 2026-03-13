@@ -9,16 +9,14 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 from sklearn.pipeline import Pipeline
 
+from humpback.classifier.archive import ArchiveProvider
 from humpback.classifier.detector import (
     merge_detection_events,
     snap_and_merge_detection_events,
 )
 from humpback.classifier.s3_stream import (
-    CachingS3Client,
     DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
     DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
-    LocalHLSClient,
-    OrcasoundS3Client,
     iter_audio_chunks,
 )
 from humpback.processing.features import extract_logmel_batch
@@ -62,7 +60,7 @@ def _build_detection_filename(
 
 
 def run_hydrophone_detection(
-    hydrophone_id: str,
+    provider: ArchiveProvider,
     start_timestamp: float,
     end_timestamp: float,
     pipeline: Pipeline,
@@ -78,8 +76,6 @@ def run_hydrophone_detection(
     on_chunk_complete: Callable | None = None,
     on_alert: Callable | None = None,
     cancel_check: Callable[[], bool] | None = None,
-    local_cache_path: str | None = None,
-    s3_cache_path: str | None = None,
     pause_gate: "threading.Event | None" = None,
     skip_segments: int = 0,
     prior_detections: list[dict] | None = None,
@@ -89,11 +85,6 @@ def run_hydrophone_detection(
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
-    Client selection priority:
-    1. local_cache_path → LocalHLSClient (pre-downloaded cache)
-    2. s3_cache_path → CachingS3Client (write-through S3 cache)
-    3. fallback → OrcasoundS3Client (direct S3, no caching)
-
     Resume support:
     - skip_segments: number of timeline segments to skip (already processed)
     - prior_detections: detections from previous run to preserve
@@ -102,19 +93,8 @@ def run_hydrophone_detection(
     """
     feature_config = feature_config or {}
     normalization = feature_config.get("normalization", "per_window_max")
-
-    client: OrcasoundS3Client | LocalHLSClient | CachingS3Client
-    if local_cache_path:
-        client = LocalHLSClient(local_cache_path)
-    elif s3_cache_path:
-        client = CachingS3Client(s3_cache_path)
-    else:
-        client = OrcasoundS3Client()
     use_prefetch = (
-        prefetch_enabled
-        and isinstance(client, (CachingS3Client, OrcasoundS3Client))
-        and prefetch_workers > 1
-        and prefetch_inflight_segments > 1
+        prefetch_enabled and prefetch_workers > 1 and prefetch_inflight_segments > 1
     )
 
     all_detections: list[dict] = list(prior_detections) if prior_detections else []
@@ -136,8 +116,7 @@ def run_hydrophone_detection(
         t_audio_decode_total += decode_sec
 
     for chunk_audio, chunk_start_utc, segs_done, segs_total in iter_audio_chunks(
-        client,
-        hydrophone_id,
+        provider,
         start_timestamp,
         end_timestamp,
         chunk_seconds=60.0,
@@ -275,7 +254,7 @@ def run_hydrophone_detection(
         "hop_seconds": hop_seconds,
         "high_threshold": high_threshold,
         "low_threshold": low_threshold,
-        "hydrophone_id": hydrophone_id,
+        "hydrophone_id": provider.source_id,
         "time_covered_sec": time_covered,
         "prefetch_enabled": use_prefetch,
         "fetch_sec": t_fetch_total,

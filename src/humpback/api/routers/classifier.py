@@ -20,6 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.classifier.providers import build_orcasound_local_cache_provider
 from humpback.schemas.classifier import (
     ClassifierModelOut,
     ClassifierTrainingJobCreate,
@@ -1167,23 +1168,28 @@ async def _resolve_detection_audio(
     import numpy as np
 
     if job.hydrophone_id:
-        from humpback.classifier.s3_stream import (
-            LocalHLSClient,
-            resolve_hydrophone_audio_slice,
-        )
+        from humpback.classifier.s3_stream import resolve_audio_slice
 
         if job.start_timestamp is None or job.end_timestamp is None:
             raise HTTPException(400, "Hydrophone job missing start/end timestamps")
 
         cache_path = job.local_cache_path or settings.s3_cache_path
-        local = LocalHLSClient(cache_path)
+        if cache_path is None:
+            raise HTTPException(
+                400, "Hydrophone playback requires a configured cache path"
+            )
+        provider_name = job.hydrophone_name or job.hydrophone_id
+        local_provider = build_orcasound_local_cache_provider(
+            job.hydrophone_id,
+            provider_name,
+            cache_path,
+        )
         target_sr = 32000
 
         try:
             segment = await asyncio.to_thread(
-                resolve_hydrophone_audio_slice,
-                local,
-                job.hydrophone_id,
+                resolve_audio_slice,
+                local_provider,
                 job.start_timestamp,
                 job.end_timestamp,
                 filename,

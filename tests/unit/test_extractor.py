@@ -6,10 +6,12 @@ import struct
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import soundfile as sf
 
+from humpback.classifier.archive import StreamSegment
 from humpback.classifier.extractor import (
     extract_hydrophone_labeled_samples,
     extract_labeled_samples,
@@ -81,6 +83,101 @@ def _make_tsv(
 def _audio_duration(path: Path) -> float:
     info = sf.info(str(path))
     return info.frames / info.samplerate
+
+
+def _make_hydrophone_timeline(
+    start_ts: float,
+    *,
+    n_segments: int = 1,
+    seg_dur: float = 60.0,
+    source_id: str = "rpi_orcasound_lab",
+    folder_ts: int | None = None,
+) -> list[StreamSegment]:
+    """Build a sequential hydrophone-style timeline for provider tests."""
+    folder = folder_ts if folder_ts is not None else int(start_ts)
+    return [
+        StreamSegment(
+            key=f"{source_id}/hls/{folder}/seg{i:04d}.ts",
+            start_ts=start_ts + (i * seg_dur),
+            duration_sec=seg_dur,
+        )
+        for i in range(n_segments)
+    ]
+
+
+class _FakeHydrophoneProvider:
+    """Minimal ArchiveProvider test double for extraction tests."""
+
+    def __init__(
+        self,
+        *,
+        source_id: str = "rpi_orcasound_lab",
+        name: str = "Orcasound Lab",
+        timeline: list[StreamSegment] | None = None,
+        audio: np.ndarray | None = None,
+    ) -> None:
+        self._source_id = source_id
+        self._name = name
+        self._timeline = list(timeline or [])
+        self.build_timeline_mock = MagicMock(return_value=self._timeline)
+        self.fetch_segment_mock = MagicMock(return_value=b"fake-ts")
+        payload = (
+            np.array(audio, dtype=np.float32, copy=True)
+            if audio is not None
+            else np.ones(32000 * 60, dtype=np.float32)
+        )
+        self.decode_segment_mock = MagicMock(
+            side_effect=lambda _raw, _sr: np.array(payload, dtype=np.float32, copy=True)
+        )
+        self.invalidate_cached_segment_mock = MagicMock(return_value=False)
+
+    @property
+    def source_id(self) -> str:
+        return self._source_id
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def build_timeline(self, start_ts: float, end_ts: float) -> list[StreamSegment]:
+        return self.build_timeline_mock(start_ts, end_ts)
+
+    def count_segments(self, start_ts: float, end_ts: float) -> int:
+        return len(self.build_timeline(start_ts, end_ts))
+
+    def fetch_segment(self, key: str) -> bytes:
+        return self.fetch_segment_mock(key)
+
+    def decode_segment(self, raw_bytes: bytes, target_sr: int) -> np.ndarray:
+        return self.decode_segment_mock(raw_bytes, target_sr)
+
+    def invalidate_cached_segment(self, key: str) -> bool:
+        return self.invalidate_cached_segment_mock(key)
+
+
+def _provider_for_recording(
+    filename: str,
+    *,
+    audio: np.ndarray,
+    source_id: str = "rpi_orcasound_lab",
+    n_segments: int = 1,
+    seg_dur: float = 60.0,
+    start_ts: float | None = None,
+) -> _FakeHydrophoneProvider:
+    """Create a provider whose timeline covers the recording timestamp."""
+    recording_ts = parse_recording_timestamp(filename)
+    assert recording_ts is not None
+    base_ts = recording_ts.timestamp() if start_ts is None else start_ts
+    return _FakeHydrophoneProvider(
+        source_id=source_id,
+        timeline=_make_hydrophone_timeline(
+            base_ts,
+            n_segments=n_segments,
+            seg_dur=seg_dur,
+            source_id=source_id,
+        ),
+        audio=audio,
+    )
 
 
 class TestWriteFlacFile:
@@ -401,11 +498,10 @@ class TestExtractionBounds:
 
 
 class TestExtractHydrophoneLabeledSamples:
-    """Test hydrophone-specific extraction with mocked HLS client."""
+    """Test hydrophone-specific extraction with ArchiveProvider inputs."""
 
     def test_basic_hydrophone_extraction(self, tmp_path):
-        """Extract labeled hydrophone samples using a mock client."""
-        from unittest.mock import MagicMock, patch
+        """Extract labeled hydrophone samples using a provider."""
 
         # Create TSV with a labeled detection
         tsv_path = tmp_path / "detections.tsv"
@@ -427,25 +523,18 @@ class TestExtractHydrophoneLabeledSamples:
 
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
-
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1718438400"]
-        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
+        provider = _provider_for_recording("20250615T080000Z.wav", audio=audio)
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-            )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+        )
 
         assert summary["n_humpback"] == 1
         assert summary["n_ship"] == 0
@@ -458,7 +547,6 @@ class TestExtractHydrophoneLabeledSamples:
 
     def test_hydrophone_extraction_uses_detection_filename_exact_bounds(self, tmp_path):
         """Hydrophone extraction should use exact detection_filename bounds (no snapping)."""
-        from unittest.mock import MagicMock, patch
 
         tsv_path = tmp_path / "detections.tsv"
         fieldnames = [
@@ -491,25 +579,18 @@ class TestExtractHydrophoneLabeledSamples:
 
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
-
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1718438400"]
-        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
+        provider = _provider_for_recording("20250615T080000Z.wav", audio=audio)
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-            )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+        )
 
         assert summary["n_humpback"] == 1
         out = (
@@ -529,7 +610,6 @@ class TestExtractHydrophoneLabeledSamples:
         self, tmp_path
     ):
         """Legacy rows should use extract_filename bounds when detection_filename is missing."""
-        from unittest.mock import MagicMock, patch
 
         tsv_path = tmp_path / "detections.tsv"
         fieldnames = [
@@ -562,25 +642,18 @@ class TestExtractHydrophoneLabeledSamples:
 
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
-
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1718438400"]
-        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
+        provider = _provider_for_recording("20250615T080000Z.wav", audio=audio)
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-            )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+        )
 
         assert summary["n_humpback"] == 1
         out = (
@@ -598,7 +671,6 @@ class TestExtractHydrophoneLabeledSamples:
 
     def test_hydrophone_negative_paths_include_hydrophone_id(self, tmp_path):
         """Hydrophone negatives write under {negative_root}/{hydrophone_id}/{label}/..."""
-        from unittest.mock import MagicMock, patch
 
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 220, sr * 60)).astype(np.float32)
@@ -630,24 +702,18 @@ class TestExtractHydrophoneLabeledSamples:
             ],
         )
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1718438400"]
-        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
+        provider = _provider_for_recording("20250615T080000Z.wav", audio=audio)
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-            )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+        )
 
         assert summary["n_ship"] == 1
         assert summary["n_background"] == 1
@@ -671,8 +737,6 @@ class TestExtractHydrophoneLabeledSamples:
         assert not list((neg_out / "rpi_orcasound_lab" / "background").rglob("*.flac"))
 
     def test_no_labeled_rows(self, tmp_path):
-        from unittest.mock import MagicMock
-
         tsv_path = tmp_path / "detections.tsv"
         _make_tsv(
             tsv_path,
@@ -690,21 +754,19 @@ class TestExtractHydrophoneLabeledSamples:
             ],
         )
 
-        mock_client = MagicMock()
+        provider = _FakeHydrophoneProvider()
 
         summary = extract_hydrophone_labeled_samples(
             tsv_path,
-            "rpi_orcasound_lab",
+            provider,
             tmp_path / "pos",
             tmp_path / "neg",
-            mock_client,
         )
         assert summary["n_humpback"] == 0
-        mock_client.list_hls_folders.assert_not_called()
+        provider.build_timeline_mock.assert_not_called()
 
     def test_idempotent_skip(self, tmp_path):
         """Running extraction twice skips existing files."""
-        from unittest.mock import MagicMock, patch
 
         sr = 32000
         audio = np.zeros(sr * 60, dtype=np.float32)
@@ -726,29 +788,22 @@ class TestExtractHydrophoneLabeledSamples:
             ],
         )
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1718438400"]
-        mock_client.list_segments.return_value = ["seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake"
+        provider = _provider_for_recording("20250615T080000Z.wav", audio=audio)
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
-            s1 = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-            )
-            s2 = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-            )
+        s1 = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+        )
+        s2 = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+        )
 
         assert s1["n_humpback"] == 1
         assert s2["n_humpback"] == 0
@@ -756,7 +811,6 @@ class TestExtractHydrophoneLabeledSamples:
 
     def test_late_timestamp_row_extracts_with_stream_anchor(self, tmp_path):
         """Late rows resolve via first-folder anchor when stream bounds are provided."""
-        from unittest.mock import MagicMock, patch
 
         sr = 32000
         tsv_path = tmp_path / "detections.tsv"
@@ -776,38 +830,27 @@ class TestExtractHydrophoneLabeledSamples:
             ],
         )
 
-        mock_client = MagicMock()
-
-        def _list_hls_folders(_hydrophone_id: str, start_ts: float, end_ts: float):
-            return ["1500"] if start_ts <= 1500 <= end_ts else []
-
-        def _list_segments(_hydrophone_id: str, folder_ts: str):
-            if folder_ts != "1500":
-                return []
-            return [f"rpi/hls/1500/seg{i:04d}.ts" for i in range(100)]
-
-        mock_client.list_hls_folders.side_effect = _list_hls_folders
-        mock_client.list_segments.side_effect = _list_segments
-        mock_client.fetch_segment.return_value = b"fake-ts"
+        provider = _FakeHydrophoneProvider(
+            timeline=_make_hydrophone_timeline(
+                1500.0,
+                n_segments=100,
+                seg_dur=10.0,
+            ),
+            audio=np.ones(sr * 10, dtype=np.float32),
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch(
-            "humpback.classifier.s3_stream.decode_ts_bytes",
-            return_value=np.ones(sr * 10, dtype=np.float32),
-        ):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-                stream_start_timestamp=1000.0,
-                stream_end_timestamp=3000.0,
-            )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+            stream_start_timestamp=1000.0,
+            stream_end_timestamp=3000.0,
+        )
 
         assert summary["n_humpback"] == 1
         assert summary["n_skipped"] == 0
@@ -815,7 +858,6 @@ class TestExtractHydrophoneLabeledSamples:
 
     def test_stream_timeline_built_once_for_multiple_rows(self, tmp_path):
         """Stream timeline should be built once and reused across extraction rows."""
-        from unittest.mock import MagicMock, patch
 
         sr = 32000
         tsv_path = tmp_path / "detections.tsv"
@@ -845,42 +887,31 @@ class TestExtractHydrophoneLabeledSamples:
             ],
         )
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1500"]
-        mock_client.list_segments.return_value = [
-            f"rpi/hls/1500/seg{i:04d}.ts" for i in range(6)
-        ]
-        mock_client.fetch_segment.return_value = b"fake-ts"
-
-        with patch(
-            "humpback.classifier.s3_stream.decode_ts_bytes",
-            return_value=np.ones(sr * 10, dtype=np.float32),
-        ):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                tmp_path / "pos",
-                tmp_path / "neg",
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-                stream_start_timestamp=1000.0,
-                stream_end_timestamp=2000.0,
-            )
+        provider = _FakeHydrophoneProvider(
+            timeline=_make_hydrophone_timeline(
+                1500.0,
+                n_segments=6,
+                seg_dur=10.0,
+            ),
+            audio=np.ones(sr * 10, dtype=np.float32),
+        )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            tmp_path / "pos",
+            tmp_path / "neg",
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+            stream_start_timestamp=1000.0,
+            stream_end_timestamp=2000.0,
+        )
 
         assert summary["n_humpback"] == 2
         assert summary["n_skipped"] == 0
-        # Initial range lookup plus a single max-lookback boundary-coverage check.
-        assert mock_client.list_hls_folders.call_count == 2
-        assert mock_client.list_segments.call_count == 1
+        provider.build_timeline_mock.assert_called_once_with(1000.0, 2000.0)
 
     def test_missing_local_timeline_skips_rows_without_failure(self, tmp_path):
         """Missing local cache data should skip rows instead of failing extraction."""
-        from unittest.mock import MagicMock
-        from humpback.classifier.s3_stream import (
-            FOLDER_LOOKBACK_STEP_SEC,
-            MAX_HYDROPHONE_RANGE_SEC,
-        )
 
         tsv_path = tmp_path / "detections.tsv"
         _make_tsv(
@@ -899,15 +930,13 @@ class TestExtractHydrophoneLabeledSamples:
             ],
         )
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = []
+        provider = _FakeHydrophoneProvider(timeline=[])
 
         summary = extract_hydrophone_labeled_samples(
             tsv_path,
-            "rpi_orcasound_lab",
+            provider,
             tmp_path / "pos",
             tmp_path / "neg",
-            mock_client,
             target_sample_rate=32000,
             window_size_seconds=5.0,
             stream_start_timestamp=1000.0,
@@ -916,14 +945,7 @@ class TestExtractHydrophoneLabeledSamples:
 
         assert summary["n_humpback"] == 0
         assert summary["n_skipped"] == 1
-        expected_calls = int(MAX_HYDROPHONE_RANGE_SEC // FOLDER_LOOKBACK_STEP_SEC) + 1
-        assert mock_client.list_hls_folders.call_count == expected_calls
-        assert mock_client.list_hls_folders.call_args_list[0].args[1] == 1000.0
-        assert (
-            mock_client.list_hls_folders.call_args_list[-1].args[1]
-            == 1000.0 - MAX_HYDROPHONE_RANGE_SEC
-        )
-        mock_client.list_segments.assert_not_called()
+        provider.build_timeline_mock.assert_called_once_with(1000.0, 2000.0)
 
 
 class TestOrcaExtraction:
@@ -964,8 +986,6 @@ class TestOrcaExtraction:
 
     def test_orca_hydrophone_extraction(self, tmp_path):
         """Orca routes to positive_output_path/orca/{hydrophone}/."""
-        from unittest.mock import MagicMock, patch
-
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
 
@@ -987,24 +1007,18 @@ class TestOrcaExtraction:
             ],
         )
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1718438400"]
-        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
+        provider = _provider_for_recording("20250615T080000Z.wav", audio=audio)
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_orcasound_lab",
-                pos_out,
-                neg_out,
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-            )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+        )
 
         assert summary["n_orca"] == 1
         assert summary["n_humpback"] == 0
@@ -1016,8 +1030,6 @@ class TestOrcaExtraction:
 
     def test_hydrophone_path_order_species_before_hydrophone(self, tmp_path):
         """All hydrophone labels follow species/category-before-hydrophone path order."""
-        from unittest.mock import MagicMock, patch
-
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
 
@@ -1039,24 +1051,22 @@ class TestOrcaExtraction:
             ],
         )
 
-        mock_client = MagicMock()
-        mock_client.list_hls_folders.return_value = ["1718438400"]
-        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
-        mock_client.fetch_segment.return_value = b"fake-ts"
+        provider = _provider_for_recording(
+            "20250615T080000Z.wav",
+            audio=audio,
+            source_id="rpi_north_sjc",
+        )
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-
-        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
-            summary = extract_hydrophone_labeled_samples(
-                tsv_path,
-                "rpi_north_sjc",
-                pos_out,
-                neg_out,
-                mock_client,
-                target_sample_rate=sr,
-                window_size_seconds=5.0,
-            )
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+        )
 
         assert summary["n_humpback"] == 1
         assert summary["n_orca"] == 1

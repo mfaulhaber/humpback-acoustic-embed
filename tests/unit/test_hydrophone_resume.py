@@ -241,9 +241,11 @@ def test_hydrophone_detection_resume(mock_iter):
             "n_windows": 3,
         },
     ]
+    provider = MagicMock()
+    provider.source_id = "hydro"
 
     detections, summary = run_hydrophone_detection(
-        hydrophone_id="hydro",
+        provider=provider,
         start_timestamp=1000.0,
         end_timestamp=1100.0,
         pipeline=mock_pipeline,
@@ -294,9 +296,11 @@ def test_hydrophone_detection_resume_timeline_changed(mock_iter):
             "n_windows": 3,
         },
     ]
+    provider = MagicMock()
+    provider.source_id = "hydro"
 
     detections, summary = run_hydrophone_detection(
-        hydrophone_id="hydro",
+        provider=provider,
         start_timestamp=1000.0,
         end_timestamp=1030.0,
         pipeline=mock_pipeline,

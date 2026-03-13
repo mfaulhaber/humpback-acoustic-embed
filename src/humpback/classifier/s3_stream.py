@@ -15,7 +15,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 import numpy as np
 
@@ -54,12 +54,6 @@ class _LegacyHLSTimelineClient(Protocol):
     def list_segments(self, hydrophone_id: str, folder_ts: str, /) -> Sequence[str]: ...
 
     def fetch_playlist(self, hydrophone_id: str, folder_ts: str, /) -> str | None: ...
-
-
-class _LegacyHLSSliceClient(_LegacyHLSTimelineClient, Protocol):
-    """Structural contract for legacy HLS playback helpers."""
-
-    def fetch_segment(self, key: str, /) -> bytes: ...
 
 
 # StreamSegment is defined in humpback.classifier.archive and re-exported here
@@ -721,19 +715,6 @@ def _build_stream_timeline(
     return timeline
 
 
-def build_hydrophone_stream_timeline(
-    client: _LegacyHLSTimelineClient,
-    hydrophone_id: str,
-    stream_start_ts: float,
-    stream_end_ts: float,
-) -> list[StreamSegment]:
-    """Build stream timeline for callers that need to reuse it across rows.
-
-    .. deprecated:: Use ``build_stream_timeline(provider, ...)`` instead.
-    """
-    return _build_stream_timeline(client, hydrophone_id, stream_start_ts, stream_end_ts)
-
-
 def build_stream_timeline(
     provider: ArchiveProvider,
     stream_start_ts: float,
@@ -741,53 +722,6 @@ def build_stream_timeline(
 ) -> list[StreamSegment]:
     """Build stream timeline via an ArchiveProvider."""
     return provider.build_timeline(stream_start_ts, stream_end_ts)
-
-
-class _ClientAdapter:
-    """Adapt a legacy client + hydrophone_id pair to the ArchiveProvider protocol.
-
-    Used by backward-compat wrappers so Phase 3 callers can migrate at their
-    own pace.
-    """
-
-    def __init__(
-        self,
-        client: _LegacyHLSSliceClient,
-        hydrophone_id: str,
-    ) -> None:
-        self._client = client
-        self._hydrophone_id = hydrophone_id
-
-    @property
-    def name(self) -> str:
-        return self._hydrophone_id
-
-    @property
-    def source_id(self) -> str:
-        return self._hydrophone_id
-
-    def build_timeline(self, start_ts: float, end_ts: float) -> list[StreamSegment]:
-        return _build_stream_timeline(
-            self._client, self._hydrophone_id, start_ts, end_ts
-        )
-
-    def count_segments(self, start_ts: float, end_ts: float) -> int:
-        folders = self._client.list_hls_folders(self._hydrophone_id, start_ts, end_ts)
-        count_segments = getattr(self._client, "count_segments", None)
-        if callable(count_segments):
-            count = count_segments(self._hydrophone_id, list(folders))
-            return int(cast(int, count))
-        return len(folders)
-
-    def fetch_segment(self, key: str) -> bytes:
-        return self._client.fetch_segment(key)
-
-    def decode_segment(self, raw_bytes: bytes, target_sr: int) -> np.ndarray:
-        return decode_ts_bytes(raw_bytes, target_sr)
-
-    def invalidate_cached_segment(self, key: str) -> bool:
-        fn = getattr(self._client, "invalidate_cached_segment", None)
-        return bool(fn(key)) if callable(fn) else False
 
 
 def _decode_and_clip_segment(
@@ -1002,79 +936,14 @@ def resolve_audio_slice(
     )
 
 
-def resolve_hydrophone_audio_slice(
-    client: _LegacyHLSSliceClient,
-    hydrophone_id: str,
-    stream_start_ts: float,
-    stream_end_ts: float,
-    filename: str,
-    row_start_sec: float,
-    duration_sec: float,
-    target_sr: int = 32000,
-    legacy_anchor_start_ts: float | None = None,
-    est_seg_dur: float = 10.0,  # noqa: ARG001 — kept for backward compat
-    timeline: list[StreamSegment] | None = None,
-    processing_start_ts: float | None = None,
-) -> np.ndarray:
-    """Backward-compat wrapper — use ``resolve_audio_slice`` instead."""
-    return resolve_audio_slice(
-        provider=_ClientAdapter(client, hydrophone_id),
-        stream_start_ts=stream_start_ts,
-        stream_end_ts=stream_end_ts,
-        filename=filename,
-        row_start_sec=row_start_sec,
-        duration_sec=duration_sec,
-        target_sr=target_sr,
-        legacy_anchor_start_ts=legacy_anchor_start_ts,
-        timeline=timeline,
-        processing_start_ts=processing_start_ts,
-    )
-
-
 def iter_audio_chunks(
-    provider_or_client,
-    start_ts_or_hydrophone_id=None,
-    end_ts_or_start_ts=None,
-    end_ts_compat=None,
-    *,
-    start_ts: float | None = None,
-    end_ts: float | None = None,
+    provider: ArchiveProvider,
+    start_ts: float,
+    end_ts: float,
     **kwargs,
 ) -> Generator:
-    """Yield audio chunks from an ArchiveProvider (or legacy client).
-
-    New signature:
-        iter_audio_chunks(provider, start_ts, end_ts, **kwargs)
-        iter_audio_chunks(provider, start_ts=..., end_ts=..., **kwargs)
-    Backward-compat signature (deprecated):
-        iter_audio_chunks(client, hydrophone_id, start_ts, end_ts, **kwargs)
-    """
-    if isinstance(start_ts_or_hydrophone_id, str):
-        # Old signature: (client, hydrophone_id, start_ts, end_ts, ...)
-        if end_ts_or_start_ts is None or end_ts_compat is None:
-            raise ValueError(
-                "Legacy iter_audio_chunks signature requires start_ts and end_ts"
-            )
-        provider = _ClientAdapter(provider_or_client, start_ts_or_hydrophone_id)
-        yield from _iter_audio_chunks(
-            provider,
-            float(end_ts_or_start_ts),
-            float(end_ts_compat),
-            **kwargs,
-        )
-    elif start_ts is not None and end_ts is not None:
-        # New signature with keyword args
-        yield from _iter_audio_chunks(provider_or_client, start_ts, end_ts, **kwargs)
-    else:
-        # New signature with positional args
-        if start_ts_or_hydrophone_id is None or end_ts_or_start_ts is None:
-            raise ValueError("iter_audio_chunks requires start_ts and end_ts")
-        yield from _iter_audio_chunks(
-            provider_or_client,
-            float(start_ts_or_hydrophone_id),
-            float(end_ts_or_start_ts),
-            **kwargs,
-        )
+    """Yield audio chunks from an ArchiveProvider."""
+    yield from _iter_audio_chunks(provider, start_ts, end_ts, **kwargs)
 
 
 def _iter_audio_chunks(

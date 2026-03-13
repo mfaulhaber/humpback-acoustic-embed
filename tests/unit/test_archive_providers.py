@@ -13,6 +13,8 @@ from humpback.classifier.providers.orcasound_hls import (
     CachingHLSProvider,
     LocalHLSCacheProvider,
     OrcasoundHLSProvider,
+    build_orcasound_detection_provider,
+    build_orcasound_local_cache_provider,
 )
 
 
@@ -199,6 +201,54 @@ class TestLocalHLSCacheProviderDelegation:
         mock_build.return_value = []
         provider.build_timeline(0.0, 100.0)
         mock_build.assert_called_once_with(mock_client, "rpi_lab", 0.0, 100.0)
+
+
+# ---------------------------------------------------------------------------
+# Builder helpers
+# ---------------------------------------------------------------------------
+
+
+class TestProviderBuilders:
+    @patch("humpback.classifier.providers.orcasound_hls.LocalHLSCacheProvider")
+    def test_detection_builder_prefers_local_cache(self, mock_local):
+        provider = build_orcasound_detection_provider(
+            "rpi_lab",
+            "Lab",
+            local_cache_path="/local-cache",
+            s3_cache_path="/s3-cache",
+        )
+        mock_local.assert_called_once_with("/local-cache", "rpi_lab", "Lab")
+        assert provider is mock_local.return_value
+
+    @patch("humpback.classifier.providers.orcasound_hls.CachingHLSProvider")
+    def test_detection_builder_uses_s3_cache_when_local_absent(self, mock_caching):
+        provider = build_orcasound_detection_provider(
+            "rpi_lab",
+            "Lab",
+            local_cache_path=None,
+            s3_cache_path="/s3-cache",
+        )
+        mock_caching.assert_called_once_with("/s3-cache", "rpi_lab", "Lab")
+        assert provider is mock_caching.return_value
+
+    @patch("humpback.classifier.providers.orcasound_hls.OrcasoundHLSProvider")
+    def test_detection_builder_falls_back_to_direct_s3(self, mock_direct):
+        provider = build_orcasound_detection_provider(
+            "rpi_lab",
+            "Lab",
+            local_cache_path=None,
+            s3_cache_path=None,
+        )
+        mock_direct.assert_called_once_with("rpi_lab", "Lab")
+        assert provider is mock_direct.return_value
+
+    @patch("humpback.classifier.providers.orcasound_hls.LocalHLSCacheProvider")
+    def test_local_cache_builder_constructs_local_provider(self, mock_local):
+        provider = build_orcasound_local_cache_provider(
+            "rpi_lab", "Lab", "/local-cache"
+        )
+        mock_local.assert_called_once_with("/local-cache", "rpi_lab", "Lab")
+        assert provider is mock_local.return_value
 
 
 # ---------------------------------------------------------------------------
