@@ -223,7 +223,7 @@ async def download_detections(job_id: str, session: SessionDep) -> Response:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status not in ("complete", "canceled") or not job.output_tsv_path:
+    if job.status not in ("paused", "complete", "canceled") or not job.output_tsv_path:
         raise HTTPException(400, "Detection job not complete or no output available")
 
     tsv_path = Path(job.output_tsv_path)
@@ -631,7 +631,7 @@ async def extract_labeled_samples(
         raise HTTPException(404, f"Detection jobs not found: {missing}")
 
     for j in jobs:
-        if j.status not in ("complete", "canceled"):
+        if j.status not in ("paused", "complete", "canceled"):
             raise HTTPException(
                 400, f"Detection job {j.id} is not complete (status={j.status})"
             )
@@ -1037,7 +1037,7 @@ async def save_detection_labels(
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status not in ("complete", "canceled") or not job.output_tsv_path:
+    if job.status not in ("paused", "complete", "canceled") or not job.output_tsv_path:
         raise HTTPException(400, "Detection job not complete or no output available")
     tsv_path = Path(job.output_tsv_path)
     if not tsv_path.is_file():

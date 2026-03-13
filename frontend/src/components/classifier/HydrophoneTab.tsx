@@ -233,23 +233,31 @@ export function HydrophoneTab() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
 
-  const activeJob = jobs.find((j) => j.status === "running" || j.status === "queued" || j.status === "paused");
+  const activeJobs = jobs.filter((j) => j.status === "running" || j.status === "queued" || j.status === "paused");
   const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued" && j.status !== "paused");
   const expandedJob = useMemo(
-    () => previousJobs.find((j) => j.id === expandedJobId) ?? null,
-    [previousJobs, expandedJobId],
+    () => [...activeJobs, ...previousJobs].find((j) => j.id === expandedJobId) ?? null,
+    [activeJobs, previousJobs, expandedJobId],
   );
-  const expandedCompletedJobId =
-    expandedJob && (expandedJob.status === "complete" || expandedJob.status === "canceled") ? expandedJob.id : null;
-  const { data: expandedRows = [] } = useDetectionContent(expandedCompletedJobId);
+  const expandedContentJobId = useMemo(() => {
+    if (!expandedJob) return null;
+    if (expandedJob.status === "complete" || expandedJob.status === "canceled") return expandedJob.id;
+    if (expandedJob.status === "paused" && expandedJob.output_tsv_path) return expandedJob.id;
+    if (expandedJob.status === "running" && (expandedJob.segments_processed ?? 0) > 0) return expandedJob.id;
+    return null;
+  }, [expandedJob]);
+  const { data: expandedRows = [] } = useDetectionContent(expandedContentJobId);
   const expandedHasSavedLabels = useMemo(
     () => expandedRows.some((r) => r.humpback === 1 || r.orca === 1 || r.ship === 1 || r.background === 1),
     [expandedRows],
   );
   const extractTargetIds = useMemo(() => {
-    if (!expandedCompletedJobId || !expandedHasSavedLabels) return new Set<string>();
-    return new Set<string>([expandedCompletedJobId]);
-  }, [expandedCompletedJobId, expandedHasSavedLabels]);
+    if (!expandedJob || !expandedHasSavedLabels) return new Set<string>();
+    if (expandedJob.status === "paused" || expandedJob.status === "complete" || expandedJob.status === "canceled") {
+      return new Set<string>([expandedJob.id]);
+    }
+    return new Set<string>();
+  }, [expandedJob, expandedHasSavedLabels]);
 
   const handleSubmit = () => {
     if (!selectedModelId || !selectedHydrophoneId || !startEpoch || !endEpoch) return;
@@ -569,109 +577,87 @@ export function HydrophoneTab() {
         </CardContent>
       </Card>
 
-      {/* Active Job Panel */}
-      {activeJob && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">
-                Active Job — {activeJob.hydrophone_name}
-                {activeJob.local_cache_path && (
-                  <Badge variant="outline" className="ml-2 text-[10px] py-0 align-middle">local</Badge>
-                )}
-              </CardTitle>
-              <div className="flex gap-2">
-                {activeJob.status === "running" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={pauseMutation.isPending}
-                    onClick={() => pauseMutation.mutate(activeJob.id)}
-                  >
-                    <Pause className="h-3.5 w-3.5 mr-1" />
-                    Pause
-                  </Button>
-                )}
-                {activeJob.status === "paused" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={resumeMutation.isPending}
-                    onClick={() => resumeMutation.mutate(activeJob.id)}
-                  >
-                    <Play className="h-3.5 w-3.5 mr-1" />
-                    Resume
-                  </Button>
-                )}
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={
-                    (activeJob.status !== "running" && activeJob.status !== "paused") ||
-                    cancelMutation.isPending
-                  }
-                  onClick={() => cancelMutation.mutate(activeJob.id)}
-                >
-                  <X className="h-3.5 w-3.5 mr-1" />
-                  Cancel
-                </Button>
-              </div>
+      {/* Active Jobs Panel */}
+      {activeJobs.length > 0 && (
+        <div className="border rounded-md">
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold">Active Jobs</h3>
+              <Badge variant="secondary">{activeJobs.length}</Badge>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {activeJob.start_timestamp != null && activeJob.end_timestamp != null && (
-              <p className="text-sm text-muted-foreground">
-                {formatUtcDateRange(activeJob.start_timestamp, activeJob.end_timestamp)}
-              </p>
-            )}
-            <div className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span>
-                  Processed {activeJob.segments_processed ?? 0}/
-                  {activeJob.segments_total ?? "?"} segments
-                  {activeJob.time_covered_sec != null && (
-                    <span className="text-muted-foreground">
-                      {" "}({formatDurationHM(activeJob.time_covered_sec)} audio)
-                    </span>
-                  )}
-                </span>
-                <Badge className={statusColor[activeJob.status] ?? ""}>
-                  {activeJob.status}
-                </Badge>
-              </div>
-              {activeJob.segments_total != null && activeJob.segments_total > 0 && (
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-blue-600 h-2 rounded-full transition-all"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        ((activeJob.segments_processed ?? 0) / activeJob.segments_total) * 100,
-                      )}%`,
-                    }}
-                  />
-                </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={
+                  dirtyJobs.size === 0 ||
+                  saveLabelsMutation.isPending ||
+                  (expandedJobId != null &&
+                    jobs.find((j) => j.id === expandedJobId)?.status === "running")
+                }
+                onClick={handleSaveLabels}
+              >
+                <Save className="h-3.5 w-3.5 mr-1" />
+                {saveLabelsMutation.isPending ? "Saving…" : "Save Labels"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={extractTargetIds.size === 0}
+                onClick={() => setShowExtractDialog(true)}
+              >
+                <PackageOpen className="h-3.5 w-3.5 mr-1" />
+                Extract Labeled Samples
+              </Button>
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="w-8 px-1 py-2" />
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+                <th className="px-3 py-2 text-left font-medium">Hydrophone</th>
+                <th className="px-3 py-2 text-left font-medium">Date Range (UTC)</th>
+                <th className="px-3 py-2 text-left font-medium">Threshold</th>
+                <th className="px-3 py-2 text-left font-medium">Progress</th>
+                <th className="px-3 py-2 text-left font-medium">Actions</th>
+                <th className="px-3 py-2 text-left font-medium">Download</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeJobs.map((job) => (
+                <HydrophoneJobRow
+                  key={job.id}
+                  job={job}
+                  isActive
+                  expanded={expandedJobId === job.id}
+                  onExpand={() =>
+                    setExpandedJobId(expandedJobId === job.id ? null : job.id)
+                  }
+                  playingKey={playingKey}
+                  onPlay={handlePlay}
+                  onLabelChange={handleLabelChange}
+                  labelEdits={labelEdits.get(job.id) ?? null}
+                  onPause={(id) => pauseMutation.mutate(id)}
+                  onResume={(id) => resumeMutation.mutate(id)}
+                  onCancel={(id) => cancelMutation.mutate(id)}
+                  pausePending={pauseMutation.isPending}
+                  resumePending={resumeMutation.isPending}
+                  cancelPending={cancelMutation.isPending}
+                />
+              ))}
+            </tbody>
+          </table>
+          {activeJobs.some((j) => j.alerts && j.alerts.length > 0) && (
+            <div className="px-4 py-2 border-t">
+              {activeJobs.map((j) =>
+                j.alerts && j.alerts.length > 0 ? (
+                  <AlertsPanel key={j.id} alerts={j.alerts} />
+                ) : null,
               )}
             </div>
-
-            {/* Flash Alerts */}
-            {activeJob.alerts && activeJob.alerts.length > 0 && (
-              <AlertsPanel alerts={activeJob.alerts} />
-            )}
-
-            {/* Live detection content */}
-            {(activeJob.segments_processed ?? 0) > 0 && activeJob.output_tsv_path && (
-              <HydrophoneContentTable
-                jobId={activeJob.id}
-                isRunning={activeJob.status === "running"}
-                playingKey={playingKey}
-                onPlay={handlePlay}
-                onLabelChange={handleLabelChange}
-                labelEdits={labelEdits.get(activeJob.id) ?? null}
-              />
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </div>
       )}
 
       {/* Previous Jobs */}
@@ -845,6 +831,7 @@ function AlertsPanel({ alerts }: { alerts: FlashAlert[] }) {
 
 function HydrophoneJobRow({
   job,
+  isActive,
   checked,
   onToggle,
   expanded,
@@ -853,30 +840,48 @@ function HydrophoneJobRow({
   onPlay,
   onLabelChange,
   labelEdits,
+  onPause,
+  onResume,
+  onCancel,
+  pausePending,
+  resumePending,
+  cancelPending,
 }: {
   job: DetectionJob;
-  checked: boolean;
-  onToggle: () => void;
+  isActive?: boolean;
+  checked?: boolean;
+  onToggle?: () => void;
   expanded: boolean;
   onExpand: () => void;
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow, clip?: PlayClip) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
+  onPause?: (id: string) => void;
+  onResume?: (id: string) => void;
+  onCancel?: (id: string) => void;
+  pausePending?: boolean;
+  resumePending?: boolean;
+  cancelPending?: boolean;
 }) {
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
   const canExpand =
     (job.status === "complete" || job.status === "canceled" ||
+     (job.status === "paused" && !!job.output_tsv_path) ||
      (isRunning && (job.segments_processed ?? 0) > 0)) &&
     !!job.output_tsv_path;
+
+  const colSpan = isActive ? 8 : 10;
 
   return (
     <>
       <tr className="border-b hover:bg-muted/30">
-        <td className="px-3 py-2">
-          <Checkbox checked={checked} onCheckedChange={onToggle} />
-        </td>
+        {!isActive && (
+          <td className="px-3 py-2">
+            <Checkbox checked={checked} onCheckedChange={onToggle} />
+          </td>
+        )}
         <td className="px-1 py-2">
           {canExpand && (
             <button className="p-0.5 hover:bg-muted rounded" onClick={onExpand}>
@@ -910,48 +915,121 @@ function HydrophoneJobRow({
         <td className="px-3 py-2 text-muted-foreground">
           {job.high_threshold}/{job.low_threshold}
         </td>
-        <td className="px-3 py-2 text-muted-foreground">
-          {summary
-            ? `${summary.n_spans} span(s)`
-            : "\u2014"}
-          {job.time_covered_sec != null && (
-            <span className="text-xs ml-1">
-              ({formatDurationHM(job.time_covered_sec)})
-            </span>
-          )}
-        </td>
-        <td className="px-3 py-2">
-          {(job.status === "complete" || job.status === "canceled") && job.output_tsv_path && (
-            <a
-              href={detectionTsvUrl(job.id)}
-              download
-              className="text-blue-600 hover:underline text-xs inline-flex items-center gap-1"
-            >
-              <Download className="h-3 w-3" />
-              TSV
-            </a>
-          )}
-        </td>
-        <td className="px-3 py-2">
-          {job.extract_status ? (
-            <Badge className={statusColor[job.extract_status] ?? ""}>
-              {job.extract_status}
-            </Badge>
-          ) : (
-            <span className="text-muted-foreground">&mdash;</span>
-          )}
-        </td>
-        <td className="px-3 py-2">
-          {job.error_message && (
-            <span className="text-red-600 text-xs truncate block max-w-48">
-              {job.error_message}
-            </span>
-          )}
-        </td>
+        {isActive ? (
+          <>
+            <td className="px-3 py-2 text-muted-foreground">
+              {job.status === "queued" ? (
+                "\u2014"
+              ) : (
+                <>
+                  {job.segments_processed ?? 0}/{job.segments_total ?? "?"}
+                  {job.time_covered_sec != null && (
+                    <span className="text-xs ml-1">
+                      ({formatDurationHM(job.time_covered_sec)})
+                    </span>
+                  )}
+                </>
+              )}
+            </td>
+            <td className="px-3 py-2">
+              <div className="flex gap-1">
+                {job.status === "running" && onPause && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={pausePending}
+                    onClick={() => onPause(job.id)}
+                  >
+                    <Pause className="h-3 w-3 mr-1" />
+                    Pause
+                  </Button>
+                )}
+                {job.status === "paused" && onResume && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={resumePending}
+                    onClick={() => onResume(job.id)}
+                  >
+                    <Play className="h-3 w-3 mr-1" />
+                    Resume
+                  </Button>
+                )}
+                {onCancel && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={cancelPending}
+                    onClick={() => onCancel(job.id)}
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            </td>
+            <td className="px-3 py-2">
+              {(job.status === "paused" || job.status === "running") && job.output_tsv_path && (
+                <a
+                  href={detectionTsvUrl(job.id)}
+                  download
+                  className="text-blue-600 hover:underline text-xs inline-flex items-center gap-1"
+                >
+                  <Download className="h-3 w-3" />
+                  TSV
+                </a>
+              )}
+            </td>
+          </>
+        ) : (
+          <>
+            <td className="px-3 py-2 text-muted-foreground">
+              {summary
+                ? `${summary.n_spans} span(s)`
+                : "\u2014"}
+              {job.time_covered_sec != null && (
+                <span className="text-xs ml-1">
+                  ({formatDurationHM(job.time_covered_sec)})
+                </span>
+              )}
+            </td>
+            <td className="px-3 py-2">
+              {(job.status === "complete" || job.status === "canceled") && job.output_tsv_path && (
+                <a
+                  href={detectionTsvUrl(job.id)}
+                  download
+                  className="text-blue-600 hover:underline text-xs inline-flex items-center gap-1"
+                >
+                  <Download className="h-3 w-3" />
+                  TSV
+                </a>
+              )}
+            </td>
+            <td className="px-3 py-2">
+              {job.extract_status ? (
+                <Badge className={statusColor[job.extract_status] ?? ""}>
+                  {job.extract_status}
+                </Badge>
+              ) : (
+                <span className="text-muted-foreground">&mdash;</span>
+              )}
+            </td>
+            <td className="px-3 py-2">
+              {job.error_message && (
+                <span className="text-red-600 text-xs truncate block max-w-48">
+                  {job.error_message}
+                </span>
+              )}
+            </td>
+          </>
+        )}
       </tr>
       {expanded && canExpand && (
         <tr>
-          <td colSpan={10} className="p-0">
+          <td colSpan={colSpan} className="p-0">
             <HydrophoneContentTable
               jobId={job.id}
               isRunning={isRunning}

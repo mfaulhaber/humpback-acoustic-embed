@@ -240,8 +240,8 @@ async def cancel_hydrophone_detection_job(
     job = result.scalar_one_or_none()
     if job is None:
         return None
-    if job.status not in ("running", "paused"):
-        raise ValueError(f"Job is not running or paused (status={job.status})")
+    if job.status not in ("running", "paused", "queued"):
+        raise ValueError(f"Job is not running, paused, or queued (status={job.status})")
 
     from datetime import datetime, timezone
 

@@ -132,7 +132,7 @@ test.describe("Hydrophone Pause/Resume/Cancel", () => {
     await page.goto("/app/classifier");
     await page.locator("button", { hasText: "Hydrophone" }).click();
 
-    const activeCard = page.locator("text=Active Job");
+    const activeCard = page.locator("text=Active Jobs");
     await expect(activeCard).toBeVisible();
 
     await expect(page.locator("button", { hasText: "Pause" })).toBeVisible();
@@ -192,10 +192,10 @@ test.describe("Hydrophone Pause/Resume/Cancel", () => {
     await page.goto("/app/classifier");
     await page.locator("button", { hasText: "Hydrophone" }).click();
 
-    await expect(page.locator("text=Active Job")).toBeVisible();
-    // The paused badge should show in the active panel
+    await expect(page.locator("text=Active Jobs")).toBeVisible();
+    // The paused badge should show in the active table
     await expect(
-      page.locator(".space-y-3").locator("text=paused").first(),
+      page.locator("table").first().locator("text=paused").first(),
     ).toBeVisible();
     // Previous Jobs should not exist (only one job, and it's active/paused)
     expect(await page.locator("text=Previous Jobs").count()).toBe(0);

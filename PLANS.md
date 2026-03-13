@@ -10,6 +10,34 @@
 
 ## Recently Completed
 
+# Plan: Refactor Classifier/Detection Active Job UI and Backend
+
+[Full plan](/Users/michael/.claude/plans/fizzy-seeking-valley.md)
+
+## Outcome (2026-03-13)
+
+- Replaced single-job "Active Job" card with multi-row "Active Jobs" table showing all
+  running/queued/paused jobs with per-row Pause/Resume/Cancel controls.
+- Extended backend status gates: `"paused"` now allowed for save-labels, download, and
+  extract endpoints; `"queued"` now allowed for cancel endpoint.
+- Extended `HydrophoneJobRow` with `isActive` prop for dual-context rendering (active
+  table: progress + actions columns; previous table: results + extract + error columns).
+- Extended `expandedContentJobId` and `extractTargetIds` to include paused jobs.
+- Added 5 backend integration tests: save labels on paused, download paused, extract
+  paused, cancel queued, reject labels on running.
+- Added Playwright spec (`hydrophone-active-queue.spec.ts`) with 4 tests for active
+  table rendering, action buttons, paused content expansion, and queued cancel.
+- Updated `hydrophone-pause-resume.spec.ts` locators from "Active Job" card to
+  "Active Jobs" table.
+
+## Verification
+
+- `uv run pytest tests/integration/test_hydrophone_api.py -q` — 27 passed.
+- `uv run pytest tests/` — 548 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pyright` on modified backend files — 0 errors.
+
+
 # Plan: Expand Pyright Enforcement to `scripts/`, Then `tests/`
 
 [Full plan](/Users/michael/.claude/plans/expand-pyright-enforcement-scripts-tests.md)

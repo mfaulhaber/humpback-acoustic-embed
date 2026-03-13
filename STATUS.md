@@ -114,14 +114,15 @@ Current state of the humpback acoustic embedding and clustering platform.
 - UMAP visualization, cluster tables, evaluation panels
 - Bulk delete for training/detection jobs
 - Expandable detection rows with sortable TSV data
-- Hydrophone Extract button enablement is based on saved labels of the expanded completed or canceled job
+- Hydrophone Extract button enablement is based on saved labels of the expanded completed, canceled, or paused job
 - Hydrophone detection table uses canonical snapped UTC Detection Range and Duration from
   `detection_filename` (no secondary raw-range row)
 - Hydrophone playback and extraction use the same canonical bounds shown in Detection Range
 - Hydrophone row tooltip exposes unsnapped raw audit range when it differs from canonical bounds
 - Hydrophone job date range uses popover picker with dual-month calendar and HH:MM time inputs (UTC-only)
-- Hydrophone active job panel shows Pause/Resume and Cancel controls
-  (paused jobs remain in active panel; canceled jobs move to Previous Jobs with full functionality)
+- Hydrophone Active Jobs table shows all running/queued/paused jobs with per-row
+  Pause/Resume/Cancel controls; queued jobs can be canceled before a worker claims them
+- Paused hydrophone jobs support label save, TSV download, and extraction (stable TSV while worker is blocked)
 - Paused hydrophone jobs with partial TSV output keep detection content available via
   `/classifier/detection-jobs/{id}/content`
 - Hydrophone progress displays audio duration in hours:minutes format

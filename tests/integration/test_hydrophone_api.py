@@ -1034,3 +1034,202 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
             .timestamp()
         )
         assert chunk_ts + float(det["end_sec"]) <= 1025.01
+
+
+# ---- Paused job label/download/extract gates ----
+
+
+async def _create_paused_job_with_tsv(app_settings):
+    """Helper: insert a paused hydrophone job with a small TSV file."""
+    import csv
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": "0.0",
+                "end_sec": "5.0",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.92",
+                "n_windows": "3",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="paused",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_orcasound_lab",
+                hydrophone_name="Orcasound Lab",
+                start_timestamp=1751439600.0,
+                end_timestamp=1751461200.0,
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    return job_id, engine
+
+
+async def test_save_labels_paused_job(client, app_settings):
+    """PUT /labels on a paused job with TSV should succeed."""
+    job_id, engine = await _create_paused_job_with_tsv(app_settings)
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "humpback": 1,
+            }
+        ],
+    )
+    assert resp.status_code == 200
+
+    await engine.dispose()
+
+
+async def test_download_paused_job(client, app_settings):
+    """GET /download on a paused job with TSV should return 200."""
+    job_id, engine = await _create_paused_job_with_tsv(app_settings)
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/download")
+    assert resp.status_code == 200
+
+    await engine.dispose()
+
+
+async def test_extract_paused_job(client, app_settings):
+    """POST /extract on a paused job should be accepted."""
+    job_id, engine = await _create_paused_job_with_tsv(app_settings)
+
+    # First save a label so extraction has something to do
+    await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": "20250702T080118Z.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "humpback": 1,
+            }
+        ],
+    )
+
+    resp = await client.post(
+        "/classifier/detection-jobs/extract",
+        json={"job_ids": [job_id]},
+    )
+    assert resp.status_code == 200
+
+    await engine.dispose()
+
+
+async def test_cancel_queued_hydrophone_job(client, app_settings):
+    """POST cancel on a queued hydrophone job should succeed."""
+    from sqlalchemy import insert, select
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="queued",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_north_sjc",
+                hydrophone_name="North San Juan Channel",
+                start_timestamp=1751644800.0,
+                end_timestamp=1751648400.0,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(f"/classifier/hydrophone-detection-jobs/{job_id}/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "canceled"
+
+    # Verify in DB
+    async with sf() as session:
+        result = await session.execute(
+            select(DetectionJob).where(DetectionJob.id == job_id)
+        )
+        job = result.scalar_one()
+        assert job.status == "canceled"
+
+    await engine.dispose()
+
+
+async def test_save_labels_running_job_rejected(client, app_settings):
+    """PUT /labels on a running job (no stable TSV) should return 400."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="running",
+                classifier_model_id="fake-model",
+                hydrophone_id="rpi_north_sjc",
+                hydrophone_name="North San Juan Channel",
+                start_timestamp=1751644800.0,
+                end_timestamp=1751648400.0,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": "test.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "humpback": 1,
+            }
+        ],
+    )
+    assert resp.status_code == 400
+
+    await engine.dispose()
