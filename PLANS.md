@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: Selective Merge for Cross-Platform TensorFlow `pyproject.toml`
+
+[Full plan](/Users/michael/.claude/plans/selective-merge-pyproject-cross-platform-tensorflow.md)
+
+## Outcome (2026-03-13)
+
+- Moved TensorFlow selection from base dependencies to mutually-exclusive extras:
+  `tf-macos`, `tf-linux-cpu`, and `tf-linux-gpu`; capped supported Python at
+  `>=3.11,<3.13`.
+- Preserved direct `soundfile` runtime dependency, consolidated dev tooling in
+  `dependency-groups.dev`, and regenerated `uv.lock`.
+- Updated docs (`CLAUDE.md`, `MEMORY.md`, `README.md`, `STATUS.md`) and added ADR-022.
+- Added `tests/unit/test_pyproject_metadata.py` to lock the packaging contract in pytest.
+
+## Verification
+
+- `uv sync --group dev --extra tf-macos` — passed.
+- `uv run ruff check tests/unit/test_pyproject_metadata.py` — passed.
+- `uv sync --dry-run --extra tf-linux-gpu --python-platform x86_64-unknown-linux-gnu` — passed.
+- `uv sync --dry-run --all-extras` — fails as expected due to TensorFlow extra conflicts.
+- `uv run pytest tests/` — 534 passed.
+
 # Plan: Switch Detection Extraction to FLAC + Conversion Script
 
 [Full plan](/Users/michael/.claude/plans/switch-detection-extraction-to-flac.md)
@@ -584,6 +606,7 @@
 
 ## Backlog
 
+- Smoke-test `tf-linux-gpu` on a real Ubuntu/NVIDIA host — verify `uv sync --extra tf-linux-gpu`, TensorFlow import, and GPU device visibility/runtime behavior.
 - [ArchiveProvider Phase 3: Adapt upstream consumers](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — migrate `hydrophone_detector.py`, `extractor.py`, `classifier_worker.py`, and API router to construct and pass `ArchiveProvider` instances instead of raw clients + hydrophone_id. Remove backward-compat wrappers in `s3_stream.py` once all callers are migrated.
 - [ArchiveProvider Phase 4: Promote NOAA GCS provider](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — move NOAA GCS POC into `providers/noaa_gcs.py` as a proper `ArchiveProvider` implementation, wire into worker/router, add tests.
 - Explore GPU-accelerated batch processing for large audio libraries

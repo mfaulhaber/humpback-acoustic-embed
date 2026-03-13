@@ -48,13 +48,18 @@ All components run locally for MVP but should be designed so workers can scale h
 ### 3.1 Package Management
 *   **ONLY** use `uv` for all Python package operations. **NEVER** use `pip`, `pip-tools`, `poetry`, or `conda`.
 *   Dependencies are managed via `pyproject.toml` and `uv.lock` files. The lock file should be committed to version control for reproducible builds.
+*   TensorFlow is selected via mutually-exclusive extras: `tf-macos`, `tf-linux-cpu`, or `tf-linux-gpu`.
+*   Do **NOT** use `uv sync --all-extras` in this project because the TensorFlow extras intentionally conflict.
 
 ### 3.2 Environment Commands
 Use these commands for managing dependencies:
-*   Install/synchronize all dependencies (including dev tools): `uv sync --all-extras`
+*   Install/synchronize Apple Silicon macOS dependencies (including dev tools): `uv sync --group dev --extra tf-macos`
+*   Install/synchronize Linux CPU dependencies (including dev tools): `uv sync --group dev --extra tf-linux-cpu`
+*   Install/synchronize Linux GPU/CUDA dependencies (including dev tools): `uv sync --group dev --extra tf-linux-gpu`
+*   Install production Linux GPU/CUDA dependencies (no dev tools): `uv sync --extra tf-linux-gpu`
 *   Add a new package (e.g., `requests`): `uv add requests`
 *   Remove a package: `uv remove <package>`
-*   Compile a new lock file: `uv pip compile pyproject.toml -o uv.lock`
+*   Refresh the lock file after dependency changes: `uv lock`
 *   Upgrade a specific package: `uv lock --upgrade-package <package>`
 
 ### 3.3 Running Python Code and Tools

@@ -10,8 +10,8 @@ For behavioral rules and development constraints, see `CLAUDE.md`.
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Python 3.11+ |
-| Package Manager | uv (pyproject.toml + uv.lock) |
+| Language | Python 3.11-3.12 |
+| Package Manager | uv (pyproject.toml + uv.lock, explicit TensorFlow extras by platform) |
 | Web Framework | FastAPI |
 | Database | SQLite (via SQLAlchemy) |
 | Migrations | Alembic |

@@ -154,6 +154,11 @@ Current state of the humpback acoustic embedding and clustering platform.
   copy events with fixed totals; planned prefix list is printed up front and
   progress postfix includes `current=<prefix>`.
 
+### Environment & Packaging
+- Platform-specific TensorFlow extras: `tf-macos`, `tf-linux-cpu`, and `tf-linux-gpu`
+- Supported Python runtime versions: 3.11 and 3.12
+- Direct runtime dependency on `soundfile` retained for extraction and FLAC conversion paths
+
 ---
 
 ## Database Schema
@@ -185,6 +190,8 @@ Changes to these areas require extra care and testing:
 - SQLite: no true row-level locking (worker claim uses UPDATE with status check)
 - No real-time streaming — polling-based UI updates
 - Single-machine deployment (MVP)
+- Exactly one TensorFlow extra must be selected per environment; `uv sync --all-extras` is invalid
+- Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels
 - Model files must be present on disk (no remote model registry)
 - Audio shorter than `window_size_seconds` (5s) is skipped entirely
 - Imported audio must remain at original path (in-place reads)

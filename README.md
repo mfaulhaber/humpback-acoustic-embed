@@ -48,16 +48,27 @@ Download https://www.kaggle.com/models/google/surfperch and place in /models fol
 
 ### Install
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/), plus Node.js 18+ for the frontend.
+Requires Python 3.11 or 3.12 and [uv](https://docs.astral.sh/uv/), plus Node.js 18+ for the frontend.
 
 ```bash
-# Backend
-uv sync --all-extras
+# Backend (Apple Silicon macOS)
+uv sync --group dev --extra tf-macos
+
+# Backend (Linux CPU)
+uv sync --group dev --extra tf-linux-cpu
+
+# Backend (Linux GPU / CUDA)
+uv sync --group dev --extra tf-linux-gpu
+
 uv run pre-commit install   # one-time per clone
 
 # Frontend
 cd frontend && npm install
 ```
+
+TensorFlow extras are mutually exclusive. Select exactly one of
+`tf-macos`, `tf-linux-cpu`, or `tf-linux-gpu` for each environment; do not use
+`uv sync --all-extras`.
 
 ### Development Mode
 
@@ -88,6 +99,9 @@ uv run humpback-api            # serves SPA + API on :8000
 Open http://localhost:8000 — the FastAPI server serves the built SPA at `/` and
 the API at their usual paths. When `static/dist/` is not present, it falls back
 to the legacy `static/index.html`.
+
+For Linux GPU deployments that do not need developer tools, use
+`uv sync --extra tf-linux-gpu`.
 
 ---
 

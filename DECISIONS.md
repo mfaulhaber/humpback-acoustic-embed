@@ -504,3 +504,36 @@ that decoded audio remains equivalent within quantization tolerance.
   metadata stays readable.
 - No database migration is required because the change is limited to file outputs,
   TSV/API metadata derivation, and documentation.
+
+---
+
+## ADR-022: Explicit platform TensorFlow extras and Python version cap
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: The project runs TensorFlow workloads on Apple Silicon macOS and on Linux
+GPU servers. Keeping TensorFlow in the base dependency set forced one install contract
+across incompatible platform/runtime combinations, and `uv sync --all-extras` was no
+longer a safe default once Linux CPU, Linux GPU, and macOS TensorFlow variants diverged.
+The supported TensorFlow wheel set also does not justify claiming Python 3.13 support.
+
+**Decision**:
+- Remove TensorFlow packages from base runtime dependencies.
+- Add mutually-exclusive extras:
+  - `tf-macos` for Apple Silicon (`tensorflow-macos` + `tensorflow-metal`)
+  - `tf-linux-cpu` for Linux CPU (`tensorflow`)
+  - `tf-linux-gpu` for Linux GPU/CUDA (`tensorflow[and-cuda]`)
+- Declare the extra conflicts in `tool.uv.conflicts`.
+- Cap supported Python versions at `>=3.11,<3.13`.
+- Keep `soundfile` as a direct base dependency because extraction and FLAC tooling
+  import it directly regardless of TensorFlow selection.
+
+**Consequences**:
+- Each environment must select exactly one TensorFlow extra; `uv sync --all-extras`
+  is invalid by design.
+- macOS and Linux deployments can resolve different TensorFlow stacks without
+  weakening the shared base dependency set.
+- The lockfile must be regenerated after TensorFlow dependency changes so platform
+  forks stay explicit.
+- Python 3.13 is intentionally unsupported until TensorFlow compatibility is validated.
