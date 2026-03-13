@@ -537,3 +537,39 @@ The supported TensorFlow wheel set also does not justify claiming Python 3.13 su
 - The lockfile must be regenerated after TensorFlow dependency changes so platform
   forks stay explicit.
 - Python 3.13 is intentionally unsupported until TensorFlow compatibility is validated.
+
+---
+
+## ADR-023: Env-driven deployment config and FastAPI trusted-host enforcement
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Deployment-specific edits were being made directly to tracked files such
+as `src/humpback/config.py` and `frontend/vite.config.ts` on remote hosts. That does
+not survive the checked-in deployment flow because `scripts/deploy.sh` resets the repo
+to `origin/main`. Production also serves the built SPA from FastAPI on port `8000`, so
+Vite `allowedHosts` is not the correct control for deployed host validation.
+
+**Decision**:
+- Load deployment/runtime overrides from a repo-root `.env` file plus normal process
+  environment variables, but do so explicitly in production entrypoints rather
+  than in every `Settings()` construction.
+- Allow `.env` to include both `HUMPBACK_*` runtime settings and deploy-time values
+  like `TF_EXTRA`; the app settings loader ignores unknown keys.
+- Add FastAPI bind settings `api_host` / `api_port` with defaults `0.0.0.0` / `8000`.
+- Add FastAPI `TrustedHostMiddleware` driven by `HUMPBACK_ALLOWED_HOSTS`.
+- Keep host validation permissive by default (`*`) so existing installs are not broken.
+- Derive default extraction/cache paths from `storage_root` when the explicit path
+  settings are unset.
+
+**Consequences**:
+- Deployment-specific paths and host allowlists no longer require tracked-file edits.
+- Cloudflare tunnel deployments should use `HUMPBACK_API_HOST=0.0.0.0` and trusted
+  host patterns like `*.trycloudflare.com`.
+- Tests and library callers that instantiate `Settings()` directly remain
+  hermetic and do not read deployment-local `.env` files from the cwd.
+- Production host validation now lives in FastAPI; Vite `allowedHosts` remains a
+  dev-server-only concern.
+- No database migration is required because the change is limited to runtime
+  configuration, deploy scripting, tests, and documentation.

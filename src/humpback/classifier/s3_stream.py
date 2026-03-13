@@ -83,7 +83,7 @@ def _folder_in_candidate_range(folder_ts: int, start_ts: float, end_ts: float) -
 @lru_cache(maxsize=1)
 def _hydrophone_timeline_lookback_seconds() -> tuple[int, int]:
     """Resolve hydrophone timeline lookback increment/max from runtime settings."""
-    settings = Settings()
+    settings = Settings.from_repo_env()
     increment_sec = int(settings.hydrophone_timeline_lookback_increment_hours) * 3600
     max_sec = int(settings.hydrophone_timeline_max_lookback_hours) * 3600
     return increment_sec, max_sec

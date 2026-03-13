@@ -2,11 +2,18 @@
 set -euo pipefail
 
 APP_DIR=/workspace/development/humpback-acoustic-embed
-TF_EXTRA="${TF_EXTRA:-tf-linux-cpu}"
 
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 cd "$APP_DIR"
+
+if [[ -f .env ]]; then
+  set -a
+  source .env
+  set +a
+fi
+
+TF_EXTRA="${TF_EXTRA:-tf-linux-cpu}"
 
 git fetch --prune origin
 git checkout main

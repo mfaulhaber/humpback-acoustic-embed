@@ -299,6 +299,22 @@ flowchart TD
 | `ml_batch_size` | 256 | Metric learning: triplets per epoch |
 | `ml_mining_strategy` | semi-hard | Metric learning: `"random"`, `"hard"`, or `"semi-hard"` triplet mining |
 
+### Runtime Configuration
+
+- `Settings` read process environment variables with the `HUMPBACK_` prefix.
+- The production API and worker entrypoints explicitly load the absolute
+  repo-root `.env`; direct `Settings()` construction does not read cwd `.env`
+  files.
+- `api_host` defaults to `0.0.0.0` and `api_port` defaults to `8000`.
+- `allowed_hosts` defaults to `*` (no host-header restriction). The
+  `HUMPBACK_ALLOWED_HOSTS` env var uses a comma-separated list with Starlette
+  wildcard syntax such as `*.trycloudflare.com`.
+- `positive_sample_path`, `negative_sample_path`, and `s3_cache_path` derive
+  from `storage_root` when unset:
+  `{storage_root}/labeled/positives`,
+  `{storage_root}/labeled/negatives`,
+  `{storage_root}/s3-orcasound-cache`.
+
 ---
 
 ## Clustering Workflow

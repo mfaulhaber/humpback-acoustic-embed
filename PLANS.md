@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: Deployment Config via Env + Trusted Hosts
+
+[Full plan](/Users/michael/.claude/plans/deployment-config-env-trusted-hosts.md)
+
+## Outcome (2026-03-13)
+
+- Added env-driven deployment/runtime config for FastAPI bind host/port and
+  trusted-host validation (`HUMPBACK_API_HOST`, `HUMPBACK_API_PORT`,
+  `HUMPBACK_ALLOWED_HOSTS`) with repo-root `.env` loading in the API and worker
+  entrypoints.
+- Replaced developer-machine default extraction/cache paths with
+  `storage_root`-derived defaults, added `.env.example`, and updated
+  `scripts/deploy.sh` to source `.env` for deploy-time values like `TF_EXTRA`.
+- Added config/trusted-host tests, updated docs
+  (`CLAUDE.md`, `MEMORY.md`, `README.md`, `STATUS.md`), and appended ADR-023.
+
+## Verification
+
+- `uv run ruff check src/humpback/config.py src/humpback/api/app.py src/humpback/workers/runner.py src/humpback/classifier/s3_stream.py tests/unit/test_config.py` — passed.
+- `uv run pytest tests/unit/test_config.py tests/integration/test_trusted_hosts.py tests/integration/test_classifier_api.py -q` — 36 passed.
+- `uv run pytest tests/` — 541 passed.
+
 # Plan: Selective Merge for Cross-Platform TensorFlow `pyproject.toml`
 
 [Full plan](/Users/michael/.claude/plans/selective-merge-pyproject-cross-platform-tensorflow.md)

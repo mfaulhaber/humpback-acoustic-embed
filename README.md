@@ -100,6 +100,17 @@ Open http://localhost:8000 — the FastAPI server serves the built SPA at `/` an
 the API at their usual paths. When `static/dist/` is not present, it falls back
 to the legacy `static/index.html`.
 
+Deployment-specific runtime settings should live in a repo-root `.env` copied
+from [`.env.example`](/Users/michael/development/humpback-acoustic-embed/.env.example).
+The `humpback-api` and `humpback-worker` entrypoints load that absolute
+repo-root file explicitly, and [`scripts/deploy.sh`](/Users/michael/development/humpback-acoustic-embed/scripts/deploy.sh)
+sources the same file before resolving `TF_EXTRA`. Direct `Settings()`
+construction remains hermetic and does not read cwd `.env` files. For
+Cloudflare tunnel access, keep `HUMPBACK_API_HOST=0.0.0.0` and set
+`HUMPBACK_ALLOWED_HOSTS=*.trycloudflare.com,localhost,127.0.0.1`. Production
+host validation is enforced in FastAPI; Vite `allowedHosts` is only relevant to
+`npm run dev`.
+
 For Linux GPU deployments that do not need developer tools, use
 `uv sync --extra tf-linux-gpu`.
 
@@ -662,6 +673,9 @@ Environment variables (prefix `HUMPBACK_`):
 |----------|---------|-------------|
 | `HUMPBACK_DATABASE_URL` | `sqlite+aiosqlite:///data/humpback.db` | Database URL |
 | `HUMPBACK_STORAGE_ROOT` | `data` | Root directory for file storage |
+| `HUMPBACK_API_HOST` | `0.0.0.0` | Bind host for the FastAPI server |
+| `HUMPBACK_API_PORT` | `8000` | Bind port for the FastAPI server |
+| `HUMPBACK_ALLOWED_HOSTS` | `*` | Comma-separated trusted Host header patterns (`*.example.com` wildcard syntax) |
 | `HUMPBACK_MODEL_VERSION` | `perch_v1` | Model version identifier |
 | `HUMPBACK_WINDOW_SIZE_SECONDS` | `5.0` | Audio window size |
 | `HUMPBACK_TARGET_SAMPLE_RATE` | `32000` | Target sample rate |
@@ -670,11 +684,18 @@ Environment variables (prefix `HUMPBACK_`):
 | `HUMPBACK_MODEL_PATH` | `models/multispecies_whale_fp16_flex.tflite` | Path to TFLite model file (fallback) |
 | `HUMPBACK_MODELS_DIR` | `models` | Directory to scan for `.tflite` model files |
 | `HUMPBACK_TF_FORCE_CPU` | `false` | Force CPU for TF2 SavedModel inference (skip GPU) |
+| `HUMPBACK_POSITIVE_SAMPLE_PATH` | `{storage_root}/labeled/positives` | Default positive labeled-sample extraction root |
+| `HUMPBACK_NEGATIVE_SAMPLE_PATH` | `{storage_root}/labeled/negatives` | Default negative labeled-sample extraction root |
+| `HUMPBACK_S3_CACHE_PATH` | `{storage_root}/s3-orcasound-cache` | Default Orcasound HLS cache root |
 | `HUMPBACK_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS` | `4` | Backfill step size for hydrophone folder discovery |
 | `HUMPBACK_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS` | `168` | Maximum hydrophone folder-discovery backlook window |
 | `HUMPBACK_HYDROPHONE_PREFETCH_ENABLED` | `true` | Enable ordered concurrent segment prefetch for S3-backed hydrophone detection |
 | `HUMPBACK_HYDROPHONE_PREFETCH_WORKERS` | `4` | Worker threads for hydrophone segment prefetch |
 | `HUMPBACK_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS` | `16` | Max queued segment fetches ahead of decode |
+
+The repo-root `.env` file may also define deploy-time values like `TF_EXTRA`.
+Unknown keys are ignored by the app settings loader so one file can configure
+both deployment and runtime behavior.
 
 ---
 

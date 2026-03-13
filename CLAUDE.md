@@ -157,6 +157,11 @@ uv run humpback-api           # serves SPA at / and API on :8000
 ```
 
 The FastAPI backend detects `static/dist/index.html` at startup. When present, it serves the built SPA at `/` and mounts `/assets` for JS/CSS bundles. When absent, it falls back to the legacy `static/index.html`.
+Deployment/runtime configuration should come from a repo-root `.env` plus
+`HUMPBACK_` env vars. The API and worker entrypoints explicitly load the
+repo-root `.env`; direct `Settings()` construction should stay hermetic.
+Production host allowlisting belongs in FastAPI via `HUMPBACK_ALLOWED_HOSTS`;
+do not use Vite `allowedHosts` for deployed host validation.
 
 ### 3.8 Timezone and Timestamp Standard (UTC-Only)
 All operational timestamps in this project must use UTC end-to-end.

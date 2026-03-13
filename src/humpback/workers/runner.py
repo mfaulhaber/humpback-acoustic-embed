@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 async def run_worker(settings: Settings | None = None) -> None:
     if settings is None:
-        settings = Settings()
+        settings = Settings.from_repo_env()
 
     logging.basicConfig(level=logging.INFO)
     logger.info("Starting worker...")

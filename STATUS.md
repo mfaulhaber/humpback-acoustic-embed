@@ -158,6 +158,15 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Platform-specific TensorFlow extras: `tf-macos`, `tf-linux-cpu`, and `tf-linux-gpu`
 - Supported Python runtime versions: 3.11 and 3.12
 - Direct runtime dependency on `soundfile` retained for extraction and FLAC conversion paths
+- Repo-root `.env` support for runtime and deploy-time configuration (API/worker
+  entrypoints load it explicitly; `scripts/deploy.sh` sources it for `TF_EXTRA`)
+- FastAPI bind host/port are configurable via `HUMPBACK_API_HOST` / `HUMPBACK_API_PORT`
+- FastAPI trusted-host validation is configurable via comma-separated
+  `HUMPBACK_ALLOWED_HOSTS` patterns (Starlette wildcard syntax, e.g.
+  `*.trycloudflare.com`)
+- Default extraction/cache paths derive from `storage_root` unless explicitly
+  overridden by `HUMPBACK_POSITIVE_SAMPLE_PATH`,
+  `HUMPBACK_NEGATIVE_SAMPLE_PATH`, or `HUMPBACK_S3_CACHE_PATH`
 
 ---
 
@@ -193,6 +202,7 @@ Changes to these areas require extra care and testing:
 - Exactly one TensorFlow extra must be selected per environment; `uv sync --all-extras` is invalid
 - Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels
 - Model files must be present on disk (no remote model registry)
+- `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax (`*.example.com`, not `.example.com`)
 - Audio shorter than `window_size_seconds` (5s) is skipped entirely
 - Imported audio must remain at original path (in-place reads)
 - `/audio/{id}/download` returns HTTP 416 for malformed/invalid Range headers
