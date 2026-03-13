@@ -36,7 +36,8 @@ description: Systematic review checklist for changes before committing.
    - Treat modified `.py` files under `src/humpback/`, `scripts/`, and `tests/` as Ruff/Pyright targets
 
 7. **Run validation in order**
-   - Ruff: if modified Python targets exist, run `uv run ruff check <modified_python_files>`
+   - Ruff format: if modified Python targets exist, run `uv run ruff format --check <modified_python_files>`
+   - Ruff lint: if modified Python targets exist, run `uv run ruff check <modified_python_files>`
    - Pyright: if modified files include `pyproject.toml` or `.pre-commit-config.yaml`, run `uv run pyright`
    - Pyright: otherwise, if modified Python targets exist, run `uv run pyright <modified_python_files>`
    - Pytest: for any non-empty modified review scope, run `uv run pytest tests/` after Ruff/Pyright
@@ -44,4 +45,4 @@ description: Systematic review checklist for changes before committing.
 ## Output
 - List any issues found with file:line references
 - If no modified files are present, report that there is no review scope
-- Confirm ready to commit only if Ruff/Pyright checks (when applicable) and `uv run pytest tests/` all pass
+- Confirm ready to commit only if Ruff format, Ruff lint, Pyright checks (when applicable), and `uv run pytest tests/` all pass
