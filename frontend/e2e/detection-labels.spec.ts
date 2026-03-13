@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Tests for detection label annotation (humpback, ship, background checkboxes).
+ * Tests for detection label annotation (humpback, orca, ship, background checkboxes).
  * Requires: backend running on :8000 with at least one completed detection job.
  */
 
@@ -36,6 +36,7 @@ test.describe("Detection labels API", () => {
     const row = rows[0];
     // Label fields should be present (initially null if TSV has no label columns)
     expect("humpback" in row).toBe(true);
+    expect("orca" in row).toBe(true);
     expect("ship" in row).toBe(true);
     expect("background" in row).toBe(true);
     // avg_confidence should still be present
@@ -69,6 +70,7 @@ test.describe("Detection labels API", () => {
             start_sec: firstRow.start_sec,
             end_sec: firstRow.end_sec,
             humpback: 1,
+            orca: 0,
             ship: 0,
             background: null,
           },
@@ -94,6 +96,7 @@ test.describe("Detection labels API", () => {
     );
     expect(updatedRow).toBeTruthy();
     expect(updatedRow.humpback).toBe(1);
+    expect(updatedRow.orca).toBe(0);
     expect(updatedRow.ship).toBe(0);
     expect(updatedRow.background).toBeNull();
 
@@ -107,6 +110,7 @@ test.describe("Detection labels API", () => {
             start_sec: firstRow.start_sec,
             end_sec: firstRow.end_sec,
             humpback: null,
+            orca: null,
             ship: null,
             background: null,
           },
@@ -127,6 +131,7 @@ test.describe("Detection labels API", () => {
         r.end_sec === firstRow.end_sec,
     );
     expect(resetRow.humpback).toBeNull();
+    expect(resetRow.orca).toBeNull();
     expect(resetRow.ship).toBeNull();
     expect(resetRow.background).toBeNull();
   });

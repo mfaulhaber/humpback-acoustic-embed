@@ -104,7 +104,7 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         time_covered_sec=job.time_covered_sec,
         alerts=json.loads(job.alerts) if job.alerts else None,
         local_cache_path=job.local_cache_path,
-        has_humpback_labels=job.has_humpback_labels,
+        has_positive_labels=job.has_positive_labels,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -907,6 +907,7 @@ def _normalize_detection_row(
         "raw_end_sec": raw_end_sec,
         "merged_event_count": merged_event_count,
         "humpback": _parse_label(row.get("humpback")),
+        "orca": _parse_label(row.get("orca")),
         "ship": _parse_label(row.get("ship")),
         "background": _parse_label(row.get("background")),
     }
@@ -994,6 +995,7 @@ class DetectionLabelRow(BaseModel):
     start_sec: float
     end_sec: float
     humpback: Optional[Literal[0, 1]] = None
+    orca: Optional[Literal[0, 1]] = None
     ship: Optional[Literal[0, 1]] = None
     background: Optional[Literal[0, 1]] = None
 
@@ -1043,6 +1045,7 @@ async def save_detection_labels(
         "peak_confidence",
         "n_windows",
         "humpback",
+        "orca",
         "ship",
         "background",
     ]
@@ -1064,6 +1067,9 @@ async def save_detection_labels(
         out_row = {field: row.get(field, "") for field in fieldnames}
         out_row["humpback"] = (
             _serialize_label(update.humpback) if update else row.get("humpback", "")
+        )
+        out_row["orca"] = (
+            _serialize_label(update.orca) if update else row.get("orca", "")
         )
         out_row["ship"] = (
             _serialize_label(update.ship) if update else row.get("ship", "")
@@ -1090,9 +1096,11 @@ async def save_detection_labels(
             pass
         raise
 
-    # Persist has_humpback_labels flag from full merged TSV state
-    has_humpback = any(row.get("humpback") == "1" for row in updated_rows)
-    job.has_humpback_labels = has_humpback
+    # Persist has_positive_labels flag from full merged TSV state
+    has_positive = any(
+        row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
+    )
+    job.has_positive_labels = has_positive
     await session.commit()
 
     return {"status": "ok", "updated": len(label_map)}

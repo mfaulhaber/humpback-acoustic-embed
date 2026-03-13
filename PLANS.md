@@ -4,11 +4,36 @@
 
 ## Active
 
-None currently.
+(none)
 
 ---
 
 ## Recently Completed
+
+# Plan: Add Orca Detection Label + Extraction Path Reorder
+
+[Full plan](/Users/michael/.claude/plans/recursive-whistling-music.md)
+
+## Outcome (2026-03-12)
+
+- Added `orca` as a fourth detection label (positive, alongside humpback), with keyboard shortcut `o`.
+- Reordered hydrophone extraction paths from `{root}/{hydrophone_id}/{species}/...` to
+  `{root}/{species}/{hydrophone_id}/...` for all labels (humpback, orca, ship, background).
+- Renamed DB column `has_humpback_labels` → `has_positive_labels` (migration `016`);
+  flag now reflects humpback OR orca labels.
+- Backend: updated `DetectionLabelRow`, `_normalize_detection_row`, label merge loop,
+  `required_fields`, flag computation, and both local/hydrophone extraction functions.
+- Frontend: updated `LabelField` type, `DetectionRow`/`DetectionLabelRow` interfaces,
+  `keyMap`, table header/body, save handler, extract dialog label, and whale badge.
+- Added ADR-020.
+
+## Verification
+
+- `uv run alembic upgrade head` — migration applied.
+- `uv run pytest tests/unit/test_extractor.py -q` — 29 passed.
+- `uv run pytest tests/integration/test_classifier_api.py -q` — 29 passed.
+- `uv run pytest tests/` — 524 passed.
+- `cd frontend && npx tsc --noEmit` — passed.
 
 # Plan: ArchiveProvider Abstraction — Phase 1 & 2
 

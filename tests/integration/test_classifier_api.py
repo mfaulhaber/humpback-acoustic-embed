@@ -468,11 +468,11 @@ async def test_spectrogram_returns_png(client, app_settings, wav_bytes):
     await engine.dispose()
 
 
-# ---- has_humpback_labels flag ----
+# ---- has_positive_labels flag ----
 
 
-async def test_save_labels_sets_has_humpback_labels_true(client, app_settings):
-    """Saving labels with humpback=1 sets has_humpback_labels to True."""
+async def test_save_labels_sets_has_positive_labels_true(client, app_settings):
+    """Saving labels with humpback=1 sets has_positive_labels to True."""
     from pathlib import Path
 
     from sqlalchemy import insert
@@ -551,13 +551,13 @@ async def test_save_labels_sets_has_humpback_labels_true(client, app_settings):
     # Verify flag is True
     resp2 = await client.get(f"/classifier/detection-jobs/{job_id}")
     assert resp2.status_code == 200
-    assert resp2.json()["has_humpback_labels"] is True
+    assert resp2.json()["has_positive_labels"] is True
 
     await engine.dispose()
 
 
-async def test_save_labels_clears_has_humpback_labels(client, app_settings):
-    """Clearing all humpback labels sets has_humpback_labels to False."""
+async def test_save_labels_clears_has_positive_labels(client, app_settings):
+    """Clearing all positive labels sets has_positive_labels to False."""
     from pathlib import Path
 
     from sqlalchemy import insert
@@ -609,7 +609,7 @@ async def test_save_labels_clears_has_humpback_labels(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 output_tsv_path=str(tsv_path),
-                has_humpback_labels=True,
+                has_positive_labels=True,
             )
         )
         await session.commit()
@@ -626,12 +626,12 @@ async def test_save_labels_clears_has_humpback_labels(client, app_settings):
     # Verify flag is now False
     resp2 = await client.get(f"/classifier/detection-jobs/{job_id}")
     assert resp2.status_code == 200
-    assert resp2.json()["has_humpback_labels"] is False
+    assert resp2.json()["has_positive_labels"] is False
 
     await engine.dispose()
 
 
-async def test_partial_save_preserves_humpback_flag_from_other_rows(
+async def test_partial_save_preserves_positive_flag_from_other_rows(
     client, app_settings
 ):
     """Partial save updating non-humpback labels preserves flag from other rows."""
@@ -713,6 +713,165 @@ async def test_partial_save_preserves_humpback_flag_from_other_rows(
     # Flag should still be True because first row has humpback=1
     resp2 = await client.get(f"/classifier/detection-jobs/{job_id}")
     assert resp2.status_code == 200
-    assert resp2.json()["has_humpback_labels"] is True
+    assert resp2.json()["has_positive_labels"] is True
+
+    await engine.dispose()
+
+
+async def test_save_orca_label_sets_has_positive_labels(client, app_settings):
+    """Saving labels with orca=1 sets has_positive_labels to True."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+    tsv_path = tsv_dir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "humpback",
+        "orca",
+        "ship",
+        "background",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "a.wav",
+                "start_sec": "0.0",
+                "end_sec": "5.0",
+                "avg_confidence": "0.8",
+                "peak_confidence": "0.9",
+                "n_windows": "1",
+                "humpback": "",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    # Save orca=1
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[{"filename": "a.wav", "start_sec": 0.0, "end_sec": 5.0, "orca": 1}],
+    )
+    assert resp.status_code == 200
+
+    # Verify flag is True
+    resp2 = await client.get(f"/classifier/detection-jobs/{job_id}")
+    assert resp2.status_code == 200
+    assert resp2.json()["has_positive_labels"] is True
+
+    await engine.dispose()
+
+
+async def test_orca_label_round_trip(client, app_settings):
+    """Orca label round-trips through PUT labels and GET content."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+    tsv_path = tsv_dir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "humpback",
+        "orca",
+        "ship",
+        "background",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "a.wav",
+                "start_sec": "0.0",
+                "end_sec": "5.0",
+                "avg_confidence": "0.8",
+                "peak_confidence": "0.9",
+                "n_windows": "1",
+                "humpback": "",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    # Save orca=1, humpback=0
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": "a.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "humpback": 0,
+                "orca": 1,
+            }
+        ],
+    )
+    assert resp.status_code == 200
+
+    # Read back content and verify orca label
+    resp2 = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp2.status_code == 200
+    rows = resp2.json()
+    assert len(rows) == 1
+    assert rows[0]["orca"] == 1
+    assert rows[0]["humpback"] == 0
 
     await engine.dispose()

@@ -57,7 +57,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Inline audio playback and label annotation available while detection is still running
 - Local extraction uses canonical labeled bounds directly (no extraction-time widening)
 - Inline audio playback of detected segments
-- Detection label annotation with keyboard shortcuts
+- Detection labels: humpback (positive), orca (positive), ship (negative), background (negative)
+- Detection label annotation with keyboard shortcuts (`h`=humpback, `o`=orca, `s`=ship, `b`=background)
 - Detection label API enforces label values in `{0, 1, null}`
 
 ### Hydrophone Streaming Detection
@@ -92,8 +93,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Legacy TSV normalization for content/download prefers `extract_filename` when `detection_filename` is missing, otherwise derives snapped canonical ranges
 - Detection TSV download streams normalized rows incrementally (avoids full-file in-memory buffering)
 - WAV export for hydrophone jobs: reads from local HLS cache (no S3 calls during extraction), writes labeled samples to positive/negative folders; missing cached rows are skipped and counted in `n_skipped`
-- Hydrophone extraction output paths include hydrophone short label partitioning:
-  `{positive|negative}_root/{hydrophone_id}/{label}/YYYY/MM/DD/*.wav`
+- Hydrophone extraction output paths: species/category before hydrophone —
+  `{positive|negative}_root/{label}/{hydrophone_id}/YYYY/MM/DD/*.wav`
 - Hydrophone labeled-sample extraction reuses the same stream-offset resolver as playback
 - Hydrophone detection job resume after worker restart: skips already-processed segments,
   preserves prior detections, guards against timeline changes between runs
@@ -126,7 +127,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone progress displays audio duration in hours:minutes format
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
 - Detection spectrogram popup: Alt+click any detection row to view an STFT spectrogram (cached PNG, configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
-- "Whale" badge on hydrophone jobs that have confirmed humpback labels (`has_humpback_labels` flag persisted on label save)
+- "Whale" badge on hydrophone jobs with confirmed positive labels — humpback or orca (`has_positive_labels` flag persisted on label save)
 
 ### Retrain Workflow
 - Automated retrain pipeline: reimport folders, queue processing, create training job — all from a single "Retrain" button
@@ -156,7 +157,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `015_has_humpback_labels.py`
+- **Latest migration**: `016_rename_has_positive_labels.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows
 
 ---

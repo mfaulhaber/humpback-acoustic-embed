@@ -44,7 +44,7 @@ import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "
 
 type SortKey = "filename" | "duration_sec" | "avg_confidence";
 type SortDir = "asc" | "desc";
-type LabelField = "humpback" | "ship" | "background";
+type LabelField = "humpback" | "orca" | "ship" | "background";
 type ClipSource = "detection_filename" | "raw";
 type PlayClip = {
   startSec: number;
@@ -203,7 +203,7 @@ export function HydrophoneTab() {
   const saveLabelsMutation = useSaveDetectionLabels();
   const extractMutation = useExtractLabeledSamples();
 
-  // Buffered label edits: jobId -> rowKey -> { humpback, ship, background }
+  // Buffered label edits: jobId -> rowKey -> { humpback, orca, ship, background }
   const [labelEdits, setLabelEdits] = useState<
     Map<string, Map<string, Partial<Record<LabelField, number | null>>>>
   >(new Map());
@@ -243,7 +243,7 @@ export function HydrophoneTab() {
     expandedJob && (expandedJob.status === "complete" || expandedJob.status === "canceled") ? expandedJob.id : null;
   const { data: expandedRows = [] } = useDetectionContent(expandedCompletedJobId);
   const expandedHasSavedLabels = useMemo(
-    () => expandedRows.some((r) => r.humpback === 1 || r.ship === 1 || r.background === 1),
+    () => expandedRows.some((r) => r.humpback === 1 || r.orca === 1 || r.ship === 1 || r.background === 1),
     [expandedRows],
   );
   const extractTargetIds = useMemo(() => {
@@ -330,6 +330,7 @@ export function HydrophoneTab() {
           start_sec: parseFloat(startStr),
           end_sec: parseFloat(endStr),
           humpback: edits.humpback ?? null,
+          orca: edits.orca ?? null,
           ship: edits.ship ?? null,
           background: edits.background ?? null,
         });
@@ -889,7 +890,7 @@ function HydrophoneJobRow({
         </td>
         <td className="px-3 py-2">
           <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
-          {job.has_humpback_labels && (
+          {job.has_positive_labels && (
             <Badge variant="outline" className="ml-1.5 text-[10px] py-0">
               Whale
             </Badge>
@@ -1071,7 +1072,7 @@ function HydrophoneContentTable({
   );
 
   // Keyboard shortcuts
-  const keyMap: Record<string, LabelField> = { h: "humpback", s: "ship", b: "background" };
+  const keyMap: Record<string, LabelField> = { h: "humpback", o: "orca", s: "ship", b: "background" };
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1153,6 +1154,7 @@ function HydrophoneContentTable({
             <SortHeader label="Duration (s)" field="duration_sec" />
             <SortHeader label="Confidence" field="avg_confidence" />
             <th className="px-3 py-1.5 text-center font-medium">Humpback</th>
+            <th className="px-3 py-1.5 text-center font-medium">Orca</th>
             <th className="px-3 py-1.5 text-center font-medium">Ship</th>
             <th className="px-3 py-1.5 text-center font-medium">Background</th>
           </tr>
@@ -1218,6 +1220,14 @@ function HydrophoneContentTable({
                     className="h-3.5 w-3.5 cursor-pointer"
                     checked={getEffectiveLabel(row, "humpback") === 1}
                     onChange={() => handleCheckboxClick(row, "humpback")}
+                  />
+                </td>
+                <td className="px-3 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer"
+                    checked={getEffectiveLabel(row, "orca") === 1}
+                    onChange={() => handleCheckboxClick(row, "orca")}
                   />
                 </td>
                 <td className="px-3 py-1.5 text-center">

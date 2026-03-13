@@ -409,7 +409,7 @@ export interface DetectionJob {
   time_covered_sec: number | null;
   alerts: FlashAlert[] | null;
   local_cache_path: string | null;
-  has_humpback_labels: boolean | null;
+  has_positive_labels: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -471,6 +471,7 @@ export interface DetectionRow {
   raw_end_sec?: number | null;
   merged_event_count?: number | null;
   humpback: number | null;
+  orca: number | null;
   ship: number | null;
   background: number | null;
 }
@@ -480,6 +481,7 @@ export interface DetectionLabelRow {
   start_sec: number;
   end_sec: number;
   humpback: number | null;
+  orca: number | null;
   ship: number | null;
   background: number | null;
 }

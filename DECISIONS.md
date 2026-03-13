@@ -442,3 +442,34 @@ and decode/inference are serialized.
 - Bounds extra network and memory pressure through a fixed in-flight queue.
 - Preserves deterministic segment ordering and existing API/TSV/DB schemas.
 - Adds only configuration + runtime behavior changes (no migration required).
+
+---
+
+## ADR-020: Orca detection label + species-first extraction paths + has_positive_labels rename
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Users working with Orcasound hydrophones encounter both humpback whales and
+orcas. The detection UI only supported humpback (positive), ship (negative), and background
+(negative) labels. Additionally, hydrophone extraction paths placed hydrophone_id before
+species/category (`{root}/{hydrophone_id}/{species}/...`), making it harder to browse all
+samples of one species across multiple hydrophones.
+
+**Decision**:
+- Add `orca` as a fourth detection label, routed as a positive label alongside humpback.
+- Add keyboard shortcut `o` for orca labeling.
+- Reorder hydrophone extraction paths to species/category-first:
+  `{root}/{species}/{hydrophone_id}/YYYY/MM/DD/*.wav`.
+- Rename DB column `has_humpback_labels` → `has_positive_labels` to cover both humpback
+  and orca (migration `016`).
+- Flag computation: `has_positive = any(humpback == 1 or orca == 1)`.
+- Backward-compatible TSV handling: old TSVs without `orca` column work fine (missing
+  column reads as empty/null).
+
+**Consequences**:
+- Orca vocalizations can now be labeled and extracted for training alongside humpback
+- Extraction folder structure is species-first, enabling easy cross-hydrophone browsing
+- Alembic migration `016_rename_has_positive_labels.py` renames the column
+- Frontend "Whale" badge now appears for jobs with any positive label (humpback or orca)
+- Local (non-hydrophone) extraction paths unchanged (no hydrophone_id component)

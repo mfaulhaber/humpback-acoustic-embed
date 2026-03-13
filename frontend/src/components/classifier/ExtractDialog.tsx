@@ -70,7 +70,7 @@ export function ExtractDialog({
           </DialogHeader>
           <div className="space-y-3 py-2">
             <div>
-              <label className="text-sm font-medium">Positive Output Path (humpback)</label>
+              <label className="text-sm font-medium">Positive Output Path (humpback, orca)</label>
               <div className="flex gap-2 mt-1">
                 <Input
                   value={posPath}

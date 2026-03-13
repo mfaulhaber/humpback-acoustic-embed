@@ -187,9 +187,9 @@ Jobs are queued and executed in the background by workers.
 UI can monitor via polling or a push channel.
 
 ### 4.4 Hydrophone Extraction Path Convention
-Hydrophone labeled-sample extraction writes outputs under the hydrophone short label:
-- positives: `{positive_output_path}/{hydrophone_id}/humpback/YYYY/MM/DD/*.wav`
-- negatives: `{negative_output_path}/{hydrophone_id}/{ship|background}/YYYY/MM/DD/*.wav`
+Hydrophone labeled-sample extraction groups by species/category first, then hydrophone:
+- positives: `{positive_output_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/*.wav`
+- negatives: `{negative_output_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/*.wav`
 
 ### 4.5 Hydrophone Timeline Assembly
 Hydrophone detection, playback, and extraction must use the same bounded stream timeline:

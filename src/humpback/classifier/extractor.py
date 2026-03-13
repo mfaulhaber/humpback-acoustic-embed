@@ -93,13 +93,20 @@ def extract_labeled_samples(
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             humpback = row.get("humpback", "").strip()
+            orca = row.get("orca", "").strip()
             ship = row.get("ship", "").strip()
             background = row.get("background", "").strip()
-            if humpback == "1" or ship == "1" or background == "1":
+            if humpback == "1" or orca == "1" or ship == "1" or background == "1":
                 labeled_rows.append(row)
 
     if not labeled_rows:
-        return {"n_humpback": 0, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+        return {
+            "n_humpback": 0,
+            "n_orca": 0,
+            "n_ship": 0,
+            "n_background": 0,
+            "n_skipped": 0,
+        }
 
     # Group by source filename
     by_file: dict[str, list[dict]] = {}
@@ -107,7 +114,13 @@ def extract_labeled_samples(
         fn = row.get("filename", "")
         by_file.setdefault(fn, []).append(row)
 
-    counts = {"n_humpback": 0, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+    counts = {
+        "n_humpback": 0,
+        "n_orca": 0,
+        "n_ship": 0,
+        "n_background": 0,
+        "n_skipped": 0,
+    }
 
     for source_filename, rows in by_file.items():
         source_path = audio_folder / source_filename
@@ -148,6 +161,9 @@ def extract_labeled_samples(
             if row.get("humpback", "").strip() == "1":
                 out_dir = positive_output_path / "humpback" / date_folder
                 labels_to_write.append((out_dir, "humpback"))
+            if row.get("orca", "").strip() == "1":
+                out_dir = positive_output_path / "orca" / date_folder
+                labels_to_write.append((out_dir, "orca"))
             if row.get("ship", "").strip() == "1":
                 out_dir = negative_output_path / "ship" / date_folder
                 labels_to_write.append((out_dir, "ship"))
@@ -264,13 +280,20 @@ def extract_hydrophone_labeled_samples(
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             humpback = row.get("humpback", "").strip()
+            orca = row.get("orca", "").strip()
             ship = row.get("ship", "").strip()
             background = row.get("background", "").strip()
-            if humpback == "1" or ship == "1" or background == "1":
+            if humpback == "1" or orca == "1" or ship == "1" or background == "1":
                 labeled_rows.append(row)
 
     if not labeled_rows:
-        return {"n_humpback": 0, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+        return {
+            "n_humpback": 0,
+            "n_orca": 0,
+            "n_ship": 0,
+            "n_background": 0,
+            "n_skipped": 0,
+        }
 
     # Group by source filename
     by_file: dict[str, list[dict]] = {}
@@ -278,7 +301,13 @@ def extract_hydrophone_labeled_samples(
         fn = row.get("filename", "")
         by_file.setdefault(fn, []).append(row)
 
-    counts = {"n_humpback": 0, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+    counts = {
+        "n_humpback": 0,
+        "n_orca": 0,
+        "n_ship": 0,
+        "n_background": 0,
+        "n_skipped": 0,
+    }
     use_stream_resolver = (
         stream_start_timestamp is not None and stream_end_timestamp is not None
     )
@@ -368,19 +397,22 @@ def extract_hydrophone_labeled_samples(
             wav_name = detection_filename
             date_folder = _date_folder(abs_start)
 
-            # Route to label-specific folders
+            # Route to label-specific folders (species/category before hydrophone_id)
             labels_to_write: list[tuple[Path, str]] = []
             if row.get("humpback", "").strip() == "1":
                 out_dir = (
-                    positive_output_path / hydrophone_id / "humpback" / date_folder
+                    positive_output_path / "humpback" / hydrophone_id / date_folder
                 )
                 labels_to_write.append((out_dir, "humpback"))
+            if row.get("orca", "").strip() == "1":
+                out_dir = positive_output_path / "orca" / hydrophone_id / date_folder
+                labels_to_write.append((out_dir, "orca"))
             if row.get("ship", "").strip() == "1":
-                out_dir = negative_output_path / hydrophone_id / "ship" / date_folder
+                out_dir = negative_output_path / "ship" / hydrophone_id / date_folder
                 labels_to_write.append((out_dir, "ship"))
             if row.get("background", "").strip() == "1":
                 out_dir = (
-                    negative_output_path / hydrophone_id / "background" / date_folder
+                    negative_output_path / "background" / hydrophone_id / date_folder
                 )
                 labels_to_write.append((out_dir, "background"))
 

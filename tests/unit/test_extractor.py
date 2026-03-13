@@ -52,7 +52,9 @@ def _make_wav(path: Path, duration: float = 1.0, sr: int = 16000) -> None:
         wf.writeframes(struct.pack(f"<{n}h", *samples))
 
 
-def _make_tsv(path: Path, rows: list[dict]) -> None:
+def _make_tsv(
+    path: Path, rows: list[dict], extra_fields: list[str] | None = None
+) -> None:
     """Write a detection TSV file."""
     fieldnames = [
         "filename",
@@ -61,9 +63,14 @@ def _make_tsv(path: Path, rows: list[dict]) -> None:
         "avg_confidence",
         "peak_confidence",
         "humpback",
+        "orca",
         "ship",
         "background",
     ]
+    if extra_fields:
+        for f in extra_fields:
+            if f not in fieldnames:
+                fieldnames.append(f)
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
@@ -153,6 +160,7 @@ class TestExtractLabeledSamples:
             tsv_path, tmp_path, tmp_path / "pos", tmp_path / "neg"
         )
         assert summary["n_humpback"] == 0
+        assert summary["n_orca"] == 0
         assert summary["n_ship"] == 0
         assert summary["n_background"] == 0
 
@@ -448,7 +456,7 @@ class TestExtractHydrophoneLabeledSamples:
         humpback_files = list(pos_out.rglob("*.wav"))
         assert len(humpback_files) == 1
         rel = humpback_files[0].relative_to(pos_out)
-        assert rel.parts[:2] == ("rpi_orcasound_lab", "humpback")
+        assert rel.parts[:2] == ("humpback", "rpi_orcasound_lab")
         assert rel.parts[2:5] == ("2025", "06", "15")
 
     def test_hydrophone_extraction_uses_detection_filename_exact_bounds(self, tmp_path):
@@ -509,8 +517,8 @@ class TestExtractHydrophoneLabeledSamples:
         assert summary["n_humpback"] == 1
         out = (
             pos_out
-            / "rpi_orcasound_lab"
             / "humpback"
+            / "rpi_orcasound_lab"
             / "2025"
             / "06"
             / "15"
@@ -581,8 +589,8 @@ class TestExtractHydrophoneLabeledSamples:
         assert summary["n_humpback"] == 1
         out = (
             pos_out
-            / "rpi_orcasound_lab"
             / "humpback"
+            / "rpi_orcasound_lab"
             / "2025"
             / "06"
             / "15"
@@ -649,21 +657,23 @@ class TestExtractHydrophoneLabeledSamples:
         assert summary["n_ship"] == 1
         assert summary["n_background"] == 1
 
-        ship_files = list((neg_out / "rpi_orcasound_lab" / "ship").rglob("*.wav"))
+        ship_files = list((neg_out / "ship" / "rpi_orcasound_lab").rglob("*.wav"))
         background_files = list(
-            (neg_out / "rpi_orcasound_lab" / "background").rglob("*.wav")
+            (neg_out / "background" / "rpi_orcasound_lab").rglob("*.wav")
         )
         assert len(ship_files) == 1
         assert len(background_files) == 1
 
         for path in ship_files + background_files:
             rel = path.relative_to(neg_out)
-            assert rel.parts[0] == "rpi_orcasound_lab"
+            # species/category first, then hydrophone_id
+            assert rel.parts[0] in ("ship", "background")
+            assert rel.parts[1] == "rpi_orcasound_lab"
             assert rel.parts[2:5] == ("2025", "06", "15")
 
-        # Old layout should remain unused for hydrophone extraction.
-        assert not list((neg_out / "ship").rglob("*.wav"))
-        assert not list((neg_out / "background").rglob("*.wav"))
+        # Old layout (hydrophone_id first) should not exist.
+        assert not list((neg_out / "rpi_orcasound_lab" / "ship").rglob("*.wav"))
+        assert not list((neg_out / "rpi_orcasound_lab" / "background").rglob("*.wav"))
 
     def test_no_labeled_rows(self, tmp_path):
         from unittest.mock import MagicMock
@@ -919,3 +929,189 @@ class TestExtractHydrophoneLabeledSamples:
             == 1000.0 - MAX_HYDROPHONE_RANGE_SEC
         )
         mock_client.list_segments.assert_not_called()
+
+
+class TestOrcaExtraction:
+    """Tests for orca label support in extraction."""
+
+    def test_orca_local_extraction(self, tmp_path):
+        """Orca label routes to positive_output_path/orca/."""
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        _make_wav(audio_folder / "test.wav", duration=10.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "",
+                    "orca": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+        summary = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        assert summary["n_orca"] == 1
+        assert summary["n_humpback"] == 0
+
+        orca_files = list((pos_out / "orca").rglob("*.wav"))
+        assert len(orca_files) == 1
+
+    def test_orca_hydrophone_extraction(self, tmp_path):
+        """Orca routes to positive_output_path/orca/{hydrophone}/."""
+        from unittest.mock import MagicMock, patch
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "",
+                    "orca": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1718438400"]
+        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path,
+                "rpi_orcasound_lab",
+                pos_out,
+                neg_out,
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
+            )
+
+        assert summary["n_orca"] == 1
+        assert summary["n_humpback"] == 0
+
+        orca_files = list(pos_out.rglob("*.wav"))
+        assert len(orca_files) == 1
+        rel = orca_files[0].relative_to(pos_out)
+        assert rel.parts[:2] == ("orca", "rpi_orcasound_lab")
+
+    def test_hydrophone_path_order_species_before_hydrophone(self, tmp_path):
+        """All hydrophone labels follow species/category-before-hydrophone path order."""
+        from unittest.mock import MagicMock, patch
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "orca": "1",
+                    "ship": "1",
+                    "background": "1",
+                },
+            ],
+        )
+
+        mock_client = MagicMock()
+        mock_client.list_hls_folders.return_value = ["1718438400"]
+        mock_client.list_segments.return_value = ["rpi/hls/1718438400/seg0.ts"]
+        mock_client.fetch_segment.return_value = b"fake-ts"
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        with patch("humpback.classifier.s3_stream.decode_ts_bytes", return_value=audio):
+            summary = extract_hydrophone_labeled_samples(
+                tsv_path,
+                "rpi_north_sjc",
+                pos_out,
+                neg_out,
+                mock_client,
+                target_sample_rate=sr,
+                window_size_seconds=5.0,
+            )
+
+        assert summary["n_humpback"] == 1
+        assert summary["n_orca"] == 1
+        assert summary["n_ship"] == 1
+        assert summary["n_background"] == 1
+
+        # Verify species/category is first path component, then hydrophone_id
+        for label in ("humpback", "orca"):
+            files = list((pos_out / label / "rpi_north_sjc").rglob("*.wav"))
+            assert len(files) == 1, f"Expected 1 file for {label}"
+        for label in ("ship", "background"):
+            files = list((neg_out / label / "rpi_north_sjc").rglob("*.wav"))
+            assert len(files) == 1, f"Expected 1 file for {label}"
+
+    def test_backward_compat_tsv_without_orca_column(self, tmp_path):
+        """TSV files without an orca column should extract with n_orca == 0."""
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        _make_wav(audio_folder / "test.wav", duration=10.0)
+
+        # Write TSV without orca column (legacy format)
+        tsv_path = tmp_path / "detections.tsv"
+        fieldnames = [
+            "filename",
+            "start_sec",
+            "end_sec",
+            "avg_confidence",
+            "peak_confidence",
+            "humpback",
+            "ship",
+            "background",
+        ]
+        with open(tsv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "filename": "test.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            )
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+        summary = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        assert summary["n_humpback"] == 1
+        assert summary["n_orca"] == 0
