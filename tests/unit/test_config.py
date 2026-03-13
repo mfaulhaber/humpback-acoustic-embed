@@ -14,6 +14,7 @@ def test_storage_root_drives_default_paths(tmp_path):
     assert settings.positive_sample_path == str(storage_root / "labeled" / "positives")
     assert settings.negative_sample_path == str(storage_root / "labeled" / "negatives")
     assert settings.s3_cache_path == str(storage_root / "s3-orcasound-cache")
+    assert settings.noaa_cache_path == str(storage_root / "noaa-gcs-cache")
     assert settings.api_host == "0.0.0.0"
     assert settings.api_port == 8000
     assert settings.allowed_hosts == ["*"]
@@ -31,6 +32,7 @@ def test_env_file_loads_hosts_and_path_overrides(tmp_path):
                 "HUMPBACK_POSITIVE_SAMPLE_PATH=/workspace/custom/positives",
                 "HUMPBACK_NEGATIVE_SAMPLE_PATH=/workspace/custom/negatives",
                 "HUMPBACK_S3_CACHE_PATH=/workspace/custom/cache",
+                "HUMPBACK_NOAA_CACHE_PATH=/workspace/custom/noaa-cache",
                 "TF_EXTRA=tf-linux-cpu",
             ]
         ),
@@ -50,6 +52,7 @@ def test_env_file_loads_hosts_and_path_overrides(tmp_path):
     assert settings.positive_sample_path == "/workspace/custom/positives"
     assert settings.negative_sample_path == "/workspace/custom/negatives"
     assert settings.s3_cache_path == "/workspace/custom/cache"
+    assert settings.noaa_cache_path == "/workspace/custom/noaa-cache"
 
 
 def test_settings_does_not_auto_load_cwd_dotenv(tmp_path, monkeypatch):

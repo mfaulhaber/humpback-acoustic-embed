@@ -376,6 +376,7 @@ async def run_hydrophone_detection_job(
             hydrophone_id,
             local_cache_path=job.local_cache_path,
             s3_cache_path=settings.s3_cache_path,
+            noaa_cache_path=settings.noaa_cache_path,
         )
         hydrophone_short_name = hydrophone_provider.source_id
 
@@ -590,6 +591,7 @@ async def run_extraction_job(
             extract_provider = build_archive_playback_provider(
                 job.hydrophone_id,
                 cache_path=cache_path,
+                noaa_cache_path=settings.noaa_cache_path,
             )
 
             summary = await asyncio.to_thread(

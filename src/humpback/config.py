@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     positive_sample_path: str | None = None
     negative_sample_path: str | None = None
     s3_cache_path: str | None = None
+    noaa_cache_path: str | None = None
     hydrophone_timeline_lookback_increment_hours: int = 4
     hydrophone_timeline_max_lookback_hours: int = 7 * 24
     hydrophone_prefetch_enabled: bool = True
@@ -67,6 +68,8 @@ class Settings(BaseSettings):
             self.negative_sample_path = str(self.storage_root / "labeled" / "negatives")
         if self.s3_cache_path is None:
             self.s3_cache_path = str(self.storage_root / "s3-orcasound-cache")
+        if self.noaa_cache_path is None:
+            self.noaa_cache_path = str(self.storage_root / "noaa-gcs-cache")
         if self.api_port <= 0:
             raise ValueError("api_port must be > 0")
         if self.hydrophone_timeline_lookback_increment_hours <= 0:

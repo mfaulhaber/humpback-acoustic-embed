@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: NOAA GCS Local Cache with GCS Fallback
+
+[Full plan](/Users/michael/.claude/plans/synthetic-splashing-prism.md)
+
+## Outcome (2026-03-13)
+
+- Added `CachingNoaaGCSProvider` with local filesystem cache + GCS fallback for
+  NOAA metadata manifests (JSON) and `.aif` segment files, using atomic writes
+  (tmpfile + `os.replace`).
+- Added `noaa_cache_path` setting (defaults to `{storage_root}/noaa-gcs-cache`),
+  factory helpers (`build_noaa_detection_provider`, `build_noaa_playback_provider`),
+  and threaded `noaa_cache_path` through detection worker, extraction worker, and
+  playback router.
+- Updated docs (ADR-025, STATUS.md, README.md) and added 16 new tests.
+
+## Verification
+
+- `uv run ruff format --check` on modified files — passed.
+- `uv run ruff check` on modified files — passed.
+- `uv run pyright` on modified files — 0 errors.
+- `uv run pytest tests/` — 587 passed.
+
 # Plan: ArchiveProvider Abstraction — Phase 4: Promote NOAA GCS provider
 
 [Full plan](/Users/michael/.claude/plans/peaceful-herding-rossum.md)

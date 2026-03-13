@@ -102,6 +102,17 @@ class TestProtocolConformance:
         )
         assert isinstance(provider, ArchiveProvider)
 
+    def test_caching_noaa_gcs_is_archive_provider(self):
+        from humpback.classifier.providers.noaa_gcs import CachingNoaaGCSProvider
+
+        provider = CachingNoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            "/tmp/noaa-cache",
+            bucket_obj=_FakeBucket([]),
+        )
+        assert isinstance(provider, ArchiveProvider)
+
 
 class TestProviderProperties:
     @patch("humpback.classifier.providers.orcasound_hls.OrcasoundS3Client")
@@ -441,7 +452,7 @@ class TestProviderBuilders:
         )
         assert provider is mock_orcasound.return_value
 
-    def test_archive_detection_builder_routes_noaa(self):
+    def test_archive_detection_builder_routes_noaa_direct(self):
         provider = build_archive_detection_provider(
             "noaa_glacier_bay",
             local_cache_path=None,
@@ -449,6 +460,19 @@ class TestProviderBuilders:
         )
 
         assert isinstance(provider, NoaaGCSProvider)
+        assert provider.source_id == "noaa_glacier_bay"
+
+    def test_archive_detection_builder_routes_noaa_caching(self, tmp_path):
+        provider = build_archive_detection_provider(
+            "noaa_glacier_bay",
+            local_cache_path=None,
+            s3_cache_path="/ignored",
+            noaa_cache_path=str(tmp_path / "noaa-cache"),
+        )
+
+        from humpback.classifier.providers.noaa_gcs import CachingNoaaGCSProvider
+
+        assert isinstance(provider, CachingNoaaGCSProvider)
         assert provider.source_id == "noaa_glacier_bay"
 
     def test_archive_detection_builder_rejects_local_cache_for_noaa(self):
@@ -487,6 +511,256 @@ class TestProviderBuilders:
 
         assert isinstance(provider, NoaaGCSProvider)
         assert provider.source_id == "noaa_glacier_bay"
+
+    def test_archive_playback_builder_routes_noaa_with_cache(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import CachingNoaaGCSProvider
+
+        provider = build_archive_playback_provider(
+            "noaa_glacier_bay",
+            cache_path=None,
+            noaa_cache_path=str(tmp_path / "noaa-cache"),
+        )
+
+        assert isinstance(provider, CachingNoaaGCSProvider)
+        assert provider.source_id == "noaa_glacier_bay"
+
+
+class TestNoaaManifest:
+    def _make_files(self) -> list:
+        from humpback.classifier.providers.noaa_gcs import NoaaAudioFile
+
+        return [
+            NoaaAudioFile(
+                filename="07_25_2015_00_00_09.aif",
+                key="archive/07_25_2015_00_00_09.aif",
+                timestamp=datetime(2015, 7, 25, 0, 0, 9, tzinfo=timezone.utc),
+                size=100,
+            ),
+            NoaaAudioFile(
+                filename="07_25_2015_00_05_09.aif",
+                key="archive/07_25_2015_00_05_09.aif",
+                timestamp=datetime(2015, 7, 25, 0, 5, 9, tzinfo=timezone.utc),
+                size=200,
+            ),
+        ]
+
+    def test_write_and_read_roundtrip(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import (
+            _manifest_path,
+            read_noaa_manifest,
+            write_noaa_manifest,
+        )
+
+        files = self._make_files()
+        path = _manifest_path(str(tmp_path), "bucket", "prefix/sub/")
+        write_noaa_manifest(path, files, 300.0)
+
+        result = read_noaa_manifest(path)
+        assert result is not None
+        loaded_files, interval = result
+        assert len(loaded_files) == 2
+        assert loaded_files[0].filename == "07_25_2015_00_00_09.aif"
+        assert loaded_files[0].key == "archive/07_25_2015_00_00_09.aif"
+        assert loaded_files[0].size == 100
+        assert loaded_files[1].filename == "07_25_2015_00_05_09.aif"
+        assert interval == 300.0
+
+    def test_read_returns_none_for_missing_file(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import read_noaa_manifest
+
+        result = read_noaa_manifest(tmp_path / "nonexistent.json")
+        assert result is None
+
+    def test_read_returns_none_for_corrupt_json(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import read_noaa_manifest
+
+        path = tmp_path / "manifest.json"
+        path.write_text("not valid json!!!")
+        result = read_noaa_manifest(path)
+        assert result is None
+
+
+class TestCachingNoaaProvider:
+    def _make_provider(
+        self, cache_root: str, bucket: _FakeBucket, prefix: str = "archive/"
+    ):
+        from humpback.classifier.providers.noaa_gcs import CachingNoaaGCSProvider
+
+        return CachingNoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            cache_root,
+            prefix=prefix,
+            bucket_obj=bucket,
+        )
+
+    def test_build_timeline_uses_manifest_when_available(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import (
+            NoaaAudioFile,
+            _manifest_path,
+            write_noaa_manifest,
+        )
+
+        prefix = "archive/"
+        files = [
+            NoaaAudioFile(
+                filename="07_25_2015_00_00_09.aif",
+                key=prefix + "07_25_2015_00_00_09.aif",
+                timestamp=datetime(2015, 7, 25, 0, 0, 9, tzinfo=timezone.utc),
+                size=100,
+            ),
+        ]
+        manifest = _manifest_path(str(tmp_path), "noaa-passive-bioacoustic", prefix)
+        write_noaa_manifest(manifest, files, 300.0)
+
+        bucket = _FakeBucket([])
+        provider = self._make_provider(str(tmp_path), bucket, prefix)
+        timeline = provider.build_timeline(
+            _ts(2015, 7, 25, 0, 0, 0),
+            _ts(2015, 7, 25, 0, 10, 0),
+        )
+
+        assert bucket.list_calls == 0
+        assert len(timeline) == 1
+
+    def test_build_timeline_lists_gcs_and_writes_manifest(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import (
+            _manifest_path,
+            read_noaa_manifest,
+        )
+
+        prefix = "archive/"
+        bucket = _FakeBucket(
+            [
+                _FakeBlob(prefix + "07_25_2015_00_00_09.aif", size=100),
+                _FakeBlob(prefix + "07_25_2015_00_05_09.aif", size=200),
+            ]
+        )
+        provider = self._make_provider(str(tmp_path), bucket, prefix)
+        timeline = provider.build_timeline(
+            _ts(2015, 7, 25, 0, 0, 0),
+            _ts(2015, 7, 25, 0, 10, 0),
+        )
+
+        assert bucket.list_calls == 1
+        assert len(timeline) == 2
+
+        manifest = _manifest_path(str(tmp_path), "noaa-passive-bioacoustic", prefix)
+        cached = read_noaa_manifest(manifest)
+        assert cached is not None
+        assert len(cached[0]) == 2
+
+    def test_fetch_segment_reads_local_first(self, tmp_path):
+        prefix = "archive/"
+        key = prefix + "07_25_2015_00_00_09.aif"
+        local_path = tmp_path / "noaa-passive-bioacoustic" / key
+        local_path.parent.mkdir(parents=True)
+        local_path.write_bytes(b"cached-aif-data")
+
+        bucket = _FakeBucket([])
+        provider = self._make_provider(str(tmp_path), bucket, prefix)
+
+        result = provider.fetch_segment(key)
+
+        assert result == b"cached-aif-data"
+        assert bucket.blob_calls == []
+
+    def test_fetch_segment_falls_back_to_gcs_and_caches(self, tmp_path):
+        prefix = "archive/"
+        key = prefix + "07_25_2015_00_00_09.aif"
+        bucket = _FakeBucket([_FakeBlob(key, data=b"gcs-aif-data")])
+        provider = self._make_provider(str(tmp_path), bucket, prefix)
+
+        result = provider.fetch_segment(key)
+
+        assert result == b"gcs-aif-data"
+        assert bucket.blob_calls == [key]
+
+        local_path = tmp_path / "noaa-passive-bioacoustic" / key
+        assert local_path.is_file()
+        assert local_path.read_bytes() == b"gcs-aif-data"
+
+    def test_invalidate_segment(self, tmp_path):
+        prefix = "archive/"
+        key = prefix + "07_25_2015_00_00_09.aif"
+        local_path = tmp_path / "noaa-passive-bioacoustic" / key
+        local_path.parent.mkdir(parents=True)
+        local_path.write_bytes(b"data")
+
+        provider = self._make_provider(str(tmp_path), _FakeBucket([]), prefix)
+
+        assert provider.invalidate_cached_segment(key) is True
+        assert not local_path.exists()
+        assert provider.invalidate_cached_segment(key) is False
+
+    def test_name_and_source_id(self):
+        from humpback.classifier.providers.noaa_gcs import CachingNoaaGCSProvider
+
+        provider = CachingNoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            "/tmp/cache",
+            bucket_obj=_FakeBucket([]),
+        )
+        assert provider.name == "NOAA Glacier Bay"
+        assert provider.source_id == "noaa_glacier_bay"
+
+
+class TestNoaaFactoryHelpers:
+    def test_detection_provider_returns_caching_when_cache_path_set(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import (
+            CachingNoaaGCSProvider,
+            build_noaa_detection_provider,
+        )
+
+        provider = build_noaa_detection_provider(
+            "noaa_test",
+            "Test",
+            noaa_cache_path=str(tmp_path),
+            bucket="test-bucket",
+            prefix="test/",
+        )
+        assert isinstance(provider, CachingNoaaGCSProvider)
+
+    def test_detection_provider_returns_direct_when_no_cache_path(self):
+        from humpback.classifier.providers.noaa_gcs import build_noaa_detection_provider
+
+        provider = build_noaa_detection_provider(
+            "noaa_test",
+            "Test",
+            noaa_cache_path=None,
+            bucket="test-bucket",
+            prefix="test/",
+        )
+        assert isinstance(provider, NoaaGCSProvider)
+        assert not isinstance(provider, object.__class__)
+
+    def test_playback_provider_returns_caching_when_cache_path_set(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import (
+            CachingNoaaGCSProvider,
+            build_noaa_playback_provider,
+        )
+
+        provider = build_noaa_playback_provider(
+            "noaa_test",
+            "Test",
+            noaa_cache_path=str(tmp_path),
+            bucket="test-bucket",
+            prefix="test/",
+        )
+        assert isinstance(provider, CachingNoaaGCSProvider)
+
+    def test_playback_provider_returns_direct_when_no_cache_path(self):
+        from humpback.classifier.providers.noaa_gcs import build_noaa_playback_provider
+
+        provider = build_noaa_playback_provider(
+            "noaa_test",
+            "Test",
+            noaa_cache_path=None,
+            bucket="test-bucket",
+            prefix="test/",
+        )
+        assert isinstance(provider, NoaaGCSProvider)
 
 
 class TestNonConformance:

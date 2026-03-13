@@ -700,6 +700,7 @@ Environment variables (prefix `HUMPBACK_`):
 | `HUMPBACK_POSITIVE_SAMPLE_PATH` | `{storage_root}/labeled/positives` | Default positive labeled-sample extraction root |
 | `HUMPBACK_NEGATIVE_SAMPLE_PATH` | `{storage_root}/labeled/negatives` | Default negative labeled-sample extraction root |
 | `HUMPBACK_S3_CACHE_PATH` | `{storage_root}/s3-orcasound-cache` | Default Orcasound HLS cache root |
+| `HUMPBACK_NOAA_CACHE_PATH` | `{storage_root}/noaa-gcs-cache` | Local cache root for NOAA GCS metadata + `.aif` segments |
 | `HUMPBACK_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS` | `4` | Backfill step size for hydrophone folder discovery |
 | `HUMPBACK_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS` | `168` | Maximum hydrophone folder-discovery backlook window |
 | `HUMPBACK_HYDROPHONE_PREFETCH_ENABLED` | `true` | Enable ordered concurrent segment prefetch for S3-backed hydrophone detection |

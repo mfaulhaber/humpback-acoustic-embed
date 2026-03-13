@@ -64,7 +64,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 ### Hydrophone Streaming Detection
 - S3 HLS streaming from Orcasound public hydrophone network (anonymous access)
 - NOAA Glacier Bay Bartlett Cove passive bioacoustic archive via anonymous GCS `.aif`
-  fetch (`noaa_glacier_bay` on the legacy `/classifier/hydrophones` endpoint)
+  fetch (`noaa_glacier_bay` on the legacy `/classifier/hydrophones` endpoint);
+  `CachingNoaaGCSProvider` caches metadata manifests + `.aif` segments locally
+  under `noaa_cache_path` with GCS fallback on cache miss
 - Write-through S3 cache (`CachingS3Client`): fetches from S3 on first access, caches segments locally with atomic writes, 404 markers for missing segments
 - Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
 - Client priority: local_cache_path > s3_cache_path > direct S3
@@ -81,7 +83,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Flash alerts for segment decode failures (dismissable, color-coded)
 - Hydrophone run summaries now include timing breakdown fields (`fetch_sec`, `decode_sec`, `features_sec`, `inference_sec`, `pipeline_total_sec`) plus prefetch flags/limits
 - Orcasound audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
-- NOAA playback/extraction use the direct GCS provider path and do not require a cache path
+- NOAA playback/extraction use `CachingNoaaGCSProvider` when `noaa_cache_path` is set,
+  falling back to direct GCS fetch when it is unset
 - Hydrophone timeline assembly uses numeric segment ordering plus playlist durations (when available),
   with fallback to numeric/default-duration metadata when playlists are unavailable
 - Sparse local-cache segment sets preserve playlist timeline offsets (for example, cached
@@ -109,7 +112,8 @@ Current state of the humpback acoustic embedding and clustering platform.
   from S3 (single retry) instead of failing permanently
 - Max 7-day time range per job
 - Hydrophone job validation enforces `hop_seconds <= classifier window_size_seconds`
-- `local_cache_path` is only valid for Orcasound HLS sources
+- `local_cache_path` is only valid for Orcasound HLS sources; NOAA sources use
+  `noaa_cache_path` for local caching instead
 
 ### Web UI
 - Tab-based SPA (Audio, Processing, Clustering, Classifier [Train/Hydrophone], Admin)
@@ -180,7 +184,8 @@ Current state of the humpback acoustic embedding and clustering platform.
   `*.trycloudflare.com`)
 - Default extraction/cache paths derive from `storage_root` unless explicitly
   overridden by `HUMPBACK_POSITIVE_SAMPLE_PATH`,
-  `HUMPBACK_NEGATIVE_SAMPLE_PATH`, or `HUMPBACK_S3_CACHE_PATH`
+  `HUMPBACK_NEGATIVE_SAMPLE_PATH`, `HUMPBACK_S3_CACHE_PATH`, or
+  `HUMPBACK_NOAA_CACHE_PATH`
 
 ---
 

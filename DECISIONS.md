@@ -614,3 +614,38 @@ but duplicated logic instead of participating in the production provider path.
   backlog item is required to rename/archive-generalize those surfaces.
 - No database migration is required because the change is limited to provider
   selection, runtime dependencies, tests, and documentation.
+
+---
+
+## ADR-025: NOAA GCS local caching provider
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: NOAA Glacier Bay detection, playback, and extraction used direct
+anonymous GCS fetch for every request. This worked but was slow for repeated
+access to the same time ranges (re-runs, playback, extraction) and consumed
+unnecessary network bandwidth when segment data was already available locally.
+
+**Decision**:
+- Add a `CachingNoaaGCSProvider` that caches NOAA metadata manifests and `.aif`
+  segment files locally with GCS fallback on cache miss.
+- Add `noaa_cache_path` setting (defaults to `{storage_root}/noaa-gcs-cache`)
+  to control the local cache root.
+- Add factory helpers `build_noaa_detection_provider` and
+  `build_noaa_playback_provider` that return `CachingNoaaGCSProvider` when
+  `noaa_cache_path` is configured, or the direct `NoaaGCSProvider` when it is
+  `None`.
+- Route all NOAA archive consumers (detection worker, playback router,
+  extraction worker) through the factory helpers so caching is applied
+  uniformly.
+
+**Consequences**:
+- Repeated NOAA detection/playback/extraction on the same time ranges avoids
+  redundant GCS network fetches after the first access.
+- Cache layout mirrors GCS object paths under `noaa_cache_path` for
+  straightforward inspection and cleanup.
+- Direct `NoaaGCSProvider` remains available as a fallback when
+  `noaa_cache_path` is explicitly set to `None`.
+- No database migration required; the change is limited to provider selection,
+  runtime configuration, and tests.

@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import io
+import json
+import logging
+import os
 import re
 import struct
 import subprocess
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from statistics import median
 from typing import Any
 
@@ -255,3 +260,231 @@ class NoaaGCSProvider:
 
     def invalidate_cached_segment(self, key: str) -> bool:
         return False
+
+
+# ---- Manifest cache ----
+
+MANIFEST_FILENAME = "_noaa_manifest.json"
+
+logger = logging.getLogger(__name__)
+
+
+def _manifest_path(cache_root: str, bucket: str, prefix: str) -> Path:
+    """Path for the metadata manifest for a given bucket/prefix."""
+    return Path(cache_root) / bucket / prefix.strip("/") / MANIFEST_FILENAME
+
+
+def write_noaa_manifest(
+    path: Path,
+    files: list[NoaaAudioFile],
+    default_interval_sec: float,
+) -> None:
+    """Atomically write metadata manifest (tmp + os.replace)."""
+    data = {
+        "version": 1,
+        "default_interval_sec": default_interval_sec,
+        "cached_at_utc": datetime.now(timezone.utc).isoformat(),
+        "files": [
+            {
+                "filename": f.filename,
+                "key": f.key,
+                "timestamp_iso": f.timestamp.isoformat(),
+                "size": f.size,
+            }
+            for f in files
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def read_noaa_manifest(
+    path: Path,
+) -> tuple[list[NoaaAudioFile], float] | None:
+    """Read cached manifest. Returns (files, default_interval_sec) or None if missing/corrupt."""
+    if not path.is_file():
+        return None
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        files = [
+            NoaaAudioFile(
+                filename=entry["filename"],
+                key=entry["key"],
+                timestamp=datetime.fromisoformat(entry["timestamp_iso"]),
+                size=entry["size"],
+            )
+            for entry in data["files"]
+        ]
+        return files, float(data["default_interval_sec"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        logger.warning("Corrupt NOAA manifest at %s: %s", path, exc)
+        return None
+
+
+# ---- Caching provider ----
+
+
+class CachingNoaaGCSProvider:
+    """ArchiveProvider with local cache + GCS fallback for NOAA archives."""
+
+    def __init__(
+        self,
+        source_id: str,
+        name: str,
+        cache_root: str,
+        *,
+        bucket: str = DEFAULT_NOAA_GCS_BUCKET,
+        prefix: str = DEFAULT_NOAA_GCS_PREFIX,
+        bucket_obj: Any | None = None,
+    ) -> None:
+        self._source_id = source_id
+        self._name = name
+        self._cache_root = cache_root
+        self._bucket_name = bucket
+        self._prefix = prefix.rstrip("/") + "/"
+        self._gcs = NoaaGCSProvider(
+            source_id, name, bucket=bucket, prefix=prefix, bucket_obj=bucket_obj
+        )
+        self._files: list[NoaaAudioFile] | None = None
+        self._default_interval_sec: float | None = None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def source_id(self) -> str:
+        return self._source_id
+
+    def _ensure_loaded(self) -> None:
+        if self._files is not None:
+            return
+        manifest = _manifest_path(self._cache_root, self._bucket_name, self._prefix)
+        cached = read_noaa_manifest(manifest)
+        if cached is not None:
+            self._files, self._default_interval_sec = cached
+            return
+        self._gcs._ensure_loaded()
+        self._files = self._gcs._files
+        self._default_interval_sec = self._gcs._default_interval_sec
+        if self._files:
+            write_noaa_manifest(
+                manifest,
+                self._files,
+                self._default_interval_sec or DEFAULT_NOAA_SEGMENT_DURATION_SEC,
+            )
+
+    def _build_segments(self) -> list[StreamSegment]:
+        self._ensure_loaded()
+        files = self._files or []
+        default_interval = (
+            self._default_interval_sec or DEFAULT_NOAA_SEGMENT_DURATION_SEC
+        )
+        segments: list[StreamSegment] = []
+        for idx, audio_file in enumerate(files):
+            duration_sec = default_interval
+            if idx + 1 < len(files):
+                next_gap = files[idx + 1].start_ts - audio_file.start_ts
+                if 0 < next_gap < default_interval:
+                    duration_sec = next_gap
+            segments.append(
+                StreamSegment(
+                    key=audio_file.key,
+                    start_ts=audio_file.start_ts,
+                    duration_sec=duration_sec,
+                )
+            )
+        return segments
+
+    def build_timeline(self, start_ts: float, end_ts: float) -> list[StreamSegment]:
+        timeline = [
+            segment
+            for segment in self._build_segments()
+            if segment.end_ts > start_ts and segment.start_ts < end_ts
+        ]
+        if not (self._files or []):
+            raise FileNotFoundError("No NOAA audio data found for this time range")
+        if not timeline:
+            raise FileNotFoundError("No NOAA stream segments found in requested range")
+        return timeline
+
+    def count_segments(self, start_ts: float, end_ts: float) -> int:
+        self._ensure_loaded()
+        return sum(
+            1
+            for segment in self._build_segments()
+            if segment.end_ts > start_ts and segment.start_ts < end_ts
+        )
+
+    def fetch_segment(self, key: str) -> bytes:
+        local_path = Path(self._cache_root) / self._bucket_name / key
+        if local_path.is_file():
+            return local_path.read_bytes()
+        raw = self._gcs.fetch_segment(key)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(local_path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(raw)
+            os.replace(tmp, str(local_path))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return raw
+
+    def decode_segment(self, raw_bytes: bytes, target_sr: int) -> np.ndarray:
+        return decode_noaa_audio_bytes(raw_bytes, target_sr)
+
+    def invalidate_cached_segment(self, key: str) -> bool:
+        local_path = Path(self._cache_root) / self._bucket_name / key
+        if local_path.is_file():
+            local_path.unlink()
+            return True
+        return False
+
+
+# ---- Factory helpers ----
+
+
+def build_noaa_detection_provider(
+    source_id: str,
+    name: str,
+    *,
+    noaa_cache_path: str | None,
+    bucket: str,
+    prefix: str,
+) -> NoaaGCSProvider | CachingNoaaGCSProvider:
+    if noaa_cache_path:
+        return CachingNoaaGCSProvider(
+            source_id, name, noaa_cache_path, bucket=bucket, prefix=prefix
+        )
+    return NoaaGCSProvider(source_id, name, bucket=bucket, prefix=prefix)
+
+
+def build_noaa_playback_provider(
+    source_id: str,
+    name: str,
+    *,
+    noaa_cache_path: str | None,
+    bucket: str,
+    prefix: str,
+) -> NoaaGCSProvider | CachingNoaaGCSProvider:
+    if noaa_cache_path:
+        return CachingNoaaGCSProvider(
+            source_id, name, noaa_cache_path, bucket=bucket, prefix=prefix
+        )
+    return NoaaGCSProvider(source_id, name, bucket=bucket, prefix=prefix)

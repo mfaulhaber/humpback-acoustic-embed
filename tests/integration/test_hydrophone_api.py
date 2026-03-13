@@ -1078,10 +1078,11 @@ async def test_hydrophone_audio_slice_supports_noaa_provider_without_cache(
     capture: dict[str, object] = {}
 
     def _fake_build_archive_playback_provider(
-        source_id: str, *, cache_path: str | None
+        source_id: str, *, cache_path: str | None, noaa_cache_path: str | None = None
     ):
         capture["source_id"] = source_id
         capture["cache_path"] = cache_path
+        capture["noaa_cache_path"] = noaa_cache_path
         return DummyProvider()
 
     monkeypatch.setattr(
@@ -1105,6 +1106,7 @@ async def test_hydrophone_audio_slice_supports_noaa_provider_without_cache(
     assert resp.content[:4] == b"RIFF"
     assert capture["source_id"] == "noaa_glacier_bay"
     assert capture["cache_path"] == app_settings.s3_cache_path
+    assert capture["noaa_cache_path"] == app_settings.noaa_cache_path
 
     await engine.dispose()
 

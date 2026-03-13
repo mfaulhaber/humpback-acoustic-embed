@@ -1,7 +1,12 @@
 """Archive providers for the detection pipeline."""
 
 from humpback.classifier.archive import ArchiveProvider, StreamSegment
-from humpback.classifier.providers.noaa_gcs import NoaaGCSProvider
+from humpback.classifier.providers.noaa_gcs import (
+    CachingNoaaGCSProvider,
+    NoaaGCSProvider,
+    build_noaa_detection_provider,
+    build_noaa_playback_provider,
+)
 from humpback.classifier.providers.orcasound_hls import (
     CachingHLSProvider,
     LocalHLSCacheProvider,
@@ -19,24 +24,12 @@ def _require_archive_source(source_id: str) -> dict[str, str]:
     return source
 
 
-def _build_noaa_provider(source: dict[str, str]) -> NoaaGCSProvider:
-    bucket = source.get("bucket")
-    prefix = source.get("prefix")
-    if not bucket or not prefix:
-        raise ValueError(f"NOAA source is missing bucket/prefix config: {source['id']}")
-    return NoaaGCSProvider(
-        source["id"],
-        source["name"],
-        bucket=bucket,
-        prefix=prefix,
-    )
-
-
 def build_archive_detection_provider(
     source_id: str,
     *,
     local_cache_path: str | None,
     s3_cache_path: str | None,
+    noaa_cache_path: str | None = None,
 ) -> ArchiveProvider:
     source = _require_archive_source(source_id)
     provider_kind = source["provider_kind"]
@@ -54,7 +47,19 @@ def build_archive_detection_provider(
             "local_cache_path is only supported for Orcasound HLS archive sources"
         )
     if provider_kind == "noaa_gcs":
-        return _build_noaa_provider(source)
+        bucket = source.get("bucket")
+        prefix = source.get("prefix")
+        if not bucket or not prefix:
+            raise ValueError(
+                f"NOAA source is missing bucket/prefix config: {source['id']}"
+            )
+        return build_noaa_detection_provider(
+            source["id"],
+            source["name"],
+            noaa_cache_path=noaa_cache_path,
+            bucket=bucket,
+            prefix=prefix,
+        )
 
     raise ValueError(f"Unsupported archive provider kind: {provider_kind}")
 
@@ -63,6 +68,7 @@ def build_archive_playback_provider(
     source_id: str,
     *,
     cache_path: str | None,
+    noaa_cache_path: str | None = None,
 ) -> ArchiveProvider:
     source = _require_archive_source(source_id)
     provider_kind = source["provider_kind"]
@@ -79,7 +85,19 @@ def build_archive_playback_provider(
         )
 
     if provider_kind == "noaa_gcs":
-        return _build_noaa_provider(source)
+        bucket = source.get("bucket")
+        prefix = source.get("prefix")
+        if not bucket or not prefix:
+            raise ValueError(
+                f"NOAA source is missing bucket/prefix config: {source['id']}"
+            )
+        return build_noaa_playback_provider(
+            source["id"],
+            source["name"],
+            noaa_cache_path=noaa_cache_path,
+            bucket=bucket,
+            prefix=prefix,
+        )
 
     raise ValueError(f"Unsupported archive provider kind: {provider_kind}")
 
@@ -87,12 +105,15 @@ def build_archive_playback_provider(
 __all__ = [
     "ArchiveProvider",
     "CachingHLSProvider",
+    "CachingNoaaGCSProvider",
     "LocalHLSCacheProvider",
     "NoaaGCSProvider",
     "OrcasoundHLSProvider",
     "StreamSegment",
     "build_archive_detection_provider",
     "build_archive_playback_provider",
+    "build_noaa_detection_provider",
+    "build_noaa_playback_provider",
     "build_orcasound_detection_provider",
     "build_orcasound_local_cache_provider",
 ]

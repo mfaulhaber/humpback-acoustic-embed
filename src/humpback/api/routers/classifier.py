@@ -1183,6 +1183,7 @@ async def _resolve_detection_audio(
             local_provider = build_archive_playback_provider(
                 job.hydrophone_id,
                 cache_path=cache_path,
+                noaa_cache_path=settings.noaa_cache_path,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc))

@@ -41,9 +41,15 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
         capture["provider"] = provider
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
-    def _fake_build_playback_provider(source_id: str, *, cache_path: str | None):
+    def _fake_build_playback_provider(
+        source_id: str,
+        *,
+        cache_path: str | None,
+        noaa_cache_path: str | None = None,
+    ):
         capture["source_id"] = source_id
         capture["cache_path"] = cache_path
+        capture["noaa_cache_path"] = noaa_cache_path
         return DummyProvider()
 
     monkeypatch.setattr(
@@ -116,9 +122,15 @@ async def test_noaa_extraction_does_not_require_cache_path(
         capture["provider"] = provider
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
-    def _fake_build_playback_provider(source_id: str, *, cache_path: str | None):
+    def _fake_build_playback_provider(
+        source_id: str,
+        *,
+        cache_path: str | None,
+        noaa_cache_path: str | None = None,
+    ):
         capture["source_id"] = source_id
         capture["cache_path"] = cache_path
+        capture["noaa_cache_path"] = noaa_cache_path
         return DummyProvider()
 
     monkeypatch.setattr(
@@ -295,6 +307,7 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
         *,
         local_cache_path: str | None,
         s3_cache_path: str | None,
+        noaa_cache_path: str | None = None,
     ):
         capture["source_id"] = source_id
         capture["local_cache_path"] = local_cache_path
