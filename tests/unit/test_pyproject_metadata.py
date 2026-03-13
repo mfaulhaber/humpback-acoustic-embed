@@ -20,6 +20,7 @@ def test_python_and_runtime_dependencies_are_explicit() -> None:
     assert data["project"]["requires-python"] == ">=3.11,<3.13"
 
     dependencies = data["project"]["dependencies"]
+    assert "google-cloud-storage>=3.9.0" in dependencies
     assert "soundfile>=0.13.1" in dependencies
     assert not any(dep.startswith("tensorflow") for dep in dependencies)
 
@@ -61,7 +62,6 @@ def test_dev_dependency_group_contains_project_tooling() -> None:
 
     dev = data["dependency-groups"]["dev"]
     assert dev == [
-        "google-cloud-storage>=3.9.0",
         "httpx>=0.28.1",
         "pre-commit>=4.3.0",
         "pyright>=1.1.408",

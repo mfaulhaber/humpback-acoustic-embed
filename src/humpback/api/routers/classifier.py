@@ -20,7 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from humpback.api.deps import SessionDep, SettingsDep
-from humpback.classifier.providers import build_orcasound_local_cache_provider
+from humpback.classifier.providers import build_archive_playback_provider
 from humpback.schemas.classifier import (
     ClassifierModelOut,
     ClassifierTrainingJobCreate,
@@ -271,10 +271,15 @@ async def download_detections(job_id: str, session: SessionDep) -> Response:
 
 @router.get("/hydrophones")
 async def list_hydrophones() -> list[HydrophoneInfo]:
-    """List configured hydrophone locations."""
-    from humpback.config import ORCASOUND_HYDROPHONES
+    """List configured archive sources on the legacy hydrophone endpoint."""
+    from humpback.config import ARCHIVE_SOURCES
 
-    return [HydrophoneInfo(**h) for h in ORCASOUND_HYDROPHONES]
+    return [
+        HydrophoneInfo(
+            id=source["id"], name=source["name"], location=source["location"]
+        )
+        for source in ARCHIVE_SOURCES
+    ]
 
 
 @router.post("/hydrophone-detection-jobs", status_code=201)
@@ -1174,16 +1179,13 @@ async def _resolve_detection_audio(
             raise HTTPException(400, "Hydrophone job missing start/end timestamps")
 
         cache_path = job.local_cache_path or settings.s3_cache_path
-        if cache_path is None:
-            raise HTTPException(
-                400, "Hydrophone playback requires a configured cache path"
+        try:
+            local_provider = build_archive_playback_provider(
+                job.hydrophone_id,
+                cache_path=cache_path,
             )
-        provider_name = job.hydrophone_name or job.hydrophone_id
-        local_provider = build_orcasound_local_cache_provider(
-            job.hydrophone_id,
-            provider_name,
-            cache_path,
-        )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
         target_sr = 32000
 
         try:

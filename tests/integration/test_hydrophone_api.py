@@ -9,13 +9,14 @@ import numpy as np
 
 
 async def test_list_hydrophones(client):
-    """GET /classifier/hydrophones returns configured locations."""
+    """GET /classifier/hydrophones returns configured archive sources."""
     resp = await client.get("/classifier/hydrophones")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 4
+    assert len(data) == 5
     ids = {h["id"] for h in data}
     assert "rpi_orcasound_lab" in ids
+    assert "noaa_glacier_bay" in ids
     assert all("name" in h and "location" in h for h in data)
 
 
@@ -160,6 +161,92 @@ async def test_create_hydrophone_detection_job_success(client, app_settings):
     local_resp = await client.get("/classifier/detection-jobs")
     local_jobs = local_resp.json()
     assert not any(j["id"] == data["id"] for j in local_jobs)
+
+    await engine.dispose()
+
+
+async def test_create_hydrophone_detection_job_noaa_success(client, app_settings):
+    """POST with NOAA source creates a queued job."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="hydro-test-model-noaa",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "hydrophone_id": "noaa_glacier_bay",
+            "start_timestamp": 1437782400,
+            "end_timestamp": 1437786000,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["hydrophone_id"] == "noaa_glacier_bay"
+    assert data["hydrophone_name"] == "NOAA Glacier Bay (Bartlett Cove)"
+
+    await engine.dispose()
+
+
+async def test_create_hydrophone_detection_job_noaa_rejects_local_cache_path(
+    client, app_settings, tmp_path
+):
+    """NOAA sources should reject local_cache_path inputs."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="hydro-test-model-noaa-local",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "hydrophone_id": "noaa_glacier_bay",
+            "start_timestamp": 1437782400,
+            "end_timestamp": 1437786000,
+            "local_cache_path": str(tmp_path),
+        },
+    )
+    assert resp.status_code == 400
+    assert "local_cache_path" in resp.json()["detail"]
 
     await engine.dispose()
 
@@ -953,6 +1040,71 @@ async def test_hydrophone_audio_slice_rejects_rows_beyond_job_end(
         params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
     )
     assert resp.status_code == 404
+
+    await engine.dispose()
+
+
+async def test_hydrophone_audio_slice_supports_noaa_provider_without_cache(
+    client, app_settings, monkeypatch
+):
+    """NOAA playback should use the provider builder without requiring cache config."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model",
+                hydrophone_id="noaa_glacier_bay",
+                hydrophone_name="NOAA Glacier Bay (Bartlett Cove)",
+                start_timestamp=1437782400.0,
+                end_timestamp=1437786000.0,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    class DummyProvider:
+        source_id = "noaa_glacier_bay"
+
+    capture: dict[str, object] = {}
+
+    def _fake_build_archive_playback_provider(
+        source_id: str, *, cache_path: str | None
+    ):
+        capture["source_id"] = source_id
+        capture["cache_path"] = cache_path
+        return DummyProvider()
+
+    monkeypatch.setattr(
+        "humpback.api.routers.classifier.build_archive_playback_provider",
+        _fake_build_archive_playback_provider,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.resolve_audio_slice",
+        lambda *args, **kwargs: np.ones(32000 * 5, dtype=np.float32),
+    )
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/audio-slice",
+        params={
+            "filename": "20150725T000009Z.wav",
+            "start_sec": 0.0,
+            "duration_sec": 5.0,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.content[:4] == b"RIFF"
+    assert capture["source_id"] == "noaa_glacier_bay"
+    assert capture["cache_path"] == app_settings.s3_cache_path
 
     await engine.dispose()
 

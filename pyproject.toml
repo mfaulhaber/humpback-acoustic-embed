@@ -21,6 +21,7 @@ dependencies = [
     "scipy>=1.14",
     "joblib>=1.5.3",
     "boto3>=1.42.63",
+    "google-cloud-storage>=3.9.0",
     "matplotlib>=3.8",
     "soundfile>=0.13.1",
     "tqdm>=4.67.3",
@@ -85,7 +86,6 @@ conflicts = [
 
 [dependency-groups]
 dev = [
-    "google-cloud-storage>=3.9.0",
     "httpx>=0.28.1",
     "pre-commit>=4.3.0",
     "pyright>=1.1.408",

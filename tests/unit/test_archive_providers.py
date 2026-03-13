@@ -1,7 +1,8 @@
-"""Tests for ArchiveProvider protocol and Orcasound HLS provider implementations."""
+"""Tests for ArchiveProvider protocol and provider implementations."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import cast
 from unittest.mock import MagicMock, patch
 
@@ -9,18 +10,56 @@ import numpy as np
 import pytest
 
 from humpback.classifier.archive import ArchiveProvider, StreamSegment
+from humpback.classifier.providers import (
+    build_archive_detection_provider,
+    build_archive_playback_provider,
+    build_orcasound_detection_provider,
+    build_orcasound_local_cache_provider,
+)
+from humpback.classifier.providers.noaa_gcs import (
+    DEFAULT_NOAA_SEGMENT_DURATION_SEC,
+    NoaaGCSProvider,
+    parse_noaa_filename,
+)
 from humpback.classifier.providers.orcasound_hls import (
     CachingHLSProvider,
     LocalHLSCacheProvider,
     OrcasoundHLSProvider,
-    build_orcasound_detection_provider,
-    build_orcasound_local_cache_provider,
 )
 
 
-# ---------------------------------------------------------------------------
-# StreamSegment dataclass
-# ---------------------------------------------------------------------------
+class _FakeBlob:
+    def __init__(self, name: str, *, size: int = 0, data: bytes = b"blob-data") -> None:
+        self.name = name
+        self.size = size
+        self._data = data
+
+    def download_as_bytes(self) -> bytes:
+        return self._data
+
+
+class _FakeBucket:
+    def __init__(self, blobs: list[_FakeBlob]) -> None:
+        self._blobs = list(blobs)
+        self.list_calls = 0
+        self.blob_calls: list[str] = []
+
+    def list_blobs(self, prefix: str):
+        self.list_calls += 1
+        return [blob for blob in self._blobs if blob.name.startswith(prefix)]
+
+    def blob(self, key: str) -> _FakeBlob:
+        self.blob_calls.append(key)
+        for blob in self._blobs:
+            if blob.name == key:
+                return blob
+        raise KeyError(key)
+
+
+def _ts(year: int, month: int, day: int, hour: int, minute: int, second: int) -> float:
+    return datetime(
+        year, month, day, hour, minute, second, tzinfo=timezone.utc
+    ).timestamp()
 
 
 class TestStreamSegment:
@@ -34,20 +73,12 @@ class TestStreamSegment:
             seg.key = "other"  # type: ignore[misc]
 
     def test_re_export_from_s3_stream(self):
-        """StreamSegment is still importable from s3_stream for backward compat."""
         from humpback.classifier.s3_stream import StreamSegment as SS
 
         assert SS is StreamSegment
 
 
-# ---------------------------------------------------------------------------
-# Protocol conformance — isinstance checks
-# ---------------------------------------------------------------------------
-
-
 class TestProtocolConformance:
-    """Each HLS provider must satisfy the ArchiveProvider protocol."""
-
     @patch("humpback.classifier.providers.orcasound_hls.OrcasoundS3Client")
     def test_orcasound_hls_is_archive_provider(self, mock_cls):
         provider = OrcasoundHLSProvider("rpi_lab", "Orcasound Lab")
@@ -63,10 +94,13 @@ class TestProtocolConformance:
         provider = LocalHLSCacheProvider("/tmp/cache", "rpi_lab", "Orcasound Lab")
         assert isinstance(provider, ArchiveProvider)
 
-
-# ---------------------------------------------------------------------------
-# Property accessors
-# ---------------------------------------------------------------------------
+    def test_noaa_gcs_is_archive_provider(self):
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=_FakeBucket([]),
+        )
+        assert isinstance(provider, ArchiveProvider)
 
 
 class TestProviderProperties:
@@ -88,10 +122,14 @@ class TestProviderProperties:
         assert p.name == "Port Townsend"
         assert p.source_id == "rpi_pt"
 
-
-# ---------------------------------------------------------------------------
-# Delegation tests — verify providers delegate to wrapped clients
-# ---------------------------------------------------------------------------
+    def test_noaa_name_and_source_id(self):
+        p = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=_FakeBucket([]),
+        )
+        assert p.name == "NOAA Glacier Bay"
+        assert p.source_id == "noaa_glacier_bay"
 
 
 class TestOrcasoundHLSProviderDelegation:
@@ -203,14 +241,147 @@ class TestLocalHLSCacheProviderDelegation:
         mock_build.assert_called_once_with(mock_client, "rpi_lab", 0.0, 100.0)
 
 
-# ---------------------------------------------------------------------------
-# Builder helpers
-# ---------------------------------------------------------------------------
+class TestNoaaProvider:
+    def test_parse_noaa_filename(self):
+        parsed = parse_noaa_filename("07_25_2015_00_00_09.aif")
+        assert parsed == datetime(2015, 7, 25, 0, 0, 9, tzinfo=timezone.utc)
+        assert parse_noaa_filename("bad_name.aif") is None
+
+    def test_build_timeline_orders_segments_and_caches_listing(self):
+        prefix = "archive/"
+        bucket = _FakeBucket(
+            [
+                _FakeBlob(prefix + "README.txt"),
+                _FakeBlob(prefix + "07_25_2015_00_05_09.aif", size=20),
+                _FakeBlob(prefix + "07_25_2015_00_00_09.aif", size=10),
+                _FakeBlob(prefix + "07_25_2015_00_15_09.aif", size=30),
+            ]
+        )
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            prefix=prefix,
+            bucket_obj=bucket,
+        )
+
+        timeline = provider.build_timeline(
+            _ts(2015, 7, 25, 0, 0, 0),
+            _ts(2015, 7, 25, 0, 20, 0),
+        )
+        again = provider.build_timeline(
+            _ts(2015, 7, 25, 0, 0, 0),
+            _ts(2015, 7, 25, 0, 20, 0),
+        )
+
+        assert bucket.list_calls == 1
+        assert [segment.key for segment in timeline] == [
+            prefix + "07_25_2015_00_00_09.aif",
+            prefix + "07_25_2015_00_05_09.aif",
+            prefix + "07_25_2015_00_15_09.aif",
+        ]
+        assert timeline == again
+        assert timeline[0].duration_sec == pytest.approx(300.0)
+        assert timeline[1].duration_sec == pytest.approx(300.0)
+        assert timeline[2].duration_sec == pytest.approx(
+            DEFAULT_NOAA_SEGMENT_DURATION_SEC
+        )
+
+    def test_build_timeline_filters_by_range(self):
+        prefix = "archive/"
+        bucket = _FakeBucket(
+            [
+                _FakeBlob(prefix + "07_25_2015_00_00_09.aif"),
+                _FakeBlob(prefix + "07_25_2015_00_05_09.aif"),
+                _FakeBlob(prefix + "07_25_2015_00_10_09.aif"),
+            ]
+        )
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            prefix=prefix,
+            bucket_obj=bucket,
+        )
+
+        timeline = provider.build_timeline(
+            _ts(2015, 7, 25, 0, 7, 0),
+            _ts(2015, 7, 25, 0, 12, 0),
+        )
+
+        assert [segment.key for segment in timeline] == [
+            prefix + "07_25_2015_00_05_09.aif",
+            prefix + "07_25_2015_00_10_09.aif",
+        ]
+        assert (
+            provider.count_segments(
+                _ts(2015, 7, 25, 0, 7, 0),
+                _ts(2015, 7, 25, 0, 12, 0),
+            )
+            == 2
+        )
+
+    def test_build_timeline_raises_when_no_overlap(self):
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=_FakeBucket(
+                [_FakeBlob("archive/07_25_2015_00_00_09.aif", size=10)]
+            ),
+            prefix="archive/",
+        )
+        with pytest.raises(FileNotFoundError, match="No NOAA stream segments"):
+            provider.build_timeline(
+                _ts(2015, 7, 25, 1, 0, 0),
+                _ts(2015, 7, 25, 1, 5, 0),
+            )
+        assert (
+            provider.count_segments(
+                _ts(2015, 7, 25, 1, 0, 0),
+                _ts(2015, 7, 25, 1, 5, 0),
+            )
+            == 0
+        )
+
+    def test_fetch_segment_downloads_from_bucket(self):
+        key = "archive/07_25_2015_00_00_09.aif"
+        bucket = _FakeBucket([_FakeBlob(key, data=b"raw-aif")])
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=bucket,
+            prefix="archive/",
+        )
+
+        result = provider.fetch_segment(key)
+
+        assert result == b"raw-aif"
+        assert bucket.blob_calls == [key]
+
+    @patch("humpback.classifier.providers.noaa_gcs.decode_noaa_audio_bytes")
+    def test_decode_segment_delegates(self, mock_decode):
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=_FakeBucket([]),
+        )
+        mock_decode.return_value = np.zeros(320, dtype=np.float32)
+
+        audio = provider.decode_segment(b"raw-aif", 32000)
+
+        mock_decode.assert_called_once_with(b"raw-aif", 32000)
+        assert audio.shape == (320,)
+
+    def test_invalidate_segment_returns_false(self):
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=_FakeBucket([]),
+        )
+        assert provider.invalidate_cached_segment("anything") is False
 
 
 class TestProviderBuilders:
     @patch("humpback.classifier.providers.orcasound_hls.LocalHLSCacheProvider")
-    def test_detection_builder_prefers_local_cache(self, mock_local):
+    def test_orcasound_detection_builder_prefers_local_cache(self, mock_local):
         provider = build_orcasound_detection_provider(
             "rpi_lab",
             "Lab",
@@ -221,7 +392,9 @@ class TestProviderBuilders:
         assert provider is mock_local.return_value
 
     @patch("humpback.classifier.providers.orcasound_hls.CachingHLSProvider")
-    def test_detection_builder_uses_s3_cache_when_local_absent(self, mock_caching):
+    def test_orcasound_detection_builder_uses_s3_cache_when_local_absent(
+        self, mock_caching
+    ):
         provider = build_orcasound_detection_provider(
             "rpi_lab",
             "Lab",
@@ -232,7 +405,7 @@ class TestProviderBuilders:
         assert provider is mock_caching.return_value
 
     @patch("humpback.classifier.providers.orcasound_hls.OrcasoundHLSProvider")
-    def test_detection_builder_falls_back_to_direct_s3(self, mock_direct):
+    def test_orcasound_detection_builder_falls_back_to_direct_s3(self, mock_direct):
         provider = build_orcasound_detection_provider(
             "rpi_lab",
             "Lab",
@@ -243,17 +416,77 @@ class TestProviderBuilders:
         assert provider is mock_direct.return_value
 
     @patch("humpback.classifier.providers.orcasound_hls.LocalHLSCacheProvider")
-    def test_local_cache_builder_constructs_local_provider(self, mock_local):
+    def test_orcasound_playback_builder_constructs_local_provider(self, mock_local):
         provider = build_orcasound_local_cache_provider(
             "rpi_lab", "Lab", "/local-cache"
         )
         mock_local.assert_called_once_with("/local-cache", "rpi_lab", "Lab")
         assert provider is mock_local.return_value
 
+    @patch("humpback.classifier.providers.build_orcasound_detection_provider")
+    def test_archive_detection_builder_routes_orcasound(self, mock_orcasound):
+        mock_orcasound.return_value = object()
 
-# ---------------------------------------------------------------------------
-# Non-conforming class should NOT satisfy Protocol
-# ---------------------------------------------------------------------------
+        provider = build_archive_detection_provider(
+            "rpi_orcasound_lab",
+            local_cache_path="/cache",
+            s3_cache_path="/s3-cache",
+        )
+
+        mock_orcasound.assert_called_once_with(
+            "rpi_orcasound_lab",
+            "Orcasound Lab",
+            local_cache_path="/cache",
+            s3_cache_path="/s3-cache",
+        )
+        assert provider is mock_orcasound.return_value
+
+    def test_archive_detection_builder_routes_noaa(self):
+        provider = build_archive_detection_provider(
+            "noaa_glacier_bay",
+            local_cache_path=None,
+            s3_cache_path="/ignored",
+        )
+
+        assert isinstance(provider, NoaaGCSProvider)
+        assert provider.source_id == "noaa_glacier_bay"
+
+    def test_archive_detection_builder_rejects_local_cache_for_noaa(self):
+        with pytest.raises(ValueError, match="local_cache_path is only supported"):
+            build_archive_detection_provider(
+                "noaa_glacier_bay",
+                local_cache_path="/cache",
+                s3_cache_path=None,
+            )
+
+    @patch("humpback.classifier.providers.build_orcasound_local_cache_provider")
+    def test_archive_playback_builder_routes_orcasound(self, mock_orcasound):
+        mock_orcasound.return_value = object()
+
+        provider = build_archive_playback_provider(
+            "rpi_orcasound_lab",
+            cache_path="/cache",
+        )
+
+        mock_orcasound.assert_called_once_with(
+            "rpi_orcasound_lab",
+            "Orcasound Lab",
+            "/cache",
+        )
+        assert provider is mock_orcasound.return_value
+
+    def test_archive_playback_builder_rejects_missing_orcasound_cache(self):
+        with pytest.raises(ValueError, match="configured cache path"):
+            build_archive_playback_provider("rpi_orcasound_lab", cache_path=None)
+
+    def test_archive_playback_builder_routes_noaa_without_cache(self):
+        provider = build_archive_playback_provider(
+            "noaa_glacier_bay",
+            cache_path=None,
+        )
+
+        assert isinstance(provider, NoaaGCSProvider)
+        assert provider.source_id == "noaa_glacier_bay"
 
 
 class TestNonConformance:

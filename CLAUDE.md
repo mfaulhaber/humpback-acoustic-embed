@@ -215,7 +215,8 @@ Hydrophone detection, playback, and extraction must use the same bounded stream 
   boundary is found
 - processing/playback/extraction must stay within `[start_timestamp, end_timestamp]`
 - legacy playback compatibility for older jobs may fall back to `job.start_timestamp`
-- hydrophone extraction is local-cache-authoritative (same as playback): resolve from local HLS cache only, with no S3 listing/fetch fallback
+- Orcasound HLS playback/extraction is local-cache-authoritative: resolve from local HLS cache only, with no S3 listing/fetch fallback
+- Non-HLS archive providers may use their own direct-fetch playback/extraction path when explicitly configured (for example NOAA GCS `.aif`)
 - hydrophone extraction should build/reuse timeline metadata once per extraction run (avoid rebuilding per labeled row)
 - hydrophone detection jobs with no overlapping stream audio in the requested range
   must fail with an explicit error message (never silently complete with zero windows)

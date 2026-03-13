@@ -100,16 +100,51 @@ ORCASOUND_HYDROPHONES = [
         "id": "rpi_orcasound_lab",
         "name": "Orcasound Lab",
         "location": "San Juan Islands",
+        "provider_kind": "orcasound_hls",
     },
     {
         "id": "rpi_north_sjc",
         "name": "North San Juan Channel",
         "location": "San Juan Channel",
+        "provider_kind": "orcasound_hls",
     },
-    {"id": "rpi_port_townsend", "name": "Port Townsend", "location": "Puget Sound"},
-    {"id": "rpi_bush_point", "name": "Bush Point", "location": "Whidbey Island"},
+    {
+        "id": "rpi_port_townsend",
+        "name": "Port Townsend",
+        "location": "Puget Sound",
+        "provider_kind": "orcasound_hls",
+    },
+    {
+        "id": "rpi_bush_point",
+        "name": "Bush Point",
+        "location": "Whidbey Island",
+        "provider_kind": "orcasound_hls",
+    },
+]
+
+NOAA_ARCHIVE_SOURCES = [
+    {
+        "id": "noaa_glacier_bay",
+        "name": "NOAA Glacier Bay (Bartlett Cove)",
+        "location": "Glacier Bay, Alaska",
+        "provider_kind": "noaa_gcs",
+        "bucket": "noaa-passive-bioacoustic",
+        "prefix": (
+            "nps/audio/glacier_bay/bartlettcove/"
+            "glacierbay_bartlettcove_jul-oct2015/audio/"
+        ),
+    }
 ]
 
 ORCASOUND_S3_BUCKET = "audio-orcasound-net"
 
 HYDROPHONE_IDS = {h["id"] for h in ORCASOUND_HYDROPHONES}
+ARCHIVE_SOURCES = [*ORCASOUND_HYDROPHONES, *NOAA_ARCHIVE_SOURCES]
+ARCHIVE_SOURCE_IDS = {source["id"] for source in ARCHIVE_SOURCES}
+
+
+def get_archive_source(source_id: str) -> dict[str, str] | None:
+    return next(
+        (source for source in ARCHIVE_SOURCES if source["id"] == source_id),
+        None,
+    )

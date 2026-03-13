@@ -21,8 +21,8 @@ from humpback.classifier.detector import (
 )
 from humpback.classifier.extractor import extract_labeled_samples
 from humpback.classifier.providers import (
-    build_orcasound_detection_provider,
-    build_orcasound_local_cache_provider,
+    build_archive_detection_provider,
+    build_archive_playback_provider,
 )
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
@@ -372,10 +372,8 @@ async def run_hydrophone_detection_job(
         hydrophone_id = job.hydrophone_id
         start_timestamp = job.start_timestamp
         end_timestamp = job.end_timestamp
-        provider_name = job.hydrophone_name or hydrophone_id
-        hydrophone_provider = build_orcasound_detection_provider(
+        hydrophone_provider = build_archive_detection_provider(
             hydrophone_id,
-            provider_name,
             local_cache_path=job.local_cache_path,
             s3_cache_path=settings.s3_cache_path,
         )
@@ -589,15 +587,9 @@ async def run_extraction_job(
             from humpback.classifier.extractor import extract_hydrophone_labeled_samples
 
             cache_path = job.local_cache_path or settings.s3_cache_path
-            if cache_path is None:
-                raise ValueError(
-                    "Hydrophone extraction requires a configured cache path"
-                )
-            provider_name = job.hydrophone_name or job.hydrophone_id
-            extract_provider = build_orcasound_local_cache_provider(
+            extract_provider = build_archive_playback_provider(
                 job.hydrophone_id,
-                provider_name,
-                cache_path,
+                cache_path=cache_path,
             )
 
             summary = await asyncio.to_thread(

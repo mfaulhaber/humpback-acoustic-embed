@@ -63,13 +63,16 @@ Current state of the humpback acoustic embedding and clustering platform.
 
 ### Hydrophone Streaming Detection
 - S3 HLS streaming from Orcasound public hydrophone network (anonymous access)
+- NOAA Glacier Bay Bartlett Cove passive bioacoustic archive via anonymous GCS `.aif`
+  fetch (`noaa_glacier_bay` on the legacy `/classifier/hydrophones` endpoint)
 - Write-through S3 cache (`CachingS3Client`): fetches from S3 on first access, caches segments locally with atomic writes, 404 markers for missing segments
 - Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
 - Client priority: local_cache_path > s3_cache_path > direct S3
 - ArchiveProvider abstraction now spans detection, playback, extraction, and worker/router
   orchestration; upstream hydrophone consumers pass providers instead of raw clients plus
   `hydrophone_id`
-- 4 configured hydrophones: Orcasound Lab, North San Juan Channel, Port Townsend, Bush Point
+- 5 configured archive sources on the legacy hydrophone API: 4 Orcasound hydrophones
+  plus NOAA Glacier Bay (Bartlett Cove)
 - Segment fetch retry: transient S3 errors (IncompleteRead, ReadTimeoutError, ConnectionError) retried up to 3× with exponential backoff (1s/2s/4s); explicit `connect_timeout=10`, `read_timeout=30`
 - Ordered concurrent S3 segment prefetch for hydrophone detection (configurable workers + in-flight bound), while preserving timeline order and existing retry/alert behavior
 - In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
@@ -77,7 +80,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Cancel support via threading.Event + DB polling
 - Flash alerts for segment decode failures (dismissable, color-coded)
 - Hydrophone run summaries now include timing breakdown fields (`fetch_sec`, `decode_sec`, `features_sec`, `inference_sec`, `pipeline_total_sec`) plus prefetch flags/limits
-- Audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
+- Orcasound audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
+- NOAA playback/extraction use the direct GCS provider path and do not require a cache path
 - Hydrophone timeline assembly uses numeric segment ordering plus playlist durations (when available),
   with fallback to numeric/default-duration metadata when playlists are unavailable
 - Sparse local-cache segment sets preserve playlist timeline offsets (for example, cached
@@ -95,7 +99,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone TSV rows include canonical snapped `.flac` `detection_filename` plus legacy `extract_filename` alias
 - Legacy TSV normalization for content/download prefers `extract_filename` when `detection_filename` is missing, otherwise derives snapped canonical ranges
 - Detection TSV download streams normalized rows incrementally (avoids full-file in-memory buffering)
-- FLAC export for hydrophone jobs: reads from local HLS cache (no S3 calls during extraction), writes labeled samples to positive/negative folders; missing cached rows are skipped and counted in `n_skipped`
+- FLAC export for hydrophone jobs: Orcasound reads from local HLS cache (no S3 calls during extraction), while NOAA uses direct anonymous GCS fetch; both write labeled samples to positive/negative folders
 - Hydrophone extraction output paths: species/category before hydrophone —
   `{positive|negative}_root/{label}/{hydrophone_id}/YYYY/MM/DD/*.flac`
 - Hydrophone labeled-sample extraction reuses the same stream-offset resolver as playback
@@ -105,6 +109,7 @@ Current state of the humpback acoustic embedding and clustering platform.
   from S3 (single retry) instead of failing permanently
 - Max 7-day time range per job
 - Hydrophone job validation enforces `hop_seconds <= classifier window_size_seconds`
+- `local_cache_path` is only valid for Orcasound HLS sources
 
 ### Web UI
 - Tab-based SPA (Audio, Processing, Clustering, Classifier [Train/Hydrophone], Admin)
@@ -161,6 +166,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 ### Environment & Packaging
 - Platform-specific TensorFlow extras: `tf-macos`, `tf-linux-cpu`, and `tf-linux-gpu`
 - Supported Python runtime versions: 3.11 and 3.12
+- `google-cloud-storage` is a runtime dependency because NOAA GCS access is part of the
+  production provider set
 - Python code quality tooling via `uv` + pre-commit: Ruff for lint/format and
   Pyright for type checking (enforced for `src/humpback`, `scripts/`, and
   `tests/`)

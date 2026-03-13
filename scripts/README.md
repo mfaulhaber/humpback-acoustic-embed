@@ -1,3 +1,24 @@
+# noaa_gcs_poc
+
+Smoke-test the production NOAA Glacier Bay `ArchiveProvider` against the public
+GCS dataset.
+
+Basic usage:
+
+```bash
+uv run python scripts/noaa_gcs_poc.py --skip-download
+uv run python scripts/noaa_gcs_poc.py --hours 1
+```
+
+Notes:
+
+* The script reuses `src/humpback/classifier/providers/noaa_gcs.py`; it is not a
+  second implementation.
+* It exercises anonymous listing, timeline building, segment fetch, and decode
+  against the Bartlett Cove Jul-Oct 2015 NOAA archive.
+
+---
+
 # convert_audio_to_flac
 
 Convert `.wav` and `.mp3` files to sibling `.flac` files without deleting the source files.

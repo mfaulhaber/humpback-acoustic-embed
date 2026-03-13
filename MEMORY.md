@@ -385,6 +385,8 @@ Queue safety note:
 - `POST /clustering/jobs` requires `embedding_set_ids` to be non-empty.
 - `POST /classifier/hydrophone-detection-jobs` requires
   `hop_seconds <= classifier window_size_seconds`.
+- `GET /classifier/hydrophones` is the legacy archive-source listing endpoint and now
+  includes both Orcasound HLS hydrophones and the NOAA Glacier Bay source.
 - Hydrophone timeline folder discovery starts at the requested range and expands
   backward in configurable hour increments (default 4h) up to configurable
   max lookback (default 168h) until overlap at the requested start boundary is
@@ -400,16 +402,18 @@ Queue safety note:
 - `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using a
   range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy
   fallback to `job.start_timestamp` for older jobs. Sparse local cache ranges preserve
-  playlist-derived offsets (for example `live6118..` windows) so local playback and
-  spectrogram lookups stay aligned.
+  playlist-derived offsets (for example `live6118..` windows) so Orcasound local playback and
+  spectrogram lookups stay aligned. NOAA Glacier Bay rows resolve through the NOAA GCS
+  provider directly and do not require a cache path.
 - `GET /classifier/detection-jobs/{id}/content` normalizes detection metadata:
   canonical snapped `detection_filename` (legacy fallback prefers `extract_filename`, then snapped
   derivation from `filename + start_sec/end_sec`) plus raw audit fields
   (`raw_start_sec`, `raw_end_sec`, `merged_event_count`). Jobs in `running`, `paused`,
   `complete`, and `canceled` states can read content when `output_tsv_path` exists.
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
-  jobs) is local-cache-authoritative (same cache root precedence as playback), writes FLAC clips,
-  and does not call S3; rows missing local cache audio are skipped and counted in `n_skipped`.
+  jobs) is local-cache-authoritative for Orcasound HLS sources (same cache root precedence as
+  playback), writes FLAC clips, and does not call S3; rows missing local cache audio are skipped
+  and counted in `n_skipped`. NOAA Glacier Bay extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---

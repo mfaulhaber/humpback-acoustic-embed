@@ -11,13 +11,13 @@ from humpback.workers.classifier_worker import (
 )
 
 
-async def test_hydrophone_extraction_uses_local_hls_client_with_default_cache_path(
+async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_cache_path(
     session,
     settings,
     tmp_path,
     monkeypatch,
 ):
-    """Hydrophone extraction should use the local-cache provider builder."""
+    """Orcasound extraction should use the archive playback provider builder."""
     tsv_path = tmp_path / "detections.tsv"
     tsv_path.write_text(
         "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
@@ -41,15 +41,14 @@ async def test_hydrophone_extraction_uses_local_hls_client_with_default_cache_pa
         capture["provider"] = provider
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
-    def _fake_build_local_provider(source_id: str, name: str, cache_path: str):
+    def _fake_build_playback_provider(source_id: str, *, cache_path: str | None):
         capture["source_id"] = source_id
-        capture["name"] = name
         capture["cache_path"] = cache_path
         return DummyProvider()
 
     monkeypatch.setattr(
-        "humpback.workers.classifier_worker.build_orcasound_local_cache_provider",
-        _fake_build_local_provider,
+        "humpback.workers.classifier_worker.build_archive_playback_provider",
+        _fake_build_playback_provider,
     )
     monkeypatch.setattr(
         "humpback.classifier.extractor.extract_hydrophone_labeled_samples",
@@ -82,7 +81,81 @@ async def test_hydrophone_extraction_uses_local_hls_client_with_default_cache_pa
 
     assert capture["cache_path"] == settings.s3_cache_path
     assert capture["source_id"] == "rpi_orcasound_lab"
-    assert capture["name"] == "Orcasound Lab"
+    assert isinstance(capture["provider"], DummyProvider)
+    assert job.extract_status == "complete"
+    assert job.extract_summary is not None
+
+
+async def test_noaa_extraction_does_not_require_cache_path(
+    session,
+    settings,
+    tmp_path,
+    monkeypatch,
+):
+    """NOAA extraction should use direct provider playback without cache config."""
+    tsv_path = tmp_path / "detections.tsv"
+    tsv_path.write_text(
+        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
+        "20150725T000009Z.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
+    )
+
+    settings.s3_cache_path = None
+    capture: dict[str, object] = {}
+
+    class DummyProvider:
+        source_id = "noaa_glacier_bay"
+
+    def _fake_extract_hydrophone_labeled_samples(
+        _tsv_path,
+        provider,
+        _positive_output_path,
+        _negative_output_path,
+        *_args,
+        **_kwargs,
+    ):
+        capture["provider"] = provider
+        return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+
+    def _fake_build_playback_provider(source_id: str, *, cache_path: str | None):
+        capture["source_id"] = source_id
+        capture["cache_path"] = cache_path
+        return DummyProvider()
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.build_archive_playback_provider",
+        _fake_build_playback_provider,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.extractor.extract_hydrophone_labeled_samples",
+        _fake_extract_hydrophone_labeled_samples,
+    )
+
+    job = DetectionJob(
+        status="complete",
+        extract_status="running",
+        classifier_model_id="missing-model-is-allowed",
+        hydrophone_id="noaa_glacier_bay",
+        hydrophone_name="NOAA Glacier Bay (Bartlett Cove)",
+        start_timestamp=1437782400.0,
+        end_timestamp=1437786000.0,
+        output_tsv_path=str(tsv_path),
+        extract_config=json.dumps(
+            {
+                "positive_output_path": str(tmp_path / "pos"),
+                "negative_output_path": str(tmp_path / "neg"),
+            }
+        ),
+        local_cache_path=None,
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    await run_extraction_job(session, job, settings)
+    await session.refresh(job)
+
+    assert capture["source_id"] == "noaa_glacier_bay"
+    assert capture["cache_path"] is None
     assert isinstance(capture["provider"], DummyProvider)
     assert job.extract_status == "complete"
     assert job.extract_summary is not None
@@ -219,19 +292,17 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
 
     def _fake_build_detection_provider(
         source_id: str,
-        name: str,
         *,
         local_cache_path: str | None,
         s3_cache_path: str | None,
     ):
         capture["source_id"] = source_id
-        capture["name"] = name
         capture["local_cache_path"] = local_cache_path
         capture["s3_cache_path"] = s3_cache_path
         return DummyProvider()
 
     monkeypatch.setattr(
-        "humpback.workers.classifier_worker.build_orcasound_detection_provider",
+        "humpback.workers.classifier_worker.build_archive_detection_provider",
         _fake_build_detection_provider,
     )
 
@@ -277,5 +348,4 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
     assert job.segments_processed == 1
     assert job.segments_total == 1
     assert capture["source_id"] == "rpi_orcasound_lab"
-    assert capture["name"] == "Orcasound Lab"
     assert capture["provider"] is not None

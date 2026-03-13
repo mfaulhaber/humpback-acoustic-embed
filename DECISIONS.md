@@ -573,3 +573,44 @@ Vite `allowedHosts` is not the correct control for deployed host validation.
   dev-server-only concern.
 - No database migration is required because the change is limited to runtime
   configuration, deploy scripting, tests, and documentation.
+
+---
+
+## ADR-024: Promote NOAA Glacier Bay to a first-class ArchiveProvider on legacy hydrophone APIs
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: The ArchiveProvider abstraction already decouples the detection pipeline
+from Orcasound HLS internals, but the user-facing worker/router/service wiring still
+assumed every remote source was an Orcasound hydrophone. We also had a standalone
+NOAA Glacier Bay GCS POC in `scripts/noaa_gcs_poc.py`, which proved archive access
+but duplicated logic instead of participating in the production provider path.
+
+**Decision**:
+- Promote the NOAA Glacier Bay Bartlett Cove archive to `NoaaGCSProvider` in
+  `src/humpback/classifier/providers/noaa_gcs.py`.
+- Reuse the existing `/classifier/hydrophones` and
+  `/classifier/hydrophone-detection-jobs` surfaces for this phase rather than
+  renaming APIs immediately; `hydrophone_id` now semantically carries a generic
+  archive `source_id`.
+- Add a static archive-source registry containing the existing Orcasound HLS
+  sources plus `noaa_glacier_bay`.
+- Keep Orcasound behavior unchanged:
+  detection uses local-cache -> S3-cache -> direct-S3 priority, while playback
+  and extraction remain local-cache-authoritative.
+- Make NOAA detection, playback, and extraction use direct anonymous GCS fetch;
+  `local_cache_path` is rejected for NOAA sources.
+- Keep the database schema unchanged; source selection is resolved from the
+  static registry by `hydrophone_id`.
+
+**Consequences**:
+- NOAA Glacier Bay detection jobs now run through the same worker/router/provider
+  pipeline as Orcasound jobs with no consumer-specific code paths in the
+  detector/extractor core.
+- `google-cloud-storage` becomes a runtime dependency because NOAA access is no
+  longer POC-only.
+- The legacy hydrophone API naming is now broader than its semantics; a follow-up
+  backlog item is required to rename/archive-generalize those surfaces.
+- No database migration is required because the change is limited to provider
+  selection, runtime dependencies, tests, and documentation.

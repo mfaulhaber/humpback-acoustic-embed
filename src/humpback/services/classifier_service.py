@@ -165,9 +165,9 @@ async def create_hydrophone_detection_job(
 ) -> DetectionJob:
     """Create a hydrophone detection job after validating inputs."""
     from humpback.config import (
-        HYDROPHONE_IDS,
-        ORCASOUND_HYDROPHONES,
+        ARCHIVE_SOURCE_IDS,
         ORCASOUND_S3_BUCKET,
+        get_archive_source,
     )
 
     # Validate classifier model exists
@@ -178,11 +178,13 @@ async def create_hydrophone_detection_job(
     if cm is None:
         raise ValueError(f"Classifier model not found: {classifier_model_id}")
 
-    # Validate hydrophone
-    if hydrophone_id not in HYDROPHONE_IDS:
+    # Validate archive source (legacy hydrophone_id field name retained)
+    if hydrophone_id not in ARCHIVE_SOURCE_IDS:
         raise ValueError(f"Unknown hydrophone: {hydrophone_id}")
 
-    hydrophone = next(h for h in ORCASOUND_HYDROPHONES if h["id"] == hydrophone_id)
+    hydrophone = get_archive_source(hydrophone_id)
+    if hydrophone is None:
+        raise ValueError(f"Unknown hydrophone: {hydrophone_id}")
 
     if not 0.0 <= confidence_threshold <= 1.0:
         raise ValueError("confidence_threshold must be between 0.0 and 1.0")
@@ -194,6 +196,10 @@ async def create_hydrophone_detection_job(
 
     # Validate local cache path if provided
     if local_cache_path:
+        if hydrophone["provider_kind"] != "orcasound_hls":
+            raise ValueError(
+                "local_cache_path is only supported for Orcasound HLS sources"
+            )
         from pathlib import Path
 
         cache_dir = Path(local_cache_path) / ORCASOUND_S3_BUCKET / hydrophone_id / "hls"

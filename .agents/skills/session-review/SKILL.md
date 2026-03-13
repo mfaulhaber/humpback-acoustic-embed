@@ -28,18 +28,20 @@ description: Systematic review checklist for changes before committing.
    - No unnecessary complexity or over-engineering?
    - Follows project conventions (uv, npm, file structure)?
 
-6. **Collect staged review scope**
-   - Run `git diff --name-only --cached --diff-filter=ACMR`
-   - If no files are staged, report "no staged files to review" and stop
-   - Treat staged `.py` files under `src/humpback/`, `scripts/`, and `tests/` as Ruff/Pyright targets
+6. **Collect modified review scope**
+   - Collect tracked working-tree changes with `git diff --name-only HEAD --diff-filter=ACMR`
+   - Collect untracked files with `git ls-files --others --exclude-standard`
+   - Review the union of those paths as the current modified-file scope
+   - If the modified-file scope is empty, report "no modified files to review" and stop
+   - Treat modified `.py` files under `src/humpback/`, `scripts/`, and `tests/` as Ruff/Pyright targets
 
 7. **Run validation in order**
-   - Ruff: if staged Python targets exist, run `uv run ruff check <staged_python_files>`
-   - Pyright: if staged files include `pyproject.toml` or `.pre-commit-config.yaml`, run `uv run pyright`
-   - Pyright: otherwise, if staged Python targets exist, run `uv run pyright <staged_python_files>`
-   - Pytest: for any non-empty staged review scope, run `uv run pytest tests/` after Ruff/Pyright
+   - Ruff: if modified Python targets exist, run `uv run ruff check <modified_python_files>`
+   - Pyright: if modified files include `pyproject.toml` or `.pre-commit-config.yaml`, run `uv run pyright`
+   - Pyright: otherwise, if modified Python targets exist, run `uv run pyright <modified_python_files>`
+   - Pytest: for any non-empty modified review scope, run `uv run pytest tests/` after Ruff/Pyright
 
 ## Output
 - List any issues found with file:line references
-- If no files are staged, report that there is no review scope
+- If no modified files are present, report that there is no review scope
 - Confirm ready to commit only if Ruff/Pyright checks (when applicable) and `uv run pytest tests/` all pass

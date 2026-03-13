@@ -10,6 +10,33 @@
 
 ## Recently Completed
 
+# Plan: ArchiveProvider Abstraction — Phase 4: Promote NOAA GCS provider
+
+[Full plan](/Users/michael/.claude/plans/peaceful-herding-rossum.md)
+
+## Outcome (2026-03-13)
+
+- Promoted the NOAA Glacier Bay Bartlett Cove GCS POC into
+  `src/humpback/classifier/providers/noaa_gcs.py` as a production
+  `ArchiveProvider`, and rewired `scripts/noaa_gcs_poc.py` to reuse the same
+  implementation.
+- Added a static archive-source registry so the legacy hydrophone service/router/worker
+  flow can build either Orcasound HLS or NOAA GCS providers without changing the
+  database schema or public endpoint names in this phase.
+- Kept Orcasound playback/extraction local-cache-authoritative, while allowing NOAA
+  detection/playback/extraction to use direct anonymous GCS fetch; rejected
+  `local_cache_path` for NOAA jobs.
+- Promoted `google-cloud-storage` to a runtime dependency, added NOAA provider/API/worker
+  tests, updated docs/status text, and appended ADR-024.
+
+## Verification
+
+- `uv run ruff check` on modified backend/tests/scripts — passed.
+- `uv run pyright` — passed.
+- `uv run pytest tests/` — 571 passed.
+- `uv run python scripts/noaa_gcs_poc.py --skip-download` — passed against the live
+  NOAA public bucket.
+
 # Plan: ArchiveProvider Abstraction — Phase 3: Adapt Upstream Consumers
 
 [Full plan](/Users/michael/.claude/plans/peaceful-herding-rossum.md)
@@ -728,7 +755,10 @@
 - Expand Pyright enforcement beyond `src/humpback` to `scripts/`, then `tests/`,
   after clearing the remaining type-checking backlog in those areas.
 - Smoke-test `tf-linux-gpu` on a real Ubuntu/NVIDIA host — verify `uv sync --extra tf-linux-gpu`, TensorFlow import, and GPU device visibility/runtime behavior.
-- [ArchiveProvider Phase 4: Promote NOAA GCS provider](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — move NOAA GCS POC into `providers/noaa_gcs.py` as a proper `ArchiveProvider` implementation, wire into worker/router, add tests.
+- Generalize the legacy hydrophone API/frontend naming to archive-source terminology now that NOAA Glacier Bay is exposed through the same backend surfaces.
+- Add shared NOAA archive metadata caching for playback/extraction so each
+  `/classifier/detection-jobs/{id}/audio-slice` request does not re-list the full
+  Bartlett Cove GCS prefix before resolving a clip.
 - Explore GPU-accelerated batch processing for large audio libraries
 - Add WebSocket push for real-time job status updates (replace polling)
 - Investigate multi-model ensemble clustering
