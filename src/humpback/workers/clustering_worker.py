@@ -79,6 +79,7 @@ async def run_clustering_job(
             raise ValueError("No embeddings found")
 
         embeddings_array = np.array(all_embeddings, dtype=np.float32)
+        category_labels: list[str | None] = []
 
         # If re-clustering from refined embeddings, replace the array
         if job.refined_from_job_id:

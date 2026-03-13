@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -196,7 +197,7 @@ def train_binary_classifier(
         cv=cv,
         scoring=["accuracy", "roc_auc", "precision", "recall", "f1"],
         return_train_score=False,
-        error_score="raise",
+        error_score=cast(Any, "raise"),
     )
 
     # Final fit on all data

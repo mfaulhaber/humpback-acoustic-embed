@@ -24,7 +24,7 @@ def reduce_umap(
             metric=metric,
             random_state=random_state,
         )
-        return reducer.fit_transform(embeddings)
+        return np.asarray(reducer.fit_transform(embeddings), dtype=np.float32)
     except ImportError:
         return _svd_reduce(embeddings, n_components)
 

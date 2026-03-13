@@ -1,5 +1,7 @@
 """API router for binary classifier training and detection."""
 
+from __future__ import annotations
+
 import csv
 import io
 import json
@@ -9,7 +11,9 @@ import tempfile
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
+
+import numpy as np
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
@@ -35,6 +39,9 @@ from humpback.schemas.classifier import (
     WindowDiagnosticRecord,
 )
 from humpback.services import classifier_service
+
+if TYPE_CHECKING:
+    from humpback.processing.spectrogram_cache import SpectrogramCache
 
 router = APIRouter(prefix="/classifier", tags=["classifier"])
 
@@ -335,7 +342,7 @@ async def resume_hydrophone_detection_job(job_id: str, session: SessionDep) -> d
 # ---- Diagnostics ----
 
 
-def _diagnostics_path(job) -> Path:
+def _diagnostics_path(job) -> Path | None:
     """Derive window_diagnostics.parquet path from a detection job."""
     if not job.output_tsv_path:
         return None
@@ -351,8 +358,10 @@ async def get_detection_diagnostics(
     limit: int = Query(1000, ge=1, le=10000),
 ) -> DiagnosticsResponse:
     """Return paginated per-window diagnostic records from a detection job."""
-    import pyarrow.compute as pc
+    import pyarrow.compute as _pc
     import pyarrow.parquet as pq
+
+    pc: Any = _pc
 
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
@@ -399,9 +408,10 @@ async def get_detection_diagnostics_summary(
     session: SessionDep,
 ) -> DiagnosticsSummaryResponse:
     """Return aggregate diagnostic statistics for a detection job."""
-    import numpy as np
-    import pyarrow.compute as pc
+    import pyarrow.compute as _pc
     import pyarrow.parquet as pq
+
+    pc: Any = _pc
 
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
@@ -1123,8 +1133,6 @@ async def save_detection_labels(
 
 def _encode_wav_response(segment: "np.ndarray", sr: int, normalize: bool) -> Response:  # noqa: F821
     """Encode audio segment as WAV response."""
-    import numpy as np
-
     if normalize:
         peak = np.max(np.abs(segment))
         if peak > 0:
@@ -1245,7 +1253,7 @@ async def get_detection_audio_slice(
 # ---- Spectrogram ----
 
 
-def _get_spectrogram_cache(settings) -> "SpectrogramCache":  # noqa: F821
+def _get_spectrogram_cache(settings) -> SpectrogramCache:
     from humpback.processing.spectrogram_cache import SpectrogramCache
 
     cache_dir = settings.storage_root / "spectrogram_cache"

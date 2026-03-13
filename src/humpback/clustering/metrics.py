@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -110,7 +111,7 @@ def extract_category_from_folder_path(folder_path: str) -> str | None:
 
 def compute_category_metrics(
     labels: np.ndarray,
-    category_labels: list[str | None],
+    category_labels: Sequence[str | None],
 ) -> dict[str, float | None]:
     """Compute semi-supervised metrics comparing clusters to folder categories.
 
@@ -147,7 +148,7 @@ def compute_category_metrics(
 
 def compute_detailed_category_metrics(
     labels: np.ndarray,
-    category_labels: list[str | None],
+    category_labels: Sequence[str | None],
 ) -> dict[str, Any]:
     """Compute detailed supervised metrics comparing clusters to categories.
 
@@ -287,7 +288,7 @@ def compute_dendrogram_data(
 
 def compute_category_fragmentation(
     labels: np.ndarray,
-    category_labels: list[str | None],
+    category_labels: Sequence[str | None],
 ) -> dict[str, dict[str, float]]:
     """Per-category fragmentation metrics.
 
@@ -355,7 +356,7 @@ def compute_category_fragmentation(
 
 def compute_cluster_fragmentation(
     labels: np.ndarray,
-    category_labels: list[str | None],
+    category_labels: Sequence[str | None],
 ) -> dict[str, dict[str, Any]]:
     """Per-cluster composition metrics.
 
@@ -404,7 +405,7 @@ def compute_global_fragmentation(
     category_frag: dict[str, dict[str, float]],
     cluster_frag: dict[str, dict[str, Any]],
     labels: np.ndarray,
-    category_labels: list[str | None],
+    category_labels: Sequence[str | None],
 ) -> dict[str, float]:
     """Weighted-average global fragmentation indices."""
     # Category-weighted averages (weight = n_non_noise)
@@ -450,7 +451,7 @@ def compute_global_fragmentation(
 
 def compute_fragmentation_report(
     labels: np.ndarray,
-    category_labels: list[str | None],
+    category_labels: Sequence[str | None],
     job_id: str,
 ) -> dict[str, Any] | None:
     """Build the full fragmentation report (``report.json``).
@@ -492,7 +493,7 @@ def compute_fragmentation_report(
 def run_parameter_sweep(
     embeddings: np.ndarray,
     parameters: dict[str, Any] | None = None,
-    category_labels: list[str | None] | None = None,
+    category_labels: Sequence[str | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Sweep clustering parameters over already-reduced embeddings.
 
@@ -522,6 +523,7 @@ def run_parameter_sweep(
     def _category_metrics(labels: np.ndarray) -> dict[str, float | None]:
         if not has_categories:
             return {}
+        assert category_labels is not None
         cluster_vals = []
         cat_vals = []
         for lab, cat in zip(labels.tolist(), category_labels):

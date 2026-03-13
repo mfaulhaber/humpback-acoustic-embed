@@ -207,7 +207,7 @@ async def _create_processing_jobs(
 
 async def _poll_processing_jobs(wf: RetrainWorkflow, session_factory) -> bool:
     """Check processing job status. Transition when all complete."""
-    job_ids = json.loads(wf.processing_job_ids)
+    job_ids = json.loads(wf.processing_job_ids or "[]")
     if not job_ids:
         # Edge case: empty list, move to training
         async with session_factory() as session:

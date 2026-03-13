@@ -82,7 +82,7 @@ def extract_logmel_batch(
 
     mel_basis = librosa.filters.mel(sr=sample_rate, n_fft=n_fft, n_mels=n_mels)
     # Periodic Hann window — same as librosa.stft uses internally
-    fft_window = get_window("hann", n_fft, fftbins=True)
+    fft_window = np.asarray(get_window("hann", n_fft, fftbins=True), dtype=np.float32)
 
     results: list[np.ndarray] = []
     for chunk_start in range(0, len(windows), chunk_size):

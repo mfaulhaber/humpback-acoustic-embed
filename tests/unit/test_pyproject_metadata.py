@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import tomllib
 
 
 def _load_pyproject() -> dict:
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     return tomllib.loads(pyproject.read_text())
+
+
+def _load_pre_commit_config() -> str:
+    config = Path(__file__).resolve().parents[2] / ".pre-commit-config.yaml"
+    return config.read_text()
 
 
 def test_python_and_runtime_dependencies_are_explicit() -> None:
@@ -59,6 +65,7 @@ def test_dev_dependency_group_contains_project_tooling() -> None:
         "google-cloud-storage>=3.9.0",
         "httpx>=0.28.1",
         "pre-commit>=4.3.0",
+        "pyright>=1.1.408",
         "pytest>=9.0.2",
         "pytest-asyncio>=1.3.0",
         "pytest-cov>=6.0",
@@ -66,3 +73,26 @@ def test_dev_dependency_group_contains_project_tooling() -> None:
         "ruff>=0.15.5",
         "supervisor>=4.3.0",
     ]
+
+
+def test_pyright_configuration_targets_src_package() -> None:
+    data = _load_pyproject()
+
+    assert data["tool"]["pyright"] == {
+        "include": ["src/humpback"],
+        "extraPaths": ["src"],
+        "pythonVersion": "3.11",
+        "typeCheckingMode": "standard",
+    }
+
+
+def test_pre_commit_runs_pyright_via_uv() -> None:
+    config = _load_pre_commit_config()
+
+    assert "id: pyright" in config
+    assert "entry: uv run pyright" in config
+    assert "pass_filenames: false" in config
+    assert re.search(
+        r"files:\s+\^\(src/humpback/\|pyproject\\\.toml\|\\\.pre-commit-config\\\.yaml\)\$",
+        config,
+    )

@@ -54,6 +54,12 @@ packages = ["src/humpback"]
 [tool.ruff]
 target-version = "py311"
 
+[tool.pyright]
+include = ["src/humpback"]
+extraPaths = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -82,6 +88,7 @@ dev = [
     "google-cloud-storage>=3.9.0",
     "httpx>=0.28.1",
     "pre-commit>=4.3.0",
+    "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=6.0",

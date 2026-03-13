@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -249,7 +250,7 @@ def train_projection(
 
 def _compute_summary(
     embeddings: np.ndarray,
-    category_labels: list[str | None],
+    category_labels: Sequence[str | None],
     params: dict[str, Any] | None,
 ) -> dict[str, float | None]:
     """Run clustering + metrics on embeddings and return summary dict."""
@@ -306,8 +307,8 @@ def _compute_summary(
 
 def run_metric_learning_refinement(
     embeddings: np.ndarray,
-    category_labels: list[str | None],
-    frag_report: dict | None = None,
+    category_labels: Sequence[str | None],
+    frag_report: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Train MLP projection, re-cluster refined embeddings, compare metrics.
@@ -323,7 +324,7 @@ def run_metric_learning_refinement(
     # Filter to labeled samples
     labeled_mask = [c is not None for c in category_labels]
     labeled_indices = [i for i, m in enumerate(labeled_mask) if m]
-    labeled_cats = [category_labels[i] for i in labeled_indices]
+    labeled_cats: list[str] = [cast(str, category_labels[i]) for i in labeled_indices]
 
     if len(labeled_indices) == 0:
         return None
@@ -342,8 +343,8 @@ def run_metric_learning_refinement(
 
     X_labeled = embeddings[filtered_indices]
     le = LabelEncoder()
-    y = le.fit_transform(filtered_cats)
-    categories_used = sorted(le.classes_.tolist())
+    y = np.asarray(cast(Any, le.fit_transform(filtered_cats)), dtype=np.int32)
+    categories_used = sorted(str(category) for category in cast(Any, le.classes_))
 
     # Extract ml_* params
     p = params or {}

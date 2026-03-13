@@ -1,9 +1,14 @@
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from humpback.database import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from humpback.models.processing import EmbeddingSet, ProcessingJob
 
 
 class AudioFile(UUIDMixin, TimestampMixin, Base):

@@ -65,12 +65,14 @@ Use these commands for managing dependencies:
 ### 3.3 Running Python Code and Tools
 *   Run a Python script: `uv run <script-name>.py`
 *   Run Python tools/tests (e.g., `pytest`): `uv run pytest tests/`
+*   Run the Python type checker: `uv run pyright`
 *   Install pre-commit hooks once per clone: `uv run pre-commit install`
 *   Run all pre-commit hooks manually: `uv run pre-commit run --all-files`
 
 ### 3.4 Best Practices
 *   Prefer `uv run` over manually activating a virtual environment and running commands directly.
-*   Python edits must pass pre-commit Ruff hooks before commit (`ruff-check --fix --exit-non-zero-on-fix`, `ruff-format`).
+*   Python edits must pass pre-commit Ruff and Pyright hooks before commit.
+*   Pyright enforcement is currently scoped to `src/humpback`; expand deliberately after cleaning new areas.
 *   When troubleshooting, use `uv cache clean` as a last resort.
 
 ### 3.5 Database Migrations

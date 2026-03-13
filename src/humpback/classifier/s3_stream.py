@@ -764,7 +764,7 @@ class _ClientAdapter:
 
     def invalidate_cached_segment(self, key: str) -> bool:
         fn = getattr(self._client, "invalidate_cached_segment", None)
-        return fn(key) if callable(fn) else False
+        return bool(fn(key)) if callable(fn) else False
 
 
 def _decode_and_clip_segment(
@@ -1028,17 +1028,29 @@ def iter_audio_chunks(
     """
     if isinstance(start_ts_or_hydrophone_id, str):
         # Old signature: (client, hydrophone_id, start_ts, end_ts, ...)
+        if end_ts_or_start_ts is None or end_ts_compat is None:
+            raise ValueError(
+                "Legacy iter_audio_chunks signature requires start_ts and end_ts"
+            )
         provider = _ClientAdapter(provider_or_client, start_ts_or_hydrophone_id)
         yield from _iter_audio_chunks(
-            provider, end_ts_or_start_ts, end_ts_compat, **kwargs
+            provider,
+            float(end_ts_or_start_ts),
+            float(end_ts_compat),
+            **kwargs,
         )
     elif start_ts is not None and end_ts is not None:
         # New signature with keyword args
         yield from _iter_audio_chunks(provider_or_client, start_ts, end_ts, **kwargs)
     else:
         # New signature with positional args
+        if start_ts_or_hydrophone_id is None or end_ts_or_start_ts is None:
+            raise ValueError("iter_audio_chunks requires start_ts and end_ts")
         yield from _iter_audio_chunks(
-            provider_or_client, start_ts_or_hydrophone_id, end_ts_or_start_ts, **kwargs
+            provider_or_client,
+            float(start_ts_or_hydrophone_id),
+            float(end_ts_or_start_ts),
+            **kwargs,
         )
 
 

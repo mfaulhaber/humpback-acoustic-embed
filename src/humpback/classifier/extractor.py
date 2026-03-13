@@ -337,29 +337,38 @@ def extract_hydrophone_labeled_samples(
     )
     stream_timeline = None
     processing_start_ts: float | None = None
+    stream_start_ts_value: float | None = None
+    stream_end_ts_value: float | None = None
+    resolve_hydrophone_audio_slice_fn = None
 
     if use_stream_resolver:
+        assert stream_start_timestamp is not None
+        assert stream_end_timestamp is not None
         from humpback.classifier.s3_stream import (
             build_hydrophone_stream_timeline,
             resolve_hydrophone_audio_slice,
         )
 
+        stream_start_ts_value = float(stream_start_timestamp)
+        stream_end_ts_value = float(stream_end_timestamp)
+        resolve_hydrophone_audio_slice_fn = resolve_hydrophone_audio_slice
+
         try:
             stream_timeline = build_hydrophone_stream_timeline(
                 client=client,
                 hydrophone_id=hydrophone_id,
-                stream_start_ts=float(stream_start_timestamp),
-                stream_end_ts=float(stream_end_timestamp),
+                stream_start_ts=stream_start_ts_value,
+                stream_end_ts=stream_end_ts_value,
             )
             processing_start_ts = max(
-                float(stream_start_timestamp), stream_timeline[0].start_ts
+                stream_start_ts_value, stream_timeline[0].start_ts
             )
         except Exception as exc:
             logger.warning(
                 "Hydrophone extraction timeline unavailable for %s [%.1f, %.1f]: %s",
                 hydrophone_id,
-                float(stream_start_timestamp),
-                float(stream_end_timestamp),
+                stream_start_ts_value,
+                stream_end_ts_value,
                 exc,
             )
             stream_timeline = []
@@ -460,17 +469,20 @@ def extract_hydrophone_labeled_samples(
                 if not stream_timeline:
                     counts["n_skipped"] += len(pending_writes)
                     continue
+                assert resolve_hydrophone_audio_slice_fn is not None
+                assert stream_start_ts_value is not None
+                assert stream_end_ts_value is not None
                 try:
-                    segment = resolve_hydrophone_audio_slice(
+                    segment = resolve_hydrophone_audio_slice_fn(
                         client=client,
                         hydrophone_id=hydrophone_id,
-                        stream_start_ts=float(stream_start_timestamp),
-                        stream_end_ts=float(stream_end_timestamp),
+                        stream_start_ts=stream_start_ts_value,
+                        stream_end_ts=stream_end_ts_value,
                         filename=source_filename,
                         row_start_sec=start_sec,
                         duration_sec=duration,
                         target_sr=target_sample_rate,
-                        legacy_anchor_start_ts=float(stream_start_timestamp),
+                        legacy_anchor_start_ts=stream_start_ts_value,
                         timeline=stream_timeline,
                         processing_start_ts=processing_start_ts,
                     )

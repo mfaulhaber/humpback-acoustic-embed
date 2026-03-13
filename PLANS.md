@@ -10,6 +10,26 @@
 
 ## Recently Completed
 
+# Plan: Add Pyright to the Python Tooling Chain
+
+[Full plan](/Users/michael/.claude/plans/pyright-tooling-integration.md)
+
+## Outcome (2026-03-13)
+
+- Added Pyright to the `uv` dev toolchain, configured it in `pyproject.toml`,
+  and enforced it via a local `uv run pyright` pre-commit hook alongside Ruff.
+- Cleaned the initial `src/humpback` type-checking baseline with narrow typing
+  fixes so Pyright passes without changing intended runtime behavior.
+- Updated docs (`CLAUDE.md`, `README.md`, `STATUS.md`), lockfile metadata, and
+  repo tests that lock the packaging/tooling contract.
+
+## Verification
+
+- `uv sync --group dev --extra tf-macos` — passed.
+- `uv run pyright` — passed.
+- `uv run pre-commit run --all-files` — passed.
+- `uv run pytest tests/` — 543 passed.
+
 # Plan: Deployment Config via Env + Trusted Hosts
 
 [Full plan](/Users/michael/.claude/plans/deployment-config-env-trusted-hosts.md)
@@ -628,6 +648,8 @@
 
 ## Backlog
 
+- Expand Pyright enforcement beyond `src/humpback` to `scripts/`, then `tests/`,
+  after clearing the remaining type-checking backlog in those areas.
 - Smoke-test `tf-linux-gpu` on a real Ubuntu/NVIDIA host — verify `uv sync --extra tf-linux-gpu`, TensorFlow import, and GPU device visibility/runtime behavior.
 - [ArchiveProvider Phase 3: Adapt upstream consumers](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — migrate `hydrophone_detector.py`, `extractor.py`, `classifier_worker.py`, and API router to construct and pass `ArchiveProvider` instances instead of raw clients + hydrophone_id. Remove backward-compat wrappers in `s3_stream.py` once all callers are migrated.
 - [ArchiveProvider Phase 4: Promote NOAA GCS provider](/Users/michael/.claude/plans/peaceful-herding-rossum.md) — move NOAA GCS POC into `providers/noaa_gcs.py` as a proper `ArchiveProvider` implementation, wire into worker/router, add tests.

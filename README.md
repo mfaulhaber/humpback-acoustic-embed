@@ -70,6 +70,8 @@ TensorFlow extras are mutually exclusive. Select exactly one of
 `tf-macos`, `tf-linux-cpu`, or `tf-linux-gpu` for each environment; do not use
 `uv sync --all-extras`.
 
+The backend dev environment includes Ruff, Pyright, pytest, and pre-commit.
+
 ### Development Mode
 
 Run the backend and frontend dev server in separate terminals:
@@ -557,18 +559,27 @@ Labeled-sample extraction outputs:
 uv run pre-commit run --all-files
 ```
 
-Commits run Ruff hooks automatically. If hooks auto-fix files, re-stage those files and commit again.
+Commits run Ruff and Pyright automatically for Python/tooling changes. If Ruff
+auto-fixes files, re-stage those files and commit again.
+
+### Type checking
+
+```bash
+uv run pyright
+```
+
+Pyright is currently enforced for `src/humpback` via the repo config.
 
 ### Run all tests
 
 ```bash
-uv run pytest
+uv run pytest tests/
 ```
 
 ### Run with verbose output
 
 ```bash
-uv run pytest -v
+uv run pytest tests/ -v
 ```
 
 ### Run specific test categories

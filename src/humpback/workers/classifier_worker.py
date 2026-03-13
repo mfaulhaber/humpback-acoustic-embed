@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import joblib
 from sqlalchemy import update
@@ -180,12 +181,13 @@ async def run_detection_job(
         # Set up output directory and TSV path early for incremental writes
         ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
         tsv_path = ddir / "detections.tsv"
+        if not job.audio_folder:
+            raise ValueError("Detection job missing audio_folder")
+        audio_folder = Path(job.audio_folder)
 
         # Count audio files and set initial progress in DB
         audio_files = sorted(
-            p
-            for p in Path(job.audio_folder).rglob("*")
-            if p.suffix.lower() in AUDIO_EXTENSIONS
+            p for p in audio_folder.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS
         )
         files_total = len(audio_files)
 
@@ -217,7 +219,7 @@ async def run_detection_job(
 
                 async def _update_progress():
                     try:
-                        async with session_factory() as progress_session:
+                        async with cast(Any, session_factory)() as progress_session:
                             await progress_session.execute(
                                 update(DetectionJob)
                                 .where(DetectionJob.id == job.id)
@@ -234,7 +236,7 @@ async def run_detection_job(
         # Run detection (CPU-bound) with diagnostics and incremental callback
         detections, summary, diagnostics = await asyncio.to_thread(
             run_detection,
-            Path(job.audio_folder),
+            audio_folder,
             pipeline,
             model,
             cm.window_size_seconds,
@@ -355,7 +357,18 @@ async def run_hydrophone_detection_job(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
 
-        hydrophone_short_name = job.hydrophone_id
+        if (
+            job.hydrophone_id is None
+            or job.start_timestamp is None
+            or job.end_timestamp is None
+        ):
+            raise ValueError(
+                "Hydrophone detection job missing hydrophone_id or time bounds"
+            )
+        hydrophone_id = job.hydrophone_id
+        start_timestamp = job.start_timestamp
+        end_timestamp = job.end_timestamp
+        hydrophone_short_name = hydrophone_id
 
         # Progress callback
         def on_chunk_complete(
@@ -377,7 +390,7 @@ async def run_hydrophone_detection_job(
 
                 async def _update_progress():
                     try:
-                        async with session_factory() as progress_session:
+                        async with cast(Any, session_factory)() as progress_session:
                             await progress_session.execute(
                                 update(DetectionJob)
                                 .where(DetectionJob.id == job.id)
@@ -404,7 +417,7 @@ async def run_hydrophone_detection_job(
 
                 async def _update_alerts():
                     try:
-                        async with session_factory() as alert_session:
+                        async with cast(Any, session_factory)() as alert_session:
                             await alert_session.execute(
                                 update(DetectionJob)
                                 .where(DetectionJob.id == job.id)
@@ -422,7 +435,7 @@ async def run_hydrophone_detection_job(
                 await asyncio.sleep(2)
                 try:
                     if session_factory is not None:
-                        async with session_factory() as poll_session:
+                        async with cast(Any, session_factory)() as poll_session:
                             result = await poll_session.execute(
                                 select(DetectionJob.status).where(
                                     DetectionJob.id == job.id
@@ -446,9 +459,9 @@ async def run_hydrophone_detection_job(
 
             detections, summary = await asyncio.to_thread(
                 run_hydrophone_detection,
-                job.hydrophone_id,
-                job.start_timestamp,
-                job.end_timestamp,
+                hydrophone_id,
+                start_timestamp,
+                end_timestamp,
                 pipeline,
                 model,
                 cm.window_size_seconds,
@@ -474,8 +487,8 @@ async def run_hydrophone_detection_job(
         except FileNotFoundError as exc:
             raise FileNotFoundError(
                 "No hydrophone audio segments found for hydrophone "
-                f"'{job.hydrophone_id}' in requested UTC range "
-                f"[{_fmt_utc(job.start_timestamp)}, {_fmt_utc(job.end_timestamp)}]"
+                f"'{hydrophone_id}' in requested UTC range "
+                f"[{_fmt_utc(start_timestamp)}, {_fmt_utc(end_timestamp)}]"
             ) from exc
         finally:
             cancel_task.cancel()
@@ -568,6 +581,10 @@ async def run_extraction_job(
             from humpback.classifier.s3_stream import LocalHLSClient
 
             cache_path = job.local_cache_path or settings.s3_cache_path
+            if cache_path is None:
+                raise ValueError(
+                    "Hydrophone extraction requires a configured cache path"
+                )
             extract_client = LocalHLSClient(cache_path)
 
             summary = await asyncio.to_thread(
@@ -583,6 +600,8 @@ async def run_extraction_job(
                 job.end_timestamp,
             )
         else:
+            if job.audio_folder is None:
+                raise ValueError("Local extraction job missing audio_folder")
             summary = await asyncio.to_thread(
                 extract_labeled_samples,
                 job.output_tsv_path,

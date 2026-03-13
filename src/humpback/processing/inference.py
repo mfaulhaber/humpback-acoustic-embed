@@ -39,7 +39,7 @@ class EmbeddingModel(Protocol):
     @property
     def vector_dim(self) -> int: ...
 
-    def embed(self, windows: np.ndarray) -> np.ndarray:
+    def embed(self, windows: np.ndarray, /) -> np.ndarray:
         """Embed a batch of windows. Output: (batch, vector_dim)."""
         ...
 

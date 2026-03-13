@@ -230,7 +230,7 @@ def run_detection(
 
     all_detections: list[dict] = []
     all_confidences: list[float] = []
-    diagnostics_records: list[dict] = [] if emit_diagnostics else None
+    diagnostics_records: list[dict] | None = [] if emit_diagnostics else None
     total_windows = 0
     total_positive = 0
     n_skipped_short = 0
@@ -337,6 +337,7 @@ def run_detection(
                         overlap_sec = prev_end - meta.offset_sec
                     else:
                         overlap_sec = 0.0
+                    assert diagnostics_records is not None
                     diagnostics_records.append(
                         {
                             "filename": rel_path,

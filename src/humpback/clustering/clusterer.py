@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import numpy as np
 
 
@@ -33,7 +35,11 @@ def cluster_kmeans(
     from sklearn.cluster import KMeans
 
     n_clusters = min(n_clusters, len(embeddings))
-    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+    kmeans = KMeans(
+        n_clusters=n_clusters,
+        random_state=random_state,
+        n_init=cast(Any, 10),
+    )
     return kmeans.fit_predict(embeddings)
 
 

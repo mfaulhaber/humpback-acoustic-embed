@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     @classmethod
     def from_repo_env(cls, **kwargs) -> "Settings":
-        return cls(_env_file=_repo_env_file(), **kwargs)
+        return cast(Any, cls)(_env_file=_repo_env_file(), **kwargs)
 
     @field_validator("allowed_hosts", mode="before")
     @classmethod

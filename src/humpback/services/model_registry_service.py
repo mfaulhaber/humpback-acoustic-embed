@@ -7,35 +7,38 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
-from humpback.models.model_registry import ModelConfig
+from humpback.models.model_registry import ModelConfig as ModelConfigRecord
 from humpback.models.processing import EmbeddingSet
 
-# Backward-compatible alias
-ModelConfig = ModelConfig
 
-
-async def list_models(session: AsyncSession) -> list[ModelConfig]:
-    result = await session.execute(select(ModelConfig).order_by(ModelConfig.name))
+async def list_models(session: AsyncSession) -> list[ModelConfigRecord]:
+    result = await session.execute(
+        select(ModelConfigRecord).order_by(ModelConfigRecord.name)
+    )
     return list(result.scalars().all())
 
 
-async def get_model_by_name(session: AsyncSession, name: str) -> Optional[ModelConfig]:
-    result = await session.execute(select(ModelConfig).where(ModelConfig.name == name))
+async def get_model_by_name(
+    session: AsyncSession, name: str
+) -> Optional[ModelConfigRecord]:
+    result = await session.execute(
+        select(ModelConfigRecord).where(ModelConfigRecord.name == name)
+    )
     return result.scalar_one_or_none()
 
 
 async def get_model_by_id(
     session: AsyncSession, model_id: str
-) -> Optional[ModelConfig]:
+) -> Optional[ModelConfigRecord]:
     result = await session.execute(
-        select(ModelConfig).where(ModelConfig.id == model_id)
+        select(ModelConfigRecord).where(ModelConfigRecord.id == model_id)
     )
     return result.scalar_one_or_none()
 
 
-async def get_default_model(session: AsyncSession) -> Optional[ModelConfig]:
+async def get_default_model(session: AsyncSession) -> Optional[ModelConfigRecord]:
     result = await session.execute(
-        select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
+        select(ModelConfigRecord).where(ModelConfigRecord.is_default == True)  # noqa: E712
     )
     return result.scalar_one_or_none()
 
@@ -51,11 +54,11 @@ async def create_model(
     is_default: bool = False,
     model_type: str = "tflite",
     input_format: str = "spectrogram",
-) -> ModelConfig:
+) -> ModelConfigRecord:
     if is_default:
         await _clear_defaults(session)
 
-    model = ModelConfig(
+    model = ModelConfigRecord(
         name=name,
         display_name=display_name,
         path=path,
@@ -80,7 +83,7 @@ async def update_model(
     is_default: Optional[bool] = None,
     model_type: Optional[str] = None,
     input_format: Optional[str] = None,
-) -> Optional[ModelConfig]:
+) -> Optional[ModelConfigRecord]:
     model = await get_model_by_id(session, model_id)
     if model is None:
         return None
@@ -106,7 +109,7 @@ async def update_model(
 
 async def set_default_model(
     session: AsyncSession, model_id: str
-) -> Optional[ModelConfig]:
+) -> Optional[ModelConfigRecord]:
     model = await get_model_by_id(session, model_id)
     if model is None:
         return None
@@ -228,7 +231,7 @@ async def scan_model_files_with_status(
 
 async def seed_default_model(session: AsyncSession) -> None:
     """Insert the default model if the table is empty."""
-    result = await session.execute(select(ModelConfig).limit(1))
+    result = await session.execute(select(ModelConfigRecord).limit(1))
     if result.scalar_one_or_none() is not None:
         return  # Table already has entries
 
@@ -245,7 +248,7 @@ async def seed_default_model(session: AsyncSession) -> None:
 async def _clear_defaults(session: AsyncSession) -> None:
     """Clear is_default on all models."""
     result = await session.execute(
-        select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
+        select(ModelConfigRecord).where(ModelConfigRecord.is_default == True)  # noqa: E712
     )
     for m in result.scalars().all():
         m.is_default = False

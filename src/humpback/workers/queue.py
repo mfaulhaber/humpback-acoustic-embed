@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,10 @@ from humpback.models.retrain import RetrainWorkflow
 logger = logging.getLogger(__name__)
 
 STALE_JOB_TIMEOUT = timedelta(minutes=10)
+
+
+def _rowcount(result: Any) -> int:
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def _claim_next_job(
@@ -52,7 +56,7 @@ async def _claim_next_job(
             }
         )
     )
-    if (claim_result.rowcount or 0) != 1:
+    if _rowcount(claim_result) != 1:
         # Another worker claimed it first.
         await session.rollback()
         return None
@@ -78,7 +82,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
             updated_at=datetime.now(timezone.utc),
         )
     )
-    count = result.rowcount
+    count = _rowcount(result)
     if count:
         logger.warning(f"Recovered {count} stale processing job(s)")
 
@@ -93,7 +97,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
             updated_at=datetime.now(timezone.utc),
         )
     )
-    count2 = result2.rowcount
+    count2 = _rowcount(result2)
     if count2:
         logger.warning(f"Recovered {count2} stale clustering job(s)")
 
@@ -108,7 +112,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
             updated_at=datetime.now(timezone.utc),
         )
     )
-    count3 = result3.rowcount
+    count3 = _rowcount(result3)
     if count3:
         logger.warning(f"Recovered {count3} stale training job(s)")
 
@@ -123,7 +127,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
             updated_at=datetime.now(timezone.utc),
         )
     )
-    count4 = result4.rowcount
+    count4 = _rowcount(result4)
     if count4:
         logger.warning(f"Recovered {count4} stale detection job(s)")
 
@@ -138,7 +142,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
             updated_at=datetime.now(timezone.utc),
         )
     )
-    count5 = result5.rowcount
+    count5 = _rowcount(result5)
     if count5:
         logger.warning(f"Recovered {count5} stale retrain workflow(s)")
 

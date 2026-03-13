@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 import numpy as np
 
@@ -12,10 +13,10 @@ logger = logging.getLogger(__name__)
 
 def run_classifier_baseline(
     embeddings: np.ndarray,
-    category_labels: list[str | None],
-    frag_report: dict | None = None,
-    all_es_ids: list[str] | None = None,
-    all_row_indices: list[int] | None = None,
+    category_labels: Sequence[str | None],
+    frag_report: dict[str, Any] | None = None,
+    all_es_ids: Sequence[str] | None = None,
+    all_row_indices: Sequence[int] | None = None,
     n_folds: int = 5,
     random_state: int = 42,
 ) -> dict[str, Any] | None:
@@ -38,7 +39,7 @@ def run_classifier_baseline(
     # --- 1. Filter to labeled samples, tracking original indices ---
     labeled_mask = [c is not None for c in category_labels]
     labeled_indices = [i for i, m in enumerate(labeled_mask) if m]
-    labeled_cats = [category_labels[i] for i in labeled_indices]
+    labeled_cats: list[str] = [cast(str, category_labels[i]) for i in labeled_indices]
 
     if len(labeled_indices) == 0:
         return None
@@ -59,24 +60,26 @@ def run_classifier_baseline(
 
     X = embeddings[filtered_indices]
     le = LabelEncoder()
-    y = le.fit_transform(filtered_cats)
-    n_classes = len(le.classes_)
+    y = np.asarray(cast(Any, le.fit_transform(filtered_cats)), dtype=np.int32)
+    encoded_classes = cast(Sequence[Any], le.classes_)
+    n_classes = len(encoded_classes)
 
     # --- 3. Cross-validated predictions ---
     clf = LogisticRegression(max_iter=1000, solver="lbfgs", random_state=random_state)
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
-    proba = cross_val_predict(clf, X, y, cv=skf, method="predict_proba")
+    proba = np.asarray(cross_val_predict(clf, X, y, cv=skf, method="predict_proba"))
     y_pred = np.argmax(proba, axis=1)
 
     # --- 4. Classification report ---
-    target_names = [str(c) for c in le.classes_]
-    report_dict = classification_report(
-        y, y_pred, target_names=target_names, output_dict=True
+    target_names = [str(c) for c in encoded_classes]
+    report_dict = cast(
+        dict[str, Any],
+        classification_report(y, y_pred, target_names=target_names, output_dict=True),
     )
 
-    per_class: dict[str, dict] = {}
+    per_class: dict[str, dict[str, float | int]] = {}
     for name in target_names:
-        r = report_dict[name]
+        r = cast(dict[str, Any], report_dict[name])
         per_class[name] = {
             "precision": round(float(r["precision"]), 4),
             "recall": round(float(r["recall"]), 4),
@@ -84,10 +87,10 @@ def run_classifier_baseline(
             "support": int(r["support"]),
         }
 
-    macro = report_dict["macro avg"]
-    weighted = report_dict["weighted avg"]
+    macro = cast(dict[str, Any], report_dict["macro avg"])
+    weighted = cast(dict[str, Any], report_dict["weighted avg"])
 
-    def _avg_dict(d: dict) -> dict:
+    def _avg_dict(d: dict[str, Any]) -> dict[str, float | int]:
         return {
             "precision": round(float(d["precision"]), 4),
             "recall": round(float(d["recall"]), 4),
@@ -114,7 +117,7 @@ def run_classifier_baseline(
     uncertainty_scores = entropy / log_n_classes if log_n_classes > 0 else entropy
 
     # --- 7. Build label queue for ALL N samples ---
-    frag_cats = {}
+    frag_cats: dict[str, float] = {}
     if frag_report is not None:
         cat_frag = frag_report.get("category_fragmentation", {})
         for cat_name, frag_data in cat_frag.items():

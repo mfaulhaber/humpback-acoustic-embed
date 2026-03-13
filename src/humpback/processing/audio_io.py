@@ -51,7 +51,7 @@ def _decode_mp3(path: Path) -> tuple[np.ndarray, int]:
             "librosa is required for MP3 decoding. Install with: pip install librosa"
         )
     audio, sr = librosa.load(str(path), sr=None, mono=True)
-    return audio, sr
+    return np.asarray(audio, dtype=np.float32), int(sr)
 
 
 def _decode_flac(path: Path) -> tuple[np.ndarray, int]:
@@ -62,7 +62,7 @@ def _decode_flac(path: Path) -> tuple[np.ndarray, int]:
             "librosa is required for FLAC decoding. Install with: uv add librosa"
         )
     audio, sr = librosa.load(str(path), sr=None, mono=True)
-    return audio, sr
+    return np.asarray(audio, dtype=np.float32), int(sr)
 
 
 def resample(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
