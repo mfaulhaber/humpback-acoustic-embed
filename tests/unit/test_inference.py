@@ -374,7 +374,6 @@ def test_validate_gpu_skips_cpu_compare_for_cuda_only_module():
 def _make_saved_model_pb(tmp_path: Path, xla_must_compile: bool) -> Path:
     """Create a minimal saved_model.pb with or without _XlaMustCompile."""
     from tensorflow.core.protobuf import saved_model_pb2
-    from tensorflow.core.framework import attr_value_pb2
 
     sm = saved_model_pb2.SavedModel()
     meta = sm.meta_graphs.add()
@@ -382,7 +381,7 @@ def _make_saved_model_pb(tmp_path: Path, xla_must_compile: bool) -> Path:
     node.name = "StatefulPartitionedCall"
     node.op = "StatefulPartitionedCall"
     if xla_must_compile:
-        node.attr["_XlaMustCompile"].CopyFrom(attr_value_pb2.AttrValue(b=True))
+        node.attr["_XlaMustCompile"].b = True
 
     model_dir = tmp_path / "test_model"
     model_dir.mkdir()

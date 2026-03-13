@@ -1,5 +1,7 @@
-import humpback.config as config_module
 from pathlib import Path
+from typing import Any, cast
+
+import humpback.config as config_module
 
 from humpback.config import Settings
 
@@ -35,7 +37,7 @@ def test_env_file_loads_hosts_and_path_overrides(tmp_path):
         encoding="utf-8",
     )
 
-    settings = Settings(_env_file=env_file)
+    settings = cast(Any, Settings)(_env_file=env_file)
 
     assert settings.api_host == "0.0.0.0"
     assert settings.api_port == 9001

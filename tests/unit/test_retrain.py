@@ -285,6 +285,7 @@ async def test_create_retrain_workflow_with_overrides(session, tmp_path):
     wf = await create_retrain_workflow(
         session, cm.id, "retrained-v2", {"classifier_type": "mlp"}
     )
+    assert wf.parameters is not None
     params = json.loads(wf.parameters)
     assert params["classifier_type"] == "mlp"
 

@@ -12,4 +12,4 @@ repos:
         entry: uv run pyright
         language: system
         pass_filenames: false
-        files: ^(src/humpback/|pyproject\.toml|\.pre-commit-config\.yaml)$
+        files: ^(src/humpback/.*\.py|scripts/.*\.py|tests/.*\.py|pyproject\.toml|\.pre-commit-config\.yaml)$

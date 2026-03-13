@@ -55,7 +55,7 @@ packages = ["src/humpback"]
 target-version = "py311"
 
 [tool.pyright]
-include = ["src/humpback"]
+include = ["src/humpback", "scripts", "tests"]
 extraPaths = ["src"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"

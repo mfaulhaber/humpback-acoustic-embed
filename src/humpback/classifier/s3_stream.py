@@ -10,11 +10,12 @@ import struct
 import subprocess
 import time
 from collections import deque
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from typing import Protocol, cast
 
 import numpy as np
 
@@ -41,6 +42,24 @@ _EXTINF_RE = re.compile(r"#EXTINF:([0-9.]+)")
 
 class SegmentNotFoundError(Exception):
     """Raised when a segment is confirmed missing (404 cached)."""
+
+
+class _LegacyHLSTimelineClient(Protocol):
+    """Structural contract for legacy HLS timeline helpers."""
+
+    def list_hls_folders(
+        self, hydrophone_id: str, start_ts: float, end_ts: float, /
+    ) -> Sequence[str]: ...
+
+    def list_segments(self, hydrophone_id: str, folder_ts: str, /) -> Sequence[str]: ...
+
+    def fetch_playlist(self, hydrophone_id: str, folder_ts: str, /) -> str | None: ...
+
+
+class _LegacyHLSSliceClient(_LegacyHLSTimelineClient, Protocol):
+    """Structural contract for legacy HLS playback helpers."""
+
+    def fetch_segment(self, key: str, /) -> bytes: ...
 
 
 # StreamSegment is defined in humpback.classifier.archive and re-exported here
@@ -140,7 +159,7 @@ def _parse_playlist_segments(
 
 
 def _ordered_folder_segments(
-    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    client: _LegacyHLSTimelineClient,
     hydrophone_id: str,
     folder_ts: str,
     default_duration_sec: float = DEFAULT_SEGMENT_DURATION_SEC,
@@ -619,7 +638,7 @@ def _parse_chunk_start_timestamp(filename: str) -> float:
 
 
 def _build_stream_timeline(
-    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    client: _LegacyHLSTimelineClient,
     hydrophone_id: str,
     stream_start_ts: float,
     stream_end_ts: float,
@@ -703,7 +722,7 @@ def _build_stream_timeline(
 
 
 def build_hydrophone_stream_timeline(
-    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    client: _LegacyHLSTimelineClient,
     hydrophone_id: str,
     stream_start_ts: float,
     stream_end_ts: float,
@@ -733,7 +752,7 @@ class _ClientAdapter:
 
     def __init__(
         self,
-        client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+        client: _LegacyHLSSliceClient,
         hydrophone_id: str,
     ) -> None:
         self._client = client
@@ -754,7 +773,11 @@ class _ClientAdapter:
 
     def count_segments(self, start_ts: float, end_ts: float) -> int:
         folders = self._client.list_hls_folders(self._hydrophone_id, start_ts, end_ts)
-        return self._client.count_segments(self._hydrophone_id, folders)
+        count_segments = getattr(self._client, "count_segments", None)
+        if callable(count_segments):
+            count = count_segments(self._hydrophone_id, list(folders))
+            return int(cast(int, count))
+        return len(folders)
 
     def fetch_segment(self, key: str) -> bytes:
         return self._client.fetch_segment(key)
@@ -980,7 +1003,7 @@ def resolve_audio_slice(
 
 
 def resolve_hydrophone_audio_slice(
-    client: "OrcasoundS3Client | LocalHLSClient | CachingS3Client",
+    client: _LegacyHLSSliceClient,
     hydrophone_id: str,
     stream_start_ts: float,
     stream_end_ts: float,

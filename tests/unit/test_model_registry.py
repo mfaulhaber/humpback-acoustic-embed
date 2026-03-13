@@ -85,6 +85,7 @@ async def test_set_default_model(session):
         path="y.tflite",
     )
     result = await model_registry_service.set_default_model(session, m2.id)
+    assert result is not None
     assert result.is_default is True
     await session.refresh(m1)
     assert m1.is_default is False
@@ -121,6 +122,7 @@ async def test_update_model(session, sample_model):
         display_name="Updated Name",
         vector_dim=256,
     )
+    assert updated is not None
     assert updated.display_name == "Updated Name"
     assert updated.vector_dim == 256
 
@@ -184,6 +186,7 @@ async def test_create_model_with_model_type(session):
 
     # Fetch and verify
     fetched = await model_registry_service.get_model_by_name(session, "surfperch_tf2")
+    assert fetched is not None
     assert fetched.model_type == "tf2_saved_model"
     assert fetched.input_format == "waveform"
 

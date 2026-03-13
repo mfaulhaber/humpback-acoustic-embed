@@ -10,6 +10,12 @@ import numpy as np
 import pytest
 
 
+def _segment_index_from_key(key: str) -> int:
+    match = re.search(r"(\d+)(?=\.ts$)", key)
+    assert match is not None
+    return int(match.group(1))
+
+
 def _make_wav_bytes(samples: np.ndarray, sr: int = 32000) -> bytes:
     """Create minimal WAV bytes from float32 samples."""
     pcm = (samples * 32767).clip(-32768, 32767).astype(np.int16)
@@ -255,14 +261,14 @@ class TestIterAudioChunksPrefetch:
         timeline = _make_timeline(6, folder_ts=1000.0, seg_dur=10.0)
 
         def _fetch(key):
-            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            idx = _segment_index_from_key(key)
             if idx % 2 == 0:
                 time.sleep(0.01)
             return key.encode()
 
         def _decode(raw_bytes, sr):
             key = raw_bytes.decode()
-            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            idx = _segment_index_from_key(key)
             return np.full(sr * 10, idx, dtype=np.float32)
 
         provider = _FakeProvider(timeline, fetch_fn=_fetch, decode_fn=_decode)
@@ -348,14 +354,14 @@ class TestIterAudioChunksPrefetch:
         timeline = _make_timeline(3, folder_ts=1000.0, seg_dur=10.0)
 
         def _fetch(key):
-            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            idx = _segment_index_from_key(key)
             if idx == 1:
                 raise RuntimeError("boom")
             return key.encode()
 
         def _decode(raw_bytes, sr):
             key = raw_bytes.decode()
-            idx = int(re.search(r"(\d+)(?=\.ts$)", key).group(1))
+            idx = _segment_index_from_key(key)
             return np.full(sr * 10, idx, dtype=np.float32)
 
         provider = _FakeProvider(timeline, fetch_fn=_fetch, decode_fn=_decode)

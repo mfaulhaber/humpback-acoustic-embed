@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -32,7 +33,7 @@ def _generate_seeds(n_runs: int, base_seed: int = 42) -> list[int]:
 def _compute_run_metrics(
     labels: np.ndarray,
     cluster_input: np.ndarray,
-    category_labels: list[str | None] | None,
+    category_labels: Sequence[str | None] | None,
 ) -> dict[str, Any]:
     """Compute per-run metrics reusing existing helpers."""
     n_total = len(labels)
@@ -127,7 +128,7 @@ def _aggregate_metric(runs: list[dict[str, Any]], key: str) -> dict[str, float |
 def run_stability_evaluation(
     embeddings: np.ndarray,
     parameters: dict[str, Any] | None,
-    category_labels: list[str | None] | None,
+    category_labels: Sequence[str | None] | None,
     n_runs: int = 10,
 ) -> dict[str, Any]:
     """Re-run the clustering pipeline N times with different random seeds.

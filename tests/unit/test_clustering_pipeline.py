@@ -9,6 +9,11 @@ from humpback.clustering.pipeline import (
 )
 
 
+def _require_reduced_embeddings(result: ClusteringResult) -> np.ndarray:
+    assert result.reduced_embeddings is not None
+    return result.reduced_embeddings
+
+
 def test_pipeline_basic():
     # Create synthetic embeddings: two clear clusters
     rng = np.random.RandomState(42)
@@ -112,8 +117,9 @@ def test_pipeline_explicit_cluster_dims():
         },
     )
 
+    reduced = _require_reduced_embeddings(result)
     assert result.cluster_input.shape == (40, 8)
-    assert result.reduced_embeddings.shape == (40, 2)
+    assert reduced.shape == (40, 2)
 
 
 def test_pipeline_backward_compat_umap_n_components():
@@ -131,8 +137,9 @@ def test_pipeline_backward_compat_umap_n_components():
         parameters={"use_umap": True, "umap_n_components": 5, "min_cluster_size": 5},
     )
 
+    reduced = _require_reduced_embeddings(result)
     assert result.cluster_input.shape == (40, 5)
-    assert result.reduced_embeddings.shape == (40, 2)
+    assert reduced.shape == (40, 2)
 
 
 def test_pipeline_cluster_dims_clamped_to_input():
@@ -150,8 +157,9 @@ def test_pipeline_cluster_dims_clamped_to_input():
     )
 
     # Clamped to min(20, 6) = 6, but 6 == input dim so UMAP still runs
+    reduced = _require_reduced_embeddings(result)
     assert result.cluster_input.shape[1] <= 6
-    assert result.reduced_embeddings.shape == (30, 2)
+    assert reduced.shape == (30, 2)
 
 
 def test_pipeline_single_pass_when_cluster_dims_2():
@@ -173,10 +181,11 @@ def test_pipeline_single_pass_when_cluster_dims_2():
         },
     )
 
+    reduced = _require_reduced_embeddings(result)
     assert result.cluster_input.shape == (40, 2)
-    assert result.reduced_embeddings.shape == (40, 2)
+    assert reduced.shape == (40, 2)
     # Single pass: both should be the same array
-    np.testing.assert_array_equal(result.cluster_input, result.reduced_embeddings)
+    np.testing.assert_array_equal(result.cluster_input, reduced)
 
 
 # --- New tests for Phase 2-3 features ---
@@ -360,8 +369,10 @@ def test_pipeline_same_random_state_reproducible():
     r1 = run_clustering_pipeline(embeddings, parameters=params)
     r2 = run_clustering_pipeline(embeddings, parameters=params)
 
+    reduced_1 = _require_reduced_embeddings(r1)
+    reduced_2 = _require_reduced_embeddings(r2)
     np.testing.assert_array_equal(r1.labels, r2.labels)
-    np.testing.assert_array_almost_equal(r1.reduced_embeddings, r2.reduced_embeddings)
+    np.testing.assert_array_almost_equal(reduced_1, reduced_2)
 
 
 def test_pipeline_default_random_state_backward_compat():
@@ -382,5 +393,7 @@ def test_pipeline_default_random_state_backward_compat():
         },
     )
 
+    reduced_1 = _require_reduced_embeddings(r1)
+    reduced_2 = _require_reduced_embeddings(r2)
     np.testing.assert_array_equal(r1.labels, r2.labels)
-    np.testing.assert_array_almost_equal(r1.reduced_embeddings, r2.reduced_embeddings)
+    np.testing.assert_array_almost_equal(reduced_1, reduced_2)

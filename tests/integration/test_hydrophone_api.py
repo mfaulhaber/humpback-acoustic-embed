@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 import uuid
 
 import numpy as np
@@ -735,7 +736,7 @@ async def test_hydrophone_download_returns_streaming_response(client, app_settin
         if isinstance(chunk, str):
             chunks.append(chunk.encode())
         else:
-            chunks.append(chunk)
+            chunks.append(bytes(chunk))
     text = b"".join(chunks).decode()
     reader = csv.DictReader(io.StringIO(text), delimiter="\t")
     rows = list(reader)
@@ -994,6 +995,10 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
     )
 
     class FakeModel:
+        @property
+        def vector_dim(self) -> int:
+            return 1
+
         def embed(self, batch):
             return np.zeros((len(batch), 1), dtype=np.float32)
 
@@ -1008,7 +1013,7 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
         hydrophone_id=hydrophone_id,
         start_timestamp=1000.0,
         end_timestamp=1025.0,
-        pipeline=FakePipeline(),
+        pipeline=cast(Any, FakePipeline()),
         model=FakeModel(),
         window_size_seconds=5.0,
         target_sample_rate=32000,

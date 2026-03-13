@@ -1,10 +1,11 @@
+from collections.abc import AsyncIterator
 import struct
 import wave
 from pathlib import Path
 
 import numpy as np
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
@@ -26,7 +27,7 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-async def engine(settings):
+async def engine(settings) -> AsyncIterator[AsyncEngine]:
     eng = create_engine(settings.database_url)
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -35,7 +36,7 @@ async def engine(settings):
 
 
 @pytest.fixture
-async def session(engine) -> AsyncSession:
+async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     factory = create_session_factory(engine)
     async with factory() as sess:
         yield sess

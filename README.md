@@ -568,7 +568,8 @@ auto-fixes files, re-stage those files and commit again.
 uv run pyright
 ```
 
-Pyright is currently enforced for `src/humpback` via the repo config.
+Pyright is enforced for `src/humpback`, `scripts/`, and `tests/` via the repo
+config.
 
 ### Run all tests
 

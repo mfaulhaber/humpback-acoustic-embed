@@ -72,7 +72,7 @@ Use these commands for managing dependencies:
 ### 3.4 Best Practices
 *   Prefer `uv run` over manually activating a virtual environment and running commands directly.
 *   Python edits must pass pre-commit Ruff and Pyright hooks before commit.
-*   Pyright enforcement is currently scoped to `src/humpback`; expand deliberately after cleaning new areas.
+*   Pyright enforcement covers `src/humpback`, `scripts/`, and `tests/`; expand deliberately after cleaning any new areas.
 *   When troubleshooting, use `uv cache clean` as a last resort.
 
 ### 3.5 Database Migrations

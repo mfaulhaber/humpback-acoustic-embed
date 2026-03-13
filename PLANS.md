@@ -10,6 +10,30 @@
 
 ## Recently Completed
 
+# Plan: Expand Pyright Enforcement to `scripts/`, Then `tests/`
+
+[Full plan](/Users/michael/.claude/plans/expand-pyright-enforcement-scripts-tests.md)
+
+## Outcome (2026-03-13)
+
+- Cleared the remaining Pyright backlog in `scripts/` and `tests/`, including
+  the progress-total typing issue in `scripts/stage_s3_epoch_cache.py`,
+  async-fixture annotations, optional-value narrowing in tests, and a few
+  narrow source annotations in hydrophone stream/stability helpers.
+- Expanded repo Pyright enforcement from `src/humpback` only to
+  `src/humpback`, `scripts`, and `tests` in both `pyproject.toml` and the
+  pre-commit hook trigger.
+- Updated tooling lock tests plus docs/status text in `CLAUDE.md`,
+  `README.md`, and `STATUS.md` to reflect the widened enforcement scope.
+
+## Verification
+
+- `uv run pyright` — passed.
+- `uv run pyright scripts tests` — passed.
+- `uv run pytest tests/unit/test_pyproject_metadata.py tests/unit/test_stage_s3_epoch_cache.py tests/unit/test_s3_stream.py tests/unit/test_detector.py tests/unit/test_diagnostics.py tests/unit/test_clustering_pipeline.py tests/unit/test_model_registry.py tests/unit/test_retrain.py tests/unit/test_inference.py tests/unit/test_detection_spans.py tests/unit/test_stability.py tests/integration/test_hydrophone_api.py tests/unit/test_archive_providers.py tests/unit/test_config.py -q` — 235 passed.
+- `uv run pre-commit run --all-files` — passed.
+- `uv run pytest tests/` — 543 passed.
+
 # Plan: Add Pyright to the Python Tooling Chain
 
 [Full plan](/Users/michael/.claude/plans/pyright-tooling-integration.md)

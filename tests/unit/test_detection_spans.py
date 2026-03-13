@@ -239,6 +239,7 @@ def test_write_tsv_preserves_n_windows():
         assert rows[0]["n_windows"] == "3"
         assert rows[1]["n_windows"] == "5"
         # All expected fieldnames present
+        assert reader.fieldnames is not None
         assert set(reader.fieldnames) == {
             "filename",
             "start_sec",
@@ -277,6 +278,7 @@ def test_append_detections_tsv_creates_with_header(tmp_path):
 
     assert len(rows) == 1
     assert rows[0]["filename"] == "a.wav"
+    assert reader.fieldnames is not None
     assert set(reader.fieldnames) == {
         "filename",
         "start_sec",

@@ -158,7 +158,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Platform-specific TensorFlow extras: `tf-macos`, `tf-linux-cpu`, and `tf-linux-gpu`
 - Supported Python runtime versions: 3.11 and 3.12
 - Python code quality tooling via `uv` + pre-commit: Ruff for lint/format and
-  Pyright for type checking (initially enforced for `src/humpback`)
+  Pyright for type checking (enforced for `src/humpback`, `scripts/`, and
+  `tests/`)
 - Direct runtime dependency on `soundfile` retained for extraction and FLAC conversion paths
 - Repo-root `.env` support for runtime and deploy-time configuration (API/worker
   entrypoints load it explicitly; `scripts/deploy.sh` sources it for `TF_EXTRA`)
@@ -204,8 +205,8 @@ Changes to these areas require extra care and testing:
 - Exactly one TensorFlow extra must be selected per environment; `uv sync --all-extras` is invalid
 - Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels
 - Model files must be present on disk (no remote model registry)
-- Pyright enforcement currently targets `src/humpback`; `tests/` and `scripts/`
-  remain follow-up scope
+- Pyright enforcement covers `src/humpback`, `scripts/`, and `tests/`;
+  expand deliberately after cleaning any new areas
 - `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax (`*.example.com`, not `.example.com`)
 - Audio shorter than `window_size_seconds` (5s) is skipped entirely
 - Imported audio must remain at original path (in-place reads)

@@ -175,4 +175,5 @@ def test_run_detection_skips_short_files(tmp_path):
 
     assert summary["n_skipped_short"] == 1
     assert summary["n_windows"] == 2  # only from normal.wav
+    assert diagnostics is not None
     assert len(diagnostics) == 2

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 import tomllib
 
 
@@ -75,11 +74,11 @@ def test_dev_dependency_group_contains_project_tooling() -> None:
     ]
 
 
-def test_pyright_configuration_targets_src_package() -> None:
+def test_pyright_configuration_targets_python_source_scopes() -> None:
     data = _load_pyproject()
 
     assert data["tool"]["pyright"] == {
-        "include": ["src/humpback"],
+        "include": ["src/humpback", "scripts", "tests"],
         "extraPaths": ["src"],
         "pythonVersion": "3.11",
         "typeCheckingMode": "standard",
@@ -92,7 +91,7 @@ def test_pre_commit_runs_pyright_via_uv() -> None:
     assert "id: pyright" in config
     assert "entry: uv run pyright" in config
     assert "pass_filenames: false" in config
-    assert re.search(
-        r"files:\s+\^\(src/humpback/\|pyproject\\\.toml\|\\\.pre-commit-config\\\.yaml\)\$",
-        config,
-    )
+    assert (
+        "files: ^(src/humpback/.*\\.py|scripts/.*\\.py|tests/.*\\.py|"
+        "pyproject\\.toml|\\.pre-commit-config\\.yaml)$"
+    ) in config

@@ -617,16 +617,16 @@ def run_s5cmd_copy_commands(
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_handle = log_path.open("w", encoding="utf-8")
 
-    progress_by_bytes = bool(expected_bytes_total and expected_bytes_total > 0)
-    progress_by_files = bool(
-        not progress_by_bytes and expected_files_total and expected_files_total > 0
-    )
+    expected_bytes = expected_bytes_total or 0
+    expected_files = expected_files_total or 0
+    progress_by_bytes = expected_bytes > 0
+    progress_by_files = not progress_by_bytes and expected_files > 0
     if progress_by_bytes:
-        total_value = int(expected_bytes_total)
+        total_value = int(expected_bytes)
         unit = "B"
         unit_scale = True
     elif progress_by_files:
-        total_value = int(expected_files_total)
+        total_value = int(expected_files)
         unit = "file"
         unit_scale = False
     else:

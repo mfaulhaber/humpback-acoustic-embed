@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from typing import cast
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -93,9 +94,9 @@ class TestProviderProperties:
 
 class TestOrcasoundHLSProviderDelegation:
     @patch("humpback.classifier.providers.orcasound_hls.OrcasoundS3Client")
-    def _make(self, mock_cls):
+    def _make(self, mock_cls: MagicMock) -> tuple[OrcasoundHLSProvider, MagicMock]:
         provider = OrcasoundHLSProvider("rpi_lab", "Lab")
-        return provider, provider._client
+        return provider, cast(MagicMock, provider._client)
 
     def test_fetch_segment_delegates(self):
         provider, mock_client = self._make()
@@ -137,9 +138,9 @@ class TestOrcasoundHLSProviderDelegation:
 
 class TestCachingHLSProviderDelegation:
     @patch("humpback.classifier.providers.orcasound_hls.CachingS3Client")
-    def _make(self, mock_cls):
+    def _make(self, mock_cls: MagicMock) -> tuple[CachingHLSProvider, MagicMock]:
         provider = CachingHLSProvider("/cache", "rpi_lab", "Lab")
-        return provider, provider._client
+        return provider, cast(MagicMock, provider._client)
 
     def test_fetch_segment_delegates(self):
         provider, mock_client = self._make()
@@ -170,9 +171,9 @@ class TestCachingHLSProviderDelegation:
 
 class TestLocalHLSCacheProviderDelegation:
     @patch("humpback.classifier.providers.orcasound_hls.LocalHLSClient")
-    def _make(self, mock_cls):
+    def _make(self, mock_cls: MagicMock) -> tuple[LocalHLSCacheProvider, MagicMock]:
         provider = LocalHLSCacheProvider("/cache", "rpi_lab", "Lab")
-        return provider, provider._client
+        return provider, cast(MagicMock, provider._client)
 
     def test_fetch_segment_delegates(self):
         provider, mock_client = self._make()

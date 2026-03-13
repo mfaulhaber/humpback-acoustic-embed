@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from typing import cast
 
 from humpback.clustering.stability import (
     _aggregate_metric,
@@ -117,7 +118,9 @@ def test_run_metrics_with_categories():
     embeddings = rng.randn(30, 8).astype(np.float32)
     labels = np.array([0] * 15 + [1] * 15)
     categories = ["catA"] * 15 + ["catB"] * 15
-    result = _compute_run_metrics(labels, embeddings, categories)
+    result = _compute_run_metrics(
+        labels, embeddings, cast(list[str | None], categories)
+    )
     assert result["n_clusters"] == 2
     assert result["adjusted_rand_index"] is not None
     assert result["normalized_mutual_info"] is not None
