@@ -28,8 +28,18 @@ description: Systematic review checklist for changes before committing.
    - No unnecessary complexity or over-engineering?
    - Follows project conventions (uv, npm, file structure)?
 
-6. **Run final check**: `uv run pytest tests/`
+6. **Collect staged review scope**
+   - Run `git diff --name-only --cached --diff-filter=ACMR`
+   - If no files are staged, report "no staged files to review" and stop
+   - Treat staged `.py` files under `src/humpback/`, `scripts/`, and `tests/` as Ruff/Pyright targets
+
+7. **Run validation in order**
+   - Ruff: if staged Python targets exist, run `uv run ruff check <staged_python_files>`
+   - Pyright: if staged files include `pyproject.toml` or `.pre-commit-config.yaml`, run `uv run pyright`
+   - Pyright: otherwise, if staged Python targets exist, run `uv run pyright <staged_python_files>`
+   - Pytest: for any non-empty staged review scope, run `uv run pytest tests/` after Ruff/Pyright
 
 ## Output
 - List any issues found with file:line references
-- If clean, confirm ready to commit
+- If no files are staged, report that there is no review scope
+- Confirm ready to commit only if Ruff/Pyright checks (when applicable) and `uv run pytest tests/` all pass
