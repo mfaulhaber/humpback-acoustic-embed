@@ -4,11 +4,11 @@ import csv
 import logging
 import math
 import re
-import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 
 from humpback.processing.audio_io import decode_audio
 
@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # e.g. "20250115T143022Z_..." or "20250115T143022.123456Z_..."
 _TS_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z")
 _COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
+_KNOWN_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
+_OUTPUT_AUDIO_EXTENSION = ".flac"
 
 
 def parse_recording_timestamp(filename: str) -> datetime | None:
@@ -51,19 +53,38 @@ def _date_folder(dt: datetime) -> str:
     return dt.strftime("%Y/%m/%d")
 
 
-def write_wav_file(audio_segment: np.ndarray, sr: int, output_path: Path) -> None:
-    """Write a float32 audio segment as 16-bit PCM WAV."""
+def _strip_known_audio_extension(filename: str) -> str:
+    """Strip a supported audio extension from a filename."""
+    suffix = Path(filename).suffix.lower()
+    if suffix in _KNOWN_AUDIO_EXTENSIONS:
+        return filename[: -len(suffix)]
+    return filename
+
+
+def _with_output_audio_extension(filename: str) -> str:
+    """Return filename with the configured extracted-audio extension."""
+    return f"{_strip_known_audio_extension(filename)}{_OUTPUT_AUDIO_EXTENSION}"
+
+
+def write_flac_file(audio_segment: np.ndarray, sr: int, output_path: Path) -> None:
+    """Write a float32 audio segment as 16-bit PCM FLAC."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # Peak normalize
     peak = np.max(np.abs(audio_segment))
     if peak > 0:
         audio_segment = audio_segment / peak
-    pcm = (audio_segment * 32767).clip(-32768, 32767).astype(np.int16)
-    with wave.open(str(output_path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        wf.writeframes(pcm.tobytes())
+    sf.write(
+        str(output_path),
+        audio_segment.astype(np.float32),
+        sr,
+        format="FLAC",
+        subtype="PCM_16",
+    )
+
+
+def write_wav_file(audio_segment: np.ndarray, sr: int, output_path: Path) -> None:
+    """Backward-compatible alias for callers that imported the old helper name."""
+    write_flac_file(audio_segment, sr, output_path)
 
 
 def extract_labeled_samples(
@@ -149,11 +170,14 @@ def extract_labeled_samples(
             if recording_ts:
                 abs_start = recording_ts + timedelta(seconds=start_sec)
                 abs_end = recording_ts + timedelta(seconds=end_sec)
-                wav_name = f"{_format_ts(abs_start)}_{_format_ts(abs_end)}.wav"
+                clip_name = (
+                    f"{_format_ts(abs_start)}_{_format_ts(abs_end)}"
+                    f"{_OUTPUT_AUDIO_EXTENSION}"
+                )
                 date_folder = _date_folder(abs_start)
             else:
                 stem = Path(source_filename).stem
-                wav_name = f"{stem}_{start_sec}_{end_sec}.wav"
+                clip_name = f"{stem}_{start_sec}_{end_sec}{_OUTPUT_AUDIO_EXTENSION}"
                 date_folder = "unknown_date"
 
             # Route to label-specific folders
@@ -172,11 +196,11 @@ def extract_labeled_samples(
                 labels_to_write.append((out_dir, "background"))
 
             for out_dir, label_name in labels_to_write:
-                out_path = out_dir / wav_name
+                out_path = out_dir / clip_name
                 if out_path.exists():
                     counts["n_skipped"] += 1
                     continue
-                write_wav_file(segment, sr, out_path)
+                write_flac_file(segment, sr, out_path)
                 counts[f"n_{label_name}"] += 1
 
     return counts
@@ -217,7 +241,7 @@ def _parse_compact_range_filename(
     filename: str,
 ) -> tuple[datetime, datetime] | None:
     """Parse compact UTC range filename into (start, end) datetimes."""
-    base = filename[:-4] if filename.endswith(".wav") else filename
+    base = _strip_known_audio_extension(filename)
     parts = base.split("_")
     if len(parts) != 2:
         return None
@@ -373,7 +397,8 @@ def extract_hydrophone_labeled_samples(
                 start_sec = (abs_start - recording_ts).total_seconds()
                 end_sec = (abs_end - recording_ts).total_seconds()
                 detection_filename = (
-                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}.wav"
+                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}"
+                    f"{_OUTPUT_AUDIO_EXTENSION}"
                 )
             else:
                 start_sec, end_sec = _snap_range_for_window(
@@ -382,7 +407,8 @@ def extract_hydrophone_labeled_samples(
                 abs_start = recording_ts + timedelta(seconds=start_sec)
                 abs_end = recording_ts + timedelta(seconds=end_sec)
                 detection_filename = (
-                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}.wav"
+                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}"
+                    f"{_OUTPUT_AUDIO_EXTENSION}"
                 )
 
             if abs_end <= abs_start:
@@ -394,7 +420,7 @@ def extract_hydrophone_labeled_samples(
 
             # Output filename and folder
             assert detection_filename is not None
-            wav_name = detection_filename
+            clip_name = _with_output_audio_extension(detection_filename)
             date_folder = _date_folder(abs_start)
 
             # Route to label-specific folders (species/category before hydrophone_id)
@@ -418,7 +444,7 @@ def extract_hydrophone_labeled_samples(
 
             pending_writes: list[tuple[Path, str]] = []
             for out_dir, label_name in labels_to_write:
-                out_path = out_dir / wav_name
+                out_path = out_dir / clip_name
                 if out_path.exists():
                     counts["n_skipped"] += 1
                     continue
@@ -471,7 +497,7 @@ def extract_hydrophone_labeled_samples(
                 continue
 
             for out_path, label_name in pending_writes:
-                write_wav_file(segment, target_sample_rate, out_path)
+                write_flac_file(segment, target_sample_rate, out_path)
                 counts[f"n_{label_name}"] += 1
 
     return counts

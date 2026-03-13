@@ -473,3 +473,34 @@ samples of one species across multiple hydrophones.
 - Alembic migration `016_rename_has_positive_labels.py` renames the column
 - Frontend "Whale" badge now appears for jobs with any positive label (humpback or orca)
 - Local (non-hydrophone) extraction paths unchanged (no hydrophone_id component)
+
+---
+
+## ADR-021: FLAC labeled-sample extraction outputs + sibling conversion utility
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Detection-job extraction was writing uncompressed WAV clips for both local
+and hydrophone workflows. These clips are used as labeled training data, so lossless
+compression is preferable to reduce storage without changing training semantics. Users
+also need a simple way to convert existing local audio libraries to FLAC while verifying
+that decoded audio remains equivalent within quantization tolerance.
+
+**Decision**:
+- Change local and hydrophone labeled-sample extraction outputs from WAV to 16-bit PCM FLAC.
+- Change newly derived hydrophone `detection_filename` and `extract_filename` values to
+  use `.flac` so metadata matches exported clip basenames.
+- Keep raw detection source `filename` values and playback endpoints unchanged (`.wav`
+  chunk identifiers and WAV preview streaming remain as-is).
+- Preserve backward compatibility for legacy TSV rows that already contain explicit `.wav`
+  `detection_filename` or `extract_filename` values.
+- Add `scripts/convert_audio_to_flac.py` to convert `.wav`/`.mp3` files to sibling
+  `.flac` files with optional decoded-sample verification.
+
+**Consequences**:
+- Extracted labeled-sample datasets use less disk space with no intentional audio loss.
+- New hydrophone clip metadata now points at `.flac` basenames, while legacy `.wav`
+  metadata stays readable.
+- No database migration is required because the change is limited to file outputs,
+  TSV/API metadata derivation, and documentation.

@@ -1,3 +1,25 @@
+# convert_audio_to_flac
+
+Convert `.wav` and `.mp3` files to sibling `.flac` files without deleting the source files.
+
+Basic usage:
+
+```bash
+uv run python scripts/convert_audio_to_flac.py /path/to/file.wav
+uv run python scripts/convert_audio_to_flac.py /path/to/folder --verify-samples
+```
+
+Notes:
+
+* File inputs are converted directly; directory inputs are scanned recursively.
+* Existing `.flac` files are skipped.
+* Existing sibling targets such as `clip.flac` next to `clip.wav` are skipped.
+* `--verify-samples` decodes the source and output files and requires matching sample
+  rate, sample count, and `max_abs_error <= 5e-5`. Failed verification deletes the
+  newly written `.flac` file and returns a non-zero exit status.
+
+---
+
 # stage_s3_epoch_cache
 
 Stage time-windowed data from **epoch-timestamped S3 directory structures** into a **local NVMe cache** using `s5cmd`.

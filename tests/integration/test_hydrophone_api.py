@@ -380,8 +380,8 @@ async def test_canceled_job_content_and_download(client, app_settings):
                 "avg_confidence": "0.82",
                 "peak_confidence": "0.86",
                 "n_windows": "2",
-                "detection_filename": "20250704T160010Z_20250704T160016Z.wav",
-                "extract_filename": "20250704T160010Z_20250704T160020Z.wav",
+                "detection_filename": "20250704T160010Z_20250704T160016Z.flac",
+                "extract_filename": "20250704T160010Z_20250704T160020Z.flac",
                 "hydrophone_name": "rpi_north_sjc",
             }
         )
@@ -408,8 +408,8 @@ async def test_canceled_job_content_and_download(client, app_settings):
     rows = resp.json()
     assert len(rows) == 1
     assert rows[0]["hydrophone_name"] == "rpi_north_sjc"
-    assert rows[0]["detection_filename"] == "20250704T160010Z_20250704T160016Z.wav"
-    assert rows[0]["extract_filename"] == "20250704T160010Z_20250704T160020Z.wav"
+    assert rows[0]["detection_filename"] == "20250704T160010Z_20250704T160016Z.flac"
+    assert rows[0]["extract_filename"] == "20250704T160010Z_20250704T160020Z.flac"
 
     # Download endpoint works for canceled jobs
     resp = await client.get(f"/classifier/detection-jobs/{job_id}/download")
@@ -490,8 +490,8 @@ async def test_hydrophone_content_includes_extract_filename(client, app_settings
                 "avg_confidence": "0.951",
                 "peak_confidence": "0.970",
                 "n_windows": "4",
-                "detection_filename": "20250702T080155Z_20250702T080203Z.wav",
-                "extract_filename": "20250702T080155Z_20250702T080205Z.wav",
+                "detection_filename": "20250702T080155Z_20250702T080203Z.flac",
+                "extract_filename": "20250702T080155Z_20250702T080205Z.flac",
             }
         )
 
@@ -515,8 +515,8 @@ async def test_hydrophone_content_includes_extract_filename(client, app_settings
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.wav"
-    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
+    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
 
     await engine.dispose()
 

@@ -763,6 +763,15 @@ def _parse_label(value: str | None) -> int | None:
 
 
 _COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
+_KNOWN_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3"}
+
+
+def _strip_known_audio_extension(filename: str) -> str:
+    """Strip a supported audio extension from a filename."""
+    suffix = Path(filename).suffix.lower()
+    if suffix in _KNOWN_AUDIO_EXTENSIONS:
+        return filename[: -len(suffix)]
+    return filename
 
 
 def _safe_float(value: str | None, default: float = 0.0) -> float:
@@ -787,7 +796,7 @@ def _parse_compact_range_filename(
     """Parse compact UTC range filename into (start, end) datetimes."""
     if not filename:
         return None
-    base = filename[:-4] if filename.endswith(".wav") else filename
+    base = _strip_known_audio_extension(filename)
     parts = base.split("_")
     if len(parts) != 2:
         return None
@@ -828,7 +837,7 @@ def _derive_detection_filename(
     """Derive canonical detection filename from row filename + bounds."""
     if end_sec <= start_sec:
         return None
-    base = filename[:-4] if filename.endswith(".wav") else filename
+    base = _strip_known_audio_extension(filename)
     try:
         chunk_start = datetime.strptime(base, _COMPACT_TS_FORMAT).replace(
             tzinfo=timezone.utc
@@ -837,7 +846,10 @@ def _derive_detection_filename(
         return None
     abs_start = chunk_start + timedelta(seconds=start_sec)
     abs_end = chunk_start + timedelta(seconds=end_sec)
-    return f"{abs_start.strftime(_COMPACT_TS_FORMAT)}_{abs_end.strftime(_COMPACT_TS_FORMAT)}.wav"
+    return (
+        f"{abs_start.strftime(_COMPACT_TS_FORMAT)}"
+        f"_{abs_end.strftime(_COMPACT_TS_FORMAT)}.flac"
+    )
 
 
 async def _get_classifier_window_size(

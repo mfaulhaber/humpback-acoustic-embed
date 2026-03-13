@@ -188,8 +188,8 @@ UI can monitor via polling or a push channel.
 
 ### 4.4 Hydrophone Extraction Path Convention
 Hydrophone labeled-sample extraction groups by species/category first, then hydrophone:
-- positives: `{positive_output_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/*.wav`
-- negatives: `{negative_output_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/*.wav`
+- positives: `{positive_output_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/*.flac`
+- negatives: `{negative_output_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/*.flac`
 
 ### 4.5 Hydrophone Timeline Assembly
 Hydrophone detection, playback, and extraction must use the same bounded stream timeline:
@@ -212,8 +212,8 @@ Hydrophone detection, playback, and extraction must use the same bounded stream 
 Hydrophone detection TSV output should carry canonical event metadata:
 - canonical `start_sec`/`end_sec` represent snapped clip bounds (window-size multiples)
 - include `raw_start_sec`/`raw_end_sec` and `merged_event_count` for audit/debug provenance
-- include `detection_filename` for hydrophone rows (`{start_utc}_{end_utc}.wav`, snapped canonical bounds)
-- keep `extract_filename` as a legacy alias to the same canonical filename for compatibility
+- include `detection_filename` for hydrophone rows (`{start_utc}_{end_utc}.flac`, snapped canonical bounds)
+- keep `extract_filename` as a legacy alias to the same canonical filename for compatibility; explicit legacy `.wav` values must remain readable
 - include `hydrophone_name` for hydrophone rows (short form, e.g., `rpi_north_sjc`)
 - local detection TSV rows follow the same canonical snapped bounds + raw audit metadata
 

@@ -28,6 +28,15 @@ from humpback.processing.windowing import slice_windows_with_metadata
 logger = logging.getLogger(__name__)
 
 _TS_FORMAT = "%Y%m%dT%H%M%SZ"
+_KNOWN_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3"}
+
+
+def _strip_known_audio_extension(filename: str) -> str:
+    """Strip a supported audio extension from a chunk filename."""
+    for suffix in _KNOWN_AUDIO_EXTENSIONS:
+        if filename.endswith(suffix):
+            return filename[: -len(suffix)]
+    return filename
 
 
 def _build_detection_filename(
@@ -39,9 +48,7 @@ def _build_detection_filename(
     if end_sec <= start_sec:
         return None
 
-    basename = (
-        chunk_filename[:-4] if chunk_filename.endswith(".wav") else chunk_filename
-    )
+    basename = _strip_known_audio_extension(chunk_filename)
     try:
         chunk_start = datetime.strptime(basename, _TS_FORMAT).replace(
             tzinfo=timezone.utc
@@ -51,7 +58,7 @@ def _build_detection_filename(
 
     abs_start = chunk_start + timedelta(seconds=start_sec)
     abs_end = chunk_start + timedelta(seconds=end_sec)
-    return f"{abs_start.strftime(_TS_FORMAT)}_{abs_end.strftime(_TS_FORMAT)}.wav"
+    return f"{abs_start.strftime(_TS_FORMAT)}_{abs_end.strftime(_TS_FORMAT)}.flac"
 
 
 def run_hydrophone_detection(

@@ -41,7 +41,7 @@ def test_hydrophone_detection_filename_uses_canonical_snapped_bounds():
         canonical[0]["start_sec"],
         canonical[0]["end_sec"],
     )
-    assert f == "20250712T011615Z_20250712T011625Z.wav"
+    assert f == "20250712T011615Z_20250712T011625Z.flac"
 
 
 # ------------------------------------------------------------------
@@ -78,8 +78,8 @@ def test_read_detections_tsv(tmp_path: Path):
             "avg_confidence": "0.85",
             "peak_confidence": "0.92",
             "n_windows": "3",
-            "detection_filename": "20250712T070005Z_20250712T070010Z.wav",
-            "extract_filename": "20250712T070005Z_20250712T070010Z.wav",
+            "detection_filename": "20250712T070005Z_20250712T070010Z.flac",
+            "extract_filename": "20250712T070005Z_20250712T070010Z.flac",
             "hydrophone_name": "rpi_north_sjc",
         },
         {
@@ -89,8 +89,8 @@ def test_read_detections_tsv(tmp_path: Path):
             "avg_confidence": "0.78",
             "peak_confidence": "0.80",
             "n_windows": "2",
-            "detection_filename": "20250712T070100Z_20250712T070105Z.wav",
-            "extract_filename": "20250712T070100Z_20250712T070105Z.wav",
+            "detection_filename": "20250712T070100Z_20250712T070105Z.flac",
+            "extract_filename": "20250712T070100Z_20250712T070105Z.flac",
             "hydrophone_name": "rpi_north_sjc",
         },
     ]

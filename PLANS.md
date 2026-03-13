@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Switch Detection Extraction to FLAC + Conversion Script
+
+[Full plan](/Users/michael/.claude/plans/switch-detection-extraction-to-flac.md)
+
+## Outcome (2026-03-13)
+
+- Detection-job extraction now writes FLAC clips for local and hydrophone workflows.
+- Newly derived hydrophone `detection_filename` / `extract_filename` values now use `.flac`,
+  while explicit legacy `.wav` metadata remains readable.
+- Added `scripts/convert_audio_to_flac.py` to convert `.wav` and `.mp3` files to sibling
+  `.flac` files with optional sample-level verification.
+- Updated docs (`CLAUDE.md`, `MEMORY.md`, `README.md`, `STATUS.md`) and added ADR-021.
+
+## Verification
+
+- `uv run pytest tests/unit/test_extractor.py tests/unit/test_hydrophone_resume.py tests/unit/test_detection_spans.py tests/unit/test_convert_audio_to_flac.py tests/integration/test_classifier_api.py tests/integration/test_hydrophone_api.py -q` — 130 passed.
+- `uv run pytest tests/` — 531 passed.
+- `uv run python scripts/convert_audio_to_flac.py --help` — passed.
+
 # Plan: Add Orca Detection Label + Extraction Path Reorder
 
 [Full plan](/Users/michael/.claude/plans/recursive-whistling-music.md)

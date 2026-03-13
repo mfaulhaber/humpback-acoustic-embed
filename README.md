@@ -32,7 +32,7 @@ Key features:
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 - Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
-- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping (playlist durations + numeric segment ordering) with legacy anchor fallback for older jobs; sparse local-cache ranges preserve playlist timeline offsets (for example cached mid-sequence `live6118..` windows) so playback/spectrogram alignment remains correct without S3 fallback; folder discovery starts at requested range and expands backward using configurable hour-based increments (default `4h`) up to configurable max lookback (default `168h`) until overlap at the requested start boundary is found (or max lookback is reached), then timeline clipping is applied; hydrophone extraction is local-cache-authoritative (no S3 fallback during extract), skipping rows with missing cached audio; hydrophone detection supports ordered bounded S3 segment prefetch (configurable workers + in-flight limit) with per-run fetch/decode/features/inference timing telemetry in `run_summary`; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{hydrophone_id}/...`); detection rows use canonical snapped clip bounds for preview/label/extract parity and preserve unsnapped audit bounds (`raw_start_sec`, `raw_end_sec`, `merged_event_count`); Hydrophone Start/End inputs and Date Range displays are UTC-only
+- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping (playlist durations + numeric segment ordering) with legacy anchor fallback for older jobs; sparse local-cache ranges preserve playlist timeline offsets (for example cached mid-sequence `live6118..` windows) so playback/spectrogram alignment remains correct without S3 fallback; folder discovery starts at requested range and expands backward using configurable hour-based increments (default `4h`) up to configurable max lookback (default `168h`) until overlap at the requested start boundary is found (or max lookback is reached), then timeline clipping is applied; hydrophone extraction is local-cache-authoritative (no S3 fallback during extract), writes FLAC clips, and skips rows with missing cached audio; hydrophone detection supports ordered bounded S3 segment prefetch (configurable workers + in-flight limit) with per-run fetch/decode/features/inference timing telemetry in `run_summary`; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{label}/{hydrophone_id}/.../*.flac`); detection rows use canonical snapped clip bounds for preview/label/extract parity and preserve unsnapped audit bounds (`raw_start_sec`, `raw_end_sec`, `merged_event_count`); Hydrophone Start/End inputs and Date Range displays are UTC-only
 - Folder import: reference audio files in-place from local filesystem folders without copying
 
 ---
@@ -475,7 +475,7 @@ Validation and error behavior notes:
 - `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`.
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
 - `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
-- Hydrophone extraction (queued via `POST /classifier/detection-jobs/extract`) reads local HLS cache only and skips missing-cache rows (reported via `n_skipped` in `extract_summary`).
+- Hydrophone extraction (queued via `POST /classifier/detection-jobs/extract`) reads local HLS cache only, writes FLAC labeled clips, and skips missing-cache rows (reported via `n_skipped` in `extract_summary`).
 - `GET /audio/{id}/download` returns `416` for malformed or unsatisfiable `Range` headers.
 
 ---
@@ -501,6 +501,14 @@ data/
   detections/{detection_job_id}/detections.tsv            (detection output; canonical snapped start/end + raw audit fields; hydrophone rows include detection_filename + extract_filename alias)
   detections/{detection_job_id}/run_summary.json
 ```
+
+Labeled-sample extraction outputs:
+- local jobs: `{positive|negative}_sample_path/{label}/YYYY/MM/DD/*.flac`
+- hydrophone jobs: `{positive|negative}_sample_path/{label}/{hydrophone_id}/YYYY/MM/DD/*.flac`
+
+## Utilities
+
+`uv run python scripts/convert_audio_to_flac.py <path> [<path> ...]` converts `.wav` and `.mp3` files to sibling `.flac` files in place. Use `--verify-samples` to compare decoded source/output audio and fail if the sample rate, sample count, or max absolute error exceeds the built-in tolerance.
 
 ---
 

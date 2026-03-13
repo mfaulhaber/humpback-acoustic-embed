@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 
 from humpback.classifier.extractor import (
     extract_hydrophone_labeled_samples,
     extract_labeled_samples,
     parse_recording_timestamp,
-    write_wav_file,
+    write_flac_file,
 )
 
 
@@ -77,16 +78,21 @@ def _make_tsv(
         writer.writerows(rows)
 
 
-class TestWriteWavFile:
-    def test_creates_wav(self, tmp_path):
+def _audio_duration(path: Path) -> float:
+    info = sf.info(str(path))
+    return info.frames / info.samplerate
+
+
+class TestWriteFlacFile:
+    def test_creates_flac(self, tmp_path):
         segment = np.sin(np.linspace(0, 2 * np.pi, 16000)).astype(np.float32)
-        out = tmp_path / "sub" / "test.wav"
-        write_wav_file(segment, 16000, out)
+        out = tmp_path / "sub" / "test.flac"
+        write_flac_file(segment, 16000, out)
         assert out.exists()
-        with wave.open(str(out), "r") as wf:
-            assert wf.getframerate() == 16000
-            assert wf.getnchannels() == 1
-            assert wf.getsampwidth() == 2
+        info = sf.info(str(out))
+        assert info.samplerate == 16000
+        assert info.channels == 1
+        assert info.subtype == "PCM_16"
 
 
 class TestExtractLabeledSamples:
@@ -131,11 +137,11 @@ class TestExtractLabeledSamples:
         assert summary["n_background"] == 0
 
         # Check humpback file exists under positive path
-        humpback_files = list(pos_out.rglob("*.wav"))
+        humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
 
         # Check ship file exists under negative path
-        ship_files = list((neg_out / "ship").rglob("*.wav"))
+        ship_files = list((neg_out / "ship").rglob("*.flac"))
         assert len(ship_files) == 1
 
     def test_no_labeled_rows(self, tmp_path):
@@ -225,7 +231,7 @@ class TestExtractLabeledSamples:
         extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
 
         # Should use date-based folder: 2025/06/15
-        humpback_files = list(pos_out.rglob("*.wav"))
+        humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
         assert "2025/06/15" in str(humpback_files[0])
 
@@ -255,7 +261,7 @@ class TestExtractLabeledSamples:
         neg_out = tmp_path / "negative"
         extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
 
-        bg_files = list((neg_out / "background").rglob("*.wav"))
+        bg_files = list((neg_out / "background").rglob("*.flac"))
         assert len(bg_files) == 1
         assert "recording_001" in bg_files[0].name
         assert "unknown_date" in str(bg_files[0])
@@ -320,13 +326,10 @@ class TestExtractionBounds:
             tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0
         )
 
-        humpback_files = list(pos_out.rglob("*.wav"))
+        humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
         # Exact [2.5, 10.0] = 7.5s
-        import wave
-
-        with wave.open(str(humpback_files[0]), "r") as wf:
-            duration = wf.getnframes() / wf.getframerate()
+        duration = _audio_duration(humpback_files[0])
         assert abs(duration - 7.5) < 0.1
 
     def test_extraction_exact_multiple_unchanged(self, tmp_path):
@@ -358,12 +361,9 @@ class TestExtractionBounds:
             tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0
         )
 
-        humpback_files = list(pos_out.rglob("*.wav"))
+        humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
-        import wave
-
-        with wave.open(str(humpback_files[0]), "r") as wf:
-            duration = wf.getnframes() / wf.getframerate()
+        duration = _audio_duration(humpback_files[0])
         assert abs(duration - 10.0) < 0.1
 
     def test_extraction_default_window_param_does_not_widen_bounds(self, tmp_path):
@@ -394,12 +394,9 @@ class TestExtractionBounds:
         # No window_size_seconds argument: extract exact [2.5, 7.5] clip.
         extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
 
-        humpback_files = list(pos_out.rglob("*.wav"))
+        humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
-        import wave
-
-        with wave.open(str(humpback_files[0]), "r") as wf:
-            duration = wf.getnframes() / wf.getframerate()
+        duration = _audio_duration(humpback_files[0])
         assert abs(duration - 5.0) < 0.1
 
 
@@ -453,7 +450,7 @@ class TestExtractHydrophoneLabeledSamples:
         assert summary["n_humpback"] == 1
         assert summary["n_ship"] == 0
 
-        humpback_files = list(pos_out.rglob("*.wav"))
+        humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
         rel = humpback_files[0].relative_to(pos_out)
         assert rel.parts[:2] == ("humpback", "rpi_orcasound_lab")
@@ -485,7 +482,7 @@ class TestExtractHydrophoneLabeledSamples:
                     "end_sec": "7.0",
                     "avg_confidence": "0.9",
                     "peak_confidence": "0.95",
-                    "detection_filename": "20250615T080003Z_20250615T080006Z.wav",
+                    "detection_filename": "20250615T080003Z_20250615T080006Z.flac",
                     "humpback": "1",
                     "ship": "",
                     "background": "",
@@ -522,11 +519,10 @@ class TestExtractHydrophoneLabeledSamples:
             / "2025"
             / "06"
             / "15"
-            / "20250615T080003Z_20250615T080006Z.wav"
+            / "20250615T080003Z_20250615T080006Z.flac"
         )
         assert out.exists()
-        with wave.open(str(out), "r") as wf:
-            duration = wf.getnframes() / wf.getframerate()
+        duration = _audio_duration(out)
         assert abs(duration - 3.0) < 0.1
 
     def test_hydrophone_extraction_uses_extract_filename_when_detection_missing(
@@ -594,11 +590,10 @@ class TestExtractHydrophoneLabeledSamples:
             / "2025"
             / "06"
             / "15"
-            / "20250615T080003Z_20250615T080006Z.wav"
+            / "20250615T080003Z_20250615T080006Z.flac"
         )
         assert out.exists()
-        with wave.open(str(out), "r") as wf:
-            duration = wf.getnframes() / wf.getframerate()
+        duration = _audio_duration(out)
         assert abs(duration - 3.0) < 0.1
 
     def test_hydrophone_negative_paths_include_hydrophone_id(self, tmp_path):
@@ -657,9 +652,9 @@ class TestExtractHydrophoneLabeledSamples:
         assert summary["n_ship"] == 1
         assert summary["n_background"] == 1
 
-        ship_files = list((neg_out / "ship" / "rpi_orcasound_lab").rglob("*.wav"))
+        ship_files = list((neg_out / "ship" / "rpi_orcasound_lab").rglob("*.flac"))
         background_files = list(
-            (neg_out / "background" / "rpi_orcasound_lab").rglob("*.wav")
+            (neg_out / "background" / "rpi_orcasound_lab").rglob("*.flac")
         )
         assert len(ship_files) == 1
         assert len(background_files) == 1
@@ -672,8 +667,8 @@ class TestExtractHydrophoneLabeledSamples:
             assert rel.parts[2:5] == ("2025", "06", "15")
 
         # Old layout (hydrophone_id first) should not exist.
-        assert not list((neg_out / "rpi_orcasound_lab" / "ship").rglob("*.wav"))
-        assert not list((neg_out / "rpi_orcasound_lab" / "background").rglob("*.wav"))
+        assert not list((neg_out / "rpi_orcasound_lab" / "ship").rglob("*.flac"))
+        assert not list((neg_out / "rpi_orcasound_lab" / "background").rglob("*.flac"))
 
     def test_no_labeled_rows(self, tmp_path):
         from unittest.mock import MagicMock
@@ -816,7 +811,7 @@ class TestExtractHydrophoneLabeledSamples:
 
         assert summary["n_humpback"] == 1
         assert summary["n_skipped"] == 0
-        assert len(list(pos_out.rglob("*.wav"))) == 1
+        assert len(list(pos_out.rglob("*.flac"))) == 1
 
     def test_stream_timeline_built_once_for_multiple_rows(self, tmp_path):
         """Stream timeline should be built once and reused across extraction rows."""
@@ -964,7 +959,7 @@ class TestOrcaExtraction:
         assert summary["n_orca"] == 1
         assert summary["n_humpback"] == 0
 
-        orca_files = list((pos_out / "orca").rglob("*.wav"))
+        orca_files = list((pos_out / "orca").rglob("*.flac"))
         assert len(orca_files) == 1
 
     def test_orca_hydrophone_extraction(self, tmp_path):
@@ -1014,7 +1009,7 @@ class TestOrcaExtraction:
         assert summary["n_orca"] == 1
         assert summary["n_humpback"] == 0
 
-        orca_files = list(pos_out.rglob("*.wav"))
+        orca_files = list(pos_out.rglob("*.flac"))
         assert len(orca_files) == 1
         rel = orca_files[0].relative_to(pos_out)
         assert rel.parts[:2] == ("orca", "rpi_orcasound_lab")
@@ -1070,10 +1065,10 @@ class TestOrcaExtraction:
 
         # Verify species/category is first path component, then hydrophone_id
         for label in ("humpback", "orca"):
-            files = list((pos_out / label / "rpi_north_sjc").rglob("*.wav"))
+            files = list((pos_out / label / "rpi_north_sjc").rglob("*.flac"))
             assert len(files) == 1, f"Expected 1 file for {label}"
         for label in ("ship", "background"):
-            files = list((neg_out / label / "rpi_north_sjc").rglob("*.wav"))
+            files = list((neg_out / label / "rpi_north_sjc").rglob("*.flac"))
             assert len(files) == 1, f"Expected 1 file for {label}"
 
     def test_backward_compat_tsv_without_orca_column(self, tmp_path):

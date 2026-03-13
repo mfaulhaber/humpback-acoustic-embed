@@ -55,7 +55,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Raw event audit metadata in TSV (`raw_start_sec`, `raw_end_sec`, `merged_event_count`)
 - Incremental detection results: file-by-file progress with live UI updates during job execution
 - Inline audio playback and label annotation available while detection is still running
-- Local extraction uses canonical labeled bounds directly (no extraction-time widening)
+- Local extraction uses canonical labeled bounds directly (no extraction-time widening) and writes FLAC clips
 - Inline audio playback of detected segments
 - Detection labels: humpback (positive), orca (positive), ship (negative), background (negative)
 - Detection label annotation with keyboard shortcuts (`h`=humpback, `o`=orca, `s`=ship, `b`=background)
@@ -89,12 +89,12 @@ Current state of the humpback acoustic embedding and clustering platform.
   in the requested time range (no silent complete-with-zero-windows)
 - Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
   with legacy fallback to `job.start_timestamp`
-- Hydrophone TSV rows include canonical snapped `detection_filename` plus legacy `extract_filename` alias
+- Hydrophone TSV rows include canonical snapped `.flac` `detection_filename` plus legacy `extract_filename` alias
 - Legacy TSV normalization for content/download prefers `extract_filename` when `detection_filename` is missing, otherwise derives snapped canonical ranges
 - Detection TSV download streams normalized rows incrementally (avoids full-file in-memory buffering)
-- WAV export for hydrophone jobs: reads from local HLS cache (no S3 calls during extraction), writes labeled samples to positive/negative folders; missing cached rows are skipped and counted in `n_skipped`
+- FLAC export for hydrophone jobs: reads from local HLS cache (no S3 calls during extraction), writes labeled samples to positive/negative folders; missing cached rows are skipped and counted in `n_skipped`
 - Hydrophone extraction output paths: species/category before hydrophone —
-  `{positive|negative}_root/{label}/{hydrophone_id}/YYYY/MM/DD/*.wav`
+  `{positive|negative}_root/{label}/{hydrophone_id}/YYYY/MM/DD/*.flac`
 - Hydrophone labeled-sample extraction reuses the same stream-offset resolver as playback
 - Hydrophone detection job resume after worker restart: skips already-processed segments,
   preserves prior detections, guards against timeline changes between runs
@@ -140,6 +140,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - API endpoints: retrain-info (pre-flight), create retrain, list/get workflows
 
 ### Data Staging Utilities
+- `scripts/convert_audio_to_flac.py` converts `.wav` and `.mp3` files to sibling `.flac`
+  files and can optionally verify decoded samples after conversion.
 - `scripts/stage_s3_epoch_cache.py` stages epoch-style public S3 prefixes with
   object `LastModified` overlap refinement against requested UTC ranges.
 - Prefix discovery uses `s3api list-objects-v2` with `start-after` and

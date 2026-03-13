@@ -392,8 +392,8 @@ Queue safety note:
   (`raw_start_sec`, `raw_end_sec`, `merged_event_count`). Jobs in `running`, `paused`,
   `complete`, and `canceled` states can read content when `output_tsv_path` exists.
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
-  jobs) is local-cache-authoritative (same cache root precedence as playback) and does not call S3;
-  rows missing local cache audio are skipped and counted in `n_skipped`.
+  jobs) is local-cache-authoritative (same cache root precedence as playback), writes FLAC clips,
+  and does not call S3; rows missing local cache audio are skipped and counted in `n_skipped`.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---
@@ -426,9 +426,11 @@ Queue safety note:
 ```
 
 Hydrophone labeled-sample extraction output layout:
-- Positive labels: `{positive_sample_path}/{hydrophone_id}/humpback/YYYY/MM/DD/{start}_{end}.wav`
-- Negative labels: `{negative_sample_path}/{hydrophone_id}/{ship|background}/YYYY/MM/DD/{start}_{end}.wav`
-- Local (non-hydrophone) extraction remains unchanged (`{positive_sample_path}/humpback/...`, `{negative_sample_path}/{ship|background}/...`)
+- Positive labels: `{positive_sample_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/{start}_{end}.flac`
+- Negative labels: `{negative_sample_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/{start}_{end}.flac`
+- Local (non-hydrophone) extraction keeps the same folder structure and now writes
+  `{positive_sample_path}/{humpback|orca}/YYYY/MM/DD/*.flac` and
+  `{negative_sample_path}/{ship|background}/YYYY/MM/DD/*.flac`
 
 ---
 
