@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Play,
   Pause,
@@ -20,7 +21,16 @@ import {
   X,
   Folder,
   Globe,
+  Search,
+  Settings,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   useClassifierModels,
   useHydrophones,
@@ -219,10 +229,27 @@ export function HydrophoneTab() {
   const [hopSeconds, setHopSeconds] = useState(1.0);
   const [highThreshold, setHighThreshold] = useState(0.70);
   const [lowThreshold, setLowThreshold] = useState(0.45);
-  const [sourceType, setSourceType] = useState<"s3" | "local">("s3");
+  const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);
   const { data: browseData } = useBrowseDirectories(browseRoot);
+
+  // Filtered hydrophones by source type
+  const filteredHydrophones = useMemo(() => {
+    if (sourceType === "local") return hydrophones;
+    return hydrophones.filter((h) =>
+      sourceType === "orcasound"
+        ? h.provider_kind === "orcasound_hls"
+        : h.provider_kind === "noaa_gcs",
+    );
+  }, [hydrophones, sourceType]);
+
+  // Reset hydrophone selection when it falls outside the filtered list
+  useEffect(() => {
+    if (selectedHydrophoneId && !filteredHydrophones.some((h) => h.id === selectedHydrophoneId)) {
+      setSelectedHydrophoneId("");
+    }
+  }, [filteredHydrophones, selectedHydrophoneId]);
 
   // Table state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -235,6 +262,94 @@ export function HydrophoneTab() {
 
   const activeJobs = jobs.filter((j) => j.status === "running" || j.status === "queued" || j.status === "paused");
   const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued" && j.status !== "paused");
+
+  // Previous Jobs preferences
+  type PrevJobsColumnId = "status" | "hydrophone" | "date" | "threshold" | "results" | "download" | "extract" | "error";
+  const ALL_PREV_COLUMNS: { id: PrevJobsColumnId; label: string }[] = [
+    { id: "status", label: "Status" },
+    { id: "hydrophone", label: "Hydrophone" },
+    { id: "date", label: "Date Range (UTC)" },
+    { id: "threshold", label: "Threshold" },
+    { id: "results", label: "Results" },
+    { id: "download", label: "Download" },
+    { id: "extract", label: "Extract" },
+    { id: "error", label: "Error" },
+  ];
+  const [prevJobsPageSize, setPrevJobsPageSize] = useState(20);
+  const [prevJobsVisibleCols, setPrevJobsVisibleCols] = useState<Set<PrevJobsColumnId>>(
+    () => new Set(ALL_PREV_COLUMNS.map((c) => c.id)),
+  );
+  const [showPrefsDialog, setShowPrefsDialog] = useState(false);
+  // Staging state for the dialog (apply on Confirm)
+  const [prefsPageSize, setPrefsPageSize] = useState(20);
+  const [prefsVisibleCols, setPrefsVisibleCols] = useState<Set<PrevJobsColumnId>>(
+    () => new Set(ALL_PREV_COLUMNS.map((c) => c.id)),
+  );
+
+  // Previous Jobs pagination, filter, and sort
+  const [prevJobsPage, setPrevJobsPage] = useState(1);
+  const [prevJobsFilterText, setPrevJobsFilterText] = useState("");
+
+  type PrevJobsSortKey = "status" | "hydrophone" | "date" | "threshold" | "results";
+  const [prevJobsSortKey, setPrevJobsSortKey] = useState<PrevJobsSortKey>("date");
+  const [prevJobsSortDir, setPrevJobsSortDir] = useState<SortDir>("desc");
+
+  const togglePrevJobsSort = useCallback(
+    (key: PrevJobsSortKey) => {
+      if (prevJobsSortKey === key) {
+        setPrevJobsSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setPrevJobsSortKey(key);
+        setPrevJobsSortDir("asc");
+      }
+    },
+    [prevJobsSortKey],
+  );
+
+  const filteredPreviousJobs = useMemo(() => {
+    if (!prevJobsFilterText) return previousJobs;
+    const q = prevJobsFilterText.toLowerCase();
+    return previousJobs.filter((j) => (j.hydrophone_name ?? "").toLowerCase().includes(q));
+  }, [previousJobs, prevJobsFilterText]);
+
+  const sortedPreviousJobs = useMemo(() => {
+    const sorted = [...filteredPreviousJobs];
+    const dir = prevJobsSortDir === "asc" ? 1 : -1;
+    sorted.sort((a, b) => {
+      switch (prevJobsSortKey) {
+        case "status":
+          return dir * (a.status ?? "").localeCompare(b.status ?? "");
+        case "hydrophone":
+          return dir * (a.hydrophone_name ?? "").localeCompare(b.hydrophone_name ?? "");
+        case "date":
+          return dir * ((a.start_timestamp ?? 0) - (b.start_timestamp ?? 0));
+        case "threshold":
+          return dir * (a.high_threshold - b.high_threshold);
+        case "results": {
+          const aCount = (a.result_summary as Record<string, number> | null)?.n_spans ?? 0;
+          const bCount = (b.result_summary as Record<string, number> | null)?.n_spans ?? 0;
+          return dir * (aCount - bCount);
+        }
+        default:
+          return 0;
+      }
+    });
+    return sorted;
+  }, [filteredPreviousJobs, prevJobsSortKey, prevJobsSortDir]);
+
+  const totalPrevPages = Math.max(1, Math.ceil(sortedPreviousJobs.length / prevJobsPageSize));
+  const effectivePrevPage = Math.min(prevJobsPage, totalPrevPages);
+
+  const paginatedPreviousJobs = useMemo(() => {
+    const start = (effectivePrevPage - 1) * prevJobsPageSize;
+    return sortedPreviousJobs.slice(start, start + prevJobsPageSize);
+  }, [sortedPreviousJobs, effectivePrevPage]);
+
+  // Reset page when filter or sort changes
+  useEffect(() => {
+    setPrevJobsPage(1);
+  }, [prevJobsFilterText, prevJobsSortKey, prevJobsSortDir]);
+
   const expandedJob = useMemo(
     () => [...activeJobs, ...previousJobs].find((j) => j.id === expandedJobId) ?? null,
     [activeJobs, previousJobs, expandedJobId],
@@ -360,6 +475,40 @@ export function HydrophoneTab() {
           <CardTitle className="text-base">Hydrophone Detection</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* Audio Source */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Audio Source</label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={sourceType === "orcasound" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSourceType("orcasound")}
+              >
+                <Globe className="h-3.5 w-3.5 mr-1.5" />
+                Orcasound
+              </Button>
+              <Button
+                type="button"
+                variant={sourceType === "noaa" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSourceType("noaa")}
+              >
+                <Globe className="h-3.5 w-3.5 mr-1.5" />
+                NOAA
+              </Button>
+              <Button
+                type="button"
+                variant={sourceType === "local" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSourceType("local")}
+              >
+                <Folder className="h-3.5 w-3.5 mr-1.5" />
+                Local Cache
+              </Button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium">Hydrophone</label>
@@ -369,7 +518,7 @@ export function HydrophoneTab() {
                 onChange={(e) => setSelectedHydrophoneId(e.target.value)}
               >
                 <option value="">Select a hydrophone…</option>
-                {hydrophones.map((h) => (
+                {filteredHydrophones.map((h) => (
                   <option key={h.id} value={h.id}>
                     {h.name} — {h.location}
                   </option>
@@ -393,101 +542,74 @@ export function HydrophoneTab() {
             </div>
           </div>
 
-          {/* Audio Source */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Audio Source</label>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant={sourceType === "s3" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSourceType("s3")}
-              >
-                <Globe className="h-3.5 w-3.5 mr-1.5" />
-                S3 (Orcasound)
-              </Button>
-              <Button
-                type="button"
-                variant={sourceType === "local" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSourceType("local")}
-              >
-                <Folder className="h-3.5 w-3.5 mr-1.5" />
-                Local Cache
-              </Button>
-            </div>
-            {sourceType === "local" && (
-              <div className="space-y-1.5">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Path to local HLS cache folder…"
-                    value={localCachePath}
-                    onChange={(e) => {
-                      setLocalCachePath(e.target.value);
-                      setBrowseRoot(null);
-                    }}
-                    className="flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setBrowseRoot(localCachePath || "/")}
-                  >
-                    Browse
-                  </Button>
-                </div>
-                {browseData && browseRoot !== null && (
-                  <div className="border rounded p-2 max-h-40 overflow-y-auto text-xs space-y-0.5">
-                    {browseRoot !== "/" && (
-                      <button
-                        className="block w-full text-left px-2 py-1 hover:bg-muted rounded text-muted-foreground"
-                        onClick={() => {
-                          const parent = browseRoot.replace(/\/[^/]+\/?$/, "") || "/";
-                          setBrowseRoot(parent);
-                        }}
-                      >
-                        ../ (up)
-                      </button>
-                    )}
-                    {browseData.subdirectories.map((d) => (
-                      <button
-                        key={d.path}
-                        className="block w-full text-left px-2 py-1 hover:bg-muted rounded"
-                        onClick={() => setBrowseRoot(d.path)}
-                        onDoubleClick={() => {
-                          setLocalCachePath(d.path);
-                          setBrowseRoot(null);
-                        }}
-                      >
-                        {d.name}/
-                      </button>
-                    ))}
-                    {browseData.subdirectories.length === 0 && (
-                      <p className="text-muted-foreground px-2 py-1">No subdirectories</p>
-                    )}
-                    <div className="pt-1 border-t mt-1">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="w-full text-xs"
-                        onClick={() => {
-                          setLocalCachePath(browseData.path);
-                          setBrowseRoot(null);
-                        }}
-                      >
-                        Select: {browseData.path}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Expects S3-mirrored structure: <code>{"{path}"}/audio-orcasound-net/{"{hydrophone}"}/hls/…</code>
-                </p>
+          {sourceType === "local" && (
+            <div className="space-y-1.5">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Local folder path…"
+                  value={localCachePath}
+                  onChange={(e) => {
+                    setLocalCachePath(e.target.value);
+                    setBrowseRoot(null);
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setBrowseRoot(localCachePath || "/")}
+                >
+                  Browse
+                </Button>
               </div>
-            )}
-          </div>
+              {browseData && browseRoot !== null && (
+                <div className="border rounded p-2 max-h-40 overflow-y-auto text-xs space-y-0.5">
+                  {browseRoot !== "/" && (
+                    <button
+                      className="block w-full text-left px-2 py-1 hover:bg-muted rounded text-muted-foreground"
+                      onClick={() => {
+                        const parent = browseRoot.replace(/\/[^/]+\/?$/, "") || "/";
+                        setBrowseRoot(parent);
+                      }}
+                    >
+                      ../ (up)
+                    </button>
+                  )}
+                  {browseData.subdirectories.map((d) => (
+                    <button
+                      key={d.path}
+                      className="block w-full text-left px-2 py-1 hover:bg-muted rounded"
+                      onClick={() => setBrowseRoot(d.path)}
+                      onDoubleClick={() => {
+                        setLocalCachePath(d.path);
+                        setBrowseRoot(null);
+                      }}
+                    >
+                      {d.name}/
+                    </button>
+                  ))}
+                  {browseData.subdirectories.length === 0 && (
+                    <p className="text-muted-foreground px-2 py-1">No subdirectories</p>
+                  )}
+                  <div className="pt-1 border-t mt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs"
+                      onClick={() => {
+                        setLocalCachePath(browseData.path);
+                        setBrowseRoot(null);
+                      }}
+                    >
+                      Select: {browseData.path}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="text-sm font-medium">Date Range (UTC)</label>
@@ -663,10 +785,11 @@ export function HydrophoneTab() {
       {/* Previous Jobs */}
       {previousJobs.length > 0 && (
         <div className="border rounded-md">
+          {/* Title + actions row */}
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold">Previous Jobs</h3>
-              <Badge variant="secondary">{previousJobs.length}</Badge>
+              <Badge variant="secondary">{filteredPreviousJobs.length}</Badge>
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -702,39 +825,180 @@ export function HydrophoneTab() {
               </Button>
             </div>
           </div>
+          {/* Filter + pagination + preferences bar */}
+          <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Filter by hydrophone…"
+                value={prevJobsFilterText}
+                onChange={(e) => setPrevJobsFilterText(e.target.value)}
+                className="h-8 w-64 pl-8 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground text-xs">
+                {sortedPreviousJobs.length > 0
+                  ? `${(effectivePrevPage - 1) * prevJobsPageSize + 1}–${Math.min(effectivePrevPage * prevJobsPageSize, sortedPreviousJobs.length)} of ${sortedPreviousJobs.length}`
+                  : "0 items"}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2"
+                disabled={effectivePrevPage <= 1}
+                onClick={() => setPrevJobsPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2"
+                disabled={effectivePrevPage >= totalPrevPages}
+                onClick={() => setPrevJobsPage((p) => Math.min(totalPrevPages, p + 1))}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={() => {
+                  setPrefsPageSize(prevJobsPageSize);
+                  setPrefsVisibleCols(new Set(prevJobsVisibleCols));
+                  setShowPrefsDialog(true);
+                }}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="w-10 px-3 py-2">
                   <Checkbox
                     checked={
-                      previousJobs.length > 0 &&
-                      previousJobs.every((j) => selectedIds.has(j.id))
+                      paginatedPreviousJobs.length > 0 &&
+                      paginatedPreviousJobs.every((j) => selectedIds.has(j.id))
                         ? true
-                        : previousJobs.some((j) => selectedIds.has(j.id))
+                        : paginatedPreviousJobs.some((j) => selectedIds.has(j.id))
                           ? "indeterminate"
                           : false
                     }
                     onCheckedChange={() => {
-                      const allSel = previousJobs.every((j) => selectedIds.has(j.id));
-                      if (allSel) setSelectedIds(new Set());
-                      else setSelectedIds(new Set(previousJobs.map((j) => j.id)));
+                      const allSel = paginatedPreviousJobs.every((j) => selectedIds.has(j.id));
+                      if (allSel) {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          paginatedPreviousJobs.forEach((j) => next.delete(j.id));
+                          return next;
+                        });
+                      } else {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          paginatedPreviousJobs.forEach((j) => next.add(j.id));
+                          return next;
+                        });
+                      }
                     }}
                   />
                 </th>
                 <th className="w-8 px-1 py-2" />
-                <th className="px-3 py-2 text-left font-medium">Status</th>
-                <th className="px-3 py-2 text-left font-medium">Hydrophone</th>
-                <th className="px-3 py-2 text-left font-medium">Date Range (UTC)</th>
-                <th className="px-3 py-2 text-left font-medium">Threshold</th>
-                <th className="px-3 py-2 text-left font-medium">Results</th>
-                <th className="px-3 py-2 text-left font-medium">Download</th>
-                <th className="px-3 py-2 text-left font-medium">Extract</th>
-                <th className="px-3 py-2 text-left font-medium">Error</th>
+                {prevJobsVisibleCols.has("status") && (
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:bg-muted/80"
+                    onClick={() => togglePrevJobsSort("status")}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Status
+                      {prevJobsSortKey === "status" &&
+                        (prevJobsSortDir === "asc" ? (
+                          <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="h-3 w-3" />
+                        ))}
+                    </span>
+                  </th>
+                )}
+                {prevJobsVisibleCols.has("hydrophone") && (
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:bg-muted/80"
+                    onClick={() => togglePrevJobsSort("hydrophone")}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Hydrophone
+                      {prevJobsSortKey === "hydrophone" &&
+                        (prevJobsSortDir === "asc" ? (
+                          <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="h-3 w-3" />
+                        ))}
+                    </span>
+                  </th>
+                )}
+                {prevJobsVisibleCols.has("date") && (
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:bg-muted/80"
+                    onClick={() => togglePrevJobsSort("date")}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Date Range (UTC)
+                      {prevJobsSortKey === "date" &&
+                        (prevJobsSortDir === "asc" ? (
+                          <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="h-3 w-3" />
+                        ))}
+                    </span>
+                  </th>
+                )}
+                {prevJobsVisibleCols.has("threshold") && (
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:bg-muted/80"
+                    onClick={() => togglePrevJobsSort("threshold")}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Threshold
+                      {prevJobsSortKey === "threshold" &&
+                        (prevJobsSortDir === "asc" ? (
+                          <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="h-3 w-3" />
+                        ))}
+                    </span>
+                  </th>
+                )}
+                {prevJobsVisibleCols.has("results") && (
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:bg-muted/80"
+                    onClick={() => togglePrevJobsSort("results")}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Results
+                      {prevJobsSortKey === "results" &&
+                        (prevJobsSortDir === "asc" ? (
+                          <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="h-3 w-3" />
+                        ))}
+                    </span>
+                  </th>
+                )}
+                {prevJobsVisibleCols.has("download") && (
+                  <th className="px-3 py-2 text-left font-medium">Download</th>
+                )}
+                {prevJobsVisibleCols.has("extract") && (
+                  <th className="px-3 py-2 text-left font-medium">Extract</th>
+                )}
+                {prevJobsVisibleCols.has("error") && (
+                  <th className="px-3 py-2 text-left font-medium">Error</th>
+                )}
               </tr>
             </thead>
             <tbody>
-              {previousJobs.map((job) => (
+              {paginatedPreviousJobs.map((job) => (
                 <HydrophoneJobRow
                   key={job.id}
                   job={job}
@@ -748,6 +1012,7 @@ export function HydrophoneTab() {
                   onPlay={handlePlay}
                   onLabelChange={handleLabelChange}
                   labelEdits={labelEdits.get(job.id) ?? null}
+                  visibleColumns={prevJobsVisibleCols}
                 />
               ))}
             </tbody>
@@ -778,6 +1043,73 @@ export function HydrophoneTab() {
         extractMutation={extractMutation}
         onSuccess={() => undefined}
       />
+
+      {/* Preferences dialog */}
+      <Dialog open={showPrefsDialog} onOpenChange={setShowPrefsDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Preferences</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5 py-2">
+            {/* Page size */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Page size</label>
+              <div className="flex gap-3">
+                {[10, 20, 50, 100].map((size) => (
+                  <label key={size} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="pageSize"
+                      checked={prefsPageSize === size}
+                      onChange={() => setPrefsPageSize(size)}
+                      className="accent-primary"
+                    />
+                    {size}
+                  </label>
+                ))}
+              </div>
+            </div>
+            {/* Visible columns */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Visible columns</label>
+              <div className="grid grid-cols-2 gap-2">
+                {ALL_PREV_COLUMNS.map((col) => (
+                  <label key={col.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <Checkbox
+                      checked={prefsVisibleCols.has(col.id)}
+                      onCheckedChange={(checked) => {
+                        setPrefsVisibleCols((prev) => {
+                          const next = new Set(prev);
+                          if (checked) next.add(col.id);
+                          else next.delete(col.id);
+                          return next;
+                        });
+                      }}
+                    />
+                    {col.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setShowPrefsDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setPrevJobsPageSize(prefsPageSize);
+                setPrevJobsVisibleCols(new Set(prefsVisibleCols));
+                setPrevJobsPage(1);
+                setShowPrefsDialog(false);
+              }}
+            >
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -846,6 +1178,7 @@ function HydrophoneJobRow({
   pausePending,
   resumePending,
   cancelPending,
+  visibleColumns,
 }: {
   job: DetectionJob;
   isActive?: boolean;
@@ -863,6 +1196,7 @@ function HydrophoneJobRow({
   pausePending?: boolean;
   resumePending?: boolean;
   cancelPending?: boolean;
+  visibleColumns?: Set<string>;
 }) {
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
@@ -872,7 +1206,9 @@ function HydrophoneJobRow({
      (isRunning && (job.segments_processed ?? 0) > 0)) &&
     !!job.output_tsv_path;
 
-  const colSpan = isActive ? 8 : 10;
+  // For active rows, show all columns; for previous rows, respect visibleColumns
+  const showCol = (id: string) => isActive || !visibleColumns || visibleColumns.has(id);
+  const colSpan = isActive ? 8 : 2 + (visibleColumns?.size ?? 8);
 
   return (
     <>
@@ -893,28 +1229,36 @@ function HydrophoneJobRow({
             </button>
           )}
         </td>
-        <td className="px-3 py-2">
-          <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
-          {job.has_positive_labels && (
-            <Badge variant="outline" className="ml-1.5 text-[10px] py-0">
-              Whale
-            </Badge>
-          )}
-        </td>
-        <td className="px-3 py-2 text-muted-foreground">
-          {job.hydrophone_name}
-          {job.local_cache_path && (
-            <Badge variant="outline" className="ml-1.5 text-[10px] py-0">local</Badge>
-          )}
-        </td>
-        <td className="px-3 py-2 text-muted-foreground text-xs">
-          {job.start_timestamp != null && job.end_timestamp != null
-            ? formatUtcDateRange(job.start_timestamp, job.end_timestamp)
-            : "\u2014"}
-        </td>
-        <td className="px-3 py-2 text-muted-foreground">
-          {job.high_threshold}/{job.low_threshold}
-        </td>
+        {showCol("status") && (
+          <td className="px-3 py-2">
+            <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
+            {job.has_positive_labels && (
+              <Badge variant="outline" className="ml-1.5 text-[10px] py-0">
+                Whale
+              </Badge>
+            )}
+          </td>
+        )}
+        {showCol("hydrophone") && (
+          <td className="px-3 py-2 text-muted-foreground">
+            {job.hydrophone_name}
+            {job.local_cache_path && (
+              <Badge variant="outline" className="ml-1.5 text-[10px] py-0">local</Badge>
+            )}
+          </td>
+        )}
+        {showCol("date") && (
+          <td className="px-3 py-2 text-muted-foreground text-xs">
+            {job.start_timestamp != null && job.end_timestamp != null
+              ? formatUtcDateRange(job.start_timestamp, job.end_timestamp)
+              : "\u2014"}
+          </td>
+        )}
+        {showCol("threshold") && (
+          <td className="px-3 py-2 text-muted-foreground">
+            {job.high_threshold}/{job.low_threshold}
+          </td>
+        )}
         {isActive ? (
           <>
             <td className="px-3 py-2 text-muted-foreground">
@@ -986,44 +1330,52 @@ function HydrophoneJobRow({
           </>
         ) : (
           <>
-            <td className="px-3 py-2 text-muted-foreground">
-              {summary
-                ? `${summary.n_spans} span(s)`
-                : "\u2014"}
-              {job.time_covered_sec != null && (
-                <span className="text-xs ml-1">
-                  ({formatDurationHM(job.time_covered_sec)})
-                </span>
-              )}
-            </td>
-            <td className="px-3 py-2">
-              {(job.status === "complete" || job.status === "canceled") && job.output_tsv_path && (
-                <a
-                  href={detectionTsvUrl(job.id)}
-                  download
-                  className="text-blue-600 hover:underline text-xs inline-flex items-center gap-1"
-                >
-                  <Download className="h-3 w-3" />
-                  TSV
-                </a>
-              )}
-            </td>
-            <td className="px-3 py-2">
-              {job.extract_status ? (
-                <Badge className={statusColor[job.extract_status] ?? ""}>
-                  {job.extract_status}
-                </Badge>
-              ) : (
-                <span className="text-muted-foreground">&mdash;</span>
-              )}
-            </td>
-            <td className="px-3 py-2">
-              {job.error_message && (
-                <span className="text-red-600 text-xs truncate block max-w-48">
-                  {job.error_message}
-                </span>
-              )}
-            </td>
+            {showCol("results") && (
+              <td className="px-3 py-2 text-muted-foreground">
+                {summary
+                  ? `${summary.n_spans} span(s)`
+                  : "\u2014"}
+                {job.time_covered_sec != null && (
+                  <span className="text-xs ml-1">
+                    ({formatDurationHM(job.time_covered_sec)})
+                  </span>
+                )}
+              </td>
+            )}
+            {showCol("download") && (
+              <td className="px-3 py-2">
+                {(job.status === "complete" || job.status === "canceled") && job.output_tsv_path && (
+                  <a
+                    href={detectionTsvUrl(job.id)}
+                    download
+                    className="text-blue-600 hover:underline text-xs inline-flex items-center gap-1"
+                  >
+                    <Download className="h-3 w-3" />
+                    TSV
+                  </a>
+                )}
+              </td>
+            )}
+            {showCol("extract") && (
+              <td className="px-3 py-2">
+                {job.extract_status ? (
+                  <Badge className={statusColor[job.extract_status] ?? ""}>
+                    {job.extract_status}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">&mdash;</span>
+                )}
+              </td>
+            )}
+            {showCol("error") && (
+              <td className="px-3 py-2">
+                {job.error_message && (
+                  <span className="text-red-600 text-xs truncate block max-w-48">
+                    {job.error_message}
+                  </span>
+                )}
+              </td>
+            )}
           </>
         )}
       </tr>

@@ -276,7 +276,10 @@ async def list_hydrophones() -> list[HydrophoneInfo]:
 
     return [
         HydrophoneInfo(
-            id=source["id"], name=source["name"], location=source["location"]
+            id=source["id"],
+            name=source["name"],
+            location=source["location"],
+            provider_kind=source["provider_kind"],
         )
         for source in ARCHIVE_SOURCES
     ]

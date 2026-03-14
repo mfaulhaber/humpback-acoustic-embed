@@ -19,6 +19,7 @@ const HYDROPHONE = {
   id: "rpi_orcasound_lab",
   name: "Orcasound Lab",
   location: "San Juan Islands",
+  provider_kind: "orcasound_hls",
 };
 
 test.describe("Hydrophone progress display and tab structure", () => {

@@ -141,6 +141,11 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
 - Detection spectrogram popup: Alt+click any detection row to view an STFT spectrogram (cached PNG, configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
 - "Whale" badge on hydrophone jobs with confirmed positive labels — humpback or orca (`has_positive_labels` flag persisted on label save)
+- 3-way audio source selector (Orcasound / NOAA / Local Cache) with hydrophone
+  dropdown filtered by `provider_kind` from the `/classifier/hydrophones` API
+- Previous Jobs table: text filter (hydrophone name), sortable columns (status,
+  hydrophone, date, threshold, results), client-side pagination, and preferences
+  dialog (page size: 10/20/50/100, column visibility toggles)
 
 ### Retrain Workflow
 - Automated retrain pipeline: reimport folders, queue processing, create training job — all from a single "Retrain" button

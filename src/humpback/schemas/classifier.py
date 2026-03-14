@@ -105,6 +105,7 @@ class HydrophoneInfo(BaseModel):
     id: str
     name: str
     location: str
+    provider_kind: str
 
 
 class HydrophoneDetectionJobCreate(BaseModel):

@@ -424,6 +424,7 @@ export interface HydrophoneInfo {
   id: string;
   name: string;
   location: string;
+  provider_kind: string;
 }
 
 export interface HydrophoneDetectionJobCreate {

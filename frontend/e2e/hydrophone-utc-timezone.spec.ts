@@ -19,6 +19,7 @@ const HYDROPHONE = {
   id: "rpi_north_sjc",
   name: "North San Juan Channel",
   location: "San Juan Channel",
+  provider_kind: "orcasound_hls",
 };
 
 function buildHydrophoneJob(overrides: Record<string, unknown> = {}) {

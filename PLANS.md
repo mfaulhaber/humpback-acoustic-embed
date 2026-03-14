@@ -10,6 +10,31 @@
 
 ## Recently Completed
 
+# Plan: UI Refactor for Classifier/Detection Page
+
+[Full plan](/Users/michael/.claude/plans/dynamic-painting-glacier.md)
+
+## Outcome (2026-03-14)
+
+- Added `provider_kind` field to `HydrophoneInfo` API schema and `/classifier/hydrophones`
+  endpoint response; frontend `HydrophoneInfo` type updated to match.
+- Replaced 2-way S3/Local source toggle with 3-way Orcasound/NOAA/Local Cache selector,
+  moved above the hydrophone dropdown, and filtered the dropdown by `provider_kind`.
+- Simplified Local Cache UI (generic placeholder, removed HLS-specific hint text).
+- Added Previous Jobs table: text filter (hydrophone name substring), sortable column
+  headers (status, hydrophone, date, threshold, results), client-side pagination, and
+  preferences dialog (page size 10/20/50/100, column visibility toggles).
+- Updated 5 Playwright specs with `provider_kind` in mocked HYDROPHONE data.
+
+## Verification
+
+- `uv run ruff format --check` on modified files — passed.
+- `uv run ruff check` on modified files — passed.
+- `uv run pyright` on modified files — 0 errors.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 594 passed.
+
+
 # Plan: Fix NOAA GCS Playback/Spectrogram — Interval Estimation Bug
 
 [Full plan](/Users/michael/.claude/plans/happy-crunching-crayon.md)
