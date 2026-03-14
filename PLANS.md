@@ -10,6 +10,26 @@
 
 ## Recently Completed
 
+# Plan: Fix NOAA GCS Playback/Spectrogram — Interval Estimation Bug
+
+[Full plan](/Users/michael/.claude/plans/happy-crunching-crayon.md)
+
+## Outcome (2026-03-14)
+
+- Fixed `estimate_noaa_interval_sec()` to use `median(intervals)` instead of
+  minimum-based filtering, making it robust to outlier file gaps (3 anomalous
+  25s gaps among 24K files at 300s intervals).
+- Made `read_noaa_manifest()` re-estimate interval from file timestamps,
+  auto-healing existing cached manifests with wrong `default_interval_sec`.
+- Added 7 new tests for estimator robustness and manifest re-estimation.
+
+## Verification
+
+- `uv run ruff format --check` on modified files — passed.
+- `uv run ruff check` on modified files — passed.
+- `uv run pyright` on modified files — 0 errors.
+- `uv run pytest tests/` — 594 passed.
+
 # Plan: NOAA GCS Local Cache with GCS Fallback
 
 [Full plan](/Users/michael/.claude/plans/synthetic-splashing-prism.md)

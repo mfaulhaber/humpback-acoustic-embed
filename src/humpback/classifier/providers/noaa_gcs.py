@@ -149,7 +149,12 @@ def group_noaa_files_by_date(files: list[NoaaAudioFile]) -> list[DateFolder]:
 
 
 def estimate_noaa_interval_sec(files: list[NoaaAudioFile]) -> float:
-    """Estimate nominal segment duration from adjacent object timestamps."""
+    """Estimate nominal segment duration from adjacent object timestamps.
+
+    Uses the median of all inter-file gaps, which is robust to both small
+    outliers (anomalous closely-spaced files) and large outliers (missing
+    files creating big gaps).
+    """
     intervals = [
         files[idx + 1].start_ts - files[idx].start_ts
         for idx in range(len(files) - 1)
@@ -157,11 +162,7 @@ def estimate_noaa_interval_sec(files: list[NoaaAudioFile]) -> float:
     ]
     if not intervals:
         return DEFAULT_NOAA_SEGMENT_DURATION_SEC
-    min_interval = min(intervals)
-    nominal_intervals = [
-        interval for interval in intervals if interval <= (min_interval * 1.1)
-    ]
-    return float(median(nominal_intervals or intervals))
+    return float(median(intervals))
 
 
 class NoaaGCSProvider:
@@ -326,7 +327,12 @@ def read_noaa_manifest(
             )
             for entry in data["files"]
         ]
-        return files, float(data["default_interval_sec"])
+        interval = (
+            estimate_noaa_interval_sec(files)
+            if files
+            else float(data["default_interval_sec"])
+        )
+        return files, interval
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         logger.warning("Corrupt NOAA manifest at %s: %s", path, exc)
         return None

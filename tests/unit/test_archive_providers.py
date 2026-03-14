@@ -18,8 +18,12 @@ from humpback.classifier.providers import (
 )
 from humpback.classifier.providers.noaa_gcs import (
     DEFAULT_NOAA_SEGMENT_DURATION_SEC,
+    NoaaAudioFile,
     NoaaGCSProvider,
+    estimate_noaa_interval_sec,
     parse_noaa_filename,
+    read_noaa_manifest,
+    write_noaa_manifest,
 )
 from humpback.classifier.providers.orcasound_hls import (
     CachingHLSProvider,
@@ -292,10 +296,9 @@ class TestNoaaProvider:
         ]
         assert timeline == again
         assert timeline[0].duration_sec == pytest.approx(300.0)
-        assert timeline[1].duration_sec == pytest.approx(300.0)
-        assert timeline[2].duration_sec == pytest.approx(
-            DEFAULT_NOAA_SEGMENT_DURATION_SEC
-        )
+        # Gaps are [300, 600]; median=450 → files with next_gap >= 450 use 450
+        assert timeline[1].duration_sec == pytest.approx(450.0)
+        assert timeline[2].duration_sec == pytest.approx(450.0)
 
     def test_build_timeline_filters_by_range(self):
         prefix = "archive/"
@@ -527,7 +530,6 @@ class TestProviderBuilders:
 
 class TestNoaaManifest:
     def _make_files(self) -> list:
-        from humpback.classifier.providers.noaa_gcs import NoaaAudioFile
 
         return [
             NoaaAudioFile(
@@ -547,8 +549,6 @@ class TestNoaaManifest:
     def test_write_and_read_roundtrip(self, tmp_path):
         from humpback.classifier.providers.noaa_gcs import (
             _manifest_path,
-            read_noaa_manifest,
-            write_noaa_manifest,
         )
 
         files = self._make_files()
@@ -566,13 +566,11 @@ class TestNoaaManifest:
         assert interval == 300.0
 
     def test_read_returns_none_for_missing_file(self, tmp_path):
-        from humpback.classifier.providers.noaa_gcs import read_noaa_manifest
 
         result = read_noaa_manifest(tmp_path / "nonexistent.json")
         assert result is None
 
     def test_read_returns_none_for_corrupt_json(self, tmp_path):
-        from humpback.classifier.providers.noaa_gcs import read_noaa_manifest
 
         path = tmp_path / "manifest.json"
         path.write_text("not valid json!!!")
@@ -596,9 +594,7 @@ class TestCachingNoaaProvider:
 
     def test_build_timeline_uses_manifest_when_available(self, tmp_path):
         from humpback.classifier.providers.noaa_gcs import (
-            NoaaAudioFile,
             _manifest_path,
-            write_noaa_manifest,
         )
 
         prefix = "archive/"
@@ -626,7 +622,6 @@ class TestCachingNoaaProvider:
     def test_build_timeline_lists_gcs_and_writes_manifest(self, tmp_path):
         from humpback.classifier.providers.noaa_gcs import (
             _manifest_path,
-            read_noaa_manifest,
         )
 
         prefix = "archive/"
@@ -777,3 +772,68 @@ class TestNonConformance:
                 return b""
 
         assert not isinstance(Incomplete(), ArchiveProvider)
+
+
+def _make_noaa_file(ts: float) -> NoaaAudioFile:
+    """Create a NoaaAudioFile from a unix timestamp."""
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    filename = dt.strftime("%m_%d_%Y_%H_%M_%S") + ".aif"
+    return NoaaAudioFile(
+        filename=filename, key=f"archive/{filename}", timestamp=dt, size=100
+    )
+
+
+class TestEstimateNoaaInterval:
+    def test_uniform_intervals(self):
+        files = [_make_noaa_file(1000 + i * 300) for i in range(5)]
+        assert estimate_noaa_interval_sec(files) == pytest.approx(300.0)
+
+    def test_small_outliers_ignored_by_median(self):
+        """3 anomalous 25s gaps among 97 normal 300s gaps → returns 300."""
+        files: list[NoaaAudioFile] = []
+        ts = 1000.0
+        for i in range(100):
+            files.append(_make_noaa_file(ts))
+            if i in (10, 50, 80):
+                ts += 25
+            else:
+                ts += 300
+        assert estimate_noaa_interval_sec(files) == pytest.approx(300.0)
+
+    def test_large_outliers_ignored_by_median(self):
+        """One large gap (missing files) among 300s gaps → returns 300."""
+        files: list[NoaaAudioFile] = []
+        ts = 1000.0
+        for i in range(50):
+            files.append(_make_noaa_file(ts))
+            if i == 25:
+                ts += 10000
+            else:
+                ts += 300
+        assert estimate_noaa_interval_sec(files) == pytest.approx(300.0)
+
+    def test_single_file_returns_default(self):
+        result = estimate_noaa_interval_sec([_make_noaa_file(1000)])
+        assert result == DEFAULT_NOAA_SEGMENT_DURATION_SEC
+
+    def test_empty_returns_default(self):
+        result = estimate_noaa_interval_sec([])
+        assert result == DEFAULT_NOAA_SEGMENT_DURATION_SEC
+
+    def test_two_files_returns_gap(self):
+        files = [_make_noaa_file(1000), _make_noaa_file(1300)]
+        assert estimate_noaa_interval_sec(files) == pytest.approx(300.0)
+
+
+class TestManifestReEstimation:
+    def test_read_manifest_recomputes_interval(self, tmp_path):
+        """Cached manifest with bad stored interval is auto-healed on read."""
+        files = [_make_noaa_file(1000 + i * 300) for i in range(10)]
+        path = tmp_path / "manifest.json"
+        write_noaa_manifest(path, files, 25.0)
+
+        result = read_noaa_manifest(path)
+        assert result is not None
+        loaded_files, interval = result
+        assert len(loaded_files) == 10
+        assert interval == pytest.approx(300.0)
