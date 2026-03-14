@@ -191,6 +191,12 @@ function resolveClipTiming(
   };
 }
 
+function formatLocalDateTime(isoString: string): string {
+  const d = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function formatUtcDateRange(startTs: number, endTs: number): string {
   return `${formatUtcDateTime(startTs)} — ${formatUtcDateTime(endTs)}`;
 }
@@ -225,10 +231,10 @@ export function HydrophoneTab() {
   const [selectedHydrophoneId, setSelectedHydrophoneId] = useState("");
   const [startEpoch, setStartEpoch] = useState<number | null>(null);
   const [endEpoch, setEndEpoch] = useState<number | null>(null);
-  const [threshold, setThreshold] = useState(0.5);
+  const [threshold, setThreshold] = useState(0.90);
   const [hopSeconds, setHopSeconds] = useState(1.0);
-  const [highThreshold, setHighThreshold] = useState(0.70);
-  const [lowThreshold, setLowThreshold] = useState(0.45);
+  const [highThreshold, setHighThreshold] = useState(0.80);
+  const [lowThreshold, setLowThreshold] = useState(0.70);
   const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);
@@ -264,9 +270,10 @@ export function HydrophoneTab() {
   const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued" && j.status !== "paused");
 
   // Previous Jobs preferences
-  type PrevJobsColumnId = "status" | "hydrophone" | "date" | "threshold" | "results" | "download" | "extract" | "error";
+  type PrevJobsColumnId = "status" | "created" | "hydrophone" | "date" | "threshold" | "results" | "download" | "extract" | "error";
   const ALL_PREV_COLUMNS: { id: PrevJobsColumnId; label: string }[] = [
     { id: "status", label: "Status" },
+    { id: "created", label: "Created" },
     { id: "hydrophone", label: "Hydrophone" },
     { id: "date", label: "Date Range (UTC)" },
     { id: "threshold", label: "Threshold" },
@@ -290,8 +297,8 @@ export function HydrophoneTab() {
   const [prevJobsPage, setPrevJobsPage] = useState(1);
   const [prevJobsFilterText, setPrevJobsFilterText] = useState("");
 
-  type PrevJobsSortKey = "status" | "hydrophone" | "date" | "threshold" | "results";
-  const [prevJobsSortKey, setPrevJobsSortKey] = useState<PrevJobsSortKey>("date");
+  type PrevJobsSortKey = "status" | "created" | "hydrophone" | "date" | "threshold" | "results";
+  const [prevJobsSortKey, setPrevJobsSortKey] = useState<PrevJobsSortKey>("created");
   const [prevJobsSortDir, setPrevJobsSortDir] = useState<SortDir>("desc");
 
   const togglePrevJobsSort = useCallback(
@@ -319,6 +326,8 @@ export function HydrophoneTab() {
       switch (prevJobsSortKey) {
         case "status":
           return dir * (a.status ?? "").localeCompare(b.status ?? "");
+        case "created":
+          return dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
         case "hydrophone":
           return dir * (a.hydrophone_name ?? "").localeCompare(b.hydrophone_name ?? "");
         case "date":
@@ -375,7 +384,8 @@ export function HydrophoneTab() {
   }, [expandedJob, expandedHasSavedLabels]);
 
   const handleSubmit = () => {
-    if (!selectedModelId || !selectedHydrophoneId || !startEpoch || !endEpoch) return;
+    if (!selectedModelId || !startEpoch || !endEpoch) return;
+    if (sourceType !== "local" && !selectedHydrophoneId) return;
     if (sourceType === "local" && !localCachePath) return;
     createMutation.mutate({
       classifier_model_id: selectedModelId,
@@ -509,22 +519,24 @@ export function HydrophoneTab() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium">Hydrophone</label>
-              <select
-                className="w-full border rounded px-3 py-2 text-sm mt-1"
-                value={selectedHydrophoneId}
-                onChange={(e) => setSelectedHydrophoneId(e.target.value)}
-              >
-                <option value="">Select a hydrophone…</option>
-                {filteredHydrophones.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {h.name} — {h.location}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className={sourceType !== "local" ? "grid grid-cols-2 gap-3" : ""}>
+            {sourceType !== "local" && (
+              <div>
+                <label className="text-sm font-medium">Hydrophone</label>
+                <select
+                  className="w-full border rounded px-3 py-2 text-sm mt-1"
+                  value={selectedHydrophoneId}
+                  onChange={(e) => setSelectedHydrophoneId(e.target.value)}
+                >
+                  <option value="">Select a hydrophone…</option>
+                  {filteredHydrophones.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name} — {h.location}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="text-sm font-medium">Classifier Model</label>
               <select
@@ -622,31 +634,19 @@ export function HydrophoneTab() {
               placeholder="Select date range (UTC)"
             />
           </div>
-          <div>
-            <label className="text-sm font-medium">
-              Confidence Threshold (summary): {threshold.toFixed(2)}
-            </label>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={threshold}
-              onChange={(e) => setThreshold(parseFloat(e.target.value))}
-              className="w-full mt-1"
-            />
-          </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-sm font-medium">Hop Size (s)</label>
-              <Input
-                type="number"
-                min={0.1}
-                max={10}
-                step={0.1}
-                value={hopSeconds}
-                onChange={(e) => setHopSeconds(parseFloat(e.target.value) || 1.0)}
-                className="mt-1"
+              <label className="text-sm font-medium">
+                Confidence Threshold: {threshold.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={threshold}
+                onChange={(e) => setThreshold(parseFloat(e.target.value))}
+                className="w-full mt-1"
               />
             </div>
             <div>
@@ -678,11 +678,23 @@ export function HydrophoneTab() {
               />
             </div>
           </div>
+          <div className="w-1/3">
+            <label className="text-sm font-medium">Hop Size (s)</label>
+            <Input
+              type="number"
+              min={0.1}
+              max={10}
+              step={0.1}
+              value={hopSeconds}
+              onChange={(e) => setHopSeconds(parseFloat(e.target.value) || 1.0)}
+              className="mt-1"
+            />
+          </div>
           <Button
             onClick={handleSubmit}
             disabled={
               !selectedModelId ||
-              !selectedHydrophoneId ||
+              (sourceType !== "local" && !selectedHydrophoneId) ||
               !startEpoch ||
               !endEpoch ||
               (sourceType === "local" && !localCachePath) ||
@@ -738,6 +750,7 @@ export function HydrophoneTab() {
               <tr className="border-b bg-muted/50">
                 <th className="w-8 px-1 py-2" />
                 <th className="px-3 py-2 text-left font-medium">Status</th>
+                <th className="px-3 py-2 text-left font-medium">Created</th>
                 <th className="px-3 py-2 text-left font-medium">Hydrophone</th>
                 <th className="px-3 py-2 text-left font-medium">Date Range (UTC)</th>
                 <th className="px-3 py-2 text-left font-medium">Threshold</th>
@@ -830,10 +843,13 @@ export function HydrophoneTab() {
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
+                type="search"
                 placeholder="Filter by hydrophone…"
                 value={prevJobsFilterText}
                 onChange={(e) => setPrevJobsFilterText(e.target.value)}
                 className="h-8 w-64 pl-8 text-xs"
+                autoComplete="off"
+                data-lpignore="true"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -914,6 +930,22 @@ export function HydrophoneTab() {
                     <span className="inline-flex items-center gap-1">
                       Status
                       {prevJobsSortKey === "status" &&
+                        (prevJobsSortDir === "asc" ? (
+                          <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="h-3 w-3" />
+                        ))}
+                    </span>
+                  </th>
+                )}
+                {prevJobsVisibleCols.has("created") && (
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:bg-muted/80"
+                    onClick={() => togglePrevJobsSort("created")}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Created
+                      {prevJobsSortKey === "created" &&
                         (prevJobsSortDir === "asc" ? (
                           <ArrowUp className="h-3 w-3" />
                         ) : (
@@ -1208,7 +1240,7 @@ function HydrophoneJobRow({
 
   // For active rows, show all columns; for previous rows, respect visibleColumns
   const showCol = (id: string) => isActive || !visibleColumns || visibleColumns.has(id);
-  const colSpan = isActive ? 8 : 2 + (visibleColumns?.size ?? 8);
+  const colSpan = isActive ? 9 : 2 + (visibleColumns?.size ?? 9);
 
   return (
     <>
@@ -1237,6 +1269,13 @@ function HydrophoneJobRow({
                 Whale
               </Badge>
             )}
+          </td>
+        )}
+        {showCol("created") && (
+          <td className="px-3 py-2 text-muted-foreground text-xs">
+            {job.created_at
+              ? formatLocalDateTime(job.created_at)
+              : "\u2014"}
           </td>
         )}
         {showCol("hydrophone") && (

@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: UI Changes for Classifier/Detection Page
+
+[Full plan](/Users/michael/.claude/plans/cheeky-growing-liskov.md)
+
+## Outcome (2026-03-14)
+
+- Added `type="search"`, `autoComplete="off"`, and `data-lpignore="true"` to Previous Jobs
+  filter input to suppress browser autocomplete and password managers.
+- Added sortable "Created" column (local time display) to both Active and Previous Jobs
+  tables; default sort changed from "date" to "created" descending.
+- Hidden Hydrophone dropdown when Local Cache source is selected; Classifier Model takes
+  full width; relaxed frontend validation to not require hydrophone for local mode.
+- Changed slider defaults: Confidence 0.50→0.90, Start 0.70→0.80, Continue 0.45→0.70.
+  Restructured layout: all three sliders in a single row, Hop Size moved below.
+- Fixed `created_at` UTC parsing (append `Z` to naive ISO strings from API).
+
+## Verification
+
+- `npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 594 passed.
+
+
 # Plan: UI Refactor for Classifier/Detection Page
 
 [Full plan](/Users/michael/.claude/plans/dynamic-painting-glacier.md)
@@ -834,6 +856,9 @@
   folder scans at each lookback step (reduce first-segment startup latency)
 - Add integration/perf harness for hydrophone S3 prefetch (verify worker-level
   prefetch settings on real S3-backed runs and tune default worker/in-flight values)
+- Make `hydrophone_id` optional for local-cache detection jobs: update backend API
+  schema, service layer, and worker to allow local-cache jobs without a hydrophone
+  selection (frontend already hides the dropdown for local mode)
 
 ---
 
