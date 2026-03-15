@@ -33,6 +33,7 @@ _KNOWN_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
 _OUTPUT_AUDIO_EXTENSION = ".flac"
 DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW = 3
 DEFAULT_POSITIVE_SELECTION_MIN_SCORE = 0.70
+DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE = 0.60
 POSITIVE_SELECTION_SCORE_SOURCE_STORED = "stored_diagnostics"
 POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK = "rescored_fallback"
 POSITIVE_SELECTION_FIELDNAMES = [
@@ -107,6 +108,7 @@ def _with_output_audio_extension(filename: str) -> str:
 def _validate_positive_selection_config(
     smoothing_window: int,
     min_score: float,
+    extend_min_score: float,
 ) -> None:
     """Validate positive-window selection parameters."""
     if smoothing_window < 1 or smoothing_window % 2 == 0:
@@ -115,6 +117,10 @@ def _validate_positive_selection_config(
         )
     if not 0.0 <= min_score <= 1.0:
         raise ValueError("positive_selection_min_score must be between 0.0 and 1.0")
+    if not 0.0 <= extend_min_score <= 1.0:
+        raise ValueError(
+            "positive_selection_extend_min_score must be between 0.0 and 1.0"
+        )
 
 
 def _read_tsv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -242,6 +248,11 @@ def _smooth_scores(scores: list[float], window_size: int) -> list[float]:
     return [float(v) for v in smoothed]
 
 
+def _candidate_offset_key(offset_sec: float) -> float:
+    """Normalize candidate offsets for exact-window lookup."""
+    return round(float(offset_sec), 6)
+
+
 def _load_window_records(
     diagnostics_path: Path | None,
     *,
@@ -343,9 +354,11 @@ def _select_positive_window(
     *,
     row_start_sec: float,
     row_end_sec: float,
+    window_size_seconds: float,
     window_records: list[dict[str, float]],
     smoothing_window: int,
     min_score: float,
+    extend_min_score: float,
     score_source: str,
 ) -> PositiveSelectionResult:
     """Select the best-scoring candidate window within a labeled positive row."""
@@ -383,6 +396,39 @@ def _select_positive_window(
     best_idx = int(np.argmax(np.asarray(smoothed_scores, dtype=np.float32)))
     peak_score = float(smoothed_scores[best_idx])
     best = candidates[best_idx]
+    start_sec = float(best["offset_sec"])
+    end_sec = float(best["end_sec"])
+
+    if peak_score >= min_score:
+        candidates_by_offset = {
+            _candidate_offset_key(float(rec["offset_sec"])): (
+                rec,
+                float(smoothed_scores[idx]),
+            )
+            for idx, rec in enumerate(candidates)
+        }
+
+        while True:
+            left_key = _candidate_offset_key(start_sec - window_size_seconds)
+            right_key = _candidate_offset_key(end_sec)
+            left_candidate = candidates_by_offset.get(left_key)
+            right_candidate = candidates_by_offset.get(right_key)
+
+            left_score = left_candidate[1] if left_candidate is not None else None
+            right_score = right_candidate[1] if right_candidate is not None else None
+            can_extend_left = left_score is not None and left_score >= extend_min_score
+            can_extend_right = (
+                right_score is not None and right_score >= extend_min_score
+            )
+            if not can_extend_left and not can_extend_right:
+                break
+
+            if can_extend_left and (not can_extend_right or left_score >= right_score):
+                assert left_candidate is not None
+                start_sec = float(left_candidate[0]["offset_sec"])
+            else:
+                assert right_candidate is not None
+                end_sec = float(right_candidate[0]["end_sec"])
 
     return PositiveSelectionResult(
         score_source=score_source,
@@ -390,8 +436,8 @@ def _select_positive_window(
         offsets=offsets,
         raw_scores=raw_scores,
         smoothed_scores=smoothed_scores,
-        start_sec=float(best["offset_sec"]),
-        end_sec=float(best["end_sec"]),
+        start_sec=start_sec,
+        end_sec=end_sec,
         peak_score=peak_score,
     )
 
@@ -483,6 +529,9 @@ def extract_labeled_samples(
     window_diagnostics_path: str | Path | None = None,
     positive_selection_smoothing_window: int = DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
     positive_selection_min_score: float = DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
+    positive_selection_extend_min_score: float = (
+        DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE
+    ),
     fallback_pipeline: Any | None = None,
     fallback_model: EmbeddingModel | None = None,
     fallback_target_sample_rate: int = 32000,
@@ -508,6 +557,7 @@ def extract_labeled_samples(
     _validate_positive_selection_config(
         positive_selection_smoothing_window,
         positive_selection_min_score,
+        positive_selection_extend_min_score,
     )
 
     fieldnames, all_rows = _read_tsv_rows(tsv_path)
@@ -567,9 +617,11 @@ def extract_labeled_samples(
                     _select_positive_window(
                         row_start_sec=row_start_sec,
                         row_end_sec=row_end_sec,
+                        window_size_seconds=window_size_seconds,
                         window_records=stored_records,
                         smoothing_window=positive_selection_smoothing_window,
                         min_score=positive_selection_min_score,
+                        extend_min_score=positive_selection_extend_min_score,
                         score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
                     )
                     if stored_records is not None
@@ -598,9 +650,11 @@ def extract_labeled_samples(
                     selection = _select_positive_window(
                         row_start_sec=row_start_sec,
                         row_end_sec=row_end_sec,
+                        window_size_seconds=window_size_seconds,
                         window_records=fallback_records,
                         smoothing_window=positive_selection_smoothing_window,
                         min_score=positive_selection_min_score,
+                        extend_min_score=positive_selection_extend_min_score,
                         score_source=POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK,
                     )
                 if selection is None:
@@ -830,6 +884,9 @@ def extract_hydrophone_labeled_samples(
     window_diagnostics_path: str | Path | None = None,
     positive_selection_smoothing_window: int = DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
     positive_selection_min_score: float = DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
+    positive_selection_extend_min_score: float = (
+        DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE
+    ),
     fallback_pipeline: Any | None = None,
     fallback_model: EmbeddingModel | None = None,
     fallback_input_format: str = "spectrogram",
@@ -851,6 +908,7 @@ def extract_hydrophone_labeled_samples(
     _validate_positive_selection_config(
         positive_selection_smoothing_window,
         positive_selection_min_score,
+        positive_selection_extend_min_score,
     )
 
     fieldnames, all_rows = _read_tsv_rows(tsv_path)
@@ -1009,9 +1067,11 @@ def extract_hydrophone_labeled_samples(
                     _select_positive_window(
                         row_start_sec=resolved_start_sec,
                         row_end_sec=resolved_end_sec,
+                        window_size_seconds=window_size_seconds,
                         window_records=stored_records,
                         smoothing_window=positive_selection_smoothing_window,
                         min_score=positive_selection_min_score,
+                        extend_min_score=positive_selection_extend_min_score,
                         score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
                     )
                     if stored_records is not None
@@ -1070,9 +1130,11 @@ def extract_hydrophone_labeled_samples(
                         selection = _select_positive_window(
                             row_start_sec=resolved_start_sec,
                             row_end_sec=resolved_end_sec,
+                            window_size_seconds=window_size_seconds,
                             window_records=fallback_records,
                             smoothing_window=positive_selection_smoothing_window,
                             min_score=positive_selection_min_score,
+                            extend_min_score=positive_selection_extend_min_score,
                             score_source=POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK,
                         )
                 if selection is None:

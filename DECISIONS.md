@@ -682,3 +682,38 @@ detection-job scores that users reviewed.
   must preserve those extra columns.
 - No database migration required; the change lives in job artifacts, extraction config, API
   parsing, tests, and documentation.
+
+---
+
+## ADR-027: Positive extraction can widen beyond one 5-second window
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: ADR-026 improved positive extraction by selecting the best-scoring 5-second
+window from stored 1-second-hop diagnostics, but some labeled rows still contain meaningful
+vocalization beyond that single window. For longer calls, exporting only the peak 5-second
+clip discards adjacent high-confidence audio that should stay in the training example.
+
+**Decision**:
+- Keep the ADR-026 seed-selection rule: select the best smoothed 5-second window and skip
+  the row when its peak is below `positive_selection_min_score`.
+- After selecting that seed, allow the extracted positive clip to widen by exact adjacent
+  5-second chunks.
+- Evaluate each adjacent chunk using the smoothed score of the aligned 5-second candidate
+  window at that chunk start.
+- Add an adjacent chunk only when its smoothed score is at or above the new
+  `positive_selection_extend_min_score` threshold.
+- If both sides qualify at once, extend the higher-scoring side first and then re-evaluate.
+- Continue growth until neither adjacent chunk qualifies or the labeled-row boundary is hit.
+
+**Consequences**:
+- Positive extraction can now emit 10-second, 15-second, or longer clips when the score
+  support justifies it, while still keeping durations as multiples of the classifier window.
+- Existing provenance fields remain sufficient; widened clips are recorded through the
+  selected `positive_selection_start_sec`, `positive_selection_end_sec`, and
+  `positive_extract_filename`.
+- Legacy rescoring fallback follows the same widening rule, so older jobs and new jobs
+  behave consistently.
+- No database migration required; the change is limited to extraction logic, config/API
+  defaults, tests, and documentation.

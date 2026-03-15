@@ -228,6 +228,10 @@ Hydrophone detection TSV output should carry canonical event metadata:
 - include `detection_filename` for hydrophone rows (`{start_utc}_{end_utc}.flac`, snapped canonical bounds)
 - keep `extract_filename` as a legacy alias to the same canonical filename for compatibility; explicit legacy `.wav` values must remain readable
 - include `hydrophone_name` for hydrophone rows (short form, e.g., `rpi_north_sjc`)
+- persist positive-selection provenance in `positive_selection_*` columns plus
+  `positive_extract_filename`; positive extraction seeds from the best 5-second
+  scored window and may widen in 5-second chunks when adjacent chunks remain
+  above the configured extension threshold
 - local detection TSV rows follow the same canonical snapped bounds + raw audit metadata
 
 ### 4.7 Hydrophone Job Lifecycle

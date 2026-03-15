@@ -129,16 +129,19 @@ export function useExtractLabeledSamples() {
       negativeOutputPath,
       positiveSelectionSmoothingWindow,
       positiveSelectionMinScore,
+      positiveSelectionExtendMinScore,
     }: {
       jobIds: string[];
       positiveOutputPath?: string;
       negativeOutputPath?: string;
       positiveSelectionSmoothingWindow?: number;
       positiveSelectionMinScore?: number;
+      positiveSelectionExtendMinScore?: number;
     }) =>
       extractLabeledSamples(jobIds, positiveOutputPath, negativeOutputPath, {
         positiveSelectionSmoothingWindow,
         positiveSelectionMinScore,
+        positiveSelectionExtendMinScore,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["detectionJobs"] });

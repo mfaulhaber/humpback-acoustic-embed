@@ -444,6 +444,7 @@ export interface ExtractionSettings {
   negative_output_path: string;
   positive_selection_smoothing_window: number;
   positive_selection_min_score: number;
+  positive_selection_extend_min_score: number;
 }
 
 // ---- Directory Browsing ----

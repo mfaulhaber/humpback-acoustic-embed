@@ -37,6 +37,9 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
             "positive_selection_smoothing_window"
         ]
         capture["positive_selection_min_score"] = kwargs["positive_selection_min_score"]
+        capture["positive_selection_extend_min_score"] = kwargs[
+            "positive_selection_extend_min_score"
+        ]
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
     def _fake_build_playback_provider(
@@ -74,6 +77,7 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
                 "negative_output_path": str(tmp_path / "neg"),
                 "positive_selection_smoothing_window": 5,
                 "positive_selection_min_score": 0.8,
+                "positive_selection_extend_min_score": 0.6,
             }
         ),
         local_cache_path=None,
@@ -94,6 +98,7 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
     )
     assert capture["positive_selection_smoothing_window"] == 5
     assert capture["positive_selection_min_score"] == 0.8
+    assert capture["positive_selection_extend_min_score"] == 0.6
     assert job.extract_status == "complete"
     assert job.extract_summary is not None
 

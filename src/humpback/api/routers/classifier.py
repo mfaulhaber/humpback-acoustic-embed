@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.classifier.detector import read_window_diagnostics_table
 from humpback.classifier.extractor import (
+    DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
 )
@@ -626,6 +627,11 @@ class ExtractRequest(BaseModel):
         ge=0.0,
         le=1.0,
     )
+    positive_selection_extend_min_score: float = Field(
+        default=DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
+        ge=0.0,
+        le=1.0,
+    )
 
     @field_validator("positive_selection_smoothing_window")
     @classmethod
@@ -674,6 +680,9 @@ async def extract_labeled_samples(
                 body.positive_selection_smoothing_window
             ),
             "positive_selection_min_score": body.positive_selection_min_score,
+            "positive_selection_extend_min_score": (
+                body.positive_selection_extend_min_score
+            ),
         }
     )
 
@@ -704,6 +713,9 @@ async def get_extraction_settings(settings: SettingsDep) -> dict:
             DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW
         ),
         "positive_selection_min_score": DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
+        "positive_selection_extend_min_score": (
+            DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE
+        ),
     }
 
 

@@ -10,6 +10,29 @@
 
 ## Recently Completed
 
+# Plan: Relax Positive Extraction Length With 5-Second Chunk Growth
+
+[Full plan](/Users/michael/.claude/plans/relaxed-positive-extraction-length.md)
+
+## Outcome (2026-03-14)
+
+- Positive extraction now seeds from the best 5-second window but can widen in
+  adjacent 5-second chunks when neighboring smoothed scores stay above the new
+  `positive_selection_extend_min_score` threshold.
+- Added extraction API/worker/frontend config support for the new extension
+  threshold, kept legacy rescoring fallback aligned with the same widening
+  behavior, and appended ADR-027.
+- Added selector/extractor regression coverage including the NOAA-style widened
+  fallback case and stale positive-output replacement.
+
+## Verification
+
+- `uv run ruff format --check` on touched files — passed.
+- `uv run ruff check` on touched files — passed.
+- `uv run pyright` — passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 606 passed.
+
 # Plan: Positive Window Selection From Stored Detection Scores
 
 [Full plan](/Users/michael/.claude/plans/stored-positive-window-selection-from-detection-scores.md)

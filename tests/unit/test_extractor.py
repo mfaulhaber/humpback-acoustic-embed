@@ -15,6 +15,7 @@ import soundfile as sf
 from humpback.classifier.archive import StreamSegment
 from humpback.classifier.detector import write_window_diagnostics
 from humpback.classifier.extractor import (
+    _select_positive_window,
     extract_hydrophone_labeled_samples,
     extract_labeled_samples,
     parse_recording_timestamp,
@@ -103,6 +104,18 @@ def _make_positive_pipeline(positive_prob: float = 0.95) -> MagicMock:
                 np.full(len(X), positive_prob, dtype=np.float32),
             ]
         )
+
+    pipeline.predict_proba = predict_proba
+    return pipeline
+
+
+def _make_sequence_positive_pipeline(positive_probs: list[float]) -> MagicMock:
+    pipeline = MagicMock()
+
+    def predict_proba(X):
+        assert len(X) == len(positive_probs)
+        probs = np.asarray(positive_probs, dtype=np.float32)
+        return np.column_stack([1.0 - probs, probs])
 
     pipeline.predict_proba = predict_proba
     return pipeline
@@ -523,7 +536,7 @@ class TestExtractionBounds:
         assert abs(duration - 5.0) < 0.1
 
     def test_extraction_exact_multiple_unchanged(self, tmp_path):
-        """Positive local extraction no longer exports full multi-window spans."""
+        """Positive local extraction can widen to the full supported 5s-multiple span."""
         audio_folder = tmp_path / "audio"
         audio_folder.mkdir()
         _make_wav(audio_folder / "test.wav", duration=20.0)
@@ -559,7 +572,7 @@ class TestExtractionBounds:
         humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
         duration = _audio_duration(humpback_files[0])
-        assert abs(duration - 5.0) < 0.1
+        assert abs(duration - 10.0) < 0.1
 
     def test_extraction_default_window_param_does_not_widen_bounds(self, tmp_path):
         """Default positive extraction still writes one 5-second clip."""
@@ -601,6 +614,95 @@ class TestExtractionBounds:
 
 
 class TestPositiveWindowSelection:
+    def test_select_positive_window_extends_right_for_noaa_style_scores(self):
+        result = _select_positive_window(
+            row_start_sec=25.0,
+            row_end_sec=40.0,
+            window_size_seconds=5.0,
+            window_records=[
+                {
+                    "offset_sec": float(offset),
+                    "end_sec": float(offset + 5),
+                    "confidence": confidence,
+                }
+                for offset, confidence in [
+                    (25, 0.083056),
+                    (26, 0.047844),
+                    (27, 0.975656),
+                    (28, 0.99657),
+                    (29, 0.97702),
+                    (30, 0.993777),
+                    (31, 0.990989),
+                    (32, 0.963464),
+                    (33, 0.957712),
+                    (34, 0.944557),
+                    (35, 0.487496),
+                ]
+            ],
+            smoothing_window=3,
+            min_score=0.7,
+            extend_min_score=0.6,
+            score_source="stored_diagnostics",
+        )
+
+        assert result.decision == "positive"
+        assert result.start_sec == 29.0
+        assert result.end_sec == 39.0
+
+    def test_select_positive_window_can_extend_both_sides(self):
+        result = _select_positive_window(
+            row_start_sec=0.0,
+            row_end_sec=20.0,
+            window_size_seconds=5.0,
+            window_records=[
+                {
+                    "offset_sec": float(offset),
+                    "end_sec": float(offset + 5),
+                    "confidence": confidence,
+                }
+                for offset, confidence in [
+                    (0, 0.65),
+                    (5, 0.92),
+                    (10, 0.78),
+                    (15, 0.3),
+                ]
+            ],
+            smoothing_window=1,
+            min_score=0.7,
+            extend_min_score=0.6,
+            score_source="stored_diagnostics",
+        )
+
+        assert result.decision == "positive"
+        assert result.start_sec == 0.0
+        assert result.end_sec == 15.0
+
+    def test_select_positive_window_requires_exact_adjacent_chunk(self):
+        result = _select_positive_window(
+            row_start_sec=0.0,
+            row_end_sec=15.0,
+            window_size_seconds=5.0,
+            window_records=[
+                {
+                    "offset_sec": float(offset),
+                    "end_sec": float(offset + 5),
+                    "confidence": confidence,
+                }
+                for offset, confidence in [
+                    (2, 0.99),
+                    (6, 0.93),
+                ]
+            ],
+            smoothing_window=1,
+            min_score=0.7,
+            extend_min_score=0.6,
+            score_source="stored_diagnostics",
+        )
+
+        assert result.decision == "positive"
+        assert result.start_sec == 2.0
+        assert result.end_sec == 7.0
+
     def test_local_positive_selection_uses_stored_diagnostics_and_updates_tsv(
         self, tmp_path
     ):
@@ -917,6 +1019,115 @@ class TestPositiveWindowSelection:
         assert rows[0]["positive_selection_end_sec"] == "8.000000"
         assert rows[0]["positive_extract_filename"] == (
             "20250615T080003Z_20250615T080008Z.flac"
+        )
+
+    def test_hydrophone_positive_fallback_widens_and_replaces_stale_output(
+        self, tmp_path
+    ):
+        source_name = "20150807T221433Z.wav"
+        tsv_path = tmp_path / "detections.tsv"
+        fieldnames = [
+            "filename",
+            "start_sec",
+            "end_sec",
+            "avg_confidence",
+            "peak_confidence",
+            "detection_filename",
+            "positive_extract_filename",
+            "humpback",
+            "orca",
+            "ship",
+            "background",
+        ]
+        with open(tsv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "filename": source_name,
+                    "start_sec": "25.0",
+                    "end_sec": "40.0",
+                    "avg_confidence": "0.974968",
+                    "peak_confidence": "0.996570",
+                    "detection_filename": "20150807T221458Z_20150807T221513Z.flac",
+                    "positive_extract_filename": (
+                        "20150807T221502Z_20150807T221507Z.flac"
+                    ),
+                    "humpback": "1",
+                    "orca": "",
+                    "ship": "",
+                    "background": "",
+                }
+            )
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+        provider = _provider_for_recording(
+            source_name,
+            audio=audio,
+            source_id="noaa_glacier_bay",
+        )
+
+        pos_out = tmp_path / "positive"
+        old_path = (
+            pos_out
+            / "humpback"
+            / "noaa_glacier_bay"
+            / "2015"
+            / "08"
+            / "07"
+            / "20150807T221502Z_20150807T221507Z.flac"
+        )
+        write_flac_file(np.ones(sr, dtype=np.float32), sr, old_path)
+
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            tmp_path / "negative",
+            window_size_seconds=5.0,
+            fallback_pipeline=_make_sequence_positive_pipeline(
+                [
+                    0.083056,
+                    0.047844,
+                    0.975656,
+                    0.99657,
+                    0.97702,
+                    0.993777,
+                    0.990989,
+                    0.963464,
+                    0.957712,
+                    0.944557,
+                    0.487496,
+                ]
+            ),
+            fallback_model=FakeTFLiteModel(vector_dim=64),
+            fallback_input_format="spectrogram",
+            fallback_feature_config=None,
+            target_sample_rate=sr,
+        )
+
+        assert summary["n_humpback"] == 1
+
+        new_path = (
+            pos_out
+            / "humpback"
+            / "noaa_glacier_bay"
+            / "2015"
+            / "08"
+            / "07"
+            / "20150807T221502Z_20150807T221512Z.flac"
+        )
+        assert not old_path.exists()
+        assert new_path.exists()
+        assert abs(_audio_duration(new_path) - 10.0) < 0.1
+
+        rows = _read_tsv_rows(tsv_path)
+        assert rows[0]["positive_selection_score_source"] == "rescored_fallback"
+        assert rows[0]["positive_selection_start_sec"] == "29.000000"
+        assert rows[0]["positive_selection_end_sec"] == "39.000000"
+        assert rows[0]["positive_extract_filename"] == (
+            "20150807T221502Z_20150807T221512Z.flac"
         )
 
 

@@ -414,10 +414,12 @@ Queue safety note:
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
   jobs) is local-cache-authoritative for Orcasound HLS sources (same cache root precedence as
   playback), writes FLAC clips, and does not call S3. Positive labels (`humpback`, `orca`) use
-  stored 1-second-hop detection diagnostics to choose a single best 5-second window after
-  moving-average smoothing; rows below `positive_selection_min_score` are skipped and counted in
-  `n_positive_selection_skipped`. Legacy jobs fall back to rescoring during extraction when
-  diagnostics are unavailable. NOAA Glacier Bay extraction uses direct anonymous GCS fetch instead.
+  stored 1-second-hop detection diagnostics to choose a best 5-second seed window after
+  moving-average smoothing, then can widen in adjacent 5-second chunks while neighboring
+  smoothed scores stay above `positive_selection_extend_min_score`; rows below
+  `positive_selection_min_score` are skipped and counted in `n_positive_selection_skipped`.
+  Legacy jobs fall back to rescoring during extraction when diagnostics are unavailable.
+  NOAA Glacier Bay extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---

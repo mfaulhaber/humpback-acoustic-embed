@@ -23,6 +23,7 @@ from humpback.classifier.detector import (
     write_window_diagnostics_shard,
 )
 from humpback.classifier.extractor import (
+    DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
     extract_labeled_samples,
@@ -626,6 +627,12 @@ async def run_extraction_job(
                 DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
             )
         )
+        extend_min_score = float(
+            config.get(
+                "positive_selection_extend_min_score",
+                DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
+            )
+        )
 
         if not job.output_tsv_path:
             raise ValueError("Detection job has no output TSV path")
@@ -678,6 +685,7 @@ async def run_extraction_job(
                 window_diagnostics_path=diagnostics_path,
                 positive_selection_smoothing_window=smoothing_window,
                 positive_selection_min_score=min_score,
+                positive_selection_extend_min_score=extend_min_score,
                 fallback_pipeline=pipeline,
                 fallback_model=model,
                 fallback_input_format=input_format,
@@ -696,6 +704,7 @@ async def run_extraction_job(
                 window_diagnostics_path=diagnostics_path,
                 positive_selection_smoothing_window=smoothing_window,
                 positive_selection_min_score=min_score,
+                positive_selection_extend_min_score=extend_min_score,
                 fallback_pipeline=pipeline,
                 fallback_model=model,
                 fallback_target_sample_rate=target_sample_rate,

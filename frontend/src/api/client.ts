@@ -244,6 +244,7 @@ export const extractLabeledSamples = (
   options?: {
     positiveSelectionSmoothingWindow?: number;
     positiveSelectionMinScore?: number;
+    positiveSelectionExtendMinScore?: number;
   },
 ) =>
   post<{ status: string; count: number }>("/classifier/detection-jobs/extract", {
@@ -252,6 +253,7 @@ export const extractLabeledSamples = (
     negative_output_path: negativeOutputPath,
     positive_selection_smoothing_window: options?.positiveSelectionSmoothingWindow,
     positive_selection_min_score: options?.positiveSelectionMinScore,
+    positive_selection_extend_min_score: options?.positiveSelectionExtendMinScore,
   });
 
 export function detectionAudioSliceUrl(

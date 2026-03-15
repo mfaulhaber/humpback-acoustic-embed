@@ -55,8 +55,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Raw event audit metadata in TSV (`raw_start_sec`, `raw_end_sec`, `merged_event_count`)
 - Incremental detection results: file-by-file progress with live UI updates during job execution
 - Inline audio playback and label annotation available while detection is still running
-- Positive labeled extraction selects one 5-second training clip from stored 1-second-hop
-  detection scores (moving-average smoothing + min-score threshold, with classifier
+- Positive labeled extraction seeds from the best 5-second training clip in stored
+  1-second-hop detection scores, then can widen in adjacent 5-second chunks when
+  the neighboring smoothed score stays above the extension threshold (with classifier
   fallback for legacy jobs); negative extraction keeps canonical labeled bounds and writes
   FLAC clips
 - Inline audio playback of detected segments

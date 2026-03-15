@@ -93,6 +93,7 @@ async def test_extraction_settings(client):
     assert "negative_output_path" in data
     assert data["positive_selection_smoothing_window"] == 3
     assert data["positive_selection_min_score"] == 0.7
+    assert data["positive_selection_extend_min_score"] == 0.6
 
 
 async def test_extract_nonexistent_jobs(client):
@@ -142,6 +143,7 @@ async def test_extract_persists_positive_selection_config(client, app_settings):
             "job_ids": [job_id],
             "positive_selection_smoothing_window": 5,
             "positive_selection_min_score": 0.82,
+            "positive_selection_extend_min_score": 0.61,
         },
     )
     assert resp.status_code == 200
@@ -156,6 +158,7 @@ async def test_extract_persists_positive_selection_config(client, app_settings):
 
     assert parsed["positive_selection_smoothing_window"] == 5
     assert parsed["positive_selection_min_score"] == 0.82
+    assert parsed["positive_selection_extend_min_score"] == 0.61
     await engine.dispose()
 
 

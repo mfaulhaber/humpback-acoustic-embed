@@ -516,9 +516,12 @@ Validation and error behavior notes:
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
 - `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
 - `POST /classifier/detection-jobs/extract` accepts optional `positive_selection_smoothing_window`
-  (odd integer, default `3`) and `positive_selection_min_score` (default `0.70`). Positive labels
-  select one 5-second training clip from stored 1-second-hop detection scores after smoothing and
-  are skipped when the peak smoothed score is below threshold; legacy jobs fall back to rescoring.
+  (odd integer, default `3`), `positive_selection_min_score` (default `0.70`), and
+  `positive_selection_extend_min_score` (default `0.60`). Positive labels seed from the
+  best 5-second training window in the stored 1-second-hop detection scores, then may widen
+  in adjacent 5-second chunks when the neighboring smoothed score remains above the extension
+  threshold; rows are skipped when the peak smoothed score is below threshold. Legacy jobs fall
+  back to rescoring.
 - Hydrophone extraction reads local HLS cache only for Orcasound jobs, writes FLAC labeled clips,
   and skips missing-cache positives via `n_positive_selection_skipped`. NOAA Glacier Bay
   extraction uses direct anonymous GCS fetch instead.
@@ -552,7 +555,8 @@ data/
 Labeled-sample extraction outputs:
 - local jobs: `{positive|negative}_sample_path/{label}/YYYY/MM/DD/*.flac`
 - hydrophone jobs: `{positive|negative}_sample_path/{label}/{hydrophone_id}/YYYY/MM/DD/*.flac`
-- Positive extraction writes the classifier-selected 5-second window (`positive_extract_filename`);
+- Positive extraction writes the classifier-selected 5-second seed window plus any adjacent
+  5-second extensions that pass the configured support threshold (`positive_extract_filename`);
   negative extraction keeps the labeled clip bounds.
 
 ## Utilities
