@@ -59,7 +59,7 @@ Current state of the humpback acoustic embedding and clustering platform.
   1-second-hop detection scores, then can widen in adjacent 5-second chunks when
   the neighboring smoothed score stays above the extension threshold (with classifier
   fallback for legacy jobs); negative extraction keeps canonical labeled bounds and writes
-  FLAC clips
+  FLAC clips with same-basename marker-free spectrogram PNG sidecars
 - Inline audio playback of detected segments
 - Detection labels: humpback (positive), orca (positive), ship (negative), background (negative)
 - Detection label annotation with keyboard shortcuts (`h`=humpback, `o`=orca, `s`=ship, `b`=background)
@@ -149,6 +149,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
 - Detection row state now persists in `detection_rows.parquet` beside each job's TSV; the row store is the canonical editable/download source and carries `row_id`, detection-time `auto_positive_selection_*`, manual override bounds, effective `positive_selection_*`, and extraction artifacts, while TSV is synchronized for user download and legacy compatibility
 - Detection spectrogram popup: click a detection row's Play button to open the cached STFT spectrogram alongside playback, or Alt+click the row for spectrogram-only view; positive-labeled detections render client-side black extraction markers immediately from live checkbox edits using stored auto/effective bounds before extraction runs, and completed hydrophone jobs can shift start/end markers in 5-second steps with Apply/Cancel to persist manual window overrides back into the detection job (configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
+- Extract Labeled Samples now writes a sibling `.png` beside each extracted `.flac`,
+  using the same shared spectrogram render settings as the UI popup base image and
+  the actual extracted clip window rather than the full detection span
 - "Whale" badge on hydrophone jobs with confirmed positive labels — humpback or orca (`has_positive_labels` flag persisted on label save)
 - 3-way audio source selector (Orcasound / NOAA / Local Cache) with hydrophone
   dropdown filtered by `provider_kind` from the `/classifier/hydrophones` API
@@ -206,7 +209,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `016_rename_has_positive_labels.py`
+- **Latest migration**: `017_output_row_store_path.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows
 
 ---

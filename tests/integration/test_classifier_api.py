@@ -1138,6 +1138,133 @@ async def test_spectrogram_returns_png(client, app_settings, wav_bytes):
     await engine.dispose()
 
 
+async def test_extracted_sidecar_png_matches_spectrogram_endpoint(client, app_settings):
+    """Extracted sidecar PNGs should match the marker-free UI spectrogram image."""
+    import io
+    import math
+    import struct
+    import wave
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.classifier.detector import write_window_diagnostics
+    from humpback.classifier.extractor import extract_labeled_samples
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    def _make_wav_bytes(duration: float, sample_rate: int = 16000) -> bytes:
+        n = int(sample_rate * duration)
+        samples = [
+            int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n)
+        ]
+        buf = io.BytesIO()
+        with wave.open(buf, "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(struct.pack(f"<{n}h", *samples))
+        return buf.getvalue()
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    audio_folder = Path(app_settings.storage_root) / "audio_test"
+    audio_folder.mkdir(parents=True)
+    source_name = "20250615T080000Z_test.wav"
+    wav_path = audio_folder / source_name
+    wav_path.write_bytes(_make_wav_bytes(duration=12.0))
+
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+    tsv_path = tsv_dir / "detections.tsv"
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "filename",
+                "start_sec",
+                "end_sec",
+                "avg_confidence",
+                "peak_confidence",
+                "humpback",
+                "orca",
+                "ship",
+                "background",
+            ],
+            delimiter="\t",
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": source_name,
+                "start_sec": "0.0",
+                "end_sec": "10.0",
+                "avg_confidence": "0.9",
+                "peak_confidence": "0.95",
+                "humpback": "1",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    diagnostics_path = tsv_dir / "window_diagnostics.parquet"
+    write_window_diagnostics(
+        [
+            {
+                "filename": source_name,
+                "window_index": idx,
+                "offset_sec": float(offset),
+                "end_sec": float(offset + 5),
+                "confidence": conf,
+                "is_overlapped": False,
+                "overlap_sec": 0.0,
+            }
+            for idx, (offset, conf) in enumerate(
+                [(0, 0.2), (1, 0.9), (2, 0.95), (3, 0.9), (4, 0.2), (5, 0.1)]
+            )
+        ],
+        diagnostics_path,
+    )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder=str(audio_folder),
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    extract_labeled_samples(
+        tsv_path=tsv_path,
+        audio_folder=audio_folder,
+        positive_output_path=Path(app_settings.storage_root) / "labeled" / "positives",
+        negative_output_path=Path(app_settings.storage_root) / "labeled" / "negatives",
+        window_diagnostics_path=diagnostics_path,
+    )
+
+    saved_pngs = list(
+        (Path(app_settings.storage_root) / "labeled" / "positives").rglob("*.png")
+    )
+    assert len(saved_pngs) == 1
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/spectrogram",
+        params={"filename": source_name, "start_sec": 2.0, "duration_sec": 5.0},
+    )
+    assert resp.status_code == 200
+    assert resp.content == saved_pngs[0].read_bytes()
+
+    await engine.dispose()
+
+
 # ---- has_positive_labels flag ----
 
 

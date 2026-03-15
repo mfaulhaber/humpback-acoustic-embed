@@ -19,13 +19,19 @@ from humpback.classifier.detection_rows import (
 )
 from humpback.classifier.detector import write_window_diagnostics
 from humpback.classifier.extractor import (
+    DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB,
+    DEFAULT_SPECTROGRAM_HEIGHT_PX,
+    DEFAULT_SPECTROGRAM_HOP_LENGTH,
+    DEFAULT_SPECTROGRAM_WIDTH_PX,
     _select_positive_window,
     extract_hydrophone_labeled_samples,
     extract_labeled_samples,
     parse_recording_timestamp,
     write_flac_file,
 )
+from humpback.processing.audio_io import decode_audio
 from humpback.processing.inference import FakeTFLiteModel
+from humpback.processing.spectrogram import generate_spectrogram_png
 
 
 class TestParseRecordingTimestamp:
@@ -395,6 +401,61 @@ class TestExtractLabeledSamples:
         assert summary2["n_humpback"] == 0
         assert summary2["n_skipped"] == 1
 
+    def test_idempotent_rerun_backfills_missing_png_without_rewriting_audio(
+        self, tmp_path
+    ):
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        _make_wav(audio_folder / "test.wav", duration=5.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "test.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                },
+            ],
+        )
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+
+        summary1 = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
+        assert summary1["n_humpback"] == 1
+
+        humpback_file = next(pos_out.rglob("*.flac"))
+        png_path = humpback_file.with_suffix(".png")
+        assert png_path.exists()
+        audio_mtime_ns = humpback_file.stat().st_mtime_ns
+        png_path.unlink()
+
+        summary2 = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
+
+        assert summary2["n_humpback"] == 0
+        assert summary2["n_skipped"] == 1
+        assert humpback_file.stat().st_mtime_ns == audio_mtime_ns
+        assert png_path.exists()
+
     def test_timestamp_based_filename(self, tmp_path):
         audio_folder = tmp_path / "audio"
         audio_folder.mkdir()
@@ -462,6 +523,7 @@ class TestExtractLabeledSamples:
         assert len(bg_files) == 1
         assert "recording_001" in bg_files[0].name
         assert "unknown_date" in str(bg_files[0])
+        assert bg_files[0].with_suffix(".png").exists()
 
     def test_multiple_labels_same_row(self, tmp_path):
         """A row labeled as both humpback and ship produces files in both dirs."""
@@ -834,6 +896,30 @@ class TestPositiveWindowSelection:
         files = list((pos_out / "humpback").rglob("*.flac"))
         assert len(files) == 1
         assert abs(_audio_duration(files[0]) - 10.0) < 0.2
+        png_path = files[0].with_suffix(".png")
+        assert png_path.exists()
+
+        audio, sr = decode_audio(audio_folder / source_name)
+        selected_start = int(5.0 * sr)
+        selected_end = int(15.0 * sr)
+        selected_png = generate_spectrogram_png(
+            audio[selected_start:selected_end],
+            sr,
+            hop_length=DEFAULT_SPECTROGRAM_HOP_LENGTH,
+            dynamic_range_db=DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB,
+            width_px=DEFAULT_SPECTROGRAM_WIDTH_PX,
+            height_px=DEFAULT_SPECTROGRAM_HEIGHT_PX,
+        )
+        full_row_png = generate_spectrogram_png(
+            audio[:selected_end],
+            sr,
+            hop_length=DEFAULT_SPECTROGRAM_HOP_LENGTH,
+            dynamic_range_db=DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB,
+            width_px=DEFAULT_SPECTROGRAM_WIDTH_PX,
+            height_px=DEFAULT_SPECTROGRAM_HEIGHT_PX,
+        )
+        assert png_path.read_bytes() == selected_png
+        assert png_path.read_bytes() != full_row_png
 
         _fieldnames, stored_rows = read_detection_row_store(row_store_path)
         assert stored_rows[0]["manual_positive_selection_start_sec"] == "5.000000"
@@ -1161,6 +1247,8 @@ class TestPositiveWindowSelection:
             / "20150807T221502Z_20150807T221507Z.flac"
         )
         write_flac_file(np.ones(sr, dtype=np.float32), sr, old_path)
+        old_png_path = old_path.with_suffix(".png")
+        old_png_path.write_bytes(b"old png")
 
         summary = extract_hydrophone_labeled_samples(
             tsv_path,
@@ -1201,7 +1289,9 @@ class TestPositiveWindowSelection:
             / "20150807T221502Z_20150807T221512Z.flac"
         )
         assert not old_path.exists()
+        assert not old_png_path.exists()
         assert new_path.exists()
+        assert new_path.with_suffix(".png").exists()
         assert abs(_audio_duration(new_path) - 10.0) < 0.1
 
         rows = _read_tsv_rows(tsv_path)
@@ -1257,6 +1347,7 @@ class TestExtractHydrophoneLabeledSamples:
 
         humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
+        assert humpback_files[0].with_suffix(".png").exists()
         rel = humpback_files[0].relative_to(pos_out)
         assert rel.parts[:2] == ("humpback", "rpi_orcasound_lab")
         assert rel.parts[2:5] == ("2025", "06", "15")
@@ -1319,6 +1410,7 @@ class TestExtractHydrophoneLabeledSamples:
             / "20250615T080003Z_20250615T080006Z.flac"
         )
         assert out.exists()
+        assert out.with_suffix(".png").exists()
         duration = _audio_duration(out)
         assert abs(duration - 3.0) < 0.1
 

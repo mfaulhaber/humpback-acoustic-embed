@@ -28,6 +28,7 @@ from humpback.classifier.s3_stream import build_stream_timeline, resolve_audio_s
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
+from humpback.processing.spectrogram import generate_spectrogram_png
 from humpback.processing.windowing import slice_windows_with_metadata
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,10 @@ _TS_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+)
 _COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
 _KNOWN_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
 _OUTPUT_AUDIO_EXTENSION = ".flac"
+DEFAULT_SPECTROGRAM_HOP_LENGTH = 256
+DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB = 80.0
+DEFAULT_SPECTROGRAM_WIDTH_PX = 640
+DEFAULT_SPECTROGRAM_HEIGHT_PX = 320
 DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW = 3
 DEFAULT_POSITIVE_SELECTION_MIN_SCORE = 0.70
 DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE = 0.60
@@ -110,6 +115,11 @@ def _strip_known_audio_extension(filename: str) -> str:
 def _with_output_audio_extension(filename: str) -> str:
     """Return filename with the configured extracted-audio extension."""
     return f"{_strip_known_audio_extension(filename)}{_OUTPUT_AUDIO_EXTENSION}"
+
+
+def _spectrogram_sidecar_path(audio_output_path: Path) -> Path:
+    """Return the sidecar spectrogram path for an extracted audio output."""
+    return audio_output_path.with_suffix(".png")
 
 
 def _validate_positive_selection_config(
@@ -553,8 +563,32 @@ def _delete_stale_positive_outputs(
             clip_name=_with_output_audio_extension(clip_name),
             source_id=source_id,
         )
+        _delete_output_artifacts(path)
+
+
+def _delete_output_artifacts(audio_output_path: Path) -> None:
+    """Remove an extracted audio artifact and its sidecar spectrogram."""
+    for path in (audio_output_path, _spectrogram_sidecar_path(audio_output_path)):
         if path.exists():
             path.unlink()
+
+
+def _write_bytes_atomic(output_path: Path, data: bytes) -> None:
+    """Atomically write bytes to disk."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(output_path.parent), suffix=output_path.suffix
+    )
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, output_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def write_flac_file(audio_segment: np.ndarray, sr: int, output_path: Path) -> None:
@@ -571,6 +605,68 @@ def write_flac_file(audio_segment: np.ndarray, sr: int, output_path: Path) -> No
         format="FLAC",
         subtype="PCM_16",
     )
+
+
+def write_spectrogram_png_file(
+    audio_segment: np.ndarray,
+    sr: int,
+    output_path: Path,
+    *,
+    hop_length: int = DEFAULT_SPECTROGRAM_HOP_LENGTH,
+    dynamic_range_db: float = DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB,
+    width_px: int = DEFAULT_SPECTROGRAM_WIDTH_PX,
+    height_px: int = DEFAULT_SPECTROGRAM_HEIGHT_PX,
+) -> None:
+    """Write a spectrogram PNG sidecar for an extracted audio segment."""
+    png_bytes = generate_spectrogram_png(
+        audio_segment,
+        sr,
+        hop_length=hop_length,
+        dynamic_range_db=dynamic_range_db,
+        width_px=width_px,
+        height_px=height_px,
+    )
+    _write_bytes_atomic(output_path, png_bytes)
+
+
+def _output_artifacts_complete(output_path: Path) -> bool:
+    """Return whether both extracted audio and spectrogram sidecar exist."""
+    return output_path.exists() and _spectrogram_sidecar_path(output_path).exists()
+
+
+def ensure_output_artifacts(
+    audio_segment: np.ndarray,
+    sr: int,
+    output_path: Path,
+    *,
+    spectrogram_hop_length: int = DEFAULT_SPECTROGRAM_HOP_LENGTH,
+    spectrogram_dynamic_range_db: float = DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB,
+    spectrogram_width_px: int = DEFAULT_SPECTROGRAM_WIDTH_PX,
+    spectrogram_height_px: int = DEFAULT_SPECTROGRAM_HEIGHT_PX,
+) -> bool:
+    """Ensure an extracted audio artifact and its sidecar PNG both exist.
+
+    Returns True when the audio file itself was newly written, or False when the
+    audio already existed and only the sidecar check/backfill was needed.
+    """
+    audio_exists = output_path.exists()
+    png_path = _spectrogram_sidecar_path(output_path)
+    png_exists = png_path.exists()
+
+    if not audio_exists:
+        write_flac_file(audio_segment, sr, output_path)
+    if not audio_exists or not png_exists:
+        write_spectrogram_png_file(
+            audio_segment,
+            sr,
+            png_path,
+            hop_length=spectrogram_hop_length,
+            dynamic_range_db=spectrogram_dynamic_range_db,
+            width_px=spectrogram_width_px,
+            height_px=spectrogram_height_px,
+        )
+
+    return not audio_exists
 
 
 def write_wav_file(audio_segment: np.ndarray, sr: int, output_path: Path) -> None:
@@ -596,6 +692,10 @@ def extract_labeled_samples(
     fallback_input_format: str = "spectrogram",
     fallback_feature_config: dict | None = None,
     row_store_path: str | Path | None = None,
+    spectrogram_hop_length: int = DEFAULT_SPECTROGRAM_HOP_LENGTH,
+    spectrogram_dynamic_range_db: float = DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB,
+    spectrogram_width_px: int = DEFAULT_SPECTROGRAM_WIDTH_PX,
+    spectrogram_height_px: int = DEFAULT_SPECTROGRAM_HEIGHT_PX,
 ) -> dict:
     """Extract labeled audio segments from a detection TSV.
 
@@ -792,11 +892,22 @@ def extract_labeled_samples(
                         for label_name in positive_labels:
                             out_dir = positive_output_path / label_name / date_folder
                             out_path = out_dir / clip_name
-                            if out_path.exists():
+                            if _output_artifacts_complete(out_path):
                                 counts["n_skipped"] += 1
                                 continue
-                            write_flac_file(selected_segment, sr, out_path)
-                            counts[f"n_{label_name}"] += 1
+                            wrote_audio = ensure_output_artifacts(
+                                selected_segment,
+                                sr,
+                                out_path,
+                                spectrogram_hop_length=spectrogram_hop_length,
+                                spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
+                                spectrogram_width_px=spectrogram_width_px,
+                                spectrogram_height_px=spectrogram_height_px,
+                            )
+                            if wrote_audio:
+                                counts[f"n_{label_name}"] += 1
+                            else:
+                                counts["n_skipped"] += 1
                         if using_row_store:
                             row["positive_extract_filename"] = clip_name
                         else:
@@ -850,11 +961,22 @@ def extract_labeled_samples(
                 for label_name in negative_labels:
                     out_dir = negative_output_path / label_name / date_folder
                     out_path = out_dir / clip_name
-                    if out_path.exists():
+                    if _output_artifacts_complete(out_path):
                         counts["n_skipped"] += 1
                         continue
-                    write_flac_file(segment, sr, out_path)
-                    counts[f"n_{label_name}"] += 1
+                    wrote_audio = ensure_output_artifacts(
+                        segment,
+                        sr,
+                        out_path,
+                        spectrogram_hop_length=spectrogram_hop_length,
+                        spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
+                        spectrogram_width_px=spectrogram_width_px,
+                        spectrogram_height_px=spectrogram_height_px,
+                    )
+                    if wrote_audio:
+                        counts[f"n_{label_name}"] += 1
+                    else:
+                        counts["n_skipped"] += 1
 
     _write_detection_rows(
         tsv_path,
@@ -982,6 +1104,10 @@ def extract_hydrophone_labeled_samples(
     fallback_input_format: str = "spectrogram",
     fallback_feature_config: dict | None = None,
     row_store_path: str | Path | None = None,
+    spectrogram_hop_length: int = DEFAULT_SPECTROGRAM_HOP_LENGTH,
+    spectrogram_dynamic_range_db: float = DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB,
+    spectrogram_width_px: int = DEFAULT_SPECTROGRAM_WIDTH_PX,
+    spectrogram_height_px: int = DEFAULT_SPECTROGRAM_HEIGHT_PX,
 ) -> dict:
     """Extract labeled audio segments from a hydrophone detection TSV.
 
@@ -1343,11 +1469,22 @@ def extract_hydrophone_labeled_samples(
                                     clip_name=clip_name,
                                     source_id=provider.source_id,
                                 )
-                                if out_path.exists():
+                                if _output_artifacts_complete(out_path):
                                     counts["n_skipped"] += 1
                                     continue
-                                write_flac_file(segment, target_sample_rate, out_path)
-                                counts[f"n_{label_name}"] += 1
+                                wrote_audio = ensure_output_artifacts(
+                                    segment,
+                                    target_sample_rate,
+                                    out_path,
+                                    spectrogram_hop_length=spectrogram_hop_length,
+                                    spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
+                                    spectrogram_width_px=spectrogram_width_px,
+                                    spectrogram_height_px=spectrogram_height_px,
+                                )
+                                if wrote_audio:
+                                    counts[f"n_{label_name}"] += 1
+                                else:
+                                    counts["n_skipped"] += 1
                             if using_row_store:
                                 row["positive_extract_filename"] = clip_name
                             else:
@@ -1421,7 +1558,7 @@ def extract_hydrophone_labeled_samples(
             pending_writes: list[tuple[Path, str]] = []
             for out_dir, label_name in labels_to_write:
                 out_path = out_dir / clip_name
-                if out_path.exists():
+                if _output_artifacts_complete(out_path):
                     counts["n_skipped"] += 1
                     continue
                 pending_writes.append((out_path, label_name))
@@ -1474,8 +1611,19 @@ def extract_hydrophone_labeled_samples(
                 continue
 
             for out_path, label_name in pending_writes:
-                write_flac_file(segment, target_sample_rate, out_path)
-                counts[f"n_{label_name}"] += 1
+                wrote_audio = ensure_output_artifacts(
+                    segment,
+                    target_sample_rate,
+                    out_path,
+                    spectrogram_hop_length=spectrogram_hop_length,
+                    spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
+                    spectrogram_width_px=spectrogram_width_px,
+                    spectrogram_height_px=spectrogram_height_px,
+                )
+                if wrote_audio:
+                    counts[f"n_{label_name}"] += 1
+                else:
+                    counts["n_skipped"] += 1
 
     _write_detection_rows(
         tsv_path,

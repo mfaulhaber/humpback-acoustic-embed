@@ -466,6 +466,9 @@ Hydrophone labeled-sample extraction output layout:
 - Local (non-hydrophone) extraction keeps the same folder structure and now writes
   `{positive_sample_path}/{humpback|orca}/YYYY/MM/DD/*.flac` and
   `{negative_sample_path}/{ship|background}/YYYY/MM/DD/*.flac`
+- Every extracted `.flac` also gets a same-basename `.png` sidecar in the same
+  directory, rendered from the actual extracted clip window with the shared UI
+  spectrogram renderer (no start/stop overlay markers baked into the file).
 
 ---
 

@@ -746,6 +746,10 @@ async def run_extraction_job(
                 fallback_input_format=input_format,
                 fallback_feature_config=feature_config,
                 row_store_path=row_store_path,
+                spectrogram_hop_length=settings.spectrogram_hop_length,
+                spectrogram_dynamic_range_db=settings.spectrogram_dynamic_range_db,
+                spectrogram_width_px=settings.spectrogram_width_px,
+                spectrogram_height_px=settings.spectrogram_height_px,
             )
         else:
             if job.audio_folder is None:
@@ -767,6 +771,10 @@ async def run_extraction_job(
                 fallback_input_format=input_format,
                 fallback_feature_config=feature_config,
                 row_store_path=row_store_path,
+                spectrogram_hop_length=settings.spectrogram_hop_length,
+                spectrogram_dynamic_range_db=settings.spectrogram_dynamic_range_db,
+                spectrogram_width_px=settings.spectrogram_width_px,
+                spectrogram_height_px=settings.spectrogram_height_px,
             )
 
         await session.execute(
