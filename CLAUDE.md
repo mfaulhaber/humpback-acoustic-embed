@@ -202,6 +202,9 @@ UI can monitor via polling or a push channel.
 Hydrophone labeled-sample extraction groups by species/category first, then hydrophone:
 - positives: `{positive_output_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/*.flac`
 - negatives: `{negative_output_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/*.flac`
+- every extracted labeled clip (local and hydrophone) must also write a sibling
+  `.png` spectrogram sidecar using the same marker-free base rendering as the UI
+  spectrogram popup for that extracted clip window
 
 ### 4.5 Hydrophone Timeline Assembly
 Hydrophone detection, playback, and extraction must use the same bounded stream timeline:

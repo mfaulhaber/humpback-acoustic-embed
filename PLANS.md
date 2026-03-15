@@ -10,6 +10,31 @@
 
 ## Recently Completed
 
+# Plan: Sidecar Spectrogram PNGs for Extracted Detection Clips
+
+[Full plan](/Users/michael/.claude/plans/extracted-audio-sidecar-spectrograms.md)
+
+## Outcome (2026-03-15)
+
+- Extract labeled samples now write a same-basename `.png` beside each extracted
+  `.flac` for local and hydrophone jobs, using the same shared spectrogram
+  renderer/settings as the UI popup base image and the actual extracted clip
+  window rather than the full detection span.
+- Extraction reruns now backfill missing PNG sidecars without rewriting existing
+  audio, and stale positive-output cleanup removes sibling PNGs when selected
+  clip filenames change.
+- Added extractor/worker/API regression coverage for positive-window parity,
+  negative-label PNG generation, settings plumbing, and saved-PNG parity with
+  the `/classifier/detection-jobs/{id}/spectrogram` endpoint.
+
+## Verification
+
+- `uv run ruff format --check src/humpback/classifier/extractor.py src/humpback/workers/classifier_worker.py tests/integration/test_classifier_api.py tests/unit/test_classifier_worker.py tests/unit/test_extractor.py` — passed.
+- `uv run ruff check src/humpback/classifier/extractor.py src/humpback/workers/classifier_worker.py tests/integration/test_classifier_api.py tests/unit/test_classifier_worker.py tests/unit/test_extractor.py` — passed.
+- `uv run pyright src/humpback/classifier/extractor.py src/humpback/workers/classifier_worker.py tests/integration/test_classifier_api.py tests/unit/test_classifier_worker.py tests/unit/test_extractor.py` — passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 618 passed.
+
 # Plan: Classifier/Detection Data Flow + Spectrogram Windowing
 
 [Full plan](/Users/michael/.claude/plans/classifier-detection-data-flow-windowing.md)

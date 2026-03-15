@@ -65,7 +65,8 @@ export function ExtractDialog({
             <DialogTitle>Extract Labeled Samples</DialogTitle>
             <DialogDescription>
               Extract labeled audio segments from {selectedIds.size} selected detection job
-              {selectedIds.size !== 1 ? "s" : ""} as WAV files.
+              {selectedIds.size !== 1 ? "s" : ""} as FLAC files with matching spectrogram
+              PNGs.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">

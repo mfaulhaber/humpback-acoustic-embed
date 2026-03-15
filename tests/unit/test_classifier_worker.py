@@ -25,6 +25,10 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
     )
 
     settings.s3_cache_path = str(tmp_path / "cache-root")
+    settings.spectrogram_hop_length = 300
+    settings.spectrogram_dynamic_range_db = 72.0
+    settings.spectrogram_width_px = 777
+    settings.spectrogram_height_px = 333
     capture: dict[str, object] = {}
 
     class DummyProvider:
@@ -40,6 +44,10 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
         capture["positive_selection_extend_min_score"] = kwargs[
             "positive_selection_extend_min_score"
         ]
+        capture["spectrogram_hop_length"] = kwargs["spectrogram_hop_length"]
+        capture["spectrogram_dynamic_range_db"] = kwargs["spectrogram_dynamic_range_db"]
+        capture["spectrogram_width_px"] = kwargs["spectrogram_width_px"]
+        capture["spectrogram_height_px"] = kwargs["spectrogram_height_px"]
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
     def _fake_build_playback_provider(
@@ -99,6 +107,76 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
     assert capture["positive_selection_smoothing_window"] == 5
     assert capture["positive_selection_min_score"] == 0.8
     assert capture["positive_selection_extend_min_score"] == 0.6
+    assert capture["spectrogram_hop_length"] == 300
+    assert capture["spectrogram_dynamic_range_db"] == 72.0
+    assert capture["spectrogram_width_px"] == 777
+    assert capture["spectrogram_height_px"] == 333
+    assert job.extract_status == "complete"
+    assert job.extract_summary is not None
+
+
+async def test_local_extraction_forwards_spectrogram_settings(
+    session,
+    settings,
+    tmp_path,
+    monkeypatch,
+):
+    """Local extraction should receive the same spectrogram settings as the UI endpoint."""
+    tsv_path = tmp_path / "detections.tsv"
+    tsv_path.write_text(
+        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
+        "test.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
+    )
+
+    settings.spectrogram_hop_length = 144
+    settings.spectrogram_dynamic_range_db = 65.0
+    settings.spectrogram_width_px = 512
+    settings.spectrogram_height_px = 256
+    capture: dict[str, object] = {}
+
+    def _fake_extract_labeled_samples(**kwargs):
+        capture["audio_folder"] = kwargs["audio_folder"]
+        capture["window_diagnostics_path"] = kwargs["window_diagnostics_path"]
+        capture["spectrogram_hop_length"] = kwargs["spectrogram_hop_length"]
+        capture["spectrogram_dynamic_range_db"] = kwargs["spectrogram_dynamic_range_db"]
+        capture["spectrogram_width_px"] = kwargs["spectrogram_width_px"]
+        capture["spectrogram_height_px"] = kwargs["spectrogram_height_px"]
+        return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.extract_labeled_samples",
+        _fake_extract_labeled_samples,
+    )
+
+    job = DetectionJob(
+        status="complete",
+        extract_status="running",
+        classifier_model_id="missing-model-is-allowed",
+        audio_folder=str(tmp_path / "audio"),
+        output_tsv_path=str(tsv_path),
+        extract_config=json.dumps(
+            {
+                "positive_output_path": str(tmp_path / "pos"),
+                "negative_output_path": str(tmp_path / "neg"),
+            }
+        ),
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    await run_extraction_job(session, job, settings)
+    await session.refresh(job)
+
+    assert capture["audio_folder"] == str(tmp_path / "audio")
+    assert (
+        capture["window_diagnostics_path"]
+        == tsv_path.parent / "window_diagnostics.parquet"
+    )
+    assert capture["spectrogram_hop_length"] == 144
+    assert capture["spectrogram_dynamic_range_db"] == 65.0
+    assert capture["spectrogram_width_px"] == 512
+    assert capture["spectrogram_height_px"] == 256
     assert job.extract_status == "complete"
     assert job.extract_summary is not None
 
