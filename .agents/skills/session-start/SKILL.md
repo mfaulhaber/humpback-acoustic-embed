@@ -1,6 +1,6 @@
 ---
 name: session-start
-description: Checklist for starting every session by loading project context. Do NOT write code during this checklist.
+description: Checklist for starting every session by loading project context before choosing the next plan.
 ---
 
 
@@ -22,6 +22,8 @@ description: Checklist for starting every session by loading project context. Do
    - Recent commits (last 5)
 
 4. **Ask** what the user wants to work on, or confirm the active plan.
+   - If the next task is implementation work, route it through `session-transition`
+     before any code changes begin.
 
 ## Rules
 - Do NOT start coding or making changes

@@ -29,3 +29,11 @@ Before coding, read `STATUS.md`, `PLANS.md`, and `DECISIONS.md` to understand cu
 
 Project skill workflows live in `.agents/skills/<name>/SKILL.md`.
 Claude command wrappers in `.claude/commands/` point directly to those skill files.
+
+For implementation work, the canonical session flow is:
+`session-start -> session-transition -> session-implement -> session-review -> session-end`
+
+- `session-transition` activates the plan and enforces feature-branch readiness
+  before local changes.
+- `session-end` runs only after a clean `session-review` and handles
+  commit/push/draft-PR wrap-up.
