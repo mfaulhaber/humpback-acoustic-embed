@@ -747,8 +747,8 @@ async def test_hydrophone_download_normalizes_legacy_detection_filename(
     assert len(rows) == 1
     assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["raw_start_sec"] == "37.0"
-    assert rows[0]["raw_end_sec"] == "45.0"
+    assert rows[0]["raw_start_sec"] == "37.000000"
+    assert rows[0]["raw_end_sec"] == "45.000000"
     assert rows[0]["merged_event_count"] == "1"
 
     await engine.dispose()
@@ -831,8 +831,8 @@ async def test_hydrophone_download_returns_streaming_response(client, app_settin
     assert len(rows) == 1
     assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["raw_start_sec"] == "37.0"
-    assert rows[0]["raw_end_sec"] == "45.0"
+    assert rows[0]["raw_start_sec"] == "37.000000"
+    assert rows[0]["raw_end_sec"] == "45.000000"
     assert rows[0]["merged_event_count"] == "1"
 
     await engine.dispose()

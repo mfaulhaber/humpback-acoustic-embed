@@ -10,6 +10,32 @@
 
 ## Recently Completed
 
+# Plan: Classifier/Detection Data Flow + Spectrogram Windowing
+
+[Full plan](/Users/michael/.claude/plans/classifier-detection-data-flow-windowing.md)
+
+## Outcome (2026-03-15)
+
+- Detection jobs now persist canonical editable row state in
+  `detection_rows.parquet`, compute default positive-selection windows during
+  detection, and treat TSV as a synchronized download/export adapter.
+- The Hydrophone spectrogram popup now supports 5-second window editing with
+  Apply/Cancel, opposite-edge compensation at clip boundaries, and immediate
+  persistence through the row-state API without requiring extraction first.
+- Follow-up fixes in this session kept resumed hydrophone jobs from serving
+  stale row-store state, allowed row-store-backed content/download/edit flows
+  when the TSV adapter is missing, and corrected manual-bound validation so any
+  in-clip `5 * N` duration such as `3..13` is accepted.
+
+## Verification
+
+- `uv run ruff format --check` on touched Python files — passed.
+- `uv run ruff check` on touched Python files — passed.
+- `uv run pyright` on touched Python files — passed.
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` — passed.
+- `cd frontend && ./node_modules/.bin/playwright test e2e/detection-spectrogram.spec.ts -g 'positive rows can adjust the window|edge expansion promotes|right-edge expansion borrows'` — passed.
+- `uv run pytest tests/` — 615 passed.
+
 # Plan: UI Changes for Classifier/Detection Spectrogram
 
 [Full plan](/Users/michael/.claude/plans/classifier-detection-spectrogram-client-overlay.md)

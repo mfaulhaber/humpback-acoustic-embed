@@ -10,6 +10,7 @@ import {
   bulkDeleteDetectionJobs,
   fetchDetectionContent,
   saveDetectionLabels,
+  saveDetectionRowState,
   fetchExtractionSettings,
   extractLabeledSamples,
   fetchTrainingDataSummary,
@@ -26,6 +27,7 @@ import {
 import type {
   ClassifierTrainingJobCreate,
   DetectionLabelRow,
+  DetectionRowStateUpdate,
   HydrophoneDetectionJobCreate,
   RetrainWorkflowCreate,
 } from "@/api/types";
@@ -154,6 +156,23 @@ export function useSaveDetectionLabels() {
   return useMutation({
     mutationFn: ({ jobId, rows }: { jobId: string; rows: DetectionLabelRow[] }) =>
       saveDetectionLabels(jobId, rows),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["detectionContent", variables.jobId] });
+      qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
+    },
+  });
+}
+
+export function useSaveDetectionRowState() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      body,
+    }: {
+      jobId: string;
+      body: DetectionRowStateUpdate;
+    }) => saveDetectionRowState(jobId, body),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["detectionContent", variables.jobId] });
       qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });

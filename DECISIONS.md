@@ -717,3 +717,36 @@ clip discards adjacent high-confidence audio that should stay in the training ex
   behave consistently.
 - No database migration required; the change is limited to extraction logic, config/API
   defaults, tests, and documentation.
+
+---
+
+## ADR-028: Detection jobs use a canonical Parquet row store for editable row state
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Detection jobs were using TSV files as both the download artifact and the mutable
+source of record for labels/extraction provenance. That made downstream flows brittle: some UI
+state (for example spectrogram markers and manual window edits) depended on later extraction
+steps or legacy filename joins instead of the detection job itself carrying durable row state.
+
+**Decision**:
+- Add a canonical `detection_rows.parquet` artifact per detection job and store its path on the
+  detection job record.
+- Persist stable `row_id`, detection-time `auto_positive_selection_*`, manual override bounds,
+  effective `positive_selection_*`, and `positive_extract_filename` in that row store.
+- Keep `detections.tsv` as a synchronized export/download adapter rather than the editable source
+  of truth.
+- Populate detection-time auto-selection data during row-store creation, even before a row is
+  labeled positive, so later label saves and popup edits can reuse the same stored window data.
+- Add a row-level API mutation (`PUT /classifier/detection-jobs/{id}/row-state`) that atomically
+  persists one row's labels plus optional manual bounds.
+
+**Consequences**:
+- Spectrogram markers no longer depend on running extraction first; completed jobs can render
+  stored auto/effective bounds immediately.
+- Manual window editing becomes durable and updates the same source of record extraction reads.
+- Legacy TSV-only jobs can be lazily upgraded into the row store without losing download
+  compatibility.
+- A database migration is required only to persist `output_row_store_path`; the rest of the
+  change lives in job artifacts, API behavior, workers, tests, and UI.

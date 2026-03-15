@@ -22,6 +22,7 @@ from humpback.classifier.detector import (
     write_window_diagnostics,
     write_window_diagnostics_shard,
 )
+from humpback.classifier.detection_rows import ensure_detection_row_store
 from humpback.classifier.extractor import (
     DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
@@ -193,6 +194,7 @@ async def run_detection_job(
         # Set up output directory and TSV path early for incremental writes
         ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
         tsv_path = ddir / "detections.tsv"
+        row_store_path = ddir / "detection_rows.parquet"
         if not job.audio_folder:
             raise ValueError("Detection job missing audio_folder")
         audio_folder = Path(job.audio_folder)
@@ -212,6 +214,7 @@ async def run_detection_job(
             .where(DetectionJob.id == job.id)
             .values(
                 output_tsv_path=str(tsv_path),
+                output_row_store_path=str(row_store_path),
                 files_total=files_total,
                 files_processed=0,
             )
@@ -271,6 +274,17 @@ async def run_detection_job(
             diag_path = ddir / "window_diagnostics.parquet"
             write_window_diagnostics(diagnostics, diag_path)
             summary["has_diagnostics"] = True
+        else:
+            diag_path = None
+
+        ensure_detection_row_store(
+            row_store_path=row_store_path,
+            tsv_path=tsv_path,
+            diagnostics_path=diag_path,
+            is_hydrophone=False,
+            window_size_seconds=cm.window_size_seconds,
+            refresh_existing=True,
+        )
 
         summary_path = ddir / "run_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2))
@@ -330,11 +344,15 @@ async def run_hydrophone_detection_job(
         ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
         tsv_path = ddir / "detections.tsv"
         diag_path = ddir / "window_diagnostics.parquet"
+        row_store_path = ddir / "detection_rows.parquet"
 
         await session.execute(
             update(DetectionJob)
             .where(DetectionJob.id == job.id)
-            .values(output_tsv_path=str(tsv_path))
+            .values(
+                output_tsv_path=str(tsv_path),
+                output_row_store_path=str(row_store_path),
+            )
         )
         await session.commit()
 
@@ -555,6 +573,14 @@ async def run_hydrophone_detection_job(
                 tsv_path,
                 fieldnames=HYDROPHONE_TSV_FIELDNAMES,
             )
+            ensure_detection_row_store(
+                row_store_path=row_store_path,
+                tsv_path=tsv_path,
+                diagnostics_path=diag_path if diag_path.exists() else None,
+                is_hydrophone=True,
+                window_size_seconds=cm.window_size_seconds,
+                refresh_existing=True,
+            )
             await session.execute(
                 update(DetectionJob)
                 .where(DetectionJob.id == job.id)
@@ -577,6 +603,15 @@ async def run_hydrophone_detection_job(
             detections,
             tsv_path,
             fieldnames=HYDROPHONE_TSV_FIELDNAMES,
+        )
+
+        ensure_detection_row_store(
+            row_store_path=row_store_path,
+            tsv_path=tsv_path,
+            diagnostics_path=diag_path if diag_path.exists() else None,
+            is_hydrophone=True,
+            window_size_seconds=cm.window_size_seconds,
+            refresh_existing=True,
         )
 
         _mark_has_diagnostics(summary)
@@ -639,6 +674,11 @@ async def run_extraction_job(
         diagnostics_path = (
             Path(job.output_tsv_path).parent / "window_diagnostics.parquet"
         )
+        row_store_path = (
+            Path(job.output_row_store_path)
+            if job.output_row_store_path
+            else (Path(job.output_tsv_path).parent / "detection_rows.parquet")
+        )
 
         # Look up window_size_seconds from the classifier model
         from sqlalchemy import select as sa_select
@@ -661,6 +701,21 @@ async def run_extraction_job(
             model, input_format = await get_model_by_version(
                 session, cm.model_version, settings
             )
+
+        ensure_detection_row_store(
+            row_store_path=row_store_path,
+            tsv_path=Path(job.output_tsv_path),
+            diagnostics_path=diagnostics_path if diagnostics_path.exists() else None,
+            is_hydrophone=job.hydrophone_id is not None,
+            window_size_seconds=ws,
+        )
+        if job.output_row_store_path != str(row_store_path):
+            await session.execute(
+                update(DetectionJob)
+                .where(DetectionJob.id == job.id)
+                .values(output_row_store_path=str(row_store_path))
+            )
+            await session.commit()
 
         if job.hydrophone_id:
             from humpback.classifier.extractor import extract_hydrophone_labeled_samples
@@ -690,6 +745,7 @@ async def run_extraction_job(
                 fallback_model=model,
                 fallback_input_format=input_format,
                 fallback_feature_config=feature_config,
+                row_store_path=row_store_path,
             )
         else:
             if job.audio_folder is None:
@@ -710,6 +766,7 @@ async def run_extraction_job(
                 fallback_target_sample_rate=target_sample_rate,
                 fallback_input_format=input_format,
                 fallback_feature_config=feature_config,
+                row_store_path=row_store_path,
             )
 
         await session.execute(

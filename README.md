@@ -32,7 +32,7 @@ Key features:
 - Classifier baseline: logistic regression cross-validation with active learning priority queue
 - Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
 - Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
-- Detection spectrogram popup: play-click opens the cached STFT spectrogram alongside playback, `Alt`/`Option`-click still opens spectrogram-only view, and positive-labeled detections render client-side black extraction markers immediately from live checkbox edits, using persisted positive-selection bounds when available and legacy extracted/clip bounds as fallback
+- Detection spectrogram popup: play-click opens the cached STFT spectrogram alongside playback, `Alt`/`Option`-click still opens spectrogram-only view, positive-labeled detections render client-side black extraction markers immediately from live checkbox edits using stored auto/effective bounds before extraction runs, and completed hydrophone rows can shift the selection window in 5-second steps with Apply/Cancel to persist manual overrides back into the job
 - Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping with provider-specific archive logic; Orcasound HLS uses playlist durations + numeric segment ordering with legacy anchor fallback for older jobs, sparse local-cache ranges preserve playlist timeline offsets (for example cached mid-sequence `live6118..` windows) so playback/spectrogram alignment remains correct without S3 fallback, and Orcasound extraction remains local-cache-authoritative; NOAA Glacier Bay is available through the same legacy hydrophone API surface via direct anonymous GCS `.aif` fetch for detection/playback/extraction; folder discovery starts at requested range and expands backward using configurable hour-based increments (default `4h`) up to configurable max lookback (default `168h`) until overlap at the requested start boundary is found (or max lookback is reached), then timeline clipping is applied; hydrophone detection supports ordered bounded S3 segment prefetch (configurable workers + in-flight limit) with per-run fetch/decode/features/inference timing telemetry in `run_summary`; Extract activates from saved labels on the expanded completed job; hydrophone extraction outputs are partitioned by short label (`{positive|negative}_root/{label}/{hydrophone_id}/.../*.flac`); detection rows use canonical snapped clip bounds for preview/label/extract parity and preserve unsnapped audit bounds (`raw_start_sec`, `raw_end_sec`, `merged_event_count`); Hydrophone Start/End inputs and Date Range displays are UTC-only
 - Folder import: reference audio files in-place from local filesystem folders without copying
 
@@ -527,6 +527,10 @@ Validation and error behavior notes:
   and skips missing-cache positives via `n_positive_selection_skipped`. NOAA Glacier Bay
   extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns `416` for malformed or unsatisfiable `Range` headers.
+- Completed detection jobs keep a canonical `detection_rows.parquet` row store beside the TSV
+  output. Detection-time auto-selection metadata is persisted there, TSV download is generated
+  from that row store, and `PUT /classifier/detection-jobs/{id}/row-state` can atomically
+  persist one row's labels plus manual positive-window bounds.
 
 ---
 
@@ -548,7 +552,8 @@ data/
   clusters/{clustering_job_id}/refined_embeddings.parquet (opt-in, for re-clustering)
   classifiers/{classifier_model_id}/model.joblib         (binary classifier pipeline)
   classifiers/{classifier_model_id}/training_summary.json
-  detections/{detection_job_id}/detections.tsv            (detection output; canonical snapped start/end + raw audit fields; positive-selection provenance in positive_selection_* columns; hydrophone rows include detection_filename + extract_filename alias)
+  detections/{detection_job_id}/detection_rows.parquet    (canonical editable row store; row_id + labels + detection-time auto selections + manual overrides + effective positive-selection provenance + extraction artifact filename)
+  detections/{detection_job_id}/detections.tsv            (download/export view synchronized from detection_rows.parquet; hydrophone rows include detection_filename + extract_filename alias)
   detections/{detection_job_id}/window_diagnostics.parquet (local jobs: single Parquet file; hydrophone jobs: shard directory)
   detections/{detection_job_id}/run_summary.json
 ```

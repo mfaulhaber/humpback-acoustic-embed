@@ -13,6 +13,10 @@ import numpy as np
 import soundfile as sf
 
 from humpback.classifier.archive import StreamSegment
+from humpback.classifier.detection_rows import (
+    read_detection_row_store,
+    write_detection_row_store,
+)
 from humpback.classifier.detector import write_window_diagnostics
 from humpback.classifier.extractor import (
     _select_positive_window,
@@ -766,6 +770,84 @@ class TestPositiveWindowSelection:
         assert rows[0]["positive_extract_filename"] == (
             "20250615T080002.000000Z_20250615T080007.000000Z.flac"
         )
+
+    def test_local_extraction_honors_stored_manual_window_from_row_store(
+        self, tmp_path
+    ):
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        source_name = "20250615T080000Z.wav"
+        _make_wav(audio_folder / source_name, duration=20.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": source_name,
+                    "start_sec": "0.0",
+                    "end_sec": "15.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            ],
+        )
+
+        row_store_path = tmp_path / "detection_rows.parquet"
+        write_detection_row_store(
+            row_store_path,
+            [
+                {
+                    "row_id": "row-1",
+                    "filename": source_name,
+                    "start_sec": "0.000000",
+                    "end_sec": "15.000000",
+                    "avg_confidence": "0.900000",
+                    "peak_confidence": "0.950000",
+                    "detection_filename": "20250615T080000Z_20250615T080015Z.flac",
+                    "humpback": "1",
+                    "manual_positive_selection_start_sec": "5.000000",
+                    "manual_positive_selection_end_sec": "15.000000",
+                    "positive_selection_origin": "manual_override",
+                    "positive_selection_score_source": "manual_override",
+                    "positive_selection_decision": "positive",
+                    "positive_selection_start_sec": "5.000000",
+                    "positive_selection_end_sec": "15.000000",
+                }
+            ],
+        )
+
+        pos_out = tmp_path / "positive"
+        neg_out = tmp_path / "negative"
+        summary = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            row_store_path=row_store_path,
+        )
+
+        assert summary["n_humpback"] == 1
+        files = list((pos_out / "humpback").rglob("*.flac"))
+        assert len(files) == 1
+        assert abs(_audio_duration(files[0]) - 10.0) < 0.2
+
+        _fieldnames, stored_rows = read_detection_row_store(row_store_path)
+        assert stored_rows[0]["manual_positive_selection_start_sec"] == "5.000000"
+        assert stored_rows[0]["manual_positive_selection_end_sec"] == "15.000000"
+        assert stored_rows[0]["positive_selection_start_sec"] == "5.000000"
+        assert stored_rows[0]["positive_selection_end_sec"] == "15.000000"
+        assert stored_rows[0]["positive_extract_filename"] == (
+            "20250615T080005.000000Z_20250615T080015.000000Z.flac"
+        )
+
+        rows = _read_tsv_rows(tsv_path)
+        assert rows[0]["positive_selection_start_sec"] == "5.000000"
+        assert rows[0]["positive_selection_end_sec"] == "15.000000"
+        assert rows[0]["positive_selection_origin"] == "manual_override"
 
     def test_local_positive_selection_skips_when_peak_below_threshold(self, tmp_path):
         audio_folder = tmp_path / "audio"
