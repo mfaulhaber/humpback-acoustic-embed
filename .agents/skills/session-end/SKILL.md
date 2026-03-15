@@ -1,6 +1,6 @@
 ---
 name: session-end
-description: Post-review wrap-up checklist with commit, push, and draft-PR handling.
+description: Post-review wrap-up checklist with commit, push, PR creation, and squash-merge handling.
 ---
 
 ## Steps
@@ -55,24 +55,40 @@ description: Post-review wrap-up checklist with commit, push, and draft-PR handl
      time.
    - Otherwise use `git push`.
 
-11. **Handle the pull request**
-   - Check for an existing open PR for the current branch.
-   - If one exists, reuse it and report the URL. Do not create a duplicate or
-     overwrite manual PR content.
-   - If no PR exists and `gh` is installed plus authenticated, create a draft
-     PR targeting the default branch. Use the active plan title as the PR title
-     when possible, falling back to the commit subject.
-   - Build the draft PR body from the session summary, validation results, and
-     next steps.
+11. **Handle the pull request against `main`**
+   - Check for existing PRs for the current branch before creating anything.
+   - If an open PR already exists, reuse it and report the URL. Do not create a
+     duplicate or overwrite manual PR content.
+   - If the branch already has a merged PR, report that and stop rather than
+     creating a duplicate PR for the same branch.
+   - If no PR exists and `gh` is installed plus authenticated, create a ready
+     PR targeting `main`. Use the active plan title as the PR title when
+     possible, falling back to the commit subject.
+   - Build the PR body from the session summary, validation results, and next
+     steps.
    - If `gh` is unavailable or unauthenticated, stop after push and report that
      PR automation could not run.
 
-12. **Report next steps** — what should the next session pick up?
+12. **Attempt the squash merge**
+   - After creating or reusing the PR, attempt an immediate squash merge via
+     GitHub.
+   - If merge is blocked by conflicts, missing permissions, required checks,
+     required review, or future branch protection, stop and report the specific
+     blocker. Do not bypass GitHub policy.
+   - Do not delete the local or remote feature branch after merge.
+   - Report the PR URL and whether the squash merge succeeded.
+
+13. **Report next steps**
+   - Note that the next `session-start` should return the repo to synced local
+     `main`.
+   - Call out any follow-up work that did not make this session's merge.
 
 ## Rules
 - `session-end` happens only after a clean `session-review`.
 - Do NOT skip directly from implementation to commit/push/PR handling.
 - Do NOT commit or push from a protected branch.
+- Target `main` when creating a PR from this skill.
+- Prefer squash merge when GitHub allows it.
 - Keep updates concise
 - Don't rewrite entire files — use targeted edits
 - Verify memory files are consistent with each other

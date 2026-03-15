@@ -33,7 +33,9 @@ Claude command wrappers in `.claude/commands/` point directly to those skill fil
 For implementation work, the canonical session flow is:
 `session-start -> session-transition -> session-implement -> session-review -> session-end`
 
+- `session-start` begins by normalizing the repo onto synced local `main`
+  before loading context.
 - `session-transition` activates the plan and enforces feature-branch readiness
   before local changes.
 - `session-end` runs only after a clean `session-review` and handles
-  commit/push/draft-PR wrap-up.
+  commit, push, PR creation, and squash-merge wrap-up.
