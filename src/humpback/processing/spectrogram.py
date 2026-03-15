@@ -10,6 +10,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from scipy.signal import stft  # noqa: E402
 
+PLOT_LEFT = 0.11
+PLOT_RIGHT = 0.985
+PLOT_BOTTOM = 0.15
+PLOT_TOP = 0.97
+
 
 def generate_spectrogram_png(
     audio: np.ndarray,
@@ -35,6 +40,8 @@ def generate_spectrogram_png(
     -------
     bytes – PNG image data
     """
+    original_duration_sec = max(len(audio) / sample_rate, 1e-6)
+
     # Handle very short audio: pad to at least n_fft samples
     if len(audio) < n_fft:
         audio = np.pad(audio, (0, n_fft - len(audio)))
@@ -54,17 +61,35 @@ def generate_spectrogram_png(
 
     dpi = 100
     fig, ax = plt.subplots(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
+    fig.subplots_adjust(
+        left=PLOT_LEFT,
+        right=PLOT_RIGHT,
+        bottom=PLOT_BOTTOM,
+        top=PLOT_TOP,
+    )
     # Crop to 0–3 kHz
     freq_mask = f <= 3000
     f = f[freq_mask]
     power_db = power_db[freq_mask, :]
+    display_t = np.linspace(
+        0.0,
+        original_duration_sec,
+        num=t.shape[0],
+        endpoint=True,
+    )
 
     ax.pcolormesh(
-        t, f, power_db, vmin=vmin, vmax=vmax, cmap="inferno", shading="gouraud"
+        display_t,
+        f,
+        power_db,
+        vmin=vmin,
+        vmax=vmax,
+        cmap="inferno",
+        shading="gouraud",
     )
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Frequency (Hz)")
-    fig.tight_layout(pad=0.5)
+    ax.set_xlim(0.0, original_duration_sec)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi)

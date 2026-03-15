@@ -147,7 +147,7 @@ Current state of the humpback acoustic embedding and clustering platform.
   `/classifier/detection-jobs/{id}/content`
 - Hydrophone progress displays audio duration in hours:minutes format
 - Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
-- Detection spectrogram popup: Alt+click any detection row to view an STFT spectrogram (cached PNG, configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
+- Detection spectrogram popup: click a detection row's Play button to open the cached STFT spectrogram alongside playback, or Alt+click the row for spectrogram-only view; positive-labeled detections render client-side black extraction markers immediately from live checkbox edits, using persisted `positive_selection_*` bounds when present and falling back to legacy extracted/clip bounds otherwise (configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
 - "Whale" badge on hydrophone jobs with confirmed positive labels — humpback or orca (`has_positive_labels` flag persisted on label save)
 - 3-way audio source selector (Orcasound / NOAA / Local Cache) with hydrophone
   dropdown filtered by `provider_kind` from the `/classifier/hydrophones` API

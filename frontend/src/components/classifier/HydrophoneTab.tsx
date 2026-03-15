@@ -60,6 +60,16 @@ type PlayClip = {
   startSec: number;
   durationSec: number;
 };
+type SpectrogramMarkerBounds = {
+  startSec: number;
+  endSec: number;
+};
+type SpectrogramPopupState = {
+  imageUrl: string;
+  position: { x: number; y: number };
+  markerBounds: SpectrogramMarkerBounds | null;
+  durationSec: number;
+};
 type HydratedDetectionRow = DetectionRow & {
   _detectionFilename: string | null;
   _clipSource: ClipSource;
@@ -97,8 +107,12 @@ function formatUtcDateTime(timestampSeconds: number): string {
   return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())} ${p(date.getUTCHours())}:${p(date.getUTCMinutes())} UTC`;
 }
 
+function stripKnownAudioExtension(value: string): string {
+  return value.replace(/\.(wav|flac|mp3|aif|aiff)$/i, "");
+}
+
 function computeUtcRange(filename: string, startSec: number, endSec: number): string {
-  const basename = filename.replace(".wav", "");
+  const basename = stripKnownAudioExtension(filename);
   const match = basename.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (!match) return filename;
   const chunkMs = Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6]);
@@ -121,7 +135,7 @@ function parseCompactUtcMs(value: string): number | null {
 function parseDetectionFilenameRange(
   detectionFilename: string,
 ): { startMs: number; endMs: number } | null {
-  const base = detectionFilename.replace(".wav", "");
+  const base = stripKnownAudioExtension(detectionFilename);
   const parts = base.split("_");
   if (parts.length !== 2) return null;
   const startMs = parseCompactUtcMs(parts[0]);
@@ -159,7 +173,7 @@ function resolveClipTiming(
       ? computeUtcRange(row.filename, auditStartSec, auditEndSec)
       : null;
 
-  const baseTs = parseCompactUtcMs(row.filename.replace(".wav", ""));
+  const baseTs = parseCompactUtcMs(stripKnownAudioExtension(row.filename));
   if (baseTs !== null && detectionFilename) {
     const detected = parseDetectionFilenameRange(detectionFilename);
     if (detected) {
@@ -188,6 +202,71 @@ function resolveClipTiming(
     _clipDurationSec: rawDurationSec,
     _clipRange: rawClipRange,
     _rawRange: null,
+  };
+}
+
+function resolveMarkerBoundsFromAbsoluteRange(
+  row: HydratedDetectionRow,
+  startSec: number | null | undefined,
+  endSec: number | null | undefined,
+): SpectrogramMarkerBounds | null {
+  if (typeof startSec !== "number" || typeof endSec !== "number" || endSec <= startSec) {
+    return null;
+  }
+
+  const epsilon = 1e-6;
+  const relativeStartSec = startSec - row._clipStartSec;
+  const relativeEndSec = endSec - row._clipStartSec;
+
+  if (
+    relativeStartSec < -epsilon ||
+    relativeEndSec > row._clipDurationSec + epsilon ||
+    relativeEndSec <= relativeStartSec
+  ) {
+    return null;
+  }
+
+  return {
+    startSec: Math.max(0, relativeStartSec),
+    endSec: Math.min(row._clipDurationSec, relativeEndSec),
+  };
+}
+
+function resolvePositiveSelectionMarkerBounds(
+  row: HydratedDetectionRow,
+): SpectrogramMarkerBounds | null {
+  const explicitSelection = resolveMarkerBoundsFromAbsoluteRange(
+    row,
+    row.positive_selection_start_sec,
+    row.positive_selection_end_sec,
+  );
+  if (explicitSelection) {
+    return explicitSelection;
+  }
+
+  const baseTs = parseCompactUtcMs(stripKnownAudioExtension(row.filename));
+  const positiveExtractRange =
+    typeof row.positive_extract_filename === "string" && row.positive_extract_filename.trim()
+      ? parseDetectionFilenameRange(row.positive_extract_filename.trim())
+      : null;
+  if (baseTs !== null && positiveExtractRange) {
+    const fallbackSelection = resolveMarkerBoundsFromAbsoluteRange(
+      row,
+      (positiveExtractRange.startMs - baseTs) / 1000,
+      (positiveExtractRange.endMs - baseTs) / 1000,
+    );
+    if (fallbackSelection) {
+      return fallbackSelection;
+    }
+  }
+
+  if (row._clipDurationSec <= 0) {
+    return null;
+  }
+
+  return {
+    startSec: 0,
+    endSec: row._clipDurationSec,
   };
 }
 
@@ -1459,10 +1538,7 @@ function HydrophoneContentTable({
   const [sortDir, setSortDir] = useState<SortDir>(isRunning ? "asc" : "desc");
   const prevRunning = useRef(isRunning);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
-  const [spectrogramPopup, setSpectrogramPopup] = useState<{
-    imageUrl: string;
-    position: { x: number; y: number };
-  } | null>(null);
+  const [spectrogramPopup, setSpectrogramPopup] = useState<SpectrogramPopupState | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
   const hydratedRows = useMemo<HydratedDetectionRow[]>(
@@ -1529,6 +1605,26 @@ function HydrophoneContentTable({
       return row[field];
     },
     [labelEdits],
+  );
+
+  const openSpectrogramPopup = useCallback(
+    (row: HydratedDetectionRow, position: { x: number; y: number }) => {
+      setSpectrogramPopup({
+        imageUrl: detectionSpectrogramUrl(
+          jobId,
+          row.filename,
+          row._clipStartSec,
+          Math.max(0.1, row._clipDurationSec),
+        ),
+        position,
+        markerBounds:
+          (getEffectiveLabel(row, "humpback") === 1 || getEffectiveLabel(row, "orca") === 1)
+            ? resolvePositiveSelectionMarkerBounds(row)
+            : null,
+        durationSec: Math.max(0.1, row._clipDurationSec),
+      });
+    },
+    [getEffectiveLabel, jobId],
   );
 
   const handleCheckboxClick = useCallback(
@@ -1641,16 +1737,7 @@ function HydrophoneContentTable({
                 onClick={(e) => {
                   if (e.altKey) {
                     e.preventDefault();
-                    const url = detectionSpectrogramUrl(
-                      jobId,
-                      row.filename,
-                      row._clipStartSec,
-                      Math.max(0.1, row._clipDurationSec),
-                    );
-                    setSpectrogramPopup({
-                      imageUrl: url,
-                      position: { x: e.clientX, y: e.clientY },
-                    });
+                    openSpectrogramPopup(row, { x: e.clientX, y: e.clientY });
                     return;
                   }
                   setFocusedIndex(i);
@@ -1661,6 +1748,13 @@ function HydrophoneContentTable({
                     className="p-0.5 hover:bg-muted rounded"
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (!isPlaying) {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        openSpectrogramPopup(row, {
+                          x: rect.right,
+                          y: rect.top + rect.height / 2,
+                        });
+                      }
                       onPlay(jobId, row, {
                         startSec: row._clipStartSec,
                         durationSec: row._clipDurationSec,
@@ -1724,6 +1818,8 @@ function HydrophoneContentTable({
         <SpectrogramPopup
           imageUrl={spectrogramPopup.imageUrl}
           position={spectrogramPopup.position}
+          markerBounds={spectrogramPopup.markerBounds}
+          durationSec={spectrogramPopup.durationSec}
           onClose={() => setSpectrogramPopup(null)}
         />
       )}

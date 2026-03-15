@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+PNG_RENDERER_VERSION = 2
+
 
 class SpectrogramCache:
     """Simple disk-backed FIFO cache keyed by spectrogram parameters."""
@@ -25,6 +27,7 @@ class SpectrogramCache:
         n_fft: int,
         width_px: int,
         height_px: int,
+        renderer_version: int = PNG_RENDERER_VERSION,
     ) -> str:
         blob = json.dumps(
             [
@@ -37,6 +40,7 @@ class SpectrogramCache:
                 n_fft,
                 width_px,
                 height_px,
+                renderer_version,
             ],
             sort_keys=False,
         ).encode()

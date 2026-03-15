@@ -10,6 +10,30 @@
 
 ## Recently Completed
 
+# Plan: UI Changes for Classifier/Detection Spectrogram
+
+[Full plan](/Users/michael/.claude/plans/classifier-detection-spectrogram-client-overlay.md)
+
+## Outcome (2026-03-15)
+
+- Detection Play clicks now open the spectrogram popup alongside playback, while
+  `Alt`/`Option`-click still opens spectrogram-only view.
+- The popup now renders client-side black extraction markers using persisted
+  `positive_selection_*` bounds when available, unsaved live positive-label
+  edits immediately, and legacy extracted/clip bounds as fallback for older
+  rows without selection metadata.
+- Spectrogram PNG rendering now uses deterministic plot margins and cache-key
+  versioning so the client-side overlay aligns consistently with cached images.
+
+## Verification
+
+- `uv run ruff format --check src/humpback/processing/spectrogram.py src/humpback/processing/spectrogram_cache.py tests/unit/test_spectrogram.py` — passed.
+- `uv run ruff check src/humpback/processing/spectrogram.py src/humpback/processing/spectrogram_cache.py tests/unit/test_spectrogram.py` — passed.
+- `uv run pyright src/humpback/processing/spectrogram.py src/humpback/processing/spectrogram_cache.py tests/unit/test_spectrogram.py` — passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `cd frontend && npx playwright test e2e/detection-spectrogram.spec.ts` — 4 passed, 1 skipped.
+- `uv run pytest tests/` — 608 passed.
+
 # Plan: Relax Positive Extraction Length With 5-Second Chunk Growth
 
 [Full plan](/Users/michael/.claude/plans/relaxed-positive-extraction-length.md)
