@@ -1,6 +1,6 @@
 ---
 name: session-review
-description: Systematic review checklist for changes before committing.
+description: Required validation gate before session-end and any git mutation.
 ---
 
 ## Checklist
@@ -42,7 +42,14 @@ description: Systematic review checklist for changes before committing.
    - Pyright: otherwise, if modified Python targets exist, run `uv run pyright <modified_python_files>`
    - Pytest: for any non-empty modified review scope, run `uv run pytest tests/` after Ruff/Pyright
 
+## Rules
+- Do NOT commit, push, or create/update a pull request in this skill.
+- If any repo-tracked file changes after this review, rerun `session-review`
+  before `session-end`.
+
 ## Output
 - List any issues found with file:line references
 - If no modified files are present, report that there is no review scope
+- If validation fails or any findings remain, explicitly state `Ready for session-end: no`
 - Confirm ready to commit only if Ruff format, Ruff lint, Pyright checks (when applicable), and `uv run pytest tests/` all pass
+- If all checks pass with no blocking findings, explicitly state `Ready for session-end: yes`
