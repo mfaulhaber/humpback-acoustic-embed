@@ -47,6 +47,7 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     high_threshold: Mapped[float] = mapped_column(default=0.70)
     low_threshold: Mapped[float] = mapped_column(default=0.45)
     output_tsv_path: Mapped[Optional[str]] = mapped_column(default=None)
+    output_row_store_path: Mapped[Optional[str]] = mapped_column(default=None)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     files_processed: Mapped[Optional[int]] = mapped_column(default=None)

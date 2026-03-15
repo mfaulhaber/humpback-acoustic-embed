@@ -221,6 +221,260 @@ test.describe("Detection spectrogram", () => {
     await expect(page.getByTestId("spectrogram-marker-end")).toHaveCount(1);
   });
 
+  test("positive rows can adjust the window in 5-second steps and apply row state", async ({
+    page,
+  }) => {
+    let rowStatePayload: Record<string, unknown> | null = null;
+
+    await setupUiMocks(page, [
+      {
+        row_id: "row-1",
+        filename: "20250704T090000Z.wav",
+        start_sec: 0,
+        end_sec: 10,
+        avg_confidence: 0.93,
+        peak_confidence: 0.97,
+        n_windows: 6,
+        humpback: null,
+        orca: null,
+        ship: null,
+        background: null,
+        detection_filename: "20250704T090000Z_20250704T090015Z.flac",
+        extract_filename: "20250704T090000Z_20250704T090015Z.flac",
+        auto_positive_selection_start_sec: 5,
+        auto_positive_selection_end_sec: 10,
+        positive_selection_start_sec: null,
+        positive_selection_end_sec: null,
+      },
+    ]);
+
+    await page.route(/\/detection-jobs\/[^/]+\/row-state$/, async (route) => {
+      rowStatePayload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "ok",
+          row: {
+            row_id: "row-1",
+            filename: "20250704T090000Z.wav",
+            start_sec: 0,
+            end_sec: 10,
+            avg_confidence: 0.93,
+            peak_confidence: 0.97,
+            n_windows: 6,
+            humpback: 1,
+            orca: null,
+            ship: null,
+            background: null,
+            detection_filename: "20250704T090000Z_20250704T090015Z.flac",
+            extract_filename: "20250704T090000Z_20250704T090015Z.flac",
+            manual_positive_selection_start_sec: 0,
+            manual_positive_selection_end_sec: 15,
+            positive_selection_origin: "manual_override",
+            positive_selection_start_sec: 0,
+            positive_selection_end_sec: 15,
+          },
+        }),
+      });
+    });
+
+    await page.goto("/app/classifier");
+    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
+    await expect(page.locator(".clip-range")).toBeVisible();
+    await page.locator(".clip-range").locator("xpath=ancestor::tr").locator('input[type="checkbox"]').nth(0).check();
+    await page.locator('button[title="Play"]').click();
+
+    await expect(page.getByTestId("spectrogram-popup")).toBeVisible();
+    await expect(page.getByTestId("spectrogram-start-earlier")).toBeVisible();
+    await expect(page.getByTestId("spectrogram-end-later")).toBeVisible();
+
+    await page.getByTestId("spectrogram-start-earlier").click();
+    await page.getByTestId("spectrogram-end-later").click();
+
+    await expect(page.getByTestId("spectrogram-start-earlier")).toBeDisabled();
+    await expect(page.getByTestId("spectrogram-end-later")).toBeDisabled();
+
+    await page.getByTestId("spectrogram-apply").click();
+
+    await expect.poll(() => rowStatePayload).not.toBeNull();
+    expect(rowStatePayload).toMatchObject({
+      row_id: "row-1",
+      humpback: 1,
+      manual_positive_selection_start_sec: 0,
+      manual_positive_selection_end_sec: 15,
+    });
+    await expect(page.getByTestId("spectrogram-popup")).toHaveCount(0);
+  });
+
+  test("edge expansion promotes to the full detection when a partial step would remain", async ({
+    page,
+  }) => {
+    let rowStatePayload: Record<string, unknown> | null = null;
+
+    await setupUiMocks(page, [
+      {
+        row_id: "row-edge-1",
+        filename: "20150808T014416Z.wav",
+        start_sec: 3,
+        end_sec: 8,
+        avg_confidence: 0.93,
+        peak_confidence: 0.97,
+        n_windows: 6,
+        humpback: null,
+        orca: null,
+        ship: null,
+        background: null,
+        detection_filename: "20150808T014416Z_20150808T014431Z.flac",
+        extract_filename: "20150808T014416Z_20150808T014431Z.flac",
+        auto_positive_selection_start_sec: 3,
+        auto_positive_selection_end_sec: 8,
+        positive_selection_start_sec: null,
+        positive_selection_end_sec: null,
+      },
+    ]);
+
+    await page.route(/\/detection-jobs\/[^/]+\/row-state$/, async (route) => {
+      rowStatePayload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "ok",
+          row: {
+            row_id: "row-edge-1",
+            filename: "20150808T014416Z.wav",
+            start_sec: 3,
+            end_sec: 8,
+            avg_confidence: 0.93,
+            peak_confidence: 0.97,
+            n_windows: 6,
+            humpback: 1,
+            orca: null,
+            ship: null,
+            background: null,
+            detection_filename: "20150808T014416Z_20150808T014431Z.flac",
+            extract_filename: "20150808T014416Z_20150808T014431Z.flac",
+            manual_positive_selection_start_sec: 0,
+            manual_positive_selection_end_sec: 15,
+            positive_selection_origin: "manual_override",
+            positive_selection_start_sec: 0,
+            positive_selection_end_sec: 15,
+          },
+        }),
+      });
+    });
+
+    await page.goto("/app/classifier");
+    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
+    await expect(page.locator(".clip-range")).toBeVisible();
+    await page.locator(".clip-range").locator("xpath=ancestor::tr").locator('input[type="checkbox"]').nth(0).check();
+    await page.locator('button[title="Play"]').click();
+
+    await expect(page.getByTestId("spectrogram-popup")).toBeVisible();
+    await page.getByTestId("spectrogram-end-later").click();
+    await page.getByTestId("spectrogram-end-later").click();
+    await expect(page.getByTestId("spectrogram-start-earlier")).toBeDisabled();
+    await expect(page.getByTestId("spectrogram-end-later")).toBeDisabled();
+
+    await page.getByTestId("spectrogram-apply").click();
+
+    await expect.poll(() => rowStatePayload).not.toBeNull();
+    expect(rowStatePayload).toMatchObject({
+      row_id: "row-edge-1",
+      humpback: 1,
+      manual_positive_selection_start_sec: 0,
+      manual_positive_selection_end_sec: 15,
+    });
+  });
+
+  test("right-edge expansion borrows from the left before using the full clip", async ({
+    page,
+  }) => {
+    let rowStatePayload: Record<string, unknown> | null = null;
+
+    await setupUiMocks(page, [
+      {
+        row_id: "row-edge-2",
+        filename: "20150807T221813Z.wav",
+        start_sec: 7,
+        end_sec: 12,
+        avg_confidence: 0.94,
+        peak_confidence: 0.98,
+        n_windows: 6,
+        humpback: null,
+        orca: null,
+        ship: null,
+        background: null,
+        detection_filename: "20150807T221813Z_20150807T221828Z.flac",
+        extract_filename: "20150807T221813Z_20150807T221828Z.flac",
+        auto_positive_selection_start_sec: 7,
+        auto_positive_selection_end_sec: 12,
+        positive_selection_start_sec: null,
+        positive_selection_end_sec: null,
+      },
+    ]);
+
+    await page.route(/\/detection-jobs\/[^/]+\/row-state$/, async (route) => {
+      rowStatePayload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "ok",
+          row: {
+            row_id: "row-edge-2",
+            filename: "20150807T221813Z.wav",
+            start_sec: 7,
+            end_sec: 12,
+            avg_confidence: 0.94,
+            peak_confidence: 0.98,
+            n_windows: 6,
+            humpback: 1,
+            orca: null,
+            ship: null,
+            background: null,
+            detection_filename: "20150807T221813Z_20150807T221828Z.flac",
+            extract_filename: "20150807T221813Z_20150807T221828Z.flac",
+            manual_positive_selection_start_sec: 5,
+            manual_positive_selection_end_sec: 15,
+            positive_selection_origin: "manual_override",
+            positive_selection_start_sec: 5,
+            positive_selection_end_sec: 15,
+          },
+        }),
+      });
+    });
+
+    await page.goto("/app/classifier");
+    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
+    await expect(page.locator(".clip-range")).toBeVisible();
+    await page
+      .locator(".clip-range")
+      .locator("xpath=ancestor::tr")
+      .locator('input[type="checkbox"]')
+      .nth(0)
+      .check();
+    await page.locator('button[title="Play"]').click();
+
+    await expect(page.getByTestId("spectrogram-popup")).toBeVisible();
+    await page.getByTestId("spectrogram-end-later").click();
+    await expect(page.getByTestId("spectrogram-start-earlier")).toBeVisible();
+
+    await page.getByTestId("spectrogram-apply").click();
+
+    await expect.poll(() => rowStatePayload).not.toBeNull();
+    expect(rowStatePayload).toMatchObject({
+      row_id: "row-edge-2",
+      humpback: 1,
+      manual_positive_selection_start_sec: 5,
+      manual_positive_selection_end_sec: 15,
+    });
+  });
+
   test("Alt+click still opens popup and rows without bounds show no markers", async ({
     page,
   }) => {

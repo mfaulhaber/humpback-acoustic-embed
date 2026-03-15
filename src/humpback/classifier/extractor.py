@@ -16,6 +16,13 @@ import numpy as np
 import soundfile as sf
 
 from humpback.classifier.archive import ArchiveProvider
+from humpback.classifier.detection_rows import (
+    ROW_STORE_FIELDNAMES,
+    read_detection_row_store,
+    safe_float_list,
+    sync_detection_tsv,
+    write_detection_row_store,
+)
 from humpback.classifier.detector import read_window_diagnostics_table
 from humpback.classifier.s3_stream import build_stream_timeline, resolve_audio_slice
 from humpback.processing.audio_io import decode_audio, resample
@@ -132,6 +139,19 @@ def _read_tsv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return fieldnames, rows
 
 
+def _read_detection_rows(
+    tsv_path: Path,
+    *,
+    row_store_path: Path | None = None,
+) -> tuple[list[str], list[dict[str, str]], bool]:
+    """Read detection rows from the canonical row store when available."""
+    if row_store_path is not None and row_store_path.exists():
+        fieldnames, rows = read_detection_row_store(row_store_path)
+        return fieldnames, rows, True
+    fieldnames, rows = _read_tsv_rows(tsv_path)
+    return fieldnames, rows, False
+
+
 def _write_tsv_rows(
     path: Path, fieldnames: list[str], rows: list[dict[str, str]]
 ) -> None:
@@ -150,6 +170,22 @@ def _write_tsv_rows(
         except OSError:
             pass
         raise
+
+
+def _write_detection_rows(
+    tsv_path: Path,
+    fieldnames: list[str],
+    rows: list[dict[str, str]],
+    *,
+    row_store_path: Path | None = None,
+    using_row_store: bool = False,
+) -> None:
+    """Persist detection rows back to the active source of truth."""
+    if using_row_store and row_store_path is not None:
+        write_detection_row_store(row_store_path, rows)
+        sync_detection_tsv(tsv_path, rows, fieldnames)
+        return
+    _write_tsv_rows(tsv_path, fieldnames, rows)
 
 
 def _ensure_fieldnames(fieldnames: list[str], required: list[str]) -> list[str]:
@@ -201,6 +237,28 @@ def _parse_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _selection_from_effective_row(
+    row: dict[str, str],
+) -> PositiveSelectionResult | None:
+    decision = row.get("positive_selection_decision", "").strip()
+    start_sec = _parse_float(row.get("positive_selection_start_sec"))
+    end_sec = _parse_float(row.get("positive_selection_end_sec"))
+    if not decision:
+        return None
+    return PositiveSelectionResult(
+        score_source=row.get("positive_selection_score_source", "").strip()
+        or POSITIVE_SELECTION_SCORE_SOURCE_STORED,
+        decision="positive" if decision == "positive" else "skip",
+        offsets=safe_float_list(row.get("positive_selection_offsets")) or [],
+        raw_scores=safe_float_list(row.get("positive_selection_raw_scores")) or [],
+        smoothed_scores=safe_float_list(row.get("positive_selection_smoothed_scores"))
+        or [],
+        start_sec=start_sec,
+        end_sec=end_sec,
+        peak_score=_parse_float(row.get("positive_selection_peak_score")),
+    )
 
 
 def _blank_positive_selection_fields() -> dict[str, str]:
@@ -537,6 +595,7 @@ def extract_labeled_samples(
     fallback_target_sample_rate: int = 32000,
     fallback_input_format: str = "spectrogram",
     fallback_feature_config: dict | None = None,
+    row_store_path: str | Path | None = None,
 ) -> dict:
     """Extract labeled audio segments from a detection TSV.
 
@@ -549,6 +608,7 @@ def extract_labeled_samples(
     audio_folder = Path(audio_folder)
     positive_output_path = Path(positive_output_path)
     negative_output_path = Path(negative_output_path)
+    row_store_path = Path(row_store_path) if row_store_path is not None else None
     diagnostics_path = (
         Path(window_diagnostics_path) if window_diagnostics_path is not None else None
     )
@@ -560,7 +620,12 @@ def extract_labeled_samples(
         positive_selection_extend_min_score,
     )
 
-    fieldnames, all_rows = _read_tsv_rows(tsv_path)
+    fieldnames, all_rows, using_row_store = _read_detection_rows(
+        tsv_path,
+        row_store_path=row_store_path,
+    )
+    if using_row_store:
+        fieldnames = list(ROW_STORE_FIELDNAMES)
     _ensure_fieldnames(fieldnames, POSITIVE_SELECTION_FIELDNAMES)
     counts = {
         "n_humpback": 0,
@@ -614,24 +679,31 @@ def extract_labeled_samples(
 
             if positive_labels:
                 selection = (
-                    _select_positive_window(
-                        row_start_sec=row_start_sec,
-                        row_end_sec=row_end_sec,
-                        window_size_seconds=window_size_seconds,
-                        window_records=stored_records,
-                        smoothing_window=positive_selection_smoothing_window,
-                        min_score=positive_selection_min_score,
-                        extend_min_score=positive_selection_extend_min_score,
-                        score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-                    )
-                    if stored_records is not None
-                    else None
+                    _selection_from_effective_row(row) if using_row_store else None
                 )
+                if selection is None:
+                    selection = (
+                        _select_positive_window(
+                            row_start_sec=row_start_sec,
+                            row_end_sec=row_end_sec,
+                            window_size_seconds=window_size_seconds,
+                            window_records=stored_records,
+                            smoothing_window=positive_selection_smoothing_window,
+                            min_score=positive_selection_min_score,
+                            extend_min_score=positive_selection_extend_min_score,
+                            score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
+                        )
+                        if stored_records is not None
+                        else None
+                    )
                 if (selection is None or not selection.offsets) and (
-                    fallback_pipeline is not None
-                    and fallback_model is not None
-                    and audio is not None
-                    and sr is not None
+                    not using_row_store
+                    and (
+                        fallback_pipeline is not None
+                        and fallback_model is not None
+                        and audio is not None
+                        and sr is not None
+                    )
                 ):
                     row_start_sample = min(int(row_start_sec * sr), len(audio))
                     row_end_sample = min(int(row_end_sec * sr), len(audio))
@@ -706,12 +778,15 @@ def extract_labeled_samples(
                             clip_name=clip_name,
                             labels=["humpback", "orca"],
                         )
-                        row.update(
-                            _selection_result_to_row_update(
-                                selection,
-                                positive_extract_filename=None,
+                        if using_row_store:
+                            row["positive_extract_filename"] = ""
+                        else:
+                            row.update(
+                                _selection_result_to_row_update(
+                                    selection,
+                                    positive_extract_filename=None,
+                                )
                             )
-                        )
                         counts["n_positive_selection_skipped"] += 1
                     else:
                         for label_name in positive_labels:
@@ -722,12 +797,15 @@ def extract_labeled_samples(
                                 continue
                             write_flac_file(selected_segment, sr, out_path)
                             counts[f"n_{label_name}"] += 1
-                        row.update(
-                            _selection_result_to_row_update(
-                                selection,
-                                positive_extract_filename=clip_name,
+                        if using_row_store:
+                            row["positive_extract_filename"] = clip_name
+                        else:
+                            row.update(
+                                _selection_result_to_row_update(
+                                    selection,
+                                    positive_extract_filename=clip_name,
+                                )
                             )
-                        )
                         counts["n_positive_selected"] += 1
                 else:
                     if old_positive_filename:
@@ -736,12 +814,15 @@ def extract_labeled_samples(
                             clip_name=old_positive_filename,
                             labels=["humpback", "orca"],
                         )
-                    row.update(
-                        _selection_result_to_row_update(
-                            selection,
-                            positive_extract_filename=None,
+                    if using_row_store:
+                        row["positive_extract_filename"] = ""
+                    else:
+                        row.update(
+                            _selection_result_to_row_update(
+                                selection,
+                                positive_extract_filename=None,
+                            )
                         )
-                    )
                     counts["n_positive_selection_skipped"] += 1
             else:
                 if old_positive_filename:
@@ -750,7 +831,10 @@ def extract_labeled_samples(
                         clip_name=old_positive_filename,
                         labels=["humpback", "orca"],
                     )
-                row.update(_blank_positive_selection_fields())
+                if using_row_store:
+                    row["positive_extract_filename"] = ""
+                else:
+                    row.update(_blank_positive_selection_fields())
 
             if negative_labels and audio is not None and sr is not None:
                 start_sample = min(int(row_start_sec * sr), len(audio))
@@ -772,7 +856,13 @@ def extract_labeled_samples(
                     write_flac_file(segment, sr, out_path)
                     counts[f"n_{label_name}"] += 1
 
-    _write_tsv_rows(tsv_path, fieldnames, all_rows)
+    _write_detection_rows(
+        tsv_path,
+        fieldnames,
+        all_rows,
+        row_store_path=row_store_path,
+        using_row_store=using_row_store,
+    )
     return counts
 
 
@@ -891,6 +981,7 @@ def extract_hydrophone_labeled_samples(
     fallback_model: EmbeddingModel | None = None,
     fallback_input_format: str = "spectrogram",
     fallback_feature_config: dict | None = None,
+    row_store_path: str | Path | None = None,
 ) -> dict:
     """Extract labeled audio segments from a hydrophone detection TSV.
 
@@ -902,6 +993,7 @@ def extract_hydrophone_labeled_samples(
     tsv_path = Path(tsv_path)
     positive_output_path = Path(positive_output_path)
     negative_output_path = Path(negative_output_path)
+    row_store_path = Path(row_store_path) if row_store_path is not None else None
     diagnostics_path = (
         Path(window_diagnostics_path) if window_diagnostics_path is not None else None
     )
@@ -911,7 +1003,12 @@ def extract_hydrophone_labeled_samples(
         positive_selection_extend_min_score,
     )
 
-    fieldnames, all_rows = _read_tsv_rows(tsv_path)
+    fieldnames, all_rows, using_row_store = _read_detection_rows(
+        tsv_path,
+        row_store_path=row_store_path,
+    )
+    if using_row_store:
+        fieldnames = list(ROW_STORE_FIELDNAMES)
     _ensure_fieldnames(fieldnames, POSITIVE_SELECTION_FIELDNAMES)
     counts = {
         "n_humpback": 0,
@@ -999,24 +1096,30 @@ def extract_hydrophone_labeled_samples(
                         source_id=provider.source_id,
                     )
                 if positive_labels:
-                    row.update(
-                        _selection_result_to_row_update(
-                            PositiveSelectionResult(
-                                score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-                                decision="skip",
-                                offsets=[],
-                                raw_scores=[],
-                                smoothed_scores=[],
-                                start_sec=None,
-                                end_sec=None,
-                                peak_score=None,
-                            ),
-                            positive_extract_filename=None,
+                    if using_row_store:
+                        row["positive_extract_filename"] = ""
+                    else:
+                        row.update(
+                            _selection_result_to_row_update(
+                                PositiveSelectionResult(
+                                    score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
+                                    decision="skip",
+                                    offsets=[],
+                                    raw_scores=[],
+                                    smoothed_scores=[],
+                                    start_sec=None,
+                                    end_sec=None,
+                                    peak_score=None,
+                                ),
+                                positive_extract_filename=None,
+                            )
                         )
-                    )
                     counts["n_positive_selection_skipped"] += 1
                 else:
-                    row.update(_blank_positive_selection_fields())
+                    if using_row_store:
+                        row["positive_extract_filename"] = ""
+                    else:
+                        row.update(_blank_positive_selection_fields())
                 if negative_labels:
                     counts["n_skipped"] += len(negative_labels)
                 continue
@@ -1064,21 +1167,26 @@ def extract_hydrophone_labeled_samples(
 
             if positive_labels:
                 selection = (
-                    _select_positive_window(
-                        row_start_sec=resolved_start_sec,
-                        row_end_sec=resolved_end_sec,
-                        window_size_seconds=window_size_seconds,
-                        window_records=stored_records,
-                        smoothing_window=positive_selection_smoothing_window,
-                        min_score=positive_selection_min_score,
-                        extend_min_score=positive_selection_extend_min_score,
-                        score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-                    )
-                    if stored_records is not None
-                    else None
+                    _selection_from_effective_row(row) if using_row_store else None
                 )
+                if selection is None:
+                    selection = (
+                        _select_positive_window(
+                            row_start_sec=resolved_start_sec,
+                            row_end_sec=resolved_end_sec,
+                            window_size_seconds=window_size_seconds,
+                            window_records=stored_records,
+                            smoothing_window=positive_selection_smoothing_window,
+                            min_score=positive_selection_min_score,
+                            extend_min_score=positive_selection_extend_min_score,
+                            score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
+                        )
+                        if stored_records is not None
+                        else None
+                    )
                 if (selection is None or not selection.offsets) and (
-                    fallback_pipeline is not None and fallback_model is not None
+                    not using_row_store
+                    and (fallback_pipeline is not None and fallback_model is not None)
                 ):
                     row_duration = max(0.0, resolved_end_sec - resolved_start_sec)
                     fallback_segment: np.ndarray | None = None
@@ -1240,12 +1348,15 @@ def extract_hydrophone_labeled_samples(
                                     continue
                                 write_flac_file(segment, target_sample_rate, out_path)
                                 counts[f"n_{label_name}"] += 1
-                            row.update(
-                                _selection_result_to_row_update(
-                                    selection,
-                                    positive_extract_filename=clip_name,
+                            if using_row_store:
+                                row["positive_extract_filename"] = clip_name
+                            else:
+                                row.update(
+                                    _selection_result_to_row_update(
+                                        selection,
+                                        positive_extract_filename=clip_name,
+                                    )
                                 )
-                            )
                             counts["n_positive_selected"] += 1
                             positive_written = True
                 if not positive_written:
@@ -1256,12 +1367,15 @@ def extract_hydrophone_labeled_samples(
                             labels=["humpback", "orca"],
                             source_id=provider.source_id,
                         )
-                    row.update(
-                        _selection_result_to_row_update(
-                            selection,
-                            positive_extract_filename=None,
+                    if using_row_store:
+                        row["positive_extract_filename"] = ""
+                    else:
+                        row.update(
+                            _selection_result_to_row_update(
+                                selection,
+                                positive_extract_filename=None,
+                            )
                         )
-                    )
                     counts["n_positive_selection_skipped"] += 1
             else:
                 if old_positive_filename:
@@ -1271,7 +1385,10 @@ def extract_hydrophone_labeled_samples(
                         labels=["humpback", "orca"],
                         source_id=provider.source_id,
                     )
-                row.update(_blank_positive_selection_fields())
+                if using_row_store:
+                    row["positive_extract_filename"] = ""
+                else:
+                    row.update(_blank_positive_selection_fields())
 
             if abs_end <= abs_start:
                 counts["n_skipped"] += 1
@@ -1360,5 +1477,11 @@ def extract_hydrophone_labeled_samples(
                 write_flac_file(segment, target_sample_rate, out_path)
                 counts[f"n_{label_name}"] += 1
 
-    _write_tsv_rows(tsv_path, fieldnames, all_rows)
+    _write_detection_rows(
+        tsv_path,
+        fieldnames,
+        all_rows,
+        row_store_path=row_store_path,
+        using_row_store=using_row_store,
+    )
     return counts

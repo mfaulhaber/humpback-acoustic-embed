@@ -392,6 +392,7 @@ export interface DetectionJob {
   high_threshold: number;
   low_threshold: number;
   output_tsv_path: string | null;
+  output_row_store_path: string | null;
   result_summary: Record<string, unknown> | null;
   error_message: string | null;
   files_processed: number | null;
@@ -462,6 +463,7 @@ export interface DirectoryListing {
 // ---- Detection Content ----
 
 export interface DetectionRow {
+  row_id?: string | null;
   filename: string;
   start_sec: number;
   end_sec: number;
@@ -474,6 +476,17 @@ export interface DetectionRow {
   raw_start_sec?: number | null;
   raw_end_sec?: number | null;
   merged_event_count?: number | null;
+  auto_positive_selection_score_source?: string | null;
+  auto_positive_selection_decision?: "positive" | "skip" | null;
+  auto_positive_selection_offsets?: number[] | null;
+  auto_positive_selection_raw_scores?: number[] | null;
+  auto_positive_selection_smoothed_scores?: number[] | null;
+  auto_positive_selection_start_sec?: number | null;
+  auto_positive_selection_end_sec?: number | null;
+  auto_positive_selection_peak_score?: number | null;
+  manual_positive_selection_start_sec?: number | null;
+  manual_positive_selection_end_sec?: number | null;
+  positive_selection_origin?: string | null;
   positive_selection_score_source?: string | null;
   positive_selection_decision?: "positive" | "skip" | null;
   positive_selection_offsets?: number[] | null;
@@ -497,6 +510,21 @@ export interface DetectionLabelRow {
   orca: number | null;
   ship: number | null;
   background: number | null;
+}
+
+export interface DetectionRowStateUpdate {
+  row_id: string;
+  humpback: number | null;
+  orca: number | null;
+  ship: number | null;
+  background: number | null;
+  manual_positive_selection_start_sec: number | null;
+  manual_positive_selection_end_sec: number | null;
+}
+
+export interface DetectionRowStateResponse {
+  status: string;
+  row: DetectionRow;
 }
 
 export interface TrainingSourceInfo {

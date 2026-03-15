@@ -286,6 +286,7 @@ async def test_content_endpoint_parses_positive_selection_metadata(
         "avg_confidence",
         "peak_confidence",
         "n_windows",
+        "humpback",
         "positive_selection_score_source",
         "positive_selection_decision",
         "positive_selection_offsets",
@@ -307,6 +308,7 @@ async def test_content_endpoint_parses_positive_selection_metadata(
                 "avg_confidence": "0.85",
                 "peak_confidence": "0.95",
                 "n_windows": "6",
+                "humpback": "1",
                 "positive_selection_score_source": "stored_diagnostics",
                 "positive_selection_decision": "positive",
                 "positive_selection_offsets": "[0,1,2]",
@@ -337,6 +339,7 @@ async def test_content_endpoint_parses_positive_selection_metadata(
     rows = resp.json()
     assert rows[0]["positive_selection_score_source"] == "stored_diagnostics"
     assert rows[0]["positive_selection_decision"] == "positive"
+    assert rows[0]["auto_positive_selection_decision"] == "positive"
     assert rows[0]["positive_selection_offsets"] == [0.0, 1.0, 2.0]
     assert rows[0]["positive_selection_raw_scores"] == [0.2, 0.9, 0.95]
     assert rows[0]["positive_selection_smoothed_scores"] == [
@@ -349,6 +352,133 @@ async def test_content_endpoint_parses_positive_selection_metadata(
     assert (
         rows[0]["positive_extract_filename"] == "20250615T080002Z_20250615T080007Z.flac"
     )
+
+    await engine.dispose()
+
+
+async def test_save_labels_uses_backfilled_auto_selection(client, app_settings):
+    """Label saves should promote detection-time auto selection into the effective row state."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.classifier.detector import write_window_diagnostics
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    diagnostics_path = ddir / "window_diagnostics.parquet"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "humpback",
+        "orca",
+        "ship",
+        "background",
+    ]
+    source_name = "20250615T080000Z.wav"
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": source_name,
+                "start_sec": "0.0",
+                "end_sec": "10.0",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.95",
+                "n_windows": "6",
+                "humpback": "",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    write_window_diagnostics(
+        [
+            {
+                "filename": source_name,
+                "window_index": idx,
+                "offset_sec": float(offset),
+                "end_sec": float(offset + 5),
+                "confidence": conf,
+                "is_overlapped": False,
+                "overlap_sec": 0.0,
+            }
+            for idx, (offset, conf) in enumerate(
+                [(0, 0.2), (1, 0.9), (2, 0.95), (3, 0.9), (4, 0.2), (5, 0.1)]
+            )
+        ],
+        diagnostics_path,
+    )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["row_id"]
+    assert rows[0]["auto_positive_selection_decision"] == "positive"
+    assert rows[0]["auto_positive_selection_start_sec"] == 2.0
+    assert rows[0]["auto_positive_selection_end_sec"] == 7.0
+    assert rows[0]["positive_selection_origin"] is None
+    assert rows[0]["positive_selection_start_sec"] is None
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": source_name,
+                "start_sec": 0.0,
+                "end_sec": 10.0,
+                "humpback": 1,
+            }
+        ],
+    )
+    assert resp.status_code == 200
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["humpback"] == 1
+    assert rows[0]["positive_selection_origin"] == "auto_selection"
+    assert rows[0]["positive_selection_start_sec"] == 2.0
+    assert rows[0]["positive_selection_end_sec"] == 7.0
+    assert rows[0]["positive_extract_filename"] is None
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        saved_rows = list(reader)
+
+    assert reader.fieldnames is not None
+    assert "auto_positive_selection_start_sec" in reader.fieldnames
+    assert "manual_positive_selection_start_sec" in reader.fieldnames
+    assert saved_rows[0]["positive_selection_start_sec"] == "2.000000"
+    assert saved_rows[0]["positive_selection_end_sec"] == "7.000000"
 
     await engine.dispose()
 
@@ -563,11 +693,393 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
     assert rows[0]["positive_selection_decision"] == "positive"
-    assert rows[0]["positive_selection_offsets"] == "[37,38,39]"
+    assert rows[0]["positive_selection_origin"] == "clip_bounds_fallback"
+    assert rows[0]["positive_selection_start_sec"] == "37.000000"
+    assert rows[0]["positive_selection_end_sec"] == "45.000000"
+    assert rows[0]["positive_selection_offsets"] == ""
     assert (
         rows[0]["positive_extract_filename"] == "20250702T080157Z_20250702T080202Z.flac"
     )
     assert rows[0]["humpback"] == "1"
+
+    await engine.dispose()
+
+
+async def test_row_state_endpoint_persists_manual_selection(client, app_settings):
+    """PUT /row-state should atomically persist labels plus manual window bounds."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.classifier.detector import write_window_diagnostics
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    diagnostics_path = ddir / "window_diagnostics.parquet"
+    source_name = "20250615T080000Z.wav"
+
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "filename",
+                "start_sec",
+                "end_sec",
+                "avg_confidence",
+                "peak_confidence",
+                "n_windows",
+                "humpback",
+                "orca",
+                "ship",
+                "background",
+            ],
+            delimiter="\t",
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": source_name,
+                "start_sec": "0.0",
+                "end_sec": "10.0",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.95",
+                "n_windows": "6",
+                "humpback": "",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    write_window_diagnostics(
+        [
+            {
+                "filename": source_name,
+                "window_index": idx,
+                "offset_sec": float(offset),
+                "end_sec": float(offset + 5),
+                "confidence": conf,
+                "is_overlapped": False,
+                "overlap_sec": 0.0,
+            }
+            for idx, (offset, conf) in enumerate(
+                [(0, 0.2), (1, 0.9), (2, 0.95), (3, 0.9), (4, 0.2), (5, 0.1)]
+            )
+        ],
+        diagnostics_path,
+    )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    row = resp.json()[0]
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/row-state",
+        json={
+            "row_id": row["row_id"],
+            "humpback": 1,
+            "orca": None,
+            "ship": None,
+            "background": None,
+            "manual_positive_selection_start_sec": 0.0,
+            "manual_positive_selection_end_sec": 10.0,
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["row"]["humpback"] == 1
+    assert payload["row"]["positive_selection_origin"] == "manual_override"
+    assert payload["row"]["positive_selection_start_sec"] == 0.0
+    assert payload["row"]["positive_selection_end_sec"] == 10.0
+    assert payload["row"]["manual_positive_selection_start_sec"] == 0.0
+    assert payload["row"]["manual_positive_selection_end_sec"] == 10.0
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    row = resp.json()[0]
+    assert row["positive_selection_origin"] == "manual_override"
+    assert row["manual_positive_selection_start_sec"] == 0.0
+    assert row["manual_positive_selection_end_sec"] == 10.0
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        saved_rows = list(reader)
+
+    assert reader.fieldnames is not None
+    assert "manual_positive_selection_start_sec" in reader.fieldnames
+    assert "manual_positive_selection_end_sec" in reader.fieldnames
+    assert saved_rows[0]["manual_positive_selection_start_sec"] == "0.000000"
+    assert saved_rows[0]["manual_positive_selection_end_sec"] == "10.000000"
+    assert saved_rows[0]["positive_selection_origin"] == "manual_override"
+
+    await engine.dispose()
+
+
+async def test_row_state_accepts_non_edge_aligned_window_multiple(client, app_settings):
+    """Manual bounds may start/end off the clip edges when duration stays at 5*N."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "filename",
+                "start_sec",
+                "end_sec",
+                "avg_confidence",
+                "peak_confidence",
+                "n_windows",
+                "detection_filename",
+                "humpback",
+                "orca",
+                "ship",
+                "background",
+            ],
+            delimiter="\t",
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250615T080000Z.wav",
+                "start_sec": "0.0",
+                "end_sec": "10.0",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.95",
+                "n_windows": "6",
+                "detection_filename": "20250615T080000Z_20250615T080015Z.flac",
+                "humpback": "",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    row = resp.json()[0]
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/row-state",
+        json={
+            "row_id": row["row_id"],
+            "humpback": 1,
+            "manual_positive_selection_start_sec": 3.0,
+            "manual_positive_selection_end_sec": 13.0,
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["row"]["positive_selection_origin"] == "manual_override"
+    assert payload["row"]["manual_positive_selection_start_sec"] == 3.0
+    assert payload["row"]["manual_positive_selection_end_sec"] == 13.0
+    assert payload["row"]["positive_selection_start_sec"] == 3.0
+    assert payload["row"]["positive_selection_end_sec"] == 13.0
+
+    await engine.dispose()
+
+
+async def test_content_and_download_use_row_store_when_tsv_missing(
+    client, app_settings
+):
+    """Completed jobs should still serve content/download from the row store alone."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    row_store_path = ddir / "detection_rows.parquet"
+
+    write_detection_row_store(
+        row_store_path,
+        [
+            {
+                "row_id": "row-1",
+                "filename": "20250615T080000Z.wav",
+                "start_sec": "0.000000",
+                "end_sec": "10.000000",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.95",
+                "n_windows": "6",
+                "detection_filename": "20250615T080000Z_20250615T080010Z.flac",
+            }
+        ],
+    )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+                output_row_store_path=str(row_store_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["row_id"] == "row-1"
+    assert rows[0]["filename"] == "20250615T080000Z.wav"
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/download")
+    assert resp.status_code == 200
+    assert "filename\tstart_sec\tend_sec" in resp.text
+    assert "20250615T080000Z.wav" in resp.text
+
+    await engine.dispose()
+
+
+async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_settings):
+    """Editing labels and row state should succeed even when the TSV adapter is missing."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    row_store_path = ddir / "detection_rows.parquet"
+
+    write_detection_row_store(
+        row_store_path,
+        [
+            {
+                "row_id": "row-1",
+                "filename": "20250615T080000Z.wav",
+                "start_sec": "0.000000",
+                "end_sec": "10.000000",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.95",
+                "n_windows": "6",
+                "detection_filename": "20250615T080000Z_20250615T080010Z.flac",
+            }
+        ],
+    )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+                output_row_store_path=str(row_store_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": "20250615T080000Z.wav",
+                "start_sec": 0.0,
+                "end_sec": 10.0,
+                "humpback": 1,
+            }
+        ],
+    )
+    assert resp.status_code == 200
+    assert tsv_path.is_file()
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        saved_rows = list(reader)
+    assert saved_rows[0]["humpback"] == "1"
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/row-state",
+        json={
+            "row_id": "row-1",
+            "humpback": 1,
+            "manual_positive_selection_start_sec": 0.0,
+            "manual_positive_selection_end_sec": 10.0,
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["row"]["positive_selection_origin"] == "manual_override"
+    assert payload["row"]["manual_positive_selection_start_sec"] == 0.0
+    assert payload["row"]["manual_positive_selection_end_sec"] == 10.0
+
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        saved_rows = list(reader)
+
+    assert saved_rows[0]["manual_positive_selection_start_sec"] == "0.000000"
+    assert saved_rows[0]["manual_positive_selection_end_sec"] == "10.000000"
+    assert saved_rows[0]["positive_selection_origin"] == "manual_override"
 
     await engine.dispose()
 

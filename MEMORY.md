@@ -408,9 +408,16 @@ Queue safety note:
 - `GET /classifier/detection-jobs/{id}/content` normalizes detection metadata:
   canonical snapped `detection_filename` (legacy fallback prefers `extract_filename`, then snapped
   derivation from `filename + start_sec/end_sec`) plus raw audit fields
-  (`raw_start_sec`, `raw_end_sec`, `merged_event_count`) and positive-selection provenance
-  (`positive_selection_*`, `positive_extract_filename`). Jobs in `running`, `paused`,
-  `complete`, and `canceled` states can read content when `output_tsv_path` exists.
+  (`raw_start_sec`, `raw_end_sec`, `merged_event_count`) and positive-selection provenance.
+  Completed/paused/canceled jobs lazily upgrade into a canonical Parquet row store that carries
+  `row_id`, detection-time `auto_positive_selection_*`, manual overrides
+  (`manual_positive_selection_start_sec`, `manual_positive_selection_end_sec`), effective
+  `positive_selection_*`, and `positive_extract_filename`; TSV is synchronized from that row
+  store for download/legacy flows. Jobs in `running`, `paused`, `complete`, and `canceled`
+  states can read content when `output_tsv_path` exists.
+- `PUT /classifier/detection-jobs/{id}/row-state` persists one row's labels plus optional
+  manual positive-selection bounds (whole-window steps only, min one classifier window,
+  bounded by the detection clip). Effective window resolution is `manual > auto > clip`.
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
   jobs) is local-cache-authoritative for Orcasound HLS sources (same cache root precedence as
   playback), writes FLAC clips, and does not call S3. Positive labels (`humpback`, `orca`) use
@@ -447,7 +454,8 @@ Queue safety note:
   {classifier_model_id}/model.joblib              (StandardScaler + LogisticRegression pipeline)
   {classifier_model_id}/training_summary.json
 /detections/
-  {detection_job_id}/detections.tsv               (canonical snapped start/end + confidence; raw_start/raw_end + merged_event_count audit fields; positive-selection provenance in positive_selection_* columns; hydrophone adds detection_filename + extract_filename alias)
+  {detection_job_id}/detection_rows.parquet       (canonical editable row store; row_id + labels + detection-time auto selections + manual overrides + effective positive-selection provenance + extraction artifact filename)
+  {detection_job_id}/detections.tsv               (download/export adapter synchronized from detection_rows.parquet; keeps legacy column compatibility including detection_filename/extract_filename aliases)
   {detection_job_id}/window_diagnostics.parquet   (local jobs: single Parquet file; hydrophone jobs: shard directory with part-*.parquet)
   {detection_job_id}/run_summary.json
 ```

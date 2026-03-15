@@ -74,6 +74,7 @@ class DetectionJobOut(BaseModel):
     high_threshold: float
     low_threshold: float
     output_tsv_path: Optional[str] = None
+    output_row_store_path: Optional[str] = None
     result_summary: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     files_processed: Optional[int] = None

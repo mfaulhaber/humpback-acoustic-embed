@@ -15,6 +15,8 @@ import type {
   DetectionJob,
   DetectionLabelRow,
   DetectionRow,
+  DetectionRowStateResponse,
+  DetectionRowStateUpdate,
   DirectoryListing,
   ExtractionSettings,
   EmbeddingSet,
@@ -232,6 +234,15 @@ export const saveDetectionLabels = (jobId: string, rows: DetectionLabelRow[]) =>
   put<{ status: string; updated: number }>(
     `/classifier/detection-jobs/${jobId}/labels`,
     rows,
+  );
+
+export const saveDetectionRowState = (
+  jobId: string,
+  body: DetectionRowStateUpdate,
+) =>
+  put<DetectionRowStateResponse>(
+    `/classifier/detection-jobs/${jobId}/row-state`,
+    body,
   );
 
 export const fetchExtractionSettings = () =>

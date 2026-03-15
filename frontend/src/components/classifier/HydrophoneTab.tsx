@@ -42,6 +42,7 @@ import {
   useBulkDeleteDetectionJobs,
   useDetectionContent,
   useSaveDetectionLabels,
+  useSaveDetectionRowState,
   useExtractLabeledSamples,
   useBrowseDirectories,
 } from "@/hooks/queries/useClassifier";
@@ -49,6 +50,7 @@ import { detectionTsvUrl, detectionAudioSliceUrl, detectionSpectrogramUrl } from
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import { ExtractDialog } from "./ExtractDialog";
 import { SpectrogramPopup } from "./SpectrogramPopup";
+import { showMsg } from "@/components/shared/MessageToast";
 import { DateRangePickerUtc } from "@/components/shared/DateRangePickerUtc";
 import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
 
@@ -64,11 +66,15 @@ type SpectrogramMarkerBounds = {
   startSec: number;
   endSec: number;
 };
+type SpectrogramAdjustment = "start-earlier" | "start-later" | "end-earlier" | "end-later";
 type SpectrogramPopupState = {
   imageUrl: string;
   position: { x: number; y: number };
-  markerBounds: SpectrogramMarkerBounds | null;
   durationSec: number;
+  row: HydratedDetectionRow;
+  initialMarkerBounds: SpectrogramMarkerBounds | null;
+  draftManualBounds: SpectrogramMarkerBounds | null;
+  editable: boolean;
 };
 type HydratedDetectionRow = DetectionRow & {
   _detectionFilename: string | null;
@@ -84,6 +90,8 @@ type HydratedDetectionRow = DetectionRow & {
 function rowKey(row: { filename: string; start_sec: number; end_sec: number }): string {
   return `${row.filename}:${row.start_sec}:${row.end_sec}`;
 }
+
+const SELECTION_WINDOW_STEP_SEC = 5;
 
 const statusColor: Record<string, string> = {
   queued: "bg-yellow-100 text-yellow-800",
@@ -234,6 +242,7 @@ function resolveMarkerBoundsFromAbsoluteRange(
 
 function resolvePositiveSelectionMarkerBounds(
   row: HydratedDetectionRow,
+  options?: { includeAutoSelection?: boolean },
 ): SpectrogramMarkerBounds | null {
   const explicitSelection = resolveMarkerBoundsFromAbsoluteRange(
     row,
@@ -242,6 +251,17 @@ function resolvePositiveSelectionMarkerBounds(
   );
   if (explicitSelection) {
     return explicitSelection;
+  }
+
+  if (options?.includeAutoSelection) {
+    const autoSelection = resolveMarkerBoundsFromAbsoluteRange(
+      row,
+      row.auto_positive_selection_start_sec,
+      row.auto_positive_selection_end_sec,
+    );
+    if (autoSelection) {
+      return autoSelection;
+    }
   }
 
   const baseTs = parseCompactUtcMs(stripKnownAudioExtension(row.filename));
@@ -267,6 +287,85 @@ function resolvePositiveSelectionMarkerBounds(
   return {
     startSec: 0,
     endSec: row._clipDurationSec,
+  };
+}
+
+function resolveManualSelectionMarkerBounds(
+  row: HydratedDetectionRow,
+): SpectrogramMarkerBounds | null {
+  return resolveMarkerBoundsFromAbsoluteRange(
+    row,
+    row.manual_positive_selection_start_sec,
+    row.manual_positive_selection_end_sec,
+  );
+}
+
+function adjustSelectionBounds(
+  bounds: SpectrogramMarkerBounds,
+  adjustment: SpectrogramAdjustment,
+  clipDurationSec: number,
+): SpectrogramMarkerBounds | null {
+  const epsilon = 1e-6;
+  const minDurationSec = SELECTION_WINDOW_STEP_SEC;
+  const next = { ...bounds };
+  const currentDurationSec = bounds.endSec - bounds.startSec;
+
+  if (adjustment === "start-earlier") {
+    if (currentDurationSec >= clipDurationSec - epsilon) {
+      return null;
+    }
+    if (currentDurationSec + SELECTION_WINDOW_STEP_SEC > clipDurationSec + epsilon) {
+      return {
+        startSec: 0,
+        endSec: clipDurationSec,
+      };
+    }
+
+    next.startSec = Math.max(0, bounds.startSec - SELECTION_WINDOW_STEP_SEC);
+    const remainingGrowthSec =
+      currentDurationSec + SELECTION_WINDOW_STEP_SEC - (bounds.endSec - next.startSec);
+    if (remainingGrowthSec > epsilon) {
+      next.endSec = Math.min(clipDurationSec, bounds.endSec + remainingGrowthSec);
+    }
+  } else if (adjustment === "start-later") {
+    if (bounds.endSec - (bounds.startSec + SELECTION_WINDOW_STEP_SEC) < minDurationSec - epsilon) {
+      return null;
+    }
+    next.startSec = bounds.startSec + SELECTION_WINDOW_STEP_SEC;
+  } else if (adjustment === "end-earlier") {
+    if ((bounds.endSec - SELECTION_WINDOW_STEP_SEC) - bounds.startSec < minDurationSec - epsilon) {
+      return null;
+    }
+    next.endSec = bounds.endSec - SELECTION_WINDOW_STEP_SEC;
+  } else {
+    if (currentDurationSec >= clipDurationSec - epsilon) {
+      return null;
+    }
+    if (currentDurationSec + SELECTION_WINDOW_STEP_SEC > clipDurationSec + epsilon) {
+      return {
+        startSec: 0,
+        endSec: clipDurationSec,
+      };
+    }
+
+    next.endSec = Math.min(clipDurationSec, bounds.endSec + SELECTION_WINDOW_STEP_SEC);
+    const remainingGrowthSec =
+      currentDurationSec + SELECTION_WINDOW_STEP_SEC - (next.endSec - bounds.startSec);
+    if (remainingGrowthSec > epsilon) {
+      next.startSec = Math.max(0, bounds.startSec - remainingGrowthSec);
+    }
+  }
+
+  if (next.endSec <= next.startSec || next.endSec - next.startSec < minDurationSec - epsilon) {
+    return null;
+  }
+  if (next.startSec < -epsilon || next.endSec > clipDurationSec + epsilon) {
+    return null;
+  }
+
+  return {
+    startSec: Math.max(0, next.startSec),
+    endSec: Math.min(clipDurationSec, next.endSec),
   };
 }
 
@@ -553,6 +652,32 @@ export function HydrophoneTab() {
     setLabelEdits(new Map());
     setDirtyJobs(new Set());
   }, [dirtyJobs, labelEdits, saveLabelsMutation]);
+
+  const clearRowEdits = useCallback((jobId: string, rk: string) => {
+    setLabelEdits((prev) => {
+      const next = new Map(prev);
+      const jobEdits = next.get(jobId);
+      if (!jobEdits) {
+        return prev;
+      }
+      const nextJobEdits = new Map(jobEdits);
+      nextJobEdits.delete(rk);
+      if (nextJobEdits.size === 0) {
+        next.delete(jobId);
+      } else {
+        next.set(jobId, nextJobEdits);
+      }
+      return next;
+    });
+    setDirtyJobs((prev) => {
+      const next = new Set(prev);
+      const jobEdits = labelEdits.get(jobId);
+      if (!jobEdits || (jobEdits.size <= 1 && jobEdits.has(rk))) {
+        next.delete(jobId);
+      }
+      return next;
+    });
+  }, [labelEdits]);
 
   return (
     <div className="space-y-4">
@@ -851,6 +976,7 @@ export function HydrophoneTab() {
                   playingKey={playingKey}
                   onPlay={handlePlay}
                   onLabelChange={handleLabelChange}
+                  onClearRowEdit={clearRowEdits}
                   labelEdits={labelEdits.get(job.id) ?? null}
                   onPause={(id) => pauseMutation.mutate(id)}
                   onResume={(id) => resumeMutation.mutate(id)}
@@ -1122,6 +1248,7 @@ export function HydrophoneTab() {
                   playingKey={playingKey}
                   onPlay={handlePlay}
                   onLabelChange={handleLabelChange}
+                  onClearRowEdit={clearRowEdits}
                   labelEdits={labelEdits.get(job.id) ?? null}
                   visibleColumns={prevJobsVisibleCols}
                 />
@@ -1282,6 +1409,7 @@ function HydrophoneJobRow({
   playingKey,
   onPlay,
   onLabelChange,
+  onClearRowEdit,
   labelEdits,
   onPause,
   onResume,
@@ -1300,6 +1428,7 @@ function HydrophoneJobRow({
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow, clip?: PlayClip) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
+  onClearRowEdit: (jobId: string, rk: string) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
   onPause?: (id: string) => void;
   onResume?: (id: string) => void;
@@ -1506,6 +1635,7 @@ function HydrophoneJobRow({
               playingKey={playingKey}
               onPlay={onPlay}
               onLabelChange={onLabelChange}
+              onClearRowEdit={onClearRowEdit}
               labelEdits={labelEdits}
             />
           </td>
@@ -1521,6 +1651,7 @@ function HydrophoneContentTable({
   playingKey,
   onPlay,
   onLabelChange,
+  onClearRowEdit,
   labelEdits,
 }: {
   jobId: string;
@@ -1528,12 +1659,14 @@ function HydrophoneContentTable({
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow, clip?: PlayClip) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
+  onClearRowEdit: (jobId: string, rk: string) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
 }) {
   const { data: rows = [], isLoading } = useDetectionContent(
     jobId,
     isRunning ? 3000 : undefined,
   );
+  const saveRowStateMutation = useSaveDetectionRowState();
   const [sortKey, setSortKey] = useState<SortKey>(isRunning ? "filename" : "avg_confidence");
   const [sortDir, setSortDir] = useState<SortDir>(isRunning ? "asc" : "desc");
   const prevRunning = useRef(isRunning);
@@ -1607,8 +1740,17 @@ function HydrophoneContentTable({
     [labelEdits],
   );
 
+  const isPositiveRow = useCallback(
+    (row: DetectionRow) =>
+      getEffectiveLabel(row, "humpback") === 1 || getEffectiveLabel(row, "orca") === 1,
+    [getEffectiveLabel],
+  );
+
   const openSpectrogramPopup = useCallback(
     (row: HydratedDetectionRow, position: { x: number; y: number }) => {
+      const initialMarkerBounds = isPositiveRow(row)
+        ? resolvePositiveSelectionMarkerBounds(row, { includeAutoSelection: true })
+        : null;
       setSpectrogramPopup({
         imageUrl: detectionSpectrogramUrl(
           jobId,
@@ -1617,15 +1759,123 @@ function HydrophoneContentTable({
           Math.max(0.1, row._clipDurationSec),
         ),
         position,
-        markerBounds:
-          (getEffectiveLabel(row, "humpback") === 1 || getEffectiveLabel(row, "orca") === 1)
-            ? resolvePositiveSelectionMarkerBounds(row)
-            : null,
         durationSec: Math.max(0.1, row._clipDurationSec),
+        row,
+        initialMarkerBounds,
+        draftManualBounds: resolveManualSelectionMarkerBounds(row),
+        editable: !isRunning && !!row.row_id && isPositiveRow(row) && initialMarkerBounds !== null,
       });
     },
-    [getEffectiveLabel, jobId],
+    [isPositiveRow, isRunning, jobId],
   );
+
+  const popupMarkerBounds =
+    spectrogramPopup?.draftManualBounds ?? spectrogramPopup?.initialMarkerBounds ?? null;
+
+  const adjustPopupBounds = useCallback((adjustment: SpectrogramAdjustment) => {
+    setSpectrogramPopup((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const currentBounds = prev.draftManualBounds ?? prev.initialMarkerBounds;
+      if (!currentBounds) {
+        return prev;
+      }
+      const nextBounds = adjustSelectionBounds(
+        currentBounds,
+        adjustment,
+        prev.row._clipDurationSec,
+      );
+      if (!nextBounds) {
+        return prev;
+      }
+      return {
+        ...prev,
+        draftManualBounds: nextBounds,
+      };
+    });
+  }, []);
+
+  const handleApplySpectrogramEdit = useCallback(async () => {
+    if (!spectrogramPopup?.editable || !spectrogramPopup.row.row_id) {
+      return;
+    }
+
+    const { row, draftManualBounds } = spectrogramPopup;
+    const rowId = row.row_id;
+    if (!rowId) {
+      return;
+    }
+    try {
+      await saveRowStateMutation.mutateAsync({
+        jobId,
+        body: {
+          row_id: rowId,
+          humpback: getEffectiveLabel(row, "humpback"),
+          orca: getEffectiveLabel(row, "orca"),
+          ship: getEffectiveLabel(row, "ship"),
+          background: getEffectiveLabel(row, "background"),
+          manual_positive_selection_start_sec:
+            draftManualBounds !== null
+              ? row._clipStartSec + draftManualBounds.startSec
+              : null,
+          manual_positive_selection_end_sec:
+            draftManualBounds !== null
+              ? row._clipStartSec + draftManualBounds.endSec
+              : null,
+        },
+      });
+      onClearRowEdit(jobId, rowKey(row));
+      setSpectrogramPopup(null);
+    } catch (error) {
+      showMsg(
+        "error",
+        error instanceof Error ? error.message : "Failed to update detection row state",
+      );
+    }
+  }, [
+    getEffectiveLabel,
+    jobId,
+    onClearRowEdit,
+    saveRowStateMutation,
+    spectrogramPopup,
+  ]);
+
+  const spectrogramEditor =
+    spectrogramPopup?.editable && popupMarkerBounds
+      ? {
+          selectionDurationSec: popupMarkerBounds.endSec - popupMarkerBounds.startSec,
+          canMoveStartEarlier: adjustSelectionBounds(
+            popupMarkerBounds,
+            "start-earlier",
+            spectrogramPopup.row._clipDurationSec,
+          ) !== null,
+          canMoveStartLater: adjustSelectionBounds(
+            popupMarkerBounds,
+            "start-later",
+            spectrogramPopup.row._clipDurationSec,
+          ) !== null,
+          canMoveEndEarlier: adjustSelectionBounds(
+            popupMarkerBounds,
+            "end-earlier",
+            spectrogramPopup.row._clipDurationSec,
+          ) !== null,
+          canMoveEndLater: adjustSelectionBounds(
+            popupMarkerBounds,
+            "end-later",
+            spectrogramPopup.row._clipDurationSec,
+          ) !== null,
+          isApplying: saveRowStateMutation.isPending,
+          onMoveStartEarlier: () => adjustPopupBounds("start-earlier"),
+          onMoveStartLater: () => adjustPopupBounds("start-later"),
+          onMoveEndEarlier: () => adjustPopupBounds("end-earlier"),
+          onMoveEndLater: () => adjustPopupBounds("end-later"),
+          onApply: () => {
+            void handleApplySpectrogramEdit();
+          },
+          onCancel: () => setSpectrogramPopup(null),
+        }
+      : null;
 
   const handleCheckboxClick = useCallback(
     (row: DetectionRow, field: LabelField) => {
@@ -1818,8 +2068,9 @@ function HydrophoneContentTable({
         <SpectrogramPopup
           imageUrl={spectrogramPopup.imageUrl}
           position={spectrogramPopup.position}
-          markerBounds={spectrogramPopup.markerBounds}
+          markerBounds={popupMarkerBounds}
           durationSec={spectrogramPopup.durationSec}
+          editor={spectrogramEditor}
           onClose={() => setSpectrogramPopup(null)}
         />
       )}

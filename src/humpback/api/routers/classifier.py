@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import csv
 import io
 import json
-import os
 import struct
-import tempfile
-from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
@@ -20,12 +15,24 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from humpback.api.deps import SessionDep, SettingsDep
-from humpback.classifier.detector import read_window_diagnostics_table
-from humpback.classifier.extractor import (
+from humpback.classifier.detection_rows import (
     DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
+    DETECTION_ROW_STORE_FILENAME,
+    ROW_STORE_FIELDNAMES,
+    apply_effective_positive_selection,
+    ensure_detection_row_store,
+    iter_detection_rows_as_tsv,
+    normalize_detection_row,
+    read_detection_row_store,
+    read_tsv_rows,
+    safe_float,
+    resolve_clip_bounds,
+    sync_detection_tsv,
+    write_detection_row_store,
 )
+from humpback.classifier.detector import read_window_diagnostics_table
 from humpback.classifier.providers import build_archive_playback_provider
 from humpback.schemas.classifier import (
     ClassifierModelOut,
@@ -100,6 +107,7 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         high_threshold=job.high_threshold,
         low_threshold=job.low_threshold,
         output_tsv_path=job.output_tsv_path,
+        output_row_store_path=job.output_row_store_path,
         result_summary=json.loads(job.result_summary) if job.result_summary else None,
         error_message=job.error_message,
         files_processed=job.files_processed,
@@ -230,41 +238,22 @@ async def download_detections(job_id: str, session: SessionDep) -> Response:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status not in ("paused", "complete", "canceled") or not job.output_tsv_path:
+    if job.status not in ("paused", "complete", "canceled") or (
+        not job.output_tsv_path and not job.output_row_store_path
+    ):
         raise HTTPException(400, "Detection job not complete or no output available")
-
-    tsv_path = Path(job.output_tsv_path)
-    if not tsv_path.is_file():
-        raise HTTPException(404, "TSV file not found on disk")
 
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
-    is_hydrophone = job.hydrophone_id is not None
-
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        source_fieldnames = list(reader.fieldnames or [])
-
-    output_fieldnames = list(source_fieldnames)
-    for field in (
-        "detection_filename",
-        "extract_filename",
-        "raw_start_sec",
-        "raw_end_sec",
-        "merged_event_count",
-    ):
-        if field not in output_fieldnames:
-            output_fieldnames.append(field)
+    fieldnames, rows = await _ensure_detection_row_store_for_job(
+        session,
+        job,
+        window_size_seconds=window_size_seconds,
+    )
 
     return StreamingResponse(
-        _stream_normalized_download_tsv(
-            tsv_path=tsv_path,
-            source_fieldnames=source_fieldnames,
-            output_fieldnames=output_fieldnames,
-            is_hydrophone=is_hydrophone,
-            window_size_seconds=window_size_seconds,
-        ),
+        iter_detection_rows_as_tsv(rows, fieldnames=fieldnames),
         media_type="text/tab-separated-values",
         headers={
             "Content-Disposition": f'attachment; filename="detections_{job_id}.tsv"'
@@ -812,133 +801,6 @@ async def bulk_delete_models(
 # ---- Detection Content ----
 
 
-def _parse_label(value: str | None) -> int | None:
-    """Parse a label column value: '0' → 0, '1' → 1, else → None."""
-    if value is not None:
-        value = value.strip()
-    if value == "0":
-        return 0
-    if value == "1":
-        return 1
-    return None
-
-
-_COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
-_KNOWN_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3"}
-
-
-def _strip_known_audio_extension(filename: str) -> str:
-    """Strip a supported audio extension from a filename."""
-    suffix = Path(filename).suffix.lower()
-    if suffix in _KNOWN_AUDIO_EXTENSIONS:
-        return filename[: -len(suffix)]
-    return filename
-
-
-def _safe_float(value: str | None, default: float = 0.0) -> float:
-    """Parse float values from TSV, falling back to default."""
-    try:
-        return float(value) if value not in (None, "") else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(value: str | None, default: int | None = None) -> int | None:
-    """Parse integer values from TSV, falling back to default."""
-    try:
-        return int(value) if value not in (None, "") else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_optional_float(value: str | None) -> float | None:
-    """Parse optional float values from TSV."""
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _safe_float_list(value: str | None) -> list[float] | None:
-    """Parse a compact JSON float list from TSV."""
-    if value in (None, ""):
-        return None
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, list):
-        return None
-    try:
-        return [float(item) for item in parsed]
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_compact_range_filename(
-    filename: str | None,
-) -> tuple[datetime, datetime] | None:
-    """Parse compact UTC range filename into (start, end) datetimes."""
-    if not filename:
-        return None
-    base = _strip_known_audio_extension(filename)
-    parts = base.split("_")
-    if len(parts) != 2:
-        return None
-    try:
-        start = datetime.strptime(parts[0], _COMPACT_TS_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
-        end = datetime.strptime(parts[1], _COMPACT_TS_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        return None
-    if end <= start:
-        return None
-    return start, end
-
-
-def _snap_bounds_to_window(
-    start_sec: float,
-    end_sec: float,
-    window_size_seconds: float,
-) -> tuple[float, float]:
-    """Snap bounds outward to window-size multiples."""
-    import math
-
-    if end_sec <= start_sec or window_size_seconds <= 0:
-        return start_sec, end_sec
-    snap_start = math.floor(start_sec / window_size_seconds) * window_size_seconds
-    snap_end = math.ceil(end_sec / window_size_seconds) * window_size_seconds
-    if snap_end <= snap_start:
-        snap_end = snap_start + window_size_seconds
-    return float(snap_start), float(snap_end)
-
-
-def _derive_detection_filename(
-    filename: str, start_sec: float, end_sec: float
-) -> str | None:
-    """Derive canonical detection filename from row filename + bounds."""
-    if end_sec <= start_sec:
-        return None
-    base = _strip_known_audio_extension(filename)
-    try:
-        chunk_start = datetime.strptime(base, _COMPACT_TS_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        return None
-    abs_start = chunk_start + timedelta(seconds=start_sec)
-    abs_end = chunk_start + timedelta(seconds=end_sec)
-    return (
-        f"{abs_start.strftime(_COMPACT_TS_FORMAT)}"
-        f"_{abs_end.strftime(_COMPACT_TS_FORMAT)}.flac"
-    )
-
-
 async def _get_classifier_window_size(
     session: SessionDep, classifier_model_id: str
 ) -> float:
@@ -956,162 +818,89 @@ async def _get_classifier_window_size(
     return float(ws) if ws is not None else 5.0
 
 
-def _normalize_detection_row(
-    row: dict[str, str],
+def _row_store_path(job) -> Path | None:
+    if job.output_row_store_path:
+        return Path(job.output_row_store_path)
+    if job.output_tsv_path:
+        return Path(job.output_tsv_path).parent / DETECTION_ROW_STORE_FILENAME
+    return None
+
+
+def _tsv_path(job, *, row_store_path: Path | None = None) -> Path | None:
+    if job.output_tsv_path:
+        return Path(job.output_tsv_path)
+    if row_store_path is not None:
+        return row_store_path.parent / "detections.tsv"
+    return None
+
+
+async def _ensure_detection_row_store_for_job(
+    session: SessionDep,
+    job,
     *,
-    is_hydrophone: bool,
     window_size_seconds: float,
-) -> dict:
-    """Normalize detection metadata while preserving original start/end bounds."""
-    filename = (row.get("filename", "") or "").strip()
-    start_sec = _safe_float(row.get("start_sec"), 0.0)
-    end_sec = _safe_float(row.get("end_sec"), 0.0)
-    avg_confidence = _safe_float(row.get("avg_confidence"), 0.0)
-    peak_confidence = _safe_float(row.get("peak_confidence"), 0.0)
-    n_windows = _safe_int(row.get("n_windows"), None)
+) -> tuple[list[str], list[dict[str, str]]]:
+    row_store_path = _row_store_path(job)
+    if row_store_path is None:
+        raise HTTPException(400, "Detection row store path unavailable")
+    tsv_path = _tsv_path(job, row_store_path=row_store_path)
 
-    detection_filename = (row.get("detection_filename", "") or "").strip() or None
-    extract_filename = (row.get("extract_filename", "") or "").strip() or None
+    if row_store_path.is_file():
+        fieldnames, rows = read_detection_row_store(row_store_path)
+    else:
+        if tsv_path is None:
+            raise HTTPException(400, "Detection job not ready or no output available")
+        if not tsv_path.is_file():
+            raise HTTPException(404, "Detection output not found on disk")
+        fieldnames, rows = ensure_detection_row_store(
+            row_store_path=row_store_path,
+            tsv_path=tsv_path,
+            diagnostics_path=_diagnostics_path(job),
+            is_hydrophone=job.hydrophone_id is not None,
+            window_size_seconds=window_size_seconds,
+        )
 
-    if detection_filename is None:
-        # Legacy precedence: reuse extract filename when valid, else derive from snapped bounds.
-        if _parse_compact_range_filename(extract_filename) is not None:
-            detection_filename = extract_filename
-        else:
-            snap_start, snap_end = _snap_bounds_to_window(
-                start_sec, end_sec, window_size_seconds
-            )
-            detection_filename = _derive_detection_filename(
-                filename, snap_start, snap_end
-            )
-
-    if extract_filename is None and is_hydrophone:
-        extract_filename = detection_filename
-
-    raw_start_sec = _safe_float(row.get("raw_start_sec"), start_sec)
-    raw_end_sec = _safe_float(row.get("raw_end_sec"), end_sec)
-    merged_event_count = _safe_int(row.get("merged_event_count"), 1)
-    positive_selection_score_source = (
-        row.get("positive_selection_score_source", "").strip() or None
-    )
-    positive_selection_decision = (
-        row.get("positive_selection_decision", "").strip() or None
-    )
-    positive_extract_filename = row.get("positive_extract_filename", "").strip() or None
-
-    return {
-        "filename": filename,
-        "start_sec": start_sec,
-        "end_sec": end_sec,
-        "avg_confidence": avg_confidence,
-        "peak_confidence": peak_confidence,
-        "n_windows": n_windows,
-        "detection_filename": detection_filename,
-        "extract_filename": extract_filename,
-        "hydrophone_name": (row.get("hydrophone_name", "").strip() or None),
-        "raw_start_sec": raw_start_sec,
-        "raw_end_sec": raw_end_sec,
-        "merged_event_count": merged_event_count,
-        "positive_selection_score_source": positive_selection_score_source,
-        "positive_selection_decision": positive_selection_decision,
-        "positive_selection_offsets": _safe_float_list(
-            row.get("positive_selection_offsets")
-        ),
-        "positive_selection_raw_scores": _safe_float_list(
-            row.get("positive_selection_raw_scores")
-        ),
-        "positive_selection_smoothed_scores": _safe_float_list(
-            row.get("positive_selection_smoothed_scores")
-        ),
-        "positive_selection_start_sec": _safe_optional_float(
-            row.get("positive_selection_start_sec")
-        ),
-        "positive_selection_end_sec": _safe_optional_float(
-            row.get("positive_selection_end_sec")
-        ),
-        "positive_selection_peak_score": _safe_optional_float(
-            row.get("positive_selection_peak_score")
-        ),
-        "positive_extract_filename": positive_extract_filename,
-        "humpback": _parse_label(row.get("humpback")),
-        "orca": _parse_label(row.get("orca")),
-        "ship": _parse_label(row.get("ship")),
-        "background": _parse_label(row.get("background")),
-    }
-
-
-def _stream_normalized_download_tsv(
-    *,
-    tsv_path: Path,
-    source_fieldnames: list[str],
-    output_fieldnames: list[str],
-    is_hydrophone: bool,
-    window_size_seconds: float,
-) -> Iterator[str]:
-    """Yield normalized TSV content incrementally for download responses."""
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=output_fieldnames, delimiter="\t")
-    writer.writeheader()
-    yield buf.getvalue()
-    buf.seek(0)
-    buf.truncate(0)
-
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            normalized = _normalize_detection_row(
-                row,
-                is_hydrophone=is_hydrophone,
-                window_size_seconds=window_size_seconds,
-            )
-            out_row = {field: row.get(field, "") for field in source_fieldnames}
-            out_row["detection_filename"] = normalized[
-                "detection_filename"
-            ] or out_row.get("detection_filename", "")
-            out_row["extract_filename"] = normalized["extract_filename"] or out_row.get(
-                "extract_filename", ""
-            )
-            out_row["raw_start_sec"] = str(normalized["raw_start_sec"])
-            out_row["raw_end_sec"] = str(normalized["raw_end_sec"])
-            out_row["merged_event_count"] = str(normalized["merged_event_count"])
-            writer.writerow(out_row)
-            yield buf.getvalue()
-            buf.seek(0)
-            buf.truncate(0)
+    if job.output_row_store_path != str(row_store_path):
+        job.output_row_store_path = str(row_store_path)
+        await session.commit()
+    return fieldnames, rows
 
 
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
-    """Parse detection TSV and return rows as JSON."""
+    """Return normalized detection rows from the active artifact source."""
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if (
-        job.status not in ("running", "paused", "complete", "canceled")
-        or not job.output_tsv_path
-    ):
+    row_store_path = _row_store_path(job)
+    tsv_path = _tsv_path(job, row_store_path=row_store_path)
+    if job.status not in ("running", "paused", "complete", "canceled"):
         raise HTTPException(400, "Detection job not ready or no output available")
-    tsv_path = Path(job.output_tsv_path)
-    if not tsv_path.is_file():
-        raise HTTPException(404, "TSV file not found on disk")
 
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
     is_hydrophone = job.hydrophone_id is not None
 
-    rows = []
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            rows.append(
-                _normalize_detection_row(
-                    row,
-                    is_hydrophone=is_hydrophone,
-                    window_size_seconds=window_size_seconds,
-                )
-            )
-    return rows
+    if job.status == "running":
+        if tsv_path is None or not tsv_path.is_file():
+            raise HTTPException(404, "TSV file not found on disk")
+        _fieldnames, raw_rows = read_tsv_rows(tsv_path)
+    else:
+        _fieldnames, raw_rows = await _ensure_detection_row_store_for_job(
+            session,
+            job,
+            window_size_seconds=window_size_seconds,
+        )
+
+    return [
+        normalize_detection_row(
+            row,
+            is_hydrophone=is_hydrophone,
+            window_size_seconds=window_size_seconds,
+        )
+        for row in raw_rows
+    ]
 
 
 # ---- Detection Labels ----
@@ -1127,6 +916,16 @@ class DetectionLabelRow(BaseModel):
     background: Optional[Literal[0, 1]] = None
 
 
+class DetectionRowStateUpdate(BaseModel):
+    row_id: str
+    humpback: Optional[Literal[0, 1]] = None
+    orca: Optional[Literal[0, 1]] = None
+    ship: Optional[Literal[0, 1]] = None
+    background: Optional[Literal[0, 1]] = None
+    manual_positive_selection_start_sec: float | None = None
+    manual_positive_selection_end_sec: float | None = None
+
+
 def _serialize_label(value: int | None) -> str:
     """Serialize label value for TSV: None → '', 0 → '0', 1 → '1'."""
     if value is None:
@@ -1138,99 +937,170 @@ def _serialize_label(value: int | None) -> str:
 async def save_detection_labels(
     job_id: str, body: list[DetectionLabelRow], session: SessionDep
 ) -> dict:
-    """Merge label annotations into the detection TSV file."""
+    """Merge label annotations into the canonical detection row store."""
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status not in ("paused", "complete", "canceled") or not job.output_tsv_path:
+    row_store_path = _row_store_path(job)
+    if job.status not in ("paused", "complete", "canceled") or row_store_path is None:
         raise HTTPException(400, "Detection job not complete or no output available")
-    tsv_path = Path(job.output_tsv_path)
-    if not tsv_path.is_file():
-        raise HTTPException(404, "TSV file not found on disk")
+    tsv_path = _tsv_path(job, row_store_path=row_store_path)
+    window_size_seconds = await _get_classifier_window_size(
+        session, job.classifier_model_id
+    )
 
-    # Build lookup of label updates keyed by (filename, start_sec, end_sec)
     label_map: dict[tuple[str, float, float], DetectionLabelRow] = {}
     for row in body:
         label_map[(row.filename, row.start_sec, row.end_sec)] = row
 
-    # Read existing TSV
-    existing_rows = []
-    fieldnames: list[str] = []
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        if reader.fieldnames:
-            fieldnames = list(reader.fieldnames)
-        for row in reader:
-            existing_rows.append(row)
+    fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
+        session,
+        job,
+        window_size_seconds=window_size_seconds,
+    )
 
-    # Merge labels, preserving unknown columns (for example extract_filename).
-    required_fields = [
-        "filename",
-        "start_sec",
-        "end_sec",
-        "avg_confidence",
-        "peak_confidence",
-        "n_windows",
-        "humpback",
-        "orca",
-        "ship",
-        "background",
-    ]
-    if not fieldnames:
-        fieldnames = list(required_fields)
-    else:
-        for field in required_fields:
-            if field not in fieldnames:
-                fieldnames.append(field)
-
-    updated_rows = []
+    updated_rows: list[dict[str, str]] = []
     for row in existing_rows:
         key = (
             row.get("filename", ""),
-            float(row.get("start_sec", 0)),
-            float(row.get("end_sec", 0)),
+            safe_float(row.get("start_sec"), 0.0),
+            safe_float(row.get("end_sec"), 0.0),
         )
         update = label_map.get(key)
-        out_row = {field: row.get(field, "") for field in fieldnames}
-        out_row["humpback"] = (
-            _serialize_label(update.humpback) if update else row.get("humpback", "")
-        )
-        out_row["orca"] = (
-            _serialize_label(update.orca) if update else row.get("orca", "")
-        )
-        out_row["ship"] = (
-            _serialize_label(update.ship) if update else row.get("ship", "")
-        )
-        out_row["background"] = (
-            _serialize_label(update.background) if update else row.get("background", "")
+        out_row = {field: row.get(field, "") for field in ROW_STORE_FIELDNAMES}
+        if update:
+            out_row["humpback"] = _serialize_label(update.humpback)
+            out_row["orca"] = _serialize_label(update.orca)
+            out_row["ship"] = _serialize_label(update.ship)
+            out_row["background"] = _serialize_label(update.background)
+        apply_effective_positive_selection(
+            out_row,
+            window_size_seconds=window_size_seconds,
         )
         updated_rows.append(out_row)
 
-    # Write atomically via temp file
-    tsv_dir = tsv_path.parent
-    fd, tmp_path = tempfile.mkstemp(dir=str(tsv_dir), suffix=".tsv")
-    try:
-        with os.fdopen(fd, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
-            writer.writeheader()
-            writer.writerows(updated_rows)
-        os.replace(tmp_path, str(tsv_path))
-    except Exception:
-        # Clean up temp file on failure
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    write_detection_row_store(row_store_path, updated_rows)
+    if tsv_path is not None:
+        sync_detection_tsv(tsv_path, updated_rows, fieldnames)
 
-    # Persist has_positive_labels flag from full merged TSV state
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
     )
     job.has_positive_labels = has_positive
+    job.output_row_store_path = str(row_store_path)
+    if tsv_path is not None:
+        job.output_tsv_path = str(tsv_path)
     await session.commit()
 
     return {"status": "ok", "updated": len(label_map)}
+
+
+@router.put("/detection-jobs/{job_id}/row-state")
+async def save_detection_row_state(
+    job_id: str,
+    body: DetectionRowStateUpdate,
+    session: SessionDep,
+) -> dict:
+    """Persist one row's labels and manual positive-selection bounds."""
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+    row_store_path = _row_store_path(job)
+    if job.status not in ("paused", "complete", "canceled") or row_store_path is None:
+        raise HTTPException(400, "Detection job not complete or no output available")
+    tsv_path = _tsv_path(job, row_store_path=row_store_path)
+
+    window_size_seconds = await _get_classifier_window_size(
+        session, job.classifier_model_id
+    )
+    fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
+        session,
+        job,
+        window_size_seconds=window_size_seconds,
+    )
+
+    matched_row: dict[str, str] | None = None
+    for row in existing_rows:
+        if row.get("row_id") != body.row_id:
+            continue
+        row["humpback"] = _serialize_label(body.humpback)
+        row["orca"] = _serialize_label(body.orca)
+        row["ship"] = _serialize_label(body.ship)
+        row["background"] = _serialize_label(body.background)
+
+        if (
+            body.manual_positive_selection_start_sec is None
+            and body.manual_positive_selection_end_sec is None
+        ):
+            row["manual_positive_selection_start_sec"] = ""
+            row["manual_positive_selection_end_sec"] = ""
+        else:
+            if (
+                body.manual_positive_selection_start_sec is None
+                or body.manual_positive_selection_end_sec is None
+            ):
+                raise HTTPException(400, "Both manual bounds are required")
+            normalized = normalize_detection_row(
+                row,
+                is_hydrophone=job.hydrophone_id is not None,
+                window_size_seconds=window_size_seconds,
+            )
+            clip_start, clip_end = resolve_clip_bounds(
+                normalized,
+                window_size_seconds=window_size_seconds,
+            )
+            manual_start = body.manual_positive_selection_start_sec
+            manual_end = body.manual_positive_selection_end_sec
+            if manual_end <= manual_start:
+                raise HTTPException(400, "Manual bounds must have positive duration")
+            if manual_start + 1e-6 < clip_start or manual_end - 1e-6 > clip_end:
+                raise HTTPException(400, "Manual bounds must stay within the clip")
+            manual_duration = manual_end - manual_start
+            if manual_duration + 1e-6 < window_size_seconds:
+                raise HTTPException(
+                    400,
+                    "Manual bounds must be at least one classifier window long",
+                )
+            duration_delta = manual_duration / window_size_seconds
+            if abs(round(duration_delta) - duration_delta) > 1e-6:
+                raise HTTPException(
+                    400,
+                    "Manual bounds must move in whole window-size steps",
+                )
+            row["manual_positive_selection_start_sec"] = f"{manual_start:.6f}"
+            row["manual_positive_selection_end_sec"] = f"{manual_end:.6f}"
+
+        apply_effective_positive_selection(
+            row,
+            window_size_seconds=window_size_seconds,
+        )
+        matched_row = row
+        break
+
+    if matched_row is None:
+        raise HTTPException(404, "Detection row not found")
+
+    write_detection_row_store(row_store_path, existing_rows)
+    if tsv_path is not None:
+        sync_detection_tsv(tsv_path, existing_rows, fieldnames)
+
+    has_positive = any(
+        row.get("humpback") == "1" or row.get("orca") == "1" for row in existing_rows
+    )
+    job.has_positive_labels = has_positive
+    job.output_row_store_path = str(row_store_path)
+    if tsv_path is not None:
+        job.output_tsv_path = str(tsv_path)
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "row": normalize_detection_row(
+            matched_row,
+            is_hydrophone=job.hydrophone_id is not None,
+            window_size_seconds=window_size_seconds,
+        ),
+    }
 
 
 # ---- Audio Slice Streaming ----
