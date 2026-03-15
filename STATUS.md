@@ -55,7 +55,10 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Raw event audit metadata in TSV (`raw_start_sec`, `raw_end_sec`, `merged_event_count`)
 - Incremental detection results: file-by-file progress with live UI updates during job execution
 - Inline audio playback and label annotation available while detection is still running
-- Local extraction uses canonical labeled bounds directly (no extraction-time widening) and writes FLAC clips
+- Positive labeled extraction selects one 5-second training clip from stored 1-second-hop
+  detection scores (moving-average smoothing + min-score threshold, with classifier
+  fallback for legacy jobs); negative extraction keeps canonical labeled bounds and writes
+  FLAC clips
 - Inline audio playback of detected segments
 - Detection labels: humpback (positive), orca (positive), ship (negative), background (negative)
 - Detection label annotation with keyboard shortcuts (`h`=humpback, `o`=orca, `s`=ship, `b`=background)
@@ -100,7 +103,11 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
   with legacy fallback to `job.start_timestamp`
 - Hydrophone TSV rows include canonical snapped `.flac` `detection_filename` plus legacy `extract_filename` alias
+- Hydrophone detection persists per-window diagnostics incrementally as Parquet shards so
+  paused/canceled jobs can extract positives without re-running inference
 - Legacy TSV normalization for content/download prefers `extract_filename` when `detection_filename` is missing, otherwise derives snapped canonical ranges
+- Detection TSV rows now persist positive-selection provenance (`positive_selection_*` +
+  `positive_extract_filename`) so selected training windows survive label-save/content/download round-trips
 - Detection TSV download streams normalized rows incrementally (avoids full-file in-memory buffering)
 - FLAC export for hydrophone jobs: Orcasound reads from local HLS cache (no S3 calls during extraction), while NOAA uses direct anonymous GCS fetch; both write labeled samples to positive/negative folders
 - Hydrophone extraction output paths: species/category before hydrophone —

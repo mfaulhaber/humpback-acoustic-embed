@@ -1,6 +1,7 @@
 """Integration tests for classifier API endpoints."""
 
 import csv
+import json
 import uuid
 
 
@@ -90,6 +91,8 @@ async def test_extraction_settings(client):
     data = resp.json()
     assert "positive_output_path" in data
     assert "negative_output_path" in data
+    assert data["positive_selection_smoothing_window"] == 3
+    assert data["positive_selection_min_score"] == 0.7
 
 
 async def test_extract_nonexistent_jobs(client):
@@ -108,6 +111,52 @@ async def test_extract_empty_job_ids(client):
     # Empty list: all 0 jobs found, 0 expected → should succeed with count 0
     assert resp.status_code == 200
     assert resp.json()["count"] == 0
+
+
+async def test_extract_persists_positive_selection_config(client, app_settings):
+    from sqlalchemy import insert, select
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path="/tmp/fake.tsv",
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/detection-jobs/extract",
+        json={
+            "job_ids": [job_id],
+            "positive_selection_smoothing_window": 5,
+            "positive_selection_min_score": 0.82,
+        },
+    )
+    assert resp.status_code == 200
+
+    async with sf() as session:
+        result = await session.execute(
+            select(DetectionJob.extract_config).where(DetectionJob.id == job_id)
+        )
+        config = result.scalar_one()
+        assert config is not None
+        parsed = json.loads(config)
+
+    assert parsed["positive_selection_smoothing_window"] == 5
+    assert parsed["positive_selection_min_score"] == 0.82
+    await engine.dispose()
 
 
 # ---- Diagnostics Endpoints ----
@@ -205,6 +254,98 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
     assert job_data["files_processed"] == 1
     assert job_data["files_total"] == 5
     assert job_data["status"] == "running"
+
+    await engine.dispose()
+
+
+async def test_content_endpoint_parses_positive_selection_metadata(
+    client, app_settings
+):
+    """GET /content should parse positive-selection metadata from TSV columns."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir.mkdir(parents=True)
+    tsv_path = ddir / "detections.tsv"
+    fieldnames = [
+        "filename",
+        "start_sec",
+        "end_sec",
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "positive_selection_score_source",
+        "positive_selection_decision",
+        "positive_selection_offsets",
+        "positive_selection_raw_scores",
+        "positive_selection_smoothed_scores",
+        "positive_selection_start_sec",
+        "positive_selection_end_sec",
+        "positive_selection_peak_score",
+        "positive_extract_filename",
+    ]
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "filename": "20250615T080000Z.wav",
+                "start_sec": "0.0",
+                "end_sec": "10.0",
+                "avg_confidence": "0.85",
+                "peak_confidence": "0.95",
+                "n_windows": "6",
+                "positive_selection_score_source": "stored_diagnostics",
+                "positive_selection_decision": "positive",
+                "positive_selection_offsets": "[0,1,2]",
+                "positive_selection_raw_scores": "[0.2,0.9,0.95]",
+                "positive_selection_smoothed_scores": "[0.366667,0.683333,0.933333]",
+                "positive_selection_start_sec": "2.000000",
+                "positive_selection_end_sec": "7.000000",
+                "positive_selection_peak_score": "0.933333",
+                "positive_extract_filename": "20250615T080002Z_20250615T080007Z.flac",
+            }
+        )
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert rows[0]["positive_selection_score_source"] == "stored_diagnostics"
+    assert rows[0]["positive_selection_decision"] == "positive"
+    assert rows[0]["positive_selection_offsets"] == [0.0, 1.0, 2.0]
+    assert rows[0]["positive_selection_raw_scores"] == [0.2, 0.9, 0.95]
+    assert rows[0]["positive_selection_smoothed_scores"] == [
+        0.366667,
+        0.683333,
+        0.933333,
+    ]
+    assert rows[0]["positive_selection_start_sec"] == 2.0
+    assert rows[0]["positive_selection_end_sec"] == 7.0
+    assert (
+        rows[0]["positive_extract_filename"] == "20250615T080002Z_20250615T080007Z.flac"
+    )
 
     await engine.dispose()
 
@@ -326,7 +467,7 @@ async def test_save_labels_rejects_invalid_values(client, app_settings):
 
 
 async def test_save_labels_preserves_extract_filename_column(client, app_settings):
-    """PUT /labels preserves extra TSV columns such as extract_filename."""
+    """PUT /labels preserves extra TSV columns such as extraction provenance."""
     from pathlib import Path
 
     from sqlalchemy import insert
@@ -350,6 +491,9 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
         "n_windows",
         "detection_filename",
         "extract_filename",
+        "positive_selection_decision",
+        "positive_selection_offsets",
+        "positive_extract_filename",
         "humpback",
         "ship",
         "background",
@@ -367,6 +511,9 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
                 "n_windows": "4",
                 "detection_filename": "20250702T080155Z_20250702T080203Z.flac",
                 "extract_filename": "20250702T080155Z_20250702T080205Z.flac",
+                "positive_selection_decision": "positive",
+                "positive_selection_offsets": "[37,38,39]",
+                "positive_extract_filename": "20250702T080157Z_20250702T080202Z.flac",
                 "humpback": "",
                 "ship": "",
                 "background": "",
@@ -406,9 +553,17 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     assert reader.fieldnames is not None
     assert "detection_filename" in reader.fieldnames
     assert "extract_filename" in reader.fieldnames
+    assert "positive_selection_decision" in reader.fieldnames
+    assert "positive_selection_offsets" in reader.fieldnames
+    assert "positive_extract_filename" in reader.fieldnames
     assert len(rows) == 1
     assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
+    assert rows[0]["positive_selection_decision"] == "positive"
+    assert rows[0]["positive_selection_offsets"] == "[37,38,39]"
+    assert (
+        rows[0]["positive_extract_filename"] == "20250702T080157Z_20250702T080202Z.flac"
+    )
     assert rows[0]["humpback"] == "1"
 
     await engine.dispose()

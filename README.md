@@ -515,7 +515,13 @@ Validation and error behavior notes:
 - `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the NOAA Glacier Bay source alongside the Orcasound hydrophones.
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
 - `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
-- Hydrophone extraction (queued via `POST /classifier/detection-jobs/extract`) reads local HLS cache only for Orcasound jobs, writes FLAC labeled clips, and skips missing-cache rows (reported via `n_skipped` in `extract_summary`). NOAA Glacier Bay extraction uses direct anonymous GCS fetch instead.
+- `POST /classifier/detection-jobs/extract` accepts optional `positive_selection_smoothing_window`
+  (odd integer, default `3`) and `positive_selection_min_score` (default `0.70`). Positive labels
+  select one 5-second training clip from stored 1-second-hop detection scores after smoothing and
+  are skipped when the peak smoothed score is below threshold; legacy jobs fall back to rescoring.
+- Hydrophone extraction reads local HLS cache only for Orcasound jobs, writes FLAC labeled clips,
+  and skips missing-cache positives via `n_positive_selection_skipped`. NOAA Glacier Bay
+  extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns `416` for malformed or unsatisfiable `Range` headers.
 
 ---
@@ -538,13 +544,16 @@ data/
   clusters/{clustering_job_id}/refined_embeddings.parquet (opt-in, for re-clustering)
   classifiers/{classifier_model_id}/model.joblib         (binary classifier pipeline)
   classifiers/{classifier_model_id}/training_summary.json
-  detections/{detection_job_id}/detections.tsv            (detection output; canonical snapped start/end + raw audit fields; hydrophone rows include detection_filename + extract_filename alias)
+  detections/{detection_job_id}/detections.tsv            (detection output; canonical snapped start/end + raw audit fields; positive-selection provenance in positive_selection_* columns; hydrophone rows include detection_filename + extract_filename alias)
+  detections/{detection_job_id}/window_diagnostics.parquet (local jobs: single Parquet file; hydrophone jobs: shard directory)
   detections/{detection_job_id}/run_summary.json
 ```
 
 Labeled-sample extraction outputs:
 - local jobs: `{positive|negative}_sample_path/{label}/YYYY/MM/DD/*.flac`
 - hydrophone jobs: `{positive|negative}_sample_path/{label}/{hydrophone_id}/YYYY/MM/DD/*.flac`
+- Positive extraction writes the classifier-selected 5-second window (`positive_extract_filename`);
+  negative extraction keeps the labeled clip bounds.
 
 ## Utilities
 

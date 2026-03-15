@@ -442,6 +442,8 @@ export interface HydrophoneDetectionJobCreate {
 export interface ExtractionSettings {
   positive_output_path: string;
   negative_output_path: string;
+  positive_selection_smoothing_window: number;
+  positive_selection_min_score: number;
 }
 
 // ---- Directory Browsing ----
@@ -471,6 +473,15 @@ export interface DetectionRow {
   raw_start_sec?: number | null;
   raw_end_sec?: number | null;
   merged_event_count?: number | null;
+  positive_selection_score_source?: string | null;
+  positive_selection_decision?: "positive" | "skip" | null;
+  positive_selection_offsets?: number[] | null;
+  positive_selection_raw_scores?: number[] | null;
+  positive_selection_smoothed_scores?: number[] | null;
+  positive_selection_start_sec?: number | null;
+  positive_selection_end_sec?: number | null;
+  positive_selection_peak_score?: number | null;
+  positive_extract_filename?: string | null;
   humpback: number | null;
   orca: number | null;
   ship: number | null;

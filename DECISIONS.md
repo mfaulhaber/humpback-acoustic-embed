@@ -649,3 +649,36 @@ unnecessary network bandwidth when segment data was already available locally.
   `noaa_cache_path` is explicitly set to `None`.
 - No database migration required; the change is limited to provider selection,
   runtime configuration, and tests.
+
+---
+
+## ADR-026: Positive extraction windows come from stored detection diagnostics
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Retraining labels are saved at multi-second clip granularity, but classifier
+training consumes 5-second embeddings. Blindly splitting a labeled-positive clip into fixed
+5-second halves creates mislabeled positives when the vocalization only occupies part of the
+clip. Re-running inference during extraction would duplicate work and can drift from the exact
+detection-job scores that users reviewed.
+
+**Decision**:
+- Treat persisted 1-second-hop detection diagnostics as the source of truth for positive
+  extraction window selection.
+- For each positive labeled row (`humpback` or `orca`), smooth candidate 5-second window
+  scores with a short moving average, select the peak smoothed window, and skip the row when
+  the peak is below a configurable minimum score.
+- Persist hydrophone diagnostics incrementally as Parquet shards so paused/canceled jobs can
+  extract positives without re-running inference.
+- Store row-level selection provenance back into the detection TSV via
+  `positive_selection_*` columns plus `positive_extract_filename`.
+- Keep classifier rescoring only as a legacy fallback for jobs missing diagnostics.
+
+**Consequences**:
+- Positive extraction is faster and stays consistent with the original detection-job scores.
+- Hydrophone jobs gain durable per-window diagnostics even before full completion.
+- Detection TSVs now carry both label state and positive-window provenance, and label-save
+  must preserve those extra columns.
+- No database migration required; the change lives in job artifacts, extraction config, API
+  parsing, tests, and documentation.

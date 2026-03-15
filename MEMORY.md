@@ -408,12 +408,16 @@ Queue safety note:
 - `GET /classifier/detection-jobs/{id}/content` normalizes detection metadata:
   canonical snapped `detection_filename` (legacy fallback prefers `extract_filename`, then snapped
   derivation from `filename + start_sec/end_sec`) plus raw audit fields
-  (`raw_start_sec`, `raw_end_sec`, `merged_event_count`). Jobs in `running`, `paused`,
+  (`raw_start_sec`, `raw_end_sec`, `merged_event_count`) and positive-selection provenance
+  (`positive_selection_*`, `positive_extract_filename`). Jobs in `running`, `paused`,
   `complete`, and `canceled` states can read content when `output_tsv_path` exists.
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
   jobs) is local-cache-authoritative for Orcasound HLS sources (same cache root precedence as
-  playback), writes FLAC clips, and does not call S3; rows missing local cache audio are skipped
-  and counted in `n_skipped`. NOAA Glacier Bay extraction uses direct anonymous GCS fetch instead.
+  playback), writes FLAC clips, and does not call S3. Positive labels (`humpback`, `orca`) use
+  stored 1-second-hop detection diagnostics to choose a single best 5-second window after
+  moving-average smoothing; rows below `positive_selection_min_score` are skipped and counted in
+  `n_positive_selection_skipped`. Legacy jobs fall back to rescoring during extraction when
+  diagnostics are unavailable. NOAA Glacier Bay extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---
@@ -441,7 +445,8 @@ Queue safety note:
   {classifier_model_id}/model.joblib              (StandardScaler + LogisticRegression pipeline)
   {classifier_model_id}/training_summary.json
 /detections/
-  {detection_job_id}/detections.tsv               (canonical snapped start/end + confidence; raw_start/raw_end + merged_event_count audit fields; hydrophone adds detection_filename + extract_filename alias)
+  {detection_job_id}/detections.tsv               (canonical snapped start/end + confidence; raw_start/raw_end + merged_event_count audit fields; positive-selection provenance in positive_selection_* columns; hydrophone adds detection_filename + extract_filename alias)
+  {detection_job_id}/window_diagnostics.parquet   (local jobs: single Parquet file; hydrophone jobs: shard directory with part-*.parquet)
   {detection_job_id}/run_summary.json
 ```
 

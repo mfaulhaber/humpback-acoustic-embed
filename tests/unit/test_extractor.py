@@ -6,18 +6,21 @@ import struct
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 from unittest.mock import MagicMock
 
 import numpy as np
 import soundfile as sf
 
 from humpback.classifier.archive import StreamSegment
+from humpback.classifier.detector import write_window_diagnostics
 from humpback.classifier.extractor import (
     extract_hydrophone_labeled_samples,
     extract_labeled_samples,
     parse_recording_timestamp,
     write_flac_file,
 )
+from humpback.processing.inference import FakeTFLiteModel
 
 
 class TestParseRecordingTimestamp:
@@ -80,9 +83,65 @@ def _make_tsv(
         writer.writerows(rows)
 
 
+def _read_tsv_rows(path: Path) -> list[dict[str, str]]:
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
 def _audio_duration(path: Path) -> float:
     info = sf.info(str(path))
     return info.frames / info.samplerate
+
+
+def _make_positive_pipeline(positive_prob: float = 0.95) -> MagicMock:
+    pipeline = MagicMock()
+
+    def predict_proba(X):
+        return np.column_stack(
+            [
+                np.full(len(X), 1.0 - positive_prob, dtype=np.float32),
+                np.full(len(X), positive_prob, dtype=np.float32),
+            ]
+        )
+
+    pipeline.predict_proba = predict_proba
+    return pipeline
+
+
+class _LocalPositiveExtractionKwargs(TypedDict):
+    fallback_pipeline: MagicMock
+    fallback_model: FakeTFLiteModel
+    fallback_target_sample_rate: int
+
+
+class _HydrophonePositiveExtractionKwargs(TypedDict):
+    fallback_pipeline: MagicMock
+    fallback_model: FakeTFLiteModel
+    fallback_input_format: str
+    fallback_feature_config: None
+    target_sample_rate: int
+
+
+def _positive_extraction_kwargs(
+    target_sample_rate: int,
+) -> _LocalPositiveExtractionKwargs:
+    return {
+        "fallback_pipeline": _make_positive_pipeline(),
+        "fallback_model": FakeTFLiteModel(vector_dim=64),
+        "fallback_target_sample_rate": target_sample_rate,
+    }
+
+
+def _positive_hydrophone_extraction_kwargs(
+    target_sample_rate: int,
+) -> _HydrophonePositiveExtractionKwargs:
+    return {
+        "fallback_pipeline": _make_positive_pipeline(),
+        "fallback_model": FakeTFLiteModel(vector_dim=64),
+        "fallback_input_format": "spectrogram",
+        "fallback_feature_config": None,
+        "target_sample_rate": target_sample_rate,
+    }
 
 
 def _make_hydrophone_timeline(
@@ -228,7 +287,13 @@ class TestExtractLabeledSamples:
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
 
-        summary = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        summary = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
         assert summary["n_humpback"] == 1
         assert summary["n_ship"] == 1
         assert summary["n_background"] == 0
@@ -293,11 +358,23 @@ class TestExtractLabeledSamples:
         neg_out = tmp_path / "negative"
 
         # First run
-        summary1 = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        summary1 = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
         assert summary1["n_humpback"] == 1
 
         # Second run should skip existing
-        summary2 = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        summary2 = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
         assert summary2["n_humpback"] == 0
         assert summary2["n_skipped"] == 1
 
@@ -325,7 +402,13 @@ class TestExtractLabeledSamples:
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
 
         # Should use date-based folder: 2025/06/15
         humpback_files = list(pos_out.rglob("*.flac"))
@@ -388,14 +471,20 @@ class TestExtractLabeledSamples:
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        summary = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        summary = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
         assert summary["n_humpback"] == 1
         assert summary["n_ship"] == 1
 
 
 class TestExtractionBounds:
     def test_extraction_uses_exact_tsv_bounds(self, tmp_path):
-        """Local extraction should use labeled bounds directly (no extra snapping)."""
+        """Positive local extraction selects one 5-second training window."""
         audio_folder = tmp_path / "audio"
         audio_folder.mkdir()
         _make_wav(audio_folder / "test.wav", duration=15.0)
@@ -420,17 +509,21 @@ class TestExtractionBounds:
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
         extract_labeled_samples(
-            tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            window_size_seconds=5.0,
+            **_positive_extraction_kwargs(16000),
         )
 
         humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
-        # Exact [2.5, 10.0] = 7.5s
         duration = _audio_duration(humpback_files[0])
-        assert abs(duration - 7.5) < 0.1
+        assert abs(duration - 5.0) < 0.1
 
     def test_extraction_exact_multiple_unchanged(self, tmp_path):
-        """Event [5.0, 15.0] stays [5.0, 15.0] = 10.0s."""
+        """Positive local extraction no longer exports full multi-window spans."""
         audio_folder = tmp_path / "audio"
         audio_folder.mkdir()
         _make_wav(audio_folder / "test.wav", duration=20.0)
@@ -455,16 +548,21 @@ class TestExtractionBounds:
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
         extract_labeled_samples(
-            tsv_path, audio_folder, pos_out, neg_out, window_size_seconds=5.0
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            window_size_seconds=5.0,
+            **_positive_extraction_kwargs(16000),
         )
 
         humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
         duration = _audio_duration(humpback_files[0])
-        assert abs(duration - 10.0) < 0.1
+        assert abs(duration - 5.0) < 0.1
 
     def test_extraction_default_window_param_does_not_widen_bounds(self, tmp_path):
-        """Default window_size parameter should not widen local extraction clips."""
+        """Default positive extraction still writes one 5-second clip."""
         audio_folder = tmp_path / "audio"
         audio_folder.mkdir()
         _make_wav(audio_folder / "test.wav", duration=15.0)
@@ -488,13 +586,338 @@ class TestExtractionBounds:
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        # No window_size_seconds argument: extract exact [2.5, 7.5] clip.
-        extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
 
         humpback_files = list(pos_out.rglob("*.flac"))
         assert len(humpback_files) == 1
         duration = _audio_duration(humpback_files[0])
         assert abs(duration - 5.0) < 0.1
+
+
+class TestPositiveWindowSelection:
+    def test_local_positive_selection_uses_stored_diagnostics_and_updates_tsv(
+        self, tmp_path
+    ):
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        source_name = "20250615T080000Z_test.wav"
+        _make_wav(audio_folder / source_name, duration=12.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": source_name,
+                    "start_sec": "0.0",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            ],
+        )
+
+        diagnostics_path = tmp_path / "window_diagnostics.parquet"
+        write_window_diagnostics(
+            [
+                {
+                    "filename": source_name,
+                    "window_index": idx,
+                    "offset_sec": float(offset),
+                    "end_sec": float(offset + 5),
+                    "confidence": conf,
+                    "is_overlapped": False,
+                    "overlap_sec": 0.0,
+                }
+                for idx, (offset, conf) in enumerate(
+                    [(0, 0.2), (1, 0.9), (2, 0.95), (3, 0.9), (4, 0.2), (5, 0.1)]
+                )
+            ],
+            diagnostics_path,
+        )
+
+        summary = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            tmp_path / "positive",
+            tmp_path / "negative",
+            window_diagnostics_path=diagnostics_path,
+        )
+
+        assert summary["n_humpback"] == 1
+        assert summary["n_positive_selected"] == 1
+
+        rows = _read_tsv_rows(tsv_path)
+        assert rows[0]["positive_selection_score_source"] == "stored_diagnostics"
+        assert rows[0]["positive_selection_decision"] == "positive"
+        assert rows[0]["positive_selection_start_sec"] == "2.000000"
+        assert rows[0]["positive_selection_end_sec"] == "7.000000"
+        assert rows[0]["positive_extract_filename"] == (
+            "20250615T080002.000000Z_20250615T080007.000000Z.flac"
+        )
+
+    def test_local_positive_selection_skips_when_peak_below_threshold(self, tmp_path):
+        audio_folder = tmp_path / "audio"
+        audio_folder.mkdir()
+        source_name = "test.wav"
+        _make_wav(audio_folder / source_name, duration=10.0)
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": source_name,
+                    "start_sec": "0.0",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "orca": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            ],
+        )
+
+        diagnostics_path = tmp_path / "window_diagnostics.parquet"
+        write_window_diagnostics(
+            [
+                {
+                    "filename": source_name,
+                    "window_index": idx,
+                    "offset_sec": float(offset),
+                    "end_sec": float(offset + 5),
+                    "confidence": conf,
+                    "is_overlapped": False,
+                    "overlap_sec": 0.0,
+                }
+                for idx, (offset, conf) in enumerate(
+                    [(0, 0.2), (1, 0.3), (2, 0.4), (3, 0.25), (4, 0.1), (5, 0.05)]
+                )
+            ],
+            diagnostics_path,
+        )
+
+        summary = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            tmp_path / "positive",
+            tmp_path / "negative",
+            window_diagnostics_path=diagnostics_path,
+            positive_selection_min_score=0.8,
+        )
+
+        assert summary["n_orca"] == 0
+        assert summary["n_positive_selection_skipped"] == 1
+        assert not list((tmp_path / "positive").rglob("*.flac"))
+
+        rows = _read_tsv_rows(tsv_path)
+        assert rows[0]["positive_selection_decision"] == "skip"
+        assert rows[0]["positive_extract_filename"] == ""
+
+    def test_hydrophone_positive_selection_uses_stored_diagnostics(self, tmp_path):
+        source_name = "20250615T080000Z.wav"
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": source_name,
+                    "start_sec": "0.0",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "orca": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            ],
+        )
+
+        diagnostics_path = tmp_path / "window_diagnostics.parquet"
+        write_window_diagnostics(
+            [
+                {
+                    "filename": source_name,
+                    "window_index": idx,
+                    "offset_sec": float(offset),
+                    "end_sec": float(offset + 5),
+                    "confidence": conf,
+                    "is_overlapped": False,
+                    "overlap_sec": 0.0,
+                }
+                for idx, (offset, conf) in enumerate(
+                    [(0, 0.2), (1, 0.9), (2, 0.95), (3, 0.9), (4, 0.1), (5, 0.05)]
+                )
+            ],
+            diagnostics_path,
+        )
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+        provider = _provider_for_recording(source_name, audio=audio)
+
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            tmp_path / "positive",
+            tmp_path / "negative",
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+            window_diagnostics_path=diagnostics_path,
+        )
+
+        assert summary["n_orca"] == 1
+        assert summary["n_positive_selected"] == 1
+
+        rows = _read_tsv_rows(tsv_path)
+        assert rows[0]["positive_selection_decision"] == "positive"
+        assert rows[0]["positive_selection_score_source"] == "stored_diagnostics"
+        assert rows[0]["positive_extract_filename"] == (
+            "20250615T080002Z_20250615T080007Z.flac"
+        )
+
+    def test_hydrophone_positive_selection_uses_resolved_detection_bounds(
+        self, tmp_path
+    ):
+        source_name = "20250615T080000Z.wav"
+        tsv_path = tmp_path / "detections.tsv"
+        fieldnames = [
+            "filename",
+            "start_sec",
+            "end_sec",
+            "avg_confidence",
+            "peak_confidence",
+            "detection_filename",
+            "humpback",
+            "orca",
+            "ship",
+            "background",
+        ]
+        with open(tsv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "filename": source_name,
+                    "start_sec": "0.0",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "detection_filename": "20250615T080003Z_20250615T080008Z.flac",
+                    "humpback": "1",
+                    "orca": "",
+                    "ship": "",
+                    "background": "",
+                }
+            )
+
+        diagnostics_path = tmp_path / "window_diagnostics.parquet"
+        write_window_diagnostics(
+            [
+                {
+                    "filename": source_name,
+                    "window_index": idx,
+                    "offset_sec": float(offset),
+                    "end_sec": float(offset + 5),
+                    "confidence": conf,
+                    "is_overlapped": False,
+                    "overlap_sec": 0.0,
+                }
+                for idx, (offset, conf) in enumerate(
+                    [(0, 0.2), (1, 0.3), (2, 0.4), (3, 0.75), (4, 0.6), (5, 0.99)]
+                )
+            ],
+            diagnostics_path,
+        )
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+        provider = _provider_for_recording(source_name, audio=audio)
+
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            tmp_path / "positive",
+            tmp_path / "negative",
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+            window_diagnostics_path=diagnostics_path,
+        )
+
+        assert summary["n_humpback"] == 1
+        rows = _read_tsv_rows(tsv_path)
+        assert rows[0]["positive_selection_start_sec"] == "3.000000"
+        assert rows[0]["positive_selection_end_sec"] == "8.000000"
+        assert rows[0]["positive_extract_filename"] == (
+            "20250615T080003Z_20250615T080008Z.flac"
+        )
+
+    def test_hydrophone_positive_fallback_uses_resolved_detection_bounds(
+        self, tmp_path
+    ):
+        source_name = "20250615T080000Z.wav"
+        tsv_path = tmp_path / "detections.tsv"
+        fieldnames = [
+            "filename",
+            "start_sec",
+            "end_sec",
+            "avg_confidence",
+            "peak_confidence",
+            "detection_filename",
+            "humpback",
+            "orca",
+            "ship",
+            "background",
+        ]
+        with open(tsv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "filename": source_name,
+                    "start_sec": "0.0",
+                    "end_sec": "10.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "detection_filename": "20250615T080003Z_20250615T080008Z.flac",
+                    "humpback": "",
+                    "orca": "1",
+                    "ship": "",
+                    "background": "",
+                }
+            )
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+        provider = _provider_for_recording(source_name, audio=audio)
+
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            tmp_path / "positive",
+            tmp_path / "negative",
+            window_size_seconds=5.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
+        )
+
+        assert summary["n_orca"] == 1
+        rows = _read_tsv_rows(tsv_path)
+        assert rows[0]["positive_selection_score_source"] == "rescored_fallback"
+        assert rows[0]["positive_selection_start_sec"] == "3.000000"
+        assert rows[0]["positive_selection_end_sec"] == "8.000000"
+        assert rows[0]["positive_extract_filename"] == (
+            "20250615T080003Z_20250615T080008Z.flac"
+        )
 
 
 class TestExtractHydrophoneLabeledSamples:
@@ -532,8 +955,8 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             pos_out,
             neg_out,
-            target_sample_rate=sr,
             window_size_seconds=5.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert summary["n_humpback"] == 1
@@ -546,7 +969,7 @@ class TestExtractHydrophoneLabeledSamples:
         assert rel.parts[2:5] == ("2025", "06", "15")
 
     def test_hydrophone_extraction_uses_detection_filename_exact_bounds(self, tmp_path):
-        """Hydrophone extraction should use exact detection_filename bounds (no snapping)."""
+        """Hydrophone negatives should still use exact detection_filename bounds."""
 
         tsv_path = tmp_path / "detections.tsv"
         fieldnames = [
@@ -571,8 +994,8 @@ class TestExtractHydrophoneLabeledSamples:
                     "avg_confidence": "0.9",
                     "peak_confidence": "0.95",
                     "detection_filename": "20250615T080003Z_20250615T080006Z.flac",
-                    "humpback": "1",
-                    "ship": "",
+                    "humpback": "",
+                    "ship": "1",
                     "background": "",
                 }
             )
@@ -588,14 +1011,14 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             pos_out,
             neg_out,
-            target_sample_rate=sr,
             window_size_seconds=5.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
-        assert summary["n_humpback"] == 1
+        assert summary["n_ship"] == 1
         out = (
-            pos_out
-            / "humpback"
+            neg_out
+            / "ship"
             / "rpi_orcasound_lab"
             / "2025"
             / "06"
@@ -609,7 +1032,7 @@ class TestExtractHydrophoneLabeledSamples:
     def test_hydrophone_extraction_uses_extract_filename_when_detection_missing(
         self, tmp_path
     ):
-        """Legacy rows should use extract_filename bounds when detection_filename is missing."""
+        """Legacy hydrophone negatives should still reuse extract_filename bounds."""
 
         tsv_path = tmp_path / "detections.tsv"
         fieldnames = [
@@ -634,8 +1057,8 @@ class TestExtractHydrophoneLabeledSamples:
                     "avg_confidence": "0.9",
                     "peak_confidence": "0.95",
                     "extract_filename": "20250615T080003Z_20250615T080006Z.wav",
-                    "humpback": "1",
-                    "ship": "",
+                    "humpback": "",
+                    "ship": "1",
                     "background": "",
                 }
             )
@@ -651,14 +1074,14 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             pos_out,
             neg_out,
-            target_sample_rate=sr,
             window_size_seconds=5.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
-        assert summary["n_humpback"] == 1
+        assert summary["n_ship"] == 1
         out = (
-            pos_out
-            / "humpback"
+            neg_out
+            / "ship"
             / "rpi_orcasound_lab"
             / "2025"
             / "06"
@@ -711,8 +1134,8 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             pos_out,
             neg_out,
-            target_sample_rate=sr,
             window_size_seconds=5.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert summary["n_ship"] == 1
@@ -797,12 +1220,14 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             pos_out,
             neg_out,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
         s2 = extract_hydrophone_labeled_samples(
             tsv_path,
             provider,
             pos_out,
             neg_out,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert s1["n_humpback"] == 1
@@ -846,10 +1271,10 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             pos_out,
             neg_out,
-            target_sample_rate=sr,
             window_size_seconds=5.0,
             stream_start_timestamp=1000.0,
             stream_end_timestamp=3000.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert summary["n_humpback"] == 1
@@ -900,10 +1325,10 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             tmp_path / "pos",
             tmp_path / "neg",
-            target_sample_rate=sr,
             window_size_seconds=5.0,
             stream_start_timestamp=1000.0,
             stream_end_timestamp=2000.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert summary["n_humpback"] == 2
@@ -937,14 +1362,15 @@ class TestExtractHydrophoneLabeledSamples:
             provider,
             tmp_path / "pos",
             tmp_path / "neg",
-            target_sample_rate=32000,
             window_size_seconds=5.0,
             stream_start_timestamp=1000.0,
             stream_end_timestamp=2000.0,
+            **_positive_hydrophone_extraction_kwargs(32000),
         )
 
         assert summary["n_humpback"] == 0
-        assert summary["n_skipped"] == 1
+        assert summary["n_positive_selection_skipped"] == 1
+        assert summary["n_skipped"] == 0
         provider.build_timeline_mock.assert_called_once_with(1000.0, 2000.0)
 
 
@@ -977,7 +1403,13 @@ class TestOrcaExtraction:
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        summary = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        summary = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
         assert summary["n_orca"] == 1
         assert summary["n_humpback"] == 0
 
@@ -1016,8 +1448,8 @@ class TestOrcaExtraction:
             provider,
             pos_out,
             neg_out,
-            target_sample_rate=sr,
             window_size_seconds=5.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert summary["n_orca"] == 1
@@ -1064,8 +1496,8 @@ class TestOrcaExtraction:
             provider,
             pos_out,
             neg_out,
-            target_sample_rate=sr,
             window_size_seconds=5.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert summary["n_humpback"] == 1
@@ -1117,6 +1549,12 @@ class TestOrcaExtraction:
 
         pos_out = tmp_path / "positive"
         neg_out = tmp_path / "negative"
-        summary = extract_labeled_samples(tsv_path, audio_folder, pos_out, neg_out)
+        summary = extract_labeled_samples(
+            tsv_path,
+            audio_folder,
+            pos_out,
+            neg_out,
+            **_positive_extraction_kwargs(16000),
+        )
         assert summary["n_humpback"] == 1
         assert summary["n_orca"] == 0

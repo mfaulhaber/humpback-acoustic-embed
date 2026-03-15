@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -15,11 +16,17 @@ from humpback.classifier.detector import (
     AUDIO_EXTENSIONS,
     append_detections_tsv,
     read_detections_tsv,
+    read_window_diagnostics_table,
     run_detection,
     write_detections_tsv,
     write_window_diagnostics,
+    write_window_diagnostics_shard,
 )
-from humpback.classifier.extractor import extract_labeled_samples
+from humpback.classifier.extractor import (
+    DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
+    DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
+    extract_labeled_samples,
+)
 from humpback.classifier.providers import (
     build_archive_detection_provider,
     build_archive_playback_provider,
@@ -321,6 +328,7 @@ async def run_hydrophone_detection_job(
         # Set up output directory and TSV path
         ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
         tsv_path = ddir / "detections.tsv"
+        diag_path = ddir / "window_diagnostics.parquet"
 
         await session.execute(
             update(DetectionJob)
@@ -347,6 +355,11 @@ async def run_hydrophone_detection_job(
                 skip_segments,
                 len(prior_detections),
             )
+        elif diag_path.exists():
+            if diag_path.is_dir():
+                shutil.rmtree(diag_path)
+            else:
+                diag_path.unlink()
 
         # Cancel and pause support
         cancel_event = threading.Event()
@@ -418,6 +431,23 @@ async def run_hydrophone_detection_job(
 
                 loop.call_soon_threadsafe(asyncio.ensure_future, _update_progress())
 
+        def on_chunk_diagnostics(chunk_records: list[dict], segments_done: int):
+            if not chunk_records:
+                return
+            write_window_diagnostics_shard(
+                chunk_records,
+                diag_path,
+                f"part-{segments_done:06d}.parquet",
+            )
+
+        def on_resume_invalidation():
+            if not diag_path.exists():
+                return
+            if diag_path.is_dir():
+                shutil.rmtree(diag_path)
+            else:
+                diag_path.unlink()
+
         # Alert callback
         alerts_list: list[dict] = []
 
@@ -469,28 +499,30 @@ async def run_hydrophone_detection_job(
 
             detections, summary = await asyncio.to_thread(
                 run_hydrophone_detection,
-                hydrophone_provider,
-                start_timestamp,
-                end_timestamp,
-                pipeline,
-                model,
-                cm.window_size_seconds,
-                cm.target_sample_rate,
-                job.confidence_threshold,
-                input_format,
-                feature_config,
-                job.hop_seconds,
-                job.high_threshold,
-                job.low_threshold,
-                on_chunk_complete,
-                on_alert,
-                cancel_event.is_set,
-                pause_gate,
-                skip_segments,
-                prior_detections,
-                settings.hydrophone_prefetch_enabled,
-                settings.hydrophone_prefetch_workers,
-                settings.hydrophone_prefetch_inflight_segments,
+                provider=hydrophone_provider,
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
+                pipeline=pipeline,
+                model=model,
+                window_size_seconds=cm.window_size_seconds,
+                target_sample_rate=cm.target_sample_rate,
+                confidence_threshold=job.confidence_threshold,
+                input_format=input_format,
+                feature_config=feature_config,
+                hop_seconds=job.hop_seconds,
+                high_threshold=job.high_threshold,
+                low_threshold=job.low_threshold,
+                on_chunk_complete=on_chunk_complete,
+                on_chunk_diagnostics=on_chunk_diagnostics,
+                on_alert=on_alert,
+                cancel_check=cancel_event.is_set,
+                pause_gate=pause_gate,
+                skip_segments=skip_segments,
+                prior_detections=prior_detections,
+                on_resume_invalidation=on_resume_invalidation,
+                prefetch_enabled=settings.hydrophone_prefetch_enabled,
+                prefetch_workers=settings.hydrophone_prefetch_workers,
+                prefetch_inflight_segments=settings.hydrophone_prefetch_inflight_segments,
             )
         except FileNotFoundError as exc:
             raise FileNotFoundError(
@@ -501,7 +533,19 @@ async def run_hydrophone_detection_job(
         finally:
             cancel_task.cancel()
 
+        def _mark_has_diagnostics(summary_data: dict) -> None:
+            if not diag_path.exists():
+                return
+            try:
+                read_window_diagnostics_table(diag_path)
+                summary_data["has_diagnostics"] = True
+            except Exception:
+                logger.debug(
+                    "Failed to read persisted hydrophone diagnostics", exc_info=True
+                )
+
         if cancel_event.is_set():
+            _mark_has_diagnostics(summary)
             # Write what we have
             for det in detections:
                 det.setdefault("hydrophone_name", hydrophone_short_name)
@@ -534,6 +578,7 @@ async def run_hydrophone_detection_job(
             fieldnames=HYDROPHONE_TSV_FIELDNAMES,
         )
 
+        _mark_has_diagnostics(summary)
         summary_path = ddir / "run_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2))
 
@@ -569,9 +614,24 @@ async def run_extraction_job(
         config = json.loads(job.extract_config) if job.extract_config else {}
         pos_path = config.get("positive_output_path", settings.positive_sample_path)
         neg_path = config.get("negative_output_path", settings.negative_sample_path)
+        smoothing_window = int(
+            config.get(
+                "positive_selection_smoothing_window",
+                DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
+            )
+        )
+        min_score = float(
+            config.get(
+                "positive_selection_min_score",
+                DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
+            )
+        )
 
         if not job.output_tsv_path:
             raise ValueError("Detection job has no output TSV path")
+        diagnostics_path = (
+            Path(job.output_tsv_path).parent / "window_diagnostics.parquet"
+        )
 
         # Look up window_size_seconds from the classifier model
         from sqlalchemy import select as sa_select
@@ -583,6 +643,17 @@ async def run_extraction_job(
         )
         cm = cm_result.scalar_one_or_none()
         ws = cm.window_size_seconds if cm else 5.0
+        target_sample_rate = cm.target_sample_rate if cm else 32000
+        feature_config = (
+            json.loads(cm.feature_config) if cm and cm.feature_config else None
+        )
+        pipeline = joblib.load(cm.model_path) if cm is not None else None
+        model = None
+        input_format = "spectrogram"
+        if cm is not None:
+            model, input_format = await get_model_by_version(
+                session, cm.model_version, settings
+            )
 
         if job.hydrophone_id:
             from humpback.classifier.extractor import extract_hydrophone_labeled_samples
@@ -596,25 +667,40 @@ async def run_extraction_job(
 
             summary = await asyncio.to_thread(
                 extract_hydrophone_labeled_samples,
-                job.output_tsv_path,
-                extract_provider,
-                pos_path,
-                neg_path,
-                cm.target_sample_rate if cm else 32000,
-                ws,
-                job.start_timestamp,
-                job.end_timestamp,
+                tsv_path=job.output_tsv_path,
+                provider=extract_provider,
+                positive_output_path=pos_path,
+                negative_output_path=neg_path,
+                target_sample_rate=target_sample_rate,
+                window_size_seconds=ws,
+                stream_start_timestamp=job.start_timestamp,
+                stream_end_timestamp=job.end_timestamp,
+                window_diagnostics_path=diagnostics_path,
+                positive_selection_smoothing_window=smoothing_window,
+                positive_selection_min_score=min_score,
+                fallback_pipeline=pipeline,
+                fallback_model=model,
+                fallback_input_format=input_format,
+                fallback_feature_config=feature_config,
             )
         else:
             if job.audio_folder is None:
                 raise ValueError("Local extraction job missing audio_folder")
             summary = await asyncio.to_thread(
                 extract_labeled_samples,
-                job.output_tsv_path,
-                job.audio_folder,
-                pos_path,
-                neg_path,
-                ws,
+                tsv_path=job.output_tsv_path,
+                audio_folder=job.audio_folder,
+                positive_output_path=pos_path,
+                negative_output_path=neg_path,
+                window_size_seconds=ws,
+                window_diagnostics_path=diagnostics_path,
+                positive_selection_smoothing_window=smoothing_window,
+                positive_selection_min_score=min_score,
+                fallback_pipeline=pipeline,
+                fallback_model=model,
+                fallback_target_sample_rate=target_sample_rate,
+                fallback_input_format=input_format,
+                fallback_feature_config=feature_config,
             )
 
         await session.execute(

@@ -17,9 +17,14 @@ import numpy as np
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.classifier.detector import read_window_diagnostics_table
+from humpback.classifier.extractor import (
+    DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
+    DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
+)
 from humpback.classifier.providers import build_archive_playback_provider
 from humpback.schemas.classifier import (
     ClassifierModelOut,
@@ -368,7 +373,6 @@ async def get_detection_diagnostics(
 ) -> DiagnosticsResponse:
     """Return paginated per-window diagnostic records from a detection job."""
     import pyarrow.compute as _pc
-    import pyarrow.parquet as pq
 
     pc: Any = _pc
 
@@ -377,16 +381,15 @@ async def get_detection_diagnostics(
         raise HTTPException(404, "Detection job not found")
 
     diag_path = _diagnostics_path(job)
-    if diag_path is None or not diag_path.is_file():
+    if diag_path is None or not diag_path.exists():
         raise HTTPException(404, "Diagnostics not available for this job")
 
-    table = pq.read_table(diag_path)
+    table = read_window_diagnostics_table(diag_path)
 
     filenames = sorted(pc.unique(table.column("filename")).to_pylist())
 
     if filename:
-        mask = pc.equal(table.column("filename"), filename)
-        table = table.filter(mask)
+        table = read_window_diagnostics_table(diag_path, filename=filename)
 
     total = table.num_rows
     page = table.slice(offset, limit)
@@ -418,7 +421,6 @@ async def get_detection_diagnostics_summary(
 ) -> DiagnosticsSummaryResponse:
     """Return aggregate diagnostic statistics for a detection job."""
     import pyarrow.compute as _pc
-    import pyarrow.parquet as pq
 
     pc: Any = _pc
 
@@ -427,10 +429,10 @@ async def get_detection_diagnostics_summary(
         raise HTTPException(404, "Detection job not found")
 
     diag_path = _diagnostics_path(job)
-    if diag_path is None or not diag_path.is_file():
+    if diag_path is None or not diag_path.exists():
         raise HTTPException(404, "Diagnostics not available for this job")
 
-    table = pq.read_table(diag_path)
+    table = read_window_diagnostics_table(diag_path)
     total_windows = table.num_rows
 
     is_overlapped = table.column("is_overlapped")
@@ -616,6 +618,23 @@ class ExtractRequest(BaseModel):
     job_ids: list[str]
     positive_output_path: Optional[str] = None
     negative_output_path: Optional[str] = None
+    positive_selection_smoothing_window: int = Field(
+        default=DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW
+    )
+    positive_selection_min_score: float = Field(
+        default=DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
+        ge=0.0,
+        le=1.0,
+    )
+
+    @field_validator("positive_selection_smoothing_window")
+    @classmethod
+    def validate_positive_selection_smoothing_window(cls, value: int) -> int:
+        if value < 1 or value % 2 == 0:
+            raise ValueError(
+                "positive_selection_smoothing_window must be an odd integer >= 1"
+            )
+        return value
 
 
 @router.post("/detection-jobs/extract")
@@ -648,7 +667,14 @@ async def extract_labeled_samples(
     pos_path = body.positive_output_path or settings.positive_sample_path
     neg_path = body.negative_output_path or settings.negative_sample_path
     config = json.dumps(
-        {"positive_output_path": pos_path, "negative_output_path": neg_path}
+        {
+            "positive_output_path": pos_path,
+            "negative_output_path": neg_path,
+            "positive_selection_smoothing_window": (
+                body.positive_selection_smoothing_window
+            ),
+            "positive_selection_min_score": body.positive_selection_min_score,
+        }
     )
 
     for j in jobs:
@@ -674,6 +700,10 @@ async def get_extraction_settings(settings: SettingsDep) -> dict:
     return {
         "positive_output_path": settings.positive_sample_path,
         "negative_output_path": settings.negative_sample_path,
+        "positive_selection_smoothing_window": (
+            DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW
+        ),
+        "positive_selection_min_score": DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
     }
 
 
@@ -809,6 +839,32 @@ def _safe_int(value: str | None, default: int | None = None) -> int | None:
         return default
 
 
+def _safe_optional_float(value: str | None) -> float | None:
+    """Parse optional float values from TSV."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float_list(value: str | None) -> list[float] | None:
+    """Parse a compact JSON float list from TSV."""
+    if value in (None, ""):
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    try:
+        return [float(item) for item in parsed]
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_compact_range_filename(
     filename: str | None,
 ) -> tuple[datetime, datetime] | None:
@@ -923,6 +979,13 @@ def _normalize_detection_row(
     raw_start_sec = _safe_float(row.get("raw_start_sec"), start_sec)
     raw_end_sec = _safe_float(row.get("raw_end_sec"), end_sec)
     merged_event_count = _safe_int(row.get("merged_event_count"), 1)
+    positive_selection_score_source = (
+        row.get("positive_selection_score_source", "").strip() or None
+    )
+    positive_selection_decision = (
+        row.get("positive_selection_decision", "").strip() or None
+    )
+    positive_extract_filename = row.get("positive_extract_filename", "").strip() or None
 
     return {
         "filename": filename,
@@ -937,6 +1000,27 @@ def _normalize_detection_row(
         "raw_start_sec": raw_start_sec,
         "raw_end_sec": raw_end_sec,
         "merged_event_count": merged_event_count,
+        "positive_selection_score_source": positive_selection_score_source,
+        "positive_selection_decision": positive_selection_decision,
+        "positive_selection_offsets": _safe_float_list(
+            row.get("positive_selection_offsets")
+        ),
+        "positive_selection_raw_scores": _safe_float_list(
+            row.get("positive_selection_raw_scores")
+        ),
+        "positive_selection_smoothed_scores": _safe_float_list(
+            row.get("positive_selection_smoothed_scores")
+        ),
+        "positive_selection_start_sec": _safe_optional_float(
+            row.get("positive_selection_start_sec")
+        ),
+        "positive_selection_end_sec": _safe_optional_float(
+            row.get("positive_selection_end_sec")
+        ),
+        "positive_selection_peak_score": _safe_optional_float(
+            row.get("positive_selection_peak_score")
+        ),
+        "positive_extract_filename": positive_extract_filename,
         "humpback": _parse_label(row.get("humpback")),
         "orca": _parse_label(row.get("orca")),
         "ship": _parse_label(row.get("ship")),

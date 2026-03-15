@@ -10,6 +10,29 @@
 
 ## Recently Completed
 
+# Plan: Positive Window Selection From Stored Detection Scores
+
+[Full plan](/Users/michael/.claude/plans/stored-positive-window-selection-from-detection-scores.md)
+
+## Outcome (2026-03-14)
+
+- Positive extraction now chooses one 5-second training clip from stored 1-second-hop
+  detection diagnostics using smoothing plus a minimum-score threshold, with rescoring kept
+  as a legacy fallback only.
+- Hydrophone detection now persists incremental diagnostics shards, and detection TSV/content
+  rows carry `positive_selection_*` provenance plus `positive_extract_filename`.
+- Added extraction API defaults for smoothing/threshold, updated frontend API typings,
+  expanded extractor/worker/API coverage, and appended ADR-026.
+
+## Verification
+
+- `uv run ruff format` on touched files — passed.
+- `uv run ruff check` on touched files — passed.
+- `uv run pyright` — passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 602 passed.
+
+
 # Plan: UI Changes for Classifier/Detection Page
 
 [Full plan](/Users/michael/.claude/plans/cheeky-growing-liskov.md)

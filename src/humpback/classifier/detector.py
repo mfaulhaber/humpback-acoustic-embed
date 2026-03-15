@@ -5,6 +5,7 @@ import logging
 import math
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from sklearn.pipeline import Pipeline
@@ -434,6 +435,34 @@ TSV_FIELDNAMES = [
     "merged_event_count",
 ]
 
+WINDOW_DIAGNOSTICS_SCHEMA = pa.schema(
+    [
+        ("filename", pa.string()),
+        ("window_index", pa.int32()),
+        ("offset_sec", pa.float32()),
+        ("end_sec", pa.float32()),
+        ("confidence", pa.float32()),
+        ("is_overlapped", pa.bool_()),
+        ("overlap_sec", pa.float32()),
+    ]
+)
+
+
+def _window_diagnostics_table(records: list[dict]) -> pa.Table:
+    """Build a Parquet table for persisted window diagnostics."""
+    return pa.table(
+        {
+            "filename": [r["filename"] for r in records],
+            "window_index": [r["window_index"] for r in records],
+            "offset_sec": [r["offset_sec"] for r in records],
+            "end_sec": [r["end_sec"] for r in records],
+            "confidence": [r["confidence"] for r in records],
+            "is_overlapped": [r["is_overlapped"] for r in records],
+            "overlap_sec": [r["overlap_sec"] for r in records],
+        },
+        schema=WINDOW_DIAGNOSTICS_SCHEMA,
+    )
+
 
 def read_detections_tsv(path: Path, fieldnames: list[str] | None = None) -> list[dict]:
     """Read detections from a TSV file. Returns empty list if file missing/empty."""
@@ -481,27 +510,30 @@ def append_detections_tsv(
 def write_window_diagnostics(records: list[dict], path: Path) -> None:
     """Write per-window diagnostic records to a Parquet file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    schema = pa.schema(
-        [
-            ("filename", pa.string()),
-            ("window_index", pa.int32()),
-            ("offset_sec", pa.float32()),
-            ("end_sec", pa.float32()),
-            ("confidence", pa.float32()),
-            ("is_overlapped", pa.bool_()),
-            ("overlap_sec", pa.float32()),
-        ]
-    )
-    table = pa.table(
-        {
-            "filename": [r["filename"] for r in records],
-            "window_index": [r["window_index"] for r in records],
-            "offset_sec": [r["offset_sec"] for r in records],
-            "end_sec": [r["end_sec"] for r in records],
-            "confidence": [r["confidence"] for r in records],
-            "is_overlapped": [r["is_overlapped"] for r in records],
-            "overlap_sec": [r["overlap_sec"] for r in records],
-        },
-        schema=schema,
-    )
-    pq.write_table(table, path)
+    pq.write_table(_window_diagnostics_table(records), path)
+
+
+def write_window_diagnostics_shard(
+    records: list[dict],
+    directory: Path,
+    shard_name: str,
+) -> Path | None:
+    """Write one Parquet shard for incremental diagnostics persistence."""
+    if not records:
+        return None
+    directory.mkdir(parents=True, exist_ok=True)
+    shard_path = directory / shard_name
+    pq.write_table(_window_diagnostics_table(records), shard_path)
+    return shard_path
+
+
+def read_window_diagnostics_table(
+    path: Path,
+    *,
+    filename: str | None = None,
+) -> pa.Table:
+    """Read window diagnostics from a single file or a shard directory."""
+    read_kwargs: dict[str, Any] = {}
+    if filename is not None:
+        read_kwargs["filters"] = [("filename", "=", filename)]
+    return pq.read_table(str(path), **read_kwargs)

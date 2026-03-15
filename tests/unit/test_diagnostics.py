@@ -9,7 +9,12 @@ from unittest.mock import MagicMock
 import numpy as np
 import pyarrow.parquet as pq
 
-from humpback.classifier.detector import run_detection, write_window_diagnostics
+from humpback.classifier.detector import (
+    read_window_diagnostics_table,
+    run_detection,
+    write_window_diagnostics,
+    write_window_diagnostics_shard,
+)
 from humpback.processing.inference import FakeTFLiteModel
 
 
@@ -67,6 +72,48 @@ def test_write_window_diagnostics(tmp_path):
     assert table.column("filename")[0].as_py() == "a.wav"
     assert table.column("is_overlapped")[1].as_py() is True
     assert abs(table.column("overlap_sec")[1].as_py() - 2.0) < 1e-5
+
+
+def test_read_window_diagnostics_table_supports_shard_directory(tmp_path):
+    """Incremental shard directories should read back like a single dataset."""
+    shard_dir = tmp_path / "diag-shards"
+    write_window_diagnostics_shard(
+        [
+            {
+                "filename": "a.wav",
+                "window_index": 0,
+                "offset_sec": 0.0,
+                "end_sec": 5.0,
+                "confidence": 0.8,
+                "is_overlapped": False,
+                "overlap_sec": 0.0,
+            }
+        ],
+        shard_dir,
+        "part-000001.parquet",
+    )
+    write_window_diagnostics_shard(
+        [
+            {
+                "filename": "b.wav",
+                "window_index": 1,
+                "offset_sec": 5.0,
+                "end_sec": 10.0,
+                "confidence": 0.6,
+                "is_overlapped": True,
+                "overlap_sec": 1.0,
+            }
+        ],
+        shard_dir,
+        "part-000002.parquet",
+    )
+
+    table = read_window_diagnostics_table(shard_dir)
+    assert table.num_rows == 2
+
+    filtered = read_window_diagnostics_table(shard_dir, filename="b.wav")
+    assert filtered.num_rows == 1
+    assert filtered.column("filename")[0].as_py() == "b.wav"
 
 
 def _make_fake_pipeline(n_classes=2, positive_prob=0.9):

@@ -74,11 +74,13 @@ def run_hydrophone_detection(
     high_threshold: float = 0.70,
     low_threshold: float = 0.45,
     on_chunk_complete: Callable | None = None,
+    on_chunk_diagnostics: Callable[[list[dict], int], None] | None = None,
     on_alert: Callable | None = None,
     cancel_check: Callable[[], bool] | None = None,
     pause_gate: "threading.Event | None" = None,
     skip_segments: int = 0,
     prior_detections: list[dict] | None = None,
+    on_resume_invalidation: Callable[[], None] | None = None,
     prefetch_enabled: bool = True,
     prefetch_workers: int = DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
     prefetch_inflight_segments: int = DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
@@ -141,6 +143,8 @@ def run_hydrophone_detection(
                 )
                 all_detections.clear()
                 skip_invalidated = True
+                if on_resume_invalidation is not None:
+                    on_resume_invalidation()
         else:
             is_first_chunk = False
         # Wait if paused (blocks until resumed or canceled)
@@ -219,12 +223,32 @@ def run_hydrophone_detection(
             for meta, conf in zip(window_metas, window_confidences)
         ]
 
+        synthetic_filename = chunk_start_utc.strftime("%Y%m%dT%H%M%SZ") + ".wav"
+        chunk_diagnostics = []
+        for i_meta, (meta, conf) in enumerate(zip(window_metas, window_confidences)):
+            if meta.is_overlapped and i_meta > 0:
+                prev_end = window_metas[i_meta - 1].offset_sec + window_size_seconds
+                overlap_sec = prev_end - meta.offset_sec
+            else:
+                overlap_sec = 0.0
+            chunk_diagnostics.append(
+                {
+                    "filename": synthetic_filename,
+                    "window_index": meta.window_index,
+                    "offset_sec": meta.offset_sec,
+                    "end_sec": meta.offset_sec + window_size_seconds,
+                    "confidence": conf,
+                    "is_overlapped": meta.is_overlapped,
+                    "overlap_sec": overlap_sec,
+                }
+            )
+        if on_chunk_diagnostics is not None:
+            on_chunk_diagnostics(chunk_diagnostics, segs_done)
+
         # Merge events, then canonicalize to snapped ranges.
         events = merge_detection_events(window_records, high_threshold, low_threshold)
         events = snap_and_merge_detection_events(events, window_size_seconds)
 
-        # Synthetic filename from chunk UTC time
-        synthetic_filename = chunk_start_utc.strftime("%Y%m%dT%H%M%SZ") + ".wav"
         for event in events:
             event["filename"] = synthetic_filename
             detection_filename = _build_detection_filename(

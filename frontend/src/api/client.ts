@@ -241,11 +241,17 @@ export const extractLabeledSamples = (
   jobIds: string[],
   positiveOutputPath?: string,
   negativeOutputPath?: string,
+  options?: {
+    positiveSelectionSmoothingWindow?: number;
+    positiveSelectionMinScore?: number;
+  },
 ) =>
   post<{ status: string; count: number }>("/classifier/detection-jobs/extract", {
     job_ids: jobIds,
     positive_output_path: positiveOutputPath,
     negative_output_path: negativeOutputPath,
+    positive_selection_smoothing_window: options?.positiveSelectionSmoothingWindow,
+    positive_selection_min_score: options?.positiveSelectionMinScore,
   });
 
 export function detectionAudioSliceUrl(

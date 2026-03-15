@@ -30,15 +30,13 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
     class DummyProvider:
         source_id = "rpi_orcasound_lab"
 
-    def _fake_extract_hydrophone_labeled_samples(
-        _tsv_path,
-        provider,
-        _positive_output_path,
-        _negative_output_path,
-        *_args,
-        **_kwargs,
-    ):
-        capture["provider"] = provider
+    def _fake_extract_hydrophone_labeled_samples(**kwargs):
+        capture["provider"] = kwargs["provider"]
+        capture["window_diagnostics_path"] = kwargs["window_diagnostics_path"]
+        capture["positive_selection_smoothing_window"] = kwargs[
+            "positive_selection_smoothing_window"
+        ]
+        capture["positive_selection_min_score"] = kwargs["positive_selection_min_score"]
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
     def _fake_build_playback_provider(
@@ -74,6 +72,8 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
             {
                 "positive_output_path": str(tmp_path / "pos"),
                 "negative_output_path": str(tmp_path / "neg"),
+                "positive_selection_smoothing_window": 5,
+                "positive_selection_min_score": 0.8,
             }
         ),
         local_cache_path=None,
@@ -88,6 +88,12 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
     assert capture["cache_path"] == settings.s3_cache_path
     assert capture["source_id"] == "rpi_orcasound_lab"
     assert isinstance(capture["provider"], DummyProvider)
+    assert (
+        capture["window_diagnostics_path"]
+        == tsv_path.parent / "window_diagnostics.parquet"
+    )
+    assert capture["positive_selection_smoothing_window"] == 5
+    assert capture["positive_selection_min_score"] == 0.8
     assert job.extract_status == "complete"
     assert job.extract_summary is not None
 
@@ -111,15 +117,9 @@ async def test_noaa_extraction_does_not_require_cache_path(
     class DummyProvider:
         source_id = "noaa_glacier_bay"
 
-    def _fake_extract_hydrophone_labeled_samples(
-        _tsv_path,
-        provider,
-        _positive_output_path,
-        _negative_output_path,
-        *_args,
-        **_kwargs,
-    ):
-        capture["provider"] = provider
+    def _fake_extract_hydrophone_labeled_samples(**kwargs):
+        capture["provider"] = kwargs["provider"]
+        capture["window_diagnostics_path"] = kwargs["window_diagnostics_path"]
         return {"n_humpback": 1, "n_ship": 0, "n_background": 0, "n_skipped": 0}
 
     def _fake_build_playback_provider(
@@ -169,6 +169,10 @@ async def test_noaa_extraction_does_not_require_cache_path(
     assert capture["source_id"] == "noaa_glacier_bay"
     assert capture["cache_path"] is None
     assert isinstance(capture["provider"], DummyProvider)
+    assert (
+        capture["window_diagnostics_path"]
+        == tsv_path.parent / "window_diagnostics.parquet"
+    )
     assert job.extract_status == "complete"
     assert job.extract_summary is not None
 
@@ -319,9 +323,10 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
         _fake_build_detection_provider,
     )
 
-    def _fake_run_hydrophone_detection(*args, **_kwargs):
-        capture["provider"] = args[0]
-        on_chunk_complete = args[13]
+    def _fake_run_hydrophone_detection(**kwargs):
+        capture["provider"] = kwargs["provider"]
+        on_chunk_complete = kwargs["on_chunk_complete"]
+        on_chunk_diagnostics = kwargs["on_chunk_diagnostics"]
         det = {
             "filename": "20250702T070018Z.wav",
             "start_sec": 0.0,
@@ -333,6 +338,20 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
             "extract_filename": "20250702T070018Z_20250702T070023Z.wav",
         }
         on_chunk_complete([det], 1, 1, 60.0)
+        on_chunk_diagnostics(
+            [
+                {
+                    "filename": "20250702T070018Z.wav",
+                    "window_index": 0,
+                    "offset_sec": 0.0,
+                    "end_sec": 5.0,
+                    "confidence": 0.95,
+                    "is_overlapped": False,
+                    "overlap_sec": 0.0,
+                }
+            ],
+            1,
+        )
         return [det], {
             "n_windows": 1,
             "n_detections": 1,
@@ -362,3 +381,5 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
     assert job.segments_total == 1
     assert capture["source_id"] == "rpi_orcasound_lab"
     assert capture["provider"] is not None
+    assert job.result_summary is not None
+    assert json.loads(job.result_summary)["has_diagnostics"] is True
