@@ -2,10 +2,16 @@
 
 import asyncio
 import json
+import queue
+import threading
+from types import SimpleNamespace
 
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.database import create_session_factory
 from humpback.workers.classifier_worker import (
+    _avg_audio_x_realtime,
+    _hydrophone_detection_subprocess_main,
+    _hydrophone_provider_mode,
     run_extraction_job,
     run_hydrophone_detection_job,
 )
@@ -466,3 +472,351 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
     assert capture["provider"] is not None
     assert job.result_summary is not None
     assert json.loads(job.result_summary)["has_diagnostics"] is True
+
+
+def test_hydrophone_provider_mode_reports_cache_strategy() -> None:
+    """Provider-mode tagging should distinguish Orcasound and NOAA cache modes."""
+    assert (
+        _hydrophone_provider_mode(
+            "rpi_orcasound_lab",
+            local_cache_path="/cache",
+            s3_cache_path="/s3-cache",
+            noaa_cache_path="/noaa-cache",
+        )
+        == "local_cache_only"
+    )
+    assert (
+        _hydrophone_provider_mode(
+            "rpi_orcasound_lab",
+            local_cache_path=None,
+            s3_cache_path="/s3-cache",
+            noaa_cache_path=None,
+        )
+        == "s3_write_through_cache"
+    )
+    assert (
+        _hydrophone_provider_mode(
+            "rpi_orcasound_lab",
+            local_cache_path=None,
+            s3_cache_path=None,
+            noaa_cache_path=None,
+        )
+        == "direct_s3"
+    )
+    assert (
+        _hydrophone_provider_mode(
+            "noaa_glacier_bay",
+            local_cache_path=None,
+            s3_cache_path=None,
+            noaa_cache_path="/noaa-cache",
+        )
+        == "noaa_cache"
+    )
+    assert (
+        _hydrophone_provider_mode(
+            "noaa_glacier_bay",
+            local_cache_path=None,
+            s3_cache_path=None,
+            noaa_cache_path=None,
+        )
+        == "direct_gcs"
+    )
+
+
+def test_avg_audio_x_realtime_uses_end_to_end_measured_time() -> None:
+    """Throughput should include fetch and decode, not only pipeline time."""
+    assert (
+        _avg_audio_x_realtime(
+            {
+                "time_covered_sec": 60.0,
+                "fetch_sec": 1.0,
+                "decode_sec": 2.0,
+                "pipeline_total_sec": 3.0,
+            }
+        )
+        == 10.0
+    )
+
+
+def test_hydrophone_detection_subprocess_main_emits_expected_events(
+    monkeypatch,
+) -> None:
+    """The child worker should proxy progress, diagnostics, alerts, and results."""
+    event_queue: queue.Queue[dict] = queue.Queue()
+    cancel_event = threading.Event()
+    pause_gate = threading.Event()
+    pause_gate.set()
+
+    det = {
+        "filename": "20250702T070018Z.wav",
+        "start_sec": 0.0,
+        "end_sec": 5.0,
+        "avg_confidence": 0.9,
+        "peak_confidence": 0.95,
+        "n_windows": 1,
+        "detection_filename": "20250702T070018Z_20250702T070023Z.wav",
+        "extract_filename": "20250702T070018Z_20250702T070023Z.wav",
+    }
+    diag = {
+        "filename": "20250702T070018Z.wav",
+        "window_index": 0,
+        "offset_sec": 0.0,
+        "end_sec": 5.0,
+        "confidence": 0.95,
+        "is_overlapped": False,
+        "overlap_sec": 0.0,
+    }
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.joblib.load",
+        lambda _path: object(),
+    )
+
+    class DummyProvider:
+        source_id = "rpi_orcasound_lab"
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.build_archive_detection_provider",
+        lambda *_args, **_kwargs: DummyProvider(),
+    )
+
+    def _fake_run_hydrophone_detection(**kwargs):
+        kwargs["on_resume_invalidation"]()
+        kwargs["on_chunk_complete"]([det], 1, 2, 60.0)
+        kwargs["on_chunk_diagnostics"]([diag], 1)
+        kwargs["on_alert"](
+            {
+                "type": "warning",
+                "message": "decode hiccup",
+                "timestamp": "2026-03-16T15:35:00Z",
+            }
+        )
+        return [det], {
+            "n_windows": 1,
+            "n_detections": 1,
+            "n_spans": 1,
+            "time_covered_sec": 60.0,
+            "pipeline_total_sec": 2.0,
+        }
+
+    monkeypatch.setattr(
+        "humpback.classifier.hydrophone_detector.run_hydrophone_detection",
+        _fake_run_hydrophone_detection,
+    )
+
+    _hydrophone_detection_subprocess_main(
+        event_queue=event_queue,
+        cancel_event=cancel_event,
+        pause_gate=pause_gate,
+        runtime={
+            "classifier_model_path": "/tmp/classifier.joblib",
+            "model_runtime": {
+                "model_version": "surfperch-tensorflow2",
+                "model_type": "tf2_saved_model",
+                "input_format": "waveform",
+                "model_path": "models/surfperch-tensorflow2",
+                "vector_dim": 1280,
+            },
+            "settings": {"use_real_model": False, "tf_force_cpu": False},
+            "hydrophone_id": "rpi_orcasound_lab",
+            "local_cache_path": None,
+            "s3_cache_path": "/tmp/s3-cache",
+            "noaa_cache_path": None,
+            "start_timestamp": 1751439600.0,
+            "end_timestamp": 1751443200.0,
+            "window_size_seconds": 5.0,
+            "target_sample_rate": 32000,
+            "confidence_threshold": 0.9,
+            "feature_config": None,
+            "hop_seconds": 1.0,
+            "high_threshold": 0.8,
+            "low_threshold": 0.7,
+            "skip_segments": 0,
+            "prior_detections": [],
+            "prefetch_enabled": True,
+            "prefetch_workers": 4,
+            "prefetch_inflight_segments": 16,
+        },
+    )
+
+    messages: list[dict] = []
+    while not event_queue.empty():
+        messages.append(event_queue.get())
+
+    assert [m["type"] for m in messages] == [
+        "resume_invalidated",
+        "progress",
+        "diagnostics",
+        "alert",
+        "result",
+    ]
+    result = messages[-1]
+    assert result["summary"]["n_windows"] == 1
+    assert result["child_pid"] is not None
+    assert result["peak_worker_rss_mb"] is not None
+
+
+async def test_tf2_hydrophone_detection_uses_subprocess_path(
+    session,
+    settings,
+    tmp_path,
+    monkeypatch,
+):
+    """TF2 hydrophone jobs should avoid in-process model loading across runs."""
+    model = ClassifierModel(
+        name="hydro-test-model-subprocess",
+        model_path=str(tmp_path / "model.joblib"),
+        model_version="surfperch-tensorflow2",
+        vector_dim=1280,
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+    )
+    session.add(model)
+    await session.flush()
+
+    jobs = [
+        DetectionJob(
+            status="running",
+            classifier_model_id=model.id,
+            hydrophone_id="rpi_orcasound_lab",
+            hydrophone_name="Orcasound Lab",
+            start_timestamp=1751439600.0,
+            end_timestamp=1751443200.0,
+            confidence_threshold=0.9,
+            hop_seconds=1.0,
+            high_threshold=0.8,
+            low_threshold=0.7,
+        ),
+        DetectionJob(
+            status="running",
+            classifier_model_id=model.id,
+            hydrophone_id="rpi_orcasound_lab",
+            hydrophone_name="Orcasound Lab",
+            start_timestamp=1751443200.0,
+            end_timestamp=1751446800.0,
+            confidence_threshold=0.9,
+            hop_seconds=1.0,
+            high_threshold=0.8,
+            low_threshold=0.7,
+        ),
+    ]
+    session.add_all(jobs)
+    await session.commit()
+    for job in jobs:
+        await session.refresh(job)
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.joblib.load",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError(
+                "parent worker should not load classifier pipeline for TF2 subprocess jobs"
+            )
+        ),
+    )
+
+    async def _fake_get_model_by_name(_session, _model_version):
+        return SimpleNamespace(
+            model_type="tf2_saved_model",
+            input_format="waveform",
+            path="models/surfperch-tensorflow2",
+            vector_dim=1280,
+        )
+
+    async def _fail_get_model_by_version(*_args, **_kwargs):
+        raise AssertionError(
+            "parent worker should not load the embedding model for TF2 subprocess jobs"
+        )
+
+    class DummyProvider:
+        source_id = "rpi_orcasound_lab"
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.get_model_by_name",
+        _fake_get_model_by_name,
+    )
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.get_model_by_version",
+        _fail_get_model_by_version,
+    )
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker.build_archive_detection_provider",
+        lambda *_args, **_kwargs: DummyProvider(),
+    )
+
+    subprocess_calls: list[str] = []
+
+    async def _fake_subprocess_runner(**kwargs):
+        subprocess_calls.append(str(kwargs["runtime"]["job_id"]))
+        on_chunk_complete = kwargs["on_chunk_complete"]
+        on_chunk_diagnostics = kwargs["on_chunk_diagnostics"]
+        on_alert = kwargs["on_alert"]
+        det = {
+            "filename": "20250702T070018Z.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+            "avg_confidence": 0.9,
+            "peak_confidence": 0.95,
+            "n_windows": 1,
+            "detection_filename": "20250702T070018Z_20250702T070023Z.wav",
+            "extract_filename": "20250702T070018Z_20250702T070023Z.wav",
+        }
+        on_chunk_complete([det], 1, 1, 60.0)
+        on_chunk_diagnostics(
+            [
+                {
+                    "filename": "20250702T070018Z.wav",
+                    "window_index": 0,
+                    "offset_sec": 0.0,
+                    "end_sec": 5.0,
+                    "confidence": 0.95,
+                    "is_overlapped": False,
+                    "overlap_sec": 0.0,
+                }
+            ],
+            1,
+        )
+        on_alert(
+            {
+                "type": "warning",
+                "message": "prefetch hiccup",
+                "timestamp": "2026-03-16T15:35:00Z",
+            }
+        )
+        return [det], {
+            "n_windows": 1,
+            "n_detections": 1,
+            "n_spans": 1,
+            "time_covered_sec": 60.0,
+            "fetch_sec": 1.0,
+            "decode_sec": 1.0,
+            "pipeline_total_sec": 2.0,
+            "hydrophone_id": "rpi_orcasound_lab",
+            "peak_worker_rss_mb": 256.0,
+            "child_pid": 424242,
+        }
+
+    monkeypatch.setattr(
+        "humpback.workers.classifier_worker._run_hydrophone_detection_in_subprocess",
+        _fake_subprocess_runner,
+    )
+
+    session_factory = create_session_factory(session.bind)
+    for job in jobs:
+        await run_hydrophone_detection_job(
+            session,
+            job,
+            settings,
+            session_factory=session_factory,
+        )
+        await asyncio.sleep(0.05)
+        await session.refresh(job)
+
+        summary = json.loads(job.result_summary or "{}")
+        assert job.status == "complete"
+        assert summary["execution_mode"] == "subprocess"
+        assert summary["provider_mode"] == "s3_write_through_cache"
+        assert summary["avg_audio_x_realtime"] == 15.0
+        assert summary["peak_worker_rss_mb"] == 256.0
+        assert summary["child_pid"] == 424242
+
+    assert subprocess_calls == [jobs[0].id, jobs[1].id]

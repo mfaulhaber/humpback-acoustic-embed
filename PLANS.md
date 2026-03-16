@@ -10,6 +10,31 @@
 
 ## Recently Completed
 
+# Plan: Isolate TF2 Hydrophone Detection in a Subprocess
+
+[Full plan](/Users/michael/.claude/plans/tf2-hydrophone-subprocess-isolation.md)
+
+## Outcome (2026-03-16)
+
+- TF2 SavedModel hydrophone detection now runs inside a spawned subprocess, so
+  TensorFlow/Metal state is released between jobs while the parent worker keeps
+  progress updates, diagnostics shards, alerts, and pause/resume/cancel
+  orchestration.
+- Hydrophone run summaries now record provider/runtime metadata including
+  `provider_mode`, `execution_mode`, `avg_audio_x_realtime`,
+  `peak_worker_rss_mb`, and `child_pid` to make cache/runtime regressions easier
+  to diagnose.
+- Follow-up review work corrected `avg_audio_x_realtime` to use end-to-end
+  measured time (`fetch_sec + decode_sec + pipeline_total_sec`) and removed the
+  completed P2 backlog item.
+
+## Verification
+
+- `uv run ruff format --check src/humpback/workers/classifier_worker.py tests/unit/test_classifier_worker.py` — passed.
+- `uv run ruff check src/humpback/workers/classifier_worker.py tests/unit/test_classifier_worker.py` — passed.
+- `uv run pyright src/humpback/workers/classifier_worker.py tests/unit/test_classifier_worker.py` — passed.
+- `uv run pytest tests/` — 622 passed.
+
 # Plan: Rewrite README Overview for Research-First Positioning
 
 [Full plan](/Users/michael/.claude/plans/readme-overview-research-first.md)
@@ -404,6 +429,10 @@
   folder scans at each lookback step (reduce first-segment startup latency)
 - Add integration/perf harness for hydrophone S3 prefetch (verify worker-level
   prefetch settings on real S3-backed runs and tune default worker/in-flight values)
+- Investigate a lower-overhead Orcasound decode path that reduces per-segment
+  `ffmpeg` startup cost, likely via chunk-level or persistent-stream decode;
+  treat this as a signal-processing/runtime change that needs validation and an
+  ADR before implementation.
 - Make `hydrophone_id` optional for local-cache detection jobs: update backend API
   schema, service layer, and worker to allow local-cache jobs without a hydrophone
   selection (frontend already hides the dropdown for local mode)

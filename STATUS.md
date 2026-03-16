@@ -84,8 +84,13 @@ Current state of the humpback acoustic embedding and clustering platform.
 - In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
 - Streaming detection pipeline with per-chunk progress updates
 - Cancel support via threading.Event + DB polling
+- TF2 SavedModel hydrophone detection now runs in a short-lived subprocess so
+  TensorFlow/Metal memory is reclaimed between jobs while the parent worker
+  retains progress/alert/pause/resume/cancel orchestration
 - Flash alerts for segment decode failures (dismissable, color-coded)
-- Hydrophone run summaries now include timing breakdown fields (`fetch_sec`, `decode_sec`, `features_sec`, `inference_sec`, `pipeline_total_sec`) plus prefetch flags/limits
+- Hydrophone run summaries now include timing breakdown fields (`fetch_sec`, `decode_sec`, `features_sec`, `inference_sec`, `pipeline_total_sec`) plus prefetch flags/limits and runtime metadata (`provider_mode`, `execution_mode`, `avg_audio_x_realtime`, `peak_worker_rss_mb`, `child_pid`)
+  where `avg_audio_x_realtime` is computed from end-to-end measured time
+  (`fetch_sec + decode_sec + pipeline_total_sec`)
 - Orcasound audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
 - NOAA playback/extraction use `CachingNoaaGCSProvider` when `noaa_cache_path` is set,
   falling back to direct GCS fetch when it is unset

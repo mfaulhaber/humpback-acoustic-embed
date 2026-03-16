@@ -182,7 +182,7 @@ only store indexing/assignment references.
 - high_threshold (float, default 0.70 — confidence to start an event)
 - low_threshold (float, default 0.45 — confidence to continue an event)
 - output_tsv_path (nullable, set on completion)
-- result_summary (JSON, nullable — local detection: n_files, n_windows, n_detections, n_spans, n_skipped_short, hop_seconds, high_threshold, low_threshold; hydrophone detection additionally includes prefetch/timing fields such as prefetch_enabled, fetch_sec, decode_sec, features_sec, inference_sec, pipeline_total_sec)
+- result_summary (JSON, nullable — local detection: n_files, n_windows, n_detections, n_spans, n_skipped_short, hop_seconds, high_threshold, low_threshold; hydrophone detection additionally includes prefetch/timing fields such as prefetch_enabled, fetch_sec, decode_sec, features_sec, inference_sec, pipeline_total_sec plus runtime metadata like provider_mode, execution_mode, end-to-end `avg_audio_x_realtime`, peak_worker_rss_mb, and child_pid when subprocess mode is used)
 - error_message (nullable)
 - extract_status, extract_error, extract_summary, extract_config (extraction columns)
 - created_at, updated_at
@@ -216,7 +216,9 @@ Rules:
 - write parquet to temp path, then atomically rename/move on completion
 - job must be restart-safe: if a temp exists, worker may resume or restart cleanly
 - if EmbeddingSet exists for encoding_signature and is complete -> skip
-- worker caches loaded models in memory to avoid reloading across jobs
+- worker caches loaded models in memory to avoid reloading across jobs, except
+  TF2 hydrophone detection which loads the classifier pipeline and embedding
+  model inside a short-lived subprocess per job
 
 ### Windowing Rules
 
@@ -396,6 +398,10 @@ Queue safety note:
   (`hydrophone_prefetch_enabled`, `hydrophone_prefetch_workers`,
   `hydrophone_prefetch_inflight_segments`). Prefetch preserves timeline order and
   uses the same per-segment retry/error handling path as sequential reads.
+- TF2 SavedModel hydrophone detection runs inside a short-lived subprocess so
+  TensorFlow/Metal memory is reclaimed when the job exits; the parent worker
+  still owns progress updates, diagnostics shards, alerts, and
+  pause/resume/cancel coordination.
 - Hydrophone detection jobs with no overlapping stream audio in the requested
   range fail explicitly (status `failed`) with a user-visible error message.
 - `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.

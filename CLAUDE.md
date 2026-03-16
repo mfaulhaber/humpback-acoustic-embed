@@ -245,6 +245,9 @@ Hydrophone detection jobs support the following status transitions:
 - `running` or `paused` → `canceled` (user cancels; partial results preserved)
 - `running` → `complete` (normal completion)
 - `running` → `failed` (error during processing)
+- TF2 SavedModel hydrophone detection must run in a short-lived subprocess so
+  TensorFlow/Metal memory is reclaimed between jobs; the parent worker remains
+  responsible for progress, diagnostics, alerts, and pause/resume/cancel state
 - Paused jobs remain in the Active Job panel; the worker thread blocks until resumed or canceled
 - Paused jobs with partial TSV output remain readable through
   `/classifier/detection-jobs/{id}/content`
