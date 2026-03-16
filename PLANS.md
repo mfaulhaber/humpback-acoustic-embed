@@ -10,6 +10,29 @@
 
 ## Recently Completed
 
+# Plan: Windowed Detection Mode (Fixed 5-Second Detections)
+
+[Full plan](/Users/michael/.claude/plans/adaptive-wiggling-firefly.md)
+
+## Outcome (2026-03-16)
+
+- Added `detection_mode` column to detection jobs with "windowed" option that
+  keeps 1-sec hop + hysteresis merge for sensitivity, then applies NMS peak
+  selection within each merged event to output only non-overlapping fixed 5-sec
+  detections — eliminating manual positive-selection during labeling.
+- Fixed cross-event duplicate peaks by deduplicating NMS output per
+  `(start_sec, end_sec)`, keeping the higher-confidence entry.
+- Frontend defaults to windowed mode; spectrogram window-editing controls and
+  positive-selection markers are hidden for windowed jobs.
+
+## Verification
+
+- `uv run ruff format --check` on modified Python files — passed.
+- `uv run ruff check` on modified Python files — passed.
+- `uv run pyright` on modified Python files — passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 643 passed.
+
 # Plan: NOAA Hydrophone Metadata
 
 [Full plan](/Users/michael/.claude/plans/noaa-hydrophone-metadata.md)

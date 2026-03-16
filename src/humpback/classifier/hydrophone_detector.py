@@ -12,6 +12,7 @@ from sklearn.pipeline import Pipeline
 from humpback.classifier.archive import ArchiveProvider
 from humpback.classifier.detector import (
     merge_detection_events,
+    select_peak_windows_from_events,
     snap_and_merge_detection_events,
 )
 from humpback.classifier.s3_stream import (
@@ -85,12 +86,16 @@ def run_hydrophone_detection(
     prefetch_enabled: bool = True,
     prefetch_workers: int = DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
     prefetch_inflight_segments: int = DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
+    detection_mode: str | None = None,
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
     Resume support:
     - skip_segments: number of timeline segments to skip (already processed)
     - prior_detections: detections from previous run to preserve
+
+    When ``detection_mode="windowed"``, each merged event is reduced to
+    non-overlapping peak windows of exactly ``window_size_seconds`` via NMS.
 
     Returns (all_detections, summary).
     """
@@ -253,6 +258,15 @@ def run_hydrophone_detection(
         events = merge_detection_events(window_records, high_threshold, low_threshold)
         events = snap_and_merge_detection_events(events, window_size_seconds)
 
+        # Windowed mode: reduce each event to peak windows via NMS.
+        if detection_mode == "windowed":
+            events = select_peak_windows_from_events(
+                events,
+                window_records,
+                window_size_seconds,
+                min_score=high_threshold,
+            )
+
         for event in events:
             event["filename"] = synthetic_filename
             detection_filename = _build_detection_filename(
@@ -282,6 +296,7 @@ def run_hydrophone_detection(
         "hop_seconds": hop_seconds,
         "high_threshold": high_threshold,
         "low_threshold": low_threshold,
+        "detection_mode": detection_mode or "merged",
         "hydrophone_id": provider.source_id,
         "time_covered_sec": time_covered,
         "prefetch_enabled": use_prefetch,

@@ -197,6 +197,116 @@ def snap_and_merge_detection_events(
     return merged
 
 
+def _smooth_scores(scores: list[float], window_size: int) -> list[float]:
+    """Smooth confidence scores with a moving-average kernel."""
+    if not scores:
+        return []
+    if window_size <= 1 or len(scores) == 1:
+        return [float(v) for v in scores]
+    arr = np.asarray(scores, dtype=np.float32)
+    pad = window_size // 2
+    padded = np.pad(arr, (pad, pad), mode="edge")
+    kernel = np.ones(window_size, dtype=np.float32) / float(window_size)
+    smoothed = np.convolve(padded, kernel, mode="valid")
+    return [float(v) for v in smoothed]
+
+
+def select_peak_windows_from_events(
+    events: list[dict],
+    window_records: list[dict],
+    window_size_seconds: float,
+    min_score: float,
+    smoothing_window: int = 3,
+) -> list[dict]:
+    """Reduce merged events to non-overlapping peak windows via NMS.
+
+    For each merged event, finds overlapping window records, smooths scores,
+    then iteratively selects the highest-scoring window and suppresses
+    neighbors within ``window_size_seconds``.
+
+    Returns detection dicts each spanning exactly ``window_size_seconds``.
+    Audit fields (``raw_start_sec``, ``raw_end_sec``, ``merged_event_count``)
+    are preserved from the parent event.
+    """
+    if not events or not window_records:
+        return []
+
+    result: list[dict] = []
+
+    for event in events:
+        ev_start = float(event["start_sec"])
+        ev_end = float(event["end_sec"])
+
+        # Filter window records overlapping event bounds (with tolerance).
+        candidates = sorted(
+            (
+                rec
+                for rec in window_records
+                if float(rec["offset_sec"]) + 1e-6 >= ev_start
+                and float(rec["end_sec"]) - 1e-6 <= ev_end
+            ),
+            key=lambda r: float(r["offset_sec"]),
+        )
+        if not candidates:
+            continue
+
+        raw_scores = [float(r["confidence"]) for r in candidates]
+        smoothed = _smooth_scores(raw_scores, smoothing_window)
+
+        # NMS loop: greedily pick best window, suppress overlapping.
+        active = list(range(len(candidates)))
+        while active:
+            best_idx = max(active, key=lambda i: smoothed[i])
+            if smoothed[best_idx] < min_score:
+                break
+
+            best_rec = candidates[best_idx]
+            best_offset = float(best_rec["offset_sec"])
+            best_end = best_offset + window_size_seconds
+            best_conf = smoothed[best_idx]
+
+            peak_det: dict = {
+                "start_sec": best_offset,
+                "end_sec": best_end,
+                "avg_confidence": best_conf,
+                "peak_confidence": best_conf,
+                "n_windows": int(event.get("n_windows", 1)),
+                "raw_start_sec": float(event.get("raw_start_sec", ev_start)),
+                "raw_end_sec": float(event.get("raw_end_sec", ev_end)),
+                "merged_event_count": int(event.get("merged_event_count", 1)),
+            }
+            # Carry extra fields (e.g. filename) from the parent event.
+            for key in event:
+                if key not in peak_det:
+                    peak_det[key] = event[key]
+            result.append(peak_det)
+
+            # Suppress windows overlapping the selected one.
+            active = [
+                i
+                for i in active
+                if abs(float(candidates[i]["offset_sec"]) - best_offset)
+                >= window_size_seconds - 1e-3
+            ]
+
+    # Deduplicate: adjacent events can share window records and independently
+    # select the same peak.  Keep the higher-confidence entry per (start, end).
+    seen: dict[tuple[float, float], int] = {}
+    deduped: list[dict] = []
+    for det in result:
+        key = (det["start_sec"], det["end_sec"])
+        if key in seen:
+            existing = deduped[seen[key]]
+            if det["peak_confidence"] > existing["peak_confidence"]:
+                deduped[seen[key]] = det
+        else:
+            seen[key] = len(deduped)
+            deduped.append(det)
+
+    deduped.sort(key=lambda d: (d.get("filename", ""), d["start_sec"]))
+    return deduped
+
+
 def run_detection(
     audio_folder: Path,
     pipeline: Pipeline,
@@ -211,12 +321,16 @@ def run_detection(
     high_threshold: float = 0.70,
     low_threshold: float = 0.45,
     on_file_complete: Callable[[list[dict], int, int], None] | None = None,
+    detection_mode: str | None = None,
 ) -> tuple[list[dict], dict, list[dict] | None]:
     """Scan audio folder, classify each window, merge events.
 
     Returns (detections_list, summary_dict, diagnostics_or_none).
     Each detection: {filename, start_sec, end_sec, avg_confidence, peak_confidence, n_windows}.
     When emit_diagnostics=True, diagnostics is a list of per-window records.
+
+    When ``detection_mode="windowed"``, each merged event is reduced to
+    non-overlapping peak windows of exactly ``window_size_seconds`` via NMS.
     """
     import time
 
@@ -357,6 +471,15 @@ def run_detection(
             )
             events = snap_and_merge_detection_events(events, window_size_seconds)
 
+            # Windowed mode: reduce each event to peak 5-sec windows via NMS.
+            if detection_mode == "windowed":
+                events = select_peak_windows_from_events(
+                    events,
+                    window_records,
+                    window_size_seconds,
+                    min_score=high_threshold,
+                )
+
             for event in events:
                 event["filename"] = rel_path
                 all_detections.append(event)
@@ -387,6 +510,7 @@ def run_detection(
         "hop_seconds": hop_seconds,
         "high_threshold": high_threshold,
         "low_threshold": low_threshold,
+        "detection_mode": detection_mode or "merged",
     }
 
     if all_confidences:

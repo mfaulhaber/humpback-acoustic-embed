@@ -182,6 +182,7 @@ only store indexing/assignment references.
 - hop_seconds (float, default 1.0 — stride between windows)
 - high_threshold (float, default 0.70 — confidence to start an event)
 - low_threshold (float, default 0.45 — confidence to continue an event)
+- detection_mode (nullable — NULL/"merged" = variable-length hysteresis merge; "windowed" = NMS peak selection producing fixed 5-sec detections)
 - output_tsv_path (nullable, set on completion)
 - result_summary (JSON, nullable — local detection: n_files, n_windows, n_detections, n_spans, n_skipped_short, hop_seconds, high_threshold, low_threshold; hydrophone detection additionally includes prefetch/timing fields such as prefetch_enabled, fetch_sec, decode_sec, features_sec, inference_sec, pipeline_total_sec plus runtime metadata like provider_mode, execution_mode, end-to-end `avg_audio_x_realtime`, peak_worker_rss_mb, and child_pid when subprocess mode is used)
 - error_message (nullable)

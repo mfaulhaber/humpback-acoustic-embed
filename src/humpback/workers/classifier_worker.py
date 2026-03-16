@@ -297,6 +297,7 @@ def _hydrophone_detection_subprocess_main(
             prefetch_enabled=bool(runtime["prefetch_enabled"]),
             prefetch_workers=int(runtime["prefetch_workers"]),
             prefetch_inflight_segments=int(runtime["prefetch_inflight_segments"]),
+            detection_mode=runtime.get("detection_mode"),
         )
         event_queue.put(
             {
@@ -648,6 +649,7 @@ async def run_detection_job(
             job.high_threshold,
             job.low_threshold,
             on_file_complete,
+            job.detection_mode,
         )
 
         # Overwrite TSV with final authoritative version
@@ -668,6 +670,7 @@ async def run_detection_job(
             is_hydrophone=False,
             window_size_seconds=cm.window_size_seconds,
             refresh_existing=True,
+            detection_mode=job.detection_mode,
         )
 
         summary_path = ddir / "run_summary.json"
@@ -947,6 +950,7 @@ async def run_hydrophone_detection_job(
                         "prefetch_enabled": settings.hydrophone_prefetch_enabled,
                         "prefetch_workers": settings.hydrophone_prefetch_workers,
                         "prefetch_inflight_segments": settings.hydrophone_prefetch_inflight_segments,
+                        "detection_mode": job.detection_mode,
                     },
                     cancel_event=cancel_event,
                     pause_gate=pause_gate,
@@ -988,6 +992,7 @@ async def run_hydrophone_detection_job(
                     prefetch_enabled=settings.hydrophone_prefetch_enabled,
                     prefetch_workers=settings.hydrophone_prefetch_workers,
                     prefetch_inflight_segments=settings.hydrophone_prefetch_inflight_segments,
+                    detection_mode=job.detection_mode,
                 )
         except FileNotFoundError as exc:
             raise FileNotFoundError(
@@ -1040,6 +1045,7 @@ async def run_hydrophone_detection_job(
                 is_hydrophone=True,
                 window_size_seconds=cm.window_size_seconds,
                 refresh_existing=True,
+                detection_mode=job.detection_mode,
             )
             await session.execute(
                 update(DetectionJob)
@@ -1072,6 +1078,7 @@ async def run_hydrophone_detection_job(
             is_hydrophone=True,
             window_size_seconds=cm.window_size_seconds,
             refresh_existing=True,
+            detection_mode=job.detection_mode,
         )
 
         _mark_has_diagnostics(summary)
@@ -1175,6 +1182,7 @@ async def run_extraction_job(
             diagnostics_path=diagnostics_path if diagnostics_path.exists() else None,
             is_hydrophone=job.hydrophone_id is not None,
             window_size_seconds=ws,
+            detection_mode=job.detection_mode,
         )
         if job.output_row_store_path != str(row_store_path):
             await session.execute(

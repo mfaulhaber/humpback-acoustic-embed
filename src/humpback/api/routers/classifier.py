@@ -213,6 +213,7 @@ async def create_detection_job(
             body.hop_seconds,
             body.high_threshold,
             body.low_threshold,
+            detection_mode=body.detection_mode,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -296,6 +297,7 @@ async def create_hydrophone_detection_job(
             body.high_threshold,
             body.low_threshold,
             body.local_cache_path,
+            detection_mode=body.detection_mode,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -858,6 +860,7 @@ async def _ensure_detection_row_store_for_job(
             diagnostics_path=_diagnostics_path(job),
             is_hydrophone=job.hydrophone_id is not None,
             window_size_seconds=window_size_seconds,
+            detection_mode=job.detection_mode,
         )
 
     if job.output_row_store_path != str(row_store_path):
