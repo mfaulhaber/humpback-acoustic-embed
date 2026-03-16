@@ -792,3 +792,44 @@ the worker process.
   mode, making warm-cache vs runtime-memory regressions easier to diagnose.
 - No database migration is required; the change is limited to worker
   orchestration, summary metadata, tests, and documentation.
+
+---
+
+## ADR-030: NOAA archive sources are metadata-driven
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: NOAA support started with a single hard-coded Glacier Bay
+Bartlett Cove source. That was enough for the initial provider rollout, but it
+did not scale to other NOAA archive families such as SanctSound, could not
+capture partitioned child-folder layouts, and made UI exposure a code change
+instead of a metadata decision.
+
+**Decision**:
+- Add packaged NOAA archive metadata in
+  `src/humpback/data/noaa_archive_sources.json`.
+- Keep the full verified metadata set in the repo, including reference-only
+  records that are not yet loadable or visible in the UI.
+- Derive runtime NOAA archive sources from metadata records that have concrete
+  `bucket` and `prefix` values.
+- Keep the legacy Bartlett Cove runtime/source ID `noaa_glacier_bay` for API
+  and job compatibility, while storing its canonical slug as
+  `nps_glacier_bay_bartlettcove`.
+- Add `include_in_detection_ui` so the legacy `/classifier/hydrophones`
+  endpoint can expose only the currently supported NOAA sources without
+  discarding the rest of the verified metadata.
+- Extend the NOAA provider to use metadata-driven root prefixes,
+  optional `child_folder_hints`, and broader filename parsing across Glacier
+  Bay and SanctSound naming conventions.
+
+**Consequences**:
+- NOAA source expansion becomes a metadata change first, rather than another
+  hard-coded config edit.
+- The hydrophone detection UI now exposes two NOAA choices: `sanctsound_ci01`
+  and legacy `noaa_glacier_bay`.
+- Partitioned NOAA archives can avoid unnecessary root-prefix scans when
+  verified child-folder hints are available, while still falling back safely
+  when hints are missing or incomplete.
+- No database migration is required; the change is limited to packaged
+  metadata, provider/config behavior, tests, and documentation.

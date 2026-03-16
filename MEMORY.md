@@ -45,6 +45,7 @@ humpback-acoustic-embed/
 │   ├── classifier/        (training, detection, embedding)
 │   ├── clustering/        (HDBSCAN, K-Means, metrics, refinement)
 │   ├── config.py          (settings)
+│   ├── data/              (packaged metadata assets such as NOAA archive sources)
 │   ├── database.py        (SQLAlchemy models + session)
 │   ├── models/            (TFLite + TF2 model runners)
 │   ├── processing/        (audio decode, windowing, features, parquet)
@@ -388,7 +389,13 @@ Queue safety note:
 - `POST /classifier/hydrophone-detection-jobs` requires
   `hop_seconds <= classifier window_size_seconds`.
 - `GET /classifier/hydrophones` is the legacy archive-source listing endpoint and now
-  includes both Orcasound HLS hydrophones and the NOAA Glacier Bay source.
+  includes all Orcasound HLS hydrophones plus the two NOAA UI-visible sources:
+  `sanctsound_ci01` and legacy `noaa_glacier_bay`.
+- NOAA archive metadata is packaged in `src/humpback/data/noaa_archive_sources.json`.
+  Runtime source lookup uses loadable records with concrete `bucket`/`prefix`
+  config plus optional source-capability flags such as
+  `supports_segment_prefetch`, while `/classifier/hydrophones` filters NOAA rows by
+  `include_in_detection_ui`.
 - Hydrophone timeline folder discovery starts at the requested range and expands
   backward in configurable hour increments (default 4h) up to configurable
   max lookback (default 168h) until overlap at the requested start boundary is
@@ -397,7 +404,10 @@ Queue safety note:
 - Hydrophone detection supports ordered bounded segment prefetch for S3-backed runs
   (`hydrophone_prefetch_enabled`, `hydrophone_prefetch_workers`,
   `hydrophone_prefetch_inflight_segments`). Prefetch preserves timeline order and
-  uses the same per-segment retry/error handling path as sequential reads.
+  uses the same per-segment retry/error handling path as sequential reads. NOAA
+  archive providers can opt out of raw-byte prefetch for very large archive
+  objects and stream decoded PCM in chunk-sized slices instead so multi-hour
+  files do not require a full in-memory decode before progress is emitted.
 - TF2 SavedModel hydrophone detection runs inside a short-lived subprocess so
   TensorFlow/Metal memory is reclaimed when the job exits; the parent worker
   still owns progress updates, diagnostics shards, alerts, and
@@ -409,7 +419,7 @@ Queue safety note:
   range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy
   fallback to `job.start_timestamp` for older jobs. Sparse local cache ranges preserve
   playlist-derived offsets (for example `live6118..` windows) so Orcasound local playback and
-  spectrogram lookups stay aligned. NOAA Glacier Bay rows resolve through the NOAA GCS
+  spectrogram lookups stay aligned. NOAA rows resolve through the NOAA GCS
   provider directly and do not require a cache path.
 - `GET /classifier/detection-jobs/{id}/content` normalizes detection metadata:
   canonical snapped `detection_filename` (legacy fallback prefers `extract_filename`, then snapped
@@ -432,7 +442,7 @@ Queue safety note:
   smoothed scores stay above `positive_selection_extend_min_score`; rows below
   `positive_selection_min_score` are skipped and counted in `n_positive_selection_skipped`.
   Legacy jobs fall back to rescoring during extraction when diagnostics are unavailable.
-  NOAA Glacier Bay extraction uses direct anonymous GCS fetch instead.
+  NOAA extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---

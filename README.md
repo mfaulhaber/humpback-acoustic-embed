@@ -11,8 +11,9 @@ Parquet-based artifacts.
 
 Researchers can import or reference MP3/WAV/FLAC collections, generate
 embeddings, inspect cluster structure, train binary detectors, and run those
-detectors on archived hydrophone audio from sources such as Orcasound and NOAA
-Glacier Bay. The web UI and REST API support review, labeling, playback,
+detectors on archived hydrophone audio from sources such as Orcasound and
+metadata-backed NOAA GCS archives including SanctSound CI01 and Glacier Bay
+Bartlett Cove. The web UI and REST API support review, labeling, playback,
 spectrogram inspection, and extraction of labeled clips with sibling
 spectrogram PNGs for iterative retraining.
 
@@ -506,7 +507,7 @@ Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.
 - `POST /clustering/jobs` requires at least one `embedding_set_id` (`422` on empty list).
 - `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`.
-- `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the NOAA Glacier Bay source alongside the Orcasound hydrophones.
+- `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the two UI-visible NOAA sources (`sanctsound_ci01` and legacy `noaa_glacier_bay`) alongside the Orcasound hydrophones.
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
 - Hydrophone detection summaries include provider/runtime metadata such as
   `provider_mode`, `execution_mode`, end-to-end `avg_audio_x_realtime`,
@@ -520,7 +521,7 @@ Validation and error behavior notes:
   threshold; rows are skipped when the peak smoothed score is below threshold. Legacy jobs fall
   back to rescoring.
 - Hydrophone extraction reads local HLS cache only for Orcasound jobs, writes FLAC labeled clips,
-  and skips missing-cache positives via `n_positive_selection_skipped`. NOAA Glacier Bay
+  and skips missing-cache positives via `n_positive_selection_skipped`. NOAA
   extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns `416` for malformed or unsatisfiable `Range` headers.
 - Completed detection jobs keep a canonical `detection_rows.parquet` row store beside the TSV
@@ -720,10 +721,10 @@ Environment variables (prefix `HUMPBACK_`):
 | `HUMPBACK_POSITIVE_SAMPLE_PATH` | `{storage_root}/labeled/positives` | Default positive labeled-sample extraction root |
 | `HUMPBACK_NEGATIVE_SAMPLE_PATH` | `{storage_root}/labeled/negatives` | Default negative labeled-sample extraction root |
 | `HUMPBACK_S3_CACHE_PATH` | `{storage_root}/s3-orcasound-cache` | Default Orcasound HLS cache root |
-| `HUMPBACK_NOAA_CACHE_PATH` | `{storage_root}/noaa-gcs-cache` | Local cache root for NOAA GCS metadata + `.aif` segments |
+| `HUMPBACK_NOAA_CACHE_PATH` | `{storage_root}/noaa-gcs-cache` | Local cache root for NOAA GCS metadata + cached archive objects |
 | `HUMPBACK_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS` | `4` | Backfill step size for hydrophone folder discovery |
 | `HUMPBACK_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS` | `168` | Maximum hydrophone folder-discovery backlook window |
-| `HUMPBACK_HYDROPHONE_PREFETCH_ENABLED` | `true` | Enable ordered concurrent segment prefetch for S3-backed hydrophone detection |
+| `HUMPBACK_HYDROPHONE_PREFETCH_ENABLED` | `true` | Enable ordered concurrent segment prefetch for hydrophone providers that support raw-byte prefetch (for example Orcasound HLS) |
 | `HUMPBACK_HYDROPHONE_PREFETCH_WORKERS` | `4` | Worker threads for hydrophone segment prefetch |
 | `HUMPBACK_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS` | `16` | Max queued segment fetches ahead of decode |
 

@@ -4,11 +4,38 @@
 
 ## Active
 
-(none)
+- None currently.
 
 ---
 
 ## Recently Completed
+
+# Plan: NOAA Hydrophone Metadata
+
+[Full plan](/Users/michael/.claude/plans/noaa-hydrophone-metadata.md)
+
+## Outcome (2026-03-16)
+
+- NOAA archive sources are now metadata-driven from the packaged
+  `src/humpback/data/noaa_archive_sources.json` registry, including verified
+  SanctSound and Glacier Bay records, UI visibility controls, and
+  child-folder hints for Bartlett Cove's partitioned archive layout.
+- The detection UI now exposes the supported NOAA sources
+  `sanctsound_ci01` and legacy `noaa_glacier_bay`, while preserving the
+  legacy Glacier Bay ID for compatibility and loading the rest of the verified
+  NOAA metadata as reference/runtime config.
+- NOAA long-object detection no longer stalls before first progress on
+  multi-hour SanctSound files because decode now streams in chunks, and raw
+  segment prefetch behavior is controlled per NOAA source in metadata
+  (disabled for SanctSound, enabled for Glacier Bay).
+
+## Verification
+
+- `uv run ruff format --check src/humpback/api/routers/classifier.py src/humpback/classifier/hydrophone_detector.py src/humpback/classifier/providers/__init__.py src/humpback/classifier/providers/noaa_gcs.py src/humpback/classifier/s3_stream.py src/humpback/config.py tests/integration/test_hydrophone_api.py tests/unit/test_archive_providers.py tests/unit/test_config.py tests/unit/test_s3_stream.py` — passed.
+- `uv run ruff check src/humpback/api/routers/classifier.py src/humpback/classifier/hydrophone_detector.py src/humpback/classifier/providers/__init__.py src/humpback/classifier/providers/noaa_gcs.py src/humpback/classifier/s3_stream.py src/humpback/config.py tests/integration/test_hydrophone_api.py tests/unit/test_archive_providers.py tests/unit/test_config.py tests/unit/test_s3_stream.py` — passed.
+- `uv run pyright src/humpback/api/routers/classifier.py src/humpback/classifier/hydrophone_detector.py src/humpback/classifier/providers/__init__.py src/humpback/classifier/providers/noaa_gcs.py src/humpback/classifier/s3_stream.py src/humpback/config.py tests/integration/test_hydrophone_api.py tests/unit/test_archive_providers.py tests/unit/test_config.py tests/unit/test_s3_stream.py` — passed.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 634 passed.
 
 # Plan: Isolate TF2 Hydrophone Detection in a Subprocess
 

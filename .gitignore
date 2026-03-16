@@ -1,4 +1,7 @@
 data/
+!src/humpback/data/
+!src/humpback/data/__init__.py
+!src/humpback/data/noaa_archive_sources.json
 __pycache__/
 *.pyc
 .venv/

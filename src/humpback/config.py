@@ -1,3 +1,5 @@
+import json
+from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -96,7 +98,7 @@ class Settings(BaseSettings):
     )
 
 
-# ---- Orcasound Hydrophone Configuration ----
+# ---- Archive Source Configuration ----
 
 ORCASOUND_HYDROPHONES = [
     {
@@ -125,28 +127,45 @@ ORCASOUND_HYDROPHONES = [
     },
 ]
 
+
+def _load_noaa_archive_metadata() -> list[dict[str, Any]]:
+    """Load packaged NOAA archive metadata records."""
+    payload = json.loads(
+        files("humpback.data")
+        .joinpath("noaa_archive_sources.json")
+        .read_text(encoding="utf-8")
+    )
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise ValueError("NOAA archive metadata must define a records list")
+    return [cast(dict[str, Any], record) for record in records]
+
+
+NOAA_ARCHIVE_METADATA = _load_noaa_archive_metadata()
 NOAA_ARCHIVE_SOURCES = [
-    {
-        "id": "noaa_glacier_bay",
-        "name": "NOAA Glacier Bay (Bartlett Cove)",
-        "location": "Glacier Bay, Alaska",
-        "provider_kind": "noaa_gcs",
-        "bucket": "noaa-passive-bioacoustic",
-        "prefix": (
-            "nps/audio/glacier_bay/bartlettcove/"
-            "glacierbay_bartlettcove_jul-oct2015/audio/"
-        ),
-    }
+    record
+    for record in NOAA_ARCHIVE_METADATA
+    if record.get("provider_kind") == "noaa_gcs"
+    and record.get("bucket")
+    and record.get("prefix")
 ]
 
 ORCASOUND_S3_BUCKET = "audio-orcasound-net"
 
 HYDROPHONE_IDS = {h["id"] for h in ORCASOUND_HYDROPHONES}
 ARCHIVE_SOURCES = [*ORCASOUND_HYDROPHONES, *NOAA_ARCHIVE_SOURCES]
+HYDROPHONE_UI_SOURCES = [
+    *ORCASOUND_HYDROPHONES,
+    *[
+        source
+        for source in NOAA_ARCHIVE_SOURCES
+        if bool(source.get("include_in_detection_ui"))
+    ],
+]
 ARCHIVE_SOURCE_IDS = {source["id"] for source in ARCHIVE_SOURCES}
 
 
-def get_archive_source(source_id: str) -> dict[str, str] | None:
+def get_archive_source(source_id: str) -> dict[str, Any] | None:
     return next(
         (source for source in ARCHIVE_SOURCES if source["id"] == source_id),
         None,

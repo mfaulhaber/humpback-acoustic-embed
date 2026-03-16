@@ -15,7 +15,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 
@@ -779,6 +779,99 @@ def _decode_and_clip_segment(
     return audio[start_sample:end_sample], start_ts
 
 
+def provider_supports_segment_prefetch(provider: ArchiveProvider) -> bool:
+    """Return whether raw-byte segment prefetch should be used for a provider."""
+    return bool(getattr(provider, "supports_segment_prefetch", True))
+
+
+def _provider_supports_chunked_segment_decode(provider: ArchiveProvider) -> bool:
+    """Return whether a provider opts into chunk-wise segment decode."""
+    instance_value = getattr(provider, "__dict__", {}).get(
+        "supports_chunked_segment_decode"
+    )
+    if instance_value is not None:
+        return bool(instance_value)
+
+    class_value = getattr(type(provider), "supports_chunked_segment_decode", False)
+    if isinstance(class_value, property):
+        return bool(class_value.__get__(provider, type(provider)))
+    return bool(class_value)
+
+
+def _iter_segment_audio_chunks(
+    provider: ArchiveProvider,
+    segment: StreamSegment,
+    target_sr: int,
+    clip_start_ts: float,
+    clip_end_ts: float,
+    chunk_seconds: float,
+    prefetched_bytes: bytes | None = None,
+    prefetched_fetch_sec: float = 0.0,
+    timing_callback: Callable[[float, float], None] | None = None,
+) -> Generator[tuple[np.ndarray, float], None, None]:
+    """Yield decoded audio for one timeline segment in chronological order."""
+    if not _provider_supports_chunked_segment_decode(provider):
+        clipped = _decode_and_clip_segment(
+            provider=provider,
+            segment=segment,
+            target_sr=target_sr,
+            clip_start_ts=clip_start_ts,
+            clip_end_ts=clip_end_ts,
+            prefetched_bytes=prefetched_bytes,
+            prefetched_fetch_sec=prefetched_fetch_sec,
+            timing_callback=timing_callback,
+        )
+        if clipped is not None:
+            yield clipped
+        return
+
+    chunk_decoder = cast(Any, getattr(provider, "iter_decoded_segment_chunks"))
+
+    fetch_sec = max(0.0, float(prefetched_fetch_sec))
+    if prefetched_bytes is None:
+        t_fetch = time.monotonic()
+        try:
+            seg_bytes = provider.fetch_segment(segment.key)
+        except Exception:
+            fetch_sec = time.monotonic() - t_fetch
+            if timing_callback is not None:
+                timing_callback(fetch_sec, 0.0)
+            raise
+        fetch_sec = time.monotonic() - t_fetch
+    else:
+        seg_bytes = prefetched_bytes
+
+    clipped_start_ts = max(segment.start_ts, clip_start_ts)
+    clipped_end_ts = min(segment.end_ts, clip_end_ts)
+    if clipped_end_ts <= clipped_start_ts:
+        if timing_callback is not None:
+            timing_callback(fetch_sec, 0.0)
+        return
+
+    t_decode = time.monotonic()
+    try:
+        for audio, offset_sec in chunk_decoder(
+            segment.key,
+            seg_bytes,
+            target_sr,
+            clip_start_sec=clipped_start_ts - segment.start_ts,
+            clip_end_sec=clipped_end_ts - segment.start_ts,
+            chunk_seconds=chunk_seconds,
+        ):
+            if len(audio) == 0:
+                continue
+            yield audio, segment.start_ts + offset_sec
+    except Exception:
+        decode_sec = time.monotonic() - t_decode
+        if timing_callback is not None:
+            timing_callback(fetch_sec, decode_sec)
+        raise
+
+    decode_sec = time.monotonic() - t_decode
+    if timing_callback is not None:
+        timing_callback(fetch_sec, decode_sec)
+
+
 def _iter_prefetched_segments(
     provider: ArchiveProvider,
     segments: Iterable[StreamSegment],
@@ -986,8 +1079,50 @@ def _iter_audio_chunks(
     accumulator_start_ts: float | None = None
     segments_done = skip_segments
     use_prefetch = (
-        prefetch_enabled and prefetch_workers > 1 and prefetch_inflight_segments > 1
+        prefetch_enabled
+        and prefetch_workers > 1
+        and prefetch_inflight_segments > 1
+        and provider_supports_segment_prefetch(provider)
     )
+
+    def _push_audio(
+        audio: np.ndarray,
+        clip_start_ts: float,
+        progress_done: int,
+    ) -> Generator[tuple[np.ndarray, datetime, int, int], None, None]:
+        nonlocal accumulator, accumulator_start_ts
+
+        if len(audio) == 0:
+            return
+
+        if len(accumulator) == 0:
+            accumulator = audio
+            accumulator_start_ts = clip_start_ts
+        else:
+            assert accumulator_start_ts is not None
+            expected_next_ts = accumulator_start_ts + (len(accumulator) / target_sr)
+            if (
+                abs(clip_start_ts - expected_next_ts)
+                > STREAM_DISCONTINUITY_TOLERANCE_SEC
+            ):
+                chunk_start_utc = datetime.fromtimestamp(
+                    accumulator_start_ts, tz=timezone.utc
+                )
+                yield accumulator, chunk_start_utc, progress_done, segments_total
+                accumulator = audio
+                accumulator_start_ts = clip_start_ts
+            else:
+                accumulator = np.concatenate([accumulator, audio])
+
+        while len(accumulator) >= chunk_samples:
+            assert accumulator_start_ts is not None
+            chunk = accumulator[:chunk_samples]
+            chunk_start_utc = datetime.fromtimestamp(
+                accumulator_start_ts, tz=timezone.utc
+            )
+            yield chunk, chunk_start_utc, progress_done, segments_total
+            accumulator = accumulator[chunk_samples:]
+            accumulator_start_ts += chunk_samples / target_sr
 
     if use_prefetch:
         segment_source = _iter_prefetched_segments(
@@ -1007,120 +1142,46 @@ def _iter_audio_chunks(
         prefetched_fetch_sec,
         prefetched_exc,
     ) in segment_source:
+        progress_done = segments_done + 1
         try:
             if prefetched_exc is not None:
                 if on_segment_timing is not None:
                     on_segment_timing(prefetched_fetch_sec, 0.0)
                 raise prefetched_exc
 
-            clipped = _decode_and_clip_segment(
+            for audio, clip_start_ts in _iter_segment_audio_chunks(
                 provider=provider,
                 segment=segment,
                 target_sr=target_sr,
                 clip_start_ts=start_ts,
                 clip_end_ts=end_ts,
+                chunk_seconds=chunk_seconds,
                 prefetched_bytes=prefetched_bytes,
                 prefetched_fetch_sec=prefetched_fetch_sec,
                 timing_callback=on_segment_timing,
-            )
-            segments_done += 1
-            if clipped is None:
-                continue
-
-            audio, clip_start_ts = clipped
-            if len(audio) == 0:
-                continue
-
-            if len(accumulator) == 0:
-                accumulator = audio
-                accumulator_start_ts = clip_start_ts
-            else:
-                assert accumulator_start_ts is not None
-                expected_next_ts = accumulator_start_ts + (len(accumulator) / target_sr)
-                if (
-                    abs(clip_start_ts - expected_next_ts)
-                    > STREAM_DISCONTINUITY_TOLERANCE_SEC
-                ):
-                    # Flush at detected timeline discontinuities (e.g., decode drops).
-                    chunk_start_utc = datetime.fromtimestamp(
-                        accumulator_start_ts, tz=timezone.utc
-                    )
-                    yield accumulator, chunk_start_utc, segments_done, segments_total
-                    accumulator = audio
-                    accumulator_start_ts = clip_start_ts
-                else:
-                    accumulator = np.concatenate([accumulator, audio])
-
-            while len(accumulator) >= chunk_samples:
-                assert accumulator_start_ts is not None
-                chunk = accumulator[:chunk_samples]
-                chunk_start_utc = datetime.fromtimestamp(
-                    accumulator_start_ts, tz=timezone.utc
-                )
-                yield chunk, chunk_start_utc, segments_done, segments_total
-                accumulator = accumulator[chunk_samples:]
-                accumulator_start_ts += chunk_samples / target_sr
+            ):
+                yield from _push_audio(audio, clip_start_ts, progress_done)
+            segments_done = progress_done
 
         except Exception as e:
-            segments_done += 1
             # If provider supports cache invalidation, delete the cached segment
             # and retry once — the cached file may be corrupted/truncated.
             if provider.invalidate_cached_segment(segment.key):
                 try:
-                    clipped = _decode_and_clip_segment(
+                    for audio, clip_start_ts in _iter_segment_audio_chunks(
                         provider=provider,
                         segment=segment,
                         target_sr=target_sr,
                         clip_start_ts=start_ts,
                         clip_end_ts=end_ts,
+                        chunk_seconds=chunk_seconds,
                         timing_callback=on_segment_timing,
-                    )
-                    if clipped is not None:
-                        audio, clip_start_ts = clipped
-                        if len(audio) > 0:
-                            if len(accumulator) == 0:
-                                accumulator = audio
-                                accumulator_start_ts = clip_start_ts
-                            else:
-                                assert accumulator_start_ts is not None
-                                expected_next_ts = accumulator_start_ts + (
-                                    len(accumulator) / target_sr
-                                )
-                                if (
-                                    abs(clip_start_ts - expected_next_ts)
-                                    > STREAM_DISCONTINUITY_TOLERANCE_SEC
-                                ):
-                                    chunk_start_utc = datetime.fromtimestamp(
-                                        accumulator_start_ts, tz=timezone.utc
-                                    )
-                                    yield (
-                                        accumulator,
-                                        chunk_start_utc,
-                                        segments_done,
-                                        segments_total,
-                                    )
-                                    accumulator = audio
-                                    accumulator_start_ts = clip_start_ts
-                                else:
-                                    accumulator = np.concatenate([accumulator, audio])
-
-                            while len(accumulator) >= chunk_samples:
-                                assert accumulator_start_ts is not None
-                                chunk = accumulator[:chunk_samples]
-                                chunk_start_utc = datetime.fromtimestamp(
-                                    accumulator_start_ts, tz=timezone.utc
-                                )
-                                yield (
-                                    chunk,
-                                    chunk_start_utc,
-                                    segments_done,
-                                    segments_total,
-                                )
-                                accumulator = accumulator[chunk_samples:]
-                                accumulator_start_ts += chunk_samples / target_sr
+                    ):
+                        yield from _push_audio(audio, clip_start_ts, progress_done)
                     logger.info(
                         "Retry after cache invalidation succeeded for %s", segment.key
                     )
+                    segments_done = progress_done
                     continue
                 except Exception as e2:
                     logger.warning(
@@ -1129,6 +1190,7 @@ def _iter_audio_chunks(
                         e2,
                     )
 
+            segments_done = progress_done
             logger.warning("Failed to decode segment %s: %s", segment.key, e)
             if on_error:
                 on_error(

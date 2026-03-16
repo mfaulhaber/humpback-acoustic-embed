@@ -1,5 +1,7 @@
 """Archive providers for the detection pipeline."""
 
+from typing import Any
+
 from humpback.classifier.archive import ArchiveProvider, StreamSegment
 from humpback.classifier.providers.noaa_gcs import (
     CachingNoaaGCSProvider,
@@ -17,7 +19,7 @@ from humpback.classifier.providers.orcasound_hls import (
 from humpback.config import get_archive_source
 
 
-def _require_archive_source(source_id: str) -> dict[str, str]:
+def _require_archive_source(source_id: str) -> dict[str, Any]:
     source = get_archive_source(source_id)
     if source is None:
         raise ValueError(f"Unknown archive source: {source_id}")
@@ -59,6 +61,11 @@ def build_archive_detection_provider(
             noaa_cache_path=noaa_cache_path,
             bucket=bucket,
             prefix=prefix,
+            audio_subpath=source.get("audio_subpath"),
+            child_folder_hints=source.get("child_folder_hints"),
+            supports_segment_prefetch=bool(
+                source.get("supports_segment_prefetch", True)
+            ),
         )
 
     raise ValueError(f"Unsupported archive provider kind: {provider_kind}")
@@ -97,6 +104,11 @@ def build_archive_playback_provider(
             noaa_cache_path=noaa_cache_path,
             bucket=bucket,
             prefix=prefix,
+            audio_subpath=source.get("audio_subpath"),
+            child_folder_hints=source.get("child_folder_hints"),
+            supports_segment_prefetch=bool(
+                source.get("supports_segment_prefetch", True)
+            ),
         )
 
     raise ValueError(f"Unsupported archive provider kind: {provider_kind}")

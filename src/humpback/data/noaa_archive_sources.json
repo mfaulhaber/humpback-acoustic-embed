@@ -1,0 +1,429 @@
+{
+  "title": "NOAA archive source metadata",
+  "version": "2026-03-16",
+  "records": [
+    {
+      "id": "sanctsound_ci01",
+      "canonical_slug": "sanctsound_ci01",
+      "code": "ci01",
+      "program": "SanctSound",
+      "record_scope": "top_level_bucket_folder",
+      "name": "NOAA SanctSound (Channel Islands)",
+      "location": "Channel Islands National Marine Sanctuary",
+      "friendly_name": "Channel Islands",
+      "protected_area_name": "Channel Islands National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US West Coast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/ci01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": true,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/ci01/",
+      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
+      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "SanctSound studied sound at 30 recording sites across seven sanctuaries and one marine national monument from 2018 to 2021; ci01 is the Channel Islands top-level code used in the public bucket/product naming.",
+      "confidence": "high",
+      "sources": [
+        "NOAA SanctSound Raw Passive Acoustic Data",
+        "NOAA Office of National Marine Sanctuaries sound monitoring page",
+        "Data.gov resource naming using sanctsound_ci01_*"
+      ],
+      "child_folder_hints": [
+        {
+          "prefix": "sanctsound_ci01_01/",
+          "start_utc": "2018-10-31T22:00:00Z",
+          "end_utc": "2018-12-15T04:26:35Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_02/",
+          "start_utc": "2019-03-25T21:00:00Z",
+          "end_utc": "2019-08-04T00:21:55Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_03/",
+          "start_utc": "2019-08-14T00:00:00Z",
+          "end_utc": "2019-10-09T06:11:54Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_04/",
+          "start_utc": "2020-01-24T07:00:00Z",
+          "end_utc": "2020-06-04T17:41:04Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_05/",
+          "start_utc": "2020-06-04T23:00:00Z",
+          "end_utc": "2020-10-10T18:23:46Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_06/",
+          "start_utc": "2020-10-22T16:00:00Z",
+          "end_utc": "2021-02-23T18:29:15Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_07/",
+          "start_utc": "2021-03-06T01:59:50Z",
+          "end_utc": "2021-07-01T20:24:30Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_08/",
+          "start_utc": "2021-07-08T18:00:02Z",
+          "end_utc": "2021-09-11T18:36:48Z"
+        }
+      ]
+    },
+    {
+      "id": "sanctsound_fk01",
+      "canonical_slug": "sanctsound_fk01",
+      "code": "fk01",
+      "program": "SanctSound",
+      "record_scope": "top_level_bucket_folder",
+      "name": "NOAA SanctSound (Florida Keys)",
+      "location": "Florida Keys National Marine Sanctuary",
+      "friendly_name": "Florida Keys",
+      "protected_area_name": "Florida Keys National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US Southeast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/fk01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/fk01/",
+      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
+      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "fk01 appears in public SanctSound product naming, including sound level metric and vessel-detection resources.",
+      "confidence": "high",
+      "sources": [
+        "NOAA SanctSound Raw Passive Acoustic Data",
+        "Data.gov resource naming using sanctsound_fk01_*"
+      ],
+      "child_folder_hints": []
+    },
+    {
+      "id": "sanctsound_gr01",
+      "canonical_slug": "sanctsound_gr01",
+      "code": "gr01",
+      "program": "SanctSound",
+      "record_scope": "top_level_bucket_folder",
+      "name": "NOAA SanctSound (Gray's Reef)",
+      "location": "Gray's Reef National Marine Sanctuary",
+      "friendly_name": "Gray's Reef",
+      "protected_area_name": "Gray's Reef National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US Southeast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/gr01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/gr01/",
+      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
+      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "Gray's Reef is one of the SanctSound monitoring units named by NOAA.",
+      "confidence": "medium",
+      "sources": [
+        "NOAA Office of National Marine Sanctuaries sound monitoring page",
+        "NOAA SanctSound overview"
+      ],
+      "child_folder_hints": []
+    },
+    {
+      "id": "sanctsound_hi01",
+      "canonical_slug": "sanctsound_hi01",
+      "code": "hi01",
+      "program": "SanctSound",
+      "record_scope": "top_level_bucket_folder",
+      "name": "NOAA SanctSound (Hawaiian Islands Humpback Whale)",
+      "location": "Hawaiian Islands Humpback Whale National Marine Sanctuary",
+      "friendly_name": "Hawaiian Islands Humpback Whale",
+      "protected_area_name": "Hawaiian Islands Humpback Whale National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "Hawaii",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/hi01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/hi01/",
+      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
+      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "hi01 appears in public SanctSound product naming; Hawaiian recording sites were used in sanctuary and monument waters.",
+      "confidence": "high",
+      "sources": [
+        "Data.gov resource naming using SanctSound_HI01_*",
+        "NOAA SanctSound sonar study details"
+      ],
+      "child_folder_hints": []
+    },
+    {
+      "id": "sanctsound_mb01",
+      "canonical_slug": "sanctsound_mb01",
+      "code": "mb01",
+      "program": "SanctSound",
+      "record_scope": "top_level_bucket_folder",
+      "name": "NOAA SanctSound (Monterey Bay)",
+      "location": "Monterey Bay National Marine Sanctuary",
+      "friendly_name": "Monterey Bay",
+      "protected_area_name": "Monterey Bay National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US West Coast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/mb01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/mb01/",
+      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
+      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "Monterey Bay is a named SanctSound monitoring unit and mb01 appears in public product naming.",
+      "confidence": "high",
+      "sources": [
+        "NOAA Monterey Bay soundscape article",
+        "Data.gov resource naming using sanctsound_mb01_*"
+      ],
+      "child_folder_hints": []
+    },
+    {
+      "id": "sanctsound_oc01",
+      "canonical_slug": "sanctsound_oc01",
+      "code": "oc01",
+      "program": "SanctSound",
+      "record_scope": "top_level_bucket_folder",
+      "name": "NOAA SanctSound (Olympic Coast)",
+      "location": "Olympic Coast National Marine Sanctuary",
+      "friendly_name": "Olympic Coast",
+      "protected_area_name": "Olympic Coast National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US West Coast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/oc01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/oc01/",
+      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
+      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "oc01 appears in public SanctSound product naming for sonar and fin-whale products.",
+      "confidence": "high",
+      "sources": [
+        "Data.gov resource naming using sanctsound_oc01_*"
+      ],
+      "child_folder_hints": []
+    },
+    {
+      "id": "sanctsound_sb01",
+      "canonical_slug": "sanctsound_sb01",
+      "code": "sb01",
+      "program": "SanctSound",
+      "record_scope": "top_level_bucket_folder",
+      "name": "NOAA SanctSound (Stellwagen Bank)",
+      "location": "Stellwagen Bank National Marine Sanctuary",
+      "friendly_name": "Stellwagen Bank",
+      "protected_area_name": "Stellwagen Bank National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US Northeast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/sb01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/sb01/",
+      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
+      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "Stellwagen Bank is a named SanctSound monitoring unit; public Data.gov pages also show site codes like SB02_02 for derived products, which indicates finer-grained station/product codes exist below the program level.",
+      "confidence": "medium",
+      "sources": [
+        "NOAA SanctSound overview",
+        "Data.gov search result showing SanctSound Site SB02_02"
+      ],
+      "child_folder_hints": []
+    },
+    {
+      "id": "sanctsound_pmmn",
+      "canonical_slug": "sanctsound_pmmn",
+      "code": "pmmn",
+      "program": "SanctSound",
+      "record_scope": "program_area_reference",
+      "name": "NOAA SanctSound (Papah\u0101naumoku\u0101kea)",
+      "location": "Papah\u0101naumoku\u0101kea Marine National Monument",
+      "friendly_name": "Papah\u0101naumoku\u0101kea",
+      "protected_area_name": "Papah\u0101naumoku\u0101kea Marine National Monument",
+      "protected_area_type": "marine_national_monument",
+      "region": "Hawaii / Northwestern Hawaiian Islands",
+      "provider_kind": "noaa_gcs",
+      "bucket": null,
+      "prefix": null,
+      "audio_subpath": null,
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": null,
+      "temporal_partitioning": "Not verified from the bucket root in this file",
+      "station_identity": "Program area included in SanctSound, but top-level raw-audio folder code not verified here",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "NOAA states SanctSound covered seven sanctuaries and one marine national monument. This row preserves that program relationship without asserting an unverified bucket folder code.",
+      "confidence": "medium",
+      "sources": [
+        "NOAA SanctSound overview",
+        "NOAA SanctSound sonar study details"
+      ],
+      "child_folder_hints": []
+    },
+    {
+      "id": "noaa_glacier_bay",
+      "canonical_slug": "nps_glacier_bay_bartlettcove",
+      "code": "nps_glacier_bay_bartlettcove",
+      "program": "NPS",
+      "record_scope": "single_hydrophone_station_with_time_partitions",
+      "name": "NOAA Glacier Bay (Bartlett Cove)",
+      "location": "Glacier Bay National Park and Preserve",
+      "friendly_name": "Glacier Bay \u2014 Bartlett Cove",
+      "protected_area_name": "Glacier Bay National Park and Preserve",
+      "protected_area_type": "national_park",
+      "region": "Alaska",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "nps/audio/glacier_bay/bartlettcove/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": true,
+      "include_in_detection_ui": true,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/nps/audio/glacier_bay/bartlettcove/",
+      "temporal_partitioning": "Single site partitioned by child folders encoding time ranges",
+      "station_identity": "Single cabled hydrophone station near Bartlett Cove",
+      "latitude": 58.43501,
+      "longitude": -135.92297,
+      "depth_m": 30,
+      "notes": "Single cabled hydrophone station near Bartlett Cove. This merged file adds known child-folder time partitions. Some names are user-observed from the bucket, while later partitions are represented by catalog-visible dataset names.",
+      "confidence": "high",
+      "sources": [
+        "User-supplied Glacier Bay Bartlett Cove bucket path",
+        "Glacier Bay National Park Raw Audio Data catalog entry",
+        "GlacierBay_BartlettCove_2021-2022 catalog entry",
+        "GlacierBay_BartlettCove_2022-2023 catalog entry",
+        "Cambridge paper on Glacier Bay hydrophone"
+      ],
+      "child_folder_hints": [
+        {
+          "prefix": "glacierbay_bartlettcove_may-oct2008/",
+          "start_utc": "2008-05-22T13:30:23Z",
+          "end_utc": "2008-10-29T10:09:36Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_apr-dec2009/",
+          "start_utc": "2009-04-27T09:49:15Z",
+          "end_utc": "2009-12-04T16:08:55Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_nov2010-jun2011/",
+          "start_utc": "2010-11-19T11:08:47Z",
+          "end_utc": "2011-06-23T00:43:51Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_jun-dec2011/",
+          "start_utc": "2011-06-23T16:17:27Z",
+          "end_utc": "2011-12-19T17:04:45Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2012/",
+          "start_utc": "2011-12-20T10:36:37Z",
+          "end_utc": "2012-10-31T23:57:38Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2013/",
+          "start_utc": "2013-01-02T09:08:48Z",
+          "end_utc": "2013-03-11T02:46:23Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_jan-jun2014/",
+          "start_utc": "2014-01-06T10:51:02Z",
+          "end_utc": "2014-06-02T08:39:17Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_jun-dec2014/",
+          "start_utc": "2014-06-02T08:50:39Z",
+          "end_utc": "2014-12-03T15:14:43Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_jun-jul2015/",
+          "start_utc": "2015-06-09T16:00:06Z",
+          "end_utc": "2015-07-24T23:55:09Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_jul-oct2015/",
+          "start_utc": "2015-07-25T00:00:09Z",
+          "end_utc": "2015-10-19T03:30:15Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2016-2017/",
+          "start_utc": "2016-07-19T11:39:11Z",
+          "end_utc": "2017-01-30T00:20:31Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2017/",
+          "start_utc": "2017-02-02T13:59:37Z",
+          "end_utc": "2018-01-24T12:13:12Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2018/",
+          "start_utc": "2018-01-24T12:18:34Z",
+          "end_utc": "2018-04-29T16:56:25Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2020/",
+          "start_utc": "2020-04-20T14:34:24Z",
+          "end_utc": "2020-12-31T23:57:22Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2021/",
+          "start_utc": "2021-01-01T00:02:22Z",
+          "end_utc": "2021-06-14T21:23:22Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2021-2022/",
+          "start_utc": "2021-06-15T10:06:06Z",
+          "end_utc": "2022-09-15T07:27:42Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2022-2023/",
+          "start_utc": "2022-09-19T13:12:31Z",
+          "end_utc": "2023-06-22T18:09:10Z"
+        },
+        {
+          "prefix": "glacierbay_bartlettcove_2023/",
+          "start_utc": "2023-07-27T16:55:59Z",
+          "end_utc": "2023-11-29T21:13:44Z"
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,12 @@ from typing import Any, cast
 
 import humpback.config as config_module
 
-from humpback.config import Settings
+from humpback.config import (
+    ARCHIVE_SOURCE_IDS,
+    NOAA_ARCHIVE_METADATA,
+    Settings,
+    get_archive_source,
+)
 
 
 def test_storage_root_drives_default_paths(tmp_path):
@@ -89,3 +94,26 @@ def test_from_repo_env_loads_repo_root_dotenv(tmp_path, monkeypatch):
     assert settings.api_host == "0.0.0.0"
     assert settings.allowed_hosts == ["*.trycloudflare.com", "localhost"]
     assert settings.storage_root == Path("/workspace/data")
+
+
+def test_noaa_archive_metadata_loads_runtime_and_reference_records():
+    record_ids = {record["id"] for record in NOAA_ARCHIVE_METADATA}
+
+    assert "sanctsound_ci01" in record_ids
+    assert "sanctsound_pmmn" in record_ids
+    assert "noaa_glacier_bay" in record_ids
+
+    assert "sanctsound_ci01" in ARCHIVE_SOURCE_IDS
+    assert "noaa_glacier_bay" in ARCHIVE_SOURCE_IDS
+    assert "sanctsound_pmmn" not in ARCHIVE_SOURCE_IDS
+
+    ci01 = get_archive_source("sanctsound_ci01")
+    assert ci01 is not None
+    assert ci01["audio_subpath"] == "audio/"
+    assert ci01["include_in_detection_ui"] is True
+    assert ci01["supports_segment_prefetch"] is False
+    assert len(ci01["child_folder_hints"]) == 8
+
+    glacier_bay = get_archive_source("noaa_glacier_bay")
+    assert glacier_bay is not None
+    assert glacier_bay["supports_segment_prefetch"] is True
