@@ -17,6 +17,7 @@ from humpback.classifier.providers import (
     build_orcasound_local_cache_provider,
 )
 from humpback.classifier.providers.noaa_gcs import (
+    CachingNoaaGCSProvider,
     DEFAULT_NOAA_SEGMENT_DURATION_SEC,
     NoaaAudioFile,
     NoaaGCSProvider,
@@ -107,8 +108,6 @@ class TestProtocolConformance:
         assert isinstance(provider, ArchiveProvider)
 
     def test_caching_noaa_gcs_is_archive_provider(self):
-        from humpback.classifier.providers.noaa_gcs import CachingNoaaGCSProvider
-
         provider = CachingNoaaGCSProvider(
             "noaa_glacier_bay",
             "NOAA Glacier Bay",
@@ -260,6 +259,21 @@ class TestNoaaProvider:
     def test_parse_noaa_filename(self):
         parsed = parse_noaa_filename("07_25_2015_00_00_09.aif")
         assert parsed == datetime(2015, 7, 25, 0, 0, 9, tzinfo=timezone.utc)
+        assert parse_noaa_filename("2022_09_19_13_12_31.wav") == datetime(
+            2022, 9, 19, 13, 12, 31, tzinfo=timezone.utc
+        )
+        assert parse_noaa_filename("2023-07-27T16-55-59Z.aiff") == datetime(
+            2023, 7, 27, 16, 55, 59, tzinfo=timezone.utc
+        )
+        assert parse_noaa_filename(
+            "SanctSound_CI01_01_671379494_20181031T220000Z.flac"
+        ) == datetime(2018, 10, 31, 22, 0, 0, tzinfo=timezone.utc)
+        assert parse_noaa_filename(
+            "SanctSound_CI01_02_671883305_190325210000.flac"
+        ) == datetime(2019, 3, 25, 21, 0, 0, tzinfo=timezone.utc)
+        assert parse_noaa_filename(
+            "SanctSound_CI01_08_671379494_210708180002_o.flac"
+        ) == datetime(2021, 7, 8, 18, 0, 2, tzinfo=timezone.utc)
         assert parse_noaa_filename("bad_name.aif") is None
 
     def test_build_timeline_orders_segments_and_caches_listing(self):
@@ -333,6 +347,78 @@ class TestNoaaProvider:
             == 2
         )
 
+    def test_build_timeline_uses_matching_child_hints(self):
+        root = "sanctsound/audio/ci01/"
+        bucket = _FakeBucket(
+            [
+                _FakeBlob(
+                    root
+                    + "sanctsound_ci01_01/audio/"
+                    + "SanctSound_CI01_01_671379494_20181031T220000Z.flac"
+                ),
+                _FakeBlob(
+                    root
+                    + "sanctsound_ci01_02/audio/"
+                    + "SanctSound_CI01_02_671883305_190325210000.flac"
+                ),
+            ]
+        )
+        provider = NoaaGCSProvider(
+            "sanctsound_ci01",
+            "NOAA SanctSound (Channel Islands)",
+            prefix=root,
+            audio_subpath="audio/",
+            child_folder_hints=[
+                {
+                    "prefix": "sanctsound_ci01_01/",
+                    "start_utc": "2018-10-31T22:00:00Z",
+                    "end_utc": "2018-12-15T04:26:35Z",
+                },
+                {
+                    "prefix": "sanctsound_ci01_02/",
+                    "start_utc": "2019-03-25T21:00:00Z",
+                    "end_utc": "2019-08-04T00:21:55Z",
+                },
+            ],
+            bucket_obj=bucket,
+        )
+
+        timeline = provider.build_timeline(
+            _ts(2019, 3, 25, 20, 0, 0),
+            _ts(2019, 3, 26, 0, 0, 0),
+        )
+
+        assert bucket.list_calls == 1
+        assert [segment.key for segment in timeline] == [
+            root
+            + "sanctsound_ci01_02/audio/"
+            + "SanctSound_CI01_02_671883305_190325210000.flac"
+        ]
+
+    def test_build_timeline_falls_back_to_root_listing_when_hints_missing(self):
+        root = "sanctsound/audio/ci01/"
+        key = (
+            root
+            + "sanctsound_ci01_02/audio/"
+            + "SanctSound_CI01_02_671883305_190325210000.flac"
+        )
+        bucket = _FakeBucket([_FakeBlob(key)])
+        provider = NoaaGCSProvider(
+            "sanctsound_ci01",
+            "NOAA SanctSound (Channel Islands)",
+            prefix=root,
+            audio_subpath="audio/",
+            bucket_obj=bucket,
+        )
+
+        timeline = provider.build_timeline(
+            _ts(2019, 3, 25, 20, 0, 0),
+            _ts(2019, 3, 26, 0, 0, 0),
+        )
+
+        assert bucket.list_calls == 1
+        assert [segment.key for segment in timeline] == [key]
+
     def test_build_timeline_raises_when_no_overlap(self):
         provider = NoaaGCSProvider(
             "noaa_glacier_bay",
@@ -391,6 +477,91 @@ class TestNoaaProvider:
             bucket_obj=_FakeBucket([]),
         )
         assert provider.invalidate_cached_segment("anything") is False
+
+    def test_noaa_prefetch_defaults_true(self):
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=_FakeBucket([]),
+        )
+        assert provider.supports_segment_prefetch is True
+
+    def test_noaa_prefetch_can_be_disabled_per_source(self):
+        provider = NoaaGCSProvider(
+            "sanctsound_ci01",
+            "NOAA SanctSound (Channel Islands)",
+            supports_segment_prefetch=False,
+            bucket_obj=_FakeBucket([]),
+        )
+        assert provider.supports_segment_prefetch is False
+
+    @patch("humpback.classifier.providers.noaa_gcs.iter_decode_noaa_audio_bytes")
+    def test_iter_decoded_segment_chunks_delegates_to_bytes_helper(self, mock_iter):
+        provider = NoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            bucket_obj=_FakeBucket([]),
+        )
+        mock_chunk = np.zeros(320, dtype=np.float32)
+        mock_iter.return_value = iter([(mock_chunk, 5.0)])
+
+        chunks = list(
+            provider.iter_decoded_segment_chunks(
+                "archive/07_25_2015_00_00_09.aif",
+                b"raw-aif",
+                32000,
+                clip_start_sec=5.0,
+                clip_end_sec=65.0,
+                chunk_seconds=60.0,
+            )
+        )
+
+        mock_iter.assert_called_once_with(
+            b"raw-aif",
+            32000,
+            clip_start_sec=5.0,
+            clip_end_sec=65.0,
+            chunk_seconds=60.0,
+        )
+        assert chunks == [(mock_chunk, 5.0)]
+
+    @patch("humpback.classifier.providers.noaa_gcs.iter_decode_noaa_audio_file")
+    def test_caching_iter_decoded_segment_chunks_prefers_cached_file(
+        self, mock_iter_file, tmp_path
+    ):
+        provider = CachingNoaaGCSProvider(
+            "noaa_glacier_bay",
+            "NOAA Glacier Bay",
+            str(tmp_path),
+            bucket="noaa-passive-bioacoustic",
+            bucket_obj=_FakeBucket([]),
+        )
+        key = "archive/07_25_2015_00_00_09.aif"
+        cached_path = tmp_path / "noaa-passive-bioacoustic" / key
+        cached_path.parent.mkdir(parents=True)
+        cached_path.write_bytes(b"cached")
+        mock_chunk = np.zeros(320, dtype=np.float32)
+        mock_iter_file.return_value = iter([(mock_chunk, 0.0)])
+
+        chunks = list(
+            provider.iter_decoded_segment_chunks(
+                key,
+                b"raw-aif",
+                32000,
+                clip_start_sec=0.0,
+                clip_end_sec=60.0,
+                chunk_seconds=60.0,
+            )
+        )
+
+        mock_iter_file.assert_called_once_with(
+            cached_path,
+            32000,
+            clip_start_sec=0.0,
+            clip_end_sec=60.0,
+            chunk_seconds=60.0,
+        )
+        assert chunks == [(mock_chunk, 0.0)]
 
 
 class TestProviderBuilders:
@@ -464,6 +635,18 @@ class TestProviderBuilders:
 
         assert isinstance(provider, NoaaGCSProvider)
         assert provider.source_id == "noaa_glacier_bay"
+        assert provider.supports_segment_prefetch is True
+
+    def test_archive_detection_builder_applies_sanctsound_prefetch_flag(self):
+        provider = build_archive_detection_provider(
+            "sanctsound_ci01",
+            local_cache_path=None,
+            s3_cache_path="/ignored",
+        )
+
+        assert isinstance(provider, NoaaGCSProvider)
+        assert provider.source_id == "sanctsound_ci01"
+        assert provider.supports_segment_prefetch is False
 
     def test_archive_detection_builder_routes_noaa_caching(self, tmp_path):
         provider = build_archive_detection_provider(
@@ -477,6 +660,7 @@ class TestProviderBuilders:
 
         assert isinstance(provider, CachingNoaaGCSProvider)
         assert provider.source_id == "noaa_glacier_bay"
+        assert provider.supports_segment_prefetch is True
 
     def test_archive_detection_builder_rejects_local_cache_for_noaa(self):
         with pytest.raises(ValueError, match="local_cache_path is only supported"):
@@ -644,6 +828,55 @@ class TestCachingNoaaProvider:
         cached = read_noaa_manifest(manifest)
         assert cached is not None
         assert len(cached[0]) == 2
+
+    def test_build_timeline_writes_manifest_per_matching_child_prefix(self, tmp_path):
+        from humpback.classifier.providers.noaa_gcs import _manifest_path
+
+        root = "sanctsound/audio/ci01/"
+        matching_prefix = root + "sanctsound_ci01_02/audio/"
+        bucket = _FakeBucket(
+            [
+                _FakeBlob(
+                    matching_prefix + "SanctSound_CI01_02_671883305_190325210000.flac",
+                    size=100,
+                ),
+            ]
+        )
+        from humpback.classifier.providers.noaa_gcs import CachingNoaaGCSProvider
+
+        provider = CachingNoaaGCSProvider(
+            "sanctsound_ci01",
+            "NOAA SanctSound (Channel Islands)",
+            str(tmp_path),
+            prefix=root,
+            audio_subpath="audio/",
+            child_folder_hints=[
+                {
+                    "prefix": "sanctsound_ci01_01/",
+                    "start_utc": "2018-10-31T22:00:00Z",
+                    "end_utc": "2018-12-15T04:26:35Z",
+                },
+                {
+                    "prefix": "sanctsound_ci01_02/",
+                    "start_utc": "2019-03-25T21:00:00Z",
+                    "end_utc": "2019-08-04T00:21:55Z",
+                },
+            ],
+            bucket_obj=bucket,
+        )
+
+        timeline = provider.build_timeline(
+            _ts(2019, 3, 25, 20, 0, 0),
+            _ts(2019, 3, 26, 0, 0, 0),
+        )
+
+        assert len(timeline) == 1
+        manifest = _manifest_path(
+            str(tmp_path),
+            "noaa-passive-bioacoustic",
+            matching_prefix,
+        )
+        assert manifest.is_file()
 
     def test_fetch_segment_reads_local_first(self, tmp_path):
         prefix = "archive/"

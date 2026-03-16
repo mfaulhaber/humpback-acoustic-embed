@@ -10,12 +10,14 @@ import re
 import struct
 import subprocess
 import tempfile
+import threading
 from collections import defaultdict
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -26,7 +28,27 @@ DEFAULT_NOAA_GCS_PREFIX = (
     "nps/audio/glacier_bay/bartlettcove/glacierbay_bartlettcove_jul-oct2015/audio/"
 )
 DEFAULT_NOAA_SEGMENT_DURATION_SEC = 300.0
-NOAA_FILENAME_RE = re.compile(r"^(\d{2})_(\d{2})_(\d{4})_(\d{2})_(\d{2})_(\d{2})\.aif$")
+
+NOAA_LEGACY_FILENAME_RE = re.compile(
+    r"^(\d{2})_(\d{2})_(\d{4})_(\d{2})_(\d{2})_(\d{2})\.(?:aif|aiff|wav)$",
+    re.IGNORECASE,
+)
+NOAA_YEAR_FIRST_FILENAME_RE = re.compile(
+    r"^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})\.(?:aif|aiff|wav)$",
+    re.IGNORECASE,
+)
+NOAA_ISO_DASH_FILENAME_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})Z\.(?:aif|aiff|wav|flac)$",
+    re.IGNORECASE,
+)
+SANCTSOUND_ISO_FILENAME_RE = re.compile(
+    r".*_(\d{8}T\d{6}Z)\.flac$",
+    re.IGNORECASE,
+)
+SANCTSOUND_COMPACT_FILENAME_RE = re.compile(
+    r".*_(\d{12})(?:_o)?\.flac$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -52,21 +74,132 @@ class DateFolder:
     files: list[NoaaAudioFile] = field(default_factory=list)
 
 
-def parse_noaa_filename(filename: str) -> datetime | None:
-    """Parse NOAA filename timestamps in UTC."""
-    match = NOAA_FILENAME_RE.match(filename)
-    if match is None:
+@dataclass(frozen=True)
+class NoaaChildFolderHint:
+    """Known child folder under a NOAA archive root."""
+
+    prefix: str
+    start_utc: datetime | None = None
+    end_utc: datetime | None = None
+
+    def overlaps(self, start_ts: float, end_ts: float) -> bool:
+        start_bound = (
+            self.start_utc.timestamp() if self.start_utc is not None else float("-inf")
+        )
+        end_bound = (
+            self.end_utc.timestamp() if self.end_utc is not None else float("inf")
+        )
+        return end_bound > start_ts and start_bound < end_ts
+
+
+def _normalized_prefix(prefix: str) -> str:
+    return prefix.strip("/") + "/"
+
+
+def _join_prefix(*parts: str) -> str:
+    return "/".join(part.strip("/") for part in parts if part.strip("/")) + "/"
+
+
+def _coerce_utc_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if not isinstance(value, str) or not value.strip():
         return None
 
-    month, day, year, hour, minute, second = (int(group) for group in match.groups())
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
     try:
-        return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_child_folder_hints(
+    raw_hints: object,
+) -> list[NoaaChildFolderHint]:
+    if not isinstance(raw_hints, list):
+        return []
+
+    hints: list[NoaaChildFolderHint] = []
+    for entry in raw_hints:
+        if not isinstance(entry, Mapping):
+            continue
+        prefix = entry.get("prefix")
+        if not isinstance(prefix, str) or not prefix.strip():
+            continue
+        hints.append(
+            NoaaChildFolderHint(
+                prefix=_normalized_prefix(prefix),
+                start_utc=_coerce_utc_datetime(entry.get("start_utc")),
+                end_utc=_coerce_utc_datetime(entry.get("end_utc")),
+            )
+        )
+    return hints
+
+
+def parse_noaa_filename(filename: str) -> datetime | None:
+    """Parse NOAA archive filename timestamps in UTC across known datasets."""
+    match = NOAA_LEGACY_FILENAME_RE.match(filename)
+    if match is not None:
+        month, day, year, hour, minute, second = (
+            int(group) for group in match.groups()
+        )
+        try:
+            return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    match = NOAA_YEAR_FIRST_FILENAME_RE.match(filename)
+    if match is not None:
+        year, month, day, hour, minute, second = (
+            int(group) for group in match.groups()
+        )
+        try:
+            return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    match = NOAA_ISO_DASH_FILENAME_RE.match(filename)
+    if match is not None:
+        year, month, day, hour, minute, second = (
+            int(group) for group in match.groups()
+        )
+        try:
+            return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    match = SANCTSOUND_ISO_FILENAME_RE.match(filename)
+    if match is not None:
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            return None
+
+    match = SANCTSOUND_COMPACT_FILENAME_RE.match(filename)
+    if match is not None:
+        try:
+            return datetime.strptime(match.group(1), "%y%m%d%H%M%S").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            return None
+
+    return None
 
 
 def decode_noaa_audio_bytes(raw_bytes: bytes, target_sr: int) -> np.ndarray:
-    """Decode NOAA AIFF bytes to mono float32 audio via ffmpeg."""
+    """Decode NOAA archive audio bytes to mono float32 audio via ffmpeg."""
     result = subprocess.run(
         [
             "ffmpeg",
@@ -108,8 +241,160 @@ def decode_noaa_audio_bytes(raw_bytes: bytes, target_sr: int) -> np.ndarray:
     return pcm.astype(np.float32) / 32768.0
 
 
+def _iter_pcm_chunks_from_ffmpeg(
+    command: list[str],
+    *,
+    chunk_samples: int,
+    raw_bytes: bytes | None = None,
+) -> Generator[np.ndarray, None, None]:
+    """Stream ffmpeg PCM output as float32 chunks."""
+    proc = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE if raw_bytes is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    writer: threading.Thread | None = None
+
+    if raw_bytes is not None:
+
+        def _feed_stdin() -> None:
+            assert proc.stdin is not None
+            try:
+                proc.stdin.write(raw_bytes)
+            except BrokenPipeError:
+                pass
+            finally:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+
+        writer = threading.Thread(target=_feed_stdin, daemon=True)
+        writer.start()
+
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+
+    bytes_per_chunk = max(1, int(chunk_samples)) * 2
+    pending = b""
+
+    try:
+        while True:
+            chunk = proc.stdout.read(bytes_per_chunk)
+            if not chunk:
+                break
+            pcm_bytes = pending + chunk
+            usable_len = len(pcm_bytes) - (len(pcm_bytes) % 2)
+            pending = pcm_bytes[usable_len:]
+            if usable_len == 0:
+                continue
+            pcm = np.frombuffer(pcm_bytes[:usable_len], dtype=np.int16)
+            if len(pcm) == 0:
+                continue
+            yield pcm.astype(np.float32) / 32768.0
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+
+    if writer is not None:
+        writer.join()
+
+    stderr = proc.stderr.read()
+    returncode = proc.wait()
+    if returncode != 0:
+        raise RuntimeError(f"ffmpeg decode failed: {stderr[:500]}")
+
+
+def iter_decode_noaa_audio_bytes(
+    raw_bytes: bytes,
+    target_sr: int,
+    *,
+    clip_start_sec: float,
+    clip_end_sec: float,
+    chunk_seconds: float,
+) -> Generator[tuple[np.ndarray, float], None, None]:
+    """Decode clipped NOAA bytes to sequential float32 chunks."""
+    clip_duration_sec = max(0.0, clip_end_sec - clip_start_sec)
+    if clip_duration_sec <= 0:
+        return
+
+    command = [
+        "ffmpeg",
+        "-i",
+        "pipe:0",
+        "-ss",
+        str(clip_start_sec),
+        "-t",
+        str(clip_duration_sec),
+        "-f",
+        "s16le",
+        "-acodec",
+        "pcm_s16le",
+        "-ac",
+        "1",
+        "-ar",
+        str(target_sr),
+        "pipe:1",
+    ]
+    offset_samples = 0
+    chunk_samples = max(1, int(round(chunk_seconds * target_sr)))
+    for pcm in _iter_pcm_chunks_from_ffmpeg(
+        command,
+        chunk_samples=chunk_samples,
+        raw_bytes=raw_bytes,
+    ):
+        yield pcm, clip_start_sec + (offset_samples / target_sr)
+        offset_samples += len(pcm)
+
+
+def iter_decode_noaa_audio_file(
+    audio_path: Path,
+    target_sr: int,
+    *,
+    clip_start_sec: float,
+    clip_end_sec: float,
+    chunk_seconds: float,
+) -> Generator[tuple[np.ndarray, float], None, None]:
+    """Decode a clipped NOAA file from disk to sequential float32 chunks."""
+    clip_duration_sec = max(0.0, clip_end_sec - clip_start_sec)
+    if clip_duration_sec <= 0:
+        return
+
+    command = [
+        "ffmpeg",
+        "-i",
+        str(audio_path),
+        "-ss",
+        str(clip_start_sec),
+        "-t",
+        str(clip_duration_sec),
+        "-f",
+        "s16le",
+        "-acodec",
+        "pcm_s16le",
+        "-ac",
+        "1",
+        "-ar",
+        str(target_sr),
+        "pipe:1",
+    ]
+    offset_samples = 0
+    chunk_samples = max(1, int(round(chunk_seconds * target_sr)))
+    for pcm in _iter_pcm_chunks_from_ffmpeg(
+        command,
+        chunk_samples=chunk_samples,
+        raw_bytes=None,
+    ):
+        yield pcm, clip_start_sec + (offset_samples / target_sr)
+        offset_samples += len(pcm)
+
+
 def list_noaa_objects(bucket: Any, prefix: str) -> list[NoaaAudioFile]:
-    """List timestamped NOAA AIFF objects under a prefix."""
+    """List timestamped NOAA archive audio objects under a prefix."""
     files: list[NoaaAudioFile] = []
     for blob in bucket.list_blobs(prefix=prefix):
         name = blob.name.rsplit("/", 1)[-1]
@@ -165,6 +450,32 @@ def estimate_noaa_interval_sec(files: list[NoaaAudioFile]) -> float:
     return float(median(intervals))
 
 
+def _load_noaa_prefix(bucket: Any, prefix: str) -> tuple[list[NoaaAudioFile], float]:
+    files = list_noaa_objects(bucket, prefix)
+    return files, estimate_noaa_interval_sec(files)
+
+
+def _segments_from_files(
+    files: list[NoaaAudioFile], default_interval_sec: float
+) -> list[StreamSegment]:
+    segments: list[StreamSegment] = []
+    for idx, audio_file in enumerate(files):
+        duration_sec = default_interval_sec
+        if idx + 1 < len(files):
+            next_gap = files[idx + 1].start_ts - audio_file.start_ts
+            if 0 < next_gap < default_interval_sec:
+                duration_sec = next_gap
+
+        segments.append(
+            StreamSegment(
+                key=audio_file.key,
+                start_ts=audio_file.start_ts,
+                duration_sec=duration_sec,
+            )
+        )
+    return segments
+
+
 class NoaaGCSProvider:
     """ArchiveProvider for NOAA's public passive bioacoustic GCS archive."""
 
@@ -175,15 +486,23 @@ class NoaaGCSProvider:
         *,
         bucket: str = DEFAULT_NOAA_GCS_BUCKET,
         prefix: str = DEFAULT_NOAA_GCS_PREFIX,
+        audio_subpath: str | None = None,
+        child_folder_hints: list[Mapping[str, object]] | None = None,
+        supports_segment_prefetch: bool = True,
         bucket_obj: Any | None = None,
     ) -> None:
         self._source_id = source_id
         self._name = name
         self._bucket_name = bucket
-        self._prefix = prefix.rstrip("/") + "/"
+        self._prefix = _normalized_prefix(prefix)
+        self._audio_subpath = (
+            _normalized_prefix(audio_subpath) if audio_subpath is not None else None
+        )
+        self._child_folder_hints = _parse_child_folder_hints(child_folder_hints)
+        self._supports_segment_prefetch = bool(supports_segment_prefetch)
         self._bucket = bucket_obj
-        self._files: list[NoaaAudioFile] | None = None
-        self._default_interval_sec: float | None = None
+        self._files_by_prefix: dict[str, list[NoaaAudioFile]] = {}
+        self._default_interval_sec_by_prefix: dict[str, float] = {}
 
     @property
     def name(self) -> str:
@@ -193,6 +512,14 @@ class NoaaGCSProvider:
     def source_id(self) -> str:
         return self._source_id
 
+    @property
+    def supports_segment_prefetch(self) -> bool:
+        return self._supports_segment_prefetch
+
+    @property
+    def supports_chunked_segment_decode(self) -> bool:
+        return True
+
     def _get_bucket(self) -> Any:
         if self._bucket is None:
             from google.cloud import storage
@@ -201,54 +528,66 @@ class NoaaGCSProvider:
             self._bucket = client.bucket(self._bucket_name)
         return self._bucket
 
-    def _ensure_loaded(self) -> None:
-        if self._files is not None:
-            return
-        files = list_noaa_objects(self._get_bucket(), self._prefix)
-        self._files = files
-        self._default_interval_sec = estimate_noaa_interval_sec(files)
+    def _candidate_prefixes(
+        self, start_ts: float | None = None, end_ts: float | None = None
+    ) -> list[str]:
+        if self._child_folder_hints:
+            matching_hints = self._child_folder_hints
+            if start_ts is not None and end_ts is not None:
+                matching_hints = [
+                    hint
+                    for hint in self._child_folder_hints
+                    if hint.overlaps(start_ts, end_ts)
+                ]
+            prefixes = [
+                _join_prefix(self._prefix, hint.prefix, self._audio_subpath or "")
+                for hint in matching_hints
+            ]
+            if prefixes:
+                return list(dict.fromkeys(prefixes))
+        return [self._prefix]
 
-    def _build_segments(self) -> list[StreamSegment]:
-        self._ensure_loaded()
-        files = self._files or []
-        default_interval = (
-            self._default_interval_sec or DEFAULT_NOAA_SEGMENT_DURATION_SEC
+    def _load_prefix(self, prefix: str) -> tuple[list[NoaaAudioFile], float]:
+        if prefix not in self._files_by_prefix:
+            files, interval = _load_noaa_prefix(self._get_bucket(), prefix)
+            self._files_by_prefix[prefix] = files
+            self._default_interval_sec_by_prefix[prefix] = interval
+        return (
+            self._files_by_prefix[prefix],
+            self._default_interval_sec_by_prefix[prefix],
         )
 
+    def _build_segments(
+        self, start_ts: float | None = None, end_ts: float | None = None
+    ) -> tuple[list[StreamSegment], bool]:
         segments: list[StreamSegment] = []
-        for idx, audio_file in enumerate(files):
-            duration_sec = default_interval
-            if idx + 1 < len(files):
-                next_gap = files[idx + 1].start_ts - audio_file.start_ts
-                if 0 < next_gap < default_interval:
-                    duration_sec = next_gap
-
-            segments.append(
-                StreamSegment(
-                    key=audio_file.key,
-                    start_ts=audio_file.start_ts,
-                    duration_sec=duration_sec,
-                )
-            )
-        return segments
+        has_files = False
+        for prefix in self._candidate_prefixes(start_ts, end_ts):
+            files, default_interval = self._load_prefix(prefix)
+            if files:
+                has_files = True
+            segments.extend(_segments_from_files(files, default_interval))
+        segments.sort(key=lambda segment: segment.start_ts)
+        return segments, has_files
 
     def build_timeline(self, start_ts: float, end_ts: float) -> list[StreamSegment]:
+        segments, has_files = self._build_segments(start_ts, end_ts)
         timeline = [
             segment
-            for segment in self._build_segments()
+            for segment in segments
             if segment.end_ts > start_ts and segment.start_ts < end_ts
         ]
-        if not (self._files or []):
+        if not has_files:
             raise FileNotFoundError("No NOAA audio data found for this time range")
         if not timeline:
             raise FileNotFoundError("No NOAA stream segments found in requested range")
         return timeline
 
     def count_segments(self, start_ts: float, end_ts: float) -> int:
-        self._ensure_loaded()
+        segments, _ = self._build_segments(start_ts, end_ts)
         return sum(
             1
-            for segment in self._build_segments()
+            for segment in segments
             if segment.end_ts > start_ts and segment.start_ts < end_ts
         )
 
@@ -258,6 +597,25 @@ class NoaaGCSProvider:
 
     def decode_segment(self, raw_bytes: bytes, target_sr: int) -> np.ndarray:
         return decode_noaa_audio_bytes(raw_bytes, target_sr)
+
+    def iter_decoded_segment_chunks(
+        self,
+        key: str,
+        raw_bytes: bytes,
+        target_sr: int,
+        *,
+        clip_start_sec: float,
+        clip_end_sec: float,
+        chunk_seconds: float,
+    ) -> Generator[tuple[np.ndarray, float], None, None]:
+        del key
+        yield from iter_decode_noaa_audio_bytes(
+            raw_bytes,
+            target_sr,
+            clip_start_sec=clip_start_sec,
+            clip_end_sec=clip_end_sec,
+            chunk_seconds=chunk_seconds,
+        )
 
     def invalidate_cached_segment(self, key: str) -> bool:
         return False
@@ -352,18 +710,29 @@ class CachingNoaaGCSProvider:
         *,
         bucket: str = DEFAULT_NOAA_GCS_BUCKET,
         prefix: str = DEFAULT_NOAA_GCS_PREFIX,
+        audio_subpath: str | None = None,
+        child_folder_hints: list[Mapping[str, object]] | None = None,
+        supports_segment_prefetch: bool = True,
         bucket_obj: Any | None = None,
     ) -> None:
         self._source_id = source_id
         self._name = name
         self._cache_root = cache_root
         self._bucket_name = bucket
-        self._prefix = prefix.rstrip("/") + "/"
+        self._prefix = _normalized_prefix(prefix)
+        self._supports_segment_prefetch = bool(supports_segment_prefetch)
         self._gcs = NoaaGCSProvider(
-            source_id, name, bucket=bucket, prefix=prefix, bucket_obj=bucket_obj
+            source_id,
+            name,
+            bucket=bucket,
+            prefix=prefix,
+            audio_subpath=audio_subpath,
+            child_folder_hints=child_folder_hints,
+            supports_segment_prefetch=supports_segment_prefetch,
+            bucket_obj=bucket_obj,
         )
-        self._files: list[NoaaAudioFile] | None = None
-        self._default_interval_sec: float | None = None
+        self._files_by_prefix: dict[str, list[NoaaAudioFile]] = {}
+        self._default_interval_sec_by_prefix: dict[str, float] = {}
 
     @property
     def name(self) -> str:
@@ -373,63 +742,65 @@ class CachingNoaaGCSProvider:
     def source_id(self) -> str:
         return self._source_id
 
-    def _ensure_loaded(self) -> None:
-        if self._files is not None:
-            return
-        manifest = _manifest_path(self._cache_root, self._bucket_name, self._prefix)
-        cached = read_noaa_manifest(manifest)
-        if cached is not None:
-            self._files, self._default_interval_sec = cached
-            return
-        self._gcs._ensure_loaded()
-        self._files = self._gcs._files
-        self._default_interval_sec = self._gcs._default_interval_sec
-        if self._files:
-            write_noaa_manifest(
-                manifest,
-                self._files,
-                self._default_interval_sec or DEFAULT_NOAA_SEGMENT_DURATION_SEC,
+    @property
+    def supports_segment_prefetch(self) -> bool:
+        return self._supports_segment_prefetch
+
+    @property
+    def supports_chunked_segment_decode(self) -> bool:
+        return True
+
+    def _load_prefix(self, prefix: str) -> tuple[list[NoaaAudioFile], float]:
+        if prefix in self._files_by_prefix:
+            return (
+                self._files_by_prefix[prefix],
+                self._default_interval_sec_by_prefix[prefix],
             )
 
-    def _build_segments(self) -> list[StreamSegment]:
-        self._ensure_loaded()
-        files = self._files or []
-        default_interval = (
-            self._default_interval_sec or DEFAULT_NOAA_SEGMENT_DURATION_SEC
-        )
+        manifest = _manifest_path(self._cache_root, self._bucket_name, prefix)
+        cached = read_noaa_manifest(manifest)
+        if cached is None:
+            files, interval = _load_noaa_prefix(self._gcs._get_bucket(), prefix)
+            if files:
+                write_noaa_manifest(manifest, files, interval)
+        else:
+            files, interval = cached
+
+        self._files_by_prefix[prefix] = files
+        self._default_interval_sec_by_prefix[prefix] = interval
+        return files, interval
+
+    def _build_segments(
+        self, start_ts: float | None = None, end_ts: float | None = None
+    ) -> tuple[list[StreamSegment], bool]:
         segments: list[StreamSegment] = []
-        for idx, audio_file in enumerate(files):
-            duration_sec = default_interval
-            if idx + 1 < len(files):
-                next_gap = files[idx + 1].start_ts - audio_file.start_ts
-                if 0 < next_gap < default_interval:
-                    duration_sec = next_gap
-            segments.append(
-                StreamSegment(
-                    key=audio_file.key,
-                    start_ts=audio_file.start_ts,
-                    duration_sec=duration_sec,
-                )
-            )
-        return segments
+        has_files = False
+        for prefix in self._gcs._candidate_prefixes(start_ts, end_ts):
+            files, default_interval = self._load_prefix(prefix)
+            if files:
+                has_files = True
+            segments.extend(_segments_from_files(files, default_interval))
+        segments.sort(key=lambda segment: segment.start_ts)
+        return segments, has_files
 
     def build_timeline(self, start_ts: float, end_ts: float) -> list[StreamSegment]:
+        segments, has_files = self._build_segments(start_ts, end_ts)
         timeline = [
             segment
-            for segment in self._build_segments()
+            for segment in segments
             if segment.end_ts > start_ts and segment.start_ts < end_ts
         ]
-        if not (self._files or []):
+        if not has_files:
             raise FileNotFoundError("No NOAA audio data found for this time range")
         if not timeline:
             raise FileNotFoundError("No NOAA stream segments found in requested range")
         return timeline
 
     def count_segments(self, start_ts: float, end_ts: float) -> int:
-        self._ensure_loaded()
+        segments, _ = self._build_segments(start_ts, end_ts)
         return sum(
             1
-            for segment in self._build_segments()
+            for segment in segments
             if segment.end_ts > start_ts and segment.start_ts < end_ts
         )
 
@@ -455,6 +826,35 @@ class CachingNoaaGCSProvider:
     def decode_segment(self, raw_bytes: bytes, target_sr: int) -> np.ndarray:
         return decode_noaa_audio_bytes(raw_bytes, target_sr)
 
+    def iter_decoded_segment_chunks(
+        self,
+        key: str,
+        raw_bytes: bytes,
+        target_sr: int,
+        *,
+        clip_start_sec: float,
+        clip_end_sec: float,
+        chunk_seconds: float,
+    ) -> Generator[tuple[np.ndarray, float], None, None]:
+        local_path = Path(self._cache_root) / self._bucket_name / key
+        if local_path.is_file():
+            yield from iter_decode_noaa_audio_file(
+                local_path,
+                target_sr,
+                clip_start_sec=clip_start_sec,
+                clip_end_sec=clip_end_sec,
+                chunk_seconds=chunk_seconds,
+            )
+            return
+
+        yield from iter_decode_noaa_audio_bytes(
+            raw_bytes,
+            target_sr,
+            clip_start_sec=clip_start_sec,
+            clip_end_sec=clip_end_sec,
+            chunk_seconds=chunk_seconds,
+        )
+
     def invalidate_cached_segment(self, key: str) -> bool:
         local_path = Path(self._cache_root) / self._bucket_name / key
         if local_path.is_file():
@@ -473,12 +873,30 @@ def build_noaa_detection_provider(
     noaa_cache_path: str | None,
     bucket: str,
     prefix: str,
+    audio_subpath: str | None = None,
+    child_folder_hints: list[Mapping[str, object]] | None = None,
+    supports_segment_prefetch: bool = True,
 ) -> NoaaGCSProvider | CachingNoaaGCSProvider:
     if noaa_cache_path:
         return CachingNoaaGCSProvider(
-            source_id, name, noaa_cache_path, bucket=bucket, prefix=prefix
+            source_id,
+            name,
+            noaa_cache_path,
+            bucket=bucket,
+            prefix=prefix,
+            audio_subpath=audio_subpath,
+            child_folder_hints=child_folder_hints,
+            supports_segment_prefetch=supports_segment_prefetch,
         )
-    return NoaaGCSProvider(source_id, name, bucket=bucket, prefix=prefix)
+    return NoaaGCSProvider(
+        source_id,
+        name,
+        bucket=bucket,
+        prefix=prefix,
+        audio_subpath=audio_subpath,
+        child_folder_hints=child_folder_hints,
+        supports_segment_prefetch=supports_segment_prefetch,
+    )
 
 
 def build_noaa_playback_provider(
@@ -488,9 +906,27 @@ def build_noaa_playback_provider(
     noaa_cache_path: str | None,
     bucket: str,
     prefix: str,
+    audio_subpath: str | None = None,
+    child_folder_hints: list[Mapping[str, object]] | None = None,
+    supports_segment_prefetch: bool = True,
 ) -> NoaaGCSProvider | CachingNoaaGCSProvider:
     if noaa_cache_path:
         return CachingNoaaGCSProvider(
-            source_id, name, noaa_cache_path, bucket=bucket, prefix=prefix
+            source_id,
+            name,
+            noaa_cache_path,
+            bucket=bucket,
+            prefix=prefix,
+            audio_subpath=audio_subpath,
+            child_folder_hints=child_folder_hints,
+            supports_segment_prefetch=supports_segment_prefetch,
         )
-    return NoaaGCSProvider(source_id, name, bucket=bucket, prefix=prefix)
+    return NoaaGCSProvider(
+        source_id,
+        name,
+        bucket=bucket,
+        prefix=prefix,
+        audio_subpath=audio_subpath,
+        child_folder_hints=child_folder_hints,
+        supports_segment_prefetch=supports_segment_prefetch,
+    )

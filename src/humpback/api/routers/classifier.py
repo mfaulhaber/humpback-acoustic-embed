@@ -267,7 +267,7 @@ async def download_detections(job_id: str, session: SessionDep) -> Response:
 @router.get("/hydrophones")
 async def list_hydrophones() -> list[HydrophoneInfo]:
     """List configured archive sources on the legacy hydrophone endpoint."""
-    from humpback.config import ARCHIVE_SOURCES
+    from humpback.config import HYDROPHONE_UI_SOURCES
 
     return [
         HydrophoneInfo(
@@ -276,7 +276,7 @@ async def list_hydrophones() -> list[HydrophoneInfo]:
             location=source["location"],
             provider_kind=source["provider_kind"],
         )
-        for source in ARCHIVE_SOURCES
+        for source in HYDROPHONE_UI_SOURCES
     ]
 
 

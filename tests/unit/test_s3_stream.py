@@ -46,12 +46,17 @@ class _FakeProvider:
         *,
         fetch_fn=None,
         decode_fn=None,
+        chunk_decode_fn=None,
         invalidate_fn=None,
+        supports_segment_prefetch: bool = True,
     ):
         self._timeline = timeline
         self._fetch_fn = fetch_fn
         self._decode_fn = decode_fn
+        self._chunk_decode_fn = chunk_decode_fn
         self._invalidate_fn = invalidate_fn
+        self.supports_segment_prefetch = supports_segment_prefetch
+        self.supports_chunked_segment_decode = chunk_decode_fn is not None
 
     @property
     def name(self) -> str:
@@ -76,6 +81,27 @@ class _FakeProvider:
         if self._decode_fn is not None:
             return self._decode_fn(raw_bytes, target_sr)
         return np.zeros(target_sr * 10, dtype=np.float32)
+
+    def iter_decoded_segment_chunks(
+        self,
+        key: str,
+        raw_bytes: bytes,
+        target_sr: int,
+        *,
+        clip_start_sec: float,
+        clip_end_sec: float,
+        chunk_seconds: float,
+    ):
+        if self._chunk_decode_fn is None:
+            raise AttributeError("chunk decode not configured")
+        return self._chunk_decode_fn(
+            key,
+            raw_bytes,
+            target_sr,
+            clip_start_sec=clip_start_sec,
+            clip_end_sec=clip_end_sec,
+            chunk_seconds=chunk_seconds,
+        )
 
     def invalidate_cached_segment(self, key: str) -> bool:
         if self._invalidate_fn is not None:
@@ -250,6 +276,69 @@ class TestIterAudioChunks:
                 )
             )
 
+    def test_long_segment_chunk_decoder_emits_incremental_progress(self):
+        """Chunk-capable providers should yield chunk-sized audio without full decode."""
+        from humpback.classifier.s3_stream import iter_audio_chunks
+
+        sr = 10
+        timeline = _make_timeline(1, folder_ts=1000.0, seg_dur=120.0)
+        fetch_calls: list[str] = []
+        decode_calls: list[bytes] = []
+
+        def _fetch(key: str) -> bytes:
+            fetch_calls.append(key)
+            return key.encode()
+
+        def _chunk_decode(
+            key: str,
+            raw_bytes: bytes,
+            target_sr: int,
+            *,
+            clip_start_sec: float,
+            clip_end_sec: float,
+            chunk_seconds: float,
+        ):
+            assert key.endswith("live0.ts")
+            assert raw_bytes == key.encode()
+            assert clip_start_sec == 0.0
+            assert clip_end_sec == 120.0
+            assert chunk_seconds == 30.0
+            for idx in range(4):
+                decode_calls.append(raw_bytes)
+                yield (
+                    np.full(target_sr * 30, idx, dtype=np.float32),
+                    idx * 30.0,
+                )
+
+        provider = _FakeProvider(
+            timeline,
+            fetch_fn=_fetch,
+            decode_fn=lambda raw, _sr: (_ for _ in ()).throw(
+                AssertionError(f"full decode should not run for {raw!r}")
+            ),
+            chunk_decode_fn=_chunk_decode,
+        )
+        chunks = list(
+            iter_audio_chunks(
+                provider,
+                1000.0,
+                1120.0,
+                chunk_seconds=30.0,
+                target_sr=sr,
+            )
+        )
+
+        assert fetch_calls == ["hydro/hls/1000/live0.ts"]
+        assert len(decode_calls) == 4
+        assert [int(chunk[0][0]) for chunk in chunks] == [0, 1, 2, 3]
+        assert [chunk[2] for chunk in chunks] == [1, 1, 1, 1]
+        assert [chunk[1].timestamp() for chunk in chunks] == [
+            1000.0,
+            1030.0,
+            1060.0,
+            1090.0,
+        ]
+
 
 class TestIterAudioChunksPrefetch:
     """Test concurrent prefetch behavior in iter_audio_chunks."""
@@ -385,6 +474,45 @@ class TestIterAudioChunksPrefetch:
         assert [int(chunk[0][0]) for chunk in chunks] == [0, 2]
         assert chunks[-1][2] == 3
         assert chunks[-1][3] == 3
+
+    def test_prefetch_disabled_when_provider_opts_out(self):
+        """Providers can opt out of raw-byte prefetch for very large segments."""
+        from humpback.classifier.s3_stream import iter_audio_chunks
+
+        timeline = _make_timeline(6, folder_ts=1000.0, seg_dur=10.0)
+        lock = threading.Lock()
+        active = [0]
+        max_active = [0]
+
+        def _fetch(key: str) -> bytes:
+            with lock:
+                active[0] += 1
+                max_active[0] = max(max_active[0], active[0])
+            time.sleep(0.02)
+            with lock:
+                active[0] -= 1
+            return key.encode()
+
+        provider = _FakeProvider(
+            timeline,
+            fetch_fn=_fetch,
+            decode_fn=lambda _raw, sr: np.zeros(sr * 10, dtype=np.float32),
+            supports_segment_prefetch=False,
+        )
+        _ = list(
+            iter_audio_chunks(
+                provider,
+                1000.0,
+                1060.0,
+                chunk_seconds=10.0,
+                target_sr=10,
+                prefetch_enabled=True,
+                prefetch_workers=6,
+                prefetch_inflight_segments=6,
+            )
+        )
+
+        assert max_active[0] == 1
 
 
 class TestFolderLookback:

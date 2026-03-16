@@ -67,21 +67,32 @@ Current state of the humpback acoustic embedding and clustering platform.
 
 ### Hydrophone Streaming Detection
 - S3 HLS streaming from Orcasound public hydrophone network (anonymous access)
-- NOAA Glacier Bay Bartlett Cove passive bioacoustic archive via anonymous GCS `.aif`
-  fetch (`noaa_glacier_bay` on the legacy `/classifier/hydrophones` endpoint);
-  `CachingNoaaGCSProvider` caches metadata manifests + `.aif` segments locally
-  under `noaa_cache_path` with GCS fallback on cache miss
+- Metadata-driven NOAA GCS archive registry packaged in
+  `src/humpback/data/noaa_archive_sources.json`, including full verified NOAA
+  reference records plus runtime config for loadable archive sources
+- NOAA passive bioacoustic archives via anonymous GCS fetch now support the
+  visible detection-UI sources `sanctsound_ci01` and legacy
+  `noaa_glacier_bay` (Glacier Bay / Bartlett Cove), with metadata-driven root
+  prefixes, mixed filename parsing, and child-folder hints for partitioned
+  archive layouts; `CachingNoaaGCSProvider` caches metadata manifests + audio
+  segments locally under `noaa_cache_path` with GCS fallback on cache miss
 - Write-through S3 cache (`CachingS3Client`): fetches from S3 on first access, caches segments locally with atomic writes, 404 markers for missing segments
 - Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
 - Client priority: local_cache_path > s3_cache_path > direct S3
 - ArchiveProvider abstraction now spans detection, playback, extraction, and worker/router
   orchestration; upstream hydrophone consumers pass providers instead of raw clients plus
   `hydrophone_id`
-- 5 configured archive sources on the legacy hydrophone API: 4 Orcasound hydrophones
-  plus NOAA Glacier Bay (Bartlett Cove)
+- 6 UI-visible archive sources on the legacy hydrophone API: 4 Orcasound
+  hydrophones plus NOAA SanctSound CI01 and NOAA Glacier Bay (Bartlett Cove)
 - Segment fetch retry: transient S3 errors (IncompleteRead, ReadTimeoutError, ConnectionError) retried up to 3× with exponential backoff (1s/2s/4s); explicit `connect_timeout=10`, `read_timeout=30`
-- Ordered concurrent S3 segment prefetch for hydrophone detection (configurable workers + in-flight bound), while preserving timeline order and existing retry/alert behavior
+- Ordered concurrent segment prefetch for hydrophone detection on providers that
+  support it, with NOAA source-level behavior controlled by metadata
+  (for example SanctSound disabled, Glacier Bay enabled), while preserving
+  timeline order and existing retry/alert behavior
 - In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
+- NOAA long-object archives now stream ffmpeg decode in chunk-sized slices and
+  opt out of raw-byte prefetch so multi-hour SanctSound files do not require a
+  full in-memory decode before chunk progress begins
 - Streaming detection pipeline with per-chunk progress updates
 - Cancel support via threading.Event + DB polling
 - TF2 SavedModel hydrophone detection now runs in a short-lived subprocess so
@@ -159,7 +170,8 @@ Current state of the humpback acoustic embedding and clustering platform.
   the actual extracted clip window rather than the full detection span
 - "Whale" badge on hydrophone jobs with confirmed positive labels — humpback or orca (`has_positive_labels` flag persisted on label save)
 - 3-way audio source selector (Orcasound / NOAA / Local Cache) with hydrophone
-  dropdown filtered by `provider_kind` from the `/classifier/hydrophones` API
+  dropdown filtered by `provider_kind` from the `/classifier/hydrophones` API;
+  the NOAA list currently exposes SanctSound CI01 plus NOAA Glacier Bay
 - Previous Jobs table: text filter (hydrophone name), sortable columns (status,
   hydrophone, date, threshold, results), client-side pagination, and preferences
   dialog (page size: 10/20/50/100, column visibility toggles)

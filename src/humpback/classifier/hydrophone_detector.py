@@ -18,6 +18,7 @@ from humpback.classifier.s3_stream import (
     DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
     DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
     iter_audio_chunks,
+    provider_supports_segment_prefetch,
 )
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
@@ -96,7 +97,10 @@ def run_hydrophone_detection(
     feature_config = feature_config or {}
     normalization = feature_config.get("normalization", "per_window_max")
     use_prefetch = (
-        prefetch_enabled and prefetch_workers > 1 and prefetch_inflight_segments > 1
+        prefetch_enabled
+        and prefetch_workers > 1
+        and prefetch_inflight_segments > 1
+        and provider_supports_segment_prefetch(provider)
     )
 
     all_detections: list[dict] = list(prior_detections) if prior_detections else []

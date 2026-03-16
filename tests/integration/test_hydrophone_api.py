@@ -13,10 +13,12 @@ async def test_list_hydrophones(client):
     resp = await client.get("/classifier/hydrophones")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 5
+    assert len(data) == 6
     ids = {h["id"] for h in data}
     assert "rpi_orcasound_lab" in ids
+    assert "sanctsound_ci01" in ids
     assert "noaa_glacier_bay" in ids
+    assert "sanctsound_fk01" not in ids
     assert all("name" in h and "location" in h for h in data)
 
 
@@ -204,6 +206,49 @@ async def test_create_hydrophone_detection_job_noaa_success(client, app_settings
     assert data["status"] == "queued"
     assert data["hydrophone_id"] == "noaa_glacier_bay"
     assert data["hydrophone_name"] == "NOAA Glacier Bay (Bartlett Cove)"
+
+    await engine.dispose()
+
+
+async def test_create_hydrophone_detection_job_sanctsound_success(client, app_settings):
+    """POST with SanctSound NOAA source creates a queued job."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="hydro-test-model-sanctsound",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "hydrophone_id": "sanctsound_ci01",
+            "start_timestamp": 1541023200,
+            "end_timestamp": 1541026800,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["hydrophone_id"] == "sanctsound_ci01"
+    assert data["hydrophone_name"] == "NOAA SanctSound (Channel Islands)"
 
     await engine.dispose()
 
