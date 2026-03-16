@@ -220,6 +220,11 @@ is natively supported by Metal.
 The patched model copy is created once and reused across worker restarts. To
 force CPU-only inference (skipping GPU entirely), set `HUMPBACK_TF_FORCE_CPU=true`.
 
+Hydrophone detection jobs that use TF2 SavedModel embeddings run that inference
+path in a short-lived subprocess. This keeps the long-lived worker from
+accumulating TensorFlow/Metal state across jobs while preserving the existing
+progress, alert, pause/resume, and cancellation behavior in the parent worker.
+
 **Typical startup log (GPU success):**
 
 ```
@@ -503,6 +508,9 @@ Validation and error behavior notes:
 - `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`.
 - `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the NOAA Glacier Bay source alongside the Orcasound hydrophones.
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
+- Hydrophone detection summaries include provider/runtime metadata such as
+  `provider_mode`, `execution_mode`, end-to-end `avg_audio_x_realtime`,
+  `peak_worker_rss_mb`, and `child_pid` (for subprocess-backed TF2 runs).
 - `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
 - `POST /classifier/detection-jobs/extract` accepts optional `positive_selection_smoothing_window`
   (odd integer, default `3`), `positive_selection_min_score` (default `0.70`), and

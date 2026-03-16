@@ -750,3 +750,45 @@ steps or legacy filename joins instead of the detection job itself carrying dura
   compatibility.
 - A database migration is required only to persist `output_row_store_path`; the rest of the
   change lives in job artifacts, API behavior, workers, tests, and UI.
+
+---
+
+## ADR-029: TF2 hydrophone detection runs in a short-lived subprocess
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Recent hydrophone detection profiling showed that warm-cache
+Orcasound runs using the `surfperch-tensorflow2` embedding backend slowed down
+substantially after the long-lived worker had processed multiple TF2 jobs.
+The profiled Orcasound Lab range was already fully populated in the disk-backed
+write-through cache, so repeated S3 segment downloads were not the primary
+bottleneck. The stronger signal was long-lived TensorFlow/Metal memory growth in
+the worker process.
+
+**Decision**:
+- Keep the existing hydrophone detection workflow, archive-provider selection,
+  progress callbacks, diagnostics persistence, and pause/resume/cancel behavior.
+- When a hydrophone job resolves to a TF2 SavedModel embedding backend
+  (`model_type="tf2_saved_model"`, `input_format="waveform"`), execute the
+  hydrophone detection loop in a spawned subprocess instead of the long-lived
+  worker process.
+- Load the classifier pipeline and TF2 embedding model inside that child
+  process, then communicate chunk progress, diagnostics, alerts, resume
+  invalidation, and final results back to the parent worker over a queue.
+- Keep TFLite hydrophone detection and local-file detection on the existing
+  in-process path.
+- Extend hydrophone run summaries with provider/runtime metadata:
+  `provider_mode`, `execution_mode`, `avg_audio_x_realtime`,
+  `peak_worker_rss_mb`, and `child_pid` when subprocess mode is used.
+
+**Consequences**:
+- TF2 hydrophone jobs release TensorFlow/Metal state when the child exits,
+  preventing memory buildup from degrading later jobs in the long-lived worker.
+- The parent worker remains the single owner of SQL status transitions and
+  artifact persistence, so UI behavior for active/paused/canceled jobs stays
+  consistent with the existing hydrophone workflow.
+- Hydrophone run summaries now distinguish cache/provider mode from execution
+  mode, making warm-cache vs runtime-memory regressions easier to diagnose.
+- No database migration is required; the change is limited to worker
+  orchestration, summary metadata, tests, and documentation.
