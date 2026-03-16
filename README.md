@@ -2,39 +2,27 @@
 
 ## Overview
 
-This project processes humpback whale audio recordings (MP3/WAV/FLAC) into reusable
-embedding vectors using a Perch-compatible TFLite or TensorFlow2 model.
+This platform supports research on humpback and other whale vocalizations by
+turning raw recordings into reusable embeddings, then using those embeddings
+for clustering, evaluation, and classifier training. It works with
+Perch-compatible TFLite spectrogram models and TensorFlow 2 SavedModels such
+as SurfPerch, and keeps processing local with SQL-backed job state and
+Parquet-based artifacts.
 
-Current embedding workflows:
-- Clustering of Humpback non-song vocalizations with optional ecological/behavioral metadata.
-- Training binary classifer with inference against raw hydrophone recordings.  
+Researchers can import or reference MP3/WAV/FLAC collections, generate
+embeddings, inspect cluster structure, train binary detectors, and run those
+detectors on archived hydrophone audio from sources such as Orcasound and NOAA
+Glacier Bay. The web UI and REST API support review, labeling, playback,
+spectrogram inspection, and extraction of labeled clips with sibling
+spectrogram PNGs for iterative retraining.
 
-Project Goals:
-- Ongoing test bed for agentic no-human coding CI/CD workflow. 
-- Investigating state-of-the-art clustering/classification with TensorFlow2 audio embedings.
-
-Key features:
-- Asynchronous job queue (SQL-backed, restart-safe, atomic claim semantics)
-- Idempotent encoding (no reprocessing for same config)
-- Multi-model registry supporting TFLite and TF2 SavedModel formats
-- TF2 SavedModel support for raw waveform input (e.g., SurfPerch)
-- macOS GPU acceleration via tensorflow-macos/tensorflow-metal
-- Embeddings stored in Parquet
-- REST API for job management and inspection
-- Flexible clustering pipeline: HDBSCAN, K-Means, or Agglomerative with interactive scatter plot visualization
-- Dimensionality reduction: UMAP, PCA, or none; euclidean or cosine distance metric
-- Quantitative cluster evaluation (Silhouette, Davies-Bouldin, Calinski-Harabasz)
-- Detailed supervised metrics (ARI, NMI, homogeneity, completeness, v-measure, per-category purity, confusion matrix) from folder-path-derived category labels
-- Automatic parameter sweep (HDBSCAN min_cluster_size × selection_method + K-Means k) with ARI/NMI when categories available
-- Spectrogram normalization options (per-window max, global ref, standardize) via feature_config
-- Fragmentation analysis: per-category and per-cluster entropy, Gini coefficient, noise rates
-- Stability evaluation: re-cluster with multiple random seeds, pairwise ARI agreement
-- Classifier baseline: logistic regression cross-validation with active learning priority queue
-- Metric learning refinement: triplet-loss MLP projection head to optimize embedding space, base vs refined comparison, re-cluster from refined embeddings with GPU support
-- Binary whale vocalization classifier: train LogisticRegression or MLP on positive + negative embedding sets, with precision/recall/F1 diagnostics and score separation analysis, scan arbitrary hydrophone folders for whale presence with hysteresis event detection
-- Detection spectrogram popup: play-click opens the cached STFT spectrogram alongside playback, `Alt`/`Option`-click still opens spectrogram-only view, positive-labeled detections render client-side black extraction markers immediately from live checkbox edits using stored auto/effective bounds before extraction runs, and completed hydrophone rows can shift the selection window in 5-second steps with Apply/Cancel to persist manual overrides back into the job
-- Hydrophone detection UX: playback/extraction use bounded stream-timeline mapping with provider-specific archive logic; Orcasound HLS uses playlist durations + numeric segment ordering with legacy anchor fallback for older jobs, sparse local-cache ranges preserve playlist timeline offsets (for example cached mid-sequence `live6118..` windows) so playback/spectrogram alignment remains correct without S3 fallback, and Orcasound extraction remains local-cache-authoritative; NOAA Glacier Bay is available through the same legacy hydrophone API surface via direct anonymous GCS `.aif` fetch for detection/playback/extraction; folder discovery starts at requested range and expands backward using configurable hour-based increments (default `4h`) up to configurable max lookback (default `168h`) until overlap at the requested start boundary is found (or max lookback is reached), then timeline clipping is applied; hydrophone detection supports ordered bounded S3 segment prefetch (configurable workers + in-flight limit) with per-run fetch/decode/features/inference timing telemetry in `run_summary`; Extract activates from saved labels on the expanded completed job; extraction outputs are partitioned by short label and every extracted `.flac` gets a same-basename marker-free spectrogram `.png` sidecar in the same folder (`{positive|negative}_root/{label}/.../*.{flac,png}`); detection rows use canonical snapped clip bounds for preview/label/extract parity and preserve unsnapped audit bounds (`raw_start_sec`, `raw_end_sec`, `merged_event_count`); Hydrophone Start/End inputs and Date Range displays are UTC-only, and the date-range popover includes month and one-year jump controls for faster navigation
-- Folder import: reference audio files in-place from local filesystem folders without copying
+Highlights:
+- Async, restart-safe job workflows with idempotent encoding
+- Multi-model support for TFLite spectrogram models and TF2 waveform models
+- Clustering, evaluation, and optional metric-learning refinement workflows
+- Binary classifier training plus hydrophone/archive detection
+- Interactive web UI and REST API for review, labeling, and extraction
+- Local-first artifact storage using SQL and Parquet-backed outputs
 
 ---
 
@@ -649,6 +637,8 @@ jobs in the database).
 ---
 
 ## Agent Workflows
+
+This repo also serves as a structured testbed for agent-assisted development workflows.
 
 The project includes structured workflows for AI coding agents (Claude Code and Codex App). Workflow definitions live in `.agents/skills/` as the single source of truth, with thin wrappers for each platform.
 

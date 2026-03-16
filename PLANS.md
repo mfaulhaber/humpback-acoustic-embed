@@ -10,6 +10,26 @@
 
 ## Recently Completed
 
+# Plan: Rewrite README Overview for Research-First Positioning
+
+[Full plan](/Users/michael/.claude/plans/readme-overview-research-first.md)
+
+## Outcome (2026-03-15)
+
+- Rewrote the top-level README overview to lead with the platform's
+  research-oriented purpose, end-to-end workflow, and supported model/archive
+  context instead of an exhaustive feature dump.
+- Replaced the old capability wall with a shorter introduction plus a compact
+  `Highlights` list covering the main workflow and system strengths.
+- Moved the agent-assisted-development framing out of the overview and into the
+  existing `Agent Workflows` section so the README opens with user-facing
+  product context.
+
+## Verification
+
+- Manual README review — passed.
+- `uv run pytest tests/` — 618 passed.
+
 # Plan: Add Year-Jump Buttons to the Hydrophone UTC Date Picker
 
 [Full plan](/Users/michael/.claude/plans/hydrophone-date-picker-year-jumps.md)
