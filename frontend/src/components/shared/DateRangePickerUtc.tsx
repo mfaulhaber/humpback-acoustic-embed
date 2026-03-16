@@ -63,6 +63,14 @@ function combineEpoch(fakeLocalDate: Date, timeStr: string): number | null {
   return ms / 1000;
 }
 
+function startOfFakeLocalMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function shiftFakeLocalMonth(date: Date, deltaMonths: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + deltaMonths, 1);
+}
+
 export function DateRangePickerUtc({
   value,
   onChange,
@@ -74,19 +82,20 @@ export function DateRangePickerUtc({
   const [draftRange, setDraftRange] = useState<DateRange | undefined>(undefined);
   const [draftStartTime, setDraftStartTime] = useState("00:00");
   const [draftEndTime, setDraftEndTime] = useState("00:00");
-  const [month, setMonth] = useState<Date>(new Date());
+  const [month, setMonth] = useState<Date>(startOfFakeLocalMonth(new Date()));
 
   // Sync draft from value when popover opens
   useEffect(() => {
     if (open) {
       if (value.startEpoch != null && value.endEpoch != null) {
+        const startDate = fakeLocalFromUtcEpoch(value.startEpoch);
         setDraftRange({
-          from: fakeLocalFromUtcEpoch(value.startEpoch),
+          from: startDate,
           to: fakeLocalFromUtcEpoch(value.endEpoch),
         });
         setDraftStartTime(timeStringFromUtcEpoch(value.startEpoch));
         setDraftEndTime(timeStringFromUtcEpoch(value.endEpoch));
-        setMonth(fakeLocalFromUtcEpoch(value.startEpoch));
+        setMonth(startOfFakeLocalMonth(startDate));
       } else {
         setDraftRange(undefined);
         setDraftStartTime("00:00");
@@ -121,6 +130,12 @@ export function DateRangePickerUtc({
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   };
 
+  const shiftVisibleMonth = (deltaMonths: number) => {
+    setMonth((currentMonth) => shiftFakeLocalMonth(startOfFakeLocalMonth(currentMonth), deltaMonths));
+  };
+
+  const navButtonClassName = "h-7 min-w-7 px-2 font-mono";
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -140,13 +155,61 @@ export function DateRangePickerUtc({
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
         <div className="p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={navButtonClassName}
+                aria-label="Go to the Previous Year"
+                onClick={() => shiftVisibleMonth(-12)}
+              >
+                {"<<"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={navButtonClassName}
+                aria-label="Go to the Previous Month"
+                onClick={() => shiftVisibleMonth(-1)}
+              >
+                {"<"}
+              </Button>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={navButtonClassName}
+                aria-label="Go to the Next Month"
+                onClick={() => shiftVisibleMonth(1)}
+              >
+                {">"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={navButtonClassName}
+                aria-label="Go to the Next Year"
+                onClick={() => shiftVisibleMonth(12)}
+              >
+                {">>"}
+              </Button>
+            </div>
+          </div>
           <CalendarComponent
+            className="p-0"
             mode="range"
             numberOfMonths={2}
             selected={draftRange}
             onSelect={setDraftRange}
             month={month}
-            onMonthChange={setMonth}
+            onMonthChange={(nextMonth) => setMonth(startOfFakeLocalMonth(nextMonth))}
+            hideNavigation
           />
         </div>
         <Separator />

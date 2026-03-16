@@ -139,7 +139,7 @@ Current state of the humpback acoustic embedding and clustering platform.
   `detection_filename` (no secondary raw-range row)
 - Hydrophone playback and extraction use the same canonical bounds shown in Detection Range
 - Hydrophone row tooltip exposes unsnapped raw audit range when it differs from canonical bounds
-- Hydrophone job date range uses popover picker with dual-month calendar and HH:MM time inputs (UTC-only)
+- Hydrophone job date range uses popover picker with dual-month calendar, month/year jump controls, and HH:MM time inputs (UTC-only)
 - Hydrophone Active Jobs table shows all running/queued/paused jobs with per-row
   Pause/Resume/Cancel controls; queued jobs can be canceled before a worker claims them
 - Paused hydrophone jobs support label save, TSV download, and extraction (stable TSV while worker is blocked)
