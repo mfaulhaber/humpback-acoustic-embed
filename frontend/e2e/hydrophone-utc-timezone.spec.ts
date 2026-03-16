@@ -141,6 +141,18 @@ test.describe("Hydrophone UTC timezone semantics", () => {
     // Tall viewport so the dual-month popover + time inputs fit
     await page.setViewportSize({ width: 1280, height: 1200 });
 
+    const monthFormatter = new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+    const currentMonth = new Date();
+    const targetMonth = new Date(2025, 6, 1);
+    const currentMonthLabel = monthFormatter.format(new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1));
+    const previousYearLabel = monthFormatter.format(
+      new Date(currentMonth.getFullYear() - 1, currentMonth.getMonth(), 1),
+    );
+    const targetMonthLabel = monthFormatter.format(targetMonth);
+
     let capturedBody: Record<string, unknown> | null = null;
     await mockHydrophonePageApis({
       page,
@@ -167,16 +179,37 @@ test.describe("Hydrophone UTC timezone semantics", () => {
     // Open the date range picker
     await page.getByTestId("date-range-trigger").click();
 
-    // Navigate backward to July 2025 (currently March 2026)
+    const prevYearBtn = page.getByRole("button", { name: "Go to the Previous Year" });
     const prevBtn = page.getByRole("button", { name: "Go to the Previous Month" });
-    for (let i = 0; i < 20; i++) {
-      if (await page.getByText("July 2025").isVisible().catch(() => false)) break;
-      await prevBtn.click({ force: true });
+    const nextBtn = page.getByRole("button", { name: "Go to the Next Month" });
+    const nextYearBtn = page.getByRole("button", { name: "Go to the Next Year" });
+
+    await expect(page.getByText(currentMonthLabel)).toBeVisible();
+
+    await prevYearBtn.click();
+    await expect(page.getByText(previousYearLabel)).toBeVisible();
+
+    await nextYearBtn.click();
+    await expect(page.getByText(currentMonthLabel)).toBeVisible();
+
+    // Navigate to July 2025 using the new year jump plus the existing month step controls.
+    const deltaMonths =
+      (targetMonth.getFullYear() - currentMonth.getFullYear()) * 12 +
+      (targetMonth.getMonth() - currentMonth.getMonth());
+    const navigateBackward = deltaMonths < 0;
+    const yearStepCount = Math.floor(Math.abs(deltaMonths) / 12);
+    const monthStepCount = Math.abs(deltaMonths) % 12;
+
+    for (let i = 0; i < yearStepCount; i++) {
+      await (navigateBackward ? prevYearBtn : nextYearBtn).click({ force: true });
     }
-    await expect(page.getByText("July 2025")).toBeVisible();
+    for (let i = 0; i < monthStepCount; i++) {
+      await (navigateBackward ? prevBtn : nextBtn).click({ force: true });
+    }
+    await expect(page.getByText(targetMonthLabel)).toBeVisible();
 
     // In range mode: click day 3 for start, day 5 for end (two different days required)
-    const julyGrid = page.getByRole("grid", { name: "July 2025" });
+    const julyGrid = page.getByRole("grid", { name: targetMonthLabel });
     await julyGrid.getByRole("button", { name: /July 3rd/ }).click({ force: true });
     await julyGrid.getByRole("button", { name: /July 5th/ }).click({ force: true });
 
@@ -237,12 +270,13 @@ test.describe("Hydrophone UTC timezone semantics", () => {
       .first();
     await expect(completedRow).toBeVisible();
 
-    const dateRangeCell = completedRow.locator("td").nth(4);
-    await expect(dateRangeCell).toContainText("2025-07-04 16:00 UTC");
-    await expect(dateRangeCell).toContainText("2025-07-04 17:00 UTC");
+    await expect(completedRow).toContainText("2025-07-04 16:00 UTC");
+    await expect(completedRow).toContainText("2025-07-04 17:00 UTC");
 
-    await completedRow.locator("td:nth-child(2) button").click();
-    const innerTable = page.locator("tr td[colspan] table");
+    await completedRow.locator("td").nth(1).getByRole("button").click({ force: true });
+    const expandedCell = page.locator("td[colspan]").first();
+    await expect(expandedCell).toBeVisible();
+    const innerTable = expandedCell.locator("table");
     await expect(innerTable).toBeVisible();
 
     await expect(innerTable.locator(".clip-range").first()).toContainText("Z_");

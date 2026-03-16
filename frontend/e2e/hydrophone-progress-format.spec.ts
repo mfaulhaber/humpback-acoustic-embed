@@ -116,13 +116,13 @@ test.describe("Hydrophone progress display and tab structure", () => {
     await page.goto("/app/classifier");
     await page.locator("button", { hasText: "Hydrophone" }).click();
 
-    // Active job panel should show 1h 30m (5432s = 1h 30m 32s → 1h 30m)
-    // Target the Card that contains "Active Job" text
-    const activeCard = page.locator("[class*=rounded-lg][class*=border]").filter({ hasText: "Active Job" });
-    await expect(activeCard).toBeVisible();
-    await expect(activeCard).toContainText("1h 30m");
+    // Active jobs table should show 1h 30m (5432s = 1h 30m 32s → 1h 30m)
+    await expect(page.getByRole("heading", { name: "Active Jobs" })).toBeVisible();
+    const activeRow = page.locator("table tbody tr").filter({ hasText: "running" }).first();
+    await expect(activeRow).toBeVisible();
+    await expect(activeRow).toContainText("1h 30m");
     // Should NOT show the raw seconds format
-    expect(await activeCard.locator("text=5432s").count()).toBe(0);
+    expect(await activeRow.locator("text=5432s").count()).toBe(0);
   });
 
   test("date range picker shows UTC label and time inputs", async ({ page }) => {
@@ -158,6 +158,11 @@ test.describe("Hydrophone progress display and tab structure", () => {
 
     // Open the picker
     await trigger.click();
+
+    await expect(page.getByRole("button", { name: "Go to the Previous Year" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Go to the Previous Month" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Go to the Next Month" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Go to the Next Year" })).toBeVisible();
 
     // Time inputs default to 00:00
     await expect(page.getByTestId("start-time-input")).toHaveValue("00:00");

@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: Add Year-Jump Buttons to the Hydrophone UTC Date Picker
+
+[Full plan](/Users/michael/.claude/plans/hydrophone-date-picker-year-jumps.md)
+
+## Outcome (2026-03-15)
+
+- Added `<<` and `>>` year-jump controls around the existing month navigation
+  in the shared UTC date-range picker used on the Hydrophone/Classifer
+  Detection page.
+- Kept the picker controlled by normalized month state so month/year jumps stay
+  stable around end-of-month dates and do not change the selected UTC range
+  until Apply.
+- Extended the existing Hydrophone Playwright coverage to assert the new
+  navigation buttons and hardened stale selectors while preserving the UTC
+  submission and range-display checks.
+
+## Verification
+
+- `cd frontend && npx tsc --noEmit` — passed.
+- `cd frontend && npx playwright test e2e/hydrophone-progress-format.spec.ts e2e/hydrophone-utc-timezone.spec.ts` — passed.
+- `uv run pytest tests/` — 618 passed.
+
 # Plan: Sidecar Spectrogram PNGs for Extracted Detection Clips
 
 [Full plan](/Users/michael/.claude/plans/extracted-audio-sidecar-spectrograms.md)
