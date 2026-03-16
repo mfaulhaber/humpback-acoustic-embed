@@ -480,7 +480,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/classifier/models` | List trained classifier models |
 | GET | `/classifier/models/{id}` | Get classifier model details |
 | DELETE | `/classifier/models/{id}` | Delete classifier model + files |
-| POST | `/classifier/detection-jobs` | Queue detection job (`hop_seconds`, `high_threshold`, `low_threshold`) |
+| POST | `/classifier/detection-jobs` | Queue detection job (`hop_seconds`, `high_threshold`, `low_threshold`, `detection_mode`: `"merged"`/`"windowed"`) |
 | GET | `/classifier/detection-jobs` | List detection jobs |
 | GET | `/classifier/detection-jobs/{id}` | Get detection job |
 | GET | `/classifier/detection-jobs/{id}/download` | Download detections TSV |
@@ -506,7 +506,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.
 - `POST /clustering/jobs` requires at least one `embedding_set_id` (`422` on empty list).
-- `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`.
+- `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`; accepts optional `detection_mode` (`"merged"` default, `"windowed"` for fixed 5-sec detections via NMS peak selection).
 - `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the two UI-visible NOAA sources (`sanctsound_ci01` and legacy `noaa_glacier_bay`) alongside the Orcasound hydrophones.
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
 - Hydrophone detection summaries include provider/runtime metadata such as

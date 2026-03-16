@@ -501,3 +501,249 @@ def test_snap_and_merge_detection_events_merges_collisions():
     assert merged["raw_start_sec"] == 15.0
     assert merged["raw_end_sec"] == 25.0
     assert merged["merged_event_count"] == 2
+
+
+# ---- select_peak_windows_from_events (NMS) ----
+
+
+class TestSelectPeakWindowsFromEvents:
+    """Tests for NMS-based peak window selection within merged events."""
+
+    def _make_window_records(
+        self,
+        offsets: list[float] | list[int],
+        confidences: list[float],
+        window_size: float = 5.0,
+    ) -> list[dict]:
+        return [
+            {"offset_sec": o, "end_sec": o + window_size, "confidence": c}
+            for o, c in zip(offsets, confidences)
+        ]
+
+    def test_empty_events(self):
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        result = select_peak_windows_from_events([], [], 5.0, min_score=0.7)
+        assert result == []
+
+    def test_empty_window_records(self):
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        events = [{"start_sec": 0.0, "end_sec": 10.0, "n_windows": 5}]
+        result = select_peak_windows_from_events(events, [], 5.0, min_score=0.7)
+        assert result == []
+
+    def test_single_event_single_peak(self):
+        """One 10-sec event, peak at offset 3 → one 5-sec detection [3, 8]."""
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        window_records = self._make_window_records(
+            offsets=[0, 1, 2, 3, 4, 5],
+            confidences=[0.5, 0.6, 0.7, 0.9, 0.8, 0.6],
+        )
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 10.0,
+                "n_windows": 6,
+                "raw_start_sec": 0.0,
+                "raw_end_sec": 10.0,
+                "merged_event_count": 1,
+            }
+        ]
+        result = select_peak_windows_from_events(
+            events, window_records, 5.0, min_score=0.7
+        )
+        assert len(result) == 1
+        assert result[0]["start_sec"] == 3.0
+        assert result[0]["end_sec"] == 8.0
+
+    def test_single_event_two_peaks_nms(self):
+        """One 25-sec event with two distinct peaks → two 5-sec detections."""
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        # Peak at offset 2 and offset 18, with a valley in between
+        offsets = list(range(0, 21))  # 0..20
+        confidences = [
+            0.5,
+            0.6,
+            0.9,
+            0.8,
+            0.5,  # peak around 2
+            0.3,
+            0.2,
+            0.2,
+            0.2,
+            0.2,  # valley
+            0.2,
+            0.2,
+            0.2,
+            0.2,
+            0.3,  # valley
+            0.5,
+            0.6,
+            0.8,
+            0.95,
+            0.7,  # peak around 18
+            0.4,
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 25.0,
+                "n_windows": 21,
+                "raw_start_sec": 0.0,
+                "raw_end_sec": 25.0,
+                "merged_event_count": 1,
+            }
+        ]
+        result = select_peak_windows_from_events(
+            events, window_records, 5.0, min_score=0.7
+        )
+        assert len(result) == 2
+        # Sorted by offset: first at 2, second at 18
+        assert result[0]["start_sec"] == 2.0
+        assert result[0]["end_sec"] == 7.0
+        assert result[1]["start_sec"] == 18.0
+        assert result[1]["end_sec"] == 23.0
+
+    def test_all_below_min_score(self):
+        """Event where all windows are below min_score → no output."""
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        window_records = self._make_window_records(
+            offsets=[0, 1, 2, 3, 4],
+            confidences=[0.3, 0.4, 0.5, 0.4, 0.3],
+        )
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 9.0,
+                "n_windows": 5,
+                "raw_start_sec": 0.0,
+                "raw_end_sec": 9.0,
+                "merged_event_count": 1,
+            }
+        ]
+        result = select_peak_windows_from_events(
+            events, window_records, 5.0, min_score=0.7
+        )
+        assert result == []
+
+    def test_multiple_events(self):
+        """Two separate events → one peak each."""
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        window_records = self._make_window_records(
+            offsets=[0, 1, 2, 3, 4, 20, 21, 22, 23, 24],
+            confidences=[0.5, 0.8, 0.9, 0.7, 0.5, 0.6, 0.7, 0.95, 0.8, 0.6],
+        )
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 9.0,
+                "n_windows": 5,
+                "raw_start_sec": 0.5,
+                "raw_end_sec": 8.5,
+                "merged_event_count": 1,
+            },
+            {
+                "start_sec": 20.0,
+                "end_sec": 29.0,
+                "n_windows": 5,
+                "raw_start_sec": 20.5,
+                "raw_end_sec": 28.5,
+                "merged_event_count": 1,
+            },
+        ]
+        result = select_peak_windows_from_events(
+            events, window_records, 5.0, min_score=0.7
+        )
+        assert len(result) == 2
+        assert result[0]["start_sec"] == 2.0
+        assert result[1]["start_sec"] == 22.0
+
+    def test_preserves_audit_fields(self):
+        """Audit fields (raw bounds, merged_event_count) are preserved."""
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        window_records = self._make_window_records(
+            offsets=[0, 1, 2], confidences=[0.5, 0.9, 0.6]
+        )
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 7.0,
+                "n_windows": 3,
+                "raw_start_sec": 0.3,
+                "raw_end_sec": 6.8,
+                "merged_event_count": 2,
+                "filename": "test.wav",
+            }
+        ]
+        result = select_peak_windows_from_events(
+            events, window_records, 5.0, min_score=0.7
+        )
+        assert len(result) == 1
+        assert result[0]["raw_start_sec"] == 0.3
+        assert result[0]["raw_end_sec"] == 6.8
+        assert result[0]["merged_event_count"] == 2
+        assert result[0]["filename"] == "test.wav"
+
+    def test_output_exactly_window_size(self):
+        """Every output detection spans exactly window_size_seconds."""
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        offsets = list(range(0, 16))
+        confidences = [0.9 - 0.02 * abs(i - 5) for i in range(16)]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 20.0,
+                "n_windows": 16,
+                "raw_start_sec": 0.0,
+                "raw_end_sec": 20.0,
+                "merged_event_count": 1,
+            }
+        ]
+        result = select_peak_windows_from_events(
+            events, window_records, 5.0, min_score=0.7
+        )
+        for det in result:
+            assert abs((det["end_sec"] - det["start_sec"]) - 5.0) < 1e-6
+
+    def test_overlapping_events_deduplicate(self):
+        """Two events sharing the same peak window produce one detection, not two."""
+        from humpback.classifier.detector import select_peak_windows_from_events
+
+        # Both events cover the window at offset 5 (the shared peak).
+        window_records = self._make_window_records(
+            offsets=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+            confidences=[0.3, 0.4, 0.5, 0.6, 0.7, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4],
+        )
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 10.0,
+                "n_windows": 6,
+                "raw_start_sec": 1.0,
+                "raw_end_sec": 8.0,
+                "merged_event_count": 1,
+            },
+            {
+                "start_sec": 5.0,
+                "end_sec": 15.0,
+                "n_windows": 6,
+                "raw_start_sec": 6.0,
+                "raw_end_sec": 14.0,
+                "merged_event_count": 1,
+            },
+        ]
+        result = select_peak_windows_from_events(
+            events, window_records, 5.0, min_score=0.7
+        )
+        starts = [d["start_sec"] for d in result]
+        # offset 5 should appear only once despite being in both events
+        assert starts.count(5.0) == 1

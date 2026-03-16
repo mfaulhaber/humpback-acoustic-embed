@@ -53,6 +53,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Per-event `n_windows` count in TSV output
 - Canonical snapped detection bounds (`start_sec`/`end_sec`) before labeling/extraction
 - Raw event audit metadata in TSV (`raw_start_sec`, `raw_end_sec`, `merged_event_count`)
+- Windowed detection mode (`detection_mode="windowed"`): NMS peak selection within merged events produces fixed 5-sec detections, eliminating manual positive-selection in the labeling workflow
 - Incremental detection results: file-by-file progress with live UI updates during job execution
 - Inline audio playback and label annotation available while detection is still running
 - Positive labeled extraction seeds from the best 5-second training clip in stored
@@ -226,7 +227,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `017_output_row_store_path.py`
+- **Latest migration**: `018_detection_mode.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows
 
 ---

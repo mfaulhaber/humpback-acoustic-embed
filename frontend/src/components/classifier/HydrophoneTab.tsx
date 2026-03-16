@@ -413,6 +413,7 @@ export function HydrophoneTab() {
   const [hopSeconds, setHopSeconds] = useState(1.0);
   const [highThreshold, setHighThreshold] = useState(0.80);
   const [lowThreshold, setLowThreshold] = useState(0.70);
+  const [detectionMode, setDetectionMode] = useState<"merged" | "windowed">("windowed");
   const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);
@@ -575,6 +576,7 @@ export function HydrophoneTab() {
       high_threshold: highThreshold,
       low_threshold: lowThreshold,
       ...(sourceType === "local" ? { local_cache_path: localCachePath } : {}),
+      detection_mode: detectionMode,
     });
   };
 
@@ -893,6 +895,17 @@ export function HydrophoneTab() {
               onChange={(e) => setHopSeconds(parseFloat(e.target.value) || 1.0)}
               className="mt-1"
             />
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium whitespace-nowrap">Detection Mode</label>
+            <select
+              value={detectionMode}
+              onChange={(e) => setDetectionMode(e.target.value as "merged" | "windowed")}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="merged">Merged (variable length)</option>
+              <option value="windowed">Windowed (5-sec fixed)</option>
+            </select>
           </div>
           <Button
             onClick={handleSubmit}
@@ -1632,6 +1645,7 @@ function HydrophoneJobRow({
             <HydrophoneContentTable
               jobId={job.id}
               isRunning={isRunning}
+              detectionMode={job.detection_mode}
               playingKey={playingKey}
               onPlay={onPlay}
               onLabelChange={onLabelChange}
@@ -1648,6 +1662,7 @@ function HydrophoneJobRow({
 function HydrophoneContentTable({
   jobId,
   isRunning,
+  detectionMode,
   playingKey,
   onPlay,
   onLabelChange,
@@ -1656,6 +1671,7 @@ function HydrophoneContentTable({
 }: {
   jobId: string;
   isRunning: boolean;
+  detectionMode: "merged" | "windowed" | null;
   playingKey: string | null;
   onPlay: (jobId: string, row: DetectionRow, clip?: PlayClip) => void;
   onLabelChange: (jobId: string, rk: string, field: LabelField, value: number | null) => void;
@@ -1763,10 +1779,10 @@ function HydrophoneContentTable({
         row,
         initialMarkerBounds,
         draftManualBounds: resolveManualSelectionMarkerBounds(row),
-        editable: !isRunning && !!row.row_id && isPositiveRow(row) && initialMarkerBounds !== null,
+        editable: !isRunning && !!row.row_id && isPositiveRow(row) && initialMarkerBounds !== null && detectionMode !== "windowed",
       });
     },
-    [isPositiveRow, isRunning, jobId],
+    [isPositiveRow, isRunning, jobId, detectionMode],
   );
 
   const popupMarkerBounds =
@@ -2068,7 +2084,7 @@ function HydrophoneContentTable({
         <SpectrogramPopup
           imageUrl={spectrogramPopup.imageUrl}
           position={spectrogramPopup.position}
-          markerBounds={popupMarkerBounds}
+          markerBounds={detectionMode === "windowed" ? null : popupMarkerBounds}
           durationSec={spectrogramPopup.durationSec}
           editor={spectrogramEditor}
           onClose={() => setSpectrogramPopup(null)}

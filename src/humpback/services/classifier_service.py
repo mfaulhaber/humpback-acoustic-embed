@@ -111,6 +111,7 @@ async def create_detection_job(
     hop_seconds: float = 1.0,
     high_threshold: float = 0.70,
     low_threshold: float = 0.45,
+    detection_mode: str | None = None,
 ) -> DetectionJob:
     """Create a detection job after validating inputs."""
     # Validate classifier model exists
@@ -145,6 +146,7 @@ async def create_detection_job(
         hop_seconds=hop_seconds,
         high_threshold=high_threshold,
         low_threshold=low_threshold,
+        detection_mode=detection_mode,
     )
     session.add(job)
     await session.commit()
@@ -162,6 +164,7 @@ async def create_hydrophone_detection_job(
     high_threshold: float = 0.70,
     low_threshold: float = 0.45,
     local_cache_path: str | None = None,
+    detection_mode: str | None = None,
 ) -> DetectionJob:
     """Create a hydrophone detection job after validating inputs."""
     from humpback.config import (
@@ -220,6 +223,7 @@ async def create_hydrophone_detection_job(
         high_threshold=high_threshold,
         low_threshold=low_threshold,
         local_cache_path=local_cache_path,
+        detection_mode=detection_mode,
     )
     session.add(job)
     await session.commit()

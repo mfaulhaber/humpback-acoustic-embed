@@ -798,7 +798,33 @@ def compute_auto_selection_update(
     smoothing_window: int = DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
     min_score: float = DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
     extend_min_score: float = DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
+    detection_mode: str | None = None,
 ) -> dict[str, str]:
+    # Windowed mode: the detection IS the positive window — trivial selection.
+    if detection_mode == "windowed":
+        normalized = normalize_detection_row(
+            row,
+            is_hydrophone=is_hydrophone,
+            window_size_seconds=window_size_seconds,
+        )
+        row_start, row_end = resolve_clip_bounds(
+            normalized, window_size_seconds=window_size_seconds
+        )
+        conf = safe_optional_float(row.get("peak_confidence")) or 0.0
+        selection = PositiveSelectionResult(
+            score_source="windowed_peak",
+            decision="positive",
+            offsets=[row_start],
+            raw_scores=[conf],
+            smoothed_scores=[conf],
+            start_sec=row_start,
+            end_sec=row_end,
+            peak_score=conf,
+        )
+        return prefixed_selection_result_to_row_update(
+            selection, prefix="auto_positive_selection_"
+        )
+
     if row.get("auto_positive_selection_start_sec", "").strip():
         return {
             field: row.get(field, "") for field in AUTO_POSITIVE_SELECTION_FIELDNAMES
@@ -970,6 +996,7 @@ def build_detection_row_store_rows(
     diagnostics_path: Path | None,
     is_hydrophone: bool,
     window_size_seconds: float,
+    detection_mode: str | None = None,
 ) -> list[dict[str, str]]:
     diagnostics_records = _load_all_window_records(diagnostics_path)
     diagnostics_by_filename: dict[str, list[dict[str, Any]]] = {}
@@ -1025,6 +1052,7 @@ def build_detection_row_store_rows(
                 diagnostics_by_filename=diagnostics_by_filename,
                 is_hydrophone=is_hydrophone,
                 window_size_seconds=window_size_seconds,
+                detection_mode=detection_mode,
             )
         )
         apply_effective_positive_selection(
@@ -1088,6 +1116,7 @@ def ensure_detection_row_store(
     is_hydrophone: bool,
     window_size_seconds: float,
     refresh_existing: bool = False,
+    detection_mode: str | None = None,
 ) -> tuple[list[str], list[dict[str, str]]]:
     if row_store_path.is_file() and not refresh_existing:
         return read_detection_row_store(row_store_path)
@@ -1102,6 +1131,7 @@ def ensure_detection_row_store(
         diagnostics_path=diagnostics_path,
         is_hydrophone=is_hydrophone,
         window_size_seconds=window_size_seconds,
+        detection_mode=detection_mode,
     )
     if row_store_path.is_file():
         _existing_fieldnames, existing_rows = read_detection_row_store(row_store_path)

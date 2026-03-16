@@ -833,3 +833,38 @@ instead of a metadata decision.
   when hints are missing or incomplete.
 - No database migration is required; the change is limited to packaged
   metadata, provider/config behavior, tests, and documentation.
+
+## ADR-031: Windowed detection mode with NMS peak selection
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Detection jobs produce variable-length detections (10–20+ seconds)
+due to hysteresis merging of overlapping 1-sec-hop windows. Users must manually
+review each long detection's spectrogram and select the best 5-sec sub-window
+for positive extraction. This manual positive-selection step is the primary
+bottleneck in the labeling workflow. The 1-sec hop is important for detection
+sensitivity but the merging creates UX problems.
+
+**Decision**:
+- Add a `detection_mode` column to `detection_jobs` (nullable; `NULL`/"merged"
+  preserves existing behavior, `"windowed"` enables the new mode).
+- Windowed mode keeps the full pipeline (1-sec hop → score → hysteresis merge
+  → snap) for sensitivity, then applies NMS within each merged event to output
+  only non-overlapping peak 5-sec windows above `high_threshold`.
+- Long events with multiple distinct vocalizations produce multiple peak
+  windows (NMS within each event), not just the single best.
+- For windowed jobs, auto-positive-selection is trivially set to the full row
+  bounds (the detection IS the positive window). The spectrogram editor's
+  window-shifting controls are hidden.
+- Extraction of windowed detections uses clip bounds directly — no
+  `select_positive_window()` call needed.
+
+**Consequences**:
+- Labeling workflow for windowed jobs is just positive/negative — no sub-window
+  selection needed.
+- Each windowed detection produces exactly one training embedding (1:1 mapping
+  between labeled detection and training vector).
+- Existing merged-mode jobs are unaffected; `detection_mode=NULL` is treated as
+  `"merged"`.
+- Requires Alembic migration 018.
