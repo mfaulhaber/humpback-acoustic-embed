@@ -4,11 +4,31 @@
 
 ## Active
 
-- None currently.
+(none)
 
 ---
 
 ## Recently Completed
+
+# Plan: Fix Slow NOAA SanctSound Audio Preview
+
+[Full plan](/Users/michael/.claude/plans/misty-dreaming-pascal.md)
+
+## Outcome (2026-03-16)
+
+- Switched `resolve_audio_slice` from full-file decode to chunked ffmpeg-seek
+  decode for NOAA providers, reducing playback latency from 10-30s to ~100-200ms.
+- Added `is_segment_cached()` check to skip redundant multi-hundred-MB file
+  reads when the segment is already in the local cache.
+- Added an in-memory LRU cache (`_DecodedAudioCache`, 64 entries) so the
+  spectrogram request immediately following audio-slice reuses the decoded array.
+
+## Verification
+
+- `uv run ruff format --check` on modified Python files — passed.
+- `uv run ruff check` on modified Python files — passed.
+- `uv run pyright` on modified Python files — passed.
+- `uv run pytest tests/` — 676 passed.
 
 # Plan: NOAA Hydrophone Detection Metadata Job Generator
 

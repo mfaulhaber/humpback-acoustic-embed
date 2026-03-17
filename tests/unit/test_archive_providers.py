@@ -116,6 +116,23 @@ class TestProtocolConformance:
         )
         assert isinstance(provider, ArchiveProvider)
 
+    def test_caching_noaa_is_segment_cached(self, tmp_path):
+        provider = CachingNoaaGCSProvider(
+            "noaa_test",
+            "NOAA Test",
+            str(tmp_path),
+            bucket="test-bucket",
+            bucket_obj=_FakeBucket([]),
+        )
+        key = "audio/test_file.flac"
+        assert not provider.is_segment_cached(key)
+
+        # Create the cached file
+        cached_path = tmp_path / "test-bucket" / key
+        cached_path.parent.mkdir(parents=True, exist_ok=True)
+        cached_path.write_bytes(b"fake-audio-data")
+        assert provider.is_segment_cached(key)
+
 
 class TestProviderProperties:
     @patch("humpback.classifier.providers.orcasound_hls.OrcasoundS3Client")

@@ -902,6 +902,122 @@ class TestResolveHydrophoneAudioSliceOrdering:
         assert 1000.0 not in set(np.unique(audio))
 
 
+class TestResolveAudioSliceChunkedDecode:
+    """Verify resolve_audio_slice uses chunked decode for NOAA-style providers."""
+
+    def test_chunked_provider_skips_full_decode(self):
+        """A chunked provider should use iter_decoded_segment_chunks, not
+        decode_segment, when resolving a playback slice."""
+        from datetime import datetime, timezone
+
+        from humpback.classifier.archive import StreamSegment
+        from humpback.classifier.s3_stream import resolve_audio_slice
+
+        full_decode_called = False
+        chunk_decode_called = False
+
+        def fake_full_decode(_raw, sr):
+            nonlocal full_decode_called
+            full_decode_called = True
+            return np.zeros(sr * 300, dtype=np.float32)
+
+        def fake_chunk_decode(
+            key,
+            raw_bytes,
+            target_sr,
+            *,
+            clip_start_sec,
+            clip_end_sec,
+            chunk_seconds,
+        ):
+            nonlocal chunk_decode_called
+            chunk_decode_called = True
+            n_samples = int(round((clip_end_sec - clip_start_sec) * target_sr))
+            yield np.ones(n_samples, dtype=np.float32), clip_start_sec
+
+        provider = _FakeProvider(
+            [
+                StreamSegment("noaa/audio/file.flac", 1000.0, 3600.0),
+            ],
+            fetch_fn=lambda key: b"fake-bytes",
+            decode_fn=fake_full_decode,
+            chunk_decode_fn=fake_chunk_decode,
+        )
+
+        filename = (
+            datetime.fromtimestamp(1000, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + ".wav"
+        )
+
+        audio = resolve_audio_slice(
+            provider=provider,
+            stream_start_ts=1000.0,
+            stream_end_ts=4600.0,
+            filename=filename,
+            row_start_sec=10.0,
+            duration_sec=5.0,
+            target_sr=100,
+        )
+
+        assert chunk_decode_called
+        assert not full_decode_called
+        assert len(audio) == 500  # 5 seconds * 100 Hz
+
+    def test_cached_segment_skips_fetch(self):
+        """When is_segment_cached returns True, fetch_segment should not be called."""
+        from datetime import datetime, timezone
+
+        from humpback.classifier.archive import StreamSegment
+        from humpback.classifier.s3_stream import resolve_audio_slice
+
+        fetch_called = False
+
+        def fake_fetch(key):
+            nonlocal fetch_called
+            fetch_called = True
+            return b"fake-bytes"
+
+        def fake_chunk_decode(
+            key,
+            raw_bytes,
+            target_sr,
+            *,
+            clip_start_sec,
+            clip_end_sec,
+            chunk_seconds,
+        ):
+            n_samples = int(round((clip_end_sec - clip_start_sec) * target_sr))
+            yield np.ones(n_samples, dtype=np.float32), clip_start_sec
+
+        provider = _FakeProvider(
+            [
+                StreamSegment("noaa/audio/file.flac", 1000.0, 3600.0),
+            ],
+            fetch_fn=fake_fetch,
+            chunk_decode_fn=fake_chunk_decode,
+        )
+        # Add is_segment_cached to the provider instance
+        provider.is_segment_cached = lambda key: True  # type: ignore[attr-defined]
+
+        filename = (
+            datetime.fromtimestamp(1000, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + ".wav"
+        )
+
+        audio = resolve_audio_slice(
+            provider=provider,
+            stream_start_ts=1000.0,
+            stream_end_ts=4600.0,
+            filename=filename,
+            row_start_sec=10.0,
+            duration_sec=5.0,
+            target_sr=100,
+        )
+
+        assert not fetch_called
+        assert len(audio) == 500
+
+
 class TestSparseLocalCacheTimeline:
     """Regression tests for sparse local cache timeline reconstruction."""
 
@@ -965,6 +1081,47 @@ class TestSparseLocalCacheTimeline:
             timeline=timeline,
         )
         assert len(audio) == 50
+
+
+class TestDecodedAudioCache:
+    """Unit tests for _DecodedAudioCache LRU in the classifier router."""
+
+    def test_cache_hit_returns_stored_value(self):
+        from humpback.api.routers.classifier import _DecodedAudioCache
+
+        cache = _DecodedAudioCache(max_entries=4)
+        audio = np.ones(100, dtype=np.float32)
+        cache.put("job1", "file.flac", 10.0, 5.0, audio, 32000)
+
+        result = cache.get("job1", "file.flac", 10.0, 5.0)
+        assert result is not None
+        arr, sr = result
+        assert sr == 32000
+        assert np.array_equal(arr, audio)
+
+    def test_cache_miss_returns_none(self):
+        from humpback.api.routers.classifier import _DecodedAudioCache
+
+        cache = _DecodedAudioCache(max_entries=4)
+        assert cache.get("job1", "file.flac", 10.0, 5.0) is None
+
+    def test_cache_evicts_oldest(self):
+        from humpback.api.routers.classifier import _DecodedAudioCache
+
+        cache = _DecodedAudioCache(max_entries=2)
+        a1 = np.ones(10, dtype=np.float32)
+        a2 = np.ones(20, dtype=np.float32) * 2
+        a3 = np.ones(30, dtype=np.float32) * 3
+
+        cache.put("j1", "f1", 0.0, 5.0, a1, 100)
+        cache.put("j2", "f2", 0.0, 5.0, a2, 100)
+        cache.put("j3", "f3", 0.0, 5.0, a3, 100)
+
+        # j1 should have been evicted
+        assert cache.get("j1", "f1", 0.0, 5.0) is None
+        # j2 and j3 should still be present
+        assert cache.get("j2", "f2", 0.0, 5.0) is not None
+        assert cache.get("j3", "f3", 0.0, 5.0) is not None
 
 
 class TestOrcasoundS3ClientRetry:
