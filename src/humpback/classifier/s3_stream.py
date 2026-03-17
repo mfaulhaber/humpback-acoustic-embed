@@ -829,15 +829,20 @@ def _iter_segment_audio_chunks(
 
     fetch_sec = max(0.0, float(prefetched_fetch_sec))
     if prefetched_bytes is None:
-        t_fetch = time.monotonic()
-        try:
-            seg_bytes = provider.fetch_segment(segment.key)
-        except Exception:
+        cache_check = getattr(provider, "is_segment_cached", None)
+        if cache_check is not None and cache_check(segment.key):
+            seg_bytes = b""
+            fetch_sec = 0.0
+        else:
+            t_fetch = time.monotonic()
+            try:
+                seg_bytes = provider.fetch_segment(segment.key)
+            except Exception:
+                fetch_sec = time.monotonic() - t_fetch
+                if timing_callback is not None:
+                    timing_callback(fetch_sec, 0.0)
+                raise
             fetch_sec = time.monotonic() - t_fetch
-            if timing_callback is not None:
-                timing_callback(fetch_sec, 0.0)
-            raise
-        fetch_sec = time.monotonic() - t_fetch
     else:
         seg_bytes = prefetched_bytes
 
@@ -996,20 +1001,18 @@ def resolve_audio_slice(
         decoded_parts: list[np.ndarray] = []
         for segment in candidates:
             try:
-                clipped = _decode_and_clip_segment(
+                for audio, _ts in _iter_segment_audio_chunks(
                     provider=provider,
                     segment=segment,
                     target_sr=target_sr,
                     clip_start_ts=target_start_ts,
                     clip_end_ts=target_end_ts,
-                )
+                    chunk_seconds=duration_sec,
+                ):
+                    if len(audio) > 0:
+                        decoded_parts.append(audio)
             except Exception:
                 continue
-            if clipped is None:
-                continue
-            part, _ = clipped
-            if len(part) > 0:
-                decoded_parts.append(part)
 
         if not decoded_parts:
             last_reason = "Failed to decode all candidate segments"

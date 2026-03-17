@@ -855,6 +855,11 @@ class CachingNoaaGCSProvider:
             chunk_seconds=chunk_seconds,
         )
 
+    def is_segment_cached(self, key: str) -> bool:
+        """Check if a segment file exists in the local cache."""
+        local_path = Path(self._cache_root) / self._bucket_name / key
+        return local_path.is_file()
+
     def invalidate_cached_segment(self, key: str) -> bool:
         local_path = Path(self._cache_root) / self._bucket_name / key
         if local_path.is_file():

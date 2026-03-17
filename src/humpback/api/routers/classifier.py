@@ -1136,10 +1136,63 @@ def _encode_wav_response(segment: "np.ndarray", sr: int, normalize: bool) -> Res
     )
 
 
+class _DecodedAudioCache:
+    """Thread-safe LRU cache for decoded detection audio arrays."""
+
+    def __init__(self, max_entries: int = 64) -> None:
+        import collections
+        import threading
+
+        self._max = max_entries
+        self._cache: collections.OrderedDict[
+            tuple[str, str, float, float], tuple[np.ndarray, int]
+        ] = collections.OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(
+        self, job_id: str, filename: str, start_sec: float, duration_sec: float
+    ) -> tuple[np.ndarray, int] | None:
+        key = (job_id, filename, start_sec, duration_sec)
+        with self._lock:
+            val = self._cache.get(key)
+            if val is not None:
+                self._cache.move_to_end(key)
+            return val
+
+    def put(
+        self,
+        job_id: str,
+        filename: str,
+        start_sec: float,
+        duration_sec: float,
+        audio: np.ndarray,
+        sr: int,
+    ) -> None:
+        key = (job_id, filename, start_sec, duration_sec)
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            else:
+                self._cache[key] = (audio, sr)
+                while len(self._cache) > self._max:
+                    self._cache.popitem(last=False)
+
+
+_decoded_audio_cache = _DecodedAudioCache()
+
+
 async def _resolve_detection_audio(
     job, settings, filename: str, start_sec: float, duration_sec: float
 ) -> tuple:
-    """Decode audio for a detection row. Returns (audio_array, sample_rate)."""
+    """Decode audio for a detection row. Returns (audio_array, sample_rate).
+
+    Results are cached in an in-memory LRU so the second request (e.g.
+    spectrogram after audio-slice) returns instantly.
+    """
+    cached = _decoded_audio_cache.get(job.id, filename, start_sec, duration_sec)
+    if cached is not None:
+        return cached
+
     import asyncio
 
     import numpy as np
@@ -1178,7 +1231,11 @@ async def _resolve_detection_audio(
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc))
 
-        return segment, target_sr
+        result = (segment, target_sr)
+        _decoded_audio_cache.put(
+            job.id, filename, start_sec, duration_sec, segment, target_sr
+        )
+        return result
 
     # Local audio folder path
     from humpback.processing.audio_io import decode_audio
@@ -1207,7 +1264,9 @@ async def _resolve_detection_audio(
     end_sample = min(end_sample, len(audio))
     segment = audio[start_sample:end_sample]
 
-    return np.asarray(segment), sr
+    result_arr = np.asarray(segment)
+    _decoded_audio_cache.put(job.id, filename, start_sec, duration_sec, result_arr, sr)
+    return result_arr, sr
 
 
 @router.get("/detection-jobs/{job_id}/audio-slice")
