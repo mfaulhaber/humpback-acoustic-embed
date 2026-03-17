@@ -10,6 +10,27 @@
 
 ## Recently Completed
 
+# Plan: Refactor noaa_detection_metadata.py — CSV URL Input
+
+[Full plan](/Users/michael/.claude/plans/sleepy-swinging-wren.md)
+
+## Outcome (2026-03-17)
+
+- Replaced hardcoded CI01 GCS URL with `--csv-url` CLI arg accepting any HTTPS detection
+  CSV URL; added `--deployment` arg (default `"01"`); made `--hydrophone-id` required in
+  generation mode.
+- Fixed `parse_noaa_detection_csv()` to normalize DictReader fieldnames to lowercase,
+  resolving "No presence days found" for OC01 CSVs that use `IsoStartTime` (mixed case)
+  vs CI01's `ISOStartTime`.
+- Added 3 new tests: mixed-case header, no-Z timestamp format, `--csv-url` arg parsing.
+
+## Verification
+
+- `uv run ruff format --check` — passed.
+- `uv run ruff check` — passed.
+- `uv run pyright` — 0 errors.
+- `uv run pytest tests/` — 680 passed.
+
 # Plan: Enable Multi-Site NOAA SanctSound Sources (Channel Islands + Olympic Coast)
 
 [Full plan](/Users/michael/.claude/plans/shimmying-napping-avalanche.md)

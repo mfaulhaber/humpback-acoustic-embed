@@ -2,21 +2,29 @@
 """
 Generate detection job payloads from NOAA SanctSound humpback detection metadata.
 
-Fetches the daily presence/absence CSV for CI01 deployment 01 from GCS,
-filters for days with confirmed humpback presence, groups consecutive
-presence days into job ranges, and outputs a JSON file of payloads
-ready to POST to the hydrophone detection API.
+Fetches (or reads locally) a daily presence/absence CSV, filters for days with
+confirmed humpback presence, groups consecutive presence days into job ranges,
+and outputs a JSON file of payloads ready to POST to the hydrophone detection API.
 
-Example — generate jobs (one per presence day, default):
-    uv run python scripts/noaa_detection_metadata.py \
+Example — generate jobs from OC01 deployment 03 CSV (one per presence day):
+    uv run python scripts/noaa_detection_metadata.py \\
+        --csv-url https://storage.googleapis.com/noaa-passive-bioacoustic/sanctsound/products/detections/oc01/sanctsound_oc01_03_humpbackwhale_1d/data/SanctSound_OC01_03_humpbackwhale_1d.csv \\
+        --hydrophone-id sanctsound_oc01 \\
         --classifier-model-id <uuid>
 
 Example — consolidate up to 7 consecutive presence days per job:
-    uv run python scripts/noaa_detection_metadata.py \
+    uv run python scripts/noaa_detection_metadata.py \\
+        --csv-url <url> --hydrophone-id <id> \\
         --classifier-model-id <uuid> --days-per-job 7
 
+Example — use a local CSV file:
+    uv run python scripts/noaa_detection_metadata.py \\
+        --csv-path /path/to/detections.csv \\
+        --hydrophone-id sanctsound_ci01 \\
+        --classifier-model-id <uuid>
+
 Example — post job #3 from the generated file:
-    uv run python scripts/noaa_detection_metadata.py \
+    uv run python scripts/noaa_detection_metadata.py \\
         --post --job-index 3 --output detection_jobs.json
 """
 
@@ -32,15 +40,6 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-
-# GCS detection product for CI01 deployment 01
-_CI01_01_BUCKET = "noaa-passive-bioacoustic"
-_CI01_01_BLOB = (
-    "sanctsound/products/detections/ci01/"
-    "sanctsound_ci01_01_humpbackwhale_1d/data/"
-    "SanctSound_CI01_01_humpbackwhale_1d.csv"
-)
-_CI01_01_GCS_URL = f"https://storage.googleapis.com/{_CI01_01_BUCKET}/{_CI01_01_BLOB}"
 
 _MAX_DAYS_PER_JOB = 7  # API constraint
 
@@ -59,10 +58,14 @@ def parse_noaa_detection_csv(
     # Strip BOM and normalize line endings (NOAA CSVs may have \ufeff + \r\n)
     clean = content.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     reader = csv.DictReader(io.StringIO(clean))
+    # Normalize column names to lowercase — NOAA CSVs vary:
+    # CI01 uses "ISOStartTime", OC01 uses "IsoStartTime"
+    if reader.fieldnames is not None:
+        reader.fieldnames = [f.lower() for f in reader.fieldnames]
     days: list[PresenceDay] = []
     for row in reader:
-        iso_time = row.get("ISOStartTime", "").strip()
-        presence_raw = row.get("Presence", "").strip()
+        iso_time = row.get("isostarttime", "").strip()
+        presence_raw = row.get("presence", "").strip()
         if not iso_time or not presence_raw:
             continue
         try:
@@ -226,7 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Generate detection job payloads from NOAA SanctSound "
-            "humpback whale detection metadata (CI01 deployment 01)."
+            "humpback whale detection metadata."
         ),
     )
     parser.add_argument(
@@ -241,13 +244,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--hydrophone-id",
-        default="sanctsound_ci01",
-        help="Archive source ID (default: sanctsound_ci01)",
+        default=None,
+        help="Archive source ID (e.g. sanctsound_oc01)",
+    )
+    parser.add_argument(
+        "--csv-url",
+        default=None,
+        help="URL of NOAA detection CSV (GCS or other HTTPS URL)",
     )
     parser.add_argument(
         "--csv-path",
         default=None,
-        help="Local CSV file instead of fetching from GCS",
+        help="Local CSV file path (alternative to --csv-url)",
+    )
+    parser.add_argument(
+        "--deployment",
+        default="01",
+        help="Deployment identifier for metadata (default: 01)",
     )
     parser.add_argument(
         "--days-per-job",
@@ -358,6 +371,20 @@ def main() -> int:
         )
         return 2
 
+    # Validate CSV source and hydrophone-id
+    if not args.csv_path and not args.csv_url:
+        print(
+            "ERROR: --csv-url or --csv-path is required",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.hydrophone_id:
+        print(
+            "ERROR: --hydrophone-id is required",
+            file=sys.stderr,
+        )
+        return 2
+
     # Fetch CSV
     if args.csv_path:
         csv_path = Path(args.csv_path)
@@ -367,15 +394,15 @@ def main() -> int:
         csv_content = csv_path.read_text(encoding="utf-8")
         source_label = str(csv_path)
     else:
-        print("Fetching detection metadata from GCS...")
-        csv_content = fetch_csv_from_gcs(_CI01_01_GCS_URL)
+        print(f"Fetching detection metadata from {args.csv_url} ...")
+        csv_content = fetch_csv_from_gcs(args.csv_url)
         if csv_content is None:
             return 1
-        source_label = _CI01_01_GCS_URL
+        source_label = args.csv_url
 
     # Parse
     presence_days = parse_noaa_detection_csv(
-        csv_content, deployment="01", source=source_label
+        csv_content, deployment=args.deployment, source=source_label
     )
     if not presence_days:
         print("No presence days found in CSV.")
@@ -434,7 +461,7 @@ def main() -> int:
         "days_per_job": args.days_per_job,
         "total_presence_days": len(presence_days),
         "total_jobs": len(payloads),
-        "deployment": "01",
+        "deployment": args.deployment,
         "jobs": payloads,
     }
     output_path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
