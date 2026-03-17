@@ -72,9 +72,10 @@ Current state of the humpback acoustic embedding and clustering platform.
   `src/humpback/data/noaa_archive_sources.json`, including full verified NOAA
   reference records plus runtime config for loadable archive sources
 - NOAA passive bioacoustic archives via anonymous GCS fetch now support the
-  visible detection-UI sources `sanctsound_ci01` and legacy
-  `noaa_glacier_bay` (Glacier Bay / Bartlett Cove), with metadata-driven root
-  prefixes, mixed filename parsing, and child-folder hints for partitioned
+  visible detection-UI sources `sanctsound_ci01` (Channel Islands, 4 sub-sites
+  ci01–ci04), `sanctsound_oc01` (Olympic Coast, 4 sub-sites oc01–oc04), and
+  legacy `noaa_glacier_bay` (Glacier Bay / Bartlett Cove), with metadata-driven
+  root prefixes, mixed filename parsing, and child-folder hints for partitioned
   archive layouts; `CachingNoaaGCSProvider` caches metadata manifests + audio
   segments locally under `noaa_cache_path` with GCS fallback on cache miss
 - Write-through S3 cache (`CachingS3Client`): fetches from S3 on first access, caches segments locally with atomic writes, 404 markers for missing segments
@@ -83,8 +84,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - ArchiveProvider abstraction now spans detection, playback, extraction, and worker/router
   orchestration; upstream hydrophone consumers pass providers instead of raw clients plus
   `hydrophone_id`
-- 6 UI-visible archive sources on the legacy hydrophone API: 4 Orcasound
-  hydrophones plus NOAA SanctSound CI01 and NOAA Glacier Bay (Bartlett Cove)
+- 7 UI-visible archive sources on the legacy hydrophone API: 4 Orcasound
+  hydrophones plus NOAA SanctSound Channel Islands (ci01–ci04), NOAA SanctSound
+  Olympic Coast (oc01–oc04), and NOAA Glacier Bay (Bartlett Cove)
 - Segment fetch retry: transient S3 errors (IncompleteRead, ReadTimeoutError, ConnectionError) retried up to 3× with exponential backoff (1s/2s/4s); explicit `connect_timeout=10`, `read_timeout=30`
 - Ordered concurrent segment prefetch for hydrophone detection on providers that
   support it, with NOAA source-level behavior controlled by metadata
@@ -172,7 +174,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 - "Whale" badge on hydrophone jobs with confirmed positive labels — humpback or orca (`has_positive_labels` flag persisted on label save)
 - 3-way audio source selector (Orcasound / NOAA / Local Cache) with hydrophone
   dropdown filtered by `provider_kind` from the `/classifier/hydrophones` API;
-  the NOAA list currently exposes SanctSound CI01 plus NOAA Glacier Bay
+  the NOAA list currently exposes SanctSound Channel Islands (ci01–ci04),
+  SanctSound Olympic Coast (oc01–oc04), and NOAA Glacier Bay
 - Previous Jobs table: text filter (hydrophone name), sortable columns (status,
   hydrophone, date, threshold, results), client-side pagination, and preferences
   dialog (page size: 10/20/50/100, column visibility toggles)

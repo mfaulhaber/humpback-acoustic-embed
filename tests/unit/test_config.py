@@ -112,7 +112,7 @@ def test_noaa_archive_metadata_loads_runtime_and_reference_records():
     assert ci01["audio_subpath"] == "audio/"
     assert ci01["include_in_detection_ui"] is True
     assert ci01["supports_segment_prefetch"] is False
-    assert len(ci01["child_folder_hints"]) == 8
+    assert len(ci01["child_folder_hints"]) == 27
 
     glacier_bay = get_archive_source("noaa_glacier_bay")
     assert glacier_bay is not None

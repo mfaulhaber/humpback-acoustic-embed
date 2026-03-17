@@ -12,7 +12,8 @@ Parquet-based artifacts.
 Researchers can import or reference MP3/WAV/FLAC collections, generate
 embeddings, inspect cluster structure, train binary detectors, and run those
 detectors on archived hydrophone audio from sources such as Orcasound and
-metadata-backed NOAA GCS archives including SanctSound CI01 and Glacier Bay
+metadata-backed NOAA GCS archives including SanctSound Channel Islands,
+Olympic Coast, and Glacier Bay
 Bartlett Cove. The web UI and REST API support review, labeling, playback,
 spectrogram inspection, and extraction of labeled clips with sibling
 spectrogram PNGs for iterative retraining.
