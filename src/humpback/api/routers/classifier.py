@@ -33,6 +33,7 @@ from humpback.classifier.detection_rows import (
     write_detection_row_store,
 )
 from humpback.classifier.detector import read_window_diagnostics_table
+from humpback.classifier.archive import ArchiveProvider
 from humpback.classifier.providers import build_archive_playback_provider
 from humpback.schemas.classifier import (
     ClassifierModelOut,
@@ -1181,6 +1182,45 @@ class _DecodedAudioCache:
 _decoded_audio_cache = _DecodedAudioCache()
 
 
+class _NoaaPlaybackProviderRegistry:
+    """Process-level cache of NOAA playback provider instances.
+
+    CachingNoaaGCSProvider._load_prefix populates _files_by_prefix lazily
+    on first build_timeline() call. Reusing instances across HTTP requests
+    means subsequent audio-slice/spectrogram calls hit the warm in-memory
+    dict instead of re-reading manifest JSON from disk (~500ms–2s per prefix).
+
+    Only NOAA sources are cached (Orcasound/HLS providers are already fast).
+    Thread safety: registry insertion is Lock-protected; _load_prefix double-
+    reads are benign (idempotent, GIL-protected dict assignment).
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self._registry: dict[tuple[str, str], ArchiveProvider] = {}
+        self._lock = threading.Lock()
+
+    def get_or_create(
+        self,
+        source_id: str,
+        cache_path: str | None,
+        noaa_cache_path: str,
+    ) -> ArchiveProvider:
+        key = (source_id, noaa_cache_path)
+        with self._lock:
+            if key not in self._registry:
+                self._registry[key] = build_archive_playback_provider(
+                    source_id,
+                    cache_path=cache_path,
+                    noaa_cache_path=noaa_cache_path,
+                )
+            return self._registry[key]
+
+
+_noaa_provider_registry = _NoaaPlaybackProviderRegistry()
+
+
 async def _resolve_detection_audio(
     job, settings, filename: str, start_sec: float, duration_sec: float
 ) -> tuple:
@@ -1205,11 +1245,25 @@ async def _resolve_detection_audio(
 
         cache_path = job.local_cache_path or settings.s3_cache_path
         try:
-            local_provider = build_archive_playback_provider(
-                job.hydrophone_id,
-                cache_path=cache_path,
-                noaa_cache_path=settings.noaa_cache_path,
-            )
+            from humpback.config import get_archive_source as _get_archive_source
+
+            _src = _get_archive_source(job.hydrophone_id)
+            if (
+                _src is not None
+                and _src.get("provider_kind") == "noaa_gcs"
+                and settings.noaa_cache_path is not None
+            ):
+                local_provider = _noaa_provider_registry.get_or_create(
+                    job.hydrophone_id,
+                    cache_path,
+                    settings.noaa_cache_path,
+                )
+            else:
+                local_provider = build_archive_playback_provider(
+                    job.hydrophone_id,
+                    cache_path=cache_path,
+                    noaa_cache_path=settings.noaa_cache_path,
+                )
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         target_sr = 32000

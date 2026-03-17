@@ -4,11 +4,32 @@
 
 ## Active
 
-(none)
-
 ---
 
 ## Recently Completed
+
+# Plan: Fix Slow NOAA SanctSound Playback — Process-Level Provider Registry
+
+[Full plan](/Users/michael/.claude/plans/imperative-wiggling-pascal.md)
+
+## Outcome (2026-03-17)
+
+- Added `_NoaaPlaybackProviderRegistry` singleton to `classifier.py` router that
+  caches `CachingNoaaGCSProvider` instances keyed by `(source_id, noaa_cache_path)`.
+- `_resolve_detection_audio` now reuses the warm cached provider for NOAA sources
+  when `noaa_cache_path` is configured, avoiding repeated manifest JSON disk reads
+  on every audio-slice/spectrogram request; Orcasound and unknown sources fall through
+  to the existing `build_archive_playback_provider` path unchanged.
+- Added 5 unit tests in `TestNoaaPlaybackProviderRegistry` covering: same-key identity,
+  distinct source_ids, distinct cache paths, warm `_files_by_prefix` preservation, and
+  20-thread concurrent safety.
+
+## Verification
+
+- `uv run ruff format --check src/humpback/api/routers/classifier.py tests/unit/test_archive_providers.py` — passed.
+- `uv run ruff check src/humpback/api/routers/classifier.py tests/unit/test_archive_providers.py` — passed.
+- `uv run pyright src/humpback/api/routers/classifier.py tests/unit/test_archive_providers.py` — 0 errors.
+- `uv run pytest tests/` — 685 passed.
 
 # Plan: Refactor noaa_detection_metadata.py — CSV URL Input
 

@@ -1123,3 +1123,133 @@ class TestManifestReEstimation:
         loaded_files, interval = result
         assert len(loaded_files) == 10
         assert interval == pytest.approx(300.0)
+
+
+class TestNoaaPlaybackProviderRegistry:
+    """Tests for _NoaaPlaybackProviderRegistry in classifier.py router."""
+
+    def _make_registry(self):
+        from humpback.api.routers.classifier import _NoaaPlaybackProviderRegistry
+
+        return _NoaaPlaybackProviderRegistry()
+
+    def test_same_key_returns_same_instance(self, tmp_path):
+        """Two get_or_create calls with the same (source_id, noaa_cache_path) return the same instance; factory called once."""
+        call_count = 0
+
+        def fake_build(source_id, *, cache_path, noaa_cache_path):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(spec=ArchiveProvider)
+
+        registry = self._make_registry()
+        with patch(
+            "humpback.api.routers.classifier.build_archive_playback_provider",
+            side_effect=fake_build,
+        ):
+            p1 = registry.get_or_create("sanctsound_oc01", None, str(tmp_path))
+            p2 = registry.get_or_create("sanctsound_oc01", None, str(tmp_path))
+
+        assert p1 is p2
+        assert call_count == 1
+
+    def test_different_source_ids_distinct(self, tmp_path):
+        """Different source_ids produce distinct instances; factory called twice."""
+        call_count = 0
+
+        def fake_build(source_id, *, cache_path, noaa_cache_path):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(spec=ArchiveProvider)
+
+        registry = self._make_registry()
+        with patch(
+            "humpback.api.routers.classifier.build_archive_playback_provider",
+            side_effect=fake_build,
+        ):
+            p1 = registry.get_or_create("sanctsound_ci01", None, str(tmp_path))
+            p2 = registry.get_or_create("sanctsound_oc01", None, str(tmp_path))
+
+        assert p1 is not p2
+        assert call_count == 2
+
+    def test_different_cache_paths_distinct(self, tmp_path):
+        """Same source_id but two different noaa_cache_path values produce distinct instances."""
+        call_count = 0
+
+        def fake_build(source_id, *, cache_path, noaa_cache_path):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(spec=ArchiveProvider)
+
+        path_a = str(tmp_path / "a")
+        path_b = str(tmp_path / "b")
+        registry = self._make_registry()
+        with patch(
+            "humpback.api.routers.classifier.build_archive_playback_provider",
+            side_effect=fake_build,
+        ):
+            p1 = registry.get_or_create("sanctsound_oc01", None, path_a)
+            p2 = registry.get_or_create("sanctsound_oc01", None, path_b)
+
+        assert p1 is not p2
+        assert call_count == 2
+
+    def test_warm_files_by_prefix_preserved(self, tmp_path):
+        """Provider stored in registry retains its _files_by_prefix state between get_or_create calls."""
+        registry = self._make_registry()
+        provider = CachingNoaaGCSProvider(
+            "sanctsound_oc01",
+            "SanctSound OC01",
+            str(tmp_path),
+            prefix="sanctsound/audio/oc01/",
+        )
+        # Manually warm the internal dict (simulates a completed build_timeline call)
+        fake_file = _make_noaa_file(1000.0)
+        provider._files_by_prefix["sanctsound/audio/oc01/"] = [fake_file]
+
+        # Inject into registry directly
+        registry._registry[("sanctsound_oc01", str(tmp_path))] = provider
+
+        retrieved = registry.get_or_create("sanctsound_oc01", None, str(tmp_path))
+        assert retrieved is provider
+        assert "sanctsound/audio/oc01/" in retrieved._files_by_prefix  # type: ignore[attr-defined]
+        assert len(retrieved._files_by_prefix["sanctsound/audio/oc01/"]) == 1  # type: ignore[attr-defined]
+
+    def test_concurrent_get_or_create(self, tmp_path):
+        """20 concurrent threads all get the same provider instance; factory called exactly once."""
+        import threading
+
+        call_count = 0
+        call_lock = threading.Lock()
+
+        def fake_build(source_id, *, cache_path, noaa_cache_path):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+            return MagicMock(spec=ArchiveProvider)
+
+        registry = self._make_registry()
+        results: list[object] = []
+        results_lock = threading.Lock()
+
+        def worker():
+            with patch(
+                "humpback.api.routers.classifier.build_archive_playback_provider",
+                side_effect=fake_build,
+            ):
+                p = registry.get_or_create("sanctsound_oc01", None, str(tmp_path))
+            with results_lock:
+                results.append(p)
+
+        threads = [threading.Thread(target=worker) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(results) == 20
+        # All threads received the same instance
+        first = results[0]
+        assert all(r is first for r in results)
+        assert call_count == 1
