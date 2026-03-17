@@ -1,3 +1,116 @@
+# noaa_detection_metadata
+
+Generate targeted hydrophone detection job payloads from NOAA SanctSound
+humpback whale detection metadata. Fetches the daily presence/absence CSV
+for CI01 deployment 01, filters for days with confirmed humpback presence,
+groups consecutive days into job ranges, and outputs a JSON file ready to
+POST to the hydrophone detection API.
+
+## Arguments
+
+### Job generation (default mode)
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `--classifier-model-id` | * | — | UUID of trained classifier model |
+| `--classifier-model-name` | * | — | Name of trained model (resolved to ID via API, e.g. `lr-v17`) |
+| `--hydrophone-id` | No | `sanctsound_ci01` | Archive source ID |
+| `--csv-path` | No | — | Local CSV file instead of fetching from GCS |
+| `--days-per-job` | No | `1` | Max consecutive presence days per job (capped at 7) |
+| `--strategy` | No | `consecutive` | Grouping: `consecutive`, `daily`, or `full-range` |
+| `--high-threshold` | No | `0.70` | Hysteresis high threshold |
+| `--low-threshold` | No | `0.45` | Hysteresis low threshold |
+| `--hop-seconds` | No | `1.0` | Detection hop stride in seconds |
+| `--detection-mode` | No | `windowed` | `merged` or `windowed` |
+| `--output` | No | `detection_jobs.json` | Output JSON file path |
+| `--dry-run` | No | — | Print summary without writing output |
+
+\* One of `--classifier-model-id` or `--classifier-model-name` is required for job generation. `--classifier-model-name` queries the API at `--api-url` to resolve the UUID.
+
+### Posting jobs to the API
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `--post` | — | — | POST a single job (requires `--job-index`) |
+| `--job-index` | With `--post` | — | 0-based index into the jobs array |
+| `--api-url` | No | `http://localhost:8000` | API base URL |
+| `--output` | No | `detection_jobs.json` | JSON file to read jobs from |
+
+## Examples
+
+Generate one job per presence day using model name:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --classifier-model-name lr-v17
+```
+
+Generate using model UUID directly:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --classifier-model-id abc-1234-5678
+```
+
+Preview without writing a file:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --classifier-model-id abc-1234-5678 --dry-run
+```
+
+Consolidate consecutive presence days into up to 7-day jobs:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --classifier-model-id abc-1234-5678 --days-per-job 7
+```
+
+Use a local CSV instead of fetching from GCS:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --classifier-model-id abc-1234-5678 \
+    --csv-path /path/to/SanctSound_CI01_01_humpbackwhale_1d.csv
+```
+
+Custom thresholds and output path:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --classifier-model-id abc-1234-5678 \
+    --high-threshold 0.80 --low-threshold 0.50 \
+    --detection-mode merged \
+    --output ci01_jobs.json
+```
+
+Post job index 3 from a previously generated file:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --post --job-index 3 --output ci01_jobs.json
+```
+
+Post to a non-default API:
+
+```bash
+uv run python scripts/noaa_detection_metadata.py \
+    --post --job-index 0 --output ci01_jobs.json \
+    --api-url http://192.168.1.10:8000
+```
+
+## Notes
+
+* The CSV source is the NOAA SanctSound CI01 deployment 01 daily humpback
+  presence product (`Presence=0` or `1`), covering Oct 31 – Dec 15, 2018.
+* `--days-per-job` is capped at 7 to respect the API's max 7-day range per job.
+* The `_metadata` key in each job payload is for human readability and is
+  stripped automatically before POST.
+* The `--post` mode reads from the output JSON file — generate first, review,
+  then submit one job at a time.
+
+---
+
 # noaa_gcs_poc
 
 Smoke-test the production NOAA Glacier Bay `ArchiveProvider` against the public
