@@ -82,6 +82,26 @@ class TestParseNoaaDetectionCsv:
         assert days[0].deployment == "03"
         assert days[0].source == "gcs://foo"
 
+    def test_mixed_case_column_header(self) -> None:
+        """OC01 CSVs use 'IsoStartTime' instead of 'ISOStartTime'."""
+        csv_text = (
+            "IsoStartTime,Presence\n"
+            "2020-11-02T00:00:00,1\n"
+            "2020-11-03T00:00:00,0\n"
+            "2020-11-04T00:00:00,1\n"
+        )
+        days = parse_noaa_detection_csv(csv_text)
+        assert len(days) == 2
+        assert days[0].date == date(2020, 11, 2)
+        assert days[1].date == date(2020, 11, 4)
+
+    def test_timestamp_without_z_suffix(self) -> None:
+        """OC01 CSVs omit the Z timezone suffix: '2020-11-02T00:00:00'."""
+        csv_text = "IsoStartTime,Presence\n2020-11-02T00:00:00,1\n"
+        days = parse_noaa_detection_csv(csv_text)
+        assert len(days) == 1
+        assert days[0].date == date(2020, 11, 2)
+
     def test_sorted_output(self) -> None:
         csv_text = (
             "ISOStartTime,Presence\n"
@@ -310,7 +330,9 @@ class TestParser:
         parser = build_parser()
         args = parser.parse_args(["--classifier-model-id", "test-id"])
         assert args.classifier_model_id == "test-id"
-        assert args.hydrophone_id == "sanctsound_ci01"
+        assert args.hydrophone_id is None
+        assert args.csv_url is None
+        assert args.deployment == "01"
         assert args.days_per_job == 1
         assert args.strategy == "consecutive"
         assert args.high_threshold == 0.70
@@ -322,6 +344,25 @@ class TestParser:
         assert args.job_index is None
         assert args.api_url == "http://localhost:8000"
         assert args.dry_run is False
+
+    def test_csv_url_arg(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--csv-url",
+                "https://example.com/SanctSound_OC01_03_humpbackwhale_1d.csv",
+                "--hydrophone-id",
+                "sanctsound_oc01",
+                "--deployment",
+                "03",
+            ]
+        )
+        assert (
+            args.csv_url
+            == "https://example.com/SanctSound_OC01_03_humpbackwhale_1d.csv"
+        )
+        assert args.hydrophone_id == "sanctsound_oc01"
+        assert args.deployment == "03"
 
     def test_post_mode_args(self) -> None:
         parser = build_parser()
