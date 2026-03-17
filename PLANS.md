@@ -10,6 +10,29 @@
 
 ## Recently Completed
 
+# Plan: NOAA Hydrophone Detection Metadata Job Generator
+
+[Full plan](/Users/michael/.claude/plans/parsed-pondering-curry.md)
+
+## Outcome (2026-03-16)
+
+- Added `scripts/noaa_detection_metadata.py` — CLI utility that fetches the NOAA
+  SanctSound CI01 deployment 01 daily humpback presence CSV from GCS, filters for
+  Presence=1 days (25 out of 46), groups consecutive presence days into job ranges
+  respecting the 7-day API limit, and outputs a JSON file of detection job payloads
+  ready to POST to the hydrophone detection API.
+- Supports `--classifier-model-name` for API-based name-to-UUID resolution,
+  `--days-per-job` for job granularity control (default 1 day), and
+  `--post --job-index N` for submitting one job at a time from the generated file.
+- Handles real-world NOAA CSV quirks (BOM prefix, `\r\n` line endings).
+
+## Verification
+
+- `uv run ruff format --check` on modified Python files — passed.
+- `uv run ruff check` on modified Python files — passed.
+- `uv run pyright` on modified Python files — passed.
+- `uv run pytest tests/` — 670 passed.
+
 # Plan: Windowed Detection Mode (Fixed 5-Second Detections)
 
 [Full plan](/Users/michael/.claude/plans/adaptive-wiggling-firefly.md)
