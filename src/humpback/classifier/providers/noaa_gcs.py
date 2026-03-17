@@ -543,8 +543,10 @@ class NoaaGCSProvider:
                 _join_prefix(self._prefix, hint.prefix, self._audio_subpath or "")
                 for hint in matching_hints
             ]
-            if prefixes:
-                return list(dict.fromkeys(prefixes))
+            # When hints exist but none match, return empty rather than
+            # falling back to the broad base prefix (which may span the
+            # entire archive tree for multi-site sources).
+            return list(dict.fromkeys(prefixes))
         return [self._prefix]
 
     def _load_prefix(self, prefix: str) -> tuple[list[NoaaAudioFile], float]:

@@ -13,10 +13,11 @@ async def test_list_hydrophones(client):
     resp = await client.get("/classifier/hydrophones")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 6
+    assert len(data) == 7
     ids = {h["id"] for h in data}
     assert "rpi_orcasound_lab" in ids
     assert "sanctsound_ci01" in ids
+    assert "sanctsound_oc01" in ids
     assert "noaa_glacier_bay" in ids
     assert "sanctsound_fk01" not in ids
     assert all("name" in h and "location" in h for h in data)

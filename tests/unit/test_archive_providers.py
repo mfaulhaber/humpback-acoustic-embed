@@ -436,6 +436,42 @@ class TestNoaaProvider:
         assert bucket.list_calls == 1
         assert [segment.key for segment in timeline] == [key]
 
+    def test_build_timeline_raises_when_hints_exist_but_none_match(self):
+        """When child_folder_hints exist but none overlap with the requested
+        time range, the provider must not fall back to scanning the broad base
+        prefix.  Instead it should raise FileNotFoundError without issuing any
+        GCS list calls — preventing accidental full-archive scans for
+        multi-site sources."""
+        root = "sanctsound/audio/"
+        bucket = _FakeBucket([])
+        provider = NoaaGCSProvider(
+            "sanctsound_oc01",
+            "NOAA SanctSound (Olympic Coast)",
+            prefix=root,
+            audio_subpath="audio/",
+            child_folder_hints=[
+                {
+                    "prefix": "oc01/sanctsound_oc01_03/",
+                    "start_utc": "2019-11-02T19:00:00Z",
+                    "end_utc": "2020-04-10T18:48:11Z",
+                },
+                {
+                    "prefix": "oc01/sanctsound_oc01_04/",
+                    "start_utc": "2020-07-31T02:00:00Z",
+                    "end_utc": "2020-09-22T23:51:47Z",
+                },
+            ],
+            bucket_obj=bucket,
+        )
+        # July 4 2020 falls in the gap between oc01_03 and oc01_04
+        with pytest.raises(FileNotFoundError, match="No NOAA audio data"):
+            provider.build_timeline(
+                _ts(2020, 7, 4, 0, 0, 0),
+                _ts(2020, 7, 4, 12, 0, 0),
+            )
+        # No GCS listing should have been attempted
+        assert bucket.list_calls == 0
+
     def test_build_timeline_raises_when_no_overlap(self):
         provider = NoaaGCSProvider(
             "noaa_glacier_bay",

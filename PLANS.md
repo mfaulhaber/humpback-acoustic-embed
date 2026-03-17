@@ -10,6 +10,29 @@
 
 ## Recently Completed
 
+# Plan: Enable Multi-Site NOAA SanctSound Sources (Channel Islands + Olympic Coast)
+
+[Full plan](/Users/michael/.claude/plans/shimmying-napping-avalanche.md)
+
+## Outcome (2026-03-17)
+
+- Expanded Channel Islands (`sanctsound_ci01`) from 8 ci01-only deployments to
+  27 deployments spanning sub-sites ci01, ci02, ci03, ci04 by raising base
+  prefix to `sanctsound/audio/` and nesting sub-site paths in child_folder_hints.
+- Populated Olympic Coast (`sanctsound_oc01`) with 12 deployments spanning
+  oc01, oc02, oc03, oc04 and enabled in the detection UI (7 total UI sources).
+- Fixed `_candidate_prefixes()` fallback: when child_folder_hints exist but none
+  match the time range, return empty list instead of scanning the entire archive
+  root prefix (prevented accidental full-SanctSound tree scans for multi-site
+  sources).
+
+## Verification
+
+- `uv run ruff format --check` on modified Python files — passed.
+- `uv run ruff check` on modified Python files — passed.
+- `uv run pyright` on modified Python files — 0 errors.
+- `uv run pytest tests/` — 677 passed.
+
 # Plan: Fix Slow NOAA SanctSound Audio Preview
 
 [Full plan](/Users/michael/.claude/plans/misty-dreaming-pascal.md)

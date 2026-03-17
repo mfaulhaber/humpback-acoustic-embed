@@ -16,7 +16,7 @@
       "region": "US West Coast",
       "provider_kind": "noaa_gcs",
       "bucket": "noaa-passive-bioacoustic",
-      "prefix": "sanctsound/audio/ci01/",
+      "prefix": "sanctsound/audio/",
       "audio_subpath": "audio/",
       "supports_segment_prefetch": false,
       "include_in_detection_ui": true,
@@ -26,7 +26,7 @@
       "latitude": null,
       "longitude": null,
       "depth_m": null,
-      "notes": "SanctSound studied sound at 30 recording sites across seven sanctuaries and one marine national monument from 2018 to 2021; ci01 is the Channel Islands top-level code used in the public bucket/product naming.",
+      "notes": "SanctSound studied sound at 30 recording sites across seven sanctuaries and one marine national monument from 2018 to 2021; Channel Islands encompasses sub-sites ci01, ci02, ci03, and ci04 with 27 deployment folders total.",
       "confidence": "high",
       "sources": [
         "NOAA SanctSound Raw Passive Acoustic Data",
@@ -35,44 +35,139 @@
       ],
       "child_folder_hints": [
         {
-          "prefix": "sanctsound_ci01_01/",
+          "prefix": "ci01/sanctsound_ci01_01/",
           "start_utc": "2018-10-31T22:00:00Z",
           "end_utc": "2018-12-15T04:26:35Z"
         },
         {
-          "prefix": "sanctsound_ci01_02/",
+          "prefix": "ci01/sanctsound_ci01_02/",
           "start_utc": "2019-03-25T21:00:00Z",
           "end_utc": "2019-08-04T00:21:55Z"
         },
         {
-          "prefix": "sanctsound_ci01_03/",
+          "prefix": "ci01/sanctsound_ci01_03/",
           "start_utc": "2019-08-14T00:00:00Z",
           "end_utc": "2019-10-09T06:11:54Z"
         },
         {
-          "prefix": "sanctsound_ci01_04/",
+          "prefix": "ci01/sanctsound_ci01_04/",
           "start_utc": "2020-01-24T07:00:00Z",
           "end_utc": "2020-06-04T17:41:04Z"
         },
         {
-          "prefix": "sanctsound_ci01_05/",
+          "prefix": "ci01/sanctsound_ci01_05/",
           "start_utc": "2020-06-04T23:00:00Z",
           "end_utc": "2020-10-10T18:23:46Z"
         },
         {
-          "prefix": "sanctsound_ci01_06/",
+          "prefix": "ci01/sanctsound_ci01_06/",
           "start_utc": "2020-10-22T16:00:00Z",
           "end_utc": "2021-02-23T18:29:15Z"
         },
         {
-          "prefix": "sanctsound_ci01_07/",
+          "prefix": "ci01/sanctsound_ci01_07/",
           "start_utc": "2021-03-06T01:59:50Z",
           "end_utc": "2021-07-01T20:24:30Z"
         },
         {
-          "prefix": "sanctsound_ci01_08/",
+          "prefix": "ci01/sanctsound_ci01_08/",
           "start_utc": "2021-07-08T18:00:02Z",
           "end_utc": "2021-09-11T18:36:48Z"
+        },
+        {
+          "prefix": "ci02/sanctsound_ci02_01/",
+          "start_utc": "2018-10-31T20:29:52Z",
+          "end_utc": "2019-01-13T11:55:53Z"
+        },
+        {
+          "prefix": "ci02/sanctsound_ci02_04/",
+          "start_utc": "2020-02-05T21:00:00Z",
+          "end_utc": "2020-06-04T10:27:26Z"
+        },
+        {
+          "prefix": "ci02/sanctsound_ci02_05/",
+          "start_utc": "2020-06-04T18:00:00Z",
+          "end_utc": "2020-10-22T14:39:39Z"
+        },
+        {
+          "prefix": "ci02/sanctsound_ci02_06/",
+          "start_utc": "2020-10-22T18:00:00Z",
+          "end_utc": "2021-03-02T21:51:20Z"
+        },
+        {
+          "prefix": "ci02/sanctsound_ci02_07/",
+          "start_utc": "2021-06-19T03:00:00Z",
+          "end_utc": "2021-11-10T22:13:08Z"
+        },
+        {
+          "prefix": "ci03/sanctsound_ci03_02/",
+          "start_utc": "2019-10-15T22:00:00Z",
+          "end_utc": "2020-02-19T16:57:33Z"
+        },
+        {
+          "prefix": "ci03/sanctsound_ci03_03/",
+          "start_utc": "2020-03-18T01:00:00Z",
+          "end_utc": "2020-07-21T15:28:29Z"
+        },
+        {
+          "prefix": "ci03/sanctsound_ci03_04/",
+          "start_utc": "2020-08-03T20:00:00Z",
+          "end_utc": "2020-11-03T13:46:48Z"
+        },
+        {
+          "prefix": "ci03/sanctsound_ci03_05/",
+          "start_utc": "2020-11-04T02:00:00Z",
+          "end_utc": "2021-03-11T12:54:23Z"
+        },
+        {
+          "prefix": "ci03/sanctsound_ci03_06/",
+          "start_utc": "2021-05-10T21:00:00Z",
+          "end_utc": "2021-08-17T04:21:06Z"
+        },
+        {
+          "prefix": "ci03/sanctsound_ci03_07/",
+          "start_utc": "2021-09-16T04:00:00Z",
+          "end_utc": "2022-01-19T10:51:45Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_01/",
+          "start_utc": "2018-11-01T20:00:00Z",
+          "end_utc": "2018-12-30T06:50:59Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_02/",
+          "start_utc": "2019-03-26T18:00:00Z",
+          "end_utc": "2019-08-08T23:52:12Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_03/",
+          "start_utc": "2019-08-13T21:00:00Z",
+          "end_utc": "2019-11-21T17:44:56Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_04/",
+          "start_utc": "2020-01-31T21:00:00Z",
+          "end_utc": "2020-05-22T19:44:02Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_05/",
+          "start_utc": "2020-06-04T13:00:00Z",
+          "end_utc": "2020-10-22T06:23:56Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_06/",
+          "start_utc": "2020-10-23T09:00:00Z",
+          "end_utc": "2021-03-02T21:24:31Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_07/",
+          "start_utc": "2021-03-06T05:00:00Z",
+          "end_utc": "2021-07-30T14:37:19Z"
+        },
+        {
+          "prefix": "ci04/sanctsound_ci04_08/",
+          "start_utc": "2021-07-29T17:59:58Z",
+          "end_utc": "2021-11-15T10:44:00Z"
         }
       ]
     },
@@ -218,22 +313,83 @@
       "region": "US West Coast",
       "provider_kind": "noaa_gcs",
       "bucket": "noaa-passive-bioacoustic",
-      "prefix": "sanctsound/audio/oc01/",
+      "prefix": "sanctsound/audio/",
       "audio_subpath": "audio/",
       "supports_segment_prefetch": false,
-      "include_in_detection_ui": false,
+      "include_in_detection_ui": true,
       "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/oc01/",
       "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
       "station_identity": "Top-level program/location code, not a single verified hydrophone station",
       "latitude": null,
       "longitude": null,
       "depth_m": null,
-      "notes": "oc01 appears in public SanctSound product naming for sonar and fin-whale products.",
+      "notes": "Olympic Coast encompasses sub-sites oc01, oc02, oc03, and oc04 with 12 deployment folders total; oc01 appears in public SanctSound product naming for sonar and fin-whale products.",
       "confidence": "high",
       "sources": [
         "Data.gov resource naming using sanctsound_oc01_*"
       ],
-      "child_folder_hints": []
+      "child_folder_hints": [
+        {
+          "prefix": "oc01/sanctsound_oc01_01/",
+          "start_utc": "2019-03-08T19:00:00Z",
+          "end_utc": "2019-07-17T17:40:35Z"
+        },
+        {
+          "prefix": "oc01/sanctsound_oc01_03/",
+          "start_utc": "2019-11-02T19:00:00Z",
+          "end_utc": "2020-04-10T18:48:11Z"
+        },
+        {
+          "prefix": "oc01/sanctsound_oc01_04/",
+          "start_utc": "2020-07-31T02:00:00Z",
+          "end_utc": "2020-09-22T23:51:47Z"
+        },
+        {
+          "prefix": "oc02/sanctsound_oc02_01/",
+          "start_utc": "2019-03-08T20:00:00Z",
+          "end_utc": "2019-04-23T23:53:03Z"
+        },
+        {
+          "prefix": "oc02/sanctsound_oc02_02/",
+          "start_utc": "2019-07-11T21:00:00Z",
+          "end_utc": "2019-10-30T13:35:22Z"
+        },
+        {
+          "prefix": "oc02/sanctsound_oc02_04/",
+          "start_utc": "2020-07-13T22:00:00Z",
+          "end_utc": "2020-09-30T20:47:51Z"
+        },
+        {
+          "prefix": "oc02/sanctsound_oc02_05/",
+          "start_utc": "2021-06-09T23:00:00Z",
+          "end_utc": "2021-10-27T22:39:40Z"
+        },
+        {
+          "prefix": "oc03/sanctsound_oc03_02/",
+          "start_utc": "2019-11-01T23:00:00Z",
+          "end_utc": "2020-03-06T06:33:44Z"
+        },
+        {
+          "prefix": "oc03/sanctsound_oc03_03/",
+          "start_utc": "2020-08-02T20:00:00Z",
+          "end_utc": "2020-10-31T14:46:49Z"
+        },
+        {
+          "prefix": "oc03/sanctsound_oc03_04/",
+          "start_utc": "2021-06-05T23:00:00Z",
+          "end_utc": "2021-10-13T22:41:17Z"
+        },
+        {
+          "prefix": "oc04/sanctsound_oc04_02/",
+          "start_utc": "2019-08-20T20:00:00Z",
+          "end_utc": "2019-09-05T05:50:58Z"
+        },
+        {
+          "prefix": "oc04/sanctsound_oc04_04/",
+          "start_utc": "2020-08-04T18:00:00Z",
+          "end_utc": "2020-12-21T13:39:40Z"
+        }
+      ]
     },
     {
       "id": "sanctsound_sb01",
