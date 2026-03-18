@@ -1,0 +1,3 @@
+api:      uv run humpback-api
+worker:   uv run humpback-worker
+frontend: cd frontend && npm run dev

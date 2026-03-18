@@ -65,20 +65,48 @@ The backend dev environment includes Ruff, Pyright, pytest, and pre-commit.
 
 ### Development Mode
 
-Run the backend and frontend dev server in separate terminals:
+Start all three processes with a single command:
 
 ```bash
-# Terminal 1: API server
-uv run humpback-api
-
-# Terminal 2: Worker
-uv run humpback-worker
-
-# Terminal 3: Frontend dev server (hot reload, proxies API to :8000)
-cd frontend && npm run dev
+make dev
 ```
 
+This runs `honcho start -f Procfile.dev`, launching:
+- `api      |` — FastAPI/uvicorn on :8000
+- `worker   |` — background job worker
+- `frontend |` — Vite dev server on :5173 (hot reload, proxies API to :8000)
+
+Press Ctrl+C to stop all processes cleanly.
+
 Open http://localhost:5173 for the dev UI. API docs at http://localhost:8000/docs.
+
+**Run individual processes:**
+
+```bash
+make api           # API only
+make worker        # Worker only
+make frontend-dev  # Frontend dev server only
+```
+
+**First-time frontend setup** (if `frontend/node_modules/` is missing):
+
+```bash
+make frontend-install
+```
+
+**All available targets:**
+
+```bash
+make help
+```
+
+**Manual three-terminal approach also works:**
+
+```bash
+uv run humpback-api                # Terminal 1
+uv run humpback-worker             # Terminal 2
+cd frontend && npm run dev         # Terminal 3
+```
 
 ### Production Build
 
