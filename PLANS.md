@@ -8,6 +8,30 @@
 
 ## Recently Completed
 
+# Plan: Local Dev Stack Startup
+
+[Full plan](/Users/michael/.claude/plans/playful-scribbling-eclipse.md)
+
+## Outcome (2026-03-18)
+
+- Added `Procfile.dev` (api/worker/frontend) and `Makefile` with `make dev`
+  as the single-command startup target, plus individual targets for `api`,
+  `worker`, `frontend-dev`, `build`, `test`, `test-watch`, `lint`,
+  `typecheck`, and `playwright`.
+- Added `honcho>=1.1.0` to the dev group in `pyproject.toml` so `uv run
+  honcho` starts all three processes with colored prefixed output and clean
+  Ctrl+C group shutdown.
+- Updated README Development Mode section and `test_pyproject_metadata.py`
+  fixture.
+
+## Verification
+
+- `uv sync --group dev --extra tf-macos` — honcho 2.0.0 resolved.
+- `make help` — all targets print with descriptions.
+- `uv run ruff format --check` / `uv run ruff check` — passed.
+- `uv run pyright` — 0 errors.
+- `uv run pytest tests/` — 685 passed.
+
 # Plan: Fix Slow NOAA SanctSound Playback — Process-Level Provider Registry
 
 [Full plan](/Users/michael/.claude/plans/imperative-wiggling-pascal.md)

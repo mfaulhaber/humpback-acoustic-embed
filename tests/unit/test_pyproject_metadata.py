@@ -62,6 +62,7 @@ def test_dev_dependency_group_contains_project_tooling() -> None:
 
     dev = data["dependency-groups"]["dev"]
     assert dev == [
+        "honcho>=1.1.0",
         "httpx>=0.28.1",
         "pre-commit>=4.3.0",
         "pyright>=1.1.408",
