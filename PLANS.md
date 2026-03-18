@@ -8,6 +8,41 @@
 
 ## Recently Completed
 
+# Plan: TFLite Detection Pipeline Performance Optimization
+
+[Full plan](/Users/michael/.claude/plans/lovely-popping-bonbon.md)
+
+## Outcome (2026-03-18) — Investigation complete, no changes shipped
+
+- Confirmed pipeline is 99.9% inference-bound (79.5 ms/window at batch=56 on perch_v2.tflite).
+- **CoreML/ANE (P3):** Infrastructure added (`_try_load_coreml_delegate`, `audit_coreml_delegate`,
+  `use_coreml_delegate` flag on `TFLiteModel`, benchmark script). Blocked — `tf.lite.experimental.CoreMLDelegate`
+  is absent from `tensorflow-macos` 2.16. Will activate automatically if a future TF build ships it.
+- **Opt-5 (per-chunk timing stats):** Implemented and tested (`inference_sec_mean/max/p95` in `run_summary`),
+  then reverted. Useful for future benchmarking but not needed once Opt-1 benchmark concluded.
+- **Opt-1 (tflite_num_threads on ModelConfig):** Implemented full stack (migration 019, ORM, schemas,
+  service, API, model_cache), benchmarked num_threads 1–14, then reverted.
+- **Benchmark result (batch=56, perch_v2.tflite, Apple M-series 14-core):**
+
+  | threads | ms/window | vs default |
+  |---------|-----------|------------|
+  | 1       | 180.0     | 2.65×  slower |
+  | 2       | 117.1     | 1.72× slower |
+  | 4       | 84.5      | 1.24× slower |
+  | 6       | 74.5      | 1.10× slower |
+  | 8       | 69.9      | 1.03× slower |
+  | 10      | 67.1      | ~same |
+  | 12      | 67.0      | peak |
+  | **14 (default)** | **67.9** | **baseline** |
+
+  Default (`os.cpu_count()` = 14) is at peak throughput — no tuning gain available.
+  The `tflite_num_threads` knob would be worth revisiting on machines where high
+  core counts cause XNNPACK synchronization overhead, or when running concurrent jobs.
+- **Decision:** All changes backed out. `tflite_num_threads` infrastructure can be
+  re-implemented if needed for a multi-job or different-hardware context.
+
+---
+
 # Plan: Local Dev Stack Startup
 
 [Full plan](/Users/michael/.claude/plans/playful-scribbling-eclipse.md)
