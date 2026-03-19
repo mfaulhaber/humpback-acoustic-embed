@@ -974,3 +974,35 @@ the worker loop since encoding is sub-second interactive work.
 - Worker poll loop checks search jobs first, before processing/clustering/detection.
 - Frontend detection mode no longer uses `useDetectionEmbedding` or
   `useSearchByVector`; it uses the new mutation + poll pattern.
+
+---
+
+## ADR-035: Runtime path derivation for detection artifacts
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: 33 of 52 detection jobs stored relative file paths (`data/detections/...`)
+in the `output_tsv_path` and `output_row_store_path` DB columns from when `storage_root`
+was the default `Path("data")`. After the storage root was changed to an absolute
+external drive path, these relative paths no longer resolved from the API's CWD. All
+detection data was intact on disk — only the path resolution was broken.
+
+**Decision**: Derive all detection artifact paths at runtime from
+`detection_dir(settings.storage_root, job.id)` plus fixed filenames, using new
+`storage.py` helpers (`detection_tsv_path()`, `detection_row_store_path()`,
+`detection_diagnostics_path()`, `detection_embeddings_path()`). The worker no longer
+writes `output_tsv_path` or `output_row_store_path` to the DB. The API router no
+longer reads these columns; all path resolution goes through `SettingsDep`. The DB
+columns are kept vestigial for now; a follow-up cleanup is in the backlog.
+
+**Alternatives considered**:
+- Backfilling relative paths to absolute: fragile if storage root changes again.
+- Storing absolute paths: still redundant since paths are fully deterministic from
+  `storage_root + job.id + fixed filename`.
+
+**Consequences**:
+- All 52 detection jobs are now accessible regardless of the stored path values.
+- `SettingsDep` was added to 6 API endpoints that previously lacked it.
+- `output_tsv_path` and `output_row_store_path` columns are vestigial; a backlog
+  item tracks their removal via Alembic migration.

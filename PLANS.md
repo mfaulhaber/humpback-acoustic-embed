@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: Derive Detection Output Paths from Storage Root, Not DB
+
+[Full plan](/Users/michael/.claude/plans/sparkling-jingling-axolotl.md)
+
+## Outcome (2026-03-19)
+
+- Replaced all reads of `job.output_tsv_path` / `job.output_row_store_path` in
+  API router and extraction worker with runtime path derivation via `storage.py`
+  helpers (`detection_tsv_path()`, `detection_row_store_path()`,
+  `detection_diagnostics_path()`, `detection_embeddings_path()`)
+- Worker no longer writes `output_tsv_path`/`output_row_store_path` to DB;
+  columns are now vestigial (cleanup backlog item added)
+- Fixes 33 of 52 detection jobs that stored stale relative paths after storage
+  root changed to an absolute external drive path
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 744 passed, 1 skipped
+
 # Plan: Search by Audio — Worker-Encoded Detection Search
 
 [Full plan](/Users/michael/.claude/plans/greedy-tickling-orbit.md)
@@ -333,6 +355,10 @@
 - Make `hydrophone_id` optional for local-cache detection jobs: update backend API
   schema, service layer, and worker to allow local-cache jobs without a hydrophone
   selection (frontend already hides the dropdown for local mode)
+- Remove vestigial `output_tsv_path` and `output_row_store_path` columns from
+  `DetectionJob` model and DB schema (Alembic migration); remove corresponding
+  fields from `DetectionJobOut` schema and frontend `types.ts`. These columns are
+  no longer read or written after the runtime path derivation change.
 
 ---
 

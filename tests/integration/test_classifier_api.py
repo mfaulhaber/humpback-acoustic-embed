@@ -199,7 +199,7 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
 
     # Write a partial TSV to disk
     storage_root = Path(app_settings.storage_root)
-    ddir = storage_root / "detection" / job_id
+    ddir = storage_root / "detections" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
     fieldnames = [
@@ -276,7 +276,7 @@ async def test_content_endpoint_parses_positive_selection_metadata(
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
     fieldnames = [
@@ -370,7 +370,7 @@ async def test_save_labels_uses_backfilled_auto_selection(client, app_settings):
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
     diagnostics_path = ddir / "window_diagnostics.parquet"
@@ -719,7 +719,7 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
     diagnostics_path = ddir / "window_diagnostics.parquet"
@@ -848,7 +848,7 @@ async def test_row_state_accepts_non_edge_aligned_window_multiple(client, app_se
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    ddir = Path(app_settings.storage_root) / "detection" / job_id
+    ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
 
@@ -1764,7 +1764,7 @@ async def test_detection_embedding_404_for_job_without_output(client, app_settin
         params={"filename": "test.wav", "start_sec": 0.0, "end_sec": 5.0},
     )
     assert resp.status_code == 404
-    assert "no output" in resp.json()["detail"].lower()
+    assert "no stored embeddings" in resp.json()["detail"].lower()
 
     await engine.dispose()
 

@@ -860,7 +860,7 @@ async def test_hydrophone_download_returns_streaming_response(client, app_settin
         await session.commit()
 
     async with sf() as session:
-        response = await download_detections(job_id, session)
+        response = await download_detections(job_id, session, app_settings)
 
     assert isinstance(response, StreamingResponse)
 

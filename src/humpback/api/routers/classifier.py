@@ -19,7 +19,6 @@ from humpback.classifier.detection_rows import (
     DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
-    DETECTION_ROW_STORE_FILENAME,
     ROW_STORE_FIELDNAMES,
     apply_effective_positive_selection,
     ensure_detection_row_store,
@@ -54,6 +53,12 @@ from humpback.schemas.classifier import (
     WindowDiagnosticRecord,
 )
 from humpback.services import classifier_service
+from humpback.storage import (  # noqa: E402
+    detection_diagnostics_path,
+    detection_embeddings_path,
+    detection_row_store_path,
+    detection_tsv_path,
+)
 
 if TYPE_CHECKING:
     from humpback.processing.spectrogram_cache import SpectrogramCache
@@ -236,13 +241,13 @@ async def get_detection_job(job_id: str, session: SessionDep) -> DetectionJobOut
 
 
 @router.get("/detection-jobs/{job_id}/download")
-async def download_detections(job_id: str, session: SessionDep) -> Response:
+async def download_detections(
+    job_id: str, session: SessionDep, settings: SettingsDep
+) -> Response:
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    if job.status not in ("paused", "complete", "canceled") or (
-        not job.output_tsv_path and not job.output_row_store_path
-    ):
+    if job.status not in ("paused", "complete", "canceled"):
         raise HTTPException(400, "Detection job not complete or no output available")
 
     window_size_seconds = await _get_classifier_window_size(
@@ -251,6 +256,7 @@ async def download_detections(job_id: str, session: SessionDep) -> Response:
     fieldnames, rows = await _ensure_detection_row_store_for_job(
         session,
         job,
+        settings=settings,
         window_size_seconds=window_size_seconds,
     )
 
@@ -349,17 +355,11 @@ async def resume_hydrophone_detection_job(job_id: str, session: SessionDep) -> d
 # ---- Diagnostics ----
 
 
-def _diagnostics_path(job) -> Path | None:
-    """Derive window_diagnostics.parquet path from a detection job."""
-    if not job.output_tsv_path:
-        return None
-    return Path(job.output_tsv_path).parent / "window_diagnostics.parquet"
-
-
 @router.get("/detection-jobs/{job_id}/diagnostics")
 async def get_detection_diagnostics(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
     filename: Optional[str] = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=10000),
@@ -373,8 +373,8 @@ async def get_detection_diagnostics(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    diag_path = _diagnostics_path(job)
-    if diag_path is None or not diag_path.exists():
+    diag_path = detection_diagnostics_path(settings.storage_root, job_id)
+    if not diag_path.exists():
         raise HTTPException(404, "Diagnostics not available for this job")
 
     table = read_window_diagnostics_table(diag_path)
@@ -411,6 +411,7 @@ async def get_detection_diagnostics(
 async def get_detection_diagnostics_summary(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> DiagnosticsSummaryResponse:
     """Return aggregate diagnostic statistics for a detection job."""
     import pyarrow.compute as _pc
@@ -421,8 +422,8 @@ async def get_detection_diagnostics_summary(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    diag_path = _diagnostics_path(job)
-    if diag_path is None or not diag_path.exists():
+    diag_path = detection_diagnostics_path(settings.storage_root, job_id)
+    if not diag_path.exists():
         raise HTTPException(404, "Diagnostics not available for this job")
 
     table = read_window_diagnostics_table(diag_path)
@@ -821,63 +822,42 @@ async def _get_classifier_window_size(
     return float(ws) if ws is not None else 5.0
 
 
-def _row_store_path(job) -> Path | None:
-    if job.output_row_store_path:
-        return Path(job.output_row_store_path)
-    if job.output_tsv_path:
-        return Path(job.output_tsv_path).parent / DETECTION_ROW_STORE_FILENAME
-    return None
-
-
-def _tsv_path(job, *, row_store_path: Path | None = None) -> Path | None:
-    if job.output_tsv_path:
-        return Path(job.output_tsv_path)
-    if row_store_path is not None:
-        return row_store_path.parent / "detections.tsv"
-    return None
-
-
 async def _ensure_detection_row_store_for_job(
     session: SessionDep,
     job,
     *,
+    settings: SettingsDep,
     window_size_seconds: float,
 ) -> tuple[list[str], list[dict[str, str]]]:
-    row_store_path = _row_store_path(job)
-    if row_store_path is None:
-        raise HTTPException(400, "Detection row store path unavailable")
-    tsv_path = _tsv_path(job, row_store_path=row_store_path)
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
+    tsv = detection_tsv_path(settings.storage_root, job.id)
 
-    if row_store_path.is_file():
-        fieldnames, rows = read_detection_row_store(row_store_path)
+    if rs_path.is_file():
+        fieldnames, rows = read_detection_row_store(rs_path)
     else:
-        if tsv_path is None:
-            raise HTTPException(400, "Detection job not ready or no output available")
-        if not tsv_path.is_file():
+        if not tsv.is_file():
             raise HTTPException(404, "Detection output not found on disk")
+        diag_path = detection_diagnostics_path(settings.storage_root, job.id)
         fieldnames, rows = ensure_detection_row_store(
-            row_store_path=row_store_path,
-            tsv_path=tsv_path,
-            diagnostics_path=_diagnostics_path(job),
+            row_store_path=rs_path,
+            tsv_path=tsv,
+            diagnostics_path=diag_path if diag_path.exists() else None,
             is_hydrophone=job.hydrophone_id is not None,
             window_size_seconds=window_size_seconds,
             detection_mode=job.detection_mode,
         )
 
-    if job.output_row_store_path != str(row_store_path):
-        job.output_row_store_path = str(row_store_path)
-        await session.commit()
     return fieldnames, rows
 
 
 @router.get("/detection-jobs/{job_id}/content")
-async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
+async def get_detection_content(
+    job_id: str, session: SessionDep, settings: SettingsDep
+) -> list[dict]:
     """Return normalized detection rows from the active artifact source."""
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    row_store_path = _row_store_path(job)
-    tsv_path = _tsv_path(job, row_store_path=row_store_path)
     if job.status not in ("running", "paused", "complete", "canceled"):
         raise HTTPException(400, "Detection job not ready or no output available")
 
@@ -886,14 +866,16 @@ async def get_detection_content(job_id: str, session: SessionDep) -> list[dict]:
     )
     is_hydrophone = job.hydrophone_id is not None
 
+    tsv = detection_tsv_path(settings.storage_root, job.id)
     if job.status == "running":
-        if tsv_path is None or not tsv_path.is_file():
+        if not tsv.is_file():
             raise HTTPException(404, "TSV file not found on disk")
-        _fieldnames, raw_rows = read_tsv_rows(tsv_path)
+        _fieldnames, raw_rows = read_tsv_rows(tsv)
     else:
         _fieldnames, raw_rows = await _ensure_detection_row_store_for_job(
             session,
             job,
+            settings=settings,
             window_size_seconds=window_size_seconds,
         )
 
@@ -939,16 +921,20 @@ def _serialize_label(value: int | None) -> str:
 
 @router.put("/detection-jobs/{job_id}/labels")
 async def save_detection_labels(
-    job_id: str, body: list[DetectionLabelRow], session: SessionDep
+    job_id: str,
+    body: list[DetectionLabelRow],
+    session: SessionDep,
+    settings: SettingsDep,
 ) -> dict:
     """Merge label annotations into the canonical detection row store."""
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    row_store_path = _row_store_path(job)
-    if job.status not in ("paused", "complete", "canceled") or row_store_path is None:
+    if job.status not in ("paused", "complete", "canceled"):
         raise HTTPException(400, "Detection job not complete or no output available")
-    tsv_path = _tsv_path(job, row_store_path=row_store_path)
+
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
+    tsv = detection_tsv_path(settings.storage_root, job.id)
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
@@ -960,6 +946,7 @@ async def save_detection_labels(
     fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
         session,
         job,
+        settings=settings,
         window_size_seconds=window_size_seconds,
     )
 
@@ -983,17 +970,13 @@ async def save_detection_labels(
         )
         updated_rows.append(out_row)
 
-    write_detection_row_store(row_store_path, updated_rows)
-    if tsv_path is not None:
-        sync_detection_tsv(tsv_path, updated_rows, fieldnames)
+    write_detection_row_store(rs_path, updated_rows)
+    sync_detection_tsv(tsv, updated_rows, fieldnames)
 
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
     )
     job.has_positive_labels = has_positive
-    job.output_row_store_path = str(row_store_path)
-    if tsv_path is not None:
-        job.output_tsv_path = str(tsv_path)
     await session.commit()
 
     return {"status": "ok", "updated": len(label_map)}
@@ -1004,15 +987,17 @@ async def save_detection_row_state(
     job_id: str,
     body: DetectionRowStateUpdate,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> dict:
     """Persist one row's labels and manual positive-selection bounds."""
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
-    row_store_path = _row_store_path(job)
-    if job.status not in ("paused", "complete", "canceled") or row_store_path is None:
+    if job.status not in ("paused", "complete", "canceled"):
         raise HTTPException(400, "Detection job not complete or no output available")
-    tsv_path = _tsv_path(job, row_store_path=row_store_path)
+
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
+    tsv = detection_tsv_path(settings.storage_root, job.id)
 
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
@@ -1020,6 +1005,7 @@ async def save_detection_row_state(
     fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
         session,
         job,
+        settings=settings,
         window_size_seconds=window_size_seconds,
     )
 
@@ -1084,17 +1070,13 @@ async def save_detection_row_state(
     if matched_row is None:
         raise HTTPException(404, "Detection row not found")
 
-    write_detection_row_store(row_store_path, existing_rows)
-    if tsv_path is not None:
-        sync_detection_tsv(tsv_path, existing_rows, fieldnames)
+    write_detection_row_store(rs_path, existing_rows)
+    sync_detection_tsv(tsv, existing_rows, fieldnames)
 
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in existing_rows
     )
     job.has_positive_labels = has_positive
-    job.output_row_store_path = str(row_store_path)
-    if tsv_path is not None:
-        job.output_tsv_path = str(tsv_path)
     await session.commit()
 
     return {
@@ -1416,6 +1398,7 @@ async def get_detection_spectrogram(
 async def get_detection_embedding(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
     filename: str = Query(...),
     start_sec: float = Query(..., ge=0),
     end_sec: float = Query(..., gt=0),
@@ -1427,10 +1410,7 @@ async def get_detection_embedding(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    if not job.output_tsv_path:
-        raise HTTPException(404, "Detection job has no output")
-
-    emb_path = Path(job.output_tsv_path).parent / "detection_embeddings.parquet"
+    emb_path = detection_embeddings_path(settings.storage_root, job.id)
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
