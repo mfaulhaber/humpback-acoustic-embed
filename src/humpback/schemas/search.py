@@ -52,3 +52,5 @@ class SearchJobResponse(BaseModel):
     status: str
     error: str | None = None
     results: SimilaritySearchResponse | None = None
+    query_vector: list[float] | None = None
+    model_version: str | None = None

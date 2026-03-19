@@ -677,6 +677,8 @@ export interface SearchJobResponse {
   status: string;
   error?: string | null;
   results?: SimilaritySearchResponse | null;
+  query_vector?: number[] | null;
+  model_version?: string | null;
 }
 
 // ---- Health ----

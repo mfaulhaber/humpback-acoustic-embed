@@ -338,6 +338,7 @@ export const searchSimilar = (body: {
   top_k?: number;
   metric?: string;
   exclude_self?: boolean;
+  embedding_set_ids?: string[];
 }) => post<SimilaritySearchResponse>("/search/similar", body);
 
 export const searchSimilarByVector = (body: {
@@ -345,6 +346,7 @@ export const searchSimilarByVector = (body: {
   model_version: string;
   top_k?: number;
   metric?: string;
+  embedding_set_ids?: string[];
 }) => post<SimilaritySearchResponse>("/search/similar-by-vector", body);
 
 export const fetchDetectionEmbedding = (
