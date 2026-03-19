@@ -516,6 +516,10 @@ async def test_poll_completed_search_job(
     assert data["results"]["model_version"] == "perch_v1"
     assert len(data["results"]["results"]) > 0
 
+    # Verify query_vector and model_version are returned for re-search
+    assert data["query_vector"] == [1.0, 0.0, 0.0, 0.0]
+    assert data["model_version"] == "perch_v1"
+
     # Job should be cleaned up — polling again returns 404
     resp3 = await client.get(f"/search/jobs/{job_id}")
     assert resp3.status_code == 404

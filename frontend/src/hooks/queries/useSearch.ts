@@ -15,6 +15,7 @@ export function useSearchSimilar(
     top_k?: number;
     metric?: string;
     exclude_self?: boolean;
+    embedding_set_ids?: string[];
   } | null,
 ) {
   return useQuery({
@@ -30,6 +31,7 @@ export function useSearchByVector(
     model_version: string;
     top_k?: number;
     metric?: string;
+    embedding_set_ids?: string[];
   } | null,
 ) {
   return useQuery({

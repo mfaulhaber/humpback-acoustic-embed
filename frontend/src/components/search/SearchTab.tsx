@@ -20,15 +20,28 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
+import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useSearchSimilar } from "@/hooks/queries/useSearch";
 import {
   audioWindowUrl,
   audioSpectrogramPngUrl,
   detectionAudioSliceUrl,
   detectionSpectrogramUrl,
+  searchSimilarByVector,
 } from "@/api/client";
 import type { EmbeddingSet, SimilaritySearchResponse } from "@/api/types";
 import { SpectrogramPopup } from "@/components/classifier/SpectrogramPopup";
+import {
+  ROOT_SENTINEL,
+  buildFolderTree,
+  makeToggleChild,
+  makeToggleParent,
+  makeToggleAll,
+  makeToggleCollapse,
+  EmbeddingSetPanel,
+  EmbeddingQueryPanel,
+} from "@/components/shared/EmbeddingSetPanel";
+import type { ParentNode } from "@/components/shared/EmbeddingSetPanel";
 
 interface DetectionSearchState {
   source: "detection";
@@ -55,7 +68,7 @@ export function SearchTab() {
     detectionState ? "detection" : "standalone",
   );
 
-  // Standalone state
+  // Standalone query state
   const [selectedModelVersion, setSelectedModelVersion] = useState<string>("");
   const [selectedEsId, setSelectedEsId] = useState<string>("");
   const [windowIndex, setWindowIndex] = useState(0);
@@ -67,12 +80,23 @@ export function SearchTab() {
     top_k: number;
     metric: string;
     exclude_self: boolean;
+    embedding_set_ids?: string[];
   } | null>(null);
 
   // Detection audio search state
   const [audioSearchLoading, setAudioSearchLoading] = useState(false);
   const [audioSearchResults, setAudioSearchResults] = useState<SimilaritySearchResponse | null>(null);
   const [audioSearchError, setAudioSearchError] = useState<string | null>(null);
+  const [detectionQueryVector, setDetectionQueryVector] = useState<number[] | null>(null);
+  const [detectionModelVersion, setDetectionModelVersion] = useState<string | null>(null);
+  const [reSearchLoading, setReSearchLoading] = useState(false);
+
+  // Embedding set filter state (shared by both modes)
+  const [filterSelected, setFilterSelected] = useState<Set<string>>(new Set());
+  const [filterCollapsed, setFilterCollapsed] = useState<Set<string> | null>(null);
+
+  // Standalone query panel collapse state
+  const [queryCollapsed, setQueryCollapsed] = useState<Set<string> | null>(null);
 
   // Playback
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -87,11 +111,111 @@ export function SearchTab() {
 
   // Data hooks
   const { data: embeddingSets = [] } = useEmbeddingSets();
+  const { data: audioFiles = [] } = useAudioFiles();
   const standaloneResult = useSearchSimilar(searchTrigger);
 
+  // Audio map for folder tree
+  const audioMap = useMemo(
+    () => new Map(audioFiles.map((af) => [af.id, af])),
+    [audioFiles],
+  );
+
+  // Model versions from embedding sets
+  const modelVersions = useMemo(() => {
+    const versions = new Set(embeddingSets.map((es) => es.model_version));
+    return Array.from(versions).sort();
+  }, [embeddingSets]);
+
+  // Determine active model version for filtering
+  const activeModelVersion = mode === "detection"
+    ? detectionModelVersion
+    : selectedModelVersion && selectedModelVersion !== "__all__"
+      ? selectedModelVersion
+      : null;
+
+  // Filter embedding sets by active model version
+  const filteredSets = useMemo(() => {
+    if (!activeModelVersion) return embeddingSets;
+    return embeddingSets.filter((es) => es.model_version === activeModelVersion);
+  }, [embeddingSets, activeModelVersion]);
+
+  // Folder tree for filter panel
+  const filterTree = useMemo(
+    () => buildFolderTree(filteredSets, audioMap),
+    [filteredSets, audioMap],
+  );
+
+  const filterParentKeys = useMemo(
+    () => new Set(filterTree.map((n) => n.parent)),
+    [filterTree],
+  );
+
+  // Folder tree for standalone query panel
+  const queryTree = useMemo(
+    () => buildFolderTree(filteredSets, audioMap),
+    [filteredSets, audioMap],
+  );
+
+  // All collapsible keys for query panel: parent keys + child composite keys
+  const queryAllKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const node of queryTree) {
+      keys.add(node.parent);
+      for (const child of node.children) {
+        keys.add(`${node.parent}/${child.child}`);
+      }
+    }
+    return keys;
+  }, [queryTree]);
+
+  // Toggle helpers for filter panel
+  const toggleFilterChild = useCallback(makeToggleChild(setFilterSelected), []);
+  const toggleFilterParent = useCallback(makeToggleParent(setFilterSelected), []);
+  const toggleFilterAll = useCallback(
+    makeToggleAll(filteredSets, filterSelected, setFilterSelected),
+    [filteredSets, filterSelected],
+  );
+  const toggleFilterCollapse = useCallback(
+    makeToggleCollapse(filterParentKeys, filterCollapsed, setFilterCollapsed),
+    [filterParentKeys],
+  );
+
+  // Toggle collapse for query panel
+  const toggleQueryCollapse = useCallback(
+    makeToggleCollapse(queryAllKeys, queryCollapsed, setQueryCollapsed),
+    [queryAllKeys],
+  );
+
+  // Display name helper
+  const displayName = useCallback(
+    (key: string) => (key === ROOT_SENTINEL ? "(root)" : key),
+    [],
+  );
+
+  // Selected query embedding set
+  const selectedEs = useMemo(
+    () => embeddingSets.find((es) => es.id === selectedEsId) ?? null,
+    [embeddingSets, selectedEsId],
+  );
+
+  // Max window index for selected embedding set
+  const maxWindowIndex = useMemo(() => {
+    if (!selectedEs) return 0;
+    return 9999;
+  }, [selectedEs]);
+
+  // Initialize filter selection: select all when filteredSets changes
+  // (for detection mode after model version is known, or when model filter changes)
+  const prevFilteredRef = useRef<string>("");
+  useEffect(() => {
+    const key = filteredSets.map((es) => es.id).sort().join(",");
+    if (key && key !== prevFilteredRef.current) {
+      prevFilteredRef.current = key;
+      setFilterSelected(new Set(filteredSets.map((es) => es.id)));
+    }
+  }, [filteredSets]);
+
   // Auto-trigger audio search when entering detection mode.
-  // Uses AbortController for StrictMode cleanup and a direct fetch loop
-  // instead of mutation + poll hooks to avoid StrictMode double-fire issues.
   useEffect(() => {
     if (mode !== "detection" || !detectionState || audioSearchResults) return;
 
@@ -101,7 +225,6 @@ export function SearchTab() {
 
     (async () => {
       try {
-        // 1. Create the search job
         const createRes = await fetch("/search/similar-by-audio", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -121,7 +244,6 @@ export function SearchTab() {
         }
         const { id: jobId } = await createRes.json();
 
-        // 2. Poll until complete/failed
         while (!controller.signal.aborted) {
           await new Promise((r) => setTimeout(r, 500));
           if (controller.signal.aborted) break;
@@ -130,7 +252,7 @@ export function SearchTab() {
             signal: controller.signal,
           });
           if (!pollRes.ok) {
-            if (pollRes.status === 404) continue; // job not found yet, retry
+            if (pollRes.status === 404) continue;
             const text = await pollRes.text();
             throw new Error(`Poll failed: ${text}`);
           }
@@ -139,12 +261,18 @@ export function SearchTab() {
           if (job.status === "complete" && job.results) {
             setAudioSearchResults(job.results);
             setAudioSearchLoading(false);
+            // Store vector for re-search
+            if (job.query_vector) {
+              setDetectionQueryVector(job.query_vector);
+            }
+            if (job.model_version) {
+              setDetectionModelVersion(job.model_version);
+            }
             return;
           }
           if (job.status === "failed") {
             throw new Error(job.error || "Search failed");
           }
-          // status is queued/running — keep polling
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -157,34 +285,9 @@ export function SearchTab() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, detectionState]);
 
-  // Model versions from embedding sets
-  const modelVersions = useMemo(() => {
-    const versions = new Set(embeddingSets.map((es) => es.model_version));
-    return Array.from(versions).sort();
-  }, [embeddingSets]);
-
-  // Filtered embedding sets by model version
-  const filteredSets = useMemo(() => {
-    if (!selectedModelVersion) return embeddingSets;
-    return embeddingSets.filter((es) => es.model_version === selectedModelVersion);
-  }, [embeddingSets, selectedModelVersion]);
-
-  // Selected embedding set
-  const selectedEs = useMemo(
-    () => embeddingSets.find((es) => es.id === selectedEsId) ?? null,
-    [embeddingSets, selectedEsId],
-  );
-
-  // Max window index for selected embedding set
-  const maxWindowIndex = useMemo(() => {
-    if (!selectedEs) return 0;
-    // Estimate from parquet — use a large number, server will 400 if out of range
-    return 9999;
-  }, [selectedEs]);
-
   // Active results
   const activeResults = mode === "detection" ? audioSearchResults : standaloneResult.data;
-  const isSearching = mode === "detection" ? audioSearchLoading : standaloneResult.isFetching;
+  const isSearching = mode === "detection" ? (audioSearchLoading || reSearchLoading) : standaloneResult.isFetching;
   const searchError = mode === "detection"
     ? (audioSearchError ? new Error(audioSearchError) : null)
     : standaloneResult.error;
@@ -201,14 +304,41 @@ export function SearchTab() {
 
   const handleStandaloneSearch = useCallback(() => {
     if (!selectedEsId) return;
+    const esIds = filterSelected.size > 0 && filterSelected.size < filteredSets.length
+      ? [...filterSelected]
+      : undefined;
     setSearchTrigger({
       embedding_set_id: selectedEsId,
       row_index: windowIndex,
       top_k: topK,
       metric,
       exclude_self: true,
+      embedding_set_ids: esIds,
     });
-  }, [selectedEsId, windowIndex, topK, metric]);
+  }, [selectedEsId, windowIndex, topK, metric, filterSelected, filteredSets.length]);
+
+  const handleDetectionReSearch = useCallback(async () => {
+    if (!detectionQueryVector || !detectionModelVersion) return;
+    setReSearchLoading(true);
+    setAudioSearchError(null);
+    try {
+      const esIds = filterSelected.size > 0 && filterSelected.size < filteredSets.length
+        ? [...filterSelected]
+        : undefined;
+      const results = await searchSimilarByVector({
+        vector: detectionQueryVector,
+        model_version: detectionModelVersion,
+        top_k: topK,
+        metric,
+        embedding_set_ids: esIds,
+      });
+      setAudioSearchResults(results);
+    } catch (err: unknown) {
+      setAudioSearchError(err instanceof Error ? err.message : "Re-search failed");
+    } finally {
+      setReSearchLoading(false);
+    }
+  }, [detectionQueryVector, detectionModelVersion, topK, metric, filterSelected, filteredSets.length]);
 
   const handlePlay = useCallback(
     (key: string, url: string) => {
@@ -238,13 +368,23 @@ export function SearchTab() {
     [],
   );
 
-  // Score color helper
   const scoreColor = (score: number) => {
     const pct = score * 100;
     if (pct >= 80) return "text-green-700 font-semibold";
     if (pct >= 60) return "text-yellow-700";
     return "text-muted-foreground";
   };
+
+  // Handle query ES selection in standalone mode
+  const handleQueryEsSelect = useCallback((esId: string) => {
+    setSelectedEsId(esId);
+    setWindowIndex(0);
+    // Auto-set model version from selected set
+    const es = embeddingSets.find((e) => e.id === esId);
+    if (es && selectedModelVersion !== es.model_version) {
+      setSelectedModelVersion(es.model_version);
+    }
+  }, [embeddingSets, selectedModelVersion]);
 
   return (
     <div className="space-y-4">
@@ -260,19 +400,80 @@ export function SearchTab() {
         </CardHeader>
         <CardContent className="space-y-3">
           {mode === "detection" && detectionState ? (
-            <DetectionQueryCard
-              state={detectionState}
-              embLoading={audioSearchLoading}
-              embError={audioSearchError ? new Error(audioSearchError) : null}
-              onPlay={handlePlay}
-              playingKey={playingKey}
-              onSpectrogramClick={handleSpectrogramClick}
-              onSwitchToStandalone={() => {
-                setMode("standalone");
-                setAudioSearchResults(null);
-                setAudioSearchError(null);
-              }}
-            />
+            <>
+              <DetectionQueryCard
+                state={detectionState}
+                embLoading={audioSearchLoading}
+                embError={audioSearchError ? new Error(audioSearchError) : null}
+                onPlay={handlePlay}
+                playingKey={playingKey}
+                onSpectrogramClick={handleSpectrogramClick}
+                onSwitchToStandalone={() => {
+                  setMode("standalone");
+                  setAudioSearchResults(null);
+                  setAudioSearchError(null);
+                  setDetectionQueryVector(null);
+                  setDetectionModelVersion(null);
+                }}
+              />
+
+              {/* Embedding Sets filter for detection re-search */}
+              {detectionModelVersion && (
+                <div className="space-y-2 pt-2 border-t">
+                  <EmbeddingSetPanel
+                    label="Embedding Sets"
+                    selected={filterSelected}
+                    collapsed={filterCollapsed ?? filterParentKeys}
+                    folderTree={filterTree}
+                    embeddingSets={filteredSets}
+                    onToggleChild={toggleFilterChild}
+                    onToggleParent={toggleFilterParent}
+                    onToggleAll={toggleFilterAll}
+                    onToggleCollapse={toggleFilterCollapse}
+                    displayName={displayName}
+                  />
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-xs text-muted-foreground">Top K:</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={500}
+                        value={topK}
+                        onChange={(e) => setTopK(Math.max(1, Math.min(500, parseInt(e.target.value) || 20)))}
+                        className="h-7 w-16 text-xs"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-xs text-muted-foreground">Metric:</label>
+                      <Select value={metric} onValueChange={(v) => setMetric(v as "cosine" | "euclidean")}>
+                        <SelectTrigger className="h-7 w-24 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cosine">Cosine</SelectItem>
+                          <SelectItem value="euclidean">Euclidean</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={!detectionQueryVector || filterSelected.size === 0 || reSearchLoading}
+                      onClick={handleDetectionReSearch}
+                    >
+                      {reSearchLoading ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <Search className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      Re-search
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <StandaloneQueryCard
               modelVersions={modelVersions}
@@ -280,7 +481,7 @@ export function SearchTab() {
               onModelVersionChange={setSelectedModelVersion}
               filteredSets={filteredSets}
               selectedEsId={selectedEsId}
-              onEsChange={setSelectedEsId}
+              onEsChange={handleQueryEsSelect}
               selectedEs={selectedEs}
               windowIndex={windowIndex}
               onWindowIndexChange={setWindowIndex}
@@ -294,6 +495,18 @@ export function SearchTab() {
               onPlay={handlePlay}
               playingKey={playingKey}
               onSpectrogramClick={handleSpectrogramClick}
+              queryTree={queryTree}
+              queryCollapsed={queryCollapsed ?? queryAllKeys}
+              onToggleQueryCollapse={toggleQueryCollapse}
+              audioMap={audioMap}
+              filterTree={filterTree}
+              filterSelected={filterSelected}
+              filterCollapsed={filterCollapsed ?? filterParentKeys}
+              onToggleFilterChild={toggleFilterChild}
+              onToggleFilterParent={toggleFilterParent}
+              onToggleFilterAll={toggleFilterAll}
+              onToggleFilterCollapse={toggleFilterCollapse}
+              displayName={displayName}
             />
           )}
         </CardContent>
@@ -332,10 +545,9 @@ export function SearchTab() {
                   <th className="px-3 py-2 text-left w-10">#</th>
                   <th className="px-3 py-2 text-left w-20">Score</th>
                   <th className="px-3 py-2 text-left w-[170px]">Spectrogram</th>
+                  <th className="px-3 py-2 text-left w-10">Play</th>
                   <th className="px-3 py-2 text-left">Audio File</th>
                   <th className="px-3 py-2 text-left">Folder</th>
-                  <th className="px-3 py-2 text-left w-24">Offset</th>
-                  <th className="px-3 py-2 text-left w-10">Play</th>
                 </tr>
               </thead>
               <tbody>
@@ -374,15 +586,6 @@ export function SearchTab() {
                           }
                         />
                       </td>
-                      <td className="px-3 py-1.5 truncate max-w-[200px]" title={hit.audio_filename}>
-                        {hit.audio_filename}
-                      </td>
-                      <td className="px-3 py-1.5 truncate max-w-[150px] text-muted-foreground" title={hit.audio_folder_path ?? ""}>
-                        {hit.audio_folder_path ?? "-"}
-                      </td>
-                      <td className="px-3 py-1.5">
-                        {hit.window_offset_seconds.toFixed(1)}s
-                      </td>
                       <td className="px-3 py-1.5">
                         <button
                           onClick={() => handlePlay(playKey, playUrl)}
@@ -395,6 +598,12 @@ export function SearchTab() {
                             <Play className="h-3.5 w-3.5" />
                           )}
                         </button>
+                      </td>
+                      <td className="px-3 py-1.5 truncate max-w-[200px]" title={hit.audio_filename}>
+                        {hit.audio_filename}
+                      </td>
+                      <td className="px-3 py-1.5 truncate max-w-[150px] text-muted-foreground" title={hit.audio_folder_path ?? ""}>
+                        {hit.audio_folder_path ?? "-"}
                       </td>
                     </tr>
                   );
@@ -530,6 +739,18 @@ function StandaloneQueryCard({
   onPlay,
   playingKey,
   onSpectrogramClick,
+  queryTree,
+  queryCollapsed,
+  onToggleQueryCollapse,
+  audioMap,
+  filterTree,
+  filterSelected,
+  filterCollapsed,
+  onToggleFilterChild,
+  onToggleFilterParent,
+  onToggleFilterAll,
+  onToggleFilterCollapse,
+  displayName,
 }: {
   modelVersions: string[];
   selectedModelVersion: string;
@@ -550,6 +771,18 @@ function StandaloneQueryCard({
   onPlay: (key: string, url: string) => void;
   playingKey: string | null;
   onSpectrogramClick: (url: string, dur: number, e: React.MouseEvent) => void;
+  queryTree: ParentNode[];
+  queryCollapsed: Set<string>;
+  onToggleQueryCollapse: (parent: string) => void;
+  audioMap: Map<string, { folder_path: string; filename: string }>;
+  filterTree: ParentNode[];
+  filterSelected: Set<string>;
+  filterCollapsed: Set<string>;
+  onToggleFilterChild: (sets: EmbeddingSet[]) => void;
+  onToggleFilterParent: (node: ParentNode) => void;
+  onToggleFilterAll: () => void;
+  onToggleFilterCollapse: (parent: string) => void;
+  displayName: (key: string) => string;
 }) {
   const windowSizeSec = selectedEs?.window_size_seconds ?? 5;
   const specUrl = selectedEs
@@ -571,42 +804,52 @@ function StandaloneQueryCard({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        {/* Model filter */}
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Model</label>
-          <Select value={selectedModelVersion} onValueChange={onModelVersionChange}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="All models" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All models</SelectItem>
-              {modelVersions.map((v) => (
-                <SelectItem key={v} value={v}>
-                  {v}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      {/* Model filter */}
+      <div className="max-w-xs">
+        <label className="text-xs text-muted-foreground mb-1 block">Model</label>
+        <Select value={selectedModelVersion || "__all__"} onValueChange={onModelVersionChange}>
+          <SelectTrigger className="h-8 text-xs">
+            <SelectValue placeholder="All models" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All models</SelectItem>
+            {modelVersions.map((v) => (
+              <SelectItem key={v} value={v}>
+                {v}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
-        {/* Embedding set */}
+      {/* Two-panel layout: Query Source + Search Targets */}
+      <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">
-            Embedding Set
-          </label>
-          <Select value={selectedEsId} onValueChange={onEsChange}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Select..." />
-            </SelectTrigger>
-            <SelectContent>
-              {filteredSets.map((es) => (
-                <SelectItem key={es.id} value={es.id}>
-                  {es.id.slice(0, 8)} ({es.model_version})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <EmbeddingQueryPanel
+            label="Search Query Embedding"
+            selectedEsId={selectedEsId}
+            onSelectEs={onEsChange}
+            collapsed={queryCollapsed}
+            folderTree={queryTree}
+            embeddingSets={filteredSets}
+            onToggleCollapse={onToggleQueryCollapse}
+            displayName={displayName}
+            audioMap={audioMap}
+          />
+        </div>
+        <div>
+          <EmbeddingSetPanel
+            label="Embedding Sets"
+            selected={filterSelected}
+            collapsed={filterCollapsed}
+            folderTree={filterTree}
+            embeddingSets={filteredSets}
+            onToggleChild={onToggleFilterChild}
+            onToggleParent={onToggleFilterParent}
+            onToggleAll={onToggleFilterAll}
+            onToggleCollapse={onToggleFilterCollapse}
+            displayName={displayName}
+          />
         </div>
       </div>
 
@@ -688,7 +931,7 @@ function StandaloneQueryCard({
         <Button
           size="sm"
           className="h-7 text-xs"
-          disabled={!selectedEsId || isSearching}
+          disabled={!selectedEsId || filterSelected.size === 0 || isSearching}
           onClick={onSearch}
         >
           {isSearching ? (

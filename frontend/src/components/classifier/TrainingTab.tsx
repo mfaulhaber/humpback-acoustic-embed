@@ -21,6 +21,16 @@ import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import { ModelFilter } from "@/components/shared/ModelFilter";
 import {
+  ROOT_SENTINEL,
+  buildFolderTree,
+  makeToggleChild,
+  makeToggleParent,
+  makeToggleAll,
+  makeToggleCollapse,
+  EmbeddingSetPanel,
+} from "@/components/shared/EmbeddingSetPanel";
+import type { ParentNode } from "@/components/shared/EmbeddingSetPanel";
+import {
   useTrainingJobs,
   useClassifierModels,
   useCreateTrainingJob,
@@ -41,19 +51,6 @@ import type {
   TrainingSourceInfo,
   RetrainWorkflow as RetrainWorkflowType,
 } from "@/api/types";
-
-const ROOT_SENTINEL = "__root__";
-
-interface FolderNode {
-  child: string;
-  sets: EmbeddingSet[];
-}
-
-interface ParentNode {
-  parent: string;
-  children: FolderNode[];
-  totalSets: number;
-}
 
 export function TrainingTab() {
   const { data: embeddingSets = [] } = useEmbeddingSets();
@@ -107,136 +104,36 @@ export function TrainingTab() {
   );
 
   // Build two-level folder tree: parent → child → embedding sets
-  const folderTree = useMemo(() => {
-    const tree = new Map<string, Map<string, EmbeddingSet[]>>();
-
-    for (const es of filteredSets) {
-      const af = audioMap.get(es.audio_file_id);
-      const folderPath = af?.folder_path || "";
-      const slashIdx = folderPath.indexOf("/");
-      const parent = folderPath
-        ? slashIdx >= 0
-          ? folderPath.slice(0, slashIdx)
-          : folderPath
-        : ROOT_SENTINEL;
-      const child =
-        folderPath && slashIdx >= 0
-          ? folderPath.slice(slashIdx + 1)
-          : ROOT_SENTINEL;
-
-      if (!tree.has(parent)) tree.set(parent, new Map());
-      const childMap = tree.get(parent)!;
-      if (!childMap.has(child)) childMap.set(child, []);
-      childMap.get(child)!.push(es);
-    }
-
-    const result: ParentNode[] = [];
-    const sortedParents = [...tree.keys()].sort((a, b) => {
-      if (a === ROOT_SENTINEL) return -1;
-      if (b === ROOT_SENTINEL) return 1;
-      return a.localeCompare(b);
-    });
-
-    for (const parent of sortedParents) {
-      const childMap = tree.get(parent)!;
-      const sortedChildren = [...childMap.keys()].sort((a, b) => {
-        if (a === ROOT_SENTINEL) return -1;
-        if (b === ROOT_SENTINEL) return 1;
-        return a.localeCompare(b);
-      });
-      const children: FolderNode[] = sortedChildren.map((child) => ({
-        child,
-        sets: childMap.get(child)!,
-      }));
-      const totalSets = children.reduce((sum, c) => sum + c.sets.length, 0);
-      result.push({ parent, children, totalSets });
-    }
-
-    return result;
-  }, [filteredSets, audioMap]);
+  const folderTree = useMemo(
+    () => buildFolderTree(filteredSets, audioMap),
+    [filteredSets, audioMap],
+  );
 
   const allParentKeys = useMemo(
     () => new Set(folderTree.map((n) => n.parent)),
     [folderTree],
   );
 
-  // Generic toggle helpers that work for both pos and neg panels
-  const makeToggleChild = (
-    setSel: React.Dispatch<React.SetStateAction<Set<string>>>,
-  ) =>
-    (sets: EmbeddingSet[]) => {
-      setSel((prev) => {
-        const next = new Set(prev);
-        const allIn = sets.every((es) => next.has(es.id));
-        for (const es of sets) {
-          if (allIn) next.delete(es.id);
-          else next.add(es.id);
-        }
-        return next;
-      });
-    };
-
-  const makeToggleParent = (
-    setSel: React.Dispatch<React.SetStateAction<Set<string>>>,
-  ) =>
-    (node: ParentNode) => {
-      setSel((prev) => {
-        const next = new Set(prev);
-        const allSets = node.children.flatMap((c) => c.sets);
-        const allIn = allSets.every((es) => next.has(es.id));
-        for (const es of allSets) {
-          if (allIn) next.delete(es.id);
-          else next.add(es.id);
-        }
-        return next;
-      });
-    };
-
-  const makeToggleAll = (
-    sel: Set<string>,
-    setSel: React.Dispatch<React.SetStateAction<Set<string>>>,
-  ) =>
-    () => {
-      const allSel =
-        filteredSets.length > 0 &&
-        filteredSets.every((es) => sel.has(es.id));
-      if (allSel) setSel(new Set());
-      else setSel(new Set(filteredSets.map((es) => es.id)));
-    };
-
-  const makeToggleCollapse = (
-    collapsed: Set<string> | null,
-    setCollapsed: React.Dispatch<React.SetStateAction<Set<string> | null>>,
-  ) =>
-    (parent: string) => {
-      setCollapsed((prev) => {
-        const base = prev ?? allParentKeys;
-        const next = new Set(base);
-        if (next.has(parent)) next.delete(parent);
-        else next.add(parent);
-        return next;
-      });
-    };
-
+  // Toggle helpers using shared factories
   const togglePosChild = useCallback(makeToggleChild(setPosSelected), []);
   const togglePosParent = useCallback(makeToggleParent(setPosSelected), []);
   const togglePosAll = useCallback(
-    makeToggleAll(posSelected, setPosSelected),
+    makeToggleAll(filteredSets, posSelected, setPosSelected),
     [filteredSets, posSelected],
   );
   const togglePosCollapse = useCallback(
-    makeToggleCollapse(posCollapsed, setPosCollapsed),
+    makeToggleCollapse(allParentKeys, posCollapsed, setPosCollapsed),
     [allParentKeys],
   );
 
   const toggleNegChild = useCallback(makeToggleChild(setNegSelected), []);
   const toggleNegParent = useCallback(makeToggleParent(setNegSelected), []);
   const toggleNegAll = useCallback(
-    makeToggleAll(negSelected, setNegSelected),
+    makeToggleAll(filteredSets, negSelected, setNegSelected),
     [filteredSets, negSelected],
   );
   const toggleNegCollapse = useCallback(
-    makeToggleCollapse(negCollapsed, setNegCollapsed),
+    makeToggleCollapse(allParentKeys, negCollapsed, setNegCollapsed),
     [allParentKeys],
   );
 
@@ -618,149 +515,6 @@ export function TrainingTab() {
         }}
         isPending={bulkDeleteModelsMutation.isPending}
       />
-    </div>
-  );
-}
-
-// ---- Embedding Set Panel (shared by positive and negative) ----
-
-function EmbeddingSetPanel({
-  label,
-  selected,
-  collapsed,
-  folderTree,
-  embeddingSets,
-  onToggleChild,
-  onToggleParent,
-  onToggleAll,
-  onToggleCollapse,
-  displayName,
-}: {
-  label: string;
-  selected: Set<string>;
-  collapsed: Set<string>;
-  folderTree: ParentNode[];
-  embeddingSets: EmbeddingSet[];
-  onToggleChild: (sets: EmbeddingSet[]) => void;
-  onToggleParent: (node: ParentNode) => void;
-  onToggleAll: () => void;
-  onToggleCollapse: (parent: string) => void;
-  displayName: (key: string) => string;
-}) {
-  const allSelected =
-    embeddingSets.length > 0 &&
-    embeddingSets.every((es) => selected.has(es.id));
-  const someSelected = embeddingSets.some((es) => selected.has(es.id));
-
-  return (
-    <div>
-      <div className="space-y-1 max-h-72 overflow-y-auto border rounded p-2">
-        <div className="flex items-center gap-2 pb-1 border-b mb-1">
-          <Checkbox
-            checked={
-              allSelected ? true : someSelected ? "indeterminate" : false
-            }
-            onCheckedChange={onToggleAll}
-          />
-          <span className="text-sm font-medium">{label}</span>
-        </div>
-        {folderTree.map((node) => {
-          const allParentSets = node.children.flatMap((c) => c.sets);
-          const parentAllSelected = allParentSets.every((es) =>
-            selected.has(es.id),
-          );
-          const parentSomeSelected = allParentSets.some((es) =>
-            selected.has(es.id),
-          );
-          const isCollapsed = collapsed.has(node.parent);
-
-          return (
-            <div key={node.parent}>
-              <div className="flex items-center gap-1.5 py-1">
-                <button
-                  className="p-0.5 hover:bg-muted rounded"
-                  onClick={() => onToggleCollapse(node.parent)}
-                >
-                  {isCollapsed ? (
-                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                  )}
-                </button>
-                <Checkbox
-                  checked={
-                    parentAllSelected
-                      ? true
-                      : parentSomeSelected
-                        ? "indeterminate"
-                        : false
-                  }
-                  onCheckedChange={() => onToggleParent(node)}
-                />
-                <span
-                  className="text-sm font-medium cursor-pointer select-none"
-                  onClick={() => onToggleCollapse(node.parent)}
-                >
-                  {displayName(node.parent)}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  ({node.totalSets} sets)
-                </span>
-              </div>
-
-              {!isCollapsed && (
-                <div className="ml-6 space-y-0.5">
-                  {node.children.map((child) => {
-                    const childAllSelected = child.sets.every((es) =>
-                      selected.has(es.id),
-                    );
-                    const childSomeSelected = child.sets.some((es) =>
-                      selected.has(es.id),
-                    );
-                    return (
-                      <label
-                        key={child.child}
-                        className="flex items-center gap-2 py-0.5 text-sm cursor-pointer"
-                      >
-                        <Checkbox
-                          checked={
-                            childAllSelected
-                              ? true
-                              : childSomeSelected
-                                ? "indeterminate"
-                                : false
-                          }
-                          onCheckedChange={() => onToggleChild(child.sets)}
-                        />
-                        <span className="truncate">
-                          {displayName(child.child)}
-                        </span>
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal shrink-0">
-                          {child.sets[0]?.model_version}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground ml-auto shrink-0">
-                          {child.sets.length}{" "}
-                          {child.sets.length === 1 ? "set" : "sets"}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {embeddingSets.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            No embedding sets available. Process audio first.
-          </p>
-        )}
-      </div>
-      {selected.size > 0 && (
-        <p className="text-xs text-muted-foreground mt-1">
-          {selected.size} of {embeddingSets.length} embedding sets selected
-        </p>
-      )}
     </div>
   );
 }

@@ -40,6 +40,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - `POST /search/similar-by-audio` — async worker-based encoding: queues a search job, worker encodes detection audio via the model, frontend polls for results
 - `GET /search/jobs/{id}` — poll search job status; returns search results on completion and deletes the ephemeral job row
 - Search tab UI: standalone search (pick embedding set + window) and detection-sourced search ("Search Similar" from detection rows — works on all detection jobs including pre-existing ones without stored embeddings)
+- Embedding set selection: folder-tree multi-select "Embedding Sets" panel for filtering which sets to search across (defaults to all selected); detection re-search uses cached query vector for instant results
+- Standalone search: dual-panel layout with "Search Query Embedding" (single-select folder tree to file level) and "Embedding Sets" (multi-select filter)
+- `GET /search/jobs/{id}` returns `query_vector` and `model_version` on completion for frontend re-search without worker roundtrip
 - Spectrogram thumbnail previews and inline playback in search results
 
 ### Clustering

@@ -137,4 +137,6 @@ async def get_search_job(
         id=job.id,
         status="complete",
         results=search_results,
+        query_vector=vector.tolist(),
+        model_version=job.model_version,
     )

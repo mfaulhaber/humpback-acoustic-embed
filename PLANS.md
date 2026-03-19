@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Search Embedding Selection Enhancements
+
+[Full plan](/Users/michael/.claude/plans/streamed-crafting-turtle.md)
+
+## Outcome (2026-03-19)
+
+- Added "Embedding Sets" multi-select tree panel to detection-sourced search with cached query vector re-search
+- Added dual-panel standalone search: "Search Query Embedding" (single-select tree to file level) + "Embedding Sets" (multi-select filter)
+- Extracted shared `EmbeddingSetPanel` + `EmbeddingQueryPanel` from TrainingTab into `components/shared/`
+- Backend returns `query_vector` and `model_version` in `SearchJobResponse` for instant detection re-search
+- Results table: moved Play column after Spectrogram, removed Offset column
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 744 passed, 1 skipped
+
 # Plan: Fix NOAA Channel Islands Detection Playback/Spectrogram 500 Error
 
 [Full plan](/Users/michael/.claude/plans/serene-giggling-hamming.md)
