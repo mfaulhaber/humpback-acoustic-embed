@@ -533,6 +533,8 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/admin/models/scan` | Scan `models/` dir for unregistered models (.tflite + SavedModel dirs) |
 | POST | `/search/similar` | Embedding similarity search — find top-K most similar windows across embedding sets for the same model (cosine or euclidean, brute-force with LRU cache) |
 | POST | `/search/similar-by-vector` | Search by raw embedding vector (e.g., from a detection row), same ranking as `/search/similar` |
+| POST | `/search/similar-by-audio` | Queue an async search job — worker encodes detection audio via the model and stores the embedding; returns `{id, status: "queued"}` |
+| GET | `/search/jobs/{id}` | Poll a search job — returns status while encoding, or search results on completion (ephemeral: row is deleted after results are returned) |
 | GET | `/classifier/detection-jobs/{id}/embedding` | Retrieve the stored embedding for a specific detection row (returns vector, model_version, vector_dim) |
 | GET | `/audio/{id}/spectrogram-png` | PNG spectrogram image for a time range of an audio file (disk-cached) |
 
@@ -795,7 +797,9 @@ No client-side router is used — the UI is tab-based (Audio, Processing,
 Clustering, Classifier, Search, Admin) with navigation managed via React Router.
 The **Search** tab supports standalone embedding search (pick an embedding set +
 window) and detection-sourced search (click "Search Similar" on a detection row
-to find similar audio across all embedding sets).
+to find similar audio across all embedding sets). Detection search uses async
+worker-based encoding so it works on all detection jobs, including those created
+before embedding storage was added.
 
 ## Acknowledgements
 

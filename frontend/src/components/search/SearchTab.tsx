@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import {
   Search,
@@ -20,18 +20,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
-import {
-  useSearchSimilar,
-  useSearchByVector,
-  useDetectionEmbedding,
-} from "@/hooks/queries/useSearch";
+import { useSearchSimilar } from "@/hooks/queries/useSearch";
 import {
   audioWindowUrl,
   audioSpectrogramPngUrl,
   detectionAudioSliceUrl,
   detectionSpectrogramUrl,
 } from "@/api/client";
-import type { EmbeddingSet, SimilaritySearchHit } from "@/api/types";
+import type { EmbeddingSet, SimilaritySearchResponse } from "@/api/types";
 import { SpectrogramPopup } from "@/components/classifier/SpectrogramPopup";
 
 interface DetectionSearchState {
@@ -73,13 +69,10 @@ export function SearchTab() {
     exclude_self: boolean;
   } | null>(null);
 
-  // Detection state
-  const [vectorSearch, setVectorSearch] = useState<{
-    vector: number[];
-    model_version: string;
-    top_k: number;
-    metric: string;
-  } | null>(null);
+  // Detection audio search state
+  const [audioSearchLoading, setAudioSearchLoading] = useState(false);
+  const [audioSearchResults, setAudioSearchResults] = useState<SimilaritySearchResponse | null>(null);
+  const [audioSearchError, setAudioSearchError] = useState<string | null>(null);
 
   // Playback
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -95,29 +88,74 @@ export function SearchTab() {
   // Data hooks
   const { data: embeddingSets = [] } = useEmbeddingSets();
   const standaloneResult = useSearchSimilar(searchTrigger);
-  const vectorResult = useSearchByVector(vectorSearch);
-  const detectionEmb = useDetectionEmbedding(
-    mode === "detection" ? detectionState?.detectionJobId ?? null : null,
-    mode === "detection" ? detectionState?.filename ?? null : null,
-    mode === "detection" ? detectionState?.startSec ?? null : null,
-    mode === "detection" ? detectionState?.endSec ?? null : null,
-  );
 
-  // Auto-trigger detection search when embedding is loaded
+  // Auto-trigger audio search when entering detection mode.
+  // Uses AbortController for StrictMode cleanup and a direct fetch loop
+  // instead of mutation + poll hooks to avoid StrictMode double-fire issues.
   useEffect(() => {
-    if (
-      mode === "detection" &&
-      detectionEmb.data &&
-      !vectorSearch
-    ) {
-      setVectorSearch({
-        vector: detectionEmb.data.vector,
-        model_version: detectionEmb.data.model_version,
-        top_k: topK,
-        metric,
-      });
-    }
-  }, [mode, detectionEmb.data, vectorSearch, topK, metric]);
+    if (mode !== "detection" || !detectionState || audioSearchResults) return;
+
+    const controller = new AbortController();
+    setAudioSearchLoading(true);
+    setAudioSearchError(null);
+
+    (async () => {
+      try {
+        // 1. Create the search job
+        const createRes = await fetch("/search/similar-by-audio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            detection_job_id: detectionState.detectionJobId,
+            filename: detectionState.filename,
+            start_sec: detectionState.startSec,
+            end_sec: detectionState.endSec,
+            top_k: topK,
+            metric,
+          }),
+          signal: controller.signal,
+        });
+        if (!createRes.ok) {
+          const text = await createRes.text();
+          throw new Error(`Failed to create search job: ${text}`);
+        }
+        const { id: jobId } = await createRes.json();
+
+        // 2. Poll until complete/failed
+        while (!controller.signal.aborted) {
+          await new Promise((r) => setTimeout(r, 500));
+          if (controller.signal.aborted) break;
+
+          const pollRes = await fetch(`/search/jobs/${jobId}`, {
+            signal: controller.signal,
+          });
+          if (!pollRes.ok) {
+            if (pollRes.status === 404) continue; // job not found yet, retry
+            const text = await pollRes.text();
+            throw new Error(`Poll failed: ${text}`);
+          }
+          const job = await pollRes.json();
+
+          if (job.status === "complete" && job.results) {
+            setAudioSearchResults(job.results);
+            setAudioSearchLoading(false);
+            return;
+          }
+          if (job.status === "failed") {
+            throw new Error(job.error || "Search failed");
+          }
+          // status is queued/running — keep polling
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setAudioSearchError(err instanceof Error ? err.message : "Search failed");
+        setAudioSearchLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, detectionState]);
 
   // Model versions from embedding sets
   const modelVersions = useMemo(() => {
@@ -145,12 +183,14 @@ export function SearchTab() {
   }, [selectedEs]);
 
   // Active results
-  const searchResult = mode === "detection" ? vectorResult : standaloneResult;
-  const isSearching = searchResult.isFetching;
-  const searchError = searchResult.error;
-  const results = searchResult.data?.results ?? [];
-  const totalCandidates = searchResult.data?.total_candidates ?? 0;
-  const resultModelVersion = searchResult.data?.model_version ?? "";
+  const activeResults = mode === "detection" ? audioSearchResults : standaloneResult.data;
+  const isSearching = mode === "detection" ? audioSearchLoading : standaloneResult.isFetching;
+  const searchError = mode === "detection"
+    ? (audioSearchError ? new Error(audioSearchError) : null)
+    : standaloneResult.error;
+  const results = activeResults?.results ?? [];
+  const totalCandidates = activeResults?.total_candidates ?? 0;
+  const resultModelVersion = activeResults?.model_version ?? "";
 
   // Find window_size_seconds for result rows
   const esMap = useMemo(() => {
@@ -222,14 +262,15 @@ export function SearchTab() {
           {mode === "detection" && detectionState ? (
             <DetectionQueryCard
               state={detectionState}
-              embLoading={detectionEmb.isLoading}
-              embError={detectionEmb.error}
+              embLoading={audioSearchLoading}
+              embError={audioSearchError ? new Error(audioSearchError) : null}
               onPlay={handlePlay}
               playingKey={playingKey}
               onSpectrogramClick={handleSpectrogramClick}
               onSwitchToStandalone={() => {
                 setMode("standalone");
-                setVectorSearch(null);
+                setAudioSearchResults(null);
+                setAudioSearchError(null);
               }}
             />
           ) : (
@@ -259,9 +300,9 @@ export function SearchTab() {
       </Card>
 
       {/* Search metadata */}
-      {searchResult.data && (
+      {activeResults && (
         <div className="text-sm text-muted-foreground px-1">
-          Found {results.length} results from {totalCandidates.toLocaleString()} candidates ({searchResult.data.metric}, model: {resultModelVersion})
+          Found {results.length} results from {totalCandidates.toLocaleString()} candidates ({activeResults.metric}, model: {resultModelVersion})
         </div>
       )}
 
@@ -365,7 +406,7 @@ export function SearchTab() {
       )}
 
       {/* Empty state */}
-      {!isSearching && !searchError && results.length === 0 && !searchResult.data && mode === "standalone" && (
+      {!isSearching && !searchError && results.length === 0 && !activeResults && mode === "standalone" && (
         <div className="text-center py-12 text-muted-foreground">
           <Search className="h-8 w-8 mx-auto mb-3 opacity-50" />
           <p>Select an embedding set and window, then click Search to find similar audio.</p>
@@ -448,15 +489,13 @@ function DetectionQueryCard({
       {embLoading && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading embedding...
+          Encoding audio &amp; searching...
         </div>
       )}
       {embError && (
         <div className="flex items-center gap-2 text-sm text-red-600">
           <AlertCircle className="h-3.5 w-3.5" />
-          {embError.message.includes("404")
-            ? "No stored embeddings for this detection job (pre-existing job)"
-            : embError.message}
+          {embError instanceof Error ? embError.message : "Search failed"}
         </div>
       )}
       <button

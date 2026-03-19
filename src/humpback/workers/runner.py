@@ -22,10 +22,12 @@ from humpback.workers.queue import (
     claim_extraction_job,
     claim_hydrophone_detection_job,
     claim_processing_job,
+    claim_search_job,
     claim_training_job,
     recover_stale_jobs,
 )
 from humpback.workers.retrain_worker import poll_retrain_workflows
+from humpback.workers.search_worker import run_search_job
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,20 @@ async def run_worker(settings: Settings | None = None) -> None:
         claimed = False
         job = cjob = tjob = djob = None
 
-        # Try processing jobs first
+        # Try search jobs first (sub-second interactive work)
+        sjob = None
+        async with session_factory() as session:
+            sjob = await claim_search_job(session)
+        if sjob:
+            logger.info(f"Search job {sjob.id}")
+            async with session_factory() as session:
+                await run_search_job(session, sjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Try processing jobs
         async with session_factory() as session:
             job = await claim_processing_job(session)
         if job:

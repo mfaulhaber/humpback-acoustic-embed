@@ -30,6 +30,8 @@ import type {
   LabelQueueEntry,
   RefinementReport,
   SimilaritySearchResponse,
+  AudioSearchRequest,
+  SearchJobResponse,
   StabilitySummary,
   ModelConfig,
   ModelConfigCreate,
@@ -354,6 +356,12 @@ export const fetchDetectionEmbedding = (
   api<DetectionEmbeddingResponse>(
     `/classifier/detection-jobs/${jobId}/embedding?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&end_sec=${endSec}`,
   );
+
+export const createAudioSearch = (body: AudioSearchRequest) =>
+  post<SearchJobResponse>("/search/similar-by-audio", body);
+
+export const pollSearchJob = (jobId: string) =>
+  api<SearchJobResponse>(`/search/jobs/${jobId}`);
 
 export function audioSpectrogramPngUrl(
   audioId: string,

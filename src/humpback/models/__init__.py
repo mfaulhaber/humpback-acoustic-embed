@@ -3,6 +3,7 @@ from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
 from humpback.models.processing import EmbeddingSet, ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
+from humpback.models.search import SearchJob
 
 __all__ = [
     "AudioFile",
@@ -15,4 +16,5 @@ __all__ = [
     "Cluster",
     "ClusterAssignment",
     "RetrainWorkflow",
+    "SearchJob",
 ]

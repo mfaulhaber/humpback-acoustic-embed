@@ -1,9 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   searchSimilar,
   searchSimilarByVector,
   fetchDetectionEmbedding,
+  createAudioSearch,
+  pollSearchJob,
 } from "@/api/client";
+import type { AudioSearchRequest, SearchJobResponse } from "@/api/types";
 
 export function useSearchSimilar(
   body: {
@@ -47,5 +50,26 @@ export function useDetectionEmbedding(
     queryFn: () => fetchDetectionEmbedding(jobId!, filename!, startSec!, endSec!),
     enabled: jobId !== null && filename !== null && startSec !== null && endSec !== null,
     retry: false,
+  });
+}
+
+export function useCreateAudioSearch() {
+  return useMutation({
+    mutationFn: (body: AudioSearchRequest) => createAudioSearch(body),
+  });
+}
+
+export function useSearchJobPoll(jobId: string | null) {
+  return useQuery<SearchJobResponse>({
+    queryKey: ["search", "job", jobId],
+    queryFn: () => pollSearchJob(jobId!),
+    enabled: jobId !== null,
+    retry: 2,
+    refetchInterval: (query) => {
+      if (query.state.error) return false;
+      const status = query.state.data?.status;
+      if (status === "complete" || status === "failed") return false;
+      return 500;
+    },
   });
 }

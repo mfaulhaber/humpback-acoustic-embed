@@ -17,6 +17,7 @@ export default defineConfig({
       "/clustering": "http://localhost:8000",
       "/classifier": "http://localhost:8000",
       "/admin": "http://localhost:8000",
+      "/search": "http://localhost:8000",
       "/health": "http://localhost:8000",
     },
   },

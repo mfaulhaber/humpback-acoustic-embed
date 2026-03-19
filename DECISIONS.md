@@ -936,3 +936,41 @@ is derived from the detection job's output directory.
 - Pre-existing detection jobs have no stored embeddings; the Search page shows an
   appropriate message when the embedding retrieval returns 404.
 - The embedding file adds modest disk overhead (one vector per detection event).
+
+---
+
+## ADR-034: Worker-encoded detection search via ephemeral SearchJob
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: Detection-sourced similarity search relied on pre-stored embeddings in
+`detection_embeddings.parquet` (ADR-033). Pre-existing detection jobs (created before
+ADR-033) had no stored embeddings, causing a 404 error when clicking "Search Similar".
+Loading the embedding model in the API process would conflict with the architecture
+that isolates model loading to workers.
+
+**Decision**: Add an async search flow using a new `SearchJob` model. The API queues
+a lightweight search job (`POST /search/similar-by-audio`), the worker claims it,
+resolves the detection audio (local or hydrophone), encodes it using the detection
+job's classifier model, and stores the embedding vector on the search job row. The
+frontend polls `GET /search/jobs/{id}` until complete, at which point the API runs the
+brute-force search synchronously and returns results. The search job row is deleted
+after results are returned (ephemeral cleanup). Search jobs are prioritized first in
+the worker loop since encoding is sub-second interactive work.
+
+**Alternatives considered**:
+- Backfilling old detection jobs: expensive for large job histories, and doesn't help
+  if the detection output directory is missing.
+- Loading the model in the API process: conflicts with worker-isolated model loading
+  architecture.
+- Direct embedding fetch with fallback: the 404 case is the default for most existing
+  jobs, so fallback would be the common path.
+
+**Consequences**:
+- "Search Similar" works on all detection jobs, including pre-existing ones.
+- The `search_jobs` table is ephemeral — rows are created, processed, and deleted
+  within seconds. No long-term storage impact.
+- Worker poll loop checks search jobs first, before processing/clustering/detection.
+- Frontend detection mode no longer uses `useDetectionEmbedding` or
+  `useSearchByVector`; it uses the new mutation + poll pattern.

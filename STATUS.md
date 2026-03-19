@@ -37,7 +37,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Supports `top_k`, `exclude_self`, `embedding_set_ids` filter, and `metric` selection
 - Returns ranked hits with audio file metadata and `window_offset_seconds`
 - Detection jobs store per-detection peak-window embeddings in `detection_embeddings.parquet`
-- Search tab UI: standalone search (pick embedding set + window) and detection-sourced search ("Search Similar" from detection rows)
+- `POST /search/similar-by-audio` — async worker-based encoding: queues a search job, worker encodes detection audio via the model, frontend polls for results
+- `GET /search/jobs/{id}` — poll search job status; returns search results on completion and deletes the ephemeral job row
+- Search tab UI: standalone search (pick embedding set + window) and detection-sourced search ("Search Similar" from detection rows — works on all detection jobs including pre-existing ones without stored embeddings)
 - Spectrogram thumbnail previews and inline playback in search results
 
 ### Clustering
@@ -250,7 +252,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `018_detection_mode.py`
+- **Latest migration**: `019_search_jobs.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows
 
 ---

@@ -120,6 +120,19 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 - parquet_path
 - created_at
 
+### SearchJob (ephemeral, deleted after results returned)
+- id
+- status (queued/running/complete/failed)
+- detection_job_id
+- filename
+- start_sec, end_sec
+- top_k, metric
+- embedding_set_ids (JSON array, nullable)
+- model_version (set by worker on completion)
+- embedding_vector (JSON float array, set by worker on completion)
+- error_message (nullable)
+- created_at, updated_at
+
 ### ClusteringJob
 - id
 - status
