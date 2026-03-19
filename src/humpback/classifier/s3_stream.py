@@ -998,7 +998,18 @@ def resolve_audio_slice(
             last_reason = "No segments selected for requested timestamp window"
             continue
 
+        # Prefer cached segments to avoid expensive remote fetches when
+        # multiple archive sub-sites overlap the same timestamp range.
+        _cache_check: Callable[[str], bool] | None = getattr(
+            provider, "is_segment_cached", None
+        )
+        if _cache_check is not None and len(candidates) > 1:
+            _cc = _cache_check  # bind for lambda closure
+            candidates.sort(key=lambda s: (not _cc(s.key), s.start_ts))
+
+        max_samples = max(1, int(round(duration_sec * target_sr)))
         decoded_parts: list[np.ndarray] = []
+        decoded_samples = 0
         for segment in candidates:
             try:
                 for audio, _ts in _iter_segment_audio_chunks(
@@ -1011,15 +1022,20 @@ def resolve_audio_slice(
                 ):
                     if len(audio) > 0:
                         decoded_parts.append(audio)
+                        decoded_samples += len(audio)
             except Exception:
                 continue
+            # Stop once we have enough samples for the requested duration;
+            # avoids fetching uncached remote files when overlapping archive
+            # sub-sites provide the same timestamp range.
+            if decoded_samples >= max_samples:
+                break
 
         if not decoded_parts:
             last_reason = "Failed to decode all candidate segments"
             continue
 
         segment = np.concatenate(decoded_parts)
-        max_samples = max(1, int(round(duration_sec * target_sr)))
         if len(segment) > max_samples:
             segment = segment[:max_samples]
         if len(segment) > 0:

@@ -63,6 +63,10 @@ from humpback.storage import (  # noqa: E402
 if TYPE_CHECKING:
     from humpback.processing.spectrogram_cache import SpectrogramCache
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/classifier", tags=["classifier"])
 
 
@@ -1266,6 +1270,14 @@ async def _resolve_detection_audio(
             raise HTTPException(400, str(exc))
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc))
+        except Exception as exc:
+            logger.exception(
+                "Unexpected error resolving detection audio for job %s", job.id
+            )
+            raise HTTPException(
+                500,
+                f"Audio resolution failed: {type(exc).__name__}: {exc}",
+            )
 
         result = (segment, target_sr)
         _decoded_audio_cache.put(

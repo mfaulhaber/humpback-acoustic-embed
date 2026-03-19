@@ -10,6 +10,27 @@
 
 ## Recently Completed
 
+# Plan: Fix NOAA Channel Islands Detection Playback/Spectrogram 500 Error
+
+[Full plan](/Users/michael/.claude/plans/serene-giggling-hamming.md)
+
+## Outcome (2026-03-19)
+
+- Fixed `resolve_audio_slice` to prefer cached segments and stop fetching once
+  enough audio is decoded, preventing multi-minute GCS downloads of uncached
+  overlapping sub-site segments for multi-site NOAA sources (Channel Islands)
+- Added catch-all exception logging in `_resolve_detection_audio` for
+  unhandled errors
+- Fixed `canExpand` frontend gate that blocked expanding new detection jobs
+  after ADR-035 stopped writing `output_tsv_path`
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 744 passed, 1 skipped
+
 # Plan: Side + Top Navigation with Breadcrumbs
 
 [Full plan](/Users/michael/.claude/plans/effervescent-soaring-comet.md)

@@ -1455,10 +1455,9 @@ function HydrophoneJobRow({
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
   const canExpand =
-    (job.status === "complete" || job.status === "canceled" ||
-     (job.status === "paused" && !!job.output_tsv_path) ||
-     (isRunning && (job.segments_processed ?? 0) > 0)) &&
-    !!job.output_tsv_path;
+    job.status === "complete" || job.status === "canceled" ||
+    job.status === "paused" ||
+    (isRunning && (job.segments_processed ?? 0) > 0);
 
   // For active rows, show all columns; for previous rows, respect visibleColumns
   const showCol = (id: string) => isActive || !visibleColumns || visibleColumns.has(id);
