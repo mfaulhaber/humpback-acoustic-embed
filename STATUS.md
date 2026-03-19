@@ -179,6 +179,9 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Previous Jobs table: text filter (hydrophone name), sortable columns (status,
   hydrophone, date, threshold, results), client-side pagination, and preferences
   dialog (page size: 10/20/50/100, column visibility toggles)
+- `DatabaseErrorBanner`: persistent top-of-page red flash bar that polls `/health`
+  every 15 s and surfaces DB misconfiguration errors (dismissable; auto-redisplays
+  while the API remains unhealthy)
 
 ### Retrain Workflow
 - Automated retrain pipeline: reimport folders, queue processing, create training job — all from a single "Retrain" button
@@ -217,6 +220,10 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Repo-root `.env` support for runtime and deploy-time configuration (API/worker
   entrypoints load it explicitly; `scripts/deploy.sh` sources it for `TF_EXTRA`)
 - FastAPI bind host/port are configurable via `HUMPBACK_API_HOST` / `HUMPBACK_API_PORT`
+- `/health` GET endpoint: returns `{"status":"ok"}` after successful startup,
+  `503 {"status":"error","detail":"..."}` when DB init failed, or
+  `{"status":"starting"}` before startup completes; registered before routers so
+  it does not depend on a DB session
 - FastAPI trusted-host validation is configurable via comma-separated
   `HUMPBACK_ALLOWED_HOSTS` patterns (Starlette wildcard syntax, e.g.
   `*.trycloudflare.com`)

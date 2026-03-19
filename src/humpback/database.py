@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -5,6 +6,8 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -38,10 +41,14 @@ def _ensure_sqlite_dir(url: str) -> None:
     db_path = url[idx + len(marker) :]
     if not db_path or db_path == ":memory:":
         return
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    parent = Path(db_path).parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Created database directory: %s", parent)
 
 
 def create_engine(url: str, **kwargs):
+    logger.debug("Creating database engine for URL: %s", url)
     _ensure_sqlite_dir(url)
     engine = create_async_engine(url, **kwargs)
     return engine
@@ -52,6 +59,7 @@ async def setup_sqlite_pragmas(engine):
     async with engine.begin() as conn:
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+    logger.debug("SQLite pragmas applied (WAL mode, foreign keys enabled)")
 
 
 def create_session_factory(engine) -> async_sessionmaker[AsyncSession]:
