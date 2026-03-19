@@ -531,6 +531,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | DELETE | `/admin/models/{id}` | Delete model (fails if embeddings reference it) |
 | POST | `/admin/models/{id}/set-default` | Set model as default |
 | GET | `/admin/models/scan` | Scan `models/` dir for unregistered models (.tflite + SavedModel dirs) |
+| POST | `/search/similar` | Embedding similarity search — find top-K most similar windows across embedding sets for the same model (cosine or euclidean, brute-force with LRU cache) |
 
 Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.

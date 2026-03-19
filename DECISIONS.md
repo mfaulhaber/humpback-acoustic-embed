@@ -868,3 +868,36 @@ sensitivity but the merging creates UX problems.
 - Existing merged-mode jobs are unaffected; `detection_mode=NULL` is treated as
   `"merged"`.
 - Requires Alembic migration 018.
+
+---
+
+## ADR-032: Standard cosine similarity for cross-corpus embedding search
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: The existing `_cosine_similarity_matrix()` in `audio.py` uses mean-centered
+cosine similarity, which removes the shared ReLU baseline direction and works well for
+within-file pairwise comparison. For the new cross-corpus embedding search
+(`POST /search/similar`), the corpus mean changes depending on which files are included,
+making mean-centering unstable.
+
+**Decision**: Use standard (non-mean-centered) cosine similarity for cross-corpus search.
+Implement brute-force search over parquet files with an LRU cache (128 entries) for loaded
+embeddings. Defer vector index (FAISS, USearch) and on-the-fly embedding to future phases.
+
+**Alternatives considered**:
+- Mean-centered cosine: unsuitable because the mean depends on corpus composition, making
+  scores non-comparable across different search sets.
+- Vector database (FAISS, USearch): unnecessary overhead at current scale (thousands to tens
+  of thousands of embeddings); the search service is designed as a single substitution point
+  if an index is needed later.
+- On-the-fly embedding in the API process: conflicts with the architecture that isolates
+  model loading to workers; deferred to Phase 1b.
+
+**Consequences**:
+- Search results use standard cosine similarity, which may differ from the within-file
+  similarity matrix displayed in the audio detail view.
+- The brute-force approach is O(N) in total embeddings; adequate at current scale but
+  will need replacement if the corpus grows to millions of vectors.
+- The LRU cache bounds memory usage while avoiding repeated parquet reads for hot sets.
