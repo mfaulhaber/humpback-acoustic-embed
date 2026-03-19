@@ -8,7 +8,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from humpback.api.routers import admin, audio, classifier, clustering, processing
+from humpback.api.routers import (
+    admin,
+    audio,
+    classifier,
+    clustering,
+    processing,
+)
 from humpback.config import Settings
 from humpback.database import (
     Base,
@@ -84,6 +90,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(clustering.router)
     app.include_router(classifier.router)
     app.include_router(admin.router)
+    from humpback.api.routers import search  # registered after other routers
+
+    app.include_router(search.router)
 
     # Serve React SPA from dist/ if it exists, otherwise fall back to legacy index.html
     has_dist = DIST_DIR.is_dir() and (DIST_DIR / "index.html").exists()

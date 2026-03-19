@@ -27,6 +27,13 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Periodic stale job recovery every 60s in worker loop (previously startup-only); prevents jobs stuck in `running` after quick restarts
 - Local detection job TSV cleanup on restart (prevents duplicate appends from stale prior runs)
 
+### Embedding Similarity Search
+- `POST /search/similar` — brute-force cosine or euclidean search across all embedding sets for the same model version
+- LRU cache (128 entries) for loaded parquet embeddings avoids repeated I/O
+- Standard cosine similarity (not mean-centered) for stable cross-corpus search
+- Supports `top_k`, `exclude_self`, `embedding_set_ids` filter, and `metric` selection
+- Returns ranked hits with audio file metadata and `window_offset_seconds`
+
 ### Clustering
 - Model version validation: rejects clustering across different embedding models
 - HDBSCAN, K-Means, Agglomerative clustering algorithms
