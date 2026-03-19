@@ -104,7 +104,7 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 | Icons | lucide-react |
 | API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
 
-**No React Router** — the UI uses tab-based navigation managed via React state, not URL routing.
+**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`); other sections are single-route pages.
 
 #### Frontend Package Management
 *   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
@@ -123,7 +123,7 @@ frontend/
 ├── e2e/                         (Playwright test specs)
 └── src/
     ├── main.tsx                 (QueryClientProvider + App mount)
-    ├── App.tsx                  (tab state + tab content switching)
+    ├── App.tsx                  (routes + AppShell wrapper)
     ├── index.css                (Tailwind directives + shadcn CSS vars)
     ├── lib/utils.ts             (cn() helper)
     ├── api/
@@ -132,11 +132,11 @@ frontend/
     ├── hooks/queries/           (TanStack Query hooks per domain)
     ├── components/
     │   ├── ui/                  (shadcn primitives)
-    │   ├── layout/              (AppShell, Header, TabNav)
+    │   ├── layout/              (AppShell, TopNav, SideNav, Breadcrumbs)
     │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
-    │   ├── classifier/          (ClassifierTab, TrainingTab, DetectionTab, BulkDeleteDialog)
+    │   ├── classifier/          (TrainingTab, HydrophoneTab, DetectionTab, BulkDeleteDialog)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
     │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc)

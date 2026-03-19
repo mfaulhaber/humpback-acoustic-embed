@@ -24,8 +24,7 @@ function parseCompactRangeMs(value: string): { startMs: number; endMs: number } 
 
 test.describe("Hydrophone extract activation", () => {
   test("Extract enables from saved labels on expanded completed job", async ({ page }) => {
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     const table = page.locator("table").first();
     const hasTable = await table

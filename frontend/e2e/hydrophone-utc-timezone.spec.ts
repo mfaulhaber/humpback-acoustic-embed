@@ -162,8 +162,7 @@ test.describe("Hydrophone UTC timezone semantics", () => {
       },
     });
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await page
       .locator("label", { hasText: "Hydrophone" })
@@ -259,8 +258,7 @@ test.describe("Hydrophone UTC timezone semantics", () => {
       ],
     });
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await expect(page.locator("th", { hasText: "Date Range (UTC)" })).toBeVisible();
 

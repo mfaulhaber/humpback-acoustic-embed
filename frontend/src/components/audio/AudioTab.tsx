@@ -35,7 +35,6 @@ export function AudioTab() {
       <AudioDetail
         file={selectedFile}
         embeddingSets={embeddingSets.filter((es) => es.audio_file_id === selectedFile.id)}
-        onBack={() => navigate("/app/audio")}
         onPrev={currentIndex > 0 ? handlePrev : undefined}
         onNext={currentIndex < sortedFiles.length - 1 ? handleNext : undefined}
       />

@@ -130,8 +130,7 @@ async function setupMocks(page: Page, initialStatus: string) {
 test.describe("Hydrophone Pause/Resume/Cancel", () => {
   test("running job shows Pause + Cancel buttons (no Stop)", async ({ page }) => {
     await setupMocks(page, "running");
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     const activeCard = page.locator("text=Active Jobs");
     await expect(activeCard).toBeVisible();
@@ -143,8 +142,7 @@ test.describe("Hydrophone Pause/Resume/Cancel", () => {
 
   test("pause transitions to paused state with Resume button", async ({ page }) => {
     const mocks = await setupMocks(page, "running");
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await expect(page.locator("button", { hasText: "Pause" })).toBeVisible();
     await page.locator("button", { hasText: "Pause" }).click();
@@ -159,8 +157,7 @@ test.describe("Hydrophone Pause/Resume/Cancel", () => {
 
   test("resume transitions back to running", async ({ page }) => {
     const mocks = await setupMocks(page, "paused");
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await expect(page.locator("button", { hasText: "Resume" })).toBeVisible();
     await page.locator("button", { hasText: "Resume" }).click();
@@ -171,8 +168,7 @@ test.describe("Hydrophone Pause/Resume/Cancel", () => {
 
   test("cancel from running calls cancel endpoint", async ({ page }) => {
     const mocks = await setupMocks(page, "running");
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await page.locator("button", { hasText: "Cancel" }).click();
     await expect.poll(() => mocks.wasCancelCalled()).toBe(true);
@@ -180,8 +176,7 @@ test.describe("Hydrophone Pause/Resume/Cancel", () => {
 
   test("cancel from paused calls cancel endpoint", async ({ page }) => {
     const mocks = await setupMocks(page, "paused");
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await expect(page.locator("button", { hasText: "Cancel" })).toBeVisible();
     await page.locator("button", { hasText: "Cancel" }).click();
@@ -190,8 +185,7 @@ test.describe("Hydrophone Pause/Resume/Cancel", () => {
 
   test("paused job stays in Active panel (not Previous Jobs)", async ({ page }) => {
     await setupMocks(page, "paused");
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await expect(page.locator("text=Active Jobs")).toBeVisible();
     // The paused badge should show in the active table

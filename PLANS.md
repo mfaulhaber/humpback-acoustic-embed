@@ -10,6 +10,26 @@
 
 ## Recently Completed
 
+# Plan: Side + Top Navigation with Breadcrumbs
+
+[Full plan](/Users/michael/.claude/plans/effervescent-soaring-comet.md)
+
+## Outcome (2026-03-19)
+
+- Replaced flat horizontal tab bar with persistent top nav (branding), icon side nav
+  (expandable Classifier group), and shadcn/ui breadcrumbs
+- Classifier sub-views are now direct routes (`/app/classifier/training`,
+  `/app/classifier/hydrophone`); removed `ClassifierTab.tsx` state-based sub-tabs
+- Deleted `Header.tsx` and `TabNav.tsx`; created `TopNav.tsx`, `SideNav.tsx`,
+  `Breadcrumbs.tsx`, and `breadcrumb.tsx` (shadcn/ui)
+- Updated 10 Playwright e2e test files for direct sub-route navigation
+
+## Verification
+
+- `cd frontend && npx tsc --noEmit` — passed
+- `cd frontend && npm run build` — passed
+- `uv run pytest tests/` — 744 passed, 1 skipped
+
 # Plan: Derive Detection Output Paths from Storage Root, Not DB
 
 [Full plan](/Users/michael/.claude/plans/sparkling-jingling-axolotl.md)

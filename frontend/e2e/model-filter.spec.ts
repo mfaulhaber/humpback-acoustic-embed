@@ -57,8 +57,7 @@ test.describe("Model filter on Clustering page", () => {
 
 test.describe("Model filter on Classifier Training page", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/app/classifier");
-    await page.getByRole("button", { name: "Train", exact: true }).click();
+    await page.goto("/app/classifier/training");
   });
 
   test("Model filter dropdown is visible with label", async ({ page }) => {

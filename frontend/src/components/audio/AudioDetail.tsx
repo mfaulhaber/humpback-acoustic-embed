@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,12 +16,11 @@ import type { AudioFile, EmbeddingSet } from "@/api/types";
 interface AudioDetailProps {
   file: AudioFile;
   embeddingSets: EmbeddingSet[];
-  onBack: () => void;
   onPrev?: () => void;
   onNext?: () => void;
 }
 
-export function AudioDetail({ file, embeddingSets, onBack, onPrev, onNext }: AudioDetailProps) {
+export function AudioDetail({ file, embeddingSets, onPrev, onNext }: AudioDetailProps) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const windowIndex = Number(searchParams.get("window") ?? 0);
@@ -62,26 +61,23 @@ export function AudioDetail({ file, embeddingSets, onBack, onPrev, onNext }: Aud
 
   return (
     <div className="space-y-4">
-      {/* Navigation bar */}
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back
-        </Button>
-        <div className="flex-1" />
-        {onPrev && (
-          <Button variant="outline" size="sm" onClick={onPrev}>
-            <ChevronLeft className="h-4 w-4 mr-1" />
-            Prev
-          </Button>
-        )}
-        {onNext && (
-          <Button variant="outline" size="sm" onClick={onNext}>
-            Next
-            <ChevronRight className="h-4 w-4 ml-1" />
-          </Button>
-        )}
-      </div>
+      {/* Prev / Next navigation */}
+      {(onPrev || onNext) && (
+        <div className="flex items-center justify-end gap-2">
+          {onPrev && (
+            <Button variant="outline" size="sm" onClick={onPrev}>
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Prev
+            </Button>
+          )}
+          {onNext && (
+            <Button variant="outline" size="sm" onClick={onNext}>
+              Next
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* File info */}
       <Card>

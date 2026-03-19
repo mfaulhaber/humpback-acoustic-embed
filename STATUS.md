@@ -158,7 +158,7 @@ Current state of the humpback acoustic embedding and clustering platform.
   `noaa_cache_path` for local caching instead
 
 ### Web UI
-- Tab-based SPA (Audio, Processing, Clustering, Classifier [Train/Hydrophone], Admin)
+- Side nav + top nav SPA with breadcrumbs (Audio, Processing, Clustering, Classifier [Training/Hydrophone Detection], Search, Admin)
 - Model filter dropdown on Processing, Clustering, and Classifier pages
 - Model version badges on processing jobs, embedding sets, and folder tree rows
 - Cross-model warning banner on classifier training (prevents submission)

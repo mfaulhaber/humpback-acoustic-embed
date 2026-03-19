@@ -18,19 +18,7 @@ test.describe("Extraction Settings API", () => {
 
 test.describe("Extraction UI", () => {
   test("Extract button is disabled with no selection", async ({ page }) => {
-    await page.goto("http://localhost:5173");
-
-    // Navigate to Classifier tab
-    const classifierTab = page.getByRole("tab", { name: /classifier/i });
-    if (await classifierTab.isVisible()) {
-      await classifierTab.click();
-    }
-
-    // Navigate to Detection sub-tab
-    const detectionTab = page.getByRole("tab", { name: /detect/i });
-    if (await detectionTab.isVisible()) {
-      await detectionTab.click();
-    }
+    await page.goto("/app/classifier/hydrophone");
 
     // Check if the Extract button exists and is disabled
     const extractButton = page.getByRole("button", {

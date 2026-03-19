@@ -9,9 +9,7 @@ import { test, expect } from "@playwright/test";
 
 test.describe("Classifier Training tab", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/app/classifier");
-    // The Train sub-tab is the default view
-    await page.locator("button", { hasText: "Train" }).click();
+    await page.goto("/app/classifier/training");
   });
 
   test("renders positive and negative embedding set panels", async ({
@@ -74,8 +72,7 @@ test.describe("Classifier Training tab", () => {
 
 test.describe("Advanced Options", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Train" }).click();
+    await page.goto("/app/classifier/training");
   });
 
   test("advanced options collapsible is present and expands", async ({
@@ -118,8 +115,7 @@ test.describe("Trained Models table columns", () => {
   test("table has Precision and F1 columns when models exist", async ({
     page,
   }) => {
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Train" }).click();
+    await page.goto("/app/classifier/training");
 
     const modelsHeading = page.locator("text=Trained Models");
     const hasModels = await modelsHeading
@@ -163,8 +159,7 @@ test.describe("Training Jobs delete button visibility", () => {
   test("delete button always visible but disabled when nothing selected", async ({
     page,
   }) => {
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Train" }).click();
+    await page.goto("/app/classifier/training");
 
     // Check for Training Jobs section
     const jobsHeading = page.locator("text=Training Jobs");
@@ -192,8 +187,7 @@ test.describe("Trained Models delete button visibility", () => {
   test("delete button always visible but disabled when nothing selected", async ({
     page,
   }) => {
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Train" }).click();
+    await page.goto("/app/classifier/training");
 
     // Check for Trained Models section
     const modelsHeading = page.locator("text=Trained Models");

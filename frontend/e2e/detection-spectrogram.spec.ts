@@ -209,8 +209,7 @@ test.describe("Detection spectrogram", () => {
       },
     ]);
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
     await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
     await expect(page.locator(".clip-range")).toBeVisible();
     await page.locator(".clip-range").locator("xpath=ancestor::tr").locator('input[type="checkbox"]').nth(0).check();
@@ -279,8 +278,7 @@ test.describe("Detection spectrogram", () => {
       });
     });
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
     await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
     await expect(page.locator(".clip-range")).toBeVisible();
     await page.locator(".clip-range").locator("xpath=ancestor::tr").locator('input[type="checkbox"]').nth(0).check();
@@ -366,8 +364,7 @@ test.describe("Detection spectrogram", () => {
       });
     });
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
     await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
     await expect(page.locator(".clip-range")).toBeVisible();
     await page.locator(".clip-range").locator("xpath=ancestor::tr").locator('input[type="checkbox"]').nth(0).check();
@@ -448,8 +445,7 @@ test.describe("Detection spectrogram", () => {
       });
     });
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
     await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
     await expect(page.locator(".clip-range")).toBeVisible();
     await page
@@ -495,8 +491,7 @@ test.describe("Detection spectrogram", () => {
       },
     ]);
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
     await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
     await expect(page.locator(".clip-range")).toBeVisible();
     await page.locator(".clip-range").click({ modifiers: ["Alt"] });
@@ -529,8 +524,7 @@ test.describe("Detection spectrogram", () => {
       },
     ]);
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
     await page.locator("table").last().locator("tbody tr td:nth-child(2) button").first().click();
     await expect(page.locator(".clip-range")).toContainText("20150807T221458Z_20150807T221513Z");
     await page.locator('button[title="Play"]').click();

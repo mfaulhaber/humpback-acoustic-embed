@@ -145,8 +145,7 @@ async function setupMocks(page: Page) {
 test.describe("Hydrophone canceled job functionality", () => {
   test("canceled job appears in Previous Jobs with expand chevron", async ({ page }) => {
     await setupMocks(page);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     // Canceled job should be in Previous Jobs
     const prevSection = page.locator("text=Previous Jobs");
@@ -165,8 +164,7 @@ test.describe("Hydrophone canceled job functionality", () => {
 
   test("can expand canceled job to view detection content", async ({ page }) => {
     await setupMocks(page);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     const canceledRow = page
       .locator("table tbody tr")
@@ -184,8 +182,7 @@ test.describe("Hydrophone canceled job functionality", () => {
 
   test("download TSV link visible for canceled job", async ({ page }) => {
     await setupMocks(page);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     const canceledRow = page
       .locator("table tbody tr")
@@ -197,8 +194,7 @@ test.describe("Hydrophone canceled job functionality", () => {
 
   test("results column shows hours:minutes format for canceled job", async ({ page }) => {
     await setupMocks(page);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     const canceledRow = page
       .locator("table tbody tr")
