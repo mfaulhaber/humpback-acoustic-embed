@@ -143,7 +143,7 @@ def test_run_detection_returns_diagnostics(tmp_path):
     model = FakeTFLiteModel(vector_dim=64)
     pipeline = _make_fake_pipeline()
 
-    detections, summary, diagnostics = run_detection(
+    detections, summary, diagnostics, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,
@@ -182,7 +182,7 @@ def test_run_detection_no_diagnostics_by_default(tmp_path):
     model = FakeTFLiteModel(vector_dim=64)
     pipeline = _make_fake_pipeline()
 
-    detections, summary, diagnostics = run_detection(
+    detections, summary, diagnostics, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,
@@ -208,7 +208,7 @@ def test_run_detection_skips_short_files(tmp_path):
     model = FakeTFLiteModel(vector_dim=64)
     pipeline = _make_fake_pipeline()
 
-    detections, summary, diagnostics = run_detection(
+    detections, summary, diagnostics, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,

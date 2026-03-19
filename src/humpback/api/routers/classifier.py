@@ -1407,3 +1407,50 @@ async def get_detection_spectrogram(
 
     cache.put(cache_key, png_bytes)
     return Response(content=png_bytes, media_type="image/png")
+
+
+# ---- Detection Embeddings ----
+
+
+@router.get("/detection-jobs/{job_id}/embedding")
+async def get_detection_embedding(
+    job_id: str,
+    session: SessionDep,
+    filename: str = Query(...),
+    start_sec: float = Query(..., ge=0),
+    end_sec: float = Query(..., gt=0),
+):
+    """Return the stored embedding vector for a detection row."""
+    from humpback.classifier.detector import read_detection_embedding
+
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+
+    if not job.output_tsv_path:
+        raise HTTPException(404, "Detection job has no output")
+
+    emb_path = Path(job.output_tsv_path).parent / "detection_embeddings.parquet"
+    if not emb_path.exists():
+        raise HTTPException(404, "No stored embeddings for this detection job")
+
+    embedding = read_detection_embedding(emb_path, filename, start_sec, end_sec)
+    if embedding is None:
+        raise HTTPException(404, "Embedding not found for specified detection row")
+
+    # Resolve model_version from the classifier model
+    from sqlalchemy import select as sa_select
+
+    from humpback.models.classifier import ClassifierModel
+
+    cm_result = await session.execute(
+        sa_select(ClassifierModel).where(ClassifierModel.id == job.classifier_model_id)
+    )
+    cm = cm_result.scalar_one_or_none()
+    model_version = cm.model_version if cm else "unknown"
+
+    return {
+        "vector": embedding,
+        "model_version": model_version,
+        "vector_dim": len(embedding),
+    }

@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from humpback.classifier.detector import run_detection
+from humpback.classifier.detector import (
+    read_detection_embedding,
+    run_detection,
+    write_detection_embeddings,
+)
 from humpback.classifier.trainer import embed_audio_folder, train_binary_classifier
 from humpback.processing.inference import FakeTFLiteModel
 
@@ -161,7 +165,7 @@ def test_confidence_stats_in_summary(tmp_path):
     neg = rng.randn(20, 64) - 2.0
     pipeline, _ = train_binary_classifier(pos, neg)
 
-    detections, summary, _ = run_detection(
+    detections, summary, _, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,
@@ -206,7 +210,7 @@ def test_run_detection_with_hop(tmp_path):
     neg = rng.randn(20, 64) - 2.0
     pipeline, _ = train_binary_classifier(pos, neg)
 
-    _, summary_no_hop, _ = run_detection(
+    _, summary_no_hop, _, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,
@@ -216,7 +220,7 @@ def test_run_detection_with_hop(tmp_path):
         hop_seconds=5.0,
     )
 
-    _, summary_hop, _ = run_detection(
+    _, summary_hop, _, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,
@@ -286,7 +290,7 @@ def test_run_detection_hysteresis(tmp_path):
     neg = rng.randn(20, 64) - 2.0
     pipeline, _ = train_binary_classifier(pos, neg)
 
-    dets_single, _, _ = run_detection(
+    dets_single, _, _, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,
@@ -298,7 +302,7 @@ def test_run_detection_hysteresis(tmp_path):
         low_threshold=0.5,
     )
 
-    dets_hysteresis, _, _ = run_detection(
+    dets_hysteresis, _, _, _ = run_detection(
         audio_folder=audio_dir,
         pipeline=pipeline,
         model=model,
@@ -317,3 +321,182 @@ def test_run_detection_hysteresis(tmp_path):
     for det in dets_single + dets_hysteresis:
         assert "n_windows" in det
         assert det["n_windows"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Detection embedding storage (write / read round-trip)
+# ---------------------------------------------------------------------------
+
+
+class TestDetectionEmbeddingStorage:
+    def test_write_read_roundtrip(self, tmp_path):
+        """write_detection_embeddings + read_detection_embedding round-trip."""
+        records = [
+            {
+                "filename": "song.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "embedding": [1.0, 2.0, 3.0, 4.0],
+            },
+            {
+                "filename": "song.wav",
+                "start_sec": 5.0,
+                "end_sec": 10.0,
+                "embedding": [5.0, 6.0, 7.0, 8.0],
+            },
+            {
+                "filename": "other.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "embedding": [9.0, 10.0, 11.0, 12.0],
+            },
+        ]
+        emb_path = tmp_path / "detection_embeddings.parquet"
+        write_detection_embeddings(records, emb_path)
+
+        # Read back each record
+        vec1 = read_detection_embedding(emb_path, "song.wav", 0.0, 5.0)
+        assert vec1 is not None
+        assert vec1 == pytest.approx([1.0, 2.0, 3.0, 4.0])
+
+        vec2 = read_detection_embedding(emb_path, "song.wav", 5.0, 10.0)
+        assert vec2 is not None
+        assert vec2 == pytest.approx([5.0, 6.0, 7.0, 8.0])
+
+        vec3 = read_detection_embedding(emb_path, "other.wav", 0.0, 5.0)
+        assert vec3 is not None
+        assert vec3 == pytest.approx([9.0, 10.0, 11.0, 12.0])
+
+    def test_read_returns_none_for_non_matching_bounds(self, tmp_path):
+        """read_detection_embedding returns None when time bounds don't match."""
+        records = [
+            {
+                "filename": "song.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "embedding": [1.0, 2.0, 3.0],
+            },
+        ]
+        emb_path = tmp_path / "detection_embeddings.parquet"
+        write_detection_embeddings(records, emb_path)
+
+        # Wrong start_sec
+        assert read_detection_embedding(emb_path, "song.wav", 1.0, 5.0) is None
+        # Wrong end_sec
+        assert read_detection_embedding(emb_path, "song.wav", 0.0, 6.0) is None
+        # Wrong filename
+        assert read_detection_embedding(emb_path, "other.wav", 0.0, 5.0) is None
+
+    def test_read_returns_none_for_nonexistent_file(self, tmp_path):
+        """read_detection_embedding returns None when parquet file doesn't exist."""
+        missing = tmp_path / "does_not_exist.parquet"
+        result = read_detection_embedding(missing, "song.wav", 0.0, 5.0)
+        assert result is None
+
+    def test_write_empty_records_is_noop(self, tmp_path):
+        """write_detection_embeddings with empty list creates no file."""
+        emb_path = tmp_path / "detection_embeddings.parquet"
+        write_detection_embeddings([], emb_path)
+        assert not emb_path.exists()
+
+
+def test_run_detection_emit_embeddings(tmp_path):
+    """emit_embeddings=True in run_detection() produces embedding records."""
+    audio_dir = tmp_path / "detect"
+    audio_dir.mkdir()
+    _write_wav(audio_dir / "a.wav", duration=12.0)
+
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64) + 2.0
+    neg = rng.randn(20, 64) - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+
+    detections, summary, _, embedding_records = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        emit_embeddings=True,
+    )
+
+    # embedding_records should be a list (not None)
+    assert embedding_records is not None
+
+    # Each detection event should have a corresponding embedding record
+    # (one embedding per detection event)
+    if len(detections) > 0:
+        assert len(embedding_records) > 0
+        for rec in embedding_records:
+            assert "filename" in rec
+            assert "start_sec" in rec
+            assert "end_sec" in rec
+            assert "embedding" in rec
+            assert len(rec["embedding"]) == 64
+    else:
+        # If no detections, no embedding records expected
+        assert len(embedding_records) == 0
+
+
+def test_run_detection_no_emit_embeddings(tmp_path):
+    """emit_embeddings=False (default) returns None for embedding records."""
+    audio_dir = tmp_path / "detect"
+    audio_dir.mkdir()
+    _write_wav(audio_dir / "a.wav", duration=12.0)
+
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64) + 2.0
+    neg = rng.randn(20, 64) - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+
+    _, _, _, embedding_records = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        emit_embeddings=False,
+    )
+
+    assert embedding_records is None
+
+
+def test_emit_embeddings_roundtrip_via_parquet(tmp_path):
+    """Embeddings from run_detection can be written and read back via parquet."""
+    audio_dir = tmp_path / "detect"
+    audio_dir.mkdir()
+    _write_wav(audio_dir / "a.wav", duration=12.0)
+
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64) + 2.0
+    neg = rng.randn(20, 64) - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+
+    detections, _, _, embedding_records = run_detection(
+        audio_folder=audio_dir,
+        pipeline=pipeline,
+        model=model,
+        window_size_seconds=5.0,
+        target_sample_rate=16000,
+        confidence_threshold=0.5,
+        emit_embeddings=True,
+    )
+
+    if not embedding_records:
+        pytest.skip("No detections produced (classifier did not fire)")
+
+    emb_path = tmp_path / "detection_embeddings.parquet"
+    write_detection_embeddings(embedding_records, emb_path)
+
+    # Read back each embedding
+    for rec in embedding_records:
+        vec = read_detection_embedding(
+            emb_path, rec["filename"], rec["start_sec"], rec["end_sec"]
+        )
+        assert vec is not None
+        assert vec == pytest.approx(rec["embedding"], abs=1e-5)

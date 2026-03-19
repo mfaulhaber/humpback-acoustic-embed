@@ -121,3 +121,52 @@ async def test_download_audio_invalid_range_header(client, wav_bytes):
         headers={"Range": "bytes=abc-def"},
     )
     assert resp.status_code == 416
+
+
+# ---------------------------------------------------------------------------
+# GET /audio/{id}/spectrogram-png
+# ---------------------------------------------------------------------------
+
+
+async def test_spectrogram_png_returns_png(client, wav_bytes):
+    """GET /audio/{id}/spectrogram-png returns PNG image bytes."""
+    upload = await client.post(
+        "/audio/upload",
+        files={"file": ("spec.wav", wav_bytes, "audio/wav")},
+    )
+    audio_id = upload.json()["id"]
+
+    resp = await client.get(
+        f"/audio/{audio_id}/spectrogram-png",
+        params={"start_seconds": 0.0, "duration_seconds": 1.0},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    # PNG files start with the magic bytes \x89PNG
+    assert resp.content[:4] == b"\x89PNG"
+    assert len(resp.content) > 100  # non-trivial PNG
+
+
+async def test_spectrogram_png_not_found(client):
+    """GET /audio/{id}/spectrogram-png returns 404 for nonexistent audio."""
+    resp = await client.get(
+        "/audio/nonexistent/spectrogram-png",
+        params={"start_seconds": 0.0, "duration_seconds": 1.0},
+    )
+    assert resp.status_code == 404
+
+
+async def test_spectrogram_png_out_of_bounds(client, wav_bytes):
+    """GET /audio/{id}/spectrogram-png returns 400 when range exceeds audio."""
+    upload = await client.post(
+        "/audio/upload",
+        files={"file": ("oob.wav", wav_bytes, "audio/wav")},
+    )
+    audio_id = upload.json()["id"]
+
+    # WAV is 2 seconds long; request starting at 999 seconds
+    resp = await client.get(
+        f"/audio/{audio_id}/spectrogram-png",
+        params={"start_seconds": 999.0, "duration_seconds": 1.0},
+    )
+    assert resp.status_code == 400

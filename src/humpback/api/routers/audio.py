@@ -407,6 +407,68 @@ async def get_spectrogram(
     )
 
 
+@router.get("/{audio_id}/spectrogram-png")
+async def get_spectrogram_png(
+    audio_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    start_seconds: float = Query(..., ge=0),
+    duration_seconds: float = Query(..., gt=0),
+):
+    """Return a PNG spectrogram image for a time range of the audio file."""
+    af = await audio_service.get_audio(session, audio_id)
+    if af is None:
+        raise HTTPException(404, "Audio file not found")
+    file_path = resolve_audio_path(af, settings.storage_root)
+    if not file_path.exists():
+        raise HTTPException(404, "Audio file not found on disk")
+
+    from humpback.processing.spectrogram import generate_spectrogram_png
+    from humpback.processing.spectrogram_cache import SpectrogramCache
+
+    cache_dir = settings.storage_root / "spectrogram_cache"
+    cache = SpectrogramCache(cache_dir, settings.spectrogram_cache_max_items)
+    cache_key = SpectrogramCache._make_key(
+        f"audio-{audio_id}",
+        "",
+        start_seconds,
+        duration_seconds,
+        settings.spectrogram_hop_length,
+        settings.spectrogram_dynamic_range_db,
+        2048,
+        settings.spectrogram_width_px,
+        settings.spectrogram_height_px,
+    )
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="image/png")
+
+    audio, sr = await asyncio.to_thread(decode_audio, file_path)
+
+    start_sample = int(start_seconds * sr)
+    end_sample = int((start_seconds + duration_seconds) * sr)
+    start_sample = min(start_sample, len(audio))
+    end_sample = min(end_sample, len(audio))
+    segment = audio[start_sample:end_sample]
+
+    if len(segment) == 0:
+        raise HTTPException(400, "Requested time range is outside audio bounds")
+
+    png_bytes = await asyncio.to_thread(
+        generate_spectrogram_png,
+        segment,
+        sr,
+        hop_length=settings.spectrogram_hop_length,
+        dynamic_range_db=settings.spectrogram_dynamic_range_db,
+        width_px=settings.spectrogram_width_px,
+        height_px=settings.spectrogram_height_px,
+    )
+
+    cache.put(cache_key, png_bytes)
+    return Response(content=png_bytes, media_type="image/png")
+
+
 def _cosine_similarity_matrix(embeddings: np.ndarray) -> np.ndarray:
     """Compute mean-centered pairwise cosine similarity between all rows.
 

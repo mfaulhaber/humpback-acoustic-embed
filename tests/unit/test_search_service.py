@@ -250,3 +250,107 @@ class TestEmbeddingCache:
 
         info = _cached_read_embeddings.cache_info()
         assert info.misses >= 2
+
+
+# ---------------------------------------------------------------------------
+# similarity_search_by_vector (async, requires DB session)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_vector_search_data(session, tmp_path: Path):
+    """Seed DB with audio files and embedding sets for vector search tests."""
+    import uuid
+
+    from humpback.models.audio import AudioFile
+    from humpback.models.processing import EmbeddingSet
+
+    # Write parquet with known dim=4 vectors
+    pq_path = tmp_path / "vectors.parquet"
+    vectors = np.array(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    _write_parquet(pq_path, vectors)
+
+    af = AudioFile(
+        filename="test.wav",
+        folder_path="test",
+        checksum_sha256=f"test_{uuid.uuid4().hex[:8]}",
+    )
+    session.add(af)
+    await session.flush()
+
+    es = EmbeddingSet(
+        audio_file_id=af.id,
+        encoding_signature="sig_test",
+        model_version="perch_v1",
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+        vector_dim=4,
+        parquet_path=str(pq_path),
+    )
+    session.add(es)
+    await session.flush()
+    await session.commit()
+    return es.id
+
+
+class TestSimilaritySearchByVector:
+    async def test_returns_results(self, session, tmp_path):
+        """similarity_search_by_vector returns results for valid query."""
+        from humpback.schemas.search import VectorSearchRequest
+        from humpback.services.search_service import similarity_search_by_vector
+
+        _cached_read_embeddings.cache_clear()
+        await _seed_vector_search_data(session, tmp_path)
+
+        request = VectorSearchRequest(
+            vector=[1.0, 0.0, 0.0, 0.0],
+            model_version="perch_v1",
+            top_k=3,
+        )
+        response = await similarity_search_by_vector(session, request)
+
+        assert response.model_version == "perch_v1"
+        assert response.total_candidates == 3
+        assert len(response.results) == 3
+        # Best match should be row 0 (identical vector)
+        assert response.results[0].row_index == 0
+        assert response.results[0].score > 0.9
+
+    async def test_dimension_mismatch_raises(self, session, tmp_path):
+        """Vector dimension mismatch raises ValueError."""
+        from humpback.schemas.search import VectorSearchRequest
+        from humpback.services.search_service import similarity_search_by_vector
+
+        _cached_read_embeddings.cache_clear()
+        await _seed_vector_search_data(session, tmp_path)
+
+        # Query with wrong dimension (3 instead of 4)
+        request = VectorSearchRequest(
+            vector=[1.0, 0.0, 0.0],
+            model_version="perch_v1",
+            top_k=3,
+        )
+        with pytest.raises(ValueError, match="dimension"):
+            await similarity_search_by_vector(session, request)
+
+    async def test_empty_model_version_raises(self, session, tmp_path):
+        """Non-existent model_version raises ValueError."""
+        from humpback.schemas.search import VectorSearchRequest
+        from humpback.services.search_service import similarity_search_by_vector
+
+        _cached_read_embeddings.cache_clear()
+        await _seed_vector_search_data(session, tmp_path)
+
+        request = VectorSearchRequest(
+            vector=[1.0, 0.0, 0.0, 0.0],
+            model_version="nonexistent_model",
+            top_k=3,
+        )
+        with pytest.raises(ValueError, match="No embedding sets found"):
+            await similarity_search_by_vector(session, request)

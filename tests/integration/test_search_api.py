@@ -287,3 +287,93 @@ async def test_window_offset_seconds(seeded, client):
     for r in data["results"]:
         expected_offset = r["row_index"] * 5.0  # window_size_seconds=5.0
         assert r["window_offset_seconds"] == pytest.approx(expected_offset)
+
+
+# ---------------------------------------------------------------------------
+# POST /search/similar-by-vector
+# ---------------------------------------------------------------------------
+
+
+async def test_vector_search_returns_200(seeded, client):
+    """POST /search/similar-by-vector returns 200 with valid vector."""
+    resp = await client.post(
+        "/search/similar-by-vector",
+        json={
+            "vector": [1.0, 0.0, 0.0, 0.0],
+            "model_version": "perch_v1",
+            "top_k": 5,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model_version"] == "perch_v1"
+    assert data["metric"] == "cosine"
+    assert data["total_candidates"] > 0
+    assert len(data["results"]) > 0
+    # Query is [1,0,0,0]; best match should be es_query row 0 or es_other row 0
+    top = data["results"][0]
+    assert top["score"] > 0.8
+    assert "audio_filename" in top
+    assert "window_offset_seconds" in top
+
+
+async def test_vector_search_dimension_mismatch_400(seeded, client):
+    """POST /search/similar-by-vector returns 400 for dimension mismatch."""
+    # Embedding sets have vector_dim=4, but we send a 3-dim vector
+    resp = await client.post(
+        "/search/similar-by-vector",
+        json={
+            "vector": [1.0, 0.0, 0.0],
+            "model_version": "perch_v1",
+            "top_k": 5,
+        },
+    )
+    assert resp.status_code == 400
+    assert "dimension" in resp.json()["detail"].lower()
+
+
+async def test_vector_search_unknown_model_400(client):
+    """POST /search/similar-by-vector returns 400 for unknown model_version."""
+    resp = await client.post(
+        "/search/similar-by-vector",
+        json={
+            "vector": [1.0, 0.0, 0.0, 0.0],
+            "model_version": "nonexistent_model",
+            "top_k": 5,
+        },
+    )
+    assert resp.status_code == 400
+    assert "no embedding sets" in resp.json()["detail"].lower()
+
+
+async def test_vector_search_euclidean(seeded, client):
+    """POST /search/similar-by-vector with euclidean metric."""
+    resp = await client.post(
+        "/search/similar-by-vector",
+        json={
+            "vector": [1.0, 0.0, 0.0, 0.0],
+            "model_version": "perch_v1",
+            "metric": "euclidean",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["metric"] == "euclidean"
+    assert len(data["results"]) > 0
+
+
+async def test_vector_search_with_embedding_set_ids_filter(seeded, client):
+    """POST /search/similar-by-vector respects embedding_set_ids filter."""
+    ids = seeded
+    resp = await client.post(
+        "/search/similar-by-vector",
+        json={
+            "vector": [1.0, 0.0, 0.0, 0.0],
+            "model_version": "perch_v1",
+            "embedding_set_ids": [ids["es_other"]],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    result_es_ids = {r["embedding_set_id"] for r in data["results"]}
+    assert result_es_ids == {ids["es_other"]}

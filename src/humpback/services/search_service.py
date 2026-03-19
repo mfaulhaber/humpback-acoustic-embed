@@ -17,6 +17,7 @@ from humpback.schemas.search import (
     SimilaritySearchHit,
     SimilaritySearchRequest,
     SimilaritySearchResponse,
+    VectorSearchRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,92 @@ async def similarity_search(
         query_embedding_set_id=request.embedding_set_id,
         query_row_index=request.row_index,
         model_version=query_es.model_version,
+        metric=request.metric,
+        total_candidates=total_candidates,
+        results=results,
+    )
+
+
+async def similarity_search_by_vector(
+    session: AsyncSession,
+    request: VectorSearchRequest,
+) -> SimilaritySearchResponse:
+    """Execute embedding similarity search using a raw vector."""
+    query_vector = np.asarray(request.vector, dtype=np.float32)
+
+    # Find candidate embedding sets matching model_version
+    stmt = select(EmbeddingSet).where(
+        EmbeddingSet.model_version == request.model_version
+    )
+    if request.embedding_set_ids is not None:
+        stmt = stmt.where(EmbeddingSet.id.in_(request.embedding_set_ids))
+
+    es_rows = (await session.execute(stmt)).scalars().all()
+    if not es_rows:
+        raise ValueError(
+            f"No embedding sets found for model_version={request.model_version!r}"
+        )
+
+    # Validate dimension
+    expected_dim = es_rows[0].vector_dim
+    if query_vector.shape[0] != expected_dim:
+        raise ValueError(
+            f"Vector dimension {query_vector.shape[0]} does not match "
+            f"embedding sets ({expected_dim})"
+        )
+
+    candidate_sets = [(es.id, es.parquet_path) for es in es_rows]
+
+    # Brute-force search in thread pool
+    hits, total_candidates = await asyncio.to_thread(
+        _brute_force_search,
+        query_vector,
+        candidate_sets,
+        request.top_k,
+        request.metric,
+    )
+
+    # Enrich hits with audio file metadata
+    es_id_set = {h[1] for h in hits}
+    es_map: dict[str, EmbeddingSet] = {}
+    if es_id_set:
+        es_result = await session.execute(
+            select(EmbeddingSet).where(EmbeddingSet.id.in_(es_id_set))
+        )
+        for es in es_result.scalars():
+            es_map[es.id] = es
+
+    audio_ids = {es.audio_file_id for es in es_map.values()}
+    audio_map: dict[str, AudioFile] = {}
+    if audio_ids:
+        audio_result = await session.execute(
+            select(AudioFile).where(AudioFile.id.in_(audio_ids))
+        )
+        for af in audio_result.scalars():
+            audio_map[af.id] = af
+
+    results: list[SimilaritySearchHit] = []
+    for score, es_id, row_idx in hits:
+        es = es_map.get(es_id)
+        if es is None:
+            continue
+        af = audio_map.get(es.audio_file_id)
+        results.append(
+            SimilaritySearchHit(
+                score=score,
+                embedding_set_id=es_id,
+                row_index=row_idx,
+                audio_file_id=es.audio_file_id,
+                audio_filename=af.filename if af else "",
+                audio_folder_path=af.folder_path if af else None,
+                window_offset_seconds=row_idx * es.window_size_seconds,
+            )
+        )
+
+    return SimilaritySearchResponse(
+        query_embedding_set_id="detection",
+        query_row_index=-1,
+        model_version=request.model_version,
         metric=request.metric,
         total_candidates=total_candidates,
         results=results,

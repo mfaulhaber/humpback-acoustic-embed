@@ -77,6 +77,7 @@ def run_hydrophone_detection(
     low_threshold: float = 0.45,
     on_chunk_complete: Callable | None = None,
     on_chunk_diagnostics: Callable[[list[dict], int], None] | None = None,
+    on_chunk_embeddings: Callable[[list[dict]], None] | None = None,
     on_alert: Callable | None = None,
     cancel_check: Callable[[], bool] | None = None,
     pause_gate: "threading.Event | None" = None,
@@ -266,6 +267,36 @@ def run_hydrophone_detection(
                 window_size_seconds,
                 min_score=high_threshold,
             )
+
+        # Collect per-detection embeddings (peak-window vector) for this chunk
+        if on_chunk_embeddings is not None:
+            chunk_embedding_records: list[dict] = []
+            for event in events:
+                ev_start = float(event["start_sec"])
+                ev_end = float(event["end_sec"])
+                best_idx = -1
+                best_conf = -1.0
+                for w_idx, (meta, conf) in enumerate(
+                    zip(window_metas, window_confidences)
+                ):
+                    if (
+                        meta.offset_sec + 1e-6 >= ev_start
+                        and meta.offset_sec + window_size_seconds - 1e-6 <= ev_end
+                        and conf > best_conf
+                    ):
+                        best_idx = w_idx
+                        best_conf = conf
+                if best_idx >= 0:
+                    chunk_embedding_records.append(
+                        {
+                            "filename": synthetic_filename,
+                            "start_sec": ev_start,
+                            "end_sec": ev_end,
+                            "embedding": all_emb[best_idx].tolist(),
+                        }
+                    )
+            if chunk_embedding_records:
+                on_chunk_embeddings(chunk_embedding_records)
 
         for event in events:
             event["filename"] = synthetic_filename

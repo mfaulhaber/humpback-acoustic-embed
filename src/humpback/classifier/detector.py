@@ -322,12 +322,14 @@ def run_detection(
     low_threshold: float = 0.45,
     on_file_complete: Callable[[list[dict], int, int], None] | None = None,
     detection_mode: str | None = None,
-) -> tuple[list[dict], dict, list[dict] | None]:
+    emit_embeddings: bool = False,
+) -> tuple[list[dict], dict, list[dict] | None, list[dict] | None]:
     """Scan audio folder, classify each window, merge events.
 
-    Returns (detections_list, summary_dict, diagnostics_or_none).
+    Returns (detections_list, summary_dict, diagnostics_or_none, embeddings_or_none).
     Each detection: {filename, start_sec, end_sec, avg_confidence, peak_confidence, n_windows}.
     When emit_diagnostics=True, diagnostics is a list of per-window records.
+    When emit_embeddings=True, embeddings is a list of per-detection embedding records.
 
     When ``detection_mode="windowed"``, each merged event is reduced to
     non-overlapping peak windows of exactly ``window_size_seconds`` via NMS.
@@ -346,6 +348,7 @@ def run_detection(
     all_detections: list[dict] = []
     all_confidences: list[float] = []
     diagnostics_records: list[dict] | None = [] if emit_diagnostics else None
+    embedding_records: list[dict] | None = [] if emit_embeddings else None
     total_windows = 0
     total_positive = 0
     n_skipped_short = 0
@@ -480,6 +483,35 @@ def run_detection(
                     min_score=high_threshold,
                 )
 
+            # Collect per-detection embeddings (peak-window vector)
+            if emit_embeddings:
+                assert embedding_records is not None
+                for event in events:
+                    ev_start = float(event["start_sec"])
+                    ev_end = float(event["end_sec"])
+                    # Find the peak-confidence window within event bounds
+                    best_idx = -1
+                    best_conf = -1.0
+                    for w_idx, (meta, conf) in enumerate(
+                        zip(window_metas, window_confidences)
+                    ):
+                        if (
+                            meta.offset_sec + 1e-6 >= ev_start
+                            and meta.offset_sec + window_size_seconds - 1e-6 <= ev_end
+                            and conf > best_conf
+                        ):
+                            best_idx = w_idx
+                            best_conf = conf
+                    if best_idx >= 0:
+                        embedding_records.append(
+                            {
+                                "filename": rel_path,
+                                "start_sec": ev_start,
+                                "end_sec": ev_end,
+                                "embedding": all_emb[best_idx].tolist(),
+                            }
+                        )
+
             for event in events:
                 event["filename"] = rel_path
                 all_detections.append(event)
@@ -544,7 +576,7 @@ def run_detection(
         t_inference_total,
     )
 
-    return all_detections, summary, diagnostics_records
+    return all_detections, summary, diagnostics_records, embedding_records
 
 
 TSV_FIELDNAMES = [
@@ -661,3 +693,53 @@ def read_window_diagnostics_table(
     if filename is not None:
         read_kwargs["filters"] = [("filename", "=", filename)]
     return pq.read_table(str(path), **read_kwargs)
+
+
+def write_detection_embeddings(records: list[dict], path: Path) -> None:
+    """Write per-detection embedding records to a Parquet file."""
+    if not records:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    vector_dim = len(records[0]["embedding"])
+    schema = pa.schema(
+        [
+            ("filename", pa.string()),
+            ("start_sec", pa.float32()),
+            ("end_sec", pa.float32()),
+            ("embedding", pa.list_(pa.float32(), vector_dim)),
+        ]
+    )
+    table = pa.table(
+        {
+            "filename": [r["filename"] for r in records],
+            "start_sec": [r["start_sec"] for r in records],
+            "end_sec": [r["end_sec"] for r in records],
+            "embedding": [r["embedding"] for r in records],
+        },
+        schema=schema,
+    )
+    pq.write_table(table, path)
+
+
+def read_detection_embedding(
+    path: Path,
+    filename: str,
+    start_sec: float,
+    end_sec: float,
+) -> list[float] | None:
+    """Read a single detection embedding matching filename and time bounds.
+
+    Returns the embedding vector as a list of floats, or None if not found.
+    """
+    if not path.exists():
+        return None
+    table = pq.read_table(
+        str(path),
+        filters=[("filename", "=", filename)],
+    )
+    for i in range(table.num_rows):
+        row_start = float(table.column("start_sec")[i].as_py())
+        row_end = float(table.column("end_sec")[i].as_py())
+        if abs(row_start - start_sec) < 0.01 and abs(row_end - end_sec) < 0.01:
+            return table.column("embedding")[i].as_py()
+    return None
