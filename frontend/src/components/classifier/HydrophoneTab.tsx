@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1678,6 +1679,7 @@ function HydrophoneContentTable({
   onClearRowEdit: (jobId: string, rk: string) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
 }) {
+  const navigate = useNavigate();
   const { data: rows = [], isLoading } = useDetectionContent(
     jobId,
     isRunning ? 3000 : undefined,
@@ -2029,6 +2031,25 @@ function HydrophoneContentTable({
                     title={isPlaying ? "Pause" : "Play"}
                   >
                     {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate("/app/search", {
+                        state: {
+                          source: "detection",
+                          detectionJobId: jobId,
+                          filename: row.filename,
+                          startSec: row.start_sec,
+                          endSec: row.end_sec,
+                          clipDuration: row._clipDurationSec,
+                        },
+                      });
+                    }}
+                    className="p-0.5 rounded hover:bg-blue-100"
+                    title="Search similar"
+                  >
+                    <Search className="h-3.5 w-3.5 text-blue-600" />
                   </button>
                 </td>
                 <td

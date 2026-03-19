@@ -1,13 +1,14 @@
 import { NavLink } from "react-router-dom";
 import type { TabId } from "@/App";
 import { cn } from "@/lib/utils";
-import { Music, Cpu, Network, Zap, Settings } from "lucide-react";
+import { Music, Cpu, Network, Zap, Search, Settings } from "lucide-react";
 
 const tabs: { id: TabId; label: string; icon: typeof Music; to: string }[] = [
   { id: "audio", label: "Audio", icon: Music, to: "/app/audio" },
   { id: "processing", label: "Processing", icon: Cpu, to: "/app/processing" },
   { id: "clustering", label: "Clustering", icon: Network, to: "/app/clustering" },
   { id: "classifier", label: "Classifier", icon: Zap, to: "/app/classifier" },
+  { id: "search", label: "Search", icon: Search, to: "/app/search" },
   { id: "admin", label: "Admin", icon: Settings, to: "/app/admin" },
 ];
 

@@ -4,13 +4,53 @@
 
 ## Active
 
-# Plan: Agile Modeling Phase 1 — Embedding Similarity Search
-
-[Full plan](/Users/michael/.claude/plans/replicated-snacking-goblet.md)
+(none)
 
 ---
 
 ## Recently Completed
+
+# Plan: Agile Modeling Phase 2 — Search Results UI
+
+[Full plan](/Users/michael/.claude/plans/polished-strolling-hare.md)
+
+## Outcome (2026-03-18)
+
+- Stored per-detection peak-window embeddings in `detection_embeddings.parquet`
+  during local + hydrophone + subprocess detection paths
+- Added `POST /search/similar-by-vector` (raw vector search), `GET /classifier/
+  detection-jobs/{id}/embedding` (retrieve stored embedding), `GET /audio/{id}/
+  spectrogram-png` (cached PNG spectrogram)
+- Built Search tab with standalone mode (embedding set + window picker) and
+  detection-sourced mode ("Search Similar" button on detection rows)
+- Results table with spectrogram thumbnails, inline playback, score ranking
+- ADR-033: Detection embedding storage for similarity search
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 736 passed, 1 skipped
+
+# Plan: Agile Modeling Phase 1 — Embedding Similarity Search
+
+[Full plan](/Users/michael/.claude/plans/replicated-snacking-goblet.md)
+
+## Outcome (2026-03-18)
+
+- Added `POST /search/similar` endpoint with brute-force cosine/euclidean search across all embedding sets for the same model version
+- LRU cache (128 entries) for loaded parquet embeddings avoids repeated I/O
+- Standard cosine similarity (not mean-centered) for stable cross-corpus search
+- Supports `top_k`, `exclude_self`, `embedding_set_ids` filter, and `metric` selection
+- Unit + integration tests (541 lines across 2 test files)
+- ADR-032: Standard cosine similarity for cross-corpus embedding search
+
+## Verification
+
+- `uv run pytest tests/` — 688+ passed
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
 
 # Plan: DB Load Logging + UI Error Flash Bar
 
@@ -250,8 +290,6 @@
 
 - Agile Modeling Phase 1b: Search by uploaded audio clip — embed on-the-fly
   using specified model, then search existing embedding sets
-- Agile Modeling Phase 2: Search results UI — playback, spectrogram preview,
-  and inline positive/negative labeling from search hits
 - Agile Modeling Phase 3: Classifier integration — label search results to
   create training sets, connect into the retrain loop
 - Agile Modeling Phase 4: Active learning — prioritize labeling suggestions

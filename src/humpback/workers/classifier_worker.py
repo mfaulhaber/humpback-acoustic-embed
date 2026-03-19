@@ -266,6 +266,9 @@ def _hydrophone_detection_subprocess_main(
                 }
             )
 
+        def on_chunk_embeddings(chunk_records: list[dict]) -> None:
+            event_queue.put({"type": "embeddings", "chunk_records": chunk_records})
+
         def on_alert(alert: dict) -> None:
             event_queue.put({"type": "alert", "alert": alert})
 
@@ -288,6 +291,7 @@ def _hydrophone_detection_subprocess_main(
             low_threshold=float(runtime["low_threshold"]),
             on_chunk_complete=on_chunk_complete,
             on_chunk_diagnostics=on_chunk_diagnostics,
+            on_chunk_embeddings=on_chunk_embeddings,
             on_alert=on_alert,
             cancel_check=cancel_event.is_set,
             pause_gate=pause_gate,
@@ -326,6 +330,7 @@ async def _run_hydrophone_detection_in_subprocess(
     pause_gate: Any,
     on_chunk_complete,
     on_chunk_diagnostics,
+    on_chunk_embeddings,
     on_alert,
     on_resume_invalidation,
 ) -> tuple[list[dict], dict]:
@@ -394,6 +399,10 @@ async def _run_hydrophone_detection_in_subprocess(
                     cast(list[dict], message["chunk_records"]),
                     int(message["segments_done"]),
                 )
+                continue
+
+            if msg_type == "embeddings":
+                on_chunk_embeddings(cast(list[dict], message["chunk_records"]))
                 continue
 
             if msg_type == "alert":
@@ -634,7 +643,12 @@ async def run_detection_job(
                 loop.call_soon_threadsafe(asyncio.ensure_future, _update_progress())
 
         # Run detection (CPU-bound) with diagnostics and incremental callback
-        detections, summary, diagnostics = await asyncio.to_thread(
+        (
+            detections,
+            summary,
+            diagnostics,
+            detection_embeddings,
+        ) = await asyncio.to_thread(
             run_detection,
             audio_folder,
             pipeline,
@@ -650,6 +664,7 @@ async def run_detection_job(
             job.low_threshold,
             on_file_complete,
             job.detection_mode,
+            True,  # emit_embeddings
         )
 
         # Overwrite TSV with final authoritative version
@@ -662,6 +677,14 @@ async def run_detection_job(
             summary["has_diagnostics"] = True
         else:
             diag_path = None
+
+        # Write detection embeddings
+        if detection_embeddings:
+            from humpback.classifier.detector import write_detection_embeddings
+
+            emb_path = ddir / "detection_embeddings.parquet"
+            write_detection_embeddings(detection_embeddings, emb_path)
+            summary["has_detection_embeddings"] = True
 
         ensure_detection_row_store(
             row_store_path=row_store_path,
@@ -867,6 +890,11 @@ async def run_hydrophone_detection_job(
                 f"part-{segments_done:06d}.parquet",
             )
 
+        accumulated_embedding_records: list[dict] = []
+
+        def on_chunk_embeddings(chunk_emb_records: list[dict]) -> None:
+            accumulated_embedding_records.extend(chunk_emb_records)
+
         def on_resume_invalidation():
             if not diag_path.exists():
                 return
@@ -956,6 +984,7 @@ async def run_hydrophone_detection_job(
                     pause_gate=pause_gate,
                     on_chunk_complete=on_chunk_complete,
                     on_chunk_diagnostics=on_chunk_diagnostics,
+                    on_chunk_embeddings=on_chunk_embeddings,
                     on_alert=on_alert,
                     on_resume_invalidation=on_resume_invalidation,
                 )
@@ -983,6 +1012,7 @@ async def run_hydrophone_detection_job(
                     low_threshold=job.low_threshold,
                     on_chunk_complete=on_chunk_complete,
                     on_chunk_diagnostics=on_chunk_diagnostics,
+                    on_chunk_embeddings=on_chunk_embeddings,
                     on_alert=on_alert,
                     cancel_check=cancel_event.is_set,
                     pause_gate=pause_gate,
@@ -1022,6 +1052,13 @@ async def run_hydrophone_detection_job(
         child_pid = int(summary["child_pid"]) if "child_pid" in summary else None
 
         if cancel_event.is_set():
+            # Write partial detection embeddings on cancel
+            if accumulated_embedding_records:
+                from humpback.classifier.detector import write_detection_embeddings
+
+                emb_path = ddir / "detection_embeddings.parquet"
+                write_detection_embeddings(accumulated_embedding_records, emb_path)
+                summary["has_detection_embeddings"] = True
             _mark_has_diagnostics(summary)
             summary = _augment_hydrophone_summary(
                 summary,
@@ -1080,6 +1117,14 @@ async def run_hydrophone_detection_job(
             refresh_existing=True,
             detection_mode=job.detection_mode,
         )
+
+        # Write detection embeddings
+        if accumulated_embedding_records:
+            from humpback.classifier.detector import write_detection_embeddings
+
+            emb_path = ddir / "detection_embeddings.parquet"
+            write_detection_embeddings(accumulated_embedding_records, emb_path)
+            summary["has_detection_embeddings"] = True
 
         _mark_has_diagnostics(summary)
         summary = _augment_hydrophone_summary(

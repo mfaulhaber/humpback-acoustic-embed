@@ -532,6 +532,9 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | POST | `/admin/models/{id}/set-default` | Set model as default |
 | GET | `/admin/models/scan` | Scan `models/` dir for unregistered models (.tflite + SavedModel dirs) |
 | POST | `/search/similar` | Embedding similarity search — find top-K most similar windows across embedding sets for the same model (cosine or euclidean, brute-force with LRU cache) |
+| POST | `/search/similar-by-vector` | Search by raw embedding vector (e.g., from a detection row), same ranking as `/search/similar` |
+| GET | `/classifier/detection-jobs/{id}/embedding` | Retrieve the stored embedding for a specific detection row (returns vector, model_version, vector_dim) |
+| GET | `/audio/{id}/spectrogram-png` | PNG spectrogram image for a time range of an audio file (disk-cached) |
 
 Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.
@@ -789,7 +792,10 @@ outputs to `src/humpback/static/dist/` and the FastAPI server serves the SPA
 alongside the API on `:8000`.
 
 No client-side router is used — the UI is tab-based (Audio, Processing,
-Clustering, Classifier, Admin) with navigation managed via React state.
+Clustering, Classifier, Search, Admin) with navigation managed via React Router.
+The **Search** tab supports standalone embedding search (pick an embedding set +
+window) and detection-sourced search (click "Search Similar" on a detection row
+to find similar audio across all embedding sets).
 
 ## Acknowledgements
 

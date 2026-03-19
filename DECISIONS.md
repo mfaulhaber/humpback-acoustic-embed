@@ -901,3 +901,38 @@ embeddings. Defer vector index (FAISS, USearch) and on-the-fly embedding to futu
 - The brute-force approach is O(N) in total embeddings; adequate at current scale but
   will need replacement if the corpus grows to millions of vectors.
 - The LRU cache bounds memory usage while avoiding repeated parquet reads for hot sets.
+
+---
+
+## ADR-033: Detection embedding storage for similarity search
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: The Search Results UI (Phase 2) needs to search for audio similar to a
+detection result. Detection rows don't map to existing embedding sets — the detector
+computes embeddings per window but discards them after classification. To enable
+"Search Similar" from detection rows, the system needs to persist the representative
+embedding for each detection output row.
+
+**Decision**: Store per-detection peak-window embeddings in
+`{detection_dir}/detection_embeddings.parquet` during detection. The detector identifies
+the peak-confidence window within each detection event's bounds and extracts its embedding
+vector. The parquet schema is `(filename, start_sec, end_sec, embedding)`. A new
+`POST /search/similar-by-vector` endpoint accepts a raw vector for search, reusing the
+existing `_brute_force_search()` core. No database column is needed — the parquet path
+is derived from the detection job's output directory.
+
+**Alternatives considered**:
+- On-the-fly re-embedding: requires loading the model in the API process, conflicting with
+  the architecture that isolates model loading to workers.
+- Storing embeddings in the database: vectors are large (1536 floats × 4 bytes = 6KB each)
+  and parquet is the existing storage pattern for embeddings.
+- Storing all window embeddings: wasteful; only the peak-confidence window per detection
+  event is needed for similarity search.
+
+**Consequences**:
+- Detection jobs run after this change automatically produce `detection_embeddings.parquet`.
+- Pre-existing detection jobs have no stored embeddings; the Search page shows an
+  appropriate message when the embedding retrieval returns 404.
+- The embedding file adds modest disk overhead (one vector per detection event).

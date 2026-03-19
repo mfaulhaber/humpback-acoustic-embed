@@ -10,6 +10,14 @@ class SimilaritySearchRequest(BaseModel):
     embedding_set_ids: list[str] | None = None
 
 
+class VectorSearchRequest(BaseModel):
+    vector: list[float]
+    model_version: str
+    top_k: int = Field(default=20, ge=1, le=500)
+    metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
+    embedding_set_ids: list[str] | None = None
+
+
 class SimilaritySearchHit(BaseModel):
     score: float
     embedding_set_id: str

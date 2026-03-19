@@ -635,6 +635,33 @@ export interface TableInfo {
   count: number;
 }
 
+// ---- Search ----
+
+export interface SimilaritySearchHit {
+  score: number;
+  embedding_set_id: string;
+  row_index: number;
+  audio_file_id: string;
+  audio_filename: string;
+  audio_folder_path: string | null;
+  window_offset_seconds: number;
+}
+
+export interface SimilaritySearchResponse {
+  query_embedding_set_id: string;
+  query_row_index: number;
+  model_version: string;
+  metric: string;
+  total_candidates: number;
+  results: SimilaritySearchHit[];
+}
+
+export interface DetectionEmbeddingResponse {
+  vector: number[];
+  model_version: string;
+  vector_dim: number;
+}
+
 // ---- Health ----
 
 export interface HealthStatus {

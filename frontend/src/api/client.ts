@@ -12,6 +12,7 @@ import type {
   ClusteringMetrics,
   ClusterOut,
   DendrogramData,
+  DetectionEmbeddingResponse,
   DetectionJob,
   DetectionLabelRow,
   DetectionRow,
@@ -28,6 +29,7 @@ import type {
   HydrophoneInfo,
   LabelQueueEntry,
   RefinementReport,
+  SimilaritySearchResponse,
   StabilitySummary,
   ModelConfig,
   ModelConfigCreate,
@@ -325,6 +327,41 @@ export const createRetrainWorkflow = (body: RetrainWorkflowCreate) =>
 
 export const fetchRetrainWorkflows = () =>
   api<RetrainWorkflow[]>("/classifier/retrain-workflows");
+
+// ---- Search ----
+
+export const searchSimilar = (body: {
+  embedding_set_id: string;
+  row_index: number;
+  top_k?: number;
+  metric?: string;
+  exclude_self?: boolean;
+}) => post<SimilaritySearchResponse>("/search/similar", body);
+
+export const searchSimilarByVector = (body: {
+  vector: number[];
+  model_version: string;
+  top_k?: number;
+  metric?: string;
+}) => post<SimilaritySearchResponse>("/search/similar-by-vector", body);
+
+export const fetchDetectionEmbedding = (
+  jobId: string,
+  filename: string,
+  startSec: number,
+  endSec: number,
+) =>
+  api<DetectionEmbeddingResponse>(
+    `/classifier/detection-jobs/${jobId}/embedding?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&end_sec=${endSec}`,
+  );
+
+export function audioSpectrogramPngUrl(
+  audioId: string,
+  startSeconds: number,
+  durationSeconds: number,
+) {
+  return `/audio/${audioId}/spectrogram-png?start_seconds=${startSeconds}&duration_seconds=${durationSeconds}`;
+}
 
 // ---- Admin ----
 

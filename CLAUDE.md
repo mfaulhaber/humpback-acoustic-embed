@@ -137,6 +137,7 @@ frontend/
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── classifier/          (ClassifierTab, TrainingTab, DetectionTab, BulkDeleteDialog)
+    │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
     │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc)
     └── utils/                   (format.ts, audio.ts)

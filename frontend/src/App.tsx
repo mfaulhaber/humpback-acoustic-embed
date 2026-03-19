@@ -6,14 +6,16 @@ import { ProcessingTab } from "@/components/processing/ProcessingTab";
 import { ClusteringTab } from "@/components/clustering/ClusteringTab";
 import { AdminTab } from "@/components/admin/AdminTab";
 import { ClassifierTab } from "@/components/classifier/ClassifierTab";
+import { SearchTab } from "@/components/search/SearchTab";
 
-export type TabId = "audio" | "processing" | "clustering" | "classifier" | "admin";
+export type TabId = "audio" | "processing" | "clustering" | "classifier" | "search" | "admin";
 
 function useActiveTab(): TabId {
   const { pathname } = useLocation();
   if (pathname.startsWith("/app/processing")) return "processing";
   if (pathname.startsWith("/app/clustering")) return "clustering";
   if (pathname.startsWith("/app/classifier")) return "classifier";
+  if (pathname.startsWith("/app/search")) return "search";
   if (pathname.startsWith("/app/admin")) return "admin";
   return "audio";
 }
@@ -31,6 +33,7 @@ export default function App() {
         <Route path="/app/clustering/:jobId" element={<ClusteringTab />} />
         <Route path="/app/clustering" element={<ClusteringTab />} />
         <Route path="/app/classifier" element={<ClassifierTab />} />
+        <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/admin" element={<AdminTab />} />
         <Route path="*" element={<Navigate to="/app/audio" replace />} />
       </Routes>

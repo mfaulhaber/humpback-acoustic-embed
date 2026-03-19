@@ -29,10 +29,16 @@ Current state of the humpback acoustic embedding and clustering platform.
 
 ### Embedding Similarity Search
 - `POST /search/similar` — brute-force cosine or euclidean search across all embedding sets for the same model version
+- `POST /search/similar-by-vector` — search using a raw embedding vector (for detection-sourced queries)
+- `GET /classifier/detection-jobs/{id}/embedding` — retrieve stored detection embedding for a row
+- `GET /audio/{id}/spectrogram-png` — PNG spectrogram for arbitrary time range (cached)
 - LRU cache (128 entries) for loaded parquet embeddings avoids repeated I/O
 - Standard cosine similarity (not mean-centered) for stable cross-corpus search
 - Supports `top_k`, `exclude_self`, `embedding_set_ids` filter, and `metric` selection
 - Returns ranked hits with audio file metadata and `window_offset_seconds`
+- Detection jobs store per-detection peak-window embeddings in `detection_embeddings.parquet`
+- Search tab UI: standalone search (pick embedding set + window) and detection-sourced search ("Search Similar" from detection rows)
+- Spectrogram thumbnail previews and inline playback in search results
 
 ### Clustering
 - Model version validation: rejects clustering across different embedding models

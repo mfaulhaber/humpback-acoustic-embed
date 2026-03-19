@@ -1672,3 +1672,177 @@ async def test_orca_label_round_trip(client, app_settings):
     assert rows[0]["humpback"] == 0
 
     await engine.dispose()
+
+
+# ---- Detection Embedding Endpoint ----
+
+
+async def test_detection_embedding_404_for_nonexistent_job(client):
+    """GET /classifier/detection-jobs/{id}/embedding returns 404 for missing job."""
+    resp = await client.get(
+        "/classifier/detection-jobs/nonexistent/embedding",
+        params={"filename": "test.wav", "start_sec": 0.0, "end_sec": 5.0},
+    )
+    assert resp.status_code == 404
+
+
+async def test_detection_embedding_404_for_job_without_embeddings(client, app_settings):
+    """GET /classifier/detection-jobs/{id}/embedding returns 404 when no embeddings exist."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    # Create a completed job with a TSV but no embeddings parquet
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+    tsv_path = tsv_dir / "detections.tsv"
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["filename", "start_sec", "end_sec"],
+            delimiter="\t",
+        )
+        writer.writeheader()
+        writer.writerow({"filename": "test.wav", "start_sec": "0.0", "end_sec": "5.0"})
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/embedding",
+        params={"filename": "test.wav", "start_sec": 0.0, "end_sec": 5.0},
+    )
+    assert resp.status_code == 404
+    assert "no stored embeddings" in resp.json()["detail"].lower()
+
+    await engine.dispose()
+
+
+async def test_detection_embedding_404_for_job_without_output(client, app_settings):
+    """GET /classifier/detection-jobs/{id}/embedding returns 404 when no output path."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                # no output_tsv_path
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/embedding",
+        params={"filename": "test.wav", "start_sec": 0.0, "end_sec": 5.0},
+    )
+    assert resp.status_code == 404
+    assert "no output" in resp.json()["detail"].lower()
+
+    await engine.dispose()
+
+
+async def test_detection_embedding_returns_vector(client, app_settings):
+    """GET /classifier/detection-jobs/{id}/embedding returns embedding when available."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.classifier.detector import write_detection_embeddings
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+
+    job_id = str(uuid.uuid4())
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+    tsv_path = tsv_dir / "detections.tsv"
+    with open(tsv_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["filename", "start_sec", "end_sec"],
+            delimiter="\t",
+        )
+        writer.writeheader()
+        writer.writerow({"filename": "song.wav", "start_sec": "0.0", "end_sec": "5.0"})
+
+    # Write detection embeddings
+    embedding_records = [
+        {
+            "filename": "song.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+            "embedding": [0.1, 0.2, 0.3, 0.4],
+        }
+    ]
+    emb_path = tsv_dir / "detection_embeddings.parquet"
+    write_detection_embeddings(embedding_records, emb_path)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="test-model",
+                model_path="/tmp/fake.pkl",
+                model_version="perch_v1",
+                vector_dim=4,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id=model_id,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                output_tsv_path=str(tsv_path),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/embedding",
+        params={"filename": "song.wav", "start_sec": 0.0, "end_sec": 5.0},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model_version"] == "perch_v1"
+    assert data["vector_dim"] == 4
+    assert len(data["vector"]) == 4
+    import pytest as _pt
+
+    assert data["vector"][0] == _pt.approx(0.1, abs=1e-5)
+
+    await engine.dispose()
