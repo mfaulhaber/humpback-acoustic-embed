@@ -327,7 +327,6 @@ async def test_classifier_workflow(e2e_settings, e2e_client, tmp_path):
     assert resp.status_code == 200
     djob = resp.json()
     assert djob["status"] == "complete"
-    assert djob["output_tsv_path"] is not None
     assert djob["result_summary"] is not None
     assert djob["result_summary"]["n_files"] == 1
 

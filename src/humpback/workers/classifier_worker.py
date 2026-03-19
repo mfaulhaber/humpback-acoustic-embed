@@ -607,8 +607,6 @@ async def run_detection_job(
             update(DetectionJob)
             .where(DetectionJob.id == job.id)
             .values(
-                output_tsv_path=str(tsv_path),
-                output_row_store_path=str(row_store_path),
                 files_total=files_total,
                 files_processed=0,
             )
@@ -764,14 +762,6 @@ async def run_hydrophone_detection_job(
         diag_path = ddir / "window_diagnostics.parquet"
         row_store_path = ddir / "detection_rows.parquet"
 
-        await session.execute(
-            update(DetectionJob)
-            .where(DetectionJob.id == job.id)
-            .values(
-                output_tsv_path=str(tsv_path),
-                output_row_store_path=str(row_store_path),
-            )
-        )
         await session.commit()
 
         # Resume support: if segments were already processed, read prior detections
@@ -1188,16 +1178,15 @@ async def run_extraction_job(
             )
         )
 
-        if not job.output_tsv_path:
-            raise ValueError("Detection job has no output TSV path")
-        diagnostics_path = (
-            Path(job.output_tsv_path).parent / "window_diagnostics.parquet"
+        from humpback.storage import (
+            detection_diagnostics_path as _det_diag_path,
+            detection_row_store_path as _det_rs_path,
+            detection_tsv_path as _det_tsv_path,
         )
-        row_store_path = (
-            Path(job.output_row_store_path)
-            if job.output_row_store_path
-            else (Path(job.output_tsv_path).parent / "detection_rows.parquet")
-        )
+
+        tsv_path = _det_tsv_path(settings.storage_root, job.id)
+        diagnostics_path = _det_diag_path(settings.storage_root, job.id)
+        row_store_path = _det_rs_path(settings.storage_root, job.id)
 
         # Look up window_size_seconds from the classifier model
         from sqlalchemy import select as sa_select
@@ -1223,19 +1212,12 @@ async def run_extraction_job(
 
         ensure_detection_row_store(
             row_store_path=row_store_path,
-            tsv_path=Path(job.output_tsv_path),
+            tsv_path=tsv_path,
             diagnostics_path=diagnostics_path if diagnostics_path.exists() else None,
             is_hydrophone=job.hydrophone_id is not None,
             window_size_seconds=ws,
             detection_mode=job.detection_mode,
         )
-        if job.output_row_store_path != str(row_store_path):
-            await session.execute(
-                update(DetectionJob)
-                .where(DetectionJob.id == job.id)
-                .values(output_row_store_path=str(row_store_path))
-            )
-            await session.commit()
 
         if job.hydrophone_id:
             from humpback.classifier.extractor import extract_hydrophone_labeled_samples
@@ -1249,7 +1231,7 @@ async def run_extraction_job(
 
             summary = await asyncio.to_thread(
                 extract_hydrophone_labeled_samples,
-                tsv_path=job.output_tsv_path,
+                tsv_path=str(tsv_path),
                 provider=extract_provider,
                 positive_output_path=pos_path,
                 negative_output_path=neg_path,
@@ -1276,7 +1258,7 @@ async def run_extraction_job(
                 raise ValueError("Local extraction job missing audio_folder")
             summary = await asyncio.to_thread(
                 extract_labeled_samples,
-                tsv_path=job.output_tsv_path,
+                tsv_path=str(tsv_path),
                 audio_folder=job.audio_folder,
                 positive_output_path=pos_path,
                 negative_output_path=neg_path,

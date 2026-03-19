@@ -24,12 +24,8 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
     monkeypatch,
 ):
     """Orcasound extraction should use the archive playback provider builder."""
-    tsv_path = tmp_path / "detections.tsv"
-    tsv_path.write_text(
-        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
-        "20250615T080000Z.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
-    )
-
+    # Job will be created below; we need to pre-create files in the derived path
+    # First, set up settings and capture dict
     settings.s3_cache_path = str(tmp_path / "cache-root")
     settings.spectrogram_hop_length = 300
     settings.spectrogram_dynamic_range_db = 72.0
@@ -84,7 +80,6 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
         hydrophone_name="Orcasound Lab",
         start_timestamp=1000.0,
         end_timestamp=2000.0,
-        output_tsv_path=str(tsv_path),
         extract_config=json.dumps(
             {
                 "positive_output_path": str(tmp_path / "pos"),
@@ -100,16 +95,24 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
     await session.commit()
     await session.refresh(job)
 
+    # Write TSV in the derived detection directory
+    from humpback.storage import detection_dir
+
+    ddir = detection_dir(settings.storage_root, job.id)
+    ddir.mkdir(parents=True, exist_ok=True)
+    tsv_path = ddir / "detections.tsv"
+    tsv_path.write_text(
+        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
+        "20250615T080000Z.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
+    )
+
     await run_extraction_job(session, job, settings)
     await session.refresh(job)
 
     assert capture["cache_path"] == settings.s3_cache_path
     assert capture["source_id"] == "rpi_orcasound_lab"
     assert isinstance(capture["provider"], DummyProvider)
-    assert (
-        capture["window_diagnostics_path"]
-        == tsv_path.parent / "window_diagnostics.parquet"
-    )
+    assert capture["window_diagnostics_path"] == ddir / "window_diagnostics.parquet"
     assert capture["positive_selection_smoothing_window"] == 5
     assert capture["positive_selection_min_score"] == 0.8
     assert capture["positive_selection_extend_min_score"] == 0.6
@@ -128,12 +131,6 @@ async def test_local_extraction_forwards_spectrogram_settings(
     monkeypatch,
 ):
     """Local extraction should receive the same spectrogram settings as the UI endpoint."""
-    tsv_path = tmp_path / "detections.tsv"
-    tsv_path.write_text(
-        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
-        "test.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
-    )
-
     settings.spectrogram_hop_length = 144
     settings.spectrogram_dynamic_range_db = 65.0
     settings.spectrogram_width_px = 512
@@ -159,7 +156,6 @@ async def test_local_extraction_forwards_spectrogram_settings(
         extract_status="running",
         classifier_model_id="missing-model-is-allowed",
         audio_folder=str(tmp_path / "audio"),
-        output_tsv_path=str(tsv_path),
         extract_config=json.dumps(
             {
                 "positive_output_path": str(tmp_path / "pos"),
@@ -171,14 +167,22 @@ async def test_local_extraction_forwards_spectrogram_settings(
     await session.commit()
     await session.refresh(job)
 
+    # Write TSV in the derived detection directory
+    from humpback.storage import detection_dir
+
+    ddir = detection_dir(settings.storage_root, job.id)
+    ddir.mkdir(parents=True, exist_ok=True)
+    tsv_path = ddir / "detections.tsv"
+    tsv_path.write_text(
+        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
+        "test.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
+    )
+
     await run_extraction_job(session, job, settings)
     await session.refresh(job)
 
     assert capture["audio_folder"] == str(tmp_path / "audio")
-    assert (
-        capture["window_diagnostics_path"]
-        == tsv_path.parent / "window_diagnostics.parquet"
-    )
+    assert capture["window_diagnostics_path"] == ddir / "window_diagnostics.parquet"
     assert capture["spectrogram_hop_length"] == 144
     assert capture["spectrogram_dynamic_range_db"] == 65.0
     assert capture["spectrogram_width_px"] == 512
@@ -194,12 +198,6 @@ async def test_noaa_extraction_does_not_require_cache_path(
     monkeypatch,
 ):
     """NOAA extraction should use direct provider playback without cache config."""
-    tsv_path = tmp_path / "detections.tsv"
-    tsv_path.write_text(
-        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
-        "20150725T000009Z.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
-    )
-
     settings.s3_cache_path = None
     capture: dict[str, object] = {}
 
@@ -239,7 +237,6 @@ async def test_noaa_extraction_does_not_require_cache_path(
         hydrophone_name="NOAA Glacier Bay (Bartlett Cove)",
         start_timestamp=1437782400.0,
         end_timestamp=1437786000.0,
-        output_tsv_path=str(tsv_path),
         extract_config=json.dumps(
             {
                 "positive_output_path": str(tmp_path / "pos"),
@@ -251,6 +248,17 @@ async def test_noaa_extraction_does_not_require_cache_path(
     session.add(job)
     await session.commit()
     await session.refresh(job)
+
+    # Write TSV in the derived detection directory
+    from humpback.storage import detection_dir
+
+    ddir = detection_dir(settings.storage_root, job.id)
+    ddir.mkdir(parents=True, exist_ok=True)
+    tsv_path = ddir / "detections.tsv"
+    tsv_path.write_text(
+        "filename\tstart_sec\tend_sec\tavg_confidence\tpeak_confidence\thumpback\tship\tbackground\n"
+        "20150725T000009Z.wav\t0.0\t5.0\t0.9\t0.95\t1\t\t\n"
+    )
 
     await run_extraction_job(session, job, settings)
     await session.refresh(job)

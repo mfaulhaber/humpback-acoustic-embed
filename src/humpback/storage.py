@@ -50,6 +50,20 @@ def detection_row_store_path(storage_root: Path, detection_job_id: str) -> Path:
     return detection_dir(storage_root, detection_job_id) / "detection_rows.parquet"
 
 
+def detection_tsv_path(storage_root: Path, detection_job_id: str) -> Path:
+    return detection_dir(storage_root, detection_job_id) / "detections.tsv"
+
+
+def detection_diagnostics_path(storage_root: Path, detection_job_id: str) -> Path:
+    return detection_dir(storage_root, detection_job_id) / "window_diagnostics.parquet"
+
+
+def detection_embeddings_path(storage_root: Path, detection_job_id: str) -> Path:
+    return (
+        detection_dir(storage_root, detection_job_id) / "detection_embeddings.parquet"
+    )
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
