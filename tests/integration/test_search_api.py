@@ -7,7 +7,9 @@ import pytest
 
 from humpback.database import create_engine, create_session_factory
 from humpback.models.audio import AudioFile
+from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.processing import EmbeddingSet
+from humpback.models.search import SearchJob
 from humpback.processing.embeddings import IncrementalParquetWriter
 
 
@@ -377,3 +379,143 @@ async def test_vector_search_with_embedding_set_ids_filter(seeded, client):
     data = resp.json()
     result_es_ids = {r["embedding_set_id"] for r in data["results"]}
     assert result_es_ids == {ids["es_other"]}
+
+
+# ---------------------------------------------------------------------------
+# POST /search/similar-by-audio + GET /search/jobs/{id}
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def detection_job_id(app_settings, client):
+    """Create a detection job for audio search tests."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        cm = ClassifierModel(
+            name="test_cls",
+            model_path="/fake/model.tflite",
+            model_version="perch_v1",
+            vector_dim=4,
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+        )
+        session.add(cm)
+        await session.flush()
+
+        dj = DetectionJob(
+            classifier_model_id=cm.id,
+            audio_folder="/fake/audio",
+            status="complete",
+        )
+        session.add(dj)
+        await session.flush()
+        dj_id = dj.id
+        await session.commit()
+    await engine.dispose()
+    return dj_id
+
+
+async def test_create_audio_search_201(detection_job_id, client):
+    """POST /search/similar-by-audio creates a queued search job."""
+    resp = await client.post(
+        "/search/similar-by-audio",
+        json={
+            "detection_job_id": detection_job_id,
+            "filename": "test.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert "id" in data
+
+
+async def test_create_audio_search_404_missing_detection(client):
+    """POST /search/similar-by-audio returns 404 for nonexistent detection job."""
+    resp = await client.post(
+        "/search/similar-by-audio",
+        json={
+            "detection_job_id": "nonexistent-id",
+            "filename": "test.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+        },
+    )
+    assert resp.status_code == 404
+
+
+async def test_poll_search_job_queued(detection_job_id, client):
+    """GET /search/jobs/{id} returns queued status before worker processes."""
+    resp = await client.post(
+        "/search/similar-by-audio",
+        json={
+            "detection_job_id": detection_job_id,
+            "filename": "test.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+        },
+    )
+    job_id = resp.json()["id"]
+
+    resp2 = await client.get(f"/search/jobs/{job_id}")
+    assert resp2.status_code == 200
+    assert resp2.json()["status"] == "queued"
+
+
+async def test_poll_search_job_404(client):
+    """GET /search/jobs/{id} returns 404 for nonexistent job."""
+    resp = await client.get("/search/jobs/nonexistent-id")
+    assert resp.status_code == 404
+
+
+async def test_poll_completed_search_job(
+    detection_job_id, seeded, app_settings, client
+):
+    """GET /search/jobs/{id} runs search and returns results for a completed job."""
+    import json
+
+    # Create a search job
+    resp = await client.post(
+        "/search/similar-by-audio",
+        json={
+            "detection_job_id": detection_job_id,
+            "filename": "test.wav",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+        },
+    )
+    job_id = resp.json()["id"]
+
+    # Manually mark it as complete with a known vector
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    from sqlalchemy import update
+
+    async with sf() as session:
+        await session.execute(
+            update(SearchJob)
+            .where(SearchJob.id == job_id)
+            .values(
+                status="complete",
+                model_version="perch_v1",
+                embedding_vector=json.dumps([1.0, 0.0, 0.0, 0.0]),
+            )
+        )
+        await session.commit()
+    await engine.dispose()
+
+    # Poll — should get search results
+    resp2 = await client.get(f"/search/jobs/{job_id}")
+    assert resp2.status_code == 200
+    data = resp2.json()
+    assert data["status"] == "complete"
+    assert data["results"] is not None
+    assert data["results"]["model_version"] == "perch_v1"
+    assert len(data["results"]["results"]) > 0
+
+    # Job should be cleaned up — polling again returns 404
+    resp3 = await client.get(f"/search/jobs/{job_id}")
+    assert resp3.status_code == 404

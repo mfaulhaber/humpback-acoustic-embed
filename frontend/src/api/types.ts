@@ -662,6 +662,23 @@ export interface DetectionEmbeddingResponse {
   vector_dim: number;
 }
 
+export interface AudioSearchRequest {
+  detection_job_id: string;
+  filename: string;
+  start_sec: number;
+  end_sec: number;
+  top_k?: number;
+  metric?: string;
+  embedding_set_ids?: string[];
+}
+
+export interface SearchJobResponse {
+  id: string;
+  status: string;
+  error?: string | null;
+  results?: SimilaritySearchResponse | null;
+}
+
 // ---- Health ----
 
 export interface HealthStatus {

@@ -35,3 +35,20 @@ class SimilaritySearchResponse(BaseModel):
     metric: str
     total_candidates: int
     results: list[SimilaritySearchHit]
+
+
+class AudioSearchRequest(BaseModel):
+    detection_job_id: str
+    filename: str
+    start_sec: float = Field(ge=0)
+    end_sec: float = Field(gt=0)
+    top_k: int = Field(default=20, ge=1, le=500)
+    metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
+    embedding_set_ids: list[str] | None = None
+
+
+class SearchJobResponse(BaseModel):
+    id: str
+    status: str
+    error: str | None = None
+    results: SimilaritySearchResponse | None = None

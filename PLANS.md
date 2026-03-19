@@ -10,6 +10,28 @@
 
 ## Recently Completed
 
+# Plan: Search by Audio — Worker-Encoded Detection Search
+
+[Full plan](/Users/michael/.claude/plans/greedy-tickling-orbit.md)
+
+## Outcome (2026-03-19)
+
+- Added `SearchJob` model + `019_search_jobs.py` migration for ephemeral worker-encoded search jobs
+- `POST /search/similar-by-audio` queues a search job; worker encodes detection audio via
+  the classifier model; `GET /search/jobs/{id}` polls and returns similarity search results
+  (row deleted after results returned)
+- Search jobs prioritized first in worker loop (sub-second interactive work)
+- Frontend detection mode uses StrictMode-safe direct fetch loop with AbortController cleanup
+- Added `/search` to Vite proxy config
+- ADR-034: Worker-encoded detection search via ephemeral SearchJob
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 744 passed, 1 skipped
+
 # Plan: Agile Modeling Phase 2 — Search Results UI
 
 [Full plan](/Users/michael/.claude/plans/polished-strolling-hare.md)

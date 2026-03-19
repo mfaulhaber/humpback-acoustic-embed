@@ -11,6 +11,7 @@ from humpback.models.classifier import ClassifierTrainingJob, DetectionJob
 from humpback.models.clustering import ClusteringJob
 from humpback.models.processing import JobStatus, ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
+from humpback.models.search import SearchJob
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,22 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count5:
         logger.warning(f"Recovered {count5} stale retrain workflow(s)")
 
-    total = count + count2 + count3 + count4 + count5
+    result6 = await session.execute(
+        update(SearchJob)
+        .where(
+            SearchJob.status == "running",
+            SearchJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count6 = _rowcount(result6)
+    if count6:
+        logger.warning(f"Recovered {count6} stale search job(s)")
+
+    total = count + count2 + count3 + count4 + count5 + count6
     if total:
         await session.commit()
     return total
@@ -408,3 +424,54 @@ async def claim_retrain_workflow(
         if wf is not None:
             return wf
     return None
+
+
+# ---- Search Jobs ----
+
+
+async def claim_search_job(session: AsyncSession) -> Optional[SearchJob]:
+    """Claim a queued search job atomically."""
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            SearchJob,
+            status_attr=SearchJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=SearchJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def complete_search_job(
+    session: AsyncSession,
+    job_id: str,
+    model_version: str,
+    embedding_vector: str,
+) -> None:
+    await session.execute(
+        update(SearchJob)
+        .where(SearchJob.id == job_id)
+        .values(
+            status="complete",
+            model_version=model_version,
+            embedding_vector=embedding_vector,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
+
+
+async def fail_search_job(session: AsyncSession, job_id: str, error: str) -> None:
+    await session.execute(
+        update(SearchJob)
+        .where(SearchJob.id == job_id)
+        .values(
+            status="failed",
+            error_message=error,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
