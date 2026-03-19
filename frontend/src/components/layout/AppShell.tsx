@@ -1,21 +1,25 @@
 import type { ReactNode } from "react";
-import type { TabId } from "@/App";
-import { Header } from "./Header";
-import { TabNav } from "./TabNav";
+import { TopNav } from "./TopNav";
+import { SideNav } from "./SideNav";
+import { Breadcrumbs } from "./Breadcrumbs";
 import { DatabaseErrorBanner } from "@/components/shared/DatabaseErrorBanner";
 
 interface AppShellProps {
-  activeTab: TabId;
   children: ReactNode;
 }
 
-export function AppShell({ activeTab, children }: AppShellProps) {
+export function AppShell({ children }: AppShellProps) {
   return (
-    <div className="min-h-screen flex flex-col">
-      <Header />
-      <TabNav activeTab={activeTab} />
-      <DatabaseErrorBanner />
-      <main className="flex-1 p-4 max-w-[1400px] w-full mx-auto">{children}</main>
+    <div className="min-h-screen">
+      <TopNav />
+      <SideNav />
+      <main className="ml-60 mt-12 p-4">
+        <div className="max-w-[1400px] mx-auto">
+          <Breadcrumbs />
+          <DatabaseErrorBanner />
+          {children}
+        </div>
+      </main>
     </div>
   );
 }

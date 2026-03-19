@@ -160,8 +160,7 @@ test.describe("Hydrophone Active Jobs Queue", () => {
       buildJob({ id: "j3", status: "queued", segments_processed: 0, segments_total: null }),
     ];
     await setupMocks(page, jobs);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     const activeSection = page.locator("text=Active Jobs").locator("..");
     await expect(activeSection).toBeVisible();
@@ -182,8 +181,7 @@ test.describe("Hydrophone Active Jobs Queue", () => {
       buildJob({ id: "j3", status: "queued", segments_processed: 0, segments_total: null }),
     ];
     await setupMocks(page, jobs);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     // Active Jobs table should exist
     await expect(page.locator("text=Active Jobs")).toBeVisible();
@@ -220,8 +218,7 @@ test.describe("Hydrophone Active Jobs Queue", () => {
       }),
     ];
     await setupMocks(page, jobs);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await expect(page.locator("text=Active Jobs")).toBeVisible();
 
@@ -238,8 +235,7 @@ test.describe("Hydrophone Active Jobs Queue", () => {
       buildJob({ id: "j-q", status: "queued", segments_processed: 0, segments_total: null }),
     ];
     await setupMocks(page, jobs);
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     await expect(page.locator("text=Active Jobs")).toBeVisible();
 

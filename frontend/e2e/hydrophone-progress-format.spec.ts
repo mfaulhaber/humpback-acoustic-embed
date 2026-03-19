@@ -46,15 +46,14 @@ test.describe("Hydrophone progress display and tab structure", () => {
       route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
     );
 
-    await page.goto("/app/classifier");
+    await page.goto("/app/classifier/training");
 
-    // Train and Hydrophone sub-tabs should exist (within the tab bar)
-    const tabBar = page.locator(".flex.gap-2.border-b");
-    await expect(tabBar.locator("button", { hasText: "Train" })).toBeVisible();
-    await expect(tabBar.locator("button", { hasText: "Hydrophone" })).toBeVisible();
+    // Training and Hydrophone links should exist in the sidebar
+    await expect(page.locator("a[href='/app/classifier/training']")).toBeVisible();
+    await expect(page.locator("a[href='/app/classifier/hydrophone']")).toBeVisible();
 
-    // Detect tab should NOT exist in the tab bar
-    expect(await tabBar.locator("button", { hasText: "Detect" }).count()).toBe(0);
+    // Detect link should NOT exist in the sidebar
+    expect(await page.locator("a", { hasText: "Detect" }).count()).toBe(0);
   });
 
   test("active job displays duration in hours:minutes format", async ({ page }) => {
@@ -113,8 +112,7 @@ test.describe("Hydrophone progress display and tab structure", () => {
       }),
     );
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     // Active jobs table should show 1h 30m (5432s = 1h 30m 32s → 1h 30m)
     await expect(page.getByRole("heading", { name: "Active Jobs" })).toBeVisible();
@@ -148,8 +146,7 @@ test.describe("Hydrophone progress display and tab structure", () => {
       route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
     );
 
-    await page.goto("/app/classifier");
-    await page.locator("button", { hasText: "Hydrophone" }).click();
+    await page.goto("/app/classifier/hydrophone");
 
     // Date range picker trigger is present with placeholder
     const trigger = page.getByTestId("date-range-trigger");
