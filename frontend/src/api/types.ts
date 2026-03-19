@@ -634,3 +634,11 @@ export interface TableInfo {
   table: string;
   count: number;
 }
+
+// ---- Health ----
+
+export interface HealthStatus {
+  status: "ok" | "error" | "starting";
+  db: string;
+  detail?: string;
+}

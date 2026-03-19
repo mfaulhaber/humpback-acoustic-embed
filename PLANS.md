@@ -8,6 +8,30 @@
 
 ## Recently Completed
 
+# Plan: DB Load Logging + UI Error Flash Bar
+
+[Full plan](/Users/michael/.claude/plans/staged-greeting-waterfall.md)
+
+## Outcome (2026-03-18)
+
+- Added structured logging to `database.py` (dir creation INFO, engine URL/pragma
+  DEBUG) and `app.py` (startup INFO/ERROR with `exc_info=True`).
+- Added `/health` GET endpoint in `app.py` that returns `ok`/`starting`/`error`
+  (503) based on `app.state.db_healthy`; registered before routers, no DB session
+  required.
+- Added `DatabaseErrorBanner` React component polling `/health` every 15 s via
+  `useHealth` TanStack Query hook; shows full-width red flash bar with dismiss
+  button that auto-redisplays on the next poll while the API remains unhealthy.
+- Added 3 unit tests (`test_health.py`): ok, 503-error, and starting-state paths.
+
+## Verification
+
+- `uv run ruff format --check src/humpback/api/app.py src/humpback/database.py tests/unit/test_health.py` — passed.
+- `uv run ruff check src/humpback/api/app.py src/humpback/database.py tests/unit/test_health.py` — passed.
+- `uv run pyright src/humpback/api/app.py src/humpback/database.py tests/unit/test_health.py` — 0 errors.
+- `cd frontend && npx tsc --noEmit` — passed.
+- `uv run pytest tests/` — 688 passed.
+
 # Plan: Local Dev Stack Startup
 
 [Full plan](/Users/michael/.claude/plans/playful-scribbling-eclipse.md)

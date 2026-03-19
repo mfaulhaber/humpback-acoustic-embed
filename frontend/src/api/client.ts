@@ -41,6 +41,7 @@ import type {
   RetrainWorkflowCreate,
   TrainingDataSummaryResponse,
   VisualizationData,
+  HealthStatus,
 } from "./types";
 
 class ApiError extends Error {
@@ -346,3 +347,15 @@ export const deleteAllRecords = () =>
   api<{ status: string; message: string }>("/admin/tables", { method: "DELETE" });
 
 export { ApiError };
+
+// ---- Health ----
+
+export function getHealth(): Promise<HealthStatus> {
+  return fetch("/health")
+    .then((r) => r.json() as Promise<HealthStatus>)
+    .catch(() => ({
+      status: "error" as const,
+      db: "unreachable",
+      detail: "Could not reach the API server.",
+    }));
+}
