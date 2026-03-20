@@ -724,28 +724,39 @@ def synthesize_clean_window(
     target_bg_rms = 0.2 * call_rms
     bg *= target_bg_rms / bg_rms
 
-    # Insert call with crossfade
+    # Insert call with crossfade (overlap-add with complementary weights)
     fade_len = max(1, int(crossfade_ms / 1000.0 * sr))
-    fade_in = _raised_cosine_fade(fade_len)
-    fade_out = fade_in[::-1]
-
     end_sample = insert_sample + call_samples
 
-    # Apply fade-out to bg before splice, fade-in to call start
+    # Crossfade lengths (limited by available space on each side)
     pre_fade = min(fade_len, insert_sample, call_samples)
-    if pre_fade > 0:
-        bg[insert_sample : insert_sample + pre_fade] *= fade_out[-pre_fade:]
-        call[:pre_fade] = call[:pre_fade] * fade_in[-pre_fade:]
-
-    # Apply fade-in to bg after splice, fade-out to call end
     post_fade = min(fade_len, expected_samples - end_sample, call_samples)
-    if post_fade > 0:
-        bg[end_sample - post_fade : end_sample] *= fade_out[:post_fade]
-        call[-post_fade:] = call[-post_fade:] * fade_in[:post_fade]
 
-    # Blend
+    # Ensure crossfade regions don't overlap within the call
+    if pre_fade + post_fade > call_samples:
+        half = call_samples // 2
+        pre_fade = min(pre_fade, half)
+        post_fade = min(post_fade, call_samples - pre_fade)
+
     result = bg.copy()
-    result[insert_sample:end_sample] = call
+
+    # Entry crossfade: background → call (overlap-add blend)
+    if pre_fade > 0:
+        ramp = _raised_cosine_fade(pre_fade)  # 0 → 1
+        idx = slice(insert_sample, insert_sample + pre_fade)
+        result[idx] = bg[idx] * (1.0 - ramp) + call[:pre_fade] * ramp
+
+    # Pure call region (between crossfades)
+    pure_start = insert_sample + pre_fade
+    pure_end = end_sample - post_fade
+    if pure_start < pure_end:
+        result[pure_start:pure_end] = call[pre_fade : call_samples - post_fade]
+
+    # Exit crossfade: call → background (overlap-add blend)
+    if post_fade > 0:
+        ramp = _raised_cosine_fade(post_fade)  # 0 → 1
+        idx = slice(end_sample - post_fade, end_sample)
+        result[idx] = call[-post_fade:] * (1.0 - ramp) + bg[idx] * ramp
 
     return ExtractedSample(
         audio_segment=result[:expected_samples],

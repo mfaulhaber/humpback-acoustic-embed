@@ -60,6 +60,58 @@ class TestSynthesisQuality:
         # Allow generous headroom but catch massive clicks
         assert float(np.max(diffs)) < 1.0
 
+    def test_no_click_at_exit_splice_with_broadband_call(self):
+        """Regression: exit crossfade must fade the call OUT (1→0), not in (0→1).
+
+        A wrong fade direction at the exit splice creates an energy notch
+        (call drops to near-silence at mid-crossfade then ramps back up).
+        We detect this by checking that RMS energy decreases monotonically
+        across the exit crossfade region.  Uses 32 kHz to match the pipeline.
+        """
+        sr = 32000  # match real pipeline sample rate
+        rng = np.random.default_rng(42)
+        call_dur = 1.5
+        t = np.arange(int(sr * call_dur)) / sr
+        # Broadband call at near-full-scale (matches real whale recordings)
+        call = (
+            0.6 * np.sin(2 * np.pi * 500 * t) + 0.3 * np.sin(2 * np.pi * 1500 * t)
+        ).astype(np.float32)
+        call += rng.normal(0, 0.05, len(call)).astype(np.float32)
+        bg = rng.normal(0, 0.01, int(sr * self.WINDOW)).astype(np.float32)
+
+        crossfade_ms = 50.0
+        sample = synthesize_clean_window(
+            call,
+            bg,
+            sr,
+            window_size=self.WINDOW,
+            placement_sec=0.75,
+            crossfade_ms=crossfade_ms,
+        )
+        assert sample is not None
+
+        # Divide the exit crossfade into quarters and check RMS envelope
+        # With correct fade-out, energy should decrease across the crossfade.
+        # With buggy fade-in, the middle quarter has near-zero energy (notch).
+        fade_samples = int(crossfade_ms / 1000.0 * sr)
+        exit_sample = int(0.75 * sr) + len(call)
+        xfade_start = exit_sample - fade_samples
+        quarter = fade_samples // 4
+
+        rms_quarters = []
+        for i in range(4):
+            chunk = sample.audio_segment[
+                xfade_start + i * quarter : xfade_start + (i + 1) * quarter
+            ]
+            rms_quarters.append(float(np.sqrt(np.mean(chunk**2))))
+
+        # With correct fade-out, energy should decrease: Q1 > Q4.
+        # With buggy fade-in, energy increases: Q1 < Q4 (opposite direction).
+        assert rms_quarters[0] > rms_quarters[-1], (
+            f"Exit crossfade energy should decrease (fade-out), "
+            f"but Q1={rms_quarters[0]:.4f} <= Q4={rms_quarters[-1]:.4f}"
+        )
+
     def test_call_energy_preserved(self):
         """The call region should retain most of its original energy."""
         call = self._make_tone(440.0, 2.0, amplitude=0.5)
