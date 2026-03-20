@@ -221,20 +221,20 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Clean 5s window extraction centered on score peaks with FLAC + PNG spectrogram sidecars
 - Fallback extraction: annotations with no peak above threshold extract at annotation
   midpoint (treatment `"fallback"`) instead of being skipped
-- Re-center extraction (Option B): tries multiple crop windows around dominant peak to
-  minimise overlap with neighbouring peaks; escalates to synthesis when no crop achieves
-  acceptable isolation (mild_overlap annotations)
 - Background region extraction: finds contiguous low-score regions (smoothed score < threshold
   for >= min_duration) and extracts non-overlapping 5s segments for synthesis use
-- Synthesis extraction (Option C): isolates cleanest 1–3s call segment using onset/offset
-  bounds, places into background with raised-cosine crossfade splicing, generates up to 3
-  placement variants (early/centre/late) per heavy_overlap annotation
+- Synthesis for all annotations with a peak: isolates cleanest 1–3s call segment using
+  onset/offset bounds, places into background with raised-cosine crossfade splicing, generates
+  up to 3 placement variants (early/centre/late); clean annotations get both a clean extraction
+  and synthesis variants
 - `LabelProcessingJob` DB model with worker integration (queued → running → complete/failed)
 - API endpoints: create/list/get/delete jobs, preview annotation pairing
 - Output organized by treatment and call type:
-  `{output_root}/{clean,fallback,recentered,synthesized}/{CallType}/*.flac`
-- Configurable parameters: `enable_recentered`, `enable_synthesized`, `background_threshold`,
+  `{output_root}/{clean,fallback,synthesized}/{CallType}/*.flac`
+- Configurable parameters: `enable_synthesized`, `background_threshold`,
   `synthesis_crossfade_ms`, `synthesis_variants`, `cleanup_score_cache`
+- Per-label classifier score KPIs in job result summary: count, mean, median, std, min, max
+  for each call type's matched peak scores
 - Score cache cleanup: `{output_root}/scores/` directory removed after job completion
   by default (`cleanup_score_cache: true`); set to `false` to retain for debugging
 - Web UI page (`/app/label-processing`): job creation form with classifier model selector,

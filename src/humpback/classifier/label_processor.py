@@ -45,7 +45,7 @@ class AnnotatedPeak:
     annotation: RavenAnnotation
     peak: ScorePeak | None
     overlap_status: str  # "clean", "mild_overlap", "heavy_overlap"
-    treatment: str  # "clean", "recentered", "synthesized", "skipped"
+    treatment: str  # "clean", "synthesized", "fallback", "skipped"
 
 
 @dataclass
@@ -344,10 +344,8 @@ def map_annotations_to_peaks(
         # Assign treatment based on overlap
         if overlap_status == "clean":
             treatment = "clean"
-        elif overlap_status == "mild_overlap":
-            treatment = "recentered"  # Phase 2 will implement
         else:
-            treatment = "synthesized"  # Phase 2 will implement
+            treatment = "synthesized"
 
         results.append(
             AnnotatedPeak(
@@ -469,76 +467,8 @@ def extract_fallback_window(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Re-center, background extraction, synthesis
+# Background extraction and synthesis
 # ---------------------------------------------------------------------------
-
-
-def recenter_extraction(
-    peak: ScorePeak,
-    all_peaks: list[ScorePeak],
-    full_audio: np.ndarray,
-    sr: int,
-    window_size: float = 5.0,
-) -> ExtractedSample | None:
-    """Re-center extraction window to isolate the dominant call (Option B).
-
-    Tries multiple crop positions around the peak and selects the one that
-    minimises overlap energy from neighbouring peaks.  Returns ``None`` when
-    no crop achieves acceptable isolation (caller should escalate to synthesis).
-    """
-    total_duration = len(full_audio) / sr
-    if total_duration < window_size:
-        return None
-
-    # Candidate offsets relative to peak: centre, left-biased, right-biased
-    offsets = [0.0, 0.5, -0.5, 1.0, -1.0]
-    best_score = -float("inf")
-    best_start: float | None = None
-
-    for off in offsets:
-        start = peak.time_sec - (window_size / 2.0) + off
-        start = max(0.0, min(start, total_duration - window_size))
-        end = start + window_size
-
-        # Score = dominant peak score − sum of overlap with neighbours
-        penalty = 0.0
-        for other in all_peaks:
-            if other.index == peak.index:
-                continue
-            other_start = other.time_sec
-            other_end = other.time_sec + window_size
-            overlap = max(0.0, min(end, other_end) - max(start, other_start))
-            if overlap > 0:
-                penalty += other.score * (overlap / window_size)
-
-        net = peak.score - penalty
-        if net > best_score:
-            best_score = net
-            best_start = start
-
-    # Reject if penalty wipes out most of the peak signal
-    if best_start is None or best_score < 0.3 * peak.score:
-        return None
-
-    start_sample = int(best_start * sr)
-    expected_samples = int(window_size * sr)
-    segment = full_audio[start_sample : start_sample + expected_samples]
-
-    if len(segment) < int(expected_samples * 0.9):
-        return None
-    if len(segment) < expected_samples:
-        segment = np.pad(segment, (0, expected_samples - len(segment)))
-
-    return ExtractedSample(
-        audio_segment=segment[:expected_samples],
-        sr=sr,
-        call_type="",
-        treatment="recentered",
-        source_filename="",
-        start_sec=best_start,
-        end_sec=best_start + window_size,
-        peak_score=peak.score,
-    )
 
 
 def extract_background_regions(
@@ -724,6 +654,14 @@ def synthesize_clean_window(
     target_bg_rms = 0.2 * call_rms
     bg *= target_bg_rms / bg_rms
 
+    # Cap transient spikes in the scaled background to prevent them from
+    # dominating peak normalization (which happens in write_flac_file).
+    # A crest factor >6 indicates impulsive noise; clamp peaks to 6× RMS.
+    bg_peak = float(np.max(np.abs(bg)))
+    bg_peak_limit = 6.0 * target_bg_rms
+    if bg_peak > bg_peak_limit:
+        np.clip(bg, -bg_peak_limit, bg_peak_limit, out=bg)
+
     # Insert call with crossfade (overlap-add with complementary weights)
     fade_len = max(1, int(crossfade_ms / 1000.0 * sr))
     end_sample = insert_sample + call_samples
@@ -826,7 +764,6 @@ def process_recording(
     onset_offset_alpha: float = 0.4,
     overlap_proximity_sec: float = 3.0,
     overlap_relative_threshold: float = 0.5,
-    enable_recentered: bool = True,
     enable_synthesized: bool = True,
     background_threshold: float = 0.1,
     synthesis_crossfade_ms: float = 50.0,
@@ -834,7 +771,8 @@ def process_recording(
 ) -> ProcessingResult:
     """Process a single recording: score, detect peaks, map annotations, extract.
 
-    Handles clean, re-centred (Option B), and synthesised (Option C) treatments.
+    Handles clean and synthesised treatments.  All annotations with a peak
+    get a synthesis attempt (including clean ones, as additional variants).
     """
     filename = audio_path.name
     result = ProcessingResult(
@@ -928,25 +866,11 @@ def process_recording(
         sample.source_filename = filename
         result.extracted_samples.append(sample)
 
-    # --- Pass 2: re-centre mild-overlap annotations (Option B) ---------
-    if enable_recentered:
-        for ap in annotated_peaks:
-            if ap.peak is None or ap.treatment != "recentered":
-                continue
-            sample = recenter_extraction(
-                ap.peak, peaks, audio, target_sr, window_size=window_size
-            )
-            if sample is None:
-                # Escalate to synthesis
-                ap.treatment = "synthesized" if enable_synthesized else "skipped"
-                if ap.treatment == "skipped":
-                    result.skipped_no_peak += 1
-                continue
-            sample.call_type = ap.annotation.call_type
-            sample.source_filename = filename
-            result.extracted_samples.append(sample)
-
-    # --- Pass 3: synthesise heavy-overlap annotations (Option C) -------
+    # --- Pass 2: synthesise all annotations with a peak -----------------
+    # This runs for every annotation that has a matched peak (including clean
+    # ones), producing additional synthesis variants alongside the clean
+    # extraction from Pass 1.  Annotations that already got a clean extraction
+    # are NOT marked skipped if synthesis fails.
     if enable_synthesized:
         # Extract background regions once per recording
         backgrounds = extract_background_regions(
@@ -958,22 +882,38 @@ def process_recording(
             window_size=window_size,
         )
 
+        # Track which annotations already have a clean extraction
+        has_clean = {
+            id(ap)
+            for ap in annotated_peaks
+            if ap.peak is not None
+            and ap.treatment == "clean"
+            and any(
+                s.source_filename == filename
+                and s.treatment == "clean"
+                and s.start_sec == ap.peak.time_sec
+                for s in result.extracted_samples
+            )
+        }
+
         for ap in annotated_peaks:
-            if ap.peak is None or ap.treatment != "synthesized":
+            if ap.peak is None:
                 continue
 
             if not backgrounds:
                 logger.warning(
                     "No background regions for synthesis in %s — skipping", filename
                 )
-                ap.treatment = "skipped"
-                result.skipped_no_peak += 1
+                if id(ap) not in has_clean:
+                    ap.treatment = "skipped"
+                    result.skipped_no_peak += 1
                 continue
 
             seg_result = isolate_call_segment(ap.peak, scores, audio, target_sr)
             if seg_result is None:
-                ap.treatment = "skipped"
-                result.skipped_no_peak += 1
+                if id(ap) not in has_clean:
+                    ap.treatment = "skipped"
+                    result.skipped_no_peak += 1
                 continue
 
             call_seg, _ = seg_result
@@ -985,16 +925,15 @@ def process_recording(
                 crossfade_ms=synthesis_crossfade_ms,
                 n_variants=synthesis_variants,
             )
-            for v_idx, sample in enumerate(variants):
+            for sample in variants:
                 sample.call_type = ap.annotation.call_type
                 sample.source_filename = filename
                 sample.peak_score = ap.peak.score
-                # Encode variant index in start_sec for unique filenames
                 sample.start_sec = ap.peak.time_sec
                 sample.end_sec = ap.peak.time_sec + window_size
                 result.extracted_samples.append(sample)
 
-            if not variants:
+            if not variants and id(ap) not in has_clean:
                 ap.treatment = "skipped"
                 result.skipped_no_peak += 1
 

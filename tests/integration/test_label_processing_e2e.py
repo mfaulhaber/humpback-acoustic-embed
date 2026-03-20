@@ -308,7 +308,26 @@ async def test_label_processing_e2e(lp_settings, lp_client, tmp_path):
     total_from_treatments = sum(treatment_counts.values())
     assert total_from_treatments == summary["total_extracted"]
 
-    # 10. Cleanup
+    # Re-centering treatment should not appear
+    assert "recentered" not in treatment_counts
+
+    # 10. Verify score_stats_by_label present and well-formed
+    score_stats = summary.get("score_stats_by_label")
+    assert score_stats is not None, "score_stats_by_label should be present"
+    assert isinstance(score_stats, dict), "score_stats_by_label should be a dict"
+    # Fake model may not produce peaks, so stats can be empty; validate structure
+    # when populated
+    for ct, stats in score_stats.items():
+        assert "count" in stats
+        assert "mean" in stats
+        assert "median" in stats
+        assert "std" in stats
+        assert "min" in stats
+        assert "max" in stats
+        assert stats["count"] >= 1
+        assert 0.0 <= stats["min"] <= stats["max"] <= 1.0
+
+    # 11. Cleanup
     await engine.dispose()
 
 

@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Synthesize All Annotations + Score KPIs
+
+[Full plan](/Users/michael/.claude/plans/foamy-sauteeing-willow.md)
+
+## Outcome (2026-03-20)
+
+- Removed re-centering treatment: mild_overlap now routes to "synthesized"; deleted `recenter_extraction()` and `enable_recentered` parameter
+- All annotations with a matched peak get synthesis variants (clean annotations get both clean extraction + synthesis)
+- Added per-label classifier score KPIs (`score_stats_by_label`) in job result summary with frontend table display
+- Fixed synthesis background transient spike pop: crest-factor limiter (6× target RMS) prevents impulsive noise from creating clicks
+- Updated documentation (STATUS.md, MEMORY.md)
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 822 passed, 1 skipped
+
 # Plan: Audio/Label Processing — Classifier Score as Segmentation Signal
 
 [Full plan](/Users/michael/.claude/plans/valiant-crunching-moonbeam.md)

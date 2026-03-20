@@ -24,6 +24,9 @@ export function LabelProcessingJobCard({ job, onDelete }: Props) {
   const summary = job.result_summary as Record<string, unknown> | null;
   const treatmentCounts = summary?.treatment_counts as Record<string, number> | undefined;
   const callTypeCounts = summary?.call_type_counts as Record<string, number> | undefined;
+  const scoreStatsByLabel = summary?.score_stats_by_label as
+    | Record<string, { count: number; mean: number; median: number; std: number; min: number; max: number }>
+    | undefined;
 
   return (
     <Card className="overflow-hidden">
@@ -153,6 +156,45 @@ export function LabelProcessingJobCard({ job, onDelete }: Props) {
                         <span className="font-mono">{count}</span>
                       </div>
                     ))}
+                </div>
+              </div>
+            )}
+
+            {/* Score statistics by label */}
+            {scoreStatsByLabel && Object.keys(scoreStatsByLabel).length > 0 && (
+              <div>
+                <div className="text-muted-foreground mb-1 text-xs font-medium">
+                  Score Statistics by Label
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="text-xs w-full">
+                    <thead>
+                      <tr className="text-muted-foreground border-b">
+                        <th className="text-left py-1 pr-3 font-medium">Call Type</th>
+                        <th className="text-right py-1 px-2 font-medium">Count</th>
+                        <th className="text-right py-1 px-2 font-medium">Mean</th>
+                        <th className="text-right py-1 px-2 font-medium">Median</th>
+                        <th className="text-right py-1 px-2 font-medium">Std</th>
+                        <th className="text-right py-1 px-2 font-medium">Min</th>
+                        <th className="text-right py-1 px-2 font-medium">Max</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(scoreStatsByLabel)
+                        .sort(([, a], [, b]) => b.count - a.count)
+                        .map(([callType, stats]) => (
+                          <tr key={callType} className="border-b border-dashed last:border-0">
+                            <td className="py-1 pr-3">{callType}</td>
+                            <td className="text-right py-1 px-2 font-mono">{stats.count}</td>
+                            <td className="text-right py-1 px-2 font-mono">{stats.mean.toFixed(3)}</td>
+                            <td className="text-right py-1 px-2 font-mono">{stats.median.toFixed(3)}</td>
+                            <td className="text-right py-1 px-2 font-mono">{stats.std.toFixed(3)}</td>
+                            <td className="text-right py-1 px-2 font-mono">{stats.min.toFixed(3)}</td>
+                            <td className="text-right py-1 px-2 font-mono">{stats.max.toFixed(3)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}

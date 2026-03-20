@@ -34,7 +34,6 @@ DEFAULT_PARAMS: dict[str, float | int | bool] = {
     "onset_offset_alpha": 0.4,
     "overlap_proximity_sec": 3.0,
     "overlap_relative_threshold": 0.5,
-    "enable_recentered": True,
     "enable_synthesized": True,
     "background_threshold": 0.1,
     "synthesis_crossfade_ms": 50.0,
@@ -84,6 +83,7 @@ async def run_label_processing_job(
         # Processing counters
         treatment_counts: Counter[str] = Counter()
         call_type_counts: Counter[str] = Counter()
+        label_scores: dict[str, list[float]] = {}
         total_extracted = 0
         total_skipped = 0
 
@@ -111,7 +111,6 @@ async def run_label_processing_job(
                 onset_offset_alpha=float(params["onset_offset_alpha"]),
                 overlap_proximity_sec=float(params["overlap_proximity_sec"]),
                 overlap_relative_threshold=float(params["overlap_relative_threshold"]),
-                enable_recentered=bool(params["enable_recentered"]),
                 enable_synthesized=bool(params["enable_synthesized"]),
                 background_threshold=float(params["background_threshold"]),
                 synthesis_crossfade_ms=float(params["synthesis_crossfade_ms"]),
@@ -125,6 +124,12 @@ async def run_label_processing_job(
                 treatment_counts[sample.treatment] += 1
                 call_type_counts[sample.call_type] += 1
                 total_extracted += 1
+
+            # Collect per-label peak scores for KPIs
+            for ap in proc_result.annotated_peaks:
+                if ap.peak is not None:
+                    ct = ap.annotation.call_type
+                    label_scores.setdefault(ct, []).append(ap.peak.score)
 
             # Count skipped annotations
             for ap in proc_result.annotated_peaks:
@@ -142,6 +147,21 @@ async def run_label_processing_job(
             )
             await session.commit()
 
+        # Compute per-label score statistics
+        import numpy as np
+
+        score_stats_by_label: dict[str, dict[str, float | int]] = {}
+        for ct, scores_list in sorted(label_scores.items()):
+            arr = np.array(scores_list)
+            score_stats_by_label[ct] = {
+                "count": len(scores_list),
+                "mean": float(np.mean(arr)),
+                "median": float(np.median(arr)),
+                "std": float(np.std(arr)),
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+            }
+
         # Write result summary
         summary = {
             "total_extracted": total_extracted,
@@ -150,6 +170,7 @@ async def run_label_processing_job(
             "call_type_counts": dict(
                 sorted(call_type_counts.items(), key=lambda x: -x[1])
             ),
+            "score_stats_by_label": score_stats_by_label,
             "files_processed": len(pairs),
         }
 
@@ -168,11 +189,10 @@ async def run_label_processing_job(
         summary_path.write_text(json.dumps(summary, indent=2))
 
         logger.info(
-            "Label processing complete: %d extracted (%d clean, %d recentered, "
+            "Label processing complete: %d extracted (%d clean, "
             "%d synthesized, %d fallback), %d skipped",
             total_extracted,
             treatment_counts.get("clean", 0),
-            treatment_counts.get("recentered", 0),
             treatment_counts.get("synthesized", 0),
             treatment_counts.get("fallback", 0),
             total_skipped,
