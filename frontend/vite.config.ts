@@ -18,6 +18,7 @@ export default defineConfig({
       "/classifier": "http://localhost:8000",
       "/admin": "http://localhost:8000",
       "/search": "http://localhost:8000",
+      "/label-processing": "http://localhost:8000",
       "/health": "http://localhost:8000",
     },
   },

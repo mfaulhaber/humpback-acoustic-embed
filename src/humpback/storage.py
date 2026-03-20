@@ -58,6 +58,10 @@ def detection_diagnostics_path(storage_root: Path, detection_job_id: str) -> Pat
     return detection_dir(storage_root, detection_job_id) / "window_diagnostics.parquet"
 
 
+def label_processing_dir(storage_root: Path, job_id: str) -> Path:
+    return storage_root / "label_processing" / job_id
+
+
 def detection_embeddings_path(storage_root: Path, detection_job_id: str) -> Path:
     return (
         detection_dir(storage_root, detection_job_id) / "detection_embeddings.parquet"

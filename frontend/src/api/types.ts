@@ -681,6 +681,47 @@ export interface SearchJobResponse {
   model_version?: string | null;
 }
 
+// ---- Label Processing ----
+
+export interface LabelProcessingJobCreate {
+  classifier_model_id: string;
+  annotation_folder: string;
+  audio_folder: string;
+  output_root: string;
+  parameters?: Record<string, unknown> | null;
+}
+
+export interface LabelProcessingJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  classifier_model_id: string;
+  annotation_folder: string;
+  audio_folder: string;
+  output_root: string;
+  parameters: Record<string, unknown> | null;
+  files_processed: number | null;
+  files_total: number | null;
+  annotations_total: number | null;
+  result_summary: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LabelProcessingPairedFile {
+  annotation_file: string;
+  audio_file: string;
+  annotation_count: number;
+}
+
+export interface LabelProcessingPreview {
+  paired_files: LabelProcessingPairedFile[];
+  total_annotations: number;
+  call_type_distribution: Record<string, number>;
+  unpaired_annotations: string[];
+  unpaired_audio: string[];
+}
+
 // ---- Health ----
 
 export interface HealthStatus {

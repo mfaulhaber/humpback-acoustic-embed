@@ -537,6 +537,11 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/search/jobs/{id}` | Poll a search job — returns status while encoding, or search results on completion (ephemeral: row is deleted after results are returned) |
 | GET | `/classifier/detection-jobs/{id}/embedding` | Retrieve the stored embedding for a specific detection row (returns vector, model_version, vector_dim) |
 | GET | `/audio/{id}/spectrogram-png` | PNG spectrogram image for a time range of an audio file (disk-cached) |
+| POST | `/label-processing/jobs` | Create label processing job (classifier-scored extraction from annotated recordings) |
+| GET | `/label-processing/jobs` | List label processing jobs |
+| GET | `/label-processing/jobs/{id}` | Get label processing job details |
+| DELETE | `/label-processing/jobs/{id}` | Delete label processing job + output artifacts |
+| GET | `/label-processing/preview` | Dry-run annotation pairing preview (`?annotation_folder=&audio_folder=`) |
 
 Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.

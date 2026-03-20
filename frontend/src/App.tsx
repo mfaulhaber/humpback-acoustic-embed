@@ -8,6 +8,7 @@ import { AdminTab } from "@/components/admin/AdminTab";
 import { TrainingTab } from "@/components/classifier/TrainingTab";
 import { HydrophoneTab } from "@/components/classifier/HydrophoneTab";
 import { SearchTab } from "@/components/search/SearchTab";
+import { LabelProcessingTab } from "@/components/label-processing/LabelProcessingTab";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/app/classifier/training" element={<TrainingTab />} />
         <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
         <Route path="/app/search" element={<SearchTab />} />
+        <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />
         <Route path="*" element={<Navigate to="/app/audio" replace />} />
       </Routes>

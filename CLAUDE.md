@@ -138,6 +138,7 @@ frontend/
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── classifier/          (TrainingTab, HydrophoneTab, DetectionTab, BulkDeleteDialog)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
+    │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
     │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc, EmbeddingSetPanel)
     └── utils/                   (format.ts, audio.ts)

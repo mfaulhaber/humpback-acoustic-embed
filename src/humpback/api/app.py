@@ -84,15 +84,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"status": "starting", "db": "unknown"}
 
     import humpback.models.classifier  # noqa: F401 — register tables
+    import humpback.models.label_processing  # noqa: F401 — register tables
 
     app.include_router(audio.router)
     app.include_router(processing.router)
     app.include_router(clustering.router)
     app.include_router(classifier.router)
     app.include_router(admin.router)
-    from humpback.api.routers import search  # registered after other routers
+    from humpback.api.routers import label_processing, search
 
     app.include_router(search.router)
+    app.include_router(label_processing.router)
 
     # Serve React SPA from dist/ if it exists, otherwise fall back to legacy index.html
     has_dist = DIST_DIR.is_dir() and (DIST_DIR / "index.html").exists()

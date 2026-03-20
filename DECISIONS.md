@@ -1006,3 +1006,32 @@ columns are kept vestigial for now; a follow-up cleanup is in the backlog.
 - `SettingsDep` was added to 6 API endpoints that previously lacked it.
 - `output_tsv_path` and `output_row_store_path` columns are vestigial; a backlog
   item tracks their removal via Alembic migration.
+
+---
+
+## ADR-036: LabelProcessingJob as a dedicated DB table
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: A new "Audio/Label Processing" workflow takes Raven annotation files
+paired with audio recordings and uses classifier scores as a segmentation signal
+to extract clean 5-second samples organized by call type and treatment category.
+Unlike detection jobs which reuse the DetectionJob table with nullable hydrophone
+columns, this workflow has sufficiently different inputs (annotation folders, call
+type labels, treatment categories) and outputs (no TSV row store, no hydrophone
+fields) that reusing DetectionJob would further widen an already-wide table.
+
+**Decision**: Create a dedicated `label_processing_jobs` table
+(`LabelProcessingJob` model) with fields specific to the annotation-based
+workflow: `classifier_model_id`, `annotation_folder`, `audio_folder`,
+`output_root`, `parameters` (JSON), `files_processed/total`,
+`annotations_total`, `result_summary` (JSON), and `error_message`. Embeddings
+generated during scoring are ephemeral — used only for classifier scoring, not
+stored in the main EmbeddingSet pipeline.
+
+**Consequences**:
+- Clean separation of concerns; DetectionJob stays focused on detection.
+- New migration `020_label_processing_jobs.py`.
+- Worker queue extended with claim/complete/fail functions and stale recovery.
+- API router at `/label-processing` with job CRUD and annotation preview.
