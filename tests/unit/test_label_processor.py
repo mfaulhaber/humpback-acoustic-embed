@@ -1,4 +1,4 @@
-"""Tests for label_processor: scoring, peak detection, extraction, re-centre, synthesis."""
+"""Tests for label_processor: scoring, peak detection, extraction, synthesis."""
 
 import numpy as np
 import pytest
@@ -12,7 +12,6 @@ from humpback.classifier.label_processor import (
     extract_clean_window,
     isolate_call_segment,
     map_annotations_to_peaks,
-    recenter_extraction,
     smooth_scores,
     synthesize_clean_window,
     synthesize_variants,
@@ -172,6 +171,25 @@ class TestMapAnnotationsToPeaks:
         assert results[0].peak is None
         assert results[0].treatment == "fallback"
 
+    def test_mild_overlap_routes_to_synthesized(self):
+        """Mild overlap annotations should be routed to synthesized treatment."""
+        annotations = [self._make_annotation(10.0, 12.0)]
+        # Two nearby peaks → mild overlap
+        peaks = [
+            ScorePeak(
+                index=10, time_sec=10.5, score=0.9, onset_sec=9.0, offset_sec=15.5
+            ),
+            ScorePeak(
+                index=12, time_sec=12.5, score=0.8, onset_sec=11.0, offset_sec=17.5
+            ),
+        ]
+        results = map_annotations_to_peaks(
+            annotations, peaks, proximity_sec=3.0, relative_threshold=0.5
+        )
+        assert len(results) == 1
+        assert results[0].overlap_status == "mild_overlap"
+        assert results[0].treatment == "synthesized"
+
     def test_annotation_with_tolerance(self):
         annotations = [self._make_annotation(10.0, 12.0)]
         # Peak just outside annotation but within tolerance
@@ -289,59 +307,8 @@ class TestExtractFallbackWindow:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 tests: re-centre, background extraction, synthesis
+# Background extraction and synthesis tests
 # ---------------------------------------------------------------------------
-
-
-class TestRecenterExtraction:
-    def _make_peak(self, index: int, time_sec: float, score: float) -> ScorePeak:
-        return ScorePeak(
-            index=index,
-            time_sec=time_sec,
-            score=score,
-            onset_sec=time_sec - 1.0,
-            offset_sec=time_sec + 6.0,
-        )
-
-    def test_single_peak_recenters(self):
-        sr = 16000
-        audio = np.random.randn(sr * 30).astype(np.float32)
-        peak = self._make_peak(10, 10.0, 0.9)
-        sample = recenter_extraction(peak, [peak], audio, sr, window_size=5.0)
-        assert sample is not None
-        assert sample.treatment == "recentered"
-        assert len(sample.audio_segment) == sr * 5
-
-    def test_heavy_overlap_returns_none(self):
-        """When many strong neighbours exist, re-centre should give up."""
-        sr = 16000
-        audio = np.random.randn(sr * 30).astype(np.float32)
-        peak = self._make_peak(10, 10.0, 0.5)
-        neighbours = [
-            self._make_peak(8, 8.0, 0.9),
-            self._make_peak(12, 12.0, 0.9),
-            self._make_peak(11, 11.0, 0.85),
-        ]
-        result = recenter_extraction(
-            peak, [peak, *neighbours], audio, sr, window_size=5.0
-        )
-        # Heavy penalty should reject
-        assert result is None
-
-    def test_too_short_audio(self):
-        sr = 16000
-        audio = np.random.randn(sr * 3).astype(np.float32)
-        peak = self._make_peak(0, 0.0, 0.9)
-        assert recenter_extraction(peak, [peak], audio, sr, window_size=5.0) is None
-
-    def test_distant_neighbor_does_not_penalise(self):
-        sr = 16000
-        audio = np.random.randn(sr * 60).astype(np.float32)
-        peak = self._make_peak(10, 10.0, 0.9)
-        distant = self._make_peak(50, 50.0, 0.9)
-        sample = recenter_extraction(peak, [peak, distant], audio, sr, window_size=5.0)
-        assert sample is not None
-        assert sample.treatment == "recentered"
 
 
 class TestExtractBackgroundRegions:

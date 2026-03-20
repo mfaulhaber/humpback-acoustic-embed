@@ -43,7 +43,6 @@ export function LabelProcessingTab() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [thresholdHigh, setThresholdHigh] = useState("0.7");
   const [smoothingWindow, setSmoothingWindow] = useState("3");
-  const [enableRecentered, setEnableRecentered] = useState(true);
   const [enableSynthesized, setEnableSynthesized] = useState(true);
   const [backgroundThreshold, setBackgroundThreshold] = useState("0.1");
   const [synthesisVariants, setSynthesisVariants] = useState("3");
@@ -70,7 +69,6 @@ export function LabelProcessingTab() {
     const parameters: Record<string, unknown> = {};
     if (thresholdHigh !== "0.7") parameters.threshold_high = parseFloat(thresholdHigh);
     if (smoothingWindow !== "3") parameters.smoothing_window = parseInt(smoothingWindow);
-    if (!enableRecentered) parameters.enable_recentered = false;
     if (!enableSynthesized) parameters.enable_synthesized = false;
     if (backgroundThreshold !== "0.1")
       parameters.background_threshold = parseFloat(backgroundThreshold);
@@ -221,15 +219,6 @@ export function LabelProcessingTab() {
                       onChange={(e) => setSynthesisVariants(e.target.value)}
                     />
                   </div>
-                  <label className="flex items-center gap-2 text-sm pt-5">
-                    <input
-                      type="checkbox"
-                      checked={enableRecentered}
-                      onChange={(e) => setEnableRecentered(e.target.checked)}
-                      className="rounded border-gray-300"
-                    />
-                    Enable re-centering
-                  </label>
                   <label className="flex items-center gap-2 text-sm pt-5">
                     <input
                       type="checkbox"

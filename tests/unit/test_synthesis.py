@@ -112,6 +112,42 @@ class TestSynthesisQuality:
             f"but Q1={rms_quarters[0]:.4f} <= Q4={rms_quarters[-1]:.4f}"
         )
 
+    def test_no_click_from_background_transient_spikes(self):
+        """Regression: background with impulsive noise spikes should not produce
+        clicks/pops in the synthesized output.
+
+        When background RMS is low but a few samples have large transient spikes,
+        the RMS-based scaling amplifies those spikes, creating discontinuities
+        that become audible clicks even after peak normalization.
+        """
+        sr = 32000
+        rng = np.random.default_rng(99)
+        call = (0.5 * np.sin(2 * np.pi * 600 * np.arange(int(sr * 1.5)) / sr)).astype(
+            np.float32
+        )
+        # Background with very low RMS but extreme transient spikes — matches
+        # real-world case where "quiet" background has impulsive noise bursts
+        bg = rng.normal(0, 0.001, int(sr * self.WINDOW)).astype(np.float32)
+        spike_positions = [int(sr * 4.8), int(sr * 4.85), int(sr * 4.9)]
+        for pos in spike_positions:
+            bg[pos] = 2.0  # very high crest factor spike (2000× bg RMS)
+
+        sample = synthesize_clean_window(
+            call, bg, sr, window_size=self.WINDOW, placement_sec=0.75
+        )
+        assert sample is not None
+
+        # After synthesis, the background region (after the call) should not have
+        # extreme jumps. The call ends around 0.75 + 1.5 = 2.25s. Check 4.5-5.0s.
+        tail = sample.audio_segment[int(sr * 4.5) :]
+        diffs = np.abs(np.diff(tail))
+        max_jump = float(np.max(diffs))
+        # Without the crest-factor limiter, max_jump would be >5.0 (extreme click).
+        # With the limiter, it should be bounded to a reasonable level.
+        assert max_jump < 1.0, (
+            f"Background transient spike created a click: max_jump={max_jump:.4f}"
+        )
+
     def test_call_energy_preserved(self):
         """The call region should retain most of its original energy."""
         call = self._make_tone(440.0, 2.0, amplitude=0.5)
