@@ -133,6 +133,21 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 - error_message (nullable)
 - created_at, updated_at
 
+### LabelProcessingJob
+- id
+- status (queued/running/complete/failed)
+- classifier_model_id
+- annotation_folder (path to Raven TSV folder)
+- audio_folder (path to paired FLAC folder)
+- output_root (output directory for extracted clips)
+- parameters (JSON — threshold_high, smoothing_window, onset_offset_alpha,
+  enable_recentered, enable_synthesized, background_threshold,
+  synthesis_crossfade_ms, synthesis_variants, cleanup_score_cache)
+- files_processed, files_total, annotations_total
+- result_summary (JSON — treatment counts, call type counts)
+- error_message (nullable)
+- created_at, updated_at
+
 ### ClusteringJob
 - id
 - status
@@ -375,6 +390,39 @@ re-clustering. Training uses GPU when available (`HUMPBACK_TF_FORCE_CPU` to over
 
 ---
 
+## Label Processing Workflow
+
+Score-based extraction of clean 5-second audio samples from annotated recordings.
+
+**Pipeline**: For each paired annotation file + recording:
+1. Score all 5s windows (1s hop) using classifier pipeline (decode → window → features → embed → classify)
+2. Smooth scores, detect peaks, estimate onset/offset per peak
+3. Map annotations to nearest score peaks within tolerance
+4. Classify overlap: clean, mild_overlap, heavy_overlap
+5. Extract samples by treatment:
+   - **clean** — direct 5s window at peak position
+   - **fallback** — window centered on annotation midpoint (when no peak above threshold)
+   - **recentered** (Option B) — shift extraction window to minimize overlap with neighbours
+   - **synthesized** (Option C) — isolate 1–3s call segment, splice into background with crossfade; up to 3 placement variants per annotation
+   - **skipped** — when extraction fails (audio too short, no background available)
+6. Write FLAC + PNG spectrogram sidecar per extracted sample
+7. Optionally clean up score cache (`cleanup_score_cache`, default true)
+
+**Output layout**:
+```
+{output_root}/
+  clean/{CallType}/{stem}_{start_sec:.1f}s.flac + .png
+  fallback/{CallType}/{stem}_{start_sec:.1f}s.flac + .png
+  recentered/{CallType}/{stem}_{start_sec:.1f}s.flac + .png
+  synthesized/{CallType}/{stem}_{start_sec:.1f}s_v{1,2,3}.flac + .png
+  background/{stem}_{offset_sec:.1f}s.flac
+  job_summary.json
+```
+
+**Call type normalization**: Title-case + typo corrections (chrip→Chirp, whuo→Whup, piccalo→Piccolo)
+
+---
+
 ## Workflow Queue
 
 Use SQL-backed queue semantics:
@@ -388,7 +436,7 @@ Concurrency:
 - prevent two running ProcessingJobs for same encoding_signature
 - allow multiple clustering jobs in parallel (configurable)
 
-Worker priority order: processing -> clustering -> classifier training -> detection
+Worker priority order: search -> processing -> clustering -> classifier training -> detection -> extraction -> label processing -> retrain
 
 Queue safety note:
 - SQLite has no true row-level locks; correctness relies on atomic status updates,

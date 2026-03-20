@@ -28,6 +28,7 @@ const staticRoutes: Record<string, Crumb[]> = {
     { label: "Hydrophone Detection" },
   ],
   "/app/search": [{ label: "Search" }],
+  "/app/label-processing": [{ label: "Label Processing" }],
   "/app/admin": [{ label: "Admin" }],
 };
 

@@ -162,7 +162,24 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count6:
         logger.warning(f"Recovered {count6} stale search job(s)")
 
-    total = count + count2 + count3 + count4 + count5 + count6
+    from humpback.models.label_processing import LabelProcessingJob
+
+    result7 = await session.execute(
+        update(LabelProcessingJob)
+        .where(
+            LabelProcessingJob.status == "running",
+            LabelProcessingJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count7 = _rowcount(result7)
+    if count7:
+        logger.warning(f"Recovered {count7} stale label processing job(s)")
+
+    total = count + count2 + count3 + count4 + count5 + count6 + count7
     if total:
         await session.commit()
     return total
@@ -468,6 +485,56 @@ async def fail_search_job(session: AsyncSession, job_id: str, error: str) -> Non
     await session.execute(
         update(SearchJob)
         .where(SearchJob.id == job_id)
+        .values(
+            status="failed",
+            error_message=error,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
+
+
+# ---- Label Processing Jobs ----
+
+
+async def claim_label_processing_job(
+    session: AsyncSession,
+) -> Optional[Any]:
+    from humpback.models.label_processing import LabelProcessingJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            LabelProcessingJob,
+            status_attr=LabelProcessingJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=LabelProcessingJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def complete_label_processing_job(session: AsyncSession, job_id: str) -> None:
+    from humpback.models.label_processing import LabelProcessingJob
+
+    await session.execute(
+        update(LabelProcessingJob)
+        .where(LabelProcessingJob.id == job_id)
+        .values(status="complete", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+
+
+async def fail_label_processing_job(
+    session: AsyncSession, job_id: str, error: str
+) -> None:
+    from humpback.models.label_processing import LabelProcessingJob
+
+    await session.execute(
+        update(LabelProcessingJob)
+        .where(LabelProcessingJob.id == job_id)
         .values(
             status="failed",
             error_message=error,

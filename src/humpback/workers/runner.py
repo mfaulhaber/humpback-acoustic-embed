@@ -174,6 +174,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then label processing jobs
+        lpjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_label_processing_job
+
+            lpjob = await claim_label_processing_job(session)
+        if lpjob:
+            logger.info(f"Label processing job {lpjob.id}")
+            from humpback.workers.label_processing_worker import (
+                run_label_processing_job,
+            )
+
+            async with session_factory() as session:
+                await run_label_processing_job(session, lpjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # Then retrain workflows
         async with session_factory() as session:
             retrain_did_work = await poll_retrain_workflows(

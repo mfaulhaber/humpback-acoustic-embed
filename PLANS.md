@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Audio/Label Processing — Classifier Score as Segmentation Signal
+
+[Full plan](/Users/michael/.claude/plans/valiant-crunching-moonbeam.md)
+
+## Outcome (2026-03-20)
+
+- Completed Phase 4 (polish): E2E smoke test, edge case handling, score cache cleanup, documentation
+- Added `"fallback"` treatment for annotations with no peak above threshold (extracts at annotation midpoint instead of skipping)
+- Added `cleanup_score_cache` parameter (default `true`): deletes `{output_root}/scores/` directory after job completion
+- E2E smoke test (`test_label_processing_e2e.py`): trains a classifier, creates fixture Raven TSV + FLAC, runs full label processing pipeline, verifies output FLAC durations, PNG sidecars, treatment distribution, and score cache cleanup
+- Updated documentation (MEMORY.md workflow, STATUS.md capabilities, README.md API endpoints)
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 823 passed, 1 skipped
+
 # Plan: Search Embedding Selection Enhancements
 
 [Full plan](/Users/michael/.claude/plans/streamed-crafting-turtle.md)

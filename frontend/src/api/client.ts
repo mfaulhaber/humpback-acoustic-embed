@@ -46,6 +46,9 @@ import type {
   TrainingDataSummaryResponse,
   VisualizationData,
   HealthStatus,
+  LabelProcessingJob,
+  LabelProcessingJobCreate,
+  LabelProcessingPreview,
 } from "./types";
 
 class ApiError extends Error {
@@ -372,6 +375,22 @@ export function audioSpectrogramPngUrl(
 ) {
   return `/audio/${audioId}/spectrogram-png?start_seconds=${startSeconds}&duration_seconds=${durationSeconds}`;
 }
+
+// ---- Label Processing ----
+
+export const fetchLabelProcessingJobs = () =>
+  api<LabelProcessingJob[]>("/label-processing/jobs");
+
+export const createLabelProcessingJob = (body: LabelProcessingJobCreate) =>
+  post<LabelProcessingJob>("/label-processing/jobs", body);
+
+export const deleteLabelProcessingJob = (jobId: string) =>
+  api<{ status: string }>(`/label-processing/jobs/${jobId}`, { method: "DELETE" });
+
+export const fetchLabelProcessingPreview = (annotationFolder: string, audioFolder: string) =>
+  api<LabelProcessingPreview>(
+    `/label-processing/preview?annotation_folder=${encodeURIComponent(annotationFolder)}&audio_folder=${encodeURIComponent(audioFolder)}`,
+  );
 
 // ---- Admin ----
 

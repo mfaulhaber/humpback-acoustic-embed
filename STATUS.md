@@ -161,7 +161,7 @@ Current state of the humpback acoustic embedding and clustering platform.
   `noaa_cache_path` for local caching instead
 
 ### Web UI
-- Side nav + top nav SPA with breadcrumbs (Audio, Processing, Clustering, Classifier [Training/Hydrophone Detection], Search, Admin)
+- Side nav + top nav SPA with breadcrumbs (Audio, Processing, Clustering, Classifier [Training/Hydrophone Detection], Search, Label Processing, Admin)
 - Model filter dropdown on Processing, Clustering, and Classifier pages
 - Model version badges on processing jobs, embedding sets, and folder tree rows
 - Cross-model warning banner on classifier training (prevents submission)
@@ -211,6 +211,39 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Frontend: retrain sub-panel in expanded model rows with step indicator and progress tracking
 - API endpoints: retrain-info (pre-flight), create retrain, list/get workflows
 
+### Audio/Label Processing (Phases 1–4)
+- Raven selection table parser: parses TSV annotation files with call type normalization
+  (handles BOM, multi-word labels, typo corrections: chrip→Chirp, whuo→Whup, piccalo→Piccolo)
+- Annotation-recording pairing by filename stem (strips `.Table.N.selections` suffix)
+- Score-based segmentation engine: runs classifier scoring pipeline (5s window, 1s hop)
+  over full recordings, smooths scores, detects peaks, estimates onset/offset
+- Annotation-to-peak mapping with overlap classification (clean, mild_overlap, heavy_overlap)
+- Clean 5s window extraction centered on score peaks with FLAC + PNG spectrogram sidecars
+- Fallback extraction: annotations with no peak above threshold extract at annotation
+  midpoint (treatment `"fallback"`) instead of being skipped
+- Re-center extraction (Option B): tries multiple crop windows around dominant peak to
+  minimise overlap with neighbouring peaks; escalates to synthesis when no crop achieves
+  acceptable isolation (mild_overlap annotations)
+- Background region extraction: finds contiguous low-score regions (smoothed score < threshold
+  for >= min_duration) and extracts non-overlapping 5s segments for synthesis use
+- Synthesis extraction (Option C): isolates cleanest 1–3s call segment using onset/offset
+  bounds, places into background with raised-cosine crossfade splicing, generates up to 3
+  placement variants (early/centre/late) per heavy_overlap annotation
+- `LabelProcessingJob` DB model with worker integration (queued → running → complete/failed)
+- API endpoints: create/list/get/delete jobs, preview annotation pairing
+- Output organized by treatment and call type:
+  `{output_root}/{clean,fallback,recentered,synthesized}/{CallType}/*.flac`
+- Configurable parameters: `enable_recentered`, `enable_synthesized`, `background_threshold`,
+  `synthesis_crossfade_ms`, `synthesis_variants`, `cleanup_score_cache`
+- Score cache cleanup: `{output_root}/scores/` directory removed after job completion
+  by default (`cleanup_score_cache: true`); set to `false` to retain for debugging
+- Web UI page (`/app/label-processing`): job creation form with classifier model selector,
+  annotation/audio folder inputs, advanced parameter accordion, preview mode showing annotation
+  pairing + call type distribution, active job progress tracking, and completed job result
+  inspection with treatment/call-type breakdown
+- E2E smoke test covers full pipeline: train classifier → create job → run worker → verify
+  output FLAC durations, PNG sidecars, treatment distribution, and score cache cleanup
+
 ### Data Staging Utilities
 - `scripts/convert_audio_to_flac.py` converts `.wav` and `.mp3` files to sibling `.flac`
   files and can optionally verify decoded samples after conversion.
@@ -255,8 +288,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `019_search_jobs.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows
+- **Latest migration**: `020_label_processing_jobs.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs
 
 ---
 

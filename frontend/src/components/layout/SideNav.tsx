@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Music, Cpu, Network, Zap, Search, Settings, ChevronRight } from "lucide-react";
+import { Music, Cpu, Network, Zap, Search, Settings, ChevronRight, FileAudio } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -38,6 +38,7 @@ const navItems: NavItem[] = [
     ],
   },
   { label: "Search", icon: Search, to: "/app/search" },
+  { label: "Label Processing", icon: FileAudio, to: "/app/label-processing" },
   { label: "Admin", icon: Settings, to: "/app/admin" },
 ];
 
