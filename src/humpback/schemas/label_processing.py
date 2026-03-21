@@ -5,7 +5,8 @@ from pydantic import BaseModel
 
 
 class LabelProcessingJobCreate(BaseModel):
-    classifier_model_id: str
+    workflow: str = "score_based"
+    classifier_model_id: Optional[str] = None
     annotation_folder: str
     audio_folder: str
     output_root: str
@@ -15,7 +16,8 @@ class LabelProcessingJobCreate(BaseModel):
 class LabelProcessingJobOut(BaseModel):
     id: str
     status: str
-    classifier_model_id: str
+    workflow: str = "score_based"
+    classifier_model_id: Optional[str] = None
     annotation_folder: str
     audio_folder: str
     output_root: str

@@ -240,6 +240,19 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Per-label classifier score KPIs in job result summary: count, mean, median, std, min, max
   for each call type's matched peak scores
 - Score cache cleanup: `{output_root}/scores/` directory removed after job completion
+- **Sample builder workflow** (`workflow="sample_builder"`): signal-processing-only alternative
+  that does not require a trained classifier; 10-stage pipeline: annotation normalization →
+  exclusion map → fragment discovery → contamination screening (band-limited RMS, spectral
+  occupancy, tonal persistence, transient energy) → acoustic similarity scoring → assembly
+  planning → construction → join smoothing → validation → pipeline orchestration; outputs
+  accepted FLAC + PNG sidecars to `{output_root}/accepted/{CallType}/` and rejection metadata
+  JSON to `{output_root}/rejected/{reason}/{CallType}/`; contamination thresholds tuned for
+  colored marine ambient noise (per-bin median tonal persistence, raised spectral occupancy
+  floor); shared `raised_cosine_fade` DSP utility in `processing/dsp.py`
+- `workflow` column on `LabelProcessingJob`: `"score_based"` (default, requires classifier)
+  or `"sample_builder"` (classifier optional); `classifier_model_id` is nullable
+- Frontend workflow selector dropdown with conditional classifier requirement and
+  sample builder acceptance/rejection stats display
   by default (`cleanup_score_cache: true`); set to `false` to retain for debugging
 - Web UI page (`/app/label-processing`): job creation form with classifier model selector,
   annotation/audio folder inputs, advanced parameter accordion, preview mode showing annotation
@@ -292,7 +305,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `020_label_processing_jobs.py`
+- **Latest migration**: `021_label_processing_workflow.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs
 
 ---

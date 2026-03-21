@@ -34,6 +34,7 @@ export function LabelProcessingTab() {
   const deleteMutation = useDeleteLabelProcessingJob();
 
   // Form state
+  const [workflow, setWorkflow] = useState<"score_based" | "sample_builder">("score_based");
   const [classifierModelId, setClassifierModelId] = useState("");
   const [annotationFolder, setAnnotationFolder] = useState("");
   const [audioFolder, setAudioFolder] = useState("");
@@ -58,8 +59,9 @@ export function LabelProcessingTab() {
     showPreview ? audioFolder : "",
   );
 
+  const classifierRequired = workflow === "score_based";
   const canSubmit =
-    classifierModelId.length > 0 &&
+    (!classifierRequired || classifierModelId.length > 0) &&
     annotationFolder.length > 0 &&
     audioFolder.length > 0 &&
     outputRoot.length > 0 &&
@@ -67,16 +69,19 @@ export function LabelProcessingTab() {
 
   const handleSubmit = () => {
     const parameters: Record<string, unknown> = {};
-    if (thresholdHigh !== "0.7") parameters.threshold_high = parseFloat(thresholdHigh);
-    if (smoothingWindow !== "3") parameters.smoothing_window = parseInt(smoothingWindow);
-    if (!enableSynthesized) parameters.enable_synthesized = false;
-    if (backgroundThreshold !== "0.1")
-      parameters.background_threshold = parseFloat(backgroundThreshold);
-    if (synthesisVariants !== "3")
-      parameters.synthesis_variants = parseInt(synthesisVariants);
+    if (workflow === "score_based") {
+      if (thresholdHigh !== "0.7") parameters.threshold_high = parseFloat(thresholdHigh);
+      if (smoothingWindow !== "3") parameters.smoothing_window = parseInt(smoothingWindow);
+      if (!enableSynthesized) parameters.enable_synthesized = false;
+      if (backgroundThreshold !== "0.1")
+        parameters.background_threshold = parseFloat(backgroundThreshold);
+      if (synthesisVariants !== "3")
+        parameters.synthesis_variants = parseInt(synthesisVariants);
+    }
 
     createMutation.mutate({
-      classifier_model_id: classifierModelId,
+      workflow,
+      classifier_model_id: classifierRequired ? classifierModelId : (classifierModelId || null),
       annotation_folder: annotationFolder,
       audio_folder: audioFolder,
       output_root: outputRoot,
@@ -99,9 +104,25 @@ export function LabelProcessingTab() {
           <CardTitle>Create Label Processing Job</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Workflow selector */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Workflow</label>
+            <Select value={workflow} onValueChange={(v) => setWorkflow(v as "score_based" | "sample_builder")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="score_based">Score-Based (classifier required)</SelectItem>
+                <SelectItem value="sample_builder">Sample Builder (signal processing)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Classifier model selector */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Classifier Model</label>
+            <label className="text-sm font-medium">
+              Classifier Model{!classifierRequired && <span className="text-muted-foreground ml-1">(optional)</span>}
+            </label>
             <Select value={classifierModelId} onValueChange={setClassifierModelId}>
               <SelectTrigger>
                 <SelectValue placeholder="Select a classifier model..." />
@@ -151,8 +172,8 @@ export function LabelProcessingTab() {
             />
           </div>
 
-          {/* Advanced parameters */}
-          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+          {/* Advanced parameters (score_based only) */}
+          {workflow === "score_based" && <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
             <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
               <ChevronRight
                 className={cn(
@@ -231,7 +252,7 @@ export function LabelProcessingTab() {
                 </div>
               </div>
             </CollapsibleContent>
-          </Collapsible>
+          </Collapsible>}
 
           {/* Actions */}
           <div className="flex items-center gap-3 pt-2">

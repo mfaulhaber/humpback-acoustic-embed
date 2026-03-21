@@ -27,6 +27,7 @@ def _job_to_out(job) -> LabelProcessingJobOut:
     return LabelProcessingJobOut(
         id=job.id,
         status=job.status,
+        workflow=job.workflow or "score_based",
         classifier_model_id=job.classifier_model_id,
         annotation_folder=job.annotation_folder,
         audio_folder=job.audio_folder,
@@ -50,11 +51,12 @@ async def create_job(
     try:
         job = await create_label_processing_job(
             session,
-            classifier_model_id=body.classifier_model_id,
             annotation_folder=body.annotation_folder,
             audio_folder=body.audio_folder,
             output_root=body.output_root,
+            classifier_model_id=body.classifier_model_id,
             parameters=body.parameters,
+            workflow=body.workflow,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

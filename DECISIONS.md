@@ -1085,3 +1085,30 @@ causing poor training data quality:
 - Two new configurable parameters: `background_threshold_auto` (bool) and
   `background_min_duration` (float).
 - No database migration required — pure algorithm change.
+
+
+---
+
+## ADR-038: Sample builder contamination screening tuned for marine recordings
+
+**Date**: 2026-03-21
+**Status**: Accepted
+**Context**: The sample builder pipeline rejected 100% of annotations (1514/1514) from real marine field recordings (Emily Vierling humpback dataset). Two root causes: (1) contamination screening thresholds designed for synthetic white noise at amplitude 0.001 failed on colored (pink/red) ocean ambient noise; (2) annotation duration bounds [0.3s, 4.0s] were too restrictive for the range of humpback vocalizations.
+
+**Decision**: Four signal-processing algorithm changes:
+
+1. **Tonal persistence: per-bin median threshold** — Changed `_tonal_persistence` from global median (across all bins and frames) to per-bin median (each bin compared to its own baseline). Pink noise has 20-30 dB more energy at low frequencies; the global median was pulled low by quiet high-frequency bins, causing all low-frequency bins to appear "persistently active." Per-bin median normalizes for spectral shape. Added configurable `persistence_margin_db` (default 10.0 dB) to `ContaminationConfig`. Trade-off: constant tones present throughout a fragment become invisible to persistence detection; the other three features (RMS, occupancy, transient) still catch loud or sudden contamination.
+
+2. **Spectral occupancy: raised noise floor** — Changed defaults from `-40 dB / 0.3` to `-10 dB / 0.8`. At -40 dB, ocean ambient noise activated >99% of FFT bins. At -10 dB, typical marine backgrounds (amp 0.005-0.02) score 0.06-0.24 occupancy. Spectral occupancy has inherently poor separation for tonal contamination in colored noise (a tone adds 1-2 bins to 513), so it now serves as a broadband-only backstop.
+
+3. **Validation: relaxed splice energy ratio and averaged spectral correlation** — Raised `splice_energy_ratio_max` from 10.0 to 1000.0 because background-to-call transitions inherently have large energy ratios (25-250x) that the crossfade smooths into gradual transitions, not audible artifacts. Changed `_spectral_correlation` from single-FFT to frame-averaged Welch-style power spectrum so spectral *shape* (e.g. 1/f) is compared rather than random per-frame fluctuations in short noise segments.
+
+4. **Widened annotation duration bounds** — `SampleBuilderConfig` defaults changed from [0.3s, 4.0s] to [0.1s, 10.0s] to accommodate brief clicks and extended songs/moans.
+
+All contamination and annotation config parameters are now exposed through the worker's job parameters for per-job tuning.
+
+**Consequences**:
+- Marine field recordings should achieve non-zero acceptance rates with default settings.
+- Contamination detection is more permissive overall; users needing stricter screening can override via job parameters.
+- Per-bin persistence cannot detect constant tones — accepted trade-off since constant recording-wide tones are effectively background.
+- No database migration required — pure algorithm and default-value changes.
