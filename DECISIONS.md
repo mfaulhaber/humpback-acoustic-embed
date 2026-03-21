@@ -1035,3 +1035,53 @@ stored in the main EmbeddingSet pipeline.
 - New migration `020_label_processing_jobs.py`.
 - Worker queue extended with claim/complete/fail functions and stale recovery.
 - API router at `/label-processing` with job CRUD and annotation preview.
+
+---
+
+## ADR-037: Annotation-guided synthesis with adaptive background threshold
+
+**Date**: 2026-03
+**Status**: Accepted
+
+**Context**: The label processing synthesis pipeline had three related issues
+causing poor training data quality:
+
+1. **Shared-peak label contamination**: `isolate_call_segment()` centred audio
+   extraction on the classifier peak's position, ignoring annotation bounds.
+   When multiple nearby annotations of different call types shared a peak (64%
+   of peaks in test data), they all got identical audio with different labels.
+
+2. **No synthesis in dense recordings**: The fixed `background_threshold` (0.1)
+   was too strict for recordings with elevated classifier baselines, causing
+   `extract_background_regions()` to find zero qualifying runs.
+
+3. **Repetitive backgrounds**: Even when backgrounds were found, all annotations
+   in a recording cycled through the same small pool deterministically.
+
+**Decision**: Three targeted changes to the synthesis pipeline:
+
+- **Annotation-guided call isolation**: `isolate_call_segment()` accepts an
+  optional `annotation` parameter.  When provided, the extracted segment centres
+  on the annotation midpoint and uses the annotation duration (clamped to
+  1–3 s), ensuring each annotation gets audio from its own labelled region.
+
+- **Adaptive per-recording background threshold**: A new helper
+  `_compute_adaptive_bg_threshold()` computes the 25th percentile of all
+  smoothed scores, clamped to `[0.05, 0.5]`.  This replaces the static 0.1
+  threshold when `background_threshold_auto=True` (default), allowing dense
+  recordings to produce background segments from their quieter regions.
+  Short runs (≥ `background_min_duration`, default 1.0 s) are tiled to fill
+  the 5 s synthesis canvas with up to 3 shifted variants per run.
+
+- **Background pool rotation**: `synthesize_variants()` accepts a `bg_offset`
+  parameter; `process_recording()` increments it per annotation so successive
+  annotations start at different positions in the background pool.
+
+**Consequences**:
+- Synthesised files are now annotation-specific: filenames use
+  `annotation.begin_time` instead of `peak.time_sec`.
+- Dense recordings that previously produced zero synthesis output now produce
+  backgrounds proportional to their quiet-region count.
+- Two new configurable parameters: `background_threshold_auto` (bool) and
+  `background_min_duration` (float).
+- No database migration required — pure algorithm change.

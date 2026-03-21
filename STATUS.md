@@ -222,11 +222,15 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Fallback extraction: annotations with no peak above threshold extract at annotation
   midpoint (treatment `"fallback"`) instead of being skipped
 - Background region extraction: finds contiguous low-score regions (smoothed score < threshold
-  for >= min_duration) and extracts non-overlapping 5s segments for synthesis use
-- Synthesis for all annotations with a peak: isolates cleanest 1–3s call segment using
-  onset/offset bounds, places into background with raised-cosine crossfade splicing, generates
-  up to 3 placement variants (early/centre/late); clean annotations get both a clean extraction
-  and synthesis variants
+  for >= min_duration) and extracts non-overlapping 5s segments for synthesis use; short runs
+  (≥ `background_min_duration`, default 1s) are tiled/looped to fill 5s when no full-length
+  background exists; adaptive per-recording threshold (`background_threshold_auto`, default
+  `True`) uses the 25th percentile of smoothed scores clamped to `[0.05, background_threshold]`
+  so dense recordings with elevated baselines can still produce synthesis backgrounds
+- Synthesis for all annotations with a peak: isolates cleanest 1–3s call segment centred
+  on the annotation's own time bounds (not the shared peak position), places into background
+  with raised-cosine crossfade splicing, generates up to 3 placement variants
+  (early/centre/late); clean annotations get both a clean extraction and synthesis variants
 - `LabelProcessingJob` DB model with worker integration (queued → running → complete/failed)
 - API endpoints: create/list/get/delete jobs, preview annotation pairing
 - Output organized by treatment and call type:

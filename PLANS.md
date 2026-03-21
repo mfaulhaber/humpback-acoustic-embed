@@ -10,6 +10,25 @@
 
 ## Recently Completed
 
+# Plan: Fix Synthesis Call Isolation to Use Annotation Bounds
+
+[Full plan](/Users/michael/.claude/plans/humble-marinating-hamming.md)
+
+## Outcome (2026-03-20)
+
+- Fixed `isolate_call_segment()` to centre on annotation bounds instead of shared peak position
+- Added adaptive per-recording background threshold (`_compute_adaptive_bg_threshold`, 25th percentile, ceiling 0.5)
+- Added tiled short-run extraction (`background_min_duration` default 1.0s) with shifted variants
+- Added `bg_offset` rotation in `synthesize_variants()` for background diversity across annotations
+- New parameters: `background_threshold_auto`, `background_min_duration`
+- ADR-037 documents all three signal processing changes
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `uv run pytest tests/` — 833 passed, 1 skipped
+
 # Plan: Synthesize All Annotations + Score KPIs
 
 [Full plan](/Users/michael/.claude/plans/foamy-sauteeing-willow.md)

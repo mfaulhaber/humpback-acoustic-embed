@@ -6,6 +6,7 @@ import pytest
 from humpback.classifier.label_processor import (
     ScorePeak,
     ScoreTimeSeries,
+    _compute_adaptive_bg_threshold,
     classify_overlap,
     detect_peaks,
     extract_background_regions,
@@ -311,6 +312,51 @@ class TestExtractFallbackWindow:
 # ---------------------------------------------------------------------------
 
 
+class TestAdaptiveBackgroundThreshold:
+    def test_basic_percentile(self):
+        scores = [0.05, 0.1, 0.15, 0.8, 0.9]
+        result = _compute_adaptive_bg_threshold(scores, ceiling=0.5)
+        assert result == pytest.approx(0.1, abs=0.01)
+
+    def test_clamped_to_floor(self):
+        scores = [0.01, 0.01, 0.02, 0.01, 0.02]
+        result = _compute_adaptive_bg_threshold(scores, ceiling=0.5, floor=0.05)
+        assert result == 0.05
+
+    def test_clamped_to_ceiling(self):
+        scores = [0.8, 0.85, 0.9, 0.95, 1.0]
+        result = _compute_adaptive_bg_threshold(scores, ceiling=0.3)
+        assert result == 0.3
+
+    def test_empty_scores_returns_ceiling(self):
+        result = _compute_adaptive_bg_threshold([], ceiling=0.5)
+        assert result == 0.5
+
+    def test_dense_recording_adapts(self):
+        """For a dense recording with elevated baseline, threshold adapts upward."""
+        # Simulate: 70% of windows score 0.6-0.9 (whale), 30% score 0.15-0.3 (bg)
+        bg_scores = [0.15, 0.2, 0.25, 0.3, 0.2, 0.25]
+        whale_scores = [
+            0.6,
+            0.7,
+            0.8,
+            0.85,
+            0.9,
+            0.75,
+            0.8,
+            0.7,
+            0.85,
+            0.9,
+            0.6,
+            0.7,
+            0.8,
+        ]
+        scores = bg_scores + whale_scores
+        result = _compute_adaptive_bg_threshold(scores, ceiling=0.5)
+        # 25th percentile should land in the 0.2-0.3 range
+        assert 0.2 <= result <= 0.35
+
+
 class TestExtractBackgroundRegions:
     def test_finds_low_score_regions(self):
         sr = 16000
@@ -365,6 +411,50 @@ class TestExtractBackgroundRegions:
         regions = extract_background_regions(series, audio, sr, min_duration=5.0)
         assert regions == []
 
+    def test_short_run_tiled_when_min_duration_relaxed(self):
+        """A 2s low-score run produces shifted tiled variants when min_duration allows."""
+        sr = 16000
+        audio = np.random.randn(sr * 10).astype(np.float32)
+        # 2s of low scores followed by high scores
+        scores = [0.02, 0.02, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9]
+        offsets = [float(i) for i in range(10)]
+        series = ScoreTimeSeries(
+            offsets=offsets,
+            raw_scores=scores,
+            smoothed_scores=scores,
+            hop_seconds=1.0,
+            window_size=5.0,
+        )
+        # With default min_duration=5.0, no regions
+        regions = extract_background_regions(series, audio, sr, min_duration=5.0)
+        assert regions == []
+        # With relaxed min_duration=1.0, the short run produces shifted variants
+        regions = extract_background_regions(series, audio, sr, min_duration=1.0)
+        assert len(regions) >= 1
+        for r in regions:
+            assert len(r) == int(5.0 * sr)
+        # Multiple variants should differ (shifted offsets)
+        if len(regions) > 1:
+            assert not np.array_equal(regions[0], regions[1])
+
+    def test_short_run_below_min_duration_still_rejected(self):
+        """A run shorter than min_duration is still rejected."""
+        sr = 16000
+        audio = np.random.randn(sr * 10).astype(np.float32)
+        # 1s of low score → run_duration ~2s (offset 0 to offset 1 + hop)
+        scores = [0.02, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9]
+        offsets = [float(i) for i in range(10)]
+        series = ScoreTimeSeries(
+            offsets=offsets,
+            raw_scores=scores,
+            smoothed_scores=scores,
+            hop_seconds=1.0,
+            window_size=5.0,
+        )
+        # 1-window run (~2s) < min_duration=3.0 → rejected
+        regions = extract_background_regions(series, audio, sr, min_duration=3.0)
+        assert regions == []
+
 
 class TestIsolateCallSegment:
     def test_basic_isolation(self):
@@ -404,6 +494,101 @@ class TestIsolateCallSegment:
         assert result is not None
         _, dur = result
         assert dur >= 0.5
+
+    def test_annotation_guided_centering(self):
+        """When annotation is provided, segment centres on annotation midpoint."""
+        sr = 16000
+        audio = np.random.randn(sr * 30).astype(np.float32)
+        peak = ScorePeak(
+            index=10, time_sec=10.0, score=0.9, onset_sec=9.5, offset_sec=16.5
+        )
+        series = ScoreTimeSeries(
+            offsets=[float(i) for i in range(30)],
+            raw_scores=[0.1] * 30,
+            smoothed_scores=[0.1] * 30,
+            hop_seconds=1.0,
+            window_size=5.0,
+        )
+        ann = RavenAnnotation(
+            selection=1,
+            begin_time=13.0,
+            end_time=14.0,
+            low_freq=0.0,
+            high_freq=3000.0,
+            call_type="Whup",
+        )
+        result = isolate_call_segment(peak, series, audio, sr, annotation=ann)
+        assert result is not None
+        seg, dur = result
+        # Duration clamped to 1.0 (annotation is 1.0 s, minimum is 1.0)
+        assert dur == pytest.approx(1.0)
+        # Segment should be centred near 13.5 s (annotation midpoint),
+        # NOT 12.5 s (peak midpoint).  Check the sample offset.
+        expected_start = int(13.0 * sr)  # 13.5 - 1.0/2
+        assert seg[0] == audio[expected_start]
+
+    def test_no_annotation_uses_peak_center(self):
+        """Without annotation, segment centres on peak midpoint (backward compat)."""
+        sr = 16000
+        audio = np.random.randn(sr * 30).astype(np.float32)
+        peak = ScorePeak(
+            index=10, time_sec=10.0, score=0.9, onset_sec=9.5, offset_sec=16.5
+        )
+        series = ScoreTimeSeries(
+            offsets=[float(i) for i in range(30)],
+            raw_scores=[0.1] * 30,
+            smoothed_scores=[0.1] * 30,
+            hop_seconds=1.0,
+            window_size=5.0,
+        )
+        result = isolate_call_segment(peak, series, audio, sr, annotation=None)
+        assert result is not None
+        seg, dur = result
+        # onset/offset: raw_dur = (16.5 - 5.0) - 9.5 = 2.0, clamped to [1,3] → 2.0
+        assert dur == pytest.approx(2.0)
+        # Peak midpoint = 10.0 + 5.0/2 = 12.5; start = 12.5 - 2.0/2 = 11.5
+        expected_start = int(11.5 * sr)
+        assert seg[0] == audio[expected_start]
+
+    def test_shared_peak_different_annotations_produce_different_segments(self):
+        """Two annotations sharing a peak get different audio segments."""
+        sr = 16000
+        # Use a distinctive audio signal so slices are verifiably different
+        audio = np.arange(sr * 30, dtype=np.float32)
+        peak = ScorePeak(
+            index=10, time_sec=10.0, score=0.9, onset_sec=9.5, offset_sec=16.5
+        )
+        series = ScoreTimeSeries(
+            offsets=[float(i) for i in range(30)],
+            raw_scores=[0.1] * 30,
+            smoothed_scores=[0.1] * 30,
+            hop_seconds=1.0,
+            window_size=5.0,
+        )
+        ann_moan = RavenAnnotation(
+            selection=1,
+            begin_time=10.5,
+            end_time=12.0,
+            low_freq=0.0,
+            high_freq=3000.0,
+            call_type="Moan",
+        )
+        ann_whup = RavenAnnotation(
+            selection=2,
+            begin_time=13.0,
+            end_time=14.0,
+            low_freq=0.0,
+            high_freq=3000.0,
+            call_type="Whup",
+        )
+        res_moan = isolate_call_segment(peak, series, audio, sr, annotation=ann_moan)
+        res_whup = isolate_call_segment(peak, series, audio, sr, annotation=ann_whup)
+        assert res_moan is not None
+        assert res_whup is not None
+        seg_moan, _ = res_moan
+        seg_whup, _ = res_whup
+        # The two segments must start at different positions
+        assert seg_moan[0] != seg_whup[0]
 
 
 class TestSynthesizeCleanWindow:
@@ -472,3 +657,19 @@ class TestSynthesizeVariants:
                 assert not np.array_equal(
                     variants[i].audio_segment, variants[j].audio_segment
                 )
+
+    def test_bg_offset_rotates_backgrounds(self):
+        """Successive bg_offset values select different backgrounds."""
+        sr = 16000
+        call = np.ones(sr, dtype=np.float32) * 0.5
+        bgs = [np.random.randn(sr * 5).astype(np.float32) for _ in range(5)]
+        # offset=0 picks bgs[0,1,2]; offset=1 picks bgs[1,2,3]
+        v0 = synthesize_variants(
+            call, bgs, sr, window_size=5.0, n_variants=1, bg_offset=0
+        )
+        v1 = synthesize_variants(
+            call, bgs, sr, window_size=5.0, n_variants=1, bg_offset=1
+        )
+        assert len(v0) == 1 and len(v1) == 1
+        # Same placement (early) but different background → different audio
+        assert not np.array_equal(v0[0].audio_segment, v1[0].audio_segment)
