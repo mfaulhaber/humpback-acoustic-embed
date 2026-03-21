@@ -471,6 +471,25 @@ def extract_fallback_window(
 # ---------------------------------------------------------------------------
 
 
+def _compute_adaptive_bg_threshold(
+    smoothed_scores: list[float],
+    ceiling: float = 0.5,
+    floor: float = 0.05,
+    percentile: float = 25.0,
+) -> float:
+    """Compute a per-recording background threshold from the score distribution.
+
+    Uses the *percentile*-th percentile of smoothed scores, clamped to
+    ``[floor, ceiling]``.  This adapts the threshold to each recording's
+    noise floor so that dense recordings with elevated baselines can still
+    produce background segments for synthesis.
+    """
+    if not smoothed_scores:
+        return ceiling
+    p = float(np.percentile(smoothed_scores, percentile))
+    return max(floor, min(p, ceiling))
+
+
 def extract_background_regions(
     score_series: ScoreTimeSeries,
     full_audio: np.ndarray,
@@ -544,23 +563,53 @@ def _extract_from_run(
     total_duration: float,
     out: list[np.ndarray],
 ) -> None:
-    """Extract non-overlapping windows from a single low-score run."""
+    """Extract non-overlapping windows from a single low-score run.
+
+    When the run is shorter than *window_size* but at least *min_duration*,
+    the available audio is tiled (looped) to fill a full *window_size* segment
+    so that dense recordings with only brief background gaps can still produce
+    synthesis backgrounds.
+    """
     run_start_sec = offsets[start_idx]
     run_end_sec = offsets[min(end_idx, len(offsets) - 1)] + hop
+    run_duration = run_end_sec - run_start_sec
 
-    if run_end_sec - run_start_sec < min_duration:
+    if run_duration < min_duration:
         return
 
-    pos = run_start_sec
     expected_samples = int(window_size * sr)
-    while pos + window_size <= min(run_end_sec, total_duration):
-        s = int(pos * sr)
-        seg = full_audio[s : s + expected_samples]
-        if len(seg) >= int(expected_samples * 0.9):
-            if len(seg) < expected_samples:
-                seg = np.pad(seg, (0, expected_samples - len(seg)))
-            out.append(seg[:expected_samples])
-        pos += window_size  # non-overlapping stride
+
+    if run_duration >= window_size:
+        # Standard path: extract non-overlapping full-size windows
+        pos = run_start_sec
+        while pos + window_size <= min(run_end_sec, total_duration):
+            s = int(pos * sr)
+            seg = full_audio[s : s + expected_samples]
+            if len(seg) >= int(expected_samples * 0.9):
+                if len(seg) < expected_samples:
+                    seg = np.pad(seg, (0, expected_samples - len(seg)))
+                out.append(seg[:expected_samples])
+            pos += window_size  # non-overlapping stride
+    else:
+        # Short run: tile (loop) available audio to fill window_size.
+        # Generate multiple shifted variants so the background pool has
+        # diversity even when only a few short runs exist.
+        s = int(run_start_sec * sr)
+        e = min(int(run_end_sec * sr), len(full_audio))
+        short_seg = full_audio[s:e]
+        if len(short_seg) < int(min_duration * sr * 0.9):
+            return
+        seg_len = len(short_seg)
+        repeats = (expected_samples // seg_len) + 2  # +2 to allow offset shifts
+        tiled_full = np.tile(short_seg, repeats)
+        # Produce up to 3 shifted variants from different start offsets
+        n_shifts = min(3, max(1, seg_len // (sr // 4)))  # ~0.25s step granularity
+        step = max(1, seg_len // n_shifts)
+        for shift_idx in range(n_shifts):
+            offset = shift_idx * step
+            out.append(
+                tiled_full[offset : offset + expected_samples].copy().astype(np.float32)
+            )
 
 
 def isolate_call_segment(
@@ -568,18 +617,27 @@ def isolate_call_segment(
     score_series: ScoreTimeSeries,
     full_audio: np.ndarray,
     sr: int,
+    annotation: RavenAnnotation | None = None,
 ) -> tuple[np.ndarray, float] | None:
     """Isolate the cleanest 1–3 s call segment around a peak using onset/offset.
+
+    When *annotation* is provided the extraction centres on the annotation
+    midpoint and uses the annotation duration, so that each annotation gets
+    its own audio even when multiple annotations share the same peak.
 
     Returns ``(segment_audio, duration_sec)`` or ``None`` if the audio is too
     short or the onset/offset span is degenerate.
     """
-    onset = peak.onset_sec
-    offset = peak.offset_sec - score_series.window_size  # strip trailing window pad
+    if annotation is not None:
+        call_centre = (annotation.begin_time + annotation.end_time) / 2.0
+        raw_dur = annotation.end_time - annotation.begin_time
+    else:
+        onset = peak.onset_sec
+        offset = peak.offset_sec - score_series.window_size  # strip trailing window pad
+        call_centre = peak.time_sec + score_series.window_size / 2.0
+        raw_dur = max(offset - onset, 0.0)
 
-    # Clamp to reasonable call duration (1–3 s centred on peak)
-    call_centre = peak.time_sec + score_series.window_size / 2.0
-    raw_dur = max(offset - onset, 0.0)
+    # Clamp to reasonable call duration (1–3 s centred on call)
     dur = min(max(raw_dur, 1.0), 3.0)
 
     start = call_centre - dur / 2.0
@@ -715,11 +773,14 @@ def synthesize_variants(
     window_size: float = 5.0,
     crossfade_ms: float = 50.0,
     n_variants: int = 3,
+    bg_offset: int = 0,
 ) -> list[ExtractedSample]:
     """Generate up to *n_variants* placement variants of a call in different backgrounds.
 
     Variant placements: early (~0.5–1.0 s), centre, late (call ends ~4.0–4.5 s).
-    Each variant uses a different background when available.
+    Each variant uses a different background when available.  *bg_offset*
+    rotates the starting index into the background pool so that successive
+    annotations pick different backgrounds even when the pool is small.
     """
     call_dur = len(call_segment) / sr
     placements = [
@@ -732,7 +793,8 @@ def synthesize_variants(
 
     results: list[ExtractedSample] = []
     for i in range(min(n_variants, len(placements))):
-        bg = backgrounds[i % len(backgrounds)] if backgrounds else None
+        bg_idx = (bg_offset + i) % len(backgrounds) if backgrounds else -1
+        bg = backgrounds[bg_idx] if bg_idx >= 0 else None
         if bg is None:
             continue
         sample = synthesize_clean_window(
@@ -766,6 +828,8 @@ def process_recording(
     overlap_relative_threshold: float = 0.5,
     enable_synthesized: bool = True,
     background_threshold: float = 0.1,
+    background_threshold_auto: bool = True,
+    background_min_duration: float = 1.0,
     synthesis_crossfade_ms: float = 50.0,
     synthesis_variants: int = 3,
 ) -> ProcessingResult:
@@ -872,13 +936,26 @@ def process_recording(
     # extraction from Pass 1.  Annotations that already got a clean extraction
     # are NOT marked skipped if synthesis fails.
     if enable_synthesized:
+        # Compute adaptive background threshold from score distribution
+        bg_threshold = background_threshold
+        if background_threshold_auto:
+            bg_threshold = _compute_adaptive_bg_threshold(
+                scores.smoothed_scores,
+            )
+            logger.info(
+                "Adaptive background threshold for %s: %.3f (static: %.3f)",
+                filename,
+                bg_threshold,
+                background_threshold,
+            )
+
         # Extract background regions once per recording
         backgrounds = extract_background_regions(
             scores,
             audio,
             target_sr,
-            threshold=background_threshold,
-            min_duration=window_size,
+            threshold=bg_threshold,
+            min_duration=background_min_duration,
             window_size=window_size,
         )
 
@@ -896,6 +973,7 @@ def process_recording(
             )
         }
 
+        synth_idx = 0  # rotating offset into background pool
         for ap in annotated_peaks:
             if ap.peak is None:
                 continue
@@ -909,7 +987,9 @@ def process_recording(
                     result.skipped_no_peak += 1
                 continue
 
-            seg_result = isolate_call_segment(ap.peak, scores, audio, target_sr)
+            seg_result = isolate_call_segment(
+                ap.peak, scores, audio, target_sr, annotation=ap.annotation
+            )
             if seg_result is None:
                 if id(ap) not in has_clean:
                     ap.treatment = "skipped"
@@ -924,13 +1004,15 @@ def process_recording(
                 window_size=window_size,
                 crossfade_ms=synthesis_crossfade_ms,
                 n_variants=synthesis_variants,
+                bg_offset=synth_idx,
             )
+            synth_idx += 1
             for sample in variants:
                 sample.call_type = ap.annotation.call_type
                 sample.source_filename = filename
                 sample.peak_score = ap.peak.score
-                sample.start_sec = ap.peak.time_sec
-                sample.end_sec = ap.peak.time_sec + window_size
+                sample.start_sec = ap.annotation.begin_time
+                sample.end_sec = ap.annotation.begin_time + window_size
                 result.extracted_samples.append(sample)
 
             if not variants and id(ap) not in has_clean:

@@ -141,8 +141,9 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 - audio_folder (path to paired FLAC folder)
 - output_root (output directory for extracted clips)
 - parameters (JSON — threshold_high, smoothing_window, onset_offset_alpha,
-  enable_synthesized, background_threshold,
-  synthesis_crossfade_ms, synthesis_variants, cleanup_score_cache)
+  enable_synthesized, background_threshold, background_threshold_auto,
+  background_min_duration, synthesis_crossfade_ms, synthesis_variants,
+  cleanup_score_cache)
 - files_processed, files_total, annotations_total
 - result_summary (JSON — treatment counts, call type counts, score_stats_by_label)
 - error_message (nullable)
@@ -402,7 +403,7 @@ Score-based extraction of clean 5-second audio samples from annotated recordings
 5. Extract samples by treatment:
    - **clean** — direct 5s window at peak position
    - **fallback** — window centered on annotation midpoint (when no peak above threshold)
-   - **synthesized** — all annotations with a peak get synthesis: isolate 1–3s call segment, splice into background with crossfade; up to 3 placement variants per annotation (clean annotations get both clean + synthesized)
+   - **synthesized** — all annotations with a peak get synthesis: isolate 1–3s call segment centred on the annotation's own time bounds, splice into background with crossfade; up to 3 placement variants per annotation (clean annotations get both clean + synthesized)
    - **skipped** — when extraction fails (audio too short, no background available)
 6. Write FLAC + PNG spectrogram sidecar per extracted sample
 7. Compute per-label score KPIs (count, mean, median, std, min, max per call type)

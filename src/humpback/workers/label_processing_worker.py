@@ -36,6 +36,8 @@ DEFAULT_PARAMS: dict[str, float | int | bool] = {
     "overlap_relative_threshold": 0.5,
     "enable_synthesized": True,
     "background_threshold": 0.1,
+    "background_threshold_auto": True,
+    "background_min_duration": 1.0,
     "synthesis_crossfade_ms": 50.0,
     "synthesis_variants": 3,
     "cleanup_score_cache": True,
@@ -113,6 +115,8 @@ async def run_label_processing_job(
                 overlap_relative_threshold=float(params["overlap_relative_threshold"]),
                 enable_synthesized=bool(params["enable_synthesized"]),
                 background_threshold=float(params["background_threshold"]),
+                background_threshold_auto=bool(params["background_threshold_auto"]),
+                background_min_duration=float(params["background_min_duration"]),
                 synthesis_crossfade_ms=float(params["synthesis_crossfade_ms"]),
                 synthesis_variants=int(params["synthesis_variants"]),
             )
