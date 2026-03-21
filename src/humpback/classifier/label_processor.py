@@ -659,9 +659,9 @@ def isolate_call_segment(
 
 def _raised_cosine_fade(length: int) -> np.ndarray:
     """Return a half-cosine ramp from 0 → 1 of *length* samples."""
-    if length <= 0:
-        return np.array([], dtype=np.float32)
-    return (0.5 * (1.0 - np.cos(np.pi * np.arange(length) / length))).astype(np.float32)
+    from humpback.processing.dsp import raised_cosine_fade
+
+    return raised_cosine_fade(length)
 
 
 def synthesize_clean_window(

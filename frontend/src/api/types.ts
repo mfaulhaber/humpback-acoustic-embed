@@ -684,7 +684,8 @@ export interface SearchJobResponse {
 // ---- Label Processing ----
 
 export interface LabelProcessingJobCreate {
-  classifier_model_id: string;
+  workflow?: "score_based" | "sample_builder";
+  classifier_model_id?: string | null;
   annotation_folder: string;
   audio_folder: string;
   output_root: string;
@@ -694,7 +695,8 @@ export interface LabelProcessingJobCreate {
 export interface LabelProcessingJob {
   id: string;
   status: "queued" | "running" | "complete" | "failed";
-  classifier_model_id: string;
+  workflow: "score_based" | "sample_builder";
+  classifier_model_id: string | null;
   annotation_folder: string;
   audio_folder: string;
   output_root: string;

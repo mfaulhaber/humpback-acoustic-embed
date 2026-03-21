@@ -10,6 +10,44 @@
 
 ## Recently Completed
 
+# Plan: Sample Builder — Fix 100% Rejection Rate on Marine Recordings
+
+[Full plan](/Users/michael/.claude/plans/buzzing-petting-zephyr.md)
+
+## Outcome (2026-03-21)
+
+- Fixed contamination screening for colored marine ambient noise: per-bin median tonal persistence, raised spectral occupancy floor (-10 dB), relaxed splice energy ratio (1000×)
+- Widened annotation duration bounds [0.1s, 10.0s] for diverse humpback vocalizations
+- Exposed all contamination config parameters through worker job parameters
+- ADR-038 documents the tuning changes and rationale
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 968 passed, 1 skipped
+
+# Plan: 5-Second Sample Builder — Alternative Label Processing Workflow
+
+[Full plan](/Users/michael/.claude/plans/structured-baking-mist.md)
+
+## Outcome (2026-03-21)
+
+- Added `sample_builder` module with 10-stage pipeline: normalize → exclusion map → fragment discovery → contamination screening → similarity scoring → assembly planning → construction → join smoothing → validation → orchestration
+- Added `workflow` column to `label_processing_jobs` (migration 021), made `classifier_model_id` nullable
+- Worker dispatches by workflow type; sample builder path requires no trained classifier
+- Frontend: workflow selector dropdown, conditional classifier requirement, acceptance/rejection stats
+- Shared `raised_cosine_fade` DSP utility extracted to `processing/dsp.py`
+- 10 new unit test files (136 tests) covering all pipeline stages
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 968 passed, 1 skipped
+
 # Plan: Fix Synthesis Call Isolation to Use Annotation Bounds
 
 [Full plan](/Users/michael/.claude/plans/humble-marinating-hamming.md)

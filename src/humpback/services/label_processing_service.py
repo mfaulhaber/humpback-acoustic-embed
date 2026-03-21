@@ -16,22 +16,36 @@ from humpback.models.classifier import ClassifierModel
 from humpback.models.label_processing import LabelProcessingJob
 
 
+_VALID_WORKFLOWS = {"score_based", "sample_builder"}
+
+
 async def create_label_processing_job(
     session: AsyncSession,
-    classifier_model_id: str,
     annotation_folder: str,
     audio_folder: str,
     output_root: str,
+    classifier_model_id: Optional[str] = None,
     parameters: Optional[dict[str, Any]] = None,
+    workflow: str = "score_based",
 ) -> LabelProcessingJob:
     """Create a label processing job after validating inputs."""
-    # Validate classifier model exists
-    result = await session.execute(
-        select(ClassifierModel).where(ClassifierModel.id == classifier_model_id)
-    )
-    model = result.scalars().first()
-    if model is None:
-        raise ValueError(f"Classifier model not found: {classifier_model_id}")
+    # Validate workflow
+    if workflow not in _VALID_WORKFLOWS:
+        raise ValueError(
+            f"Invalid workflow '{workflow}'. Must be one of: {_VALID_WORKFLOWS}"
+        )
+
+    # Validate classifier model exists (required for score_based, optional for sample_builder)
+    if workflow == "score_based" and not classifier_model_id:
+        raise ValueError("classifier_model_id is required for score_based workflow")
+
+    if classifier_model_id:
+        result = await session.execute(
+            select(ClassifierModel).where(ClassifierModel.id == classifier_model_id)
+        )
+        model = result.scalars().first()
+        if model is None:
+            raise ValueError(f"Classifier model not found: {classifier_model_id}")
 
     # Validate folders exist
     ann_path = Path(annotation_folder)
@@ -46,6 +60,7 @@ async def create_label_processing_job(
     total_annotations = sum(len(p.annotations) for p in pairs)
 
     job = LabelProcessingJob(
+        workflow=workflow,
         classifier_model_id=classifier_model_id,
         annotation_folder=annotation_folder,
         audio_folder=audio_folder,

@@ -10,7 +10,8 @@ class LabelProcessingJob(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "label_processing_jobs"
 
     status: Mapped[str] = mapped_column(default="queued")
-    classifier_model_id: Mapped[str]
+    workflow: Mapped[str] = mapped_column(default="score_based")
+    classifier_model_id: Mapped[Optional[str]] = mapped_column(default=None)
     annotation_folder: Mapped[str]
     audio_folder: Mapped[str]
     output_root: Mapped[str]

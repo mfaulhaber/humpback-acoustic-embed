@@ -22,11 +22,16 @@ export function LabelProcessingJobCard({ job, onDelete }: Props) {
   const isActive = job.status === "queued" || job.status === "running";
 
   const summary = job.result_summary as Record<string, unknown> | null;
+  const isSampleBuilder = job.workflow === "sample_builder";
   const treatmentCounts = summary?.treatment_counts as Record<string, number> | undefined;
   const callTypeCounts = summary?.call_type_counts as Record<string, number> | undefined;
   const scoreStatsByLabel = summary?.score_stats_by_label as
     | Record<string, { count: number; mean: number; median: number; std: number; min: number; max: number }>
     | undefined;
+  const rejectionCounts = summary?.rejection_counts as Record<string, number> | undefined;
+  const totalAccepted = summary?.total_accepted as number | undefined;
+  const totalRejected = summary?.total_rejected as number | undefined;
+  const acceptanceRate = summary?.acceptance_rate as number | undefined;
 
   return (
     <Card className="overflow-hidden">
@@ -43,6 +48,11 @@ export function LabelProcessingJobCard({ job, onDelete }: Props) {
             )}
           />
           <StatusBadge status={job.status} />
+          {isSampleBuilder && (
+            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-indigo-100 text-indigo-700 rounded">
+              Sample Builder
+            </span>
+          )}
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">
               {job.annotation_folder.split("/").pop()} / {job.audio_folder.split("/").pop()}
@@ -101,13 +111,54 @@ export function LabelProcessingJobCard({ job, onDelete }: Props) {
               </div>
               <div>
                 <span className="text-muted-foreground">Classifier model:</span>{" "}
-                <span className="font-mono text-xs">{job.classifier_model_id.slice(0, 8)}</span>
+                <span className="font-mono text-xs">{job.classifier_model_id ? job.classifier_model_id.slice(0, 8) : "none"}</span>
               </div>
             </div>
 
             {job.error_message && (
               <div className="text-red-600 text-xs bg-red-50 rounded p-2">
                 {job.error_message}
+              </div>
+            )}
+
+            {/* Sample builder acceptance stats */}
+            {isSampleBuilder && totalAccepted != null && (
+              <div>
+                <div className="text-muted-foreground mb-1 text-xs font-medium">
+                  Acceptance
+                </div>
+                <div className="flex gap-4 text-xs">
+                  <div>
+                    <span className="text-green-600 font-medium">{totalAccepted}</span> accepted
+                  </div>
+                  <div>
+                    <span className="text-red-600 font-medium">{totalRejected ?? 0}</span> rejected
+                  </div>
+                  {acceptanceRate != null && (
+                    <div className="text-muted-foreground">
+                      ({(acceptanceRate * 100).toFixed(0)}% acceptance)
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Rejection breakdown (sample_builder) */}
+            {isSampleBuilder && rejectionCounts && Object.keys(rejectionCounts).length > 0 && (
+              <div>
+                <div className="text-muted-foreground mb-1 text-xs font-medium">
+                  Rejection Breakdown
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {Object.entries(rejectionCounts)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([reason, count]) => (
+                      <div key={reason} className="text-xs">
+                        <span className="text-muted-foreground">{reason.replace(/_/g, " ")}:</span>{" "}
+                        <span className="font-mono">{count}</span>
+                      </div>
+                    ))}
+                </div>
               </div>
             )}
 
