@@ -113,6 +113,49 @@ async def test_create_hydrophone_detection_job_too_long_range(client):
     assert resp.status_code == 422
 
 
+async def test_create_hydrophone_detection_job_rejects_detection_mode(
+    client, app_settings
+):
+    """POST rejects the retired detection_mode field."""
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="hydro-test-model-legacy",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/hydrophone-detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "hydrophone_id": "rpi_orcasound_lab",
+            "start_timestamp": 1700000000,
+            "end_timestamp": 1700003600,
+            "detection_mode": "merged",
+        },
+    )
+    assert resp.status_code == 422
+    assert "detection_mode" in resp.text
+
+    await engine.dispose()
+
+
 async def test_create_hydrophone_detection_job_success(client, app_settings):
     """POST with valid model + hydrophone creates a queued job."""
     from sqlalchemy import insert
@@ -153,12 +196,15 @@ async def test_create_hydrophone_detection_job_success(client, app_settings):
     assert data["hydrophone_name"] == "Orcasound Lab"
     assert data["start_timestamp"] == 1700000000
     assert data["end_timestamp"] == 1700003600
+    assert data["detection_mode"] == "windowed"
 
     # Should appear in the list
     list_resp = await client.get("/classifier/hydrophone-detection-jobs")
     assert list_resp.status_code == 200
     jobs = list_resp.json()
-    assert any(j["id"] == data["id"] for j in jobs)
+    assert any(
+        j["id"] == data["id"] and j["detection_mode"] == "windowed" for j in jobs
+    )
 
     # Should NOT appear in the local detection jobs list
     local_resp = await client.get("/classifier/detection-jobs")
@@ -1288,6 +1334,7 @@ async def _create_paused_job_with_tsv(app_settings):
                 start_timestamp=1751439600.0,
                 end_timestamp=1751461200.0,
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )

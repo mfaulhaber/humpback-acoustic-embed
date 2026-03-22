@@ -92,6 +92,12 @@ function rowKey(row: { filename: string; start_sec: number; end_sec: number }): 
   return `${row.filename}:${row.start_sec}:${row.end_sec}`;
 }
 
+function isLegacyMergedMode(
+  detectionMode: DetectionJob["detection_mode"],
+): boolean {
+  return detectionMode !== "windowed";
+}
+
 const SELECTION_WINDOW_STEP_SEC = 5;
 
 const statusColor: Record<string, string> = {
@@ -414,7 +420,6 @@ export function HydrophoneTab() {
   const [hopSeconds, setHopSeconds] = useState(1.0);
   const [highThreshold, setHighThreshold] = useState(0.80);
   const [lowThreshold, setLowThreshold] = useState(0.70);
-  const [detectionMode, setDetectionMode] = useState<"merged" | "windowed">("windowed");
   const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);
@@ -551,17 +556,23 @@ export function HydrophoneTab() {
     return null;
   }, [expandedJob]);
   const { data: expandedRows = [] } = useDetectionContent(expandedContentJobId);
+  const expandedJobIsLegacyMerged = useMemo(
+    () => (expandedJob ? isLegacyMergedMode(expandedJob.detection_mode) : false),
+    [expandedJob],
+  );
   const expandedHasSavedLabels = useMemo(
     () => expandedRows.some((r) => r.humpback === 1 || r.orca === 1 || r.ship === 1 || r.background === 1),
     [expandedRows],
   );
   const extractTargetIds = useMemo(() => {
-    if (!expandedJob || !expandedHasSavedLabels) return new Set<string>();
+    if (!expandedJob || !expandedHasSavedLabels || expandedJobIsLegacyMerged) {
+      return new Set<string>();
+    }
     if (expandedJob.status === "paused" || expandedJob.status === "complete" || expandedJob.status === "canceled") {
       return new Set<string>([expandedJob.id]);
     }
     return new Set<string>();
-  }, [expandedJob, expandedHasSavedLabels]);
+  }, [expandedJob, expandedHasSavedLabels, expandedJobIsLegacyMerged]);
 
   const handleSubmit = () => {
     if (!selectedModelId || !startEpoch || !endEpoch) return;
@@ -577,7 +588,6 @@ export function HydrophoneTab() {
       high_threshold: highThreshold,
       low_threshold: lowThreshold,
       ...(sourceType === "local" ? { local_cache_path: localCachePath } : {}),
-      detection_mode: detectionMode,
     });
   };
 
@@ -897,17 +907,9 @@ export function HydrophoneTab() {
               className="mt-1"
             />
           </div>
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium whitespace-nowrap">Detection Mode</label>
-            <select
-              value={detectionMode}
-              onChange={(e) => setDetectionMode(e.target.value as "merged" | "windowed")}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-            >
-              <option value="merged">Merged (variable length)</option>
-              <option value="windowed">Windowed (5-sec fixed)</option>
-            </select>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            New jobs use fixed 5-second windowed detections.
+          </p>
           <Button
             onClick={handleSubmit}
             disabled={
@@ -1454,6 +1456,7 @@ function HydrophoneJobRow({
 }) {
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
+  const isLegacyMerged = isLegacyMergedMode(job.detection_mode);
   const canExpand =
     job.status === "complete" || job.status === "canceled" ||
     job.status === "paused" ||
@@ -1485,6 +1488,11 @@ function HydrophoneJobRow({
         {showCol("status") && (
           <td className="px-3 py-2">
             <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
+            {isLegacyMerged && (
+              <Badge variant="outline" className="ml-1.5 border-amber-300 text-amber-800">
+                Legacy merged
+              </Badge>
+            )}
             {job.has_positive_labels && (
               <Badge variant="outline" className="ml-1.5 text-[10px] py-0">
                 Whale
@@ -1683,6 +1691,7 @@ function HydrophoneContentTable({
     jobId,
     isRunning ? 3000 : undefined,
   );
+  const isLegacyMerged = isLegacyMergedMode(detectionMode);
   const saveRowStateMutation = useSaveDetectionRowState();
   const [sortKey, setSortKey] = useState<SortKey>(isRunning ? "filename" : "avg_confidence");
   const [sortDir, setSortDir] = useState<SortDir>(isRunning ? "asc" : "desc");
@@ -1780,10 +1789,12 @@ function HydrophoneContentTable({
         row,
         initialMarkerBounds,
         draftManualBounds: resolveManualSelectionMarkerBounds(row),
-        editable: !isRunning && !!row.row_id && isPositiveRow(row) && initialMarkerBounds !== null && detectionMode !== "windowed",
+        // Hydrophone jobs no longer allow spectrogram-bound editing:
+        // legacy merged jobs are read-only, and windowed jobs never needed it.
+        editable: false,
       });
     },
-    [isPositiveRow, isRunning, jobId, detectionMode],
+    [isPositiveRow, jobId],
   );
 
   const popupMarkerBounds =
@@ -1896,11 +1907,14 @@ function HydrophoneContentTable({
 
   const handleCheckboxClick = useCallback(
     (row: DetectionRow, field: LabelField) => {
+      if (isLegacyMerged) {
+        return;
+      }
       const current = getEffectiveLabel(row, field);
       const next = current === 1 ? 0 : 1;
       onLabelChange(jobId, rowKey(row), field, next);
     },
-    [jobId, getEffectiveLabel, onLabelChange],
+    [isLegacyMerged, jobId, getEffectiveLabel, onLabelChange],
   );
 
   // Keyboard shortcuts
@@ -1978,6 +1992,15 @@ function HydrophoneContentTable({
 
   return (
     <div className="bg-muted/20 border-t" ref={tableRef}>
+      {isLegacyMerged && (
+        <div className="flex items-start gap-2 border-b bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Legacy merged-mode job. Labels, extraction, and marker edits are disabled
+            here; rerun this job in windowed mode to continue.
+          </span>
+        </div>
+      )}
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b">
@@ -2066,32 +2089,36 @@ function HydrophoneContentTable({
                 <td className="px-3 py-1.5 text-center">
                   <input
                     type="checkbox"
-                    className="h-3.5 w-3.5 cursor-pointer"
+                    className={`h-3.5 w-3.5 ${isLegacyMerged ? "cursor-not-allowed" : "cursor-pointer"}`}
                     checked={getEffectiveLabel(row, "humpback") === 1}
+                    disabled={isLegacyMerged}
                     onChange={() => handleCheckboxClick(row, "humpback")}
                   />
                 </td>
                 <td className="px-3 py-1.5 text-center">
                   <input
                     type="checkbox"
-                    className="h-3.5 w-3.5 cursor-pointer"
+                    className={`h-3.5 w-3.5 ${isLegacyMerged ? "cursor-not-allowed" : "cursor-pointer"}`}
                     checked={getEffectiveLabel(row, "orca") === 1}
+                    disabled={isLegacyMerged}
                     onChange={() => handleCheckboxClick(row, "orca")}
                   />
                 </td>
                 <td className="px-3 py-1.5 text-center">
                   <input
                     type="checkbox"
-                    className="h-3.5 w-3.5 cursor-pointer"
+                    className={`h-3.5 w-3.5 ${isLegacyMerged ? "cursor-not-allowed" : "cursor-pointer"}`}
                     checked={getEffectiveLabel(row, "ship") === 1}
+                    disabled={isLegacyMerged}
                     onChange={() => handleCheckboxClick(row, "ship")}
                   />
                 </td>
                 <td className="px-3 py-1.5 text-center">
                   <input
                     type="checkbox"
-                    className="h-3.5 w-3.5 cursor-pointer"
+                    className={`h-3.5 w-3.5 ${isLegacyMerged ? "cursor-not-allowed" : "cursor-pointer"}`}
                     checked={getEffectiveLabel(row, "background") === 1}
+                    disabled={isLegacyMerged}
                     onChange={() => handleCheckboxClick(row, "background")}
                   />
                 </td>

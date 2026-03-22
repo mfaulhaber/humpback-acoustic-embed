@@ -71,7 +71,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Per-event `n_windows` count in TSV output
 - Canonical snapped detection bounds (`start_sec`/`end_sec`) before labeling/extraction
 - Raw event audit metadata in TSV (`raw_start_sec`, `raw_end_sec`, `merged_event_count`)
-- Windowed detection mode (`detection_mode="windowed"`): NMS peak selection within merged events produces fixed 5-sec detections, eliminating manual positive-selection in the labeling workflow
+- Windowed-only detection creation: new jobs persist `detection_mode="windowed"` and produce fixed 5-sec detections via NMS peak selection; legacy merged jobs remain readable but are read-only for labels, row-state edits, and extraction
 - Incremental detection results: file-by-file progress with live UI updates during job execution
 - Inline audio playback and label annotation available while detection is still running
 - Positive labeled extraction seeds from the best 5-second training clip in stored

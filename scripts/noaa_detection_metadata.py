@@ -130,7 +130,6 @@ def build_job_payloads(
     hop_seconds: float = 1.0,
     high_threshold: float = 0.70,
     low_threshold: float = 0.45,
-    detection_mode: str | None = "windowed",
 ) -> list[dict]:
     """Build API-ready job payloads from date ranges."""
     payloads: list[dict] = []
@@ -147,8 +146,6 @@ def build_job_payloads(
             "high_threshold": high_threshold,
             "low_threshold": low_threshold,
         }
-        if detection_mode is not None:
-            payload["detection_mode"] = detection_mode
         payload["_metadata"] = {
             "index": len(payloads),
             "presence_days": len(chunk_days),
@@ -296,12 +293,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Detection hop stride (default: 1.0)",
     )
     parser.add_argument(
-        "--detection-mode",
-        choices=["merged", "windowed"],
-        default="windowed",
-        help="Detection mode (default: windowed)",
-    )
-    parser.add_argument(
         "--output",
         default="detection_jobs.json",
         help="Output JSON file path (default: detection_jobs.json)",
@@ -430,7 +421,6 @@ def main() -> int:
         hop_seconds=args.hop_seconds,
         high_threshold=args.high_threshold,
         low_threshold=args.low_threshold,
-        detection_mode=args.detection_mode,
     )
 
     # Summary

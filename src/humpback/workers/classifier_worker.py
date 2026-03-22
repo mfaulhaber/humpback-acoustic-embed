@@ -1156,6 +1156,10 @@ async def run_extraction_job(
 ) -> None:
     """Execute a labeled sample extraction job."""
     try:
+        if job.detection_mode != "windowed":
+            raise ValueError(
+                "Legacy merged-mode extraction is no longer supported; rerun the detection job in windowed mode"
+            )
         config = json.loads(job.extract_config) if job.extract_config else {}
         pos_path = config.get("positive_output_path", settings.positive_sample_path)
         neg_path = config.get("negative_output_path", settings.negative_sample_path)

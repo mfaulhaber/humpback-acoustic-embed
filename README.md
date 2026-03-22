@@ -509,7 +509,7 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/classifier/models` | List trained classifier models |
 | GET | `/classifier/models/{id}` | Get classifier model details |
 | DELETE | `/classifier/models/{id}` | Delete classifier model + files |
-| POST | `/classifier/detection-jobs` | Queue detection job (`hop_seconds`, `high_threshold`, `low_threshold`, `detection_mode`: `"merged"`/`"windowed"`) |
+| POST | `/classifier/detection-jobs` | Queue detection job (`hop_seconds`, `high_threshold`, `low_threshold`; new jobs are always windowed) |
 | GET | `/classifier/detection-jobs` | List detection jobs |
 | GET | `/classifier/detection-jobs/{id}` | Get detection job |
 | GET | `/classifier/detection-jobs/{id}/download` | Download detections TSV |
@@ -546,12 +546,13 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.
 - `POST /clustering/jobs` requires at least one `embedding_set_id` (`422` on empty list).
-- `POST /classifier/hydrophone-detection-jobs` enforces `hop_seconds <= classifier window_size_seconds`; accepts optional `detection_mode` (`"merged"` default, `"windowed"` for fixed 5-sec detections via NMS peak selection).
+- `POST /classifier/detection-jobs` and `POST /classifier/hydrophone-detection-jobs` now create windowed jobs only; sending `detection_mode` is rejected.
 - `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the two UI-visible NOAA sources (`sanctsound_ci01` and legacy `noaa_glacier_bay`) alongside the Orcasound hydrophones.
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
 - Hydrophone detection summaries include provider/runtime metadata such as
   `provider_mode`, `execution_mode`, end-to-end `avg_audio_x_realtime`,
   `peak_worker_rss_mb`, and `child_pid` (for subprocess-backed TF2 runs).
+- Legacy merged-mode jobs remain readable (`/download`, `/content`) but reject label saves, row-state edits, and extraction; rerun them in windowed mode first.
 - `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
 - `POST /classifier/detection-jobs/extract` accepts optional `positive_selection_smoothing_window`
   (odd integer, default `3`), `positive_selection_min_score` (default `0.70`), and

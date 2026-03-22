@@ -76,6 +76,7 @@ async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_
         status="complete",
         extract_status="running",
         classifier_model_id="missing-model-is-allowed",
+        detection_mode="windowed",
         hydrophone_id="rpi_orcasound_lab",
         hydrophone_name="Orcasound Lab",
         start_timestamp=1000.0,
@@ -155,6 +156,7 @@ async def test_local_extraction_forwards_spectrogram_settings(
         status="complete",
         extract_status="running",
         classifier_model_id="missing-model-is-allowed",
+        detection_mode="windowed",
         audio_folder=str(tmp_path / "audio"),
         extract_config=json.dumps(
             {
@@ -233,6 +235,7 @@ async def test_noaa_extraction_does_not_require_cache_path(
         status="complete",
         extract_status="running",
         classifier_model_id="missing-model-is-allowed",
+        detection_mode="windowed",
         hydrophone_id="noaa_glacier_bay",
         hydrophone_name="NOAA Glacier Bay (Bartlett Cove)",
         start_timestamp=1437782400.0,
