@@ -7,298 +7,83 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Implemented Capabilities
 
 ### Audio Management
-- Upload individual audio files (MP3, WAV, FLAC) with copy to `audio/raw/`
-- Import audio folders in-place (no copy, reads from `source_folder`)
-- Audio metadata attachment and editing
-- Audio detail view with processing history
+
+- Upload individual MP3, WAV, and FLAC files into `audio/raw/`, or import audio folders in place via `source_folder` without copying files.
+- Attach and edit audio metadata, and inspect per-file processing history from the audio detail view.
 
 ### Processing Pipeline
-- Configurable model registry (TFLite + TF2 SavedModel) with auto-detection of input format and vector dim (scanner + runtime safety net)
-- Audio decoding, resampling (32 kHz), overlap-back windowing (5s default)
-- Log-mel spectrogram extraction (128x128) for TFLite models
-- Raw waveform input for TF2 SavedModel models
-- Vectorized batch spectrogram extraction (`extract_logmel_batch`) via single `np.fft.rfft` call (10.9x faster than per-window)
-- Batch TFLite inference via `resize_tensor_input` (batch_size=64, optimal for M-series) with automatic sequential fallback
-- Multi-threaded TFLite interpreter (default `os.cpu_count()` threads); XNNPACK delegate warnings suppressed
-- Processing timing instrumentation (decode, features, inference) in worker, detector, and trainer
-- Incremental Parquet embedding output with atomic writes
-- Idempotent encoding via `encoding_signature`
-- Background worker with job queue (queued/running/complete/failed/canceled) and atomic compare-and-set claim updates
-- Periodic stale job recovery every 60s in worker loop (previously startup-only); prevents jobs stuck in `running` after quick restarts
-- Local detection job TSV cleanup on restart (prevents duplicate appends from stale prior runs)
+
+- Model registry supports TFLite and TF2 SavedModel encoders, auto-detects input format and vector dimensionality, and runs shared 32 kHz decoding plus 5-second overlap-back windowing.
+- Feature extraction supports both 128x128 log-mel spectrograms and raw waveform inputs, with batched FFT extraction, batched TFLite inference, and multi-threaded interpreter defaults.
+- Embeddings are written incrementally to Parquet with atomic promotion; idempotent reuse is keyed by `encoding_signature`.
+- Worker execution uses queued/running/complete/failed/canceled states, compare-and-set job claims, periodic stale-job recovery, timing instrumentation, and restart cleanup for stale local detection TSV outputs.
 
 ### Embedding Similarity Search
-- `POST /search/similar` — brute-force cosine or euclidean search across all embedding sets for the same model version
-- `POST /search/similar-by-vector` — search using a raw embedding vector (for detection-sourced queries)
-- `GET /classifier/detection-jobs/{id}/embedding` — retrieve stored detection embedding for a row
-- `GET /audio/{id}/spectrogram-png` — PNG spectrogram for arbitrary time range (cached)
-- LRU cache (128 entries) for loaded parquet embeddings avoids repeated I/O
-- Standard cosine similarity (not mean-centered) for stable cross-corpus search
-- Supports `top_k`, `exclude_self`, `embedding_set_ids` filter, and `metric` selection
-- Returns ranked hits with audio file metadata and `window_offset_seconds`
-- Detection jobs store per-detection peak-window embeddings in `detection_embeddings.parquet`
-- `POST /search/similar-by-audio` — async worker-based encoding: queues a search job, worker encodes detection audio via the model, frontend polls for results
-- `GET /search/jobs/{id}` — poll search job status; returns search results on completion and deletes the ephemeral job row
-- Search tab UI: standalone search (pick embedding set + window) and detection-sourced search ("Search Similar" from detection rows — works on all detection jobs including pre-existing ones without stored embeddings)
-- Embedding set selection: folder-tree multi-select "Embedding Sets" panel for filtering which sets to search across (defaults to all selected); detection re-search uses cached query vector for instant results
-- Standalone search: dual-panel layout with "Search Query Embedding" (single-select folder tree to file level) and "Embedding Sets" (multi-select filter)
-- `GET /search/jobs/{id}` returns `query_vector` and `model_version` on completion for frontend re-search without worker roundtrip
-- Spectrogram thumbnail previews and inline playback in search results
+
+- Similarity search supports brute-force cosine or euclidean lookup across same-model embedding sets with `top_k`, `exclude_self`, and embedding-set filters.
+- Queries can come from stored windows, raw vectors, or async worker-encoded audio; completed audio queries return the query vector and model version for immediate re-search.
+- Detection peak-window embeddings are stored in `detection_embeddings.parquet`, and search results include audio metadata, window offsets, spectrogram thumbnails, and inline playback.
+- The Search UI supports both standalone search and detection-sourced "Search Similar" flows, including multi-select embedding-set filtering.
 
 ### Clustering
-- Model version validation: rejects clustering across different embedding models
-- HDBSCAN, K-Means, Agglomerative clustering algorithms
-- UMAP, PCA, or no dimensionality reduction
-- Euclidean and cosine distance metrics
-- Internal metrics: Silhouette, Davies-Bouldin, Calinski-Harabasz
-- Supervised metrics: ARI, NMI, homogeneity, completeness, v_measure, confusion matrix
-- Parameter sweep (HDBSCAN + K-Means ranges)
-- Fragmentation report (entropy, Gini, noise rates)
-- Opt-in: classifier baseline, stability evaluation, metric learning refinement
-- Re-clustering from refined embeddings via `refined_from_job_id`
-- Clustering job validation requires at least one embedding set ID
+
+- Clustering supports HDBSCAN, K-Means, and Agglomerative algorithms with UMAP, PCA, or no dimensionality reduction and cosine or euclidean distance metrics.
+- Evaluation includes internal metrics, supervised metrics, fragmentation reporting, parameter sweeps, and optional classifier-baseline, stability, and metric-learning refinement flows.
+- Validation blocks mixed-model clustering, requires at least one embedding set, and supports reclustering from refined embeddings via `refined_from_job_id`.
 
 ### Binary Classifier
-- Train LogisticRegression (default) or MLPClassifier from positive + negative embedding sets
-- Optional L2 normalization of embeddings before scaling
-- Balanced class weights by default
-- Cross-validation metrics (accuracy, ROC-AUC, precision, recall, F1)
-- Decision boundary diagnostics: score separation (d-prime), train confusion matrix
-- Overlap validation: rejects same embedding set in both positive and negative lists
-- Encoding signature consistency warning when mixing different processing configs
-- Detection job: scan audio folder with configurable `hop_seconds` (default 1.0s)
-- Hysteresis event merging with dual thresholds (`high_threshold`/`low_threshold`)
-- Per-event `n_windows` count in TSV output
-- Canonical snapped detection bounds (`start_sec`/`end_sec`) before labeling/extraction
-- Raw event audit metadata in TSV (`raw_start_sec`, `raw_end_sec`, `merged_event_count`)
-- Windowed-only detection creation: new jobs persist `detection_mode="windowed"` and produce fixed 5-sec detections via NMS peak selection; legacy merged jobs remain readable but are read-only for labels, row-state edits, and extraction
-- Incremental detection results: file-by-file progress with live UI updates during job execution
-- Inline audio playback and label annotation available while detection is still running
-- Positive labeled extraction seeds from the best 5-second training clip in stored
-  1-second-hop detection scores, then can widen in adjacent 5-second chunks when
-  the neighboring smoothed score stays above the extension threshold (with classifier
-  fallback for legacy jobs); negative extraction keeps canonical labeled bounds and writes
-  FLAC clips with same-basename marker-free spectrogram PNG sidecars
-- Inline audio playback of detected segments
-- Detection labels: humpback (positive), orca (positive), ship (negative), background (negative)
-- Detection label annotation with keyboard shortcuts (`h`=humpback, `o`=orca, `s`=ship, `b`=background)
-- Detection label API enforces label values in `{0, 1, null}`
+
+- Train LogisticRegression (default) or MLP classifiers from positive and negative embedding sets with balanced class weights, optional L2 normalization, cross-validation metrics, decision diagnostics, overlap validation, and encoding-signature consistency warnings.
+- Local detection scans audio folders with configurable hop size and hysteresis thresholds, stores canonical snapped detection bounds plus raw audit metadata, and streams incremental progress back to the UI.
+- New detection jobs are windowed-only: fresh jobs persist `detection_mode="windowed"` and emit fixed 5-second detections via NMS peak selection; legacy merged jobs remain readable but are read-only for labels, row-state edits, and extraction.
+- Detection rows support inline playback, live labeling with keyboard shortcuts, persisted row-state and positive-selection metadata, and labeled-sample extraction to FLAC with sibling marker-free PNG spectrogram sidecars.
+- Label validation remains constrained to humpback and orca positives plus ship and background negatives.
 
 ### Hydrophone Streaming Detection
-- S3 HLS streaming from Orcasound public hydrophone network (anonymous access)
-- Metadata-driven NOAA GCS archive registry packaged in
-  `src/humpback/data/noaa_archive_sources.json`, including full verified NOAA
-  reference records plus runtime config for loadable archive sources
-- NOAA passive bioacoustic archives via anonymous GCS fetch now support the
-  visible detection-UI sources `sanctsound_ci01` (Channel Islands, 4 sub-sites
-  ci01–ci04), `sanctsound_oc01` (Olympic Coast, 4 sub-sites oc01–oc04), and
-  legacy `noaa_glacier_bay` (Glacier Bay / Bartlett Cove), with metadata-driven
-  root prefixes, mixed filename parsing, and child-folder hints for partitioned
-  archive layouts; `CachingNoaaGCSProvider` caches metadata manifests + audio
-  segments locally under `noaa_cache_path` with GCS fallback on cache miss
-- Write-through S3 cache (`CachingS3Client`): fetches from S3 on first access, caches segments locally with atomic writes, 404 markers for missing segments
-- Local HLS cache support: read pre-downloaded .ts segments from filesystem (same S3-mirrored directory structure)
-- Client priority: local_cache_path > s3_cache_path > direct S3
-- ArchiveProvider abstraction now spans detection, playback, extraction, and worker/router
-  orchestration; upstream hydrophone consumers pass providers instead of raw clients plus
-  `hydrophone_id`
-- 7 UI-visible archive sources on the legacy hydrophone API: 4 Orcasound
-  hydrophones plus NOAA SanctSound Channel Islands (ci01–ci04), NOAA SanctSound
-  Olympic Coast (oc01–oc04), and NOAA Glacier Bay (Bartlett Cove)
-- Segment fetch retry: transient S3 errors (IncompleteRead, ReadTimeoutError, ConnectionError) retried up to 3× with exponential backoff (1s/2s/4s); explicit `connect_timeout=10`, `read_timeout=30`
-- Ordered concurrent segment prefetch for hydrophone detection on providers that
-  support it, with NOAA source-level behavior controlled by metadata
-  (for example SanctSound disabled, Glacier Bay enabled), while preserving
-  timeline order and existing retry/alert behavior
-- In-memory processing: segments decoded via ffmpeg stdin/stdout, no disk I/O
-- NOAA long-object archives now stream ffmpeg decode in chunk-sized slices and
-  opt out of raw-byte prefetch so multi-hour SanctSound files do not require a
-  full in-memory decode before chunk progress begins
-- Streaming detection pipeline with per-chunk progress updates
-- Cancel support via threading.Event + DB polling
-- TF2 SavedModel hydrophone detection now runs in a short-lived subprocess so
-  TensorFlow/Metal memory is reclaimed between jobs while the parent worker
-  retains progress/alert/pause/resume/cancel orchestration
-- Flash alerts for segment decode failures (dismissable, color-coded)
-- Hydrophone run summaries now include timing breakdown fields (`fetch_sec`, `decode_sec`, `features_sec`, `inference_sec`, `pipeline_total_sec`) plus prefetch flags/limits and runtime metadata (`provider_mode`, `execution_mode`, `avg_audio_x_realtime`, `peak_worker_rss_mb`, `child_pid`)
-  where `avg_audio_x_realtime` is computed from end-to-end measured time
-  (`fetch_sec + decode_sec + pipeline_total_sec`)
-- Orcasound audio playback reads from local cache via LocalHLSClient (no S3 calls during playback)
-- NOAA playback/extraction use `CachingNoaaGCSProvider` when `noaa_cache_path` is set,
-  falling back to direct GCS fetch when it is unset
-- Hydrophone timeline assembly uses numeric segment ordering plus playlist durations (when available),
-  with fallback to numeric/default-duration metadata when playlists are unavailable
-- Sparse local-cache segment sets preserve playlist timeline offsets (for example, cached
-  mid-sequence `live6118..` ranges) so playback/spectrogram resolution stays aligned
-  without S3 fallback
-- Hydrophone folder selection starts at requested range and expands backward
-  using configurable hour increments (default 4h) up to configurable max
-  lookback (default 168h) until overlap at requested start boundary is found
-  (or max lookback is reached), then clips timeline to requested bounds
-- Hydrophone detection/playback/extraction are bounded to job `[start_timestamp, end_timestamp]`
-- Hydrophone detection jobs fail explicitly when no overlapping stream audio exists
-  in the requested time range (no silent complete-with-zero-windows)
-- Hydrophone playback timestamp mapping uses stream-offset resolution against the bounded timeline
-  with legacy fallback to `job.start_timestamp`
-- Hydrophone TSV rows include canonical snapped `.flac` `detection_filename` plus legacy `extract_filename` alias
-- Hydrophone detection persists per-window diagnostics incrementally as Parquet shards so
-  paused/canceled jobs can extract positives without re-running inference
-- Legacy TSV normalization for content/download prefers `extract_filename` when `detection_filename` is missing, otherwise derives snapped canonical ranges
-- Detection TSV rows now persist positive-selection provenance (`positive_selection_*` +
-  `positive_extract_filename`) so selected training windows survive label-save/content/download round-trips
-- Detection TSV download streams normalized rows incrementally (avoids full-file in-memory buffering)
-- FLAC export for hydrophone jobs: Orcasound reads from local HLS cache (no S3 calls during extraction), while NOAA uses direct anonymous GCS fetch; both write labeled samples to positive/negative folders
-- Hydrophone extraction output paths: species/category before hydrophone —
-  `{positive|negative}_root/{label}/{hydrophone_id}/YYYY/MM/DD/*.flac`
-- Hydrophone labeled-sample extraction reuses the same stream-offset resolver as playback
-- Hydrophone detection job resume after worker restart: skips already-processed segments,
-  preserves prior detections, guards against timeline changes between runs
-- Cache invalidation on decode failure: corrupted cached segments are deleted and re-fetched
-  from S3 (single retry) instead of failing permanently
-- Max 7-day time range per job
-- Hydrophone job validation enforces `hop_seconds <= classifier window_size_seconds`
-- `local_cache_path` is only valid for Orcasound HLS sources; NOAA sources use
-  `noaa_cache_path` for local caching instead
+
+- Hydrophone detection supports Orcasound HLS and metadata-driven NOAA archives, including SanctSound Channel Islands, SanctSound Olympic Coast, and legacy Glacier Bay sources.
+- Cache and provider behavior is shared across detection, playback, and extraction: Orcasound prefers `local_cache_path`, then `s3_cache_path`, then direct S3; NOAA uses `noaa_cache_path` when configured and falls back to direct anonymous GCS access when needed.
+- Hydrophone timelines are clipped to requested UTC ranges, use numeric segment ordering plus playlist durations when available, preserve sparse-cache offsets, and expand backward by configurable lookback windows until overlap is found.
+- Worker execution supports ordered prefetch, retry handling, per-chunk progress, pause/resume/cancel, restart-safe resume, explicit no-audio failures, and TF2 subprocess isolation with runtime and timing diagnostics.
+- Playback and labeled-sample extraction share the same stream-offset resolver and canonical snapped detection ranges; extraction writes FLAC plus PNG sidecars into species/category-first output trees and keeps partial TSV content usable while jobs are paused.
+- Hydrophone UI flows include active and previous job management, UTC-only range selection, persisted detection row state, whale badges and positive-selection metadata, and guardrails such as a 7-day maximum range and `hop_seconds <= window_size_seconds`.
 
 ### Web UI
-- Side nav + top nav SPA with breadcrumbs (Audio, Processing, Clustering, Classifier [Training/Hydrophone Detection], Search, Label Processing, Admin)
-- Model filter dropdown on Processing, Clustering, and Classifier pages
-- Model version badges on processing jobs, embedding sets, and folder tree rows
-- Cross-model warning banner on classifier training (prevents submission)
-- Processing job delete (per-row and folder-level bulk delete)
-- Model registry management and scanner
-- Folder browser for audio selection
-- UMAP visualization, cluster tables, evaluation panels
-- Bulk delete for training/detection jobs
-- Expandable detection rows with sortable TSV data
-- Hydrophone Extract button enablement is based on saved labels of the expanded completed, canceled, or paused job
-- Hydrophone detection table uses canonical snapped UTC Detection Range and Duration from
-  `detection_filename` (no secondary raw-range row)
-- Hydrophone playback and extraction use the same canonical bounds shown in Detection Range
-- Hydrophone row tooltip exposes unsnapped raw audit range when it differs from canonical bounds
-- Hydrophone job date range uses popover picker with dual-month calendar, month/year jump controls, and HH:MM time inputs (UTC-only)
-- Hydrophone Active Jobs table shows all running/queued/paused jobs with per-row
-  Pause/Resume/Cancel controls; queued jobs can be canceled before a worker claims them
-- Paused hydrophone jobs support label save, TSV download, and extraction (stable TSV while worker is blocked)
-- Paused hydrophone jobs with partial TSV output keep detection content available via
-  `/classifier/detection-jobs/{id}/content`
-- Hydrophone progress displays audio duration in hours:minutes format
-- Hydrophone TSV report includes `hydrophone_name` column (short form, e.g., `rpi_north_sjc`)
-- Detection row state now persists in `detection_rows.parquet` beside each job's TSV; the row store is the canonical editable/download source and carries `row_id`, detection-time `auto_positive_selection_*`, manual override bounds, effective `positive_selection_*`, and extraction artifacts, while TSV is synchronized for user download and legacy compatibility
-- Detection spectrogram popup: click a detection row's Play button to open the cached STFT spectrogram alongside playback, or Alt+click the row for spectrogram-only view; positive-labeled detections render client-side black extraction markers immediately from live checkbox edits using stored auto/effective bounds before extraction runs, and completed hydrophone jobs can shift start/end markers in 5-second steps with Apply/Cancel to persist manual window overrides back into the detection job (configurable via `HUMPBACK_SPECTROGRAM_*` env vars)
-- Extract Labeled Samples now writes a sibling `.png` beside each extracted `.flac`,
-  using the same shared spectrogram render settings as the UI popup base image and
-  the actual extracted clip window rather than the full detection span
-- "Whale" badge on hydrophone jobs with confirmed positive labels — humpback or orca (`has_positive_labels` flag persisted on label save)
-- 3-way audio source selector (Orcasound / NOAA / Local Cache) with hydrophone
-  dropdown filtered by `provider_kind` from the `/classifier/hydrophones` API;
-  the NOAA list currently exposes SanctSound Channel Islands (ci01–ci04),
-  SanctSound Olympic Coast (oc01–oc04), and NOAA Glacier Bay
-- Previous Jobs table: text filter (hydrophone name), sortable columns (status,
-  hydrophone, date, threshold, results), client-side pagination, and preferences
-  dialog (page size: 10/20/50/100, column visibility toggles)
-- `DatabaseErrorBanner`: persistent top-of-page red flash bar that polls `/health`
-  every 15 s and surfaces DB misconfiguration errors (dismissable; auto-redisplays
-  while the API remains unhealthy)
+
+- The frontend is a routed SPA with top navigation, side navigation, breadcrumbs, and dedicated views for Audio, Processing, Clustering, Classifier, Search, Label Processing, and Admin.
+- Shared UI patterns include model/version filters, folder browsing, model-registry management, processing and training bulk-delete actions, and clustering visualizations plus evaluation panels.
+- Detection views support expandable rows, sortable content, cached spectrogram popups, canonical UTC range display, persisted row-state editing, and completed-job spectrogram window overrides in 5-second steps where supported.
+- Hydrophone tables cover active-job pause/resume/cancel controls, paused-job content access, previous-job filtering/pagination/preferences, and source selection across Orcasound, NOAA, and local cache modes.
+- `DatabaseErrorBanner` polls `/health` and surfaces backend database startup failures while the API remains unhealthy.
 
 ### Retrain Workflow
-- Automated retrain pipeline: reimport folders, queue processing, create training job — all from a single "Retrain" button
-- Backend-orchestrated state machine: `queued` → `importing` → `processing` → `training` → `complete`
-- Folder tracing: resolves import root paths from training job's embedding set provenance
-- Embedding set collection: gathers ALL embedding sets from folder hierarchies (includes newly added audio)
-- Worker integration: polled alongside other job types in the main worker loop
-- Stale workflow recovery: importing/processing/training workflows reset to queued after timeout
-- Frontend: retrain sub-panel in expanded model rows with step indicator and progress tracking
-- API endpoints: retrain-info (pre-flight), create retrain, list/get workflows
+
+- Retrain runs reimport folders, queue processing, and create a new training job from a single frontend action.
+- The backend orchestrates retrain state as `queued -> importing -> processing -> training -> complete`, with worker integration and stale-workflow recovery.
+- Retrain provenance traces import roots from prior embedding sets, gathers all descendant embedding sets, and surfaces step-by-step progress in the UI.
 
 ### Audio/Label Processing (Phases 1–4)
-- Raven selection table parser: parses TSV annotation files with call type normalization
-  (handles BOM, multi-word labels, typo corrections: chrip→Chirp, whuo→Whup, piccalo→Piccolo)
-- Annotation-recording pairing by filename stem (strips `.Table.N.selections` suffix)
-- Score-based segmentation engine: runs classifier scoring pipeline (5s window, 1s hop)
-  over full recordings, smooths scores, detects peaks, estimates onset/offset
-- Annotation-to-peak mapping with overlap classification (clean, mild_overlap, heavy_overlap)
-- Clean 5s window extraction centered on score peaks with FLAC + PNG spectrogram sidecars
-- Fallback extraction: annotations with no peak above threshold extract at annotation
-  midpoint (treatment `"fallback"`) instead of being skipped
-- Background region extraction: finds contiguous low-score regions (smoothed score < threshold
-  for >= min_duration) and extracts non-overlapping 5s segments for synthesis use; short runs
-  (≥ `background_min_duration`, default 1s) are tiled/looped to fill 5s when no full-length
-  background exists; adaptive per-recording threshold (`background_threshold_auto`, default
-  `True`) uses the 25th percentile of smoothed scores clamped to `[0.05, background_threshold]`
-  so dense recordings with elevated baselines can still produce synthesis backgrounds
-- Synthesis for all annotations with a peak: isolates cleanest 1–3s call segment centred
-  on the annotation's own time bounds (not the shared peak position), places into background
-  with raised-cosine crossfade splicing, generates up to 3 placement variants
-  (early/centre/late); clean annotations get both a clean extraction and synthesis variants
-- `LabelProcessingJob` DB model with worker integration (queued → running → complete/failed)
-- API endpoints: create/list/get/delete jobs, preview annotation pairing
-- Output organized by treatment and call type:
-  `{output_root}/{clean,fallback,synthesized}/{CallType}/*.flac`
-- Configurable parameters: `enable_synthesized`, `background_threshold`,
-  `synthesis_crossfade_ms`, `synthesis_variants`, `cleanup_score_cache`
-- Per-label classifier score KPIs in job result summary: count, mean, median, std, min, max
-  for each call type's matched peak scores
-- Score cache cleanup: `{output_root}/scores/` directory removed after job completion
-- **Sample builder workflow** (`workflow="sample_builder"`): signal-processing-only alternative
-  that does not require a trained classifier; 10-stage pipeline: annotation normalization →
-  exclusion map → fragment discovery → contamination screening (band-limited RMS, spectral
-  occupancy, tonal persistence, transient energy) → acoustic similarity scoring → assembly
-  planning → construction → join smoothing → validation → pipeline orchestration; outputs
-  accepted FLAC + PNG sidecars to `{output_root}/accepted/{CallType}/` and rejection metadata
-  JSON to `{output_root}/rejected/{reason}/{CallType}/`; contamination thresholds tuned for
-  colored marine ambient noise (per-bin median tonal persistence, raised spectral occupancy
-  floor); shared `raised_cosine_fade` DSP utility in `processing/dsp.py`
-- `workflow` column on `LabelProcessingJob`: `"score_based"` (default, requires classifier)
-  or `"sample_builder"` (classifier optional); `classifier_model_id` is nullable
-- Frontend workflow selector dropdown with conditional classifier requirement and
-  sample builder acceptance/rejection stats display
-  by default (`cleanup_score_cache: true`); set to `false` to retain for debugging
-- Web UI page (`/app/label-processing`): job creation form with classifier model selector,
-  annotation/audio folder inputs, advanced parameter accordion, preview mode showing annotation
-  pairing + call type distribution, active job progress tracking, and completed job result
-  inspection with treatment/call-type breakdown
-- E2E smoke test covers full pipeline: train classifier → create job → run worker → verify
-  output FLAC durations, PNG sidecars, treatment distribution, and score cache cleanup
+
+- The score-based workflow parses Raven selection tables, normalizes call types, pairs annotations to recordings, runs classifier scoring over full recordings, and maps annotations to peaks with overlap classification.
+- Outputs include clean 5-second extracts, fallback midpoint extracts when no peak exceeds threshold, and synthesized variants with annotation-guided call isolation, adaptive background thresholds, short-run tiling, and raised-cosine splicing.
+- `LabelProcessingJob` is a worker-backed DB workflow with preview/create/list/get/delete support, treatment- and call-type-organized outputs, per-label score KPIs, and optional score-cache cleanup.
+- `sample_builder` provides a classifier-free alternative with a 10-stage signal-processing pipeline, marine-noise-tuned contamination screening, accepted/rejected artifact reporting, and shared DSP utilities such as `raised_cosine_fade`.
+- `workflow` can be `score_based` or `sample_builder`, with nullable `classifier_model_id` for classifier-free runs; the UI exposes workflow-aware forms, acceptance/rejection stats, and completed-job result inspection.
+- End-to-end smoke coverage verifies training, job execution, FLAC duration correctness, PNG sidecars, treatment distribution, and score-cache cleanup.
 
 ### Data Staging Utilities
-- `scripts/convert_audio_to_flac.py` converts `.wav` and `.mp3` files to sibling `.flac`
-  files and can optionally verify decoded samples after conversion.
-- `scripts/stage_s3_epoch_cache.py` stages epoch-style public S3 prefixes with
-  object `LastModified` overlap refinement against requested UTC ranges.
-- Prefix discovery uses `s3api list-objects-v2` with `start-after` and
-  end-boundary early stop to reduce startup latency for narrow windows.
-- CLI uses `--dry-run` for manifest-only planning; downloads execute by default
-  when `--dry-run` is omitted.
-- Optional pre-count/pre-size pass (`--pre-count`, default enabled) estimates
-  files/bytes totals and per-prefix breakdown.
-- Download progress is script-owned (`tqdm`) using structured `s5cmd --json`
-  copy events with fixed totals; planned prefix list is printed up front and
-  progress postfix includes `current=<prefix>`.
+
+- `scripts/convert_audio_to_flac.py` converts sibling `.wav` and `.mp3` files to `.flac` and can optionally verify decoded sample fidelity.
+- `scripts/stage_s3_epoch_cache.py` stages epoch-style public S3 ranges with `LastModified` overlap refinement, dry-run planning, optional pre-count/pre-size estimation, and early-stop prefix discovery.
+- Downloads use `s5cmd --json` plus `tqdm` for fixed-total progress reporting with per-prefix status.
 
 ### Environment & Packaging
-- Platform-specific TensorFlow extras: `tf-macos`, `tf-linux-cpu`, and `tf-linux-gpu`
-- Supported Python runtime versions: 3.11 and 3.12
-- `google-cloud-storage` is a runtime dependency because NOAA GCS access is part of the
-  production provider set
-- Python code quality tooling via `uv` + pre-commit: Ruff for lint/format and
-  Pyright for type checking (enforced for `src/humpback`, `scripts/`, and
-  `tests/`)
-- Direct runtime dependency on `soundfile` retained for extraction and FLAC conversion paths
-- Repo-root `.env` support for runtime and deploy-time configuration (API/worker
-  entrypoints load it explicitly; `scripts/deploy.sh` sources it for `TF_EXTRA`)
-- FastAPI bind host/port are configurable via `HUMPBACK_API_HOST` / `HUMPBACK_API_PORT`
-- `/health` GET endpoint: returns `{"status":"ok"}` after successful startup,
-  `503 {"status":"error","detail":"..."}` when DB init failed, or
-  `{"status":"starting"}` before startup completes; registered before routers so
-  it does not depend on a DB session
-- FastAPI trusted-host validation is configurable via comma-separated
-  `HUMPBACK_ALLOWED_HOSTS` patterns (Starlette wildcard syntax, e.g.
-  `*.trycloudflare.com`)
-- Default extraction/cache paths derive from `storage_root` unless explicitly
-  overridden by `HUMPBACK_POSITIVE_SAMPLE_PATH`,
-  `HUMPBACK_NEGATIVE_SAMPLE_PATH`, `HUMPBACK_S3_CACHE_PATH`, or
-  `HUMPBACK_NOAA_CACHE_PATH`
+
+- Python package management uses `uv` with mutually exclusive TensorFlow extras: `tf-macos`, `tf-linux-cpu`, and `tf-linux-gpu`; supported Python versions are 3.11 and 3.12.
+- Runtime dependencies include `google-cloud-storage` for NOAA archive access and `soundfile` for extraction and FLAC conversion paths.
+- Tooling uses Ruff, Pyright, and pre-commit; current Pyright enforcement covers `src/humpback`, `scripts/`, and `tests/`.
+- API, worker, and deploy flows load the repo-root `.env`; host, port, trusted hosts, and storage-derived extraction/cache paths remain configurable via `HUMPBACK_` environment variables.
+- `/health` reports `ok`, `starting`, or `error` independently of normal router DB dependencies.
 
 ---
 
@@ -328,15 +113,14 @@ Changes to these areas require extra care and testing:
 
 ## Known Constraints
 
-- SQLite: no true row-level locking (worker claim uses UPDATE with status check)
-- No real-time streaming — polling-based UI updates
-- Single-machine deployment (MVP)
-- Exactly one TensorFlow extra must be selected per environment; `uv sync --all-extras` is invalid
-- Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels
-- Model files must be present on disk (no remote model registry)
-- Pyright enforcement covers `src/humpback`, `scripts/`, and `tests/`;
-  expand deliberately after cleaning any new areas
-- `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax (`*.example.com`, not `.example.com`)
-- Audio shorter than `window_size_seconds` (5s) is skipped entirely
-- Imported audio must remain at original path (in-place reads)
-- `/audio/{id}/download` returns HTTP 416 for malformed/invalid Range headers
+- SQLite has no true row-level locking; worker claims rely on `UPDATE` plus status checks.
+- The UI remains polling-based rather than real-time.
+- Deployment is still single-machine MVP infrastructure.
+- Exactly one TensorFlow extra must be selected per environment; `uv sync --all-extras` is invalid.
+- Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels.
+- Model files must be present on disk; there is no remote model registry.
+- Pyright enforcement currently covers `src/humpback`, `scripts/`, and `tests/`; expand deliberately after cleaning new areas.
+- `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax such as `*.example.com`, not `.example.com`.
+- Audio shorter than `window_size_seconds` (5 seconds) is skipped entirely.
+- Imported audio must remain at its original path for in-place reads.
+- `/audio/{id}/download` returns HTTP 416 for malformed or invalid `Range` headers.
