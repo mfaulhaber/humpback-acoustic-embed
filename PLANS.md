@@ -4,11 +4,27 @@
 
 ## Active
 
-(none)
-
 ---
 
 ## Recently Completed
+
+# Plan: Retire Merged Detection Mode
+
+[Full plan](/Users/michael/.claude/plans/retire-merged-detection-mode.md)
+
+## Outcome (2026-03-22)
+
+- Removed merged-mode creation from the API, Hydrophone UI, and NOAA metadata helper tooling; new detection jobs are always created as `windowed`
+- Legacy merged jobs remain readable in the UI/API but are now read-only for label saves, row-state edits, and extraction
+- Added ADR-039 plus API/UI/tests/docs updates for the windowed-only rollout
+- Known issue waived for this rollout: stale legacy extraction rows inserted directly in the DB could stick in `running`, but the live production DB currently has zero legacy jobs with `status` or `extract_status` in `queued`/`running`
+
+## Verification
+
+- `uv run ruff format --check` / `uv run ruff check` — passed
+- `uv run pyright` — 0 errors
+- `cd frontend && npx tsc --noEmit` — passed
+- `uv run pytest tests/` — 974 passed, 1 skipped
 
 # Plan: Sample Builder — Fix 100% Rejection Rate on Marine Recordings
 

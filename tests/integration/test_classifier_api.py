@@ -75,6 +75,90 @@ async def test_create_detection_job_bad_model(client):
     assert resp.status_code == 400
 
 
+async def test_create_detection_job_success(client, app_settings, test_wav):
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="local-detection-model",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "audio_folder": str(test_wav.parent),
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["audio_folder"] == str(test_wav.parent)
+    assert data["detection_mode"] == "windowed"
+
+    get_resp = await client.get(f"/classifier/detection-jobs/{data['id']}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["detection_mode"] == "windowed"
+
+    await engine.dispose()
+
+
+async def test_create_detection_job_rejects_detection_mode(
+    client, app_settings, test_wav
+):
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="local-detection-model-legacy",
+                model_path="/fake/path",
+                model_version="test_v1",
+                vector_dim=128,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/detection-jobs",
+        json={
+            "classifier_model_id": model_id,
+            "audio_folder": str(test_wav.parent),
+            "detection_mode": "merged",
+        },
+    )
+    assert resp.status_code == 422
+    assert "detection_mode" in resp.text
+
+    await engine.dispose()
+
+
 async def test_get_detection_job_not_found(client):
     resp = await client.get("/classifier/detection-jobs/nonexistent")
     assert resp.status_code == 404
@@ -132,6 +216,7 @@ async def test_extract_persists_positive_selection_config(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path="/tmp/fake.tsv",
             )
         )
@@ -356,8 +441,10 @@ async def test_content_endpoint_parses_positive_selection_metadata(
     await engine.dispose()
 
 
-async def test_save_labels_uses_backfilled_auto_selection(client, app_settings):
-    """Label saves should promote detection-time auto selection into the effective row state."""
+async def test_content_uses_backfilled_auto_selection_for_legacy_job(
+    client, app_settings
+):
+    """Legacy merged jobs should still surface backfilled auto selection on read paths."""
     from pathlib import Path
 
     from sqlalchemy import insert
@@ -447,38 +534,111 @@ async def test_save_labels_uses_backfilled_auto_selection(client, app_settings):
     assert rows[0]["positive_selection_origin"] is None
     assert rows[0]["positive_selection_start_sec"] is None
 
+    await engine.dispose()
+
+
+async def test_save_labels_rejects_legacy_merged_job(client, app_settings):
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
     resp = await client.put(
         f"/classifier/detection-jobs/{job_id}/labels",
         json=[
             {
-                "filename": source_name,
+                "filename": "test.wav",
                 "start_sec": 0.0,
-                "end_sec": 10.0,
+                "end_sec": 5.0,
                 "humpback": 1,
             }
         ],
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 400
+    assert "legacy merged-mode job" in resp.json()["detail"]
 
-    resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
-    assert resp.status_code == 200
-    rows = resp.json()
-    assert len(rows) == 1
-    assert rows[0]["humpback"] == 1
-    assert rows[0]["positive_selection_origin"] == "auto_selection"
-    assert rows[0]["positive_selection_start_sec"] == 2.0
-    assert rows[0]["positive_selection_end_sec"] == 7.0
-    assert rows[0]["positive_extract_filename"] is None
+    await engine.dispose()
 
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        saved_rows = list(reader)
 
-    assert reader.fieldnames is not None
-    assert "auto_positive_selection_start_sec" in reader.fieldnames
-    assert "manual_positive_selection_start_sec" in reader.fieldnames
-    assert saved_rows[0]["positive_selection_start_sec"] == "2.000000"
-    assert saved_rows[0]["positive_selection_end_sec"] == "7.000000"
+async def test_row_state_rejects_legacy_merged_job(client, app_settings):
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/row-state",
+        json={
+            "row_id": "row-1",
+            "humpback": 1,
+        },
+    )
+    assert resp.status_code == 400
+    assert "legacy merged-mode job" in resp.json()["detail"]
+
+    await engine.dispose()
+
+
+async def test_extract_rejects_legacy_merged_job(client, app_settings):
+    from sqlalchemy import insert
+
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import DetectionJob
+
+    job_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id="fake-model-id",
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        "/classifier/detection-jobs/extract",
+        json={"job_ids": [job_id]},
+    )
+    assert resp.status_code == 400
+    assert "legacy merged-mode job" in resp.json()["detail"]
 
     await engine.dispose()
 
@@ -578,6 +738,7 @@ async def test_save_labels_rejects_invalid_values(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -661,6 +822,7 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -693,10 +855,10 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
     assert rows[0]["positive_selection_decision"] == "positive"
-    assert rows[0]["positive_selection_origin"] == "clip_bounds_fallback"
+    assert rows[0]["positive_selection_origin"] == "auto_selection"
     assert rows[0]["positive_selection_start_sec"] == "37.000000"
     assert rows[0]["positive_selection_end_sec"] == "45.000000"
-    assert rows[0]["positive_selection_offsets"] == ""
+    assert rows[0]["positive_selection_offsets"] == "[37.0]"
     assert (
         rows[0]["positive_extract_filename"] == "20250702T080157Z_20250702T080202Z.flac"
     )
@@ -784,6 +946,7 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -895,6 +1058,7 @@ async def test_row_state_accepts_non_edge_aligned_window_multiple(client, app_se
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -1033,6 +1197,7 @@ async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_sett
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
                 output_row_store_path=str(row_store_path),
             )
@@ -1333,6 +1498,7 @@ async def test_save_labels_sets_has_positive_labels_true(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -1405,6 +1571,7 @@ async def test_save_labels_clears_has_positive_labels(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
                 has_positive_labels=True,
             )
@@ -1495,6 +1662,7 @@ async def test_partial_save_preserves_positive_flag_from_other_rows(
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -1569,6 +1737,7 @@ async def test_save_orca_label_sets_has_positive_labels(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )
@@ -1643,6 +1812,7 @@ async def test_orca_label_round_trip(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
+                detection_mode="windowed",
                 output_tsv_path=str(tsv_path),
             )
         )

@@ -106,6 +106,18 @@ def _model_to_out(m) -> ClassifierModelOut:
     )
 
 
+def _require_windowed_detection_job(job, *, operation: str) -> None:
+    if job.detection_mode == "windowed":
+        return
+    raise HTTPException(
+        400,
+        (
+            f"Detection job {job.id} is a legacy merged-mode job and is read-only; "
+            f"rerun it in windowed mode to {operation}."
+        ),
+    )
+
+
 def _detection_job_to_out(job) -> DetectionJobOut:
     return DetectionJobOut(
         id=job.id,
@@ -116,6 +128,7 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         hop_seconds=job.hop_seconds,
         high_threshold=job.high_threshold,
         low_threshold=job.low_threshold,
+        detection_mode=job.detection_mode,
         output_tsv_path=job.output_tsv_path,
         output_row_store_path=job.output_row_store_path,
         result_summary=json.loads(job.result_summary) if job.result_summary else None,
@@ -223,7 +236,6 @@ async def create_detection_job(
             body.hop_seconds,
             body.high_threshold,
             body.low_threshold,
-            detection_mode=body.detection_mode,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -308,7 +320,6 @@ async def create_hydrophone_detection_job(
             body.high_threshold,
             body.low_threshold,
             body.local_cache_path,
-            detection_mode=body.detection_mode,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -666,6 +677,7 @@ async def extract_labeled_samples(
             raise HTTPException(
                 400, f"Detection job {j.id} is not complete (status={j.status})"
             )
+        _require_windowed_detection_job(j, operation="extract labeled samples")
 
     pos_path = body.positive_output_path or settings.positive_sample_path
     neg_path = body.negative_output_path or settings.negative_sample_path
@@ -936,6 +948,7 @@ async def save_detection_labels(
         raise HTTPException(404, "Detection job not found")
     if job.status not in ("paused", "complete", "canceled"):
         raise HTTPException(400, "Detection job not complete or no output available")
+    _require_windowed_detection_job(job, operation="save labels")
 
     rs_path = detection_row_store_path(settings.storage_root, job.id)
     tsv = detection_tsv_path(settings.storage_root, job.id)
@@ -999,6 +1012,7 @@ async def save_detection_row_state(
         raise HTTPException(404, "Detection job not found")
     if job.status not in ("paused", "complete", "canceled"):
         raise HTTPException(400, "Detection job not complete or no output available")
+    _require_windowed_detection_job(job, operation="edit row state")
 
     rs_path = detection_row_store_path(settings.storage_root, job.id)
     tsv = detection_tsv_path(settings.storage_root, job.id)

@@ -21,7 +21,6 @@ POST to the hydrophone detection API.
 | `--high-threshold` | No | `0.70` | Hysteresis high threshold |
 | `--low-threshold` | No | `0.45` | Hysteresis low threshold |
 | `--hop-seconds` | No | `1.0` | Detection hop stride in seconds |
-| `--detection-mode` | No | `windowed` | `merged` or `windowed` |
 | `--output` | No | `detection_jobs.json` | Output JSON file path |
 | `--dry-run` | No | — | Print summary without writing output |
 
@@ -80,7 +79,6 @@ Custom thresholds and output path:
 uv run python scripts/noaa_detection_metadata.py \
     --classifier-model-id abc-1234-5678 \
     --high-threshold 0.80 --low-threshold 0.50 \
-    --detection-mode merged \
     --output ci01_jobs.json
 ```
 

@@ -439,7 +439,6 @@ export interface HydrophoneDetectionJobCreate {
   high_threshold?: number;
   low_threshold?: number;
   local_cache_path?: string;
-  detection_mode?: "merged" | "windowed";
 }
 
 export interface ExtractionSettings {

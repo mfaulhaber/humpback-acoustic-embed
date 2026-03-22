@@ -249,13 +249,11 @@ class TestBuildJobPayloads:
             high_threshold=0.80,
             low_threshold=0.50,
             hop_seconds=0.5,
-            detection_mode="merged",
         )
         p = payloads[0]
         assert p["high_threshold"] == 0.80
         assert p["low_threshold"] == 0.50
         assert p["hop_seconds"] == 0.5
-        assert p["detection_mode"] == "merged"
 
     def test_range_within_7_day_api_limit(self) -> None:
         """Every generated payload must have end - start <= 7 days."""
@@ -338,7 +336,6 @@ class TestParser:
         assert args.high_threshold == 0.70
         assert args.low_threshold == 0.45
         assert args.hop_seconds == 1.0
-        assert args.detection_mode == "windowed"
         assert args.output == "detection_jobs.json"
         assert args.post is False
         assert args.job_index is None

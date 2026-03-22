@@ -1112,3 +1112,26 @@ All contamination and annotation config parameters are now exposed through the w
 - Contamination detection is more permissive overall; users needing stricter screening can override via job parameters.
 - Per-bin persistence cannot detect constant tones — accepted trade-off since constant recording-wide tones are effectively background.
 - No database migration required — pure algorithm and default-value changes.
+
+---
+
+## ADR-039: Retire merged detection mode from the public creation/edit surface
+
+**Date**: 2026-03-22
+**Status**: Accepted
+
+**Context**: Windowed detection mode solved the manual positive-selection bottleneck and became the operational default, but the product still exposed merged mode in the API, Hydrophone UI, and helper scripts. Keeping both modes on the public surface increased maintenance cost, preserved edit paths that only mattered for legacy jobs, and made it harder to backfill older merged outputs into the windowed workflow.
+
+**Decision**:
+- Remove `detection_mode` from detection-job creation requests in both local and hydrophone APIs; new jobs are always persisted as `"windowed"`.
+- Reject create payloads that still send `detection_mode` instead of silently ignoring the obsolete field.
+- Remove the Hydrophone UI mode selector and treat legacy merged jobs (`NULL` or `"merged"`) as read-only.
+- Preserve legacy merged read paths (`GET` job/list, `/download`, `/content`) temporarily so historical jobs can still be inspected during manual backfill.
+- Reject label-save, row-state, and extraction operations for legacy merged jobs with a rerun-in-windowed-mode error.
+- Keep the `detection_mode` DB column for now so legacy rows remain distinguishable; defer schema cleanup until after manual backfill and artifact cleanup.
+
+**Consequences**:
+- The public detection workflow is now windowed-only.
+- Hydrophone spectrogram-bound editing is effectively retired because it only applied to merged jobs.
+- Legacy merged jobs remain visible for audit/download purposes but can no longer be modified or extracted.
+- No Alembic migration is required in this phase because the schema is intentionally retained for compatibility.

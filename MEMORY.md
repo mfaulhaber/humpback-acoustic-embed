@@ -211,7 +211,7 @@ only store indexing/assignment references.
 - hop_seconds (float, default 1.0 — stride between windows)
 - high_threshold (float, default 0.70 — confidence to start an event)
 - low_threshold (float, default 0.45 — confidence to continue an event)
-- detection_mode (nullable — NULL/"merged" = variable-length hysteresis merge; "windowed" = NMS peak selection producing fixed 5-sec detections)
+- detection_mode (nullable legacy marker — NULL/"merged" = retired variable-length hysteresis merge jobs kept for read compatibility; new jobs persist "windowed" for NMS peak-selected fixed 5-sec detections)
 - output_tsv_path (nullable, set on completion)
 - result_summary (JSON, nullable — local detection: n_files, n_windows, n_detections, n_spans, n_skipped_short, hop_seconds, high_threshold, low_threshold; hydrophone detection additionally includes prefetch/timing fields such as prefetch_enabled, fetch_sec, decode_sec, features_sec, inference_sec, pipeline_total_sec plus runtime metadata like provider_mode, execution_mode, end-to-end `avg_audio_x_realtime`, peak_worker_rss_mb, and child_pid when subprocess mode is used)
 - error_message (nullable)
@@ -476,7 +476,7 @@ Queue safety note:
   pause/resume/cancel coordination.
 - Hydrophone detection jobs with no overlapping stream audio in the requested
   range fail explicitly (status `failed`) with a user-visible error message.
-- `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field.
+- `PUT /classifier/detection-jobs/{id}/labels` accepts only `0`, `1`, or null per label field, and rejects legacy merged-mode jobs.
 - `GET /classifier/detection-jobs/{id}/audio-slice` (hydrophone jobs) resolves slices using a
   range-bounded stream timeline (playlist durations + numeric segment ordering), with legacy
   fallback to `job.start_timestamp` for older jobs. Sparse local cache ranges preserve
@@ -495,7 +495,8 @@ Queue safety note:
   states can read content when `output_tsv_path` exists.
 - `PUT /classifier/detection-jobs/{id}/row-state` persists one row's labels plus optional
   manual positive-selection bounds (whole-window steps only, min one classifier window,
-  bounded by the detection clip). Effective window resolution is `manual > auto > clip`.
+  bounded by the detection clip) for windowed-compatible rows only; legacy merged-mode jobs are
+  read-only. Effective window resolution is `manual > auto > clip`.
 - Hydrophone labeled-sample extraction (`POST /classifier/detection-jobs/extract` on hydrophone
   jobs) is local-cache-authoritative for Orcasound HLS sources (same cache root precedence as
   playback), writes FLAC clips, and does not call S3. Positive labels (`humpback`, `orca`) use

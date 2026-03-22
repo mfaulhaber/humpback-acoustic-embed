@@ -3,7 +3,9 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, model_validator
 
-VALID_DETECTION_MODES = {None, "merged", "windowed"}
+DETECTION_MODE_CREATE_ERROR = (
+    "detection_mode is no longer accepted; new jobs are always created in windowed mode"
+)
 
 
 class ClassifierTrainingJobCreate(BaseModel):
@@ -56,7 +58,13 @@ class DetectionJobCreate(BaseModel):
     hop_seconds: float = 1.0
     high_threshold: float = 0.70
     low_threshold: float = 0.45
-    detection_mode: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_detection_mode(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "detection_mode" in data:
+            raise ValueError(DETECTION_MODE_CREATE_ERROR)
+        return data
 
     @model_validator(mode="after")
     def _validate_thresholds(self):
@@ -64,10 +72,6 @@ class DetectionJobCreate(BaseModel):
             raise ValueError("high_threshold must be >= low_threshold")
         if self.hop_seconds <= 0:
             raise ValueError("hop_seconds must be positive")
-        if self.detection_mode not in VALID_DETECTION_MODES:
-            raise ValueError(
-                f"detection_mode must be one of {sorted(m for m in VALID_DETECTION_MODES if m)}"
-            )
         return self
 
 
@@ -127,7 +131,13 @@ class HydrophoneDetectionJobCreate(BaseModel):
     high_threshold: float = 0.70
     low_threshold: float = 0.45
     local_cache_path: Optional[str] = None
-    detection_mode: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_detection_mode(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "detection_mode" in data:
+            raise ValueError(DETECTION_MODE_CREATE_ERROR)
+        return data
 
     @model_validator(mode="after")
     def _validate(self):
@@ -140,10 +150,6 @@ class HydrophoneDetectionJobCreate(BaseModel):
         max_range = 7 * 24 * 3600  # 7 days
         if self.end_timestamp - self.start_timestamp > max_range:
             raise ValueError("Time range must be <= 7 days")
-        if self.detection_mode not in VALID_DETECTION_MODES:
-            raise ValueError(
-                f"detection_mode must be one of {sorted(m for m in VALID_DETECTION_MODES if m)}"
-            )
         return self
 
 
