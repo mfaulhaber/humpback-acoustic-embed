@@ -10,6 +10,16 @@
 
 ## Recently Completed
 
+### Fix Labeling Similar Sounds + Add Embedding Set Selector
+
+[Full plan](/Users/michael/.claude/plans/cached-dancing-perlis.md)
+
+- Fixed broken Similar Sounds search (missing Vite proxy, wrong audio URL, missing `el.load()`).
+- Converted detection-neighbors endpoint from GET to POST to avoid HTTP 431 on large embedding set selections.
+- Added collapsible Embedding Set selector to the Similar Sounds panel, reusing shared `EmbeddingSetPanel`.
+- Verification: Ruff, Pyright, `cd frontend && npx tsc --noEmit`, and `uv run pytest tests/` all passed (`1013 passed, 1 skipped`).
+
+
 ### Agile Labeling Workspace — Vocalization Type Classification
 
 [Full plan](/Users/michael/.claude/plans/concurrent-mixing-nebula.md)
