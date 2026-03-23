@@ -329,14 +329,14 @@ async def test_detection_neighbors(client, app_settings, tmp_path):
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
     ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
 
-    resp = await client.get(
+    resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
-        params={
+        json={
             "filename": "test.wav",
             "start_sec": 0.0,
             "end_sec": 5.0,
             "top_k": 5,
-            "embedding_set_ids": ref_es_id,
+            "embedding_set_ids": [ref_es_id],
         },
     )
     assert resp.status_code == 200
@@ -354,9 +354,9 @@ async def test_detection_neighbors_missing_embedding(client, app_settings, tmp_p
     """Requesting neighbors for non-existent detection row returns 404."""
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
-    resp = await client.get(
+    resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
-        params={
+        json={
             "filename": "nonexistent.wav",
             "start_sec": 0.0,
             "end_sec": 5.0,
@@ -368,9 +368,9 @@ async def test_detection_neighbors_missing_embedding(client, app_settings, tmp_p
 @pytest.mark.asyncio
 async def test_detection_neighbors_nonexistent_job(client):
     """Requesting neighbors for non-existent job returns 404."""
-    resp = await client.get(
+    resp = await client.post(
         "/labeling/detection-neighbors/nonexistent",
-        params={
+        json={
             "filename": "test.wav",
             "start_sec": 0.0,
             "end_sec": 5.0,

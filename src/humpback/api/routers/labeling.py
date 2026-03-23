@@ -15,6 +15,7 @@ from humpback.schemas.labeling import (
     AnnotationOut,
     AnnotationUpdate,
     ConvergenceMetrics,
+    DetectionNeighborsRequest,
     DetectionNeighborsResponse,
     LabelingSummary,
     NeighborHit,
@@ -202,23 +203,15 @@ def _infer_label_from_folder(folder_path: str | None) -> str | None:
     return parts[-1] if parts else None
 
 
-@router.get(
+@router.post(
     "/detection-neighbors/{detection_job_id}",
     response_model=DetectionNeighborsResponse,
 )
 async def get_detection_neighbors(
     detection_job_id: str,
+    body: DetectionNeighborsRequest,
     session: SessionDep,
     settings: SettingsDep,
-    filename: str = Query(...),
-    start_sec: float = Query(..., ge=0),
-    end_sec: float = Query(..., gt=0),
-    top_k: int = Query(default=10, ge=1, le=100),
-    metric: str = Query(default="cosine", pattern="^(cosine|euclidean)$"),
-    embedding_set_ids: str | None = Query(
-        default=None,
-        description="Comma-separated embedding set IDs to search",
-    ),
 ):
     """Find similar sounds from reference embedding sets for a detection row."""
     from humpback.classifier.detector import read_detection_embedding
@@ -236,7 +229,9 @@ async def get_detection_neighbors(
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
-    embedding = read_detection_embedding(emb_path, filename, start_sec, end_sec)
+    embedding = read_detection_embedding(
+        emb_path, body.filename, body.start_sec, body.end_sec
+    )
     if embedding is None:
         raise HTTPException(404, "Embedding not found for specified detection row")
 
@@ -248,18 +243,12 @@ async def get_detection_neighbors(
     if cm is None:
         raise HTTPException(404, "Classifier model not found for detection job")
 
-    es_ids = (
-        [s.strip() for s in embedding_set_ids.split(",") if s.strip()]
-        if embedding_set_ids
-        else None
-    )
-
     search_request = VectorSearchRequest(
         vector=embedding,
         model_version=cm.model_version,
-        top_k=top_k,
-        metric=metric,
-        embedding_set_ids=es_ids,
+        top_k=body.top_k,
+        metric=body.metric,
+        embedding_set_ids=body.embedding_set_ids,
     )
 
     search_response = await similarity_search_by_vector(session, search_request)

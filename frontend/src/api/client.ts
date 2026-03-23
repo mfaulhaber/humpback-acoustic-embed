@@ -479,20 +479,11 @@ export const fetchDetectionNeighbors = (
     metric?: string;
     embedding_set_ids?: string[];
   },
-) => {
-  const qs = new URLSearchParams({
-    filename: params.filename,
-    start_sec: String(params.start_sec),
-    end_sec: String(params.end_sec),
-  });
-  if (params.top_k) qs.set("top_k", String(params.top_k));
-  if (params.metric) qs.set("metric", params.metric);
-  if (params.embedding_set_ids?.length)
-    qs.set("embedding_set_ids", params.embedding_set_ids.join(","));
-  return api<DetectionNeighborsResponse>(
-    `/labeling/detection-neighbors/${detectionJobId}?${qs}`,
+) =>
+  post<DetectionNeighborsResponse>(
+    `/labeling/detection-neighbors/${detectionJobId}`,
+    params,
   );
-};
 
 // ---- Annotations ----
 
