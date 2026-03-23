@@ -10,6 +10,15 @@
 
 ## Recently Completed
 
+### Agile Labeling Workspace — Vocalization Type Classification
+
+[Full plan](/Users/michael/.claude/plans/concurrent-mixing-nebula.md)
+
+- Added vocalization type labeling with vector search neighbors, extensible labels, and a focused labeling workspace at `/app/classifier/labeling`.
+- Multi-class vocalization classifier training/prediction with active learning cycle, uncertainty queue, and convergence metrics.
+- Sub-window annotation system for marking precise call boundaries within detection windows.
+- Verification: Ruff, Pyright, `cd frontend && npx tsc --noEmit`, and `uv run pytest tests/` all passed (`1013 passed, 1 skipped`).
+
 ### Fix Near-5s Hydrophone Extract Boundary Failures
 
 [Full plan](/Users/michael/.claude/plans/fix-near-5s-hydrophone-extract-boundary-failures.md)

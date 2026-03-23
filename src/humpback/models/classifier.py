@@ -18,6 +18,7 @@ class ClassifierModel(UUIDMixin, TimestampMixin, Base):
     feature_config: Mapped[Optional[str]] = mapped_column(Text, default=None)
     training_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     training_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    classifier_purpose: Mapped[str] = mapped_column(default="detection")
 
 
 class ClassifierTrainingJob(UUIDMixin, TimestampMixin, Base):
@@ -34,6 +35,8 @@ class ClassifierTrainingJob(UUIDMixin, TimestampMixin, Base):
     parameters: Mapped[Optional[str]] = mapped_column(Text, default=None)
     classifier_model_id: Mapped[Optional[str]] = mapped_column(default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    job_purpose: Mapped[str] = mapped_column(default="detection")
+    source_detection_job_ids: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
 
 class DetectionJob(UUIDMixin, TimestampMixin, Base):

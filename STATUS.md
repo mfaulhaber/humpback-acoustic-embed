@@ -71,6 +71,17 @@ Current state of the humpback acoustic embedding and clustering platform.
 - `workflow` can be `score_based` or `sample_builder`, with nullable `classifier_model_id` for classifier-free runs; the UI exposes workflow-aware forms, acceptance/rejection stats, and completed-job result inspection.
 - End-to-end smoke coverage verifies training, job execution, FLAC duration correctness, PNG sidecars, treatment distribution, and score-cache cleanup.
 
+### Vocalization Type Labeling
+
+- The `/app/classifier/labeling` page provides a focused single-detection labeling workspace for applying extensible vocalization type labels (e.g., whup, moan, shriek) to detection rows.
+- Detection neighbors endpoint performs synchronous vector search against reference embedding sets and infers vocalization types from audio folder paths.
+- Vocalization labels are stored in a dedicated `vocalization_labels` SQL table with CRUD API at `/labeling/`, including vocabulary auto-complete and per-job labeling progress summary.
+- Keyboard-driven navigation (j/k, space, u, 1-9, x) enables rapid labeling throughput.
+- Multi-class vocalization classifiers can be trained from labeled detection embeddings via `/labeling/training-jobs`, with `classifier_purpose="vocalization"` and `job_purpose="vocalization"` columns discriminating from binary detection classifiers.
+- Trained vocalization models predict labels for all detection rows via `/labeling/predict/{job_id}`, returning per-class probabilities sorted by uncertainty for active learning.
+- Sub-window annotations in `labeling_annotations` table allow marking precise call boundaries within 5-second detection windows via click-drag on the spectrogram, with CRUD at `/labeling/annotations/`.
+- Active learning loop via `/labeling/active-learning-cycle` queues retrain cycles, `/labeling/uncertainty-queue/{job_id}` returns detection rows sorted by prediction uncertainty, and `/labeling/convergence/{model_id}` tracks accuracy trend and per-class metrics across training cycles.
+
 ### Data Staging Utilities
 
 - `scripts/convert_audio_to_flac.py` converts sibling `.wav` and `.mp3` files to `.flac` and can optionally verify decoded sample fidelity.
@@ -91,8 +102,8 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `021_label_processing_workflow.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs
+- **Latest migration**: `024_labeling_annotations.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, labeling_annotations
 
 ---
 

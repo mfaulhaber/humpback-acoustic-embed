@@ -104,7 +104,7 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 | Icons | lucide-react |
 | API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
 
-**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`); other sections are single-route pages.
+**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/labeling`); other sections are single-route pages.
 
 #### Frontend Package Management
 *   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
@@ -136,7 +136,7 @@ frontend/
     │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
-    │   ├── classifier/          (TrainingTab, HydrophoneTab, DetectionTab, BulkDeleteDialog)
+    │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, DetectionTab, BulkDeleteDialog)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
     │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)

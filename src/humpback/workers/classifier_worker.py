@@ -470,6 +470,8 @@ async def run_training_job(
     settings: Settings,
 ) -> None:
     """Execute a classifier training job end-to-end."""
+    if getattr(job, "job_purpose", "detection") == "vocalization":
+        return await _run_vocalization_training_job(session, job, settings)
     try:
         # Load positive embeddings from parquet files
         import numpy as np
@@ -549,6 +551,137 @@ async def run_training_job(
 
     except Exception as e:
         logger.exception("Training job %s failed", job.id)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        try:
+            await fail_training_job(session, job.id, str(e))
+        except Exception:
+            logger.exception("Failed to mark training job as failed")
+
+
+async def _run_vocalization_training_job(
+    session: AsyncSession,
+    job: ClassifierTrainingJob,
+    settings: Settings,
+) -> None:
+    """Execute a vocalization label classifier training job."""
+    try:
+        import numpy as np
+        import pyarrow.parquet as pq
+        from sqlalchemy import select
+
+        from humpback.classifier.label_trainer import train_label_classifier
+        from humpback.models.labeling import VocalizationLabel
+        from humpback.storage import detection_embeddings_path
+
+        source_job_ids: list[str] = json.loads(job.source_detection_job_ids or "[]")
+
+        # Collect embeddings and labels across source detection jobs
+        all_embeddings: list[np.ndarray] = []
+        all_labels: list[str] = []
+
+        for det_job_id in source_job_ids:
+            emb_path = detection_embeddings_path(settings.storage_root, det_job_id)
+            if not emb_path.exists():
+                logger.warning(
+                    "No embeddings for detection job %s, skipping", det_job_id
+                )
+                continue
+
+            # Read embeddings
+            table = pq.read_table(str(emb_path))
+            filenames = table.column("filename").to_pylist()
+            start_secs = table.column("start_sec").to_pylist()
+            end_secs = table.column("end_sec").to_pylist()
+            embeddings_col = table.column("embedding")
+
+            # Get vocalization labels for this detection job
+            result = await session.execute(
+                select(VocalizationLabel).where(
+                    VocalizationLabel.detection_job_id == det_job_id
+                )
+            )
+            voc_labels = result.scalars().all()
+
+            # Index labels by row_id
+            label_by_row_id: dict[str, str] = {}
+            for vl in voc_labels:
+                # Use the first label per row_id (if multiple, take the first)
+                if vl.row_id not in label_by_row_id:
+                    label_by_row_id[vl.row_id] = vl.label
+
+            # Read row store to map (filename, start, end) -> row_id
+            from humpback.classifier.detection_rows import (
+                read_detection_row_store,
+            )
+            from humpback.storage import detection_row_store_path
+
+            row_store = detection_row_store_path(settings.storage_root, det_job_id)
+            row_id_map: dict[str, str] = {}
+            if row_store.exists():
+                _fnames, rows = read_detection_row_store(row_store)
+                for row in rows:
+                    key = f"{row.get('filename', '')}:{row.get('start_sec', '')}:{row.get('end_sec', '')}"
+                    row_id_map[key] = row.get("row_id", "")
+
+            # Match embeddings to labels
+            for i in range(table.num_rows):
+                key = f"{filenames[i]}:{start_secs[i]}:{end_secs[i]}"
+                row_id = row_id_map.get(key, "")
+                if row_id in label_by_row_id:
+                    vec = np.array(embeddings_col[i].as_py(), dtype=np.float32)
+                    all_embeddings.append(vec)
+                    all_labels.append(label_by_row_id[row_id])
+
+        if len(all_embeddings) < 4:
+            raise ValueError(
+                f"Need at least 4 labeled samples, found {len(all_embeddings)}"
+            )
+
+        X = np.vstack(all_embeddings)
+        parameters = json.loads(job.parameters) if job.parameters else None
+
+        pipeline, summary = await asyncio.to_thread(
+            train_label_classifier, X, all_labels, parameters
+        )
+
+        # Save model atomically
+        cdir = ensure_dir(classifier_dir(settings.storage_root, job.id))
+        tmp_path = cdir / "model.tmp.joblib"
+        final_path = cdir / "model.joblib"
+        joblib.dump(pipeline, tmp_path)
+        tmp_path.rename(final_path)
+
+        summary_path = cdir / "training_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2))
+
+        # Create ClassifierModel with vocalization purpose
+        cm = ClassifierModel(
+            name=job.name,
+            model_path=str(final_path),
+            model_version=job.model_version,
+            vector_dim=X.shape[1],
+            window_size_seconds=job.window_size_seconds,
+            target_sample_rate=job.target_sample_rate,
+            feature_config=job.feature_config,
+            training_summary=json.dumps(summary),
+            training_job_id=job.id,
+            classifier_purpose="vocalization",
+        )
+        session.add(cm)
+        await session.flush()
+
+        await session.execute(
+            update(ClassifierTrainingJob)
+            .where(ClassifierTrainingJob.id == job.id)
+            .values(classifier_model_id=cm.id)
+        )
+        await complete_training_job(session, job.id)
+
+    except Exception as e:
+        logger.exception("Vocalization training job %s failed", job.id)
         try:
             await session.rollback()
         except Exception:
