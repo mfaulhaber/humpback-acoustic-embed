@@ -49,6 +49,17 @@ import type {
   LabelProcessingJob,
   LabelProcessingJobCreate,
   LabelProcessingPreview,
+  VocalizationLabel,
+  DetectionNeighborsResponse,
+  LabelingSummary,
+  VocalizationTrainingJobCreate,
+  VocalizationTrainingJobOut,
+  VocalizationModelOut,
+  PredictionRow,
+  LabelingAnnotation,
+  ActiveLearningCycleResponse,
+  UncertaintyQueueRow,
+  ConvergenceMetrics,
 } from "./types";
 
 class ApiError extends Error {
@@ -209,6 +220,9 @@ export const fetchClassifierModel = (modelId: string) =>
 
 export const deleteClassifierModel = (modelId: string) =>
   api<{ status: string }>(`/classifier/models/${modelId}`, { method: "DELETE" });
+
+export const fetchDetectionJobs = () =>
+  api<DetectionJob[]>("/classifier/detection-jobs");
 
 export const fetchDetectionJob = (jobId: string) =>
   api<DetectionJob>(`/classifier/detection-jobs/${jobId}`);
@@ -413,6 +427,152 @@ export const deleteAllRecords = () =>
   api<{ status: string; message: string }>("/admin/tables", { method: "DELETE" });
 
 export { ApiError };
+
+// ---- Labeling ----
+
+export const fetchVocalizationLabels = (
+  detectionJobId: string,
+  rowId: string,
+) =>
+  api<VocalizationLabel[]>(
+    `/labeling/vocalization-labels/${detectionJobId}/${encodeURIComponent(rowId)}`,
+  );
+
+export const createVocalizationLabel = (
+  detectionJobId: string,
+  rowId: string,
+  body: { label: string; confidence?: number; source?: string; notes?: string },
+) =>
+  post<VocalizationLabel>(
+    `/labeling/vocalization-labels/${detectionJobId}/${encodeURIComponent(rowId)}`,
+    body,
+  );
+
+export const updateVocalizationLabel = (
+  labelId: string,
+  body: { label?: string; confidence?: number; notes?: string },
+) => put<VocalizationLabel>(`/labeling/vocalization-labels/${labelId}`, body);
+
+export const deleteVocalizationLabel = async (labelId: string) => {
+  const res = await fetch(`/labeling/vocalization-labels/${labelId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(res.status, text);
+  }
+};
+
+export const fetchLabelVocabulary = () =>
+  api<string[]>("/labeling/label-vocabulary");
+
+export const fetchLabelingSummary = (detectionJobId: string) =>
+  api<LabelingSummary>(`/labeling/summary/${detectionJobId}`);
+
+export const fetchDetectionNeighbors = (
+  detectionJobId: string,
+  params: {
+    filename: string;
+    start_sec: number;
+    end_sec: number;
+    top_k?: number;
+    metric?: string;
+    embedding_set_ids?: string[];
+  },
+) => {
+  const qs = new URLSearchParams({
+    filename: params.filename,
+    start_sec: String(params.start_sec),
+    end_sec: String(params.end_sec),
+  });
+  if (params.top_k) qs.set("top_k", String(params.top_k));
+  if (params.metric) qs.set("metric", params.metric);
+  if (params.embedding_set_ids?.length)
+    qs.set("embedding_set_ids", params.embedding_set_ids.join(","));
+  return api<DetectionNeighborsResponse>(
+    `/labeling/detection-neighbors/${detectionJobId}?${qs}`,
+  );
+};
+
+// ---- Annotations ----
+
+export const fetchAnnotations = (detectionJobId: string, rowId: string) =>
+  api<LabelingAnnotation[]>(
+    `/labeling/annotations/${detectionJobId}/${encodeURIComponent(rowId)}`,
+  );
+
+export const createAnnotation = (
+  detectionJobId: string,
+  rowId: string,
+  body: {
+    start_offset_sec: number;
+    end_offset_sec: number;
+    label: string;
+    notes?: string;
+  },
+) =>
+  post<LabelingAnnotation>(
+    `/labeling/annotations/${detectionJobId}/${encodeURIComponent(rowId)}`,
+    body,
+  );
+
+export const updateAnnotation = (
+  annotationId: string,
+  body: {
+    start_offset_sec?: number;
+    end_offset_sec?: number;
+    label?: string;
+    notes?: string;
+  },
+) => put<LabelingAnnotation>(`/labeling/annotations/${annotationId}`, body);
+
+export const deleteAnnotation = async (annotationId: string) => {
+  const res = await fetch(`/labeling/annotations/${annotationId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(res.status, text);
+  }
+};
+
+// ---- Vocalization Classifier ----
+
+export const createVocalizationTrainingJob = (body: VocalizationTrainingJobCreate) =>
+  post<VocalizationTrainingJobOut>("/labeling/training-jobs", body);
+
+export const fetchVocalizationTrainingJob = (jobId: string) =>
+  api<VocalizationTrainingJobOut>(`/labeling/training-jobs/${jobId}`);
+
+export const fetchVocalizationModels = () =>
+  api<VocalizationModelOut[]>("/labeling/vocalization-models");
+
+export const predictVocalizationLabels = (
+  detectionJobId: string,
+  vocalizationModelId: string,
+) =>
+  post<PredictionRow[]>(`/labeling/predict/${detectionJobId}`, {
+    vocalization_model_id: vocalizationModelId,
+  });
+
+// ---- Active Learning ----
+
+export const startActiveLearningCycle = (body: {
+  vocalization_model_id: string;
+  detection_job_ids: string[];
+  name: string;
+}) => post<ActiveLearningCycleResponse>("/labeling/active-learning-cycle", body);
+
+export const fetchUncertaintyQueue = (
+  detectionJobId: string,
+  vocalizationModelId: string,
+) =>
+  api<UncertaintyQueueRow[]>(
+    `/labeling/uncertainty-queue/${detectionJobId}?vocalization_model_id=${vocalizationModelId}`,
+  );
+
+export const fetchConvergenceMetrics = (vocalizationModelId: string) =>
+  api<ConvergenceMetrics>(`/labeling/convergence/${vocalizationModelId}`);
 
 // ---- Health ----
 

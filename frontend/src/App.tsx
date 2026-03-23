@@ -7,6 +7,7 @@ import { ClusteringTab } from "@/components/clustering/ClusteringTab";
 import { AdminTab } from "@/components/admin/AdminTab";
 import { TrainingTab } from "@/components/classifier/TrainingTab";
 import { HydrophoneTab } from "@/components/classifier/HydrophoneTab";
+import { LabelingTab } from "@/components/classifier/LabelingTab";
 import { SearchTab } from "@/components/search/SearchTab";
 import { LabelProcessingTab } from "@/components/label-processing/LabelProcessingTab";
 
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/app/classifier" element={<Navigate to="/app/classifier/training" replace />} />
         <Route path="/app/classifier/training" element={<TrainingTab />} />
         <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
+        <Route path="/app/classifier/labeling" element={<LabelingTab />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />

@@ -723,6 +723,121 @@ export interface LabelProcessingPreview {
   unpaired_audio: string[];
 }
 
+// ---- Labeling ----
+
+export interface VocalizationLabel {
+  id: string;
+  detection_job_id: string;
+  row_id: string;
+  label: string;
+  confidence: number | null;
+  source: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NeighborHit {
+  score: number;
+  embedding_set_id: string;
+  row_index: number;
+  audio_file_id: string;
+  audio_filename: string;
+  audio_folder_path: string | null;
+  window_offset_seconds: number;
+  inferred_label: string | null;
+}
+
+export interface DetectionNeighborsResponse {
+  hits: NeighborHit[];
+  total_candidates: number;
+}
+
+export interface LabelingSummary {
+  total_rows: number;
+  labeled_rows: number;
+  unlabeled_rows: number;
+  label_distribution: Record<string, number>;
+}
+
+// ---- Annotations ----
+
+export interface LabelingAnnotation {
+  id: string;
+  detection_job_id: string;
+  row_id: string;
+  start_offset_sec: number;
+  end_offset_sec: number;
+  label: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---- Vocalization Classifier ----
+
+export interface VocalizationTrainingJobCreate {
+  name: string;
+  source_detection_job_ids: string[];
+  parameters?: Record<string, unknown>;
+}
+
+export interface VocalizationTrainingJobOut {
+  id: string;
+  status: string;
+  name: string;
+  job_purpose: string;
+  source_detection_job_ids: string[];
+  classifier_model_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VocalizationModelOut {
+  id: string;
+  name: string;
+  model_version: string;
+  vector_dim: number;
+  classifier_purpose: string;
+  training_summary: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PredictionRow {
+  row_id: string;
+  predicted_label: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+}
+
+// ---- Active Learning ----
+
+export interface ActiveLearningCycleResponse {
+  training_job_id: string;
+  status: string;
+}
+
+export interface UncertaintyQueueRow {
+  row_id: string;
+  filename: string;
+  start_sec: number;
+  end_sec: number;
+  avg_confidence: number;
+  peak_confidence: number;
+  predicted_label: string | null;
+  prediction_confidence: number | null;
+  probabilities: Record<string, number> | null;
+}
+
+export interface ConvergenceMetrics {
+  cycles_completed: number;
+  label_distribution: Record<string, number>;
+  accuracy_trend: number[];
+  uncertainty_histogram: Array<Record<string, unknown>>;
+}
+
 // ---- Health ----
 
 export interface HealthStatus {
