@@ -1352,6 +1352,74 @@ class TestExtractHydrophoneLabeledSamples:
         assert rel.parts[:2] == ("humpback", "rpi_orcasound_lab")
         assert rel.parts[2:5] == ("2025", "06", "15")
 
+    def test_hydrophone_fallback_fetch_writes_exact_5s_clip(self, tmp_path):
+        """Fallback absolute-range fetch should recover a near-boundary shortfall."""
+
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(
+            tsv_path,
+            [
+                {
+                    "filename": "20250615T080000Z.wav",
+                    "start_sec": "0.0",
+                    "end_sec": "5.0",
+                    "avg_confidence": "0.9",
+                    "peak_confidence": "0.95",
+                    "humpback": "",
+                    "ship": "1",
+                    "background": "",
+                },
+            ],
+        )
+
+        sr = 32000
+        expected_samples = sr * 5
+        recording_ts = parse_recording_timestamp("20250615T080000Z.wav")
+        assert recording_ts is not None
+        provider = _FakeHydrophoneProvider(
+            timeline=_make_hydrophone_timeline(
+                recording_ts.timestamp(),
+                n_segments=2,
+                seg_dur=5.0,
+            )
+        )
+        provider.fetch_segment_mock.side_effect = lambda key: key.encode()
+
+        def _decode_segment(raw_bytes, _target_sr):
+            key = raw_bytes.decode()
+            if key.endswith("seg0000.ts"):
+                return np.ones(expected_samples - 3, dtype=np.float32)
+            if key.endswith("seg0001.ts"):
+                return np.full(expected_samples, 2.0, dtype=np.float32)
+            raise AssertionError(f"Unexpected segment key: {key}")
+
+        provider.decode_segment_mock.side_effect = _decode_segment
+
+        neg_out = tmp_path / "negative"
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            tmp_path / "positive",
+            neg_out,
+            target_sample_rate=sr,
+            window_size_seconds=5.0,
+        )
+
+        assert summary["n_ship"] == 1
+        out = (
+            neg_out
+            / "ship"
+            / "rpi_orcasound_lab"
+            / "2025"
+            / "06"
+            / "15"
+            / "20250615T080000Z_20250615T080005Z.flac"
+        )
+        info = sf.info(str(out))
+        assert info.samplerate == sr
+        assert info.frames == expected_samples
+        assert out.with_suffix(".png").exists()
+
     def test_hydrophone_extraction_uses_detection_filename_exact_bounds(self, tmp_path):
         """Hydrophone negatives should still use exact detection_filename bounds."""
 

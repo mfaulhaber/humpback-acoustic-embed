@@ -34,6 +34,7 @@ FOLDER_LOOKBACK_STEP_SEC = DEFAULT_HYDROPHONE_TIMELINE_LOOKBACK_INCREMENT_HOURS 
 MAX_HYDROPHONE_RANGE_SEC = DEFAULT_HYDROPHONE_TIMELINE_MAX_LOOKBACK_HOURS * 3600
 _SEGMENT_FETCH_RETRIES = 3
 _SEGMENT_FETCH_BACKOFF_BASE = 1.0  # seconds
+AUDIO_SLICE_GUARD_SAMPLES = 64
 
 _SEGMENT_INDEX_RE = re.compile(r"(\d+)(?=\.ts$)", re.IGNORECASE)
 _SEGMENT_SUFFIX_RE = re.compile(r"^(.*?)(\d+)$")
@@ -54,6 +55,11 @@ class _LegacyHLSTimelineClient(Protocol):
     def list_segments(self, hydrophone_id: str, folder_ts: str, /) -> Sequence[str]: ...
 
     def fetch_playlist(self, hydrophone_id: str, folder_ts: str, /) -> str | None: ...
+
+
+def expected_audio_samples(duration_sec: float, target_sr: int) -> int:
+    """Return the rounded sample count expected for a requested clip."""
+    return max(1, int(round(duration_sec * target_sr)))
 
 
 # StreamSegment is defined in humpback.classifier.archive and re-exported here
@@ -984,6 +990,7 @@ def resolve_audio_slice(
 
         target_start_ts = processing_start_ts + stream_offset
         target_end_ts = target_start_ts + duration_sec
+        fetch_end_ts = target_end_ts + (AUDIO_SLICE_GUARD_SAMPLES / target_sr)
 
         if target_start_ts >= max_timeline_ts:
             last_reason = "Resolved start timestamp outside available stream range"
@@ -992,7 +999,7 @@ def resolve_audio_slice(
         candidates = [
             seg
             for seg in timeline
-            if seg.end_ts > target_start_ts and seg.start_ts < target_end_ts
+            if seg.end_ts > target_start_ts and seg.start_ts < fetch_end_ts
         ]
         if not candidates:
             last_reason = "No segments selected for requested timestamp window"
@@ -1007,7 +1014,7 @@ def resolve_audio_slice(
             _cc = _cache_check  # bind for lambda closure
             candidates.sort(key=lambda s: (not _cc(s.key), s.start_ts))
 
-        max_samples = max(1, int(round(duration_sec * target_sr)))
+        max_samples = expected_audio_samples(duration_sec, target_sr)
         decoded_parts: list[np.ndarray] = []
         decoded_samples = 0
         for segment in candidates:
@@ -1017,7 +1024,7 @@ def resolve_audio_slice(
                     segment=segment,
                     target_sr=target_sr,
                     clip_start_ts=target_start_ts,
-                    clip_end_ts=target_end_ts,
+                    clip_end_ts=fetch_end_ts,
                     chunk_seconds=duration_sec,
                 ):
                     if len(audio) > 0:

@@ -383,6 +383,8 @@ async def test_short_audio_warns_no_embedding_set(e2e_settings, e2e_client):
     assert job["status"] == "complete"
     assert job["warning_message"] is not None
     assert "too short" in job["warning_message"]
+    assert f"samples @ {settings.target_sample_rate} Hz" in job["warning_message"]
+    assert "5.0s < 5.0s" not in job["warning_message"]
 
     # No embedding set should have been created
     resp = await client.get("/processing/embedding-sets")

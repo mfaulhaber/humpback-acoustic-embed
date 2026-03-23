@@ -2,8 +2,10 @@ import numpy as np
 
 from humpback.processing.windowing import (
     count_windows,
+    format_short_audio_window_message,
     slice_windows,
     slice_windows_with_metadata,
+    window_sample_count,
 )
 
 
@@ -45,6 +47,17 @@ def test_count_windows_short_audio():
     """Audio shorter than one window → 0 windows."""
     assert count_windows(100, 16000, 5.0) == 0
     assert count_windows(79999, 16000, 5.0) == 0
+
+
+def test_window_sample_count_matches_slice_threshold():
+    assert window_sample_count(32000, 5.0) == 160000
+
+
+def test_short_audio_window_message_uses_precise_samples_and_duration():
+    message = format_short_audio_window_message(159997, 32000, 5.0)
+    assert "159997 samples @ 32000 Hz" in message
+    assert "4.99990625s" in message
+    assert "160000 samples = 5.00000000s window" in message
 
 
 def test_overlap_12s_audio():

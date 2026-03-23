@@ -20,13 +20,25 @@ def decode_audio(path: Path) -> tuple[np.ndarray, int]:
         raise ValueError(f"Unsupported audio format: {suffix}")
 
 
+def _has_flac_magic(path: Path) -> bool:
+    with path.open("rb") as f:
+        return f.read(4) == b"fLaC"
+
+
 def _decode_wav(path: Path) -> tuple[np.ndarray, int]:
-    with wave.open(str(path), "r") as wf:
-        sr = wf.getframerate()
-        n_frames = wf.getnframes()
-        n_channels = wf.getnchannels()
-        raw = wf.readframes(n_frames)
-        sampwidth = wf.getsampwidth()
+    try:
+        with wave.open(str(path), "r") as wf:
+            sr = wf.getframerate()
+            n_frames = wf.getnframes()
+            n_channels = wf.getnchannels()
+            raw = wf.readframes(n_frames)
+            sampwidth = wf.getsampwidth()
+    except wave.Error:
+        # Historical hydrophone repair runs could leave FLAC bytes under a
+        # stale .wav suffix; decode the actual container instead of crashing.
+        if _has_flac_magic(path):
+            return _decode_flac(path)
+        raise
 
     if sampwidth == 2:
         dtype = np.int16

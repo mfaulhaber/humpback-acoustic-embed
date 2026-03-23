@@ -204,6 +204,9 @@ UI can monitor via polling or a push channel.
 Hydrophone labeled-sample extraction groups by species/category first, then hydrophone:
 - positives: `{positive_output_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/*.flac`
 - negatives: `{negative_output_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/*.flac`
+- hydrophone extraction should over-fetch a small real-audio guard band and
+  hard-trim clips to the expected sample count when archive audio exists;
+  never zero-pad short archive clips just to satisfy a window length
 - every extracted labeled clip (local and hydrophone) must also write a sibling
   `.png` spectrogram sidecar using the same marker-free base rendering as the UI
   spectrogram popup for that extracted clip window

@@ -15,7 +15,11 @@ from sklearn.preprocessing import Normalizer, StandardScaler
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
-from humpback.processing.windowing import slice_windows
+from humpback.processing.windowing import (
+    format_short_audio_window_message,
+    slice_windows,
+    window_sample_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +60,16 @@ def embed_audio_folder(
             audio = resample(audio, sr, target_sample_rate)
             t_decode_total += time.monotonic() - t0
 
-            window_samples = int(target_sample_rate * window_size_seconds)
+            window_samples = window_sample_count(
+                target_sample_rate, window_size_seconds
+            )
             if len(audio) < window_samples:
                 logger.warning(
-                    "Skipping %s: audio too short (%.3fs < %.1fs window)",
+                    "Skipping %s: audio too short (%s)",
                     audio_path.name,
-                    len(audio) / target_sample_rate,
-                    window_size_seconds,
+                    format_short_audio_window_message(
+                        len(audio), target_sample_rate, window_size_seconds
+                    ),
                 )
                 continue
 

@@ -24,7 +24,12 @@ from humpback.classifier.detection_rows import (
     write_detection_row_store,
 )
 from humpback.classifier.detector import read_window_diagnostics_table
-from humpback.classifier.s3_stream import build_stream_timeline, resolve_audio_slice
+from humpback.classifier.s3_stream import (
+    AUDIO_SLICE_GUARD_SAMPLES,
+    build_stream_timeline,
+    expected_audio_samples,
+    resolve_audio_slice,
+)
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
@@ -993,9 +998,16 @@ def _fetch_audio_range(
     abs_start_ts: float,
     abs_end_ts: float,
     target_sr: int,
+    *,
+    expected_samples: int | None = None,
+    guard_samples: int = AUDIO_SLICE_GUARD_SAMPLES,
 ) -> np.ndarray | None:
     """Fetch and decode provider audio covering a time range."""
-    timeline = provider.build_timeline(abs_start_ts, abs_end_ts)
+    fetch_end_ts = abs_end_ts
+    if expected_samples is not None:
+        fetch_end_ts += guard_samples / target_sr
+
+    timeline = provider.build_timeline(abs_start_ts, fetch_end_ts)
     all_audio: list[np.ndarray] = []
     for segment in timeline:
         try:
@@ -1007,7 +1019,7 @@ def _fetch_audio_range(
             continue
         decoded_end_ts = segment.start_ts + (len(audio) / target_sr)
         start_ts = max(segment.start_ts, abs_start_ts)
-        end_ts = min(decoded_end_ts, abs_end_ts)
+        end_ts = min(decoded_end_ts, fetch_end_ts)
         if end_ts <= start_ts:
             continue
         start_sample = max(0, int(round((start_ts - segment.start_ts) * target_sr)))
@@ -1019,7 +1031,10 @@ def _fetch_audio_range(
         all_audio.append(audio[start_sample:end_sample])
     if not all_audio:
         return None
-    return np.concatenate(all_audio)
+    combined = np.concatenate(all_audio)
+    if expected_samples is not None and len(combined) > expected_samples:
+        combined = combined[:expected_samples]
+    return combined
 
 
 def _format_compact_ts(dt: datetime) -> str:
@@ -1047,6 +1062,32 @@ def _parse_compact_range_filename(
     if end <= start:
         return None
     return start, end
+
+
+def parse_hydrophone_clip_range(
+    filename: str,
+) -> tuple[datetime, datetime] | None:
+    """Parse a compact UTC hydrophone clip filename into absolute bounds."""
+    return _parse_compact_range_filename(filename)
+
+
+def fetch_hydrophone_audio_range(
+    provider: ArchiveProvider,
+    abs_start_ts: float,
+    abs_end_ts: float,
+    target_sr: int,
+) -> np.ndarray | None:
+    """Fetch a hydrophone clip by absolute UTC range with exact-length trimming."""
+    duration_sec = abs_end_ts - abs_start_ts
+    if duration_sec <= 0:
+        return None
+    return _fetch_audio_range(
+        provider,
+        abs_start_ts,
+        abs_end_ts,
+        target_sr,
+        expected_samples=expected_audio_samples(duration_sec, target_sr),
+    )
 
 
 def _resolve_hydrophone_clip_name(
@@ -1343,7 +1384,7 @@ def extract_hydrophone_labeled_samples(
                             abs_end_ts = (
                                 recording_ts + timedelta(seconds=resolved_end_sec)
                             ).timestamp()
-                            fallback_segment = _fetch_audio_range(
+                            fallback_segment = fetch_hydrophone_audio_range(
                                 provider,
                                 abs_start_ts,
                                 abs_end_ts,
@@ -1437,7 +1478,7 @@ def extract_hydrophone_labeled_samples(
                                     segment = None
                         else:
                             if recording_ts is not None:
-                                segment = _fetch_audio_range(
+                                segment = fetch_hydrophone_audio_range(
                                     provider,
                                     (
                                         recording_ts
@@ -1599,12 +1640,14 @@ def extract_hydrophone_labeled_samples(
             else:
                 # Backward-compatible fallback for direct callers that do not
                 # provide stream bounds.
-                combined = _fetch_audio_range(
-                    provider, abs_start_ts, abs_end_ts, target_sample_rate
+                combined = fetch_hydrophone_audio_range(
+                    provider,
+                    abs_start_ts,
+                    abs_end_ts,
+                    target_sample_rate,
                 )
                 if combined is not None:
-                    end_sample = min(int(duration * target_sample_rate), len(combined))
-                    segment = combined[:end_sample]
+                    segment = combined
 
             if segment is None or len(segment) == 0:
                 counts["n_skipped"] += len(pending_writes)

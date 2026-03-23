@@ -16,7 +16,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Model registry supports TFLite and TF2 SavedModel encoders, auto-detects input format and vector dimensionality, and runs shared 32 kHz decoding plus 5-second overlap-back windowing.
 - Feature extraction supports both 128x128 log-mel spectrograms and raw waveform inputs, with batched FFT extraction, batched TFLite inference, and multi-threaded interpreter defaults.
 - Embeddings are written incrementally to Parquet with atomic promotion; idempotent reuse is keyed by `encoding_signature`.
-- Worker execution uses queued/running/complete/failed/canceled states, compare-and-set job claims, periodic stale-job recovery, timing instrumentation, and restart cleanup for stale local detection TSV outputs.
+- Worker execution uses queued/running/complete/failed/canceled states, compare-and-set job claims, periodic stale-job recovery, timing instrumentation, restart cleanup for stale local detection TSV outputs, and sample-precise short-audio warnings when no embeddings are produced.
 
 ### Embedding Similarity Search
 
@@ -45,7 +45,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Cache and provider behavior is shared across detection, playback, and extraction: Orcasound prefers `local_cache_path`, then `s3_cache_path`, then direct S3; NOAA uses `noaa_cache_path` when configured and falls back to direct anonymous GCS access when needed.
 - Hydrophone timelines are clipped to requested UTC ranges, use numeric segment ordering plus playlist durations when available, preserve sparse-cache offsets, and expand backward by configurable lookback windows until overlap is found.
 - Worker execution supports ordered prefetch, retry handling, per-chunk progress, pause/resume/cancel, restart-safe resume, explicit no-audio failures, and TF2 subprocess isolation with runtime and timing diagnostics.
-- Playback and labeled-sample extraction share the same stream-offset resolver and canonical snapped detection ranges; extraction writes FLAC plus PNG sidecars into species/category-first output trees and keeps partial TSV content usable while jobs are paused.
+- Playback and labeled-sample extraction share the same stream-offset resolver and canonical snapped detection ranges; extraction over-fetches a small real-audio guard band, hard-trims hydrophone clips to the expected sample count when the archive contains enough audio, never zero-pads short archive clips, writes FLAC plus PNG sidecars into species/category-first output trees, and keeps partial TSV content usable while jobs are paused.
 - Hydrophone UI flows include active and previous job management, UTC-only range selection, persisted detection row state, whale badges and positive-selection metadata, and guardrails such as a 7-day maximum range and `hop_seconds <= window_size_seconds`.
 
 ### Web UI
@@ -74,6 +74,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ### Data Staging Utilities
 
 - `scripts/convert_audio_to_flac.py` converts sibling `.wav` and `.mp3` files to `.flac` and can optionally verify decoded sample fidelity.
+- `scripts/repair_hydrophone_extract_lengths.py` dry-runs or repairs imported hydrophone extracts that are `1..64` samples short of the configured 5-second window, can recover legacy `.wav`-named FLAC outputs, and refreshes `audio_files` metadata when applied.
 - `scripts/stage_s3_epoch_cache.py` stages epoch-style public S3 ranges with `LastModified` overlap refinement, dry-run planning, optional pre-count/pre-size estimation, and early-stop prefix discovery.
 - Downloads use `s5cmd --json` plus `tqdm` for fixed-total progress reporting with per-prefix status.
 

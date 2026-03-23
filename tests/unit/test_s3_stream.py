@@ -1017,6 +1017,52 @@ class TestResolveAudioSliceChunkedDecode:
         assert not fetch_called
         assert len(audio) == 500
 
+    def test_guard_fetch_recovers_boundary_samples_from_following_segment(self):
+        """A small over-fetch should recover a few missing boundary samples."""
+        from datetime import datetime, timezone
+
+        from humpback.classifier.archive import StreamSegment
+        from humpback.classifier.s3_stream import resolve_audio_slice
+
+        sr = 32000
+        expected_samples = sr * 5
+
+        def fake_decode(ts_bytes, _sr):
+            key = ts_bytes.decode()
+            if key.endswith("live0.ts"):
+                return np.ones(expected_samples - 3, dtype=np.float32)
+            if key.endswith("live1.ts"):
+                return np.full(expected_samples, 2.0, dtype=np.float32)
+            raise AssertionError(f"Unexpected key: {key}")
+
+        provider = _FakeProvider(
+            [
+                StreamSegment("hydro/hls/1000/live0.ts", 1000.0, 5.0),
+                StreamSegment("hydro/hls/1000/live1.ts", 1005.0, 5.0),
+            ],
+            fetch_fn=lambda key: key.encode(),
+            decode_fn=fake_decode,
+        )
+
+        filename = (
+            datetime.fromtimestamp(1000, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + ".wav"
+        )
+        audio = resolve_audio_slice(
+            provider=provider,
+            stream_start_ts=1000.0,
+            stream_end_ts=1010.0,
+            filename=filename,
+            row_start_sec=0.0,
+            duration_sec=5.0,
+            target_sr=sr,
+            legacy_anchor_start_ts=1000.0,
+        )
+
+        assert len(audio) == expected_samples
+        assert np.all(audio[:-3] == 1.0)
+        assert np.all(audio[-3:] == 2.0)
+
 
 class TestSparseLocalCacheTimeline:
     """Regression tests for sparse local cache timeline reconstruction."""

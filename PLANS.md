@@ -10,6 +10,14 @@
 
 ## Recently Completed
 
+### Fix Near-5s Hydrophone Extract Boundary Failures
+
+[Full plan](/Users/michael/.claude/plans/fix-near-5s-hydrophone-extract-boundary-failures.md)
+
+- Shared hydrophone slice resolution and absolute-range fallback now over-fetch a small real-audio guard band and hard-trim to the expected sample count when archive audio exists, while truly short clips remain strict and unpadded.
+- Processing, training, and detection short-audio warnings now use sample-precise counts and high-precision durations, and a new repair utility can backfill near-short hydrophone clips plus recover legacy `.wav`-named FLAC outputs while refreshing `audio_files` metadata.
+- Verification: Ruff, Pyright, and `uv run pytest tests/` all passed (`985 passed, 1 skipped`).
+
 ### Compact PLANS.md and STATUS.md Safely
 
 [Full plan](/Users/michael/.claude/plans/compact-plans-status-docs.md)

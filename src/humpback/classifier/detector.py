@@ -16,7 +16,12 @@ import pyarrow.parquet as pq
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
-from humpback.processing.windowing import WindowMetadata, slice_windows_with_metadata
+from humpback.processing.windowing import (
+    WindowMetadata,
+    format_short_audio_window_message,
+    slice_windows_with_metadata,
+    window_sample_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,13 +371,16 @@ def run_detection(
             audio = resample(audio, sr, target_sample_rate)
             t_decode_total += time.monotonic() - t0
 
-            window_samples = int(target_sample_rate * window_size_seconds)
+            window_samples = window_sample_count(
+                target_sample_rate, window_size_seconds
+            )
             if len(audio) < window_samples:
                 logger.warning(
-                    "Skipping %s: audio too short (%.3fs < %.1fs window)",
+                    "Skipping %s: audio too short (%s)",
                     audio_path.name,
-                    len(audio) / target_sample_rate,
-                    window_size_seconds,
+                    format_short_audio_window_message(
+                        len(audio), target_sample_rate, window_size_seconds
+                    ),
                 )
                 n_skipped_short += 1
                 files_done += 1
