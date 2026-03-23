@@ -152,6 +152,38 @@ Notes:
 
 ---
 
+# repair_hydrophone_extract_lengths
+
+Repair imported hydrophone extracts whose compact UTC clip filenames span the
+configured window length but whose stored FLAC audio is still a few samples
+short on disk.
+
+Basic usage:
+
+```bash
+uv run python scripts/repair_hydrophone_extract_lengths.py
+uv run python scripts/repair_hydrophone_extract_lengths.py --apply
+```
+
+Notes:
+
+* Default mode is dry run; `--apply` rewrites files and updates `audio_files`
+  metadata.
+* The script only targets imported hydrophone extracts under
+  `{positive|negative}_sample_path` whose filenames parse as compact UTC clip
+  ranges and whose parent folders match `{label}/{hydrophone_id}/YYYY/MM/DD`.
+* By default it repairs files that are `1..64` samples short of the configured
+  `5.0` second window, and it also fixes legacy hydrophone extracts whose files
+  still end in `.wav` even though the stored audio bytes are FLAC.
+* Repaired clips are regenerated from the shared hydrophone absolute-range
+  extraction path, rewritten as FLAC, and get a fresh sibling `.png`
+  spectrogram sidecar.
+* The script skips clips that still cannot resolve to the expected sample count
+  or that would collide with another `audio_files` row's
+  `(checksum_sha256, folder_path)` uniqueness key.
+
+---
+
 # stage_s3_epoch_cache
 
 Stage time-windowed data from **epoch-timestamped S3 directory structures** into a **local NVMe cache** using `s5cmd`.

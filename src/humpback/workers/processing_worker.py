@@ -15,7 +15,11 @@ from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.embeddings import IncrementalParquetWriter
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel, FakeTF2Model, FakeTFLiteModel
-from humpback.processing.windowing import slice_windows
+from humpback.processing.windowing import (
+    format_short_audio_window_message,
+    slice_windows,
+    window_sample_count,
+)
 from humpback.services.model_registry_service import get_model_by_name
 from humpback.storage import embedding_path, resolve_audio_path
 from humpback.workers.queue import complete_processing_job, fail_processing_job
@@ -155,10 +159,11 @@ async def run_processing_job(
         if total_rows == 0:
             # Audio too short for window size — no embeddings produced
             audio_data, sr = decode_audio(audio_path)
-            duration = len(audio_data) / sr
+            audio_data = resample(audio_data, sr, job.target_sample_rate)
             warning = (
-                f"Audio too short for window size ({duration:.1f}s < "
-                f"{job.window_size_seconds:.1f}s) — no embeddings produced"
+                "Audio too short for window size "
+                f"({format_short_audio_window_message(len(audio_data), job.target_sample_rate, job.window_size_seconds)}) "
+                "— no embeddings produced"
             )
             logger.warning("Job %s: %s", job.id, warning)
             # Clean up empty parquet if it was somehow written
@@ -225,12 +230,15 @@ def _process_audio(
     feature_config = _json.loads(job.feature_config) if job.feature_config else {}
     normalization = feature_config.get("normalization", "per_window_max")
 
-    window_samples = int(job.target_sample_rate * job.window_size_seconds)
+    window_samples = window_sample_count(
+        job.target_sample_rate, job.window_size_seconds
+    )
     if len(audio) < window_samples:
         logger.warning(
-            "Audio too short for window size (%.3fs < %.1fs), producing 0 embeddings for job %s",
-            len(audio) / job.target_sample_rate,
-            job.window_size_seconds,
+            "Audio too short for window size (%s), producing 0 embeddings for job %s",
+            format_short_audio_window_message(
+                len(audio), job.target_sample_rate, job.window_size_seconds
+            ),
             job.id,
         )
 

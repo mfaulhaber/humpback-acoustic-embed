@@ -562,8 +562,12 @@ Validation and error behavior notes:
   threshold; rows are skipped when the peak smoothed score is below threshold. Legacy jobs fall
   back to rescoring.
 - Hydrophone extraction reads local HLS cache only for Orcasound jobs, writes FLAC labeled clips,
-  and skips missing-cache positives via `n_positive_selection_skipped`. NOAA
+  over-fetches a small real-audio guard band and hard-trims clips to the expected sample count
+  when archive audio exists, skips missing-cache positives via
+  `n_positive_selection_skipped`, and never zero-pads genuinely short archive clips. NOAA
   extraction uses direct anonymous GCS fetch instead.
+- Processing jobs that are shorter than one full window persist sample-precise warnings with
+  sample counts and high-precision durations instead of rounded `5.0s < 5.0s` messages.
 - `GET /audio/{id}/download` returns `416` for malformed or unsatisfiable `Range` headers.
 - Completed detection jobs keep a canonical `detection_rows.parquet` row store beside the TSV
   output. Detection-time auto-selection metadata is persisted there, TSV download is generated
@@ -602,6 +606,8 @@ Labeled-sample extraction outputs:
 - every extracted audio file also writes a same-basename `.png` spectrogram sidecar in
   the same directory, rendered from the extracted clip window rather than the full
   detection span
+- hydrophone extraction hard-trims repaired/current clips to the expected sample count when
+  the archive contains enough real audio; it never pads silence to manufacture a full window
 - Positive extraction writes the classifier-selected 5-second seed window plus any adjacent
   5-second extensions that pass the configured support threshold (`positive_extract_filename`);
   negative extraction keeps the labeled clip bounds.
@@ -609,6 +615,12 @@ Labeled-sample extraction outputs:
 ## Utilities
 
 `uv run python scripts/convert_audio_to_flac.py <path> [<path> ...]` converts `.wav` and `.mp3` files to sibling `.flac` files in place. Use `--verify-samples` to compare decoded source/output audio and fail if the sample rate, sample count, or max absolute error exceeds the built-in tolerance.
+
+`uv run python scripts/repair_hydrophone_extract_lengths.py` dry-runs imported hydrophone
+extracts whose compact UTC clip filenames span the configured 5-second window but whose stored
+audio is still short by `1..64` samples. It also fixes legacy hydrophone extracts whose files
+still end in `.wav` even though their on-disk bytes are FLAC. Add `--apply` to rewrite the FLAC,
+regenerate the PNG sidecar, and refresh the matching `audio_files` metadata.
 
 ---
 

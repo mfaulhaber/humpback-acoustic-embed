@@ -1,4 +1,5 @@
 import numpy as np
+import soundfile as sf
 
 from humpback.processing.audio_io import decode_audio, resample
 
@@ -16,6 +17,20 @@ def test_decode_flac(test_flac):
     assert sr == 16000
     assert audio.dtype == np.float32
     assert len(audio) == 16000 * 10  # 10 seconds
+    assert np.abs(audio).max() <= 1.0
+
+
+def test_decode_wav_suffix_with_flac_payload(tmp_path):
+    path = tmp_path / "misnamed_hydrophone_clip.wav"
+    sample_rate = 16000
+    expected = np.linspace(-0.25, 0.25, sample_rate, dtype=np.float32)
+    sf.write(str(path), expected, sample_rate, format="FLAC", subtype="PCM_16")
+
+    audio, sr = decode_audio(path)
+
+    assert sr == sample_rate
+    assert audio.dtype == np.float32
+    assert len(audio) == len(expected)
     assert np.abs(audio).max() <= 1.0
 
 

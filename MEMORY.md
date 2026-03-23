@@ -105,6 +105,8 @@ Note: `TFLiteModelConfig` is kept as a backward-compatible alias for `ModelConfi
 - window_size_seconds
 - target_sample_rate
 - feature_config (JSON)
+- warning_message (nullable — persisted sample-precise short-audio warnings when
+  the decoded clip is shorter than one full window and no embeddings are produced)
 - created_at
 - updated_at
 - error_message (nullable)
@@ -505,7 +507,10 @@ Queue safety note:
   smoothed scores stay above `positive_selection_extend_min_score`; rows below
   `positive_selection_min_score` are skipped and counted in `n_positive_selection_skipped`.
   Legacy jobs fall back to rescoring during extraction when diagnostics are unavailable.
-  NOAA extraction uses direct anonymous GCS fetch instead.
+  When hydrophone extraction resolves audio by absolute UTC range, it over-fetches a small
+  real-audio guard band and hard-trims to the expected sample count when enough archive audio
+  exists; clips that remain genuinely short stay short and are never zero-padded. NOAA
+  extraction uses direct anonymous GCS fetch instead.
 - `GET /audio/{id}/download` returns 416 for malformed/unsatisfiable `Range` headers.
 
 ---
@@ -548,6 +553,11 @@ Hydrophone labeled-sample extraction output layout:
 - Every extracted `.flac` also gets a same-basename `.png` sidecar in the same
   directory, rendered from the actual extracted clip window with the shared UI
   spectrogram renderer (no start/stop overlay markers baked into the file).
+- `scripts/repair_hydrophone_extract_lengths.py` can dry-run or rewrite imported
+  hydrophone extracts whose compact UTC clip filenames span the configured
+  5-second window but whose stored audio is still short by `1..64` samples; it
+  also repairs legacy hydrophone extracts whose files still end in `.wav` even
+  though their stored bytes are FLAC.
 
 ---
 

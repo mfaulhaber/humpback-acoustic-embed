@@ -14,6 +14,26 @@ class WindowMetadata:
     original_samples: int
 
 
+def window_sample_count(sample_rate: int, window_seconds: float) -> int:
+    """Return the exact sample threshold used by window slicing."""
+    return int(sample_rate * window_seconds)
+
+
+def format_short_audio_window_message(
+    n_samples: int,
+    sample_rate: int,
+    window_seconds: float,
+) -> str:
+    """Describe a short-audio/window-size mismatch with sample precision."""
+    required_samples = window_sample_count(sample_rate, window_seconds)
+    actual_duration = n_samples / sample_rate
+    required_duration = required_samples / sample_rate
+    return (
+        f"{n_samples} samples @ {sample_rate} Hz = {actual_duration:.8f}s < "
+        f"{required_samples} samples = {required_duration:.8f}s window"
+    )
+
+
 def slice_windows(
     audio: np.ndarray,
     sample_rate: int,
@@ -31,7 +51,7 @@ def slice_windows(
         hop_seconds: Stride between window starts. Defaults to window_seconds
             (no overlap). Must be > 0 and <= window_seconds.
     """
-    window_samples = int(sample_rate * window_seconds)
+    window_samples = window_sample_count(sample_rate, window_seconds)
     if window_samples <= 0:
         raise ValueError(f"Invalid window: {window_seconds}s at {sample_rate}Hz")
 
@@ -74,7 +94,7 @@ def slice_windows_with_metadata(
     Same slicing logic as slice_windows but additionally tracks whether each
     window was shifted backward (overlapped) to avoid zero-padding.
     """
-    window_samples = int(sample_rate * window_seconds)
+    window_samples = window_sample_count(sample_rate, window_seconds)
     if window_samples <= 0:
         raise ValueError(f"Invalid window: {window_seconds}s at {sample_rate}Hz")
 
@@ -124,7 +144,7 @@ def count_windows(
     hop_seconds: float | None = None,
 ) -> int:
     """Return number of windows for given audio length."""
-    window_samples = int(sample_rate * window_seconds)
+    window_samples = window_sample_count(sample_rate, window_seconds)
     if window_samples <= 0:
         return 0
     if n_samples < window_samples:
