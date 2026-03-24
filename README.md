@@ -707,49 +707,25 @@ The project includes structured workflows for AI coding agents (Claude Code and 
 
 ### Claude Code Commands
 
-Available as `/project:<name>` in Claude Code sessions:
+The project uses the [superpowers](https://github.com/anthropics/claude-code) skill system as its canonical development workflow:
 
-| Command | Purpose |
-|---------|---------|
-| `/start` | Load project context (STATUS, PLANS, DECISIONS) and summarize state. No coding. |
-| `/implement` | Structured implementation: restate task, identify files, implement, test, update docs. |
-| `/review` | Pre-commit checklist: architecture violations, missing tests/migrations, stale docs. |
-| `/handoff` | End-of-session: update STATUS.md, PLANS.md, DECISIONS.md for next session. |
-| `/debug` | Root-cause debugging: symptom, reproduce, fix, regression test. |
+**brainstorming** -> **writing-plans** -> **subagent-driven-development** -> **finishing-a-development-branch**
 
-Command files are in `.claude/commands/` and each points to `.agents/skills/<name>/SKILL.md`.
+Design specs are saved to `docs/specs/`, implementation plans to `docs/plans/`.
 
+### Codex App
 
-/start     → initialized session
-/plan (Claude command), exit plan option 4 with this command : Save this plan to PLANS.md and then implement it.
-/implement → executes plan
-/review    → checks plan implementation
-/handoff   → records outcome
+Codex reads `AGENTS.md` as its entry point, which defines a 6-phase workflow (Context -> Design -> Plan -> Implement -> Verify -> Finish) mirroring the superpowers flow using only Codex-available tools.
 
-### Codex App Skills
-
-Available as skills in Codex:
-
-| Skill | Purpose |
-|-------|---------|
-| `implement` | Same as `/project:implement` above |
-| `review` | Same as `/project:review` above |
-| `debug` | Same as `/project:debug` above |
-
-Skill definitions are in `.agents/skills/<name>/SKILL.md`. Codex also reads `AGENTS.md` as its entry point, which points to `CLAUDE.md` as the authoritative spec.
-
-### Memory Files
-
-Both agents share persistent project memory via root-level markdown files:
+### Project Documentation
 
 | File | Purpose |
 |------|---------|
-| `CLAUDE.md` | Behavioral rules, development constraints, testing requirements |
-| `MEMORY.md` | Data models, workflows, signal parameters, storage layout |
-| `AGENTS.md` | Codex entry point with key constraints |
+| `CLAUDE.md` | Rules, reference material, project state (auto-loaded by Claude Code) |
 | `DECISIONS.md` | Architecture decision log (append-only) |
-| `STATUS.md` | Current project state, capabilities, constraints |
-| `PLANS.md` | Active and backlog development plans |
+| `AGENTS.md` | Codex entry point with phase-based workflow |
+| `docs/specs/` | Design specs from brainstorming |
+| `docs/plans/` | Implementation plans + backlog |
 
 ---
 
