@@ -13,18 +13,9 @@ The system must:
 - Allow separate queuing of processing and clustering jobs
 - Provide a web UI for job management and inspection
 
-This document defines behavioral rules and engineering constraints.
-For reference material (data models, workflows, parameters), see `MEMORY.md`.
-
-## Memory Files
-
-| File | When to read |
-|------|-------------|
-| `MEMORY.md` | Working on data models, workflows, signal processing, storage layout |
-| `DECISIONS.md` | Before making architecture changes (check for prior decisions) |
-| `STATUS.md` | At session start — understand current capabilities and constraints |
-| `PLANS.md` | At session start — check active and backlog plans |
-| `AGENTS.md` | Codex entry point (not needed for Claude Code) |
+This document defines behavioral rules, engineering constraints, project reference
+material, and workflow integration. For architecture decisions, see `DECISIONS.md`.
+For Codex-specific workflow, see `AGENTS.md`.
 
 ---
 
@@ -82,12 +73,11 @@ Use these commands for managing dependencies:
 
 ### 3.6 Documentation
 *   When a change adds, removes, or modifies API endpoints, data models, configuration options, architecture, or workflows, update the relevant files:
-    *   `CLAUDE.md` — behavioral rules, development constraints (this file)
-    *   `MEMORY.md` — data models, workflows, signal parameters, storage layout
-    *   `README.md` — user-facing API endpoints, configuration, feature list
-    *   `STATUS.md` — current capabilities, schema version, known constraints
+    *   `CLAUDE.md` — rules, reference material, project state (this file)
     *   `DECISIONS.md` — append new ADR for significant architecture changes
-*   `CLAUDE.md` is the authoritative spec for rules; `MEMORY.md` is authoritative for reference material.
+    *   `README.md` — user-facing API endpoints, configuration, feature list
+    *   `docs/specs/` — design specs (written during brainstorming phase)
+    *   `docs/plans/` — implementation plans (written during planning phase)
 
 ## 3.7 Frontend Stack & Development
 
