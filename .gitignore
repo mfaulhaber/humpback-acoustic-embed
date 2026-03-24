@@ -21,3 +21,4 @@ node_modules/
 /models/
 grunt.wav
 /frontend/test-results/
+.worktrees/
