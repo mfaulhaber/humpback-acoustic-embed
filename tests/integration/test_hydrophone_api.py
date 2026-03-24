@@ -16,8 +16,8 @@ async def test_list_hydrophones(client):
     assert len(data) == 7
     ids = {h["id"] for h in data}
     assert "rpi_orcasound_lab" in ids
-    assert "sanctsound_ci01" in ids
-    assert "sanctsound_oc01" in ids
+    assert "sanctsound_ci" in ids
+    assert "sanctsound_oc" in ids
     assert "noaa_glacier_bay" in ids
     assert "sanctsound_fk01" not in ids
     assert all("name" in h and "location" in h for h in data)
@@ -286,7 +286,7 @@ async def test_create_hydrophone_detection_job_sanctsound_success(client, app_se
         "/classifier/hydrophone-detection-jobs",
         json={
             "classifier_model_id": model_id,
-            "hydrophone_id": "sanctsound_ci01",
+            "hydrophone_id": "sanctsound_ci",
             "start_timestamp": 1541023200,
             "end_timestamp": 1541026800,
         },
@@ -294,7 +294,7 @@ async def test_create_hydrophone_detection_job_sanctsound_success(client, app_se
     assert resp.status_code == 201
     data = resp.json()
     assert data["status"] == "queued"
-    assert data["hydrophone_id"] == "sanctsound_ci01"
+    assert data["hydrophone_id"] == "sanctsound_ci"
     assert data["hydrophone_name"] == "NOAA SanctSound (Channel Islands)"
 
     await engine.dispose()

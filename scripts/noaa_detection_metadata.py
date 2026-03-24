@@ -242,7 +242,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hydrophone-id",
         default=None,
-        help="Archive source ID (e.g. sanctsound_oc01)",
+        help=(
+            "Archive source ID (e.g. site-scoped sanctsound_oc01 or "
+            "umbrella sanctsound_oc)"
+        ),
     )
     parser.add_argument(
         "--csv-url",

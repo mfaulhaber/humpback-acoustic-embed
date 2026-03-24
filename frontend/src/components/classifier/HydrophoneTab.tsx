@@ -1537,7 +1537,7 @@ function HydrophoneJobRow({
                   {job.segments_processed ?? 0}/{job.segments_total ?? "?"}
                   {job.time_covered_sec != null && (
                     <span className="text-xs ml-1">
-                      ({formatDurationHM(job.time_covered_sec)})
+                      ({formatDurationHM(job.time_covered_sec)} processed audio)
                     </span>
                   )}
                 </>
@@ -1605,7 +1605,7 @@ function HydrophoneJobRow({
                   : "\u2014"}
                 {job.time_covered_sec != null && (
                   <span className="text-xs ml-1">
-                    ({formatDurationHM(job.time_covered_sec)})
+                    ({formatDurationHM(job.time_covered_sec)} processed audio)
                   </span>
                 )}
               </td>

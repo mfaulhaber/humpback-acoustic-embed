@@ -1135,3 +1135,40 @@ All contamination and annotation config parameters are now exposed through the w
 - Hydrophone spectrogram-bound editing is effectively retired because it only applied to merged jobs.
 - Legacy merged jobs remain visible for audit/download purposes but can no longer be modified or extracted.
 - No Alembic migration is required in this phase because the schema is intentionally retained for compatibility.
+
+---
+
+## ADR-040: Split SanctSound umbrella archive IDs from site-scoped IDs
+
+**Date**: 2026-03-24
+**Status**: Accepted
+
+**Context**: NOAA archive sources are metadata-driven, but the Hydrophone UI
+surfaced `sanctsound_ci01` and `sanctsound_oc01` as if they were single-site
+sources. In reality those records acted as region umbrellas and included
+overlapping child-folder hints from multiple sites. That made job IDs
+misleading, allowed progress to exceed the requested wall-clock range without
+clear explanation, and caused deployment-specific workflows to reuse IDs with
+the wrong semantics.
+
+**Decision**:
+- Add explicit umbrella source IDs `sanctsound_ci` and `sanctsound_oc` for the
+  UI-visible Channel Islands and Olympic Coast archive choices.
+- Keep `sanctsound_ci01` and `sanctsound_oc01` as hidden site-scoped sources
+  whose child-folder hints only reference same-site deployment folders.
+- Migrate historical detection jobs from legacy umbrella-in-site IDs
+  (`sanctsound_ci01`, `sanctsound_oc01`) to the new umbrella IDs so playback,
+  extraction, and job history keep their original semantics.
+- Keep progress accounting as summed processed audio duration, but clarify the
+  UI wording so umbrella sources can legitimately exceed the selected
+  wall-clock range when multiple overlapping site feeds are processed.
+
+**Consequences**:
+- The Hydrophone UI keeps one visible Channel Islands source and one visible
+  Olympic Coast source, but their IDs now match their umbrella behavior.
+- Scripted or metadata-driven workflows can still target exact sites with
+  hidden IDs such as `sanctsound_ci01` and `sanctsound_oc01`.
+- Future SanctSound metadata mistakes are easier to catch because site-scoped
+  records now have explicit same-site child-folder expectations.
+- Added Alembic migration `025_normalize_sanctsound_source_ids.py` to preserve
+  historical job semantics on existing databases.

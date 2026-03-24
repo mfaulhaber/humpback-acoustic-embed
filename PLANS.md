@@ -4,11 +4,20 @@
 
 ## Active
 
-- None currently active.
+- None right now.
 
 ---
 
 ## Recently Completed
+
+### Normalize SanctSound Umbrella Sources Without Expanding the UI
+
+[Full plan](/Users/michael/.claude/plans/normalize-sanctsound-umbrella-sources.md)
+
+- Split SanctSound UI-visible archive IDs into explicit umbrella sources (`sanctsound_ci`, `sanctsound_oc`) while keeping hidden site-scoped IDs narrowed to same-site child-folder hints.
+- Added migration `025_normalize_sanctsound_source_ids.py`, fixed Alembic DB URL resolution to honor `HUMPBACK_DATABASE_URL`, and verified the upgrade on the real project DB.
+- Updated Hydrophone progress wording to "processed audio" and added metadata, API, provider, and migration regression coverage.
+- Verification: Ruff, Pyright, `cd frontend && npx tsc --noEmit`, and `uv run pytest tests/` all passed (`1024 passed, 1 skipped`).
 
 ### Spectrogram Thumbnails + Annotation Label Dropdown in Labeling Tab
 
