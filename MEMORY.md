@@ -453,13 +453,15 @@ Queue safety note:
 - `POST /classifier/hydrophone-detection-jobs` requires
   `hop_seconds <= classifier window_size_seconds`.
 - `GET /classifier/hydrophones` is the legacy archive-source listing endpoint and now
-  includes all Orcasound HLS hydrophones plus the two NOAA UI-visible sources:
-  `sanctsound_ci01` and legacy `noaa_glacier_bay`.
+  includes all Orcasound HLS hydrophones plus the three NOAA UI-visible sources:
+  `sanctsound_ci`, `sanctsound_oc`, and legacy `noaa_glacier_bay`.
 - NOAA archive metadata is packaged in `src/humpback/data/noaa_archive_sources.json`.
   Runtime source lookup uses loadable records with concrete `bucket`/`prefix`
   config plus optional source-capability flags such as
   `supports_segment_prefetch`, while `/classifier/hydrophones` filters NOAA rows by
-  `include_in_detection_ui`.
+  `include_in_detection_ui`. SanctSound keeps umbrella UI IDs for region-level
+  picking and hidden site-scoped IDs such as `sanctsound_ci01` /
+  `sanctsound_oc01` for exact deployment-matched workflows.
 - Hydrophone timeline folder discovery starts at the requested range and expands
   backward in configurable hour increments (default 4h) up to configurable
   max lookback (default 168h) until overlap at the requested start boundary is
@@ -468,6 +470,8 @@ Queue safety note:
 - Hydrophone detection supports ordered bounded segment prefetch for S3-backed runs
   (`hydrophone_prefetch_enabled`, `hydrophone_prefetch_workers`,
   `hydrophone_prefetch_inflight_segments`). Prefetch preserves timeline order and
+  `time_covered_sec` tracks summed processed audio duration rather than wall-clock
+  range coverage.
   uses the same per-segment retry/error handling path as sequential reads. NOAA
   archive providers can opt out of raw-byte prefetch for very large archive
   objects and stream decoded PCM in chunk-sized slices instead so multi-hour

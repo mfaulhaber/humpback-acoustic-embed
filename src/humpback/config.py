@@ -1,4 +1,5 @@
 import json
+import re
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -128,6 +129,35 @@ ORCASOUND_HYDROPHONES = [
 ]
 
 
+_SANCTSOUND_SITE_CODE_RE = re.compile(r"^[a-z]{2}\d{2}$")
+
+
+def _validate_noaa_archive_metadata(records: list[dict[str, Any]]) -> None:
+    """Validate metadata invariants for loadable NOAA archive sources."""
+    for record in records:
+        if record.get("program") != "SanctSound":
+            continue
+        code = record.get("code")
+        if (
+            not isinstance(code, str)
+            or _SANCTSOUND_SITE_CODE_RE.fullmatch(code) is None
+        ):
+            continue
+
+        for hint in record.get("child_folder_hints") or []:
+            prefix = hint.get("prefix") if isinstance(hint, dict) else None
+            if not isinstance(prefix, str) or not prefix.strip():
+                continue
+            normalized = prefix.strip("/")
+            if normalized.startswith(f"{code}/") or f"_{code}_" in normalized:
+                continue
+            raise ValueError(
+                "SanctSound site-scoped record "
+                f"{record.get('id', '(unknown)')} contains a child-folder hint "
+                f"outside site code {code}: {prefix}"
+            )
+
+
 def _load_noaa_archive_metadata() -> list[dict[str, Any]]:
     """Load packaged NOAA archive metadata records."""
     payload = json.loads(
@@ -138,7 +168,9 @@ def _load_noaa_archive_metadata() -> list[dict[str, Any]]:
     records = payload.get("records")
     if not isinstance(records, list):
         raise ValueError("NOAA archive metadata must define a records list")
-    return [cast(dict[str, Any], record) for record in records]
+    parsed = [cast(dict[str, Any], record) for record in records]
+    _validate_noaa_archive_metadata(parsed)
+    return parsed
 
 
 NOAA_ARCHIVE_METADATA = _load_noaa_archive_metadata()

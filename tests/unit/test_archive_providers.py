@@ -692,13 +692,13 @@ class TestProviderBuilders:
 
     def test_archive_detection_builder_applies_sanctsound_prefetch_flag(self):
         provider = build_archive_detection_provider(
-            "sanctsound_ci01",
+            "sanctsound_ci",
             local_cache_path=None,
             s3_cache_path="/ignored",
         )
 
         assert isinstance(provider, NoaaGCSProvider)
-        assert provider.source_id == "sanctsound_ci01"
+        assert provider.source_id == "sanctsound_ci"
         assert provider.supports_segment_prefetch is False
 
     def test_archive_detection_builder_routes_noaa_caching(self, tmp_path):
@@ -763,6 +763,66 @@ class TestProviderBuilders:
 
         assert isinstance(provider, CachingNoaaGCSProvider)
         assert provider.source_id == "noaa_glacier_bay"
+
+
+class TestRuntimeSanctsoundMetadata:
+    @staticmethod
+    def _candidate_prefixes(
+        source_id: str, start_ts: float, end_ts: float
+    ) -> list[str]:
+        provider = build_archive_detection_provider(
+            source_id,
+            local_cache_path=None,
+            s3_cache_path="/ignored",
+        )
+        inner = getattr(provider, "_gcs", provider)
+        return inner._candidate_prefixes(start_ts, end_ts)  # type: ignore[attr-defined]
+
+    def test_channel_islands_umbrella_matches_multiple_sites(self):
+        prefixes = self._candidate_prefixes(
+            "sanctsound_ci",
+            _ts(2019, 3, 26, 0, 0, 0),
+            _ts(2019, 3, 27, 0, 0, 0),
+        )
+
+        assert prefixes == [
+            "sanctsound/audio/ci01/sanctsound_ci01_02/audio/",
+            "sanctsound/audio/ci04/sanctsound_ci04_02/audio/",
+        ]
+
+    def test_channel_islands_site_scoped_source_stays_on_ci01(self):
+        prefixes = self._candidate_prefixes(
+            "sanctsound_ci01",
+            _ts(2019, 3, 26, 0, 0, 0),
+            _ts(2019, 3, 27, 0, 0, 0),
+        )
+
+        assert prefixes == [
+            "sanctsound/audio/ci01/sanctsound_ci01_02/audio/",
+        ]
+
+    def test_olympic_coast_umbrella_matches_multiple_sites(self):
+        prefixes = self._candidate_prefixes(
+            "sanctsound_oc",
+            _ts(2019, 3, 12, 0, 0, 0),
+            _ts(2019, 3, 13, 0, 0, 0),
+        )
+
+        assert prefixes == [
+            "sanctsound/audio/oc01/sanctsound_oc01_01/audio/",
+            "sanctsound/audio/oc02/sanctsound_oc02_01/audio/",
+        ]
+
+    def test_olympic_coast_site_scoped_source_stays_on_oc01(self):
+        prefixes = self._candidate_prefixes(
+            "sanctsound_oc01",
+            _ts(2019, 3, 12, 0, 0, 0),
+            _ts(2019, 3, 13, 0, 0, 0),
+        )
+
+        assert prefixes == [
+            "sanctsound/audio/oc01/sanctsound_oc01_01/audio/",
+        ]
 
 
 class TestNoaaManifest:
