@@ -413,6 +413,50 @@ async def test_create_vocalization_training_job(client, app_settings, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_get_vocalization_training_job(client, app_settings, tmp_path):
+    """Test fetching a vocalization training job by ID."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Add vocalization labels (need at least 2 distinct labels)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}/row-001",
+        json={"label": "whup"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}/row-002",
+        json={"label": "moan"},
+    )
+
+    # Create a training job
+    create_resp = await client.post(
+        "/labeling/training-jobs",
+        json={
+            "name": "test-voc-get",
+            "source_detection_job_ids": [job_id],
+        },
+    )
+    assert create_resp.status_code == 201
+    training_job_id = create_resp.json()["id"]
+
+    # Fetch it
+    resp = await client.get(f"/labeling/training-jobs/{training_job_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == training_job_id
+    assert data["name"] == "test-voc-get"
+    assert data["status"] == "queued"
+    assert data["job_purpose"] == "vocalization"
+    assert data["source_detection_job_ids"] == [job_id]
+
+
+@pytest.mark.asyncio
+async def test_get_vocalization_training_job_not_found(client):
+    """Fetching a nonexistent training job returns 404."""
+    resp = await client.get("/labeling/training-jobs/nonexistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_create_vocalization_training_job_too_few_labels(
     client,
     app_settings,
@@ -558,6 +602,81 @@ async def test_multiple_annotations_per_row(client):
     assert len(anns) == 2
     # Should be sorted by start_offset_sec
     assert anns[0]["start_offset_sec"] < anns[1]["start_offset_sec"]
+
+
+@pytest.mark.asyncio
+async def test_summary_includes_annotation_labels(client, app_settings, tmp_path):
+    """Annotations contribute to labeling summary label_distribution."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # No vocalization labels — only annotations
+    await client.post(
+        f"/labeling/annotations/{job_id}/row-001",
+        json={"start_offset_sec": 0.5, "end_offset_sec": 3.0, "label": "whup"},
+    )
+    await client.post(
+        f"/labeling/annotations/{job_id}/row-002",
+        json={"start_offset_sec": 1.0, "end_offset_sec": 4.0, "label": "moan"},
+    )
+
+    resp = await client.get(f"/labeling/summary/{job_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["labeled_rows"] == 2
+    assert "whup" in data["label_distribution"]
+    assert "moan" in data["label_distribution"]
+
+
+@pytest.mark.asyncio
+async def test_training_summary_aggregates_across_jobs(client, app_settings, tmp_path):
+    """Training summary aggregates labels from all detection jobs."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Add annotations to this job
+    await client.post(
+        f"/labeling/annotations/{job_id}/row-001",
+        json={"start_offset_sec": 0.5, "end_offset_sec": 3.0, "label": "whup"},
+    )
+    await client.post(
+        f"/labeling/annotations/{job_id}/row-002",
+        json={"start_offset_sec": 1.0, "end_offset_sec": 4.0, "label": "moan"},
+    )
+
+    resp = await client.get("/labeling/training-summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert job_id in data["labeled_job_ids"]
+    assert data["labeled_rows"] >= 2
+    assert "whup" in data["label_distribution"]
+    assert "moan" in data["label_distribution"]
+
+
+@pytest.mark.asyncio
+async def test_training_job_accepts_annotation_only_labels(
+    client, app_settings, tmp_path
+):
+    """Training job creation succeeds when labels come from annotations only."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Only annotations, no vocalization labels
+    await client.post(
+        f"/labeling/annotations/{job_id}/row-001",
+        json={"start_offset_sec": 0.5, "end_offset_sec": 3.0, "label": "whup"},
+    )
+    await client.post(
+        f"/labeling/annotations/{job_id}/row-002",
+        json={"start_offset_sec": 1.0, "end_offset_sec": 4.0, "label": "moan"},
+    )
+
+    resp = await client.post(
+        "/labeling/training-jobs",
+        json={
+            "name": "annotation-only-classifier",
+            "source_detection_job_ids": [job_id],
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["status"] == "queued"
 
 
 # ---- Active Learning ----

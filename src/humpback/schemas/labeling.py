@@ -53,6 +53,14 @@ class LabelingSummary(BaseModel):
     label_distribution: dict[str, int]
 
 
+class TrainingSummary(BaseModel):
+    """Aggregate label stats across all detection jobs for training readiness."""
+
+    labeled_job_ids: list[str]
+    labeled_rows: int
+    label_distribution: dict[str, int]
+
+
 class DetectionNeighborsRequest(BaseModel):
     filename: str
     start_sec: float = Field(ge=0)
