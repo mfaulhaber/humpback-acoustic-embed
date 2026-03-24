@@ -10,6 +10,14 @@
 
 ## Recently Completed
 
+### Spectrogram Thumbnails + Annotation Label Dropdown in Labeling Tab
+
+[Full plan](/Users/michael/.claude/plans/quiet-foraging-fog.md)
+
+- Added inline spectrogram thumbnails to Similar Sounds result cards with click-to-expand popup.
+- Replaced annotation label text input with a dropdown populated from inferred neighbor vocalization types, with normalization (underscore→space, title case).
+- Verification: `cd frontend && npx tsc --noEmit` and `uv run pytest tests/` all passed (`1018 passed, 1 skipped`).
+
 ### Surface Vocalization Classifier Training in LabelingTab
 
 [Full plan](/Users/michael/.claude/plans/shimmying-knitting-canyon.md)
