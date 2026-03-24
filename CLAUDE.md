@@ -358,3 +358,218 @@ A PR/change is "done" only if:
 - Real-time streaming inference
 - Multi-tenant support
 - Distributed GPU execution
+
+---
+
+## 8. Project Reference
+
+### 8.1 Technology Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Language | Python 3.11-3.12 |
+| Package Manager | uv (pyproject.toml + uv.lock, explicit TensorFlow extras by platform) |
+| Web Framework | FastAPI |
+| Database | SQLite (via SQLAlchemy) |
+| Migrations | Alembic |
+| Embedding Format | Apache Parquet |
+| ML Models | TFLite (Perch), TF2 SavedModel |
+| Clustering | HDBSCAN, K-Means, Agglomerative |
+| Dim Reduction | UMAP, PCA |
+| Metric Learning | PyTorch (triplet loss MLP) |
+| Classifier | scikit-learn LogisticRegression |
+| Frontend | React 18 + Vite + TypeScript + Tailwind + shadcn/ui |
+| Charts | react-plotly.js |
+| Server State | TanStack Query |
+| Testing | pytest + pre-commit/Ruff (backend), Playwright (frontend) |
+
+### 8.2 Repository Layout
+
+```
+humpback-acoustic-embed/
+├── CLAUDE.md              (rules, reference, project state — auto-loaded)
+├── AGENTS.md              (Codex entry point)
+├── DECISIONS.md           (architecture decision log)
+├── pyproject.toml         (Python dependencies)
+├── uv.lock                (lockfile)
+├── alembic.ini            (migration config)
+├── alembic/versions/      (migration scripts, 001–025)
+├── src/humpback/
+│   ├── api/               (FastAPI routes)
+│   ├── classifier/        (training, detection, embedding)
+│   ├── clustering/        (HDBSCAN, K-Means, metrics, refinement)
+│   ├── config.py          (settings)
+│   ├── data/              (packaged metadata assets such as NOAA archive sources)
+│   ├── database.py        (SQLAlchemy models + session)
+│   ├── models/            (TFLite + TF2 model runners)
+│   ├── processing/        (audio decode, windowing, features, parquet)
+│   ├── schemas/           (Pydantic request/response models)
+│   ├── services/          (business logic layer)
+│   ├── static/            (built frontend SPA)
+│   ├── storage.py         (file path helpers)
+│   └── workers/           (background job processing)
+├── frontend/              (React SPA — see §3.7)
+├── tests/                 (pytest suite)
+├── models/                (ML model files)
+├── scripts/               (utility scripts)
+├── docs/
+│   ├── specs/             (design specs from brainstorming)
+│   └── plans/             (implementation plans + backlog)
+└── data/                  (runtime data)
+```
+
+### 8.3 Data Model Summary
+
+Condensed model reference. For full field lists, see `src/humpback/database.py`.
+
+- **ModelConfig** (`model_configs`) — ML model registry entry (name, path, vector_dim, model_type, input_format, is_default). `TFLiteModelConfig` is a backward-compatible alias.
+- **AudioFile** (`audio_files`) — uploaded/imported audio (filename, folder_path, source_folder, checksum_sha256, duration_seconds, sample_rate_original)
+- **AudioMetadata** (`audio_metadata`) — optional editable metadata per audio file (tag_data, visual_observations, group_composition, prey_density_proxy — all JSON)
+- **ProcessingJob** (`processing_jobs`) — encoding job (audio_file_id FK, encoding_signature, model_version, window_size_seconds, target_sample_rate, feature_config JSON, status, warning_message)
+- **EmbeddingSet** (`embedding_sets`) — one per audio+encoding_signature (parquet_path, model_version, vector_dim). Embeddings stored in Parquet, not SQL.
+- **SearchJob** (`search_jobs`) — ephemeral similarity search, deleted after results returned (detection_job_id, top_k, metric, embedding_set_ids, embedding_vector)
+- **ClusteringJob** (`clustering_jobs`) — clustering run (embedding_set_ids JSON, parameters JSON, metrics_json, refined_from_job_id)
+- **Cluster** (`clusters`) — one per cluster label per job (clustering_job_id FK, cluster_label, size, metadata_summary JSON)
+- **ClusterAssignment** (`cluster_assignments`) — links cluster to embedding row index (cluster_id FK, embedding_row_id)
+- **ClassifierModel** (`classifier_models`) — binary classifier artifact (name, model_path .joblib, model_version, vector_dim, training_summary JSON)
+- **ClassifierTrainingJob** (`classifier_training_jobs`) — training run (positive/negative_embedding_set_ids JSON, classifier_model_id set on completion)
+- **DetectionJob** (`detection_jobs`) — local or hydrophone detection scan (classifier_model_id FK, audio_folder, confidence/hop/threshold params, detection_mode, output_tsv_path, result_summary JSON, extract_* columns)
+- **LabelProcessingJob** (`label_processing_jobs`) — score-based audio sample extraction (classifier_model_id, annotation_folder, audio_folder, output_root, parameters JSON, result_summary JSON)
+- **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, row_id, label, source)
+- **LabelingAnnotation** (`labeling_annotations`) — sub-window annotation boundary (detection_job_id, row_id, start_sec, end_sec, label)
+- **RetrainWorkflow** (`retrain_workflows`) — orchestrated reimport+reprocess+retrain (status, step, provenance)
+
+### 8.4 Signal Processing Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `target_sample_rate` | 32 000 Hz | Resample target for all audio |
+| `window_size_seconds` | 5.0 s | Window duration (= 160 000 samples at 32 kHz) |
+| `n_mels` | 128 | Mel frequency bins |
+| `n_fft` | 2048 | FFT window size |
+| `hop_length` | 1252 | STFT hop (chosen so 160 000 samples -> 128 frames) |
+| `target_frames` | 128 | Time frames per spectrogram (pad/truncate) |
+| Spectrogram shape | 128 x 128 | (n_mels x target_frames) |
+| `vector_dim` | 1280 | Embedding dimensions (Perch default) |
+| `batch_size` | 100 | Parquet writer flush interval |
+| UMAP `n_neighbors` | 15 | UMAP neighbor count |
+| UMAP `min_dist` | 0.1 | UMAP minimum distance |
+| `umap_cluster_n_components` | 5 | UMAP dimensions for HDBSCAN input (visualization always 2D) |
+| `cluster_selection_method` | leaf | HDBSCAN selection: 'leaf' (fine-grained) or 'eom' (coarser) |
+| HDBSCAN `min_cluster_size` | 5 | Minimum points per cluster |
+| `clustering_algorithm` | hdbscan | `"hdbscan"`, `"kmeans"`, or `"agglomerative"` |
+| `n_clusters` | 15 | For kmeans/agglomerative |
+| `linkage` | ward | For agglomerative: `"ward"`, `"complete"`, `"average"`, `"single"` |
+| `reduction_method` | umap | `"umap"`, `"pca"`, or `"none"` |
+| `distance_metric` | euclidean | `"euclidean"` or `"cosine"` (passed to UMAP + HDBSCAN) |
+| `normalization` | per_window_max | Spectrogram normalization: `"per_window_max"`, `"global_ref"`, `"standardize"` (in feature_config) |
+| Parameter sweep range | 2-50 | Sweeps HDBSCAN (min_cluster_size x selection_method) + K-Means (k=2..30) |
+| `tf_force_cpu` | `false` | Force CPU for TF2 SavedModel inference, skipping GPU (env: `HUMPBACK_TF_FORCE_CPU`) |
+| `run_classifier` | `false` | Opt-in: run logistic regression classifier baseline on category labels |
+| `stability_runs` | 0 | Opt-in: number of stability re-runs (>= 2 to enable); re-clusters with different random seeds |
+| `enable_metric_learning` | `false` | Opt-in: train MLP projection head via triplet loss, re-cluster, compare metrics |
+| `ml_output_dim` | 128 | Metric learning: projection output dimensionality |
+| `ml_hidden_dim` | 512 | Metric learning: hidden layer dimensionality |
+| `ml_n_epochs` | 50 | Metric learning: training epochs |
+| `ml_lr` | 0.001 | Metric learning: Adam learning rate |
+| `ml_margin` | 1.0 | Metric learning: triplet loss margin |
+| `ml_batch_size` | 256 | Metric learning: triplets per epoch |
+| `ml_mining_strategy` | semi-hard | Metric learning: `"random"`, `"hard"`, or `"semi-hard"` triplet mining |
+
+#### Windowing Rules
+
+Audio is sliced into fixed-length windows using an **overlap-back** strategy instead of zero-padding:
+
+| Scenario | Behavior |
+|----------|----------|
+| Audio >= 1 window, last chunk is full | Normal: no overlap, no padding |
+| Audio >= 1 window, last chunk is partial | **Overlap-back**: shift last window start backward so it ends at the audio boundary, overlapping with the previous window. Contains only real audio. |
+| Audio < 1 window (shorter than `window_size_seconds`) | **Skipped entirely**: produces 0 windows, 0 embeddings. A warning is logged. |
+
+**Why not zero-pad?** Zero-padded final windows create out-of-distribution spectrograms that cause false positives in classifiers. The overlap-back strategy ensures every window contains only real audio.
+
+**Minimum audio duration** = `window_size_seconds` (default 5.0 s). Audio files shorter than this threshold are skipped by:
+- `slice_windows()` / `slice_windows_with_metadata()` — yield nothing
+- `count_windows()` — returns 0
+- Processing worker — logs warning, writes empty embedding set
+- Detection worker — logs warning, increments `n_skipped_short` in summary
+- Trainer (`embed_audio_folder`) — logs warning, skips file
+
+`WindowMetadata` carries `is_overlapped: bool` to flag overlap-back windows (replacing the former `is_padded` field).
+
+#### Processing Pipeline Diagram
+
+```mermaid
+flowchart TD
+    A["Audio File<br/>(MP3/WAV/FLAC)"] --> B["Decode Audio<br/>-> float32 mono"]
+    B --> C["Resample<br/>-> 32 kHz"]
+    C --> D{"Duration >= window?"}
+    D -- No --> D2["Skip file<br/>(log warning)"]
+    D -- Yes --> D3["Slice Windows<br/>5 s -> 160 000 samples<br/>(overlap-back last window)"]
+    D3 --> E{input_format?}
+    E -- spectrogram --> F["Log-Mel Spectrogram<br/>128 mels x 128 frames"]
+    E -- waveform --> G["Raw Waveform<br/>160 000 samples"]
+    F --> H["TFLite Model<br/>-> 1280-d vector"]
+    G --> I["TF2 SavedModel<br/>-> N-d vector"]
+    H --> J["Parquet Writer<br/>(incremental, atomic)"]
+    I --> J
+    J --> K["EmbeddingSet<br/>(SQL row)"]
+    K --> L["UMAP<br/>-> 2-d coords"]
+    L --> M["HDBSCAN<br/>-> cluster labels"]
+    M --> N["Metrics<br/>Silhouette / DB / CH / ARI / NMI"]
+    M --> O["Outputs<br/>clusters.json, assignments.parquet,<br/>umap_coords.parquet, parameter_sweep.json"]
+```
+
+### 8.5 Storage Layout
+
+```
+/audio/
+  raw/{audio_file_id}/original.(wav|mp3|flac)    (uploaded files only; imported files are read from source_folder)
+/embeddings/
+  {model_version}/{audio_file_id}/{encoding_signature}.parquet
+  {model_version}/{audio_file_id}/{encoding_signature}.tmp.parquet
+/clusters/
+  {clustering_job_id}/clusters.json
+  {clustering_job_id}/assignments.parquet
+  {clustering_job_id}/umap_coords.parquet
+  {clustering_job_id}/parameter_sweep.json
+  {clustering_job_id}/report.json                (fragmentation report)
+  {clustering_job_id}/classifier_report.json     (opt-in classifier baseline)
+  {clustering_job_id}/label_queue.json           (opt-in active learning queue)
+  {clustering_job_id}/stability_summary.json     (opt-in stability evaluation)
+  {clustering_job_id}/refinement_report.json     (opt-in metric learning refinement)
+  {clustering_job_id}/refined_embeddings.parquet (opt-in refined embedding vectors for re-clustering)
+/classifiers/
+  {classifier_model_id}/model.joblib              (StandardScaler + LogisticRegression pipeline)
+  {classifier_model_id}/training_summary.json
+/detections/
+  {detection_job_id}/detection_rows.parquet       (canonical editable row store)
+  {detection_job_id}/detections.tsv               (download/export adapter synchronized from row store)
+  {detection_job_id}/window_diagnostics.parquet   (local: single file; hydrophone: shard directory)
+  {detection_job_id}/run_summary.json
+```
+
+Hydrophone extraction output:
+- Positive labels: `{positive_sample_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/{start}_{end}.flac`
+- Negative labels: `{negative_sample_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/{start}_{end}.flac`
+- Local extraction: same structure without `{hydrophone_id}/` level
+- Every `.flac` also gets a same-basename `.png` spectrogram sidecar
+
+### 8.6 Runtime Configuration
+
+- `Settings` reads `HUMPBACK_`-prefixed environment variables.
+- API and worker entrypoints load the repo-root `.env`; direct `Settings()` does not.
+- `api_host` defaults to `0.0.0.0`, `api_port` to `8000`.
+- `allowed_hosts` defaults to `*`. `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax.
+- `positive_sample_path`, `negative_sample_path`, `s3_cache_path` derive from `storage_root` when unset.
+
+### 8.7 Behavioral Constraints
+
+Non-obvious constraints that are not immediately derivable from code:
+
+- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> label processing -> retrain
+- **Job claim semantics**: Workers claim queued jobs via atomic compare-and-set (`WHERE id=:candidate AND status='queued'`). SQLite has no true row-level locks; correctness relies on atomic status updates, not `SELECT ... FOR UPDATE`.
+- **Job status transitions**: `queued -> running -> complete`, `queued -> running -> failed`, `queued -> canceled`
+- **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
+- **Prefetch semantics**: `time_covered_sec` tracks summed processed audio duration rather than wall-clock range coverage
+- **Parquet row-store upgrade**: completed/paused/canceled detection jobs lazily upgrade into a canonical Parquet row store; TSV is synchronized from that store for download/legacy flows
