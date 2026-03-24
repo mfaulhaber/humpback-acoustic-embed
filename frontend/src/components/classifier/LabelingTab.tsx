@@ -7,6 +7,7 @@ import {
   detectionSpectrogramUrl,
   detectionAudioSliceUrl,
   audioWindowUrl,
+  audioSpectrogramPngUrl,
 } from "@/api/client";
 import type { DetectionJob, DetectionRow, NeighborHit, PredictionRow } from "@/api/types";
 import {
@@ -37,6 +38,7 @@ import { ActiveLearningDashboard } from "./ActiveLearningDashboard";
 import { VocalizationTrainingPanel } from "./VocalizationTrainingPanel";
 import { AnnotationOverlay } from "./AnnotationOverlay";
 import { AnnotationList } from "./AnnotationList";
+import { SpectrogramPopup } from "./SpectrogramPopup";
 import {
   ChevronLeft,
   ChevronRight,
@@ -52,6 +54,10 @@ import {
 
 type FilterMode = "all" | "unlabeled" | "labeled";
 type SortMode = "confidence" | "time" | "uncertainty";
+
+function normalizeLabel(raw: string): string {
+  return raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export function LabelingTab() {
   // ---- Job selection ----
@@ -340,6 +346,38 @@ export function LabelingTab() {
     },
     [playingNeighborIdx],
   );
+
+  // Neighbor spectrogram popup
+  const [spectrogramPopup, setSpectrogramPopup] = useState<{
+    imageUrl: string;
+    position: { x: number; y: number };
+    durationSec: number;
+  } | null>(null);
+
+  const handleNeighborSpectrogramClick = useCallback(
+    (imageUrl: string, durationSec: number, e: React.MouseEvent) => {
+      setSpectrogramPopup({
+        imageUrl,
+        position: { x: e.clientX, y: e.clientY },
+        durationSec,
+      });
+    },
+    [],
+  );
+
+  // Unique normalized inferred labels from neighbor hits for annotation dropdown
+  const inferredLabelOptions = useMemo(() => {
+    const hits = neighborsQuery.data?.hits ?? [];
+    const seen = new Set<string>();
+    const options: { value: string; raw: string }[] = [];
+    for (const hit of hits) {
+      if (hit.inferred_label && !seen.has(hit.inferred_label)) {
+        seen.add(hit.inferred_label);
+        options.push({ value: normalizeLabel(hit.inferred_label), raw: hit.inferred_label });
+      }
+    }
+    return options;
+  }, [neighborsQuery.data]);
 
   // ---- Annotation mode ----
   const [annotationMode, setAnnotationMode] = useState(false);
@@ -663,18 +701,38 @@ export function LabelingTab() {
                   {pendingRegion.start.toFixed(2)}s &ndash;{" "}
                   {pendingRegion.end.toFixed(2)}s
                 </span>
-                <input
-                  type="text"
-                  value={annotationLabelInput}
-                  onChange={(e) => setAnnotationLabelInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleConfirmAnnotation();
-                    if (e.key === "Escape") setPendingRegion(null);
-                  }}
-                  placeholder="Label (e.g. whup, moan)..."
-                  className="flex-1 border rounded px-2 py-1 text-sm"
-                  autoFocus
-                />
+                {inferredLabelOptions.length > 0 ? (
+                  <select
+                    value={annotationLabelInput}
+                    onChange={(e) => setAnnotationLabelInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleConfirmAnnotation();
+                      if (e.key === "Escape") setPendingRegion(null);
+                    }}
+                    className="flex-1 border rounded px-2 py-1 text-sm bg-white"
+                    autoFocus
+                  >
+                    <option value="">Select label...</option>
+                    {inferredLabelOptions.map((opt) => (
+                      <option key={opt.raw} value={opt.value}>
+                        {opt.value}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={annotationLabelInput}
+                    onChange={(e) => setAnnotationLabelInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleConfirmAnnotation();
+                      if (e.key === "Escape") setPendingRegion(null);
+                    }}
+                    placeholder="Label (e.g. whup, moan)..."
+                    className="flex-1 border rounded px-2 py-1 text-sm"
+                    autoFocus
+                  />
+                )}
                 <button
                   onClick={handleConfirmAnnotation}
                   disabled={!annotationLabelInput.trim()}
@@ -946,7 +1004,9 @@ export function LabelingTab() {
             )}
 
             <div className="space-y-2">
-              {(neighborsQuery.data?.hits ?? []).map((hit, idx) => (
+              {(neighborsQuery.data?.hits ?? []).map((hit, idx) => {
+                const specUrl = audioSpectrogramPngUrl(hit.audio_file_id, hit.window_offset_seconds, 5);
+                return (
                 <div
                   key={`${hit.embedding_set_id}-${hit.row_index}`}
                   className="border rounded p-2 bg-white"
@@ -967,6 +1027,14 @@ export function LabelingTab() {
                       {(hit.score * 100).toFixed(1)}%
                     </span>
                   </div>
+
+                  <img
+                    src={specUrl}
+                    alt="spectrogram"
+                    className="w-full h-[50px] object-cover rounded cursor-pointer border mb-1"
+                    loading="lazy"
+                    onClick={(e) => handleNeighborSpectrogramClick(specUrl, 5, e)}
+                  />
 
                   {hit.inferred_label && (
                     <div className="mb-1">
@@ -1006,7 +1074,8 @@ export function LabelingTab() {
                     {hit.audio_filename}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {neighborsQuery.data &&
@@ -1042,6 +1111,15 @@ export function LabelingTab() {
             )}
           </div>
         </div>
+      )}
+
+      {spectrogramPopup && (
+        <SpectrogramPopup
+          imageUrl={spectrogramPopup.imageUrl}
+          position={spectrogramPopup.position}
+          durationSec={spectrogramPopup.durationSec}
+          onClose={() => setSpectrogramPopup(null)}
+        />
       )}
 
       {/* Keyboard shortcuts help */}
