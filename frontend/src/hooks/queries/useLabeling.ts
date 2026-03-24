@@ -5,8 +5,10 @@ import {
   deleteVocalizationLabel,
   fetchLabelVocabulary,
   fetchLabelingSummary,
+  fetchTrainingSummary,
   fetchDetectionNeighbors,
   createVocalizationTrainingJob,
+  fetchVocalizationTrainingJob,
   fetchVocalizationModels,
   predictVocalizationLabels,
   fetchAnnotations,
@@ -66,6 +68,7 @@ export function useAddVocalizationLabel() {
       qc.invalidateQueries({
         queryKey: ["labeling", "summary", vars.detectionJobId],
       });
+      qc.invalidateQueries({ queryKey: ["labeling", "training-summary"] });
       qc.invalidateQueries({ queryKey: ["labeling", "label-vocabulary"] });
     },
   });
@@ -138,6 +141,14 @@ export function useDetectionNeighbors(
 
 // ---- Vocalization Classifier ----
 
+export function useTrainingSummary() {
+  return useQuery({
+    queryKey: ["labeling", "training-summary"],
+    queryFn: fetchTrainingSummary,
+    refetchInterval: 5000,
+  });
+}
+
 export function useVocalizationModels() {
   return useQuery({
     queryKey: ["labeling", "vocalization-models"],
@@ -155,6 +166,19 @@ export function useCreateVocalizationTrainingJob() {
       qc.invalidateQueries({
         queryKey: ["labeling", "vocalization-models"],
       });
+    },
+  });
+}
+
+export function useVocalizationTrainingJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["labeling", "vocalization-training-job", jobId],
+    queryFn: () => fetchVocalizationTrainingJob(jobId!),
+    enabled: jobId !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (status === "complete" || status === "failed") return false;
+      return 2000;
     },
   });
 }
@@ -216,6 +240,10 @@ export function useCreateAnnotation() {
           vars.rowId,
         ],
       });
+      qc.invalidateQueries({
+        queryKey: ["labeling", "summary", vars.detectionJobId],
+      });
+      qc.invalidateQueries({ queryKey: ["labeling", "training-summary"] });
     },
   });
 }

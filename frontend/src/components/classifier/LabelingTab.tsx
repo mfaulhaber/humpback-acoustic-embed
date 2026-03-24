@@ -34,6 +34,7 @@ import {
   EmbeddingSetPanel,
 } from "@/components/shared/EmbeddingSetPanel";
 import { ActiveLearningDashboard } from "./ActiveLearningDashboard";
+import { VocalizationTrainingPanel } from "./VocalizationTrainingPanel";
 import { AnnotationOverlay } from "./AnnotationOverlay";
 import { AnnotationList } from "./AnnotationList";
 import {
@@ -1015,6 +1016,16 @@ export function LabelingTab() {
                   embeddings
                 </div>
               )}
+
+            {/* Vocalization classifier training */}
+            <div className="mt-4 pt-4 border-t">
+              <VocalizationTrainingPanel
+                onModelReady={(modelId) => {
+                  setSelectedModelId(modelId);
+                  vocModelsQuery.refetch();
+                }}
+              />
+            </div>
 
             {/* Active Learning Dashboard */}
             {selectedModelId && selectedJobId && (

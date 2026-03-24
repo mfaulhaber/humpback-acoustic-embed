@@ -760,6 +760,12 @@ export interface LabelingSummary {
   label_distribution: Record<string, number>;
 }
 
+export interface TrainingSummary {
+  labeled_job_ids: string[];
+  labeled_rows: number;
+  label_distribution: Record<string, number>;
+}
+
 // ---- Annotations ----
 
 export interface LabelingAnnotation {

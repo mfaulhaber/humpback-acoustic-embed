@@ -18,6 +18,7 @@ from humpback.schemas.labeling import (
     DetectionNeighborsRequest,
     DetectionNeighborsResponse,
     LabelingSummary,
+    TrainingSummary,
     NeighborHit,
     PredictRequest,
     PredictionRow,
@@ -175,10 +176,59 @@ async def get_labeling_summary(
         labeled_row_ids.add(row_id)
         label_counts[label] = label_counts.get(label, 0) + 1
 
+    # Also count annotation labels (sub-window annotations carry vocalization types)
+    ann_result = await session.execute(
+        select(LabelingAnnotation.row_id, LabelingAnnotation.label).where(
+            LabelingAnnotation.detection_job_id == detection_job_id
+        )
+    )
+    for row_id, label in ann_result.all():
+        labeled_row_ids.add(row_id)
+        label_counts[label] = label_counts.get(label, 0) + 1
+
     return LabelingSummary(
         total_rows=total_rows,
         labeled_rows=len(labeled_row_ids),
         unlabeled_rows=total_rows - len(labeled_row_ids),
+        label_distribution=label_counts,
+    )
+
+
+@router.get("/training-summary", response_model=TrainingSummary)
+async def get_training_summary(session: SessionDep):
+    """Aggregate label stats across all detection jobs for training readiness."""
+    # Vocalization labels
+    result = await session.execute(
+        select(
+            VocalizationLabel.detection_job_id,
+            VocalizationLabel.row_id,
+            VocalizationLabel.label,
+        )
+    )
+    labeled_job_ids: set[str] = set()
+    labeled_row_keys: set[str] = set()
+    label_counts: dict[str, int] = {}
+    for job_id, row_id, label in result.all():
+        labeled_job_ids.add(job_id)
+        labeled_row_keys.add(f"{job_id}:{row_id}")
+        label_counts[label] = label_counts.get(label, 0) + 1
+
+    # Annotations
+    ann_result = await session.execute(
+        select(
+            LabelingAnnotation.detection_job_id,
+            LabelingAnnotation.row_id,
+            LabelingAnnotation.label,
+        )
+    )
+    for job_id, row_id, label in ann_result.all():
+        labeled_job_ids.add(job_id)
+        labeled_row_keys.add(f"{job_id}:{row_id}")
+        label_counts[label] = label_counts.get(label, 0) + 1
+
+    return TrainingSummary(
+        labeled_job_ids=sorted(labeled_job_ids),
+        labeled_rows=len(labeled_row_keys),
         label_distribution=label_counts,
     )
 
@@ -296,18 +346,27 @@ async def create_vocalization_training_job(
         if job is None:
             raise HTTPException(404, f"Detection job {job_id} not found")
 
-    # Check that at least some vocalization labels exist across the source jobs
+    # Check that at least some labels exist across the source jobs
+    # (from vocalization labels and/or sub-window annotations)
     result = await session.execute(
         select(VocalizationLabel.label)
         .where(VocalizationLabel.detection_job_id.in_(body.source_detection_job_ids))
         .distinct()
     )
-    distinct_labels = [row[0] for row in result.all()]
+    distinct_labels = set(row[0] for row in result.all())
+
+    ann_result = await session.execute(
+        select(LabelingAnnotation.label)
+        .where(LabelingAnnotation.detection_job_id.in_(body.source_detection_job_ids))
+        .distinct()
+    )
+    distinct_labels |= set(row[0] for row in ann_result.all())
+
     if len(distinct_labels) < 2:
         raise HTTPException(
             400,
             f"Need at least 2 distinct vocalization labels across source jobs, "
-            f"found {len(distinct_labels)}: {distinct_labels}",
+            f"found {len(distinct_labels)}: {list(distinct_labels)}",
         )
 
     # Resolve model_version from the first detection job's classifier model
@@ -348,6 +407,39 @@ async def create_vocalization_training_job(
         error_message=training_job.error_message,
         created_at=training_job.created_at,
         updated_at=training_job.updated_at,
+    )
+
+
+@router.get("/training-jobs/{job_id}", response_model=VocalizationTrainingJobOut)
+async def get_vocalization_training_job(job_id: str, session: SessionDep):
+    """Fetch a vocalization training job by ID."""
+    import json
+
+    from humpback.models.classifier import ClassifierTrainingJob
+
+    result = await session.execute(
+        select(ClassifierTrainingJob).where(
+            ClassifierTrainingJob.id == job_id,
+            ClassifierTrainingJob.job_purpose == "vocalization",
+        )
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(404, f"Vocalization training job {job_id} not found")
+
+    source_ids = (
+        json.loads(job.source_detection_job_ids) if job.source_detection_job_ids else []
+    )
+    return VocalizationTrainingJobOut(
+        id=job.id,
+        status=job.status,
+        name=job.name,
+        job_purpose=job.job_purpose,
+        source_detection_job_ids=source_ids,
+        classifier_model_id=job.classifier_model_id,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
     )
 
 
@@ -611,13 +703,19 @@ async def start_active_learning_cycle(
         if job is None:
             raise HTTPException(404, f"Detection job {job_id} not found")
 
-    # Check labels exist
+    # Check labels exist (vocalization labels + annotations)
     result = await session.execute(
         select(VocalizationLabel.label)
         .where(VocalizationLabel.detection_job_id.in_(body.detection_job_ids))
         .distinct()
     )
-    distinct_labels = [row[0] for row in result.all()]
+    distinct_labels = set(row[0] for row in result.all())
+    ann_result = await session.execute(
+        select(LabelingAnnotation.label)
+        .where(LabelingAnnotation.detection_job_id.in_(body.detection_job_ids))
+        .distinct()
+    )
+    distinct_labels |= set(row[0] for row in ann_result.all())
     if len(distinct_labels) < 2:
         raise HTTPException(
             400,

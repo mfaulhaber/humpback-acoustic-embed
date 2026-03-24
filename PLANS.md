@@ -10,6 +10,15 @@
 
 ## Recently Completed
 
+### Surface Vocalization Classifier Training in LabelingTab
+
+[Full plan](/Users/michael/.claude/plans/shimmying-knitting-canyon.md)
+
+- Added vocalization classifier training UI panel to the Labeling workspace with per-type label distribution, training job polling, and auto-model-selection on completion.
+- Unified annotations and vocalization labels as training data sources across summary, validation, and worker training.
+- Added `GET /labeling/training-jobs/{job_id}` for polling and `GET /labeling/training-summary` for cross-job aggregate label stats.
+- Verification: Ruff, Pyright, `cd frontend && npx tsc --noEmit`, and `uv run pytest tests/` all passed (`1018 passed, 1 skipped`).
+
 ### Fix Labeling Similar Sounds + Add Embedding Set Selector
 
 [Full plan](/Users/michael/.claude/plans/cached-dancing-perlis.md)

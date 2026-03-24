@@ -52,6 +52,7 @@ import type {
   VocalizationLabel,
   DetectionNeighborsResponse,
   LabelingSummary,
+  TrainingSummary,
   VocalizationTrainingJobCreate,
   VocalizationTrainingJobOut,
   VocalizationModelOut,
@@ -468,6 +469,9 @@ export const fetchLabelVocabulary = () =>
 
 export const fetchLabelingSummary = (detectionJobId: string) =>
   api<LabelingSummary>(`/labeling/summary/${detectionJobId}`);
+
+export const fetchTrainingSummary = () =>
+  api<TrainingSummary>("/labeling/training-summary");
 
 export const fetchDetectionNeighbors = (
   detectionJobId: string,
