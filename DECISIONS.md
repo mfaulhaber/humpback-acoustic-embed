@@ -1172,3 +1172,25 @@ the wrong semantics.
   records now have explicit same-site child-folder expectations.
 - Added Alembic migration `025_normalize_sanctsound_source_ids.py` to preserve
   historical job semantics on existing databases.
+
+---
+
+## ADR-041: Adopt superpowers workflow, consolidate documentation
+
+**Date**: 2026-03-24
+**Status**: Accepted
+
+**Context**: The project had 6 repo-root .md files with overlapping concerns and
+6 custom session-* skills that duplicated superpowers functionality while missing
+key capabilities (brainstorming, TDD enforcement, subagent execution, code review).
+
+**Decision**: Adopt superpowers as the canonical workflow. Consolidate to 3 repo-root
+files (CLAUDE.md, DECISIONS.md, AGENTS.md). Move specs to docs/specs/, plans to
+docs/plans/. Rewrite AGENTS.md for Codex-compatible workflow.
+
+**Consequences**:
+- Single workflow system instead of two competing ones
+- CLAUDE.md is larger (~450 lines) but self-contained
+- Codex follows same phase sequence with its own tooling
+- Session-* skills deleted; all workflow orchestration via superpowers
+- Backlog items preserved in docs/plans/backlog.md
