@@ -573,3 +573,51 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
 - **Prefetch semantics**: `time_covered_sec` tracks summed processed audio duration rather than wall-clock range coverage
 - **Parquet row-store upgrade**: completed/paused/canceled detection jobs lazily upgrade into a canonical Parquet row store; TSV is synchronized from that store for download/legacy flows
+
+---
+
+## 9. Current State
+
+### 9.1 Implemented Capabilities
+
+- Audio upload, folder import, metadata editing
+- Processing pipeline: TFLite + TF2 SavedModel, overlap-back windowing, incremental Parquet
+- Embedding similarity search (cosine/euclidean, cross-set, detection-sourced)
+- Clustering: HDBSCAN/K-Means/Agglomerative, UMAP/PCA, parameter sweeps, metric learning
+- Binary classifier training (LogisticRegression/MLP) + local/hydrophone detection
+- Hydrophone streaming: Orcasound HLS + NOAA archives, pause/resume/cancel, subprocess isolation
+- Label processing: score-based + sample-builder workflows
+- Vocalization labeling: type classification, active learning, sub-window annotations
+- Retrain workflow: reimport -> reprocess -> retrain
+- Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Search, Label Processing, Admin
+
+### 9.2 Database Schema
+
+- **Engine**: SQLite via SQLAlchemy
+- **Latest migration**: `025_normalize_sanctsound_source_ids.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, labeling_annotations
+
+### 9.3 Sensitive Components
+
+| Component | Risk | Why |
+|-----------|------|-----|
+| `processing/windowing.py` | Signal integrity | Affects all downstream embeddings |
+| `processing/features.py` | Signal integrity | Spectrogram shape must be 128x128 |
+| `processing/parquet_writer.py` | Data integrity | Atomic write semantics |
+| `database.py` | Schema | Must match Alembic migrations |
+| `encoding_signature` computation | Idempotency | Duplicate prevention depends on this |
+| `clustering/engine.py` | Correctness | Metrics and assignments must be consistent |
+| `classifier/trainer.py` | Model quality | Class weight balance, CV splits |
+
+### 9.4 Known Constraints
+
+- SQLite has no true row-level locking; worker claims rely on `UPDATE` plus status checks.
+- The UI remains polling-based rather than real-time.
+- Deployment is still single-machine MVP infrastructure.
+- Exactly one TensorFlow extra must be selected per environment; `uv sync --all-extras` is invalid.
+- Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels.
+- Model files must be present on disk; there is no remote model registry.
+- Pyright enforcement covers `src/humpback`, `scripts/`, and `tests/`.
+- `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax such as `*.example.com`, not `.example.com`.
+- Audio shorter than `window_size_seconds` (5 seconds) is skipped entirely.
+- Imported audio must remain at its original path for in-place reads.
