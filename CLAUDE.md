@@ -621,3 +621,64 @@ Non-obvious constraints that are not immediately derivable from code:
 - `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax such as `*.example.com`, not `.example.com`.
 - Audio shorter than `window_size_seconds` (5 seconds) is skipped entirely.
 - Imported audio must remain at its original path for in-place reads.
+
+---
+
+## 10. Workflow
+
+### 10.1 Superpowers Integration
+
+This project uses the superpowers skill system as its canonical development workflow.
+
+**Canonical flow for every task:**
+
+brainstorming -> writing-plans -> subagent-driven-development -> finishing-a-development-branch
+
+**During implementation (enforced by subagent-driven-development):**
+- test-driven-development (per task — write failing test first)
+- requesting-code-review (per task + final review)
+- verification-before-completion (before any completion claim)
+
+**When debugging:**
+- systematic-debugging (before any fix attempt)
+
+**Artifact locations:**
+- Design specs: `docs/specs/YYYY-MM-DD-<topic>-design.md`
+- Implementation plans: `docs/plans/YYYY-MM-DD-<feature>.md`
+- Git worktrees: `.worktrees/` (gitignored)
+
+### 10.2 Session Start Checklist
+
+At the start of every session:
+1. Normalize the repo onto local `main` (fast-forward from origin; stop if dirty or detached)
+2. Read CLAUDE.md and DECISIONS.md
+3. Check `docs/plans/` for active work
+4. Summarize current state for the user
+5. Resume active plan work, or begin superpowers brainstorming for the next task
+
+### 10.3 Project Verification Gates
+
+Before claiming work is complete, run these in order:
+1. `uv run ruff format --check` on modified Python files
+2. `uv run ruff check` on modified Python files
+3. `uv run pyright` on modified Python files (full run if pyproject.toml changed)
+4. `uv run pytest tests/`
+5. `cd frontend && npx tsc --noEmit` (if frontend files changed)
+
+**Doc-update matrix:**
+
+| Change type | Update |
+|---|---|
+| API endpoints added/changed | CLAUDE.md §8, README.md |
+| Data model changed | CLAUDE.md §8.3, Alembic migration |
+| Signal processing changed | CLAUDE.md §8.4, DECISIONS.md |
+| New capability | CLAUDE.md §9.1 |
+| Constraint changed | CLAUDE.md §9.4 |
+| Architecture decision | DECISIONS.md |
+| Frontend routes/components | CLAUDE.md §3.7 |
+
+### 10.4 Codex Compatibility
+
+Codex follows the same phase sequence as superpowers but uses only Codex-available
+tools (file read/write, bash, grep, glob). See AGENTS.md for Codex-specific
+workflow instructions.
