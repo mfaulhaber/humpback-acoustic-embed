@@ -585,9 +585,15 @@ export function timelineTileUrl(
 export function timelineAudioUrl(
   jobId: string,
   startSec: number,
-  durationSec = 30,
+  durationSec = 300,
+  format = "mp3",
 ): string {
-  return `/classifier/detection-jobs/${jobId}/timeline/audio?start_sec=${startSec}&duration_sec=${durationSec}`;
+  const params = new URLSearchParams({
+    start_sec: startSec.toString(),
+    duration_sec: durationSec.toString(),
+    format,
+  });
+  return `/classifier/detection-jobs/${jobId}/timeline/audio?${params}`;
 }
 
 export const fetchTimelineConfidence = (jobId: string) =>

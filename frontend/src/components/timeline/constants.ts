@@ -58,5 +58,6 @@ export const CONFIDENCE_GRADIENT = [
 ] as const;
 
 export const CROSSFADE_DURATION_MS = 300;
-export const AUDIO_PREFETCH_SEC = 30;
+export const AUDIO_PREFETCH_SEC = 300;
+export const AUDIO_FORMAT = "mp3";
 export const FREQ_AXIS_WIDTH_PX = 44;
