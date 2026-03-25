@@ -113,9 +113,15 @@ The reducer maintains a flat list of edits. Multiple edits to the same row colla
 
 New rows receive a temporary client-side UUID as `id`. The backend assigns the real `row_id` on save. Confidence fields (`avg_confidence`, `peak_confidence`) are `null`. `start_sec`/`end_sec` are job-relative seconds.
 
+### Type Updates for Null Confidence
+
+`DetectionRow` in `frontend/src/api/types.ts` must update `avg_confidence` and `peak_confidence` from `number` to `number | null`. The corresponding Pydantic response schema must also allow `Optional[float]` for these fields.
+
 ### Null Confidence Audit
 
 Before implementation, validate that `null` confidence is non-breaking across:
+- `DetectionRow` TypeScript type (`avg_confidence`, `peak_confidence` → `number | null`)
+- Pydantic detection row response schema (→ `Optional[float]`)
 - Confidence strip rendering (skip nulls — already handled)
 - Detection row sorting (null sorts last)
 - Extraction positive-selection logic (null rows use label only, no score-based windowing)
@@ -131,7 +137,8 @@ Before implementation, validate that `null` confidence is non-breaking across:
 Remove the TSV as an intermediate representation. The Parquet row store becomes the sole source of truth for detection rows.
 
 - Detection worker stops writing `detections.tsv` alongside the row store
-- Remove all `_sync_tsv_from_row_store()` calls
+- Remove all `sync_detection_tsv()` calls (found in `classifier.py`, `detection_rows.py`, `extractor.py`)
+- Update `ensure_detection_row_store()` to remove its TSV-path fallback parameter
 - The download endpoint (`GET /classifier/detection-jobs/{job_id}/download`) generates TSV on-the-fly from the Parquet row store
 - DB migration drops `output_tsv_path` from `detection_jobs` table
 - Remove `output_tsv_path` from Pydantic schemas and API responses
@@ -162,7 +169,7 @@ PATCH /classifier/detection-jobs/{job_id}/labels
 - Job status must be `complete`, `paused`, or `canceled`
 - No overlapping windows in the resulting state (compute final positions of all rows after all edits, reject the entire batch if any overlap)
 - Each label must be one of the four valid types
-- Move targets must be within `[0, job_duration]`
+- Move targets must be within `[0, job_duration]` where job duration is `end_timestamp - start_timestamp` for hydrophone jobs, or `max(row.end_sec)` across existing rows for local jobs
 - All referenced `row_id`s must exist in the row store
 - Single-label enforcement on all modified rows
 
