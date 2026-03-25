@@ -392,8 +392,12 @@ export function SpectrogramViewport({
             centerTimestamp={centerTimestamp}
             zoomLevel={zoomLevel}
             width={canvasWidth}
-            height={canvasHeight}
+            height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
             visible={showLabels}
+            onDetectionClick={(row, x, y) => {
+              setSelectedRow(row);
+              setPopoverPos({ x, y });
+            }}
           />
 
           {/* Detection click popover */}
