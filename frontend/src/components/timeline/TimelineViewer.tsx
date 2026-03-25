@@ -7,6 +7,7 @@ import { useHydrophoneDetectionJobs } from "@/hooks/queries/useClassifier";
 import { TimelineHeader } from "./TimelineHeader";
 import { ZoomSelector } from "./ZoomSelector";
 import { PlaybackControls } from "./PlaybackControls";
+import { Minimap } from "./Minimap";
 import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS } from "./constants";
 
 export function TimelineViewer() {
@@ -35,8 +36,7 @@ export function TimelineViewer() {
   const { data: confidence } = useTimelineConfidence(jobId ?? "");
   const { data: detections } = useTimelineDetections(jobId ?? "");
 
-  // Suppress unused variable warnings for data that will be used in later tasks
-  void confidence;
+  // confidence.scores is consumed by the Minimap below
 
   // Zoom in/out
   const zoomIn = useCallback(() => {
@@ -116,10 +116,14 @@ export function TimelineViewer() {
         onFreqRangeChange={setFreqRange}
       />
 
-      {/* Minimap placeholder — Task 10 */}
-      <div className="px-4 pt-1.5">
-        <div className="h-7 rounded" style={{ background: COLORS.bgDark }} />
-      </div>
+      <Minimap
+        scores={confidence?.scores ?? []}
+        jobStart={job.start_timestamp ?? 0}
+        jobEnd={job.end_timestamp ?? 0}
+        centerTimestamp={centerTimestamp}
+        viewportSpan={VIEWPORT_SPAN[zoomLevel]}
+        onCenterChange={setCenterTimestamp}
+      />
 
       {/* Main spectrogram viewport placeholder — Task 11 */}
       <div className="flex-1 mx-4 my-2 rounded relative" style={{ background: COLORS.bgDark }}>
