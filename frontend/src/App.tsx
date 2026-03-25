@@ -10,6 +10,7 @@ import { HydrophoneTab } from "@/components/classifier/HydrophoneTab";
 import { LabelingTab } from "@/components/classifier/LabelingTab";
 import { SearchTab } from "@/components/search/SearchTab";
 import { LabelProcessingTab } from "@/components/label-processing/LabelProcessingTab";
+import { TimelineViewer } from "@/components/timeline/TimelineViewer";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/app/classifier/training" element={<TrainingTab />} />
         <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
         <Route path="/app/classifier/labeling" element={<LabelingTab />} />
+        <Route path="/app/classifier/timeline/:jobId" element={<TimelineViewer />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />
