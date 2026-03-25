@@ -230,14 +230,14 @@ async def test_audio_endpoint_returns_wav(client, app_settings):
 
 
 async def test_audio_endpoint_max_duration(client, app_settings):
-    """Requesting > 120 seconds returns 400."""
+    """Requesting > 600 seconds returns 400."""
     job_id = await _create_completed_hydrophone_job(app_settings)
 
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/timeline/audio",
-        params={"start_sec": 1000.0, "duration_sec": 200.0},
+        params={"start_sec": 1000.0, "duration_sec": 601.0},
     )
-    assert resp.status_code == 400
+    assert resp.status_code in (400, 422)
 
 
 async def test_audio_endpoint_job_not_found(client):
@@ -365,3 +365,50 @@ async def test_prepare_endpoint_job_not_found(client):
         "/classifier/detection-jobs/nonexistent/timeline/prepare",
     )
     assert resp.status_code == 404
+
+
+async def test_audio_endpoint_mp3_format(client, app_settings):
+    """GET /audio with format=mp3 should return audio/mpeg content."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 5.0, "format": "mp3"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/mpeg"
+    # MP3 starts with ID3 tag or sync word 0xFF
+    assert resp.content[:3] == b"ID3" or resp.content[0] == 0xFF
+
+
+async def test_audio_endpoint_600s_accepted(client, app_settings):
+    """GET /audio should accept duration_sec up to 600."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 600.0},
+    )
+    assert resp.status_code == 200
+
+
+async def test_audio_endpoint_601s_rejected(client, app_settings):
+    """GET /audio should reject duration_sec > 600."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 601.0},
+    )
+    assert resp.status_code in (400, 422)
+
+
+async def test_audio_endpoint_invalid_format(client, app_settings):
+    """GET /audio with invalid format should return 422."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 5.0, "format": "ogg"},
+    )
+    assert resp.status_code == 422

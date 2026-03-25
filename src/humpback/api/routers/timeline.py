@@ -193,6 +193,43 @@ def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
+def _encode_mp3(audio: np.ndarray, sample_rate: int) -> bytes:
+    """Encode float32 audio to MP3 via ffmpeg subprocess."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    wav_bytes = _encode_wav(audio, sample_rate)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_f:
+        wav_path = wav_f.name
+        wav_f.write(wav_bytes)
+
+    mp3_path = wav_path.replace(".wav", ".mp3")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                wav_path,
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                "128k",
+                "-ac",
+                "1",
+                mp3_path,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        return Path(mp3_path).read_bytes()
+    finally:
+        Path(wav_path).unlink(missing_ok=True)
+        Path(mp3_path).unlink(missing_ok=True)
+
+
 # ---- Endpoints ----
 
 
@@ -293,10 +330,11 @@ async def get_audio(
         ..., description="Timeline-absolute start position (epoch seconds)"
     ),
     duration_sec: float = Query(..., gt=0, description="Duration in seconds"),
+    format: str = Query("wav", pattern="^(wav|mp3)$"),
 ) -> Response:
-    """Return WAV audio for an arbitrary timeline position."""
-    if duration_sec > 120.0:
-        raise HTTPException(400, "Maximum audio duration is 120 seconds")
+    """Return audio for an arbitrary timeline position (WAV or MP3)."""
+    if duration_sec > 600.0:
+        raise HTTPException(400, "Maximum audio duration is 600 seconds")
 
     job = await _get_job_or_404(session, job_id)
 
@@ -319,8 +357,12 @@ async def get_audio(
         noaa_cache_path=settings.noaa_cache_path,
     )
 
-    wav_bytes = _encode_wav(audio, sample_rate=32000)
-    return Response(content=wav_bytes, media_type="audio/wav")
+    if format == "mp3":
+        data = _encode_mp3(audio, 32000)
+        return Response(content=data, media_type="audio/mpeg")
+    else:
+        data = _encode_wav(audio, sample_rate=32000)
+        return Response(content=data, media_type="audio/wav")
 
 
 @router.post("/prepare")
