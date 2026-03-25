@@ -1,76 +1,85 @@
-# Humpback Acoustic Embedding & Clustering Platform
+# Superpowers Workflow Adoption — Implementation Plan
 
-## 1. Purpose
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-This system processes humpback whale audio recordings into reusable embedding vectors
-using a Perch-compatible TFLite model, then performs clustering with optional
-behavioral/ecological metadata.
+**Goal:** Replace 6 custom session-* skills with the superpowers workflow, consolidate 6 repo-root .md files down to 3, and provide a Codex-compatible workflow in AGENTS.md.
 
-The system must:
-- Support asynchronous, resumable workflows
-- Persist workflow state in SQL
-- Prevent reprocessing of already-encoded audio for the same configuration
-- Allow separate queuing of processing and clustering jobs
-- Provide a web UI for job management and inspection
+**Architecture:** This is a pure documentation/configuration restructuring — no application code changes. Content from STATUS.md and MEMORY.md is absorbed into CLAUDE.md. Session skills and command wrappers are deleted. AGENTS.md is rewritten for Codex. An ADR is appended to DECISIONS.md.
 
+**Tech Stack:** Markdown files, git
+
+**Spec:** `docs/specs/2026-03-24-superpowers-workflow-adoption-design.md`
+
+---
+
+### Task 1: Infrastructure Setup
+
+**Files:**
+- Modify: `.gitignore`
+- Create: `docs/plans/backlog.md`
+
+- [ ] **Step 1: Add `.worktrees/` to `.gitignore`**
+
+Open `.gitignore` and append at the end:
+
+```
+.worktrees/
+```
+
+- [ ] **Step 2: Create `docs/plans/backlog.md` from PLANS.md backlog**
+
+Create `docs/plans/backlog.md` with the backlog items migrated from `PLANS.md`:
+
+```markdown
+# Development Backlog
+
+- Agile Modeling Phase 1b: search by uploaded audio clip by embedding the clip on the fly with a selected model, then searching existing embedding sets.
+- Agile Modeling Phase 3: connect search-result labeling into classifier training and the retrain loop.
+- Agile Modeling Phase 4: prioritize labeling suggestions using model uncertainty signals such as entropy or margin.
+- Smoke-test `tf-linux-gpu` on a real Ubuntu/NVIDIA host, including `uv sync --extra tf-linux-gpu`, TensorFlow import, and GPU device visibility.
+- Generalize legacy hydrophone API and frontend naming toward archive-source terminology now that NOAA Glacier Bay shares the same backend surfaces.
+- Explore GPU-accelerated batch processing for large audio libraries.
+- Add WebSocket push for real-time job status updates to replace polling.
+- Investigate multi-model ensemble clustering.
+- Optimize `/audio/{id}/spectrogram` to avoid materializing all windows when only one index is requested.
+- Optimize hydrophone incremental lookback discovery to avoid repeated full S3 folder scans during startup.
+- Add an integration and performance harness for hydrophone S3 prefetch so worker defaults can be tuned on real S3-backed runs.
+- Investigate a lower-overhead Orcasound decode path, likely chunk-level or persistent-stream decode, and treat it as a signal-processing/runtime change that needs validation plus an ADR.
+- Make `hydrophone_id` optional for local-cache detection jobs in the backend API, service layer, and worker.
+- Remove vestigial `output_tsv_path` and `output_row_store_path` fields from the detection model, schema, and database via migration.
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add .gitignore docs/plans/backlog.md
+git commit -m "Add .worktrees/ to gitignore and migrate backlog to docs/plans/"
+```
+
+---
+
+### Task 2: Update CLAUDE.md Preamble and Section 3.6
+
+**Files:**
+- Modify: `CLAUDE.md` (lines 1-91)
+
+- [ ] **Step 1: Replace the preamble (lines 16-28)**
+
+Replace lines 16-28 (the "This document defines..." paragraph, the empty line, the "## Memory Files" heading, and the table) with:
+
+```markdown
 This document defines behavioral rules, engineering constraints, project reference
 material, and workflow integration. For architecture decisions, see `DECISIONS.md`.
 For Codex-specific workflow, see `AGENTS.md`.
+```
 
----
+Remove the blank line and `---` separator that follows the old table if present before section 2.
 
-## 2. High-Level Architecture
+- [ ] **Step 2: Update section 3.6 Documentation (lines 83-90)**
 
-Components:
-1. Web UI
-2. API Server
-3. Workflow Queue (SQL-backed)
-4. Worker Processes (processing + clustering)
-5. SQL Database
-6. Object/File Storage (audio + embeddings + cluster outputs)
-7. Clustering Engine
+Replace the content of section 3.6 with:
 
-All components run locally for MVP but should be designed so workers can scale horizontally.
-
----
-
-## 3. Core Development Rules
-
-### 3.1 Package Management
-*   **ONLY** use `uv` for all Python package operations. **NEVER** use `pip`, `pip-tools`, `poetry`, or `conda`.
-*   Dependencies are managed via `pyproject.toml` and `uv.lock` files. The lock file should be committed to version control for reproducible builds.
-*   TensorFlow is selected via mutually-exclusive extras: `tf-macos`, `tf-linux-cpu`, or `tf-linux-gpu`.
-*   Do **NOT** use `uv sync --all-extras` in this project because the TensorFlow extras intentionally conflict.
-
-### 3.2 Environment Commands
-Use these commands for managing dependencies:
-*   Install/synchronize Apple Silicon macOS dependencies (including dev tools): `uv sync --group dev --extra tf-macos`
-*   Install/synchronize Linux CPU dependencies (including dev tools): `uv sync --group dev --extra tf-linux-cpu`
-*   Install/synchronize Linux GPU/CUDA dependencies (including dev tools): `uv sync --group dev --extra tf-linux-gpu`
-*   Install production Linux GPU/CUDA dependencies (no dev tools): `uv sync --extra tf-linux-gpu`
-*   Add a new package (e.g., `requests`): `uv add requests`
-*   Remove a package: `uv remove <package>`
-*   Refresh the lock file after dependency changes: `uv lock`
-*   Upgrade a specific package: `uv lock --upgrade-package <package>`
-
-### 3.3 Running Python Code and Tools
-*   Run a Python script: `uv run <script-name>.py`
-*   Run Python tools/tests (e.g., `pytest`): `uv run pytest tests/`
-*   Run the Python type checker: `uv run pyright`
-*   Install pre-commit hooks once per clone: `uv run pre-commit install`
-*   Run all pre-commit hooks manually: `uv run pre-commit run --all-files`
-
-### 3.4 Best Practices
-*   Prefer `uv run` over manually activating a virtual environment and running commands directly.
-*   Python edits must pass pre-commit Ruff and Pyright hooks before commit.
-*   Pyright enforcement covers `src/humpback`, `scripts/`, and `tests/`; expand deliberately after cleaning any new areas.
-*   When troubleshooting, use `uv cache clean` as a last resort.
-
-### 3.5 Database Migrations
-*   When a change adds, removes, or renames columns on any SQL table, **always** create an Alembic migration in `alembic/versions/` and run it with `uv run alembic upgrade head` before verifying the change works.
-*   Migration files follow the naming convention `NNN_short_description.py` (e.g., `007_negative_embedding_set_ids.py`), incrementing from the latest revision.
-*   Use `op.batch_alter_table()` for SQLite compatibility.
-
+```markdown
 ### 3.6 Documentation
 *   When a change adds, removes, or modifies API endpoints, data models, configuration options, architecture, or workflows, update the relevant files:
     *   `CLAUDE.md` — rules, reference material, project state (this file)
@@ -78,287 +87,39 @@ Use these commands for managing dependencies:
     *   `README.md` — user-facing API endpoints, configuration, feature list
     *   `docs/specs/` — design specs (written during brainstorming phase)
     *   `docs/plans/` — implementation plans (written during planning phase)
-
-## 3.7 Frontend Stack & Development
-
-The web UI is a React SPA in the `frontend/` directory, built with:
-
-| Layer | Technology |
-|-------|-----------|
-| Build | Vite + TypeScript |
-| UI Framework | React 18 |
-| Styling | Tailwind CSS |
-| Component Library | shadcn/ui (Radix primitives, copy-paste model in `frontend/src/components/ui/`) |
-| Server State | TanStack Query (polling, caching, mutations) |
-| Charts | react-plotly.js (wraps Plotly.js basic dist) |
-| Icons | lucide-react |
-| API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
-
-**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/labeling`); the timeline viewer is at `/app/classifier/timeline/:jobId`; other sections are single-route pages.
-
-#### Frontend Package Management
-*   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
-*   `npm install` — install dependencies
-*   `npm run dev` — start Vite dev server on `:5173` (proxies API calls to `:8000`)
-*   `npm run build` — production build to `src/humpback/static/dist/`
-*   `npx tsc --noEmit` — type-check without emitting
-
-#### Frontend File Structure
-```
-frontend/
-├── package.json, vite.config.ts, tsconfig.json, tailwind.config.ts
-├── playwright.config.ts         (Playwright test config)
-├── components.json              (shadcn/ui config)
-├── index.html
-├── e2e/                         (Playwright test specs)
-└── src/
-    ├── main.tsx                 (QueryClientProvider + App mount)
-    ├── App.tsx                  (routes + AppShell wrapper)
-    ├── index.css                (Tailwind directives + shadcn CSS vars)
-    ├── lib/utils.ts             (cn() helper)
-    ├── api/
-    │   ├── client.ts            (typed fetch wrapper, all endpoints)
-    │   └── types.ts             (TS interfaces mirroring Pydantic schemas)
-    ├── hooks/queries/           (TanStack Query hooks per domain)
-    ├── components/
-    │   ├── ui/                  (shadcn primitives)
-    │   ├── layout/              (AppShell, TopNav, SideNav, Breadcrumbs)
-    │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
-    │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
-    │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
-    │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, DetectionTab, BulkDeleteDialog)
-    │   ├── timeline/            (TimelineViewer, Minimap, SpectrogramViewport, TileCanvas, etc.)
-    │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
-    │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
-    │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
-    │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc, EmbeddingSetPanel)
-    └── utils/                   (format.ts, audio.ts)
 ```
 
-#### Dev Workflow
+- [ ] **Step 3: Verify the edit**
+
+Run: `head -30 CLAUDE.md`
+
+Expected: the new preamble text, no "Memory Files" table, no references to MEMORY.md/STATUS.md/PLANS.md.
+
+Run: `grep -n "MEMORY.md\|STATUS.md\|PLANS.md" CLAUDE.md`
+
+Expected: no matches (these references should all be gone from sections 1-3).
+
+- [ ] **Step 4: Commit**
+
 ```bash
-# Terminal 1: Backend
-uv run humpback-api          # API on :8000
-uv run humpback-worker       # Worker process
-
-# Terminal 2: Frontend dev server
-cd frontend && npm run dev   # Vite on :5173, proxies to :8000
+git add CLAUDE.md
+git commit -m "Update CLAUDE.md preamble and documentation section for consolidated workflow"
 ```
 
-#### Production Build & Serving
-```bash
-cd frontend && npm run build  # outputs to src/humpback/static/dist/
-uv run humpback-api           # serves SPA at / and API on :8000
-```
-
-The FastAPI backend detects `static/dist/index.html` at startup. When present, it serves the built SPA at `/` and mounts `/assets` for JS/CSS bundles. When absent, it falls back to the legacy `static/index.html`.
-Deployment/runtime configuration should come from a repo-root `.env` plus
-`HUMPBACK_` env vars. The API and worker entrypoints explicitly load the
-repo-root `.env`; direct `Settings()` construction should stay hermetic.
-Production host allowlisting belongs in FastAPI via `HUMPBACK_ALLOWED_HOSTS`;
-do not use Vite `allowedHosts` for deployed host validation.
-
-### 3.8 Timezone and Timestamp Standard (UTC-Only)
-All operational timestamps in this project must use UTC end-to-end.
-
-*   Backend must compute, compare, persist, and serialize timestamps in UTC.
-*   API timestamp fields should be UTC epoch seconds or ISO-like values with `Z` semantics.
-*   Frontend must parse and submit timestamp inputs as UTC for project workflows unless an endpoint explicitly requires local time.
-*   Frontend displays for operational time ranges must be labeled as UTC; avoid locale-time rendering for these values.
-*   Time-derived filenames/identifiers must use compact UTC format (`%Y%m%dT%H%M%SZ`), including detection/extraction naming paths.
-*   Tests touching timestamp behavior must assert UTC semantics explicitly.
-
 ---
 
-## 4. Core Design Principles
+### Task 3: Add CLAUDE.md Section 8 — Project Reference
 
-### 4.1 Idempotent Encoding (No Reprocessing)
-Each audio file is encoded once per (model_version, window_size, target_sample_rate, feature_config).
+**Files:**
+- Modify: `CLAUDE.md` (append after section 7)
 
-A ProcessingJob MUST:
-- compute a stable "encoding_signature"
-- check for an existing completed embedding set with that signature
-- skip work if the embedding set exists
+This is the largest task. It absorbs content from MEMORY.md into a new section 8.
 
-### 4.2 Resumable Workflow
-All steps are recorded in SQL. Workers must be restart-safe:
-- jobs can resume after crash/restart
-- partial artifacts should be either:
-  - safely overwritten, or
-  - written to temp and atomically promoted on completion
+- [ ] **Step 1: Add section 8 header and subsections 8.1-8.2**
 
-### 4.3 Asynchronous, Observable Jobs
-Jobs are queued and executed in the background by workers.
-UI can monitor via polling or a push channel.
+Append after the existing section 7 (`## 7. Non-Goals`) and its content. Add:
 
-### 4.4 Hydrophone Extraction Path Convention
-Hydrophone labeled-sample extraction groups by species/category first, then hydrophone:
-- positives: `{positive_output_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/*.flac`
-- negatives: `{negative_output_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/*.flac`
-- hydrophone extraction should over-fetch a small real-audio guard band and
-  hard-trim clips to the expected sample count when archive audio exists;
-  never zero-pad short archive clips just to satisfy a window length
-- every extracted labeled clip (local and hydrophone) must also write a sibling
-  `.png` spectrogram sidecar using the same marker-free base rendering as the UI
-  spectrogram popup for that extracted clip window
-
-### 4.5 Hydrophone Timeline Assembly
-Hydrophone detection, playback, and extraction must use the same bounded stream timeline:
-- segment ordering must be numeric by segment suffix (never plain lexicographic)
-- playlist (`live.m3u8`) duration metadata should be used when available
-- sparse local cache segment sets must preserve playlist timeline offsets
-  (do not assume the first cached segment starts at folder timestamp)
-- folder discovery should start at the requested range and expand backward
-  by configurable hour increments (default 4h), up to configurable max
-  lookback (default 168h), stopping once overlap at the requested start
-  boundary is found
-- processing/playback/extraction must stay within `[start_timestamp, end_timestamp]`
-- legacy playback compatibility for older jobs may fall back to `job.start_timestamp`
-- Orcasound HLS playback/extraction is local-cache-authoritative: resolve from local HLS cache only, with no S3 listing/fetch fallback
-- Non-HLS archive providers may use their own direct-fetch playback/extraction path when explicitly configured (for example NOAA GCS `.aif`)
-- hydrophone extraction should build/reuse timeline metadata once per extraction run (avoid rebuilding per labeled row)
-- hydrophone detection jobs with no overlapping stream audio in the requested range
-  must fail with an explicit error message (never silently complete with zero windows)
-
-### 4.6 Hydrophone Detection TSV Metadata
-Hydrophone detection TSV output should carry canonical event metadata:
-- canonical `start_sec`/`end_sec` represent snapped clip bounds (window-size multiples)
-- include `raw_start_sec`/`raw_end_sec` and `merged_event_count` for audit/debug provenance
-- include `detection_filename` for hydrophone rows (`{start_utc}_{end_utc}.flac`, snapped canonical bounds)
-- keep `extract_filename` as a legacy alias to the same canonical filename for compatibility; explicit legacy `.wav` values must remain readable
-- include `hydrophone_name` for hydrophone rows (short form, e.g., `rpi_north_sjc`)
-- persist positive-selection provenance in `positive_selection_*` columns plus
-  `positive_extract_filename`; positive extraction seeds from the best 5-second
-  scored window and may widen in 5-second chunks when adjacent chunks remain
-  above the configured extension threshold
-- local detection TSV rows follow the same canonical snapped bounds + raw audit metadata
-
-### 4.7 Hydrophone Job Lifecycle
-Hydrophone detection jobs support the following status transitions:
-- `queued` → `running` (worker claims job)
-- `running` → `paused` (user pauses via API/UI)
-- `paused` → `running` (user resumes via API/UI)
-- `running` or `paused` → `canceled` (user cancels; partial results preserved)
-- `running` → `complete` (normal completion)
-- `running` → `failed` (error during processing)
-- TF2 SavedModel hydrophone detection must run in a short-lived subprocess so
-  TensorFlow/Metal memory is reclaimed between jobs; the parent worker remains
-  responsible for progress, diagnostics, alerts, and pause/resume/cancel state
-- Paused jobs remain in the Active Job panel; the worker thread blocks until resumed or canceled
-- Paused jobs with partial TSV output remain readable through
-  `/classifier/detection-jobs/{id}/content`
-- Canceled jobs are fully functional in the Previous Jobs panel (expandable, downloadable, label-editable, extractable)
-
----
-
-## 5. Testing Requirements (MANDATORY)
-
-Testing is not optional. Every meaningful change must include:
-- unit tests for new logic
-- integration tests for API endpoints
-- at least one end-to-end smoke test path that exercises the real workflows
-
-### 5.1 Unit Tests
-Add unit tests for:
-- encoding_signature computation (idempotency)
-- audio window slicing logic
-- feature extraction shape correctness
-- TFLite runner batching (mock interpreter acceptable)
-- Parquet writer behavior (temp + atomic promote)
-- clustering pipeline (small synthetic embeddings)
-
-Guidelines:
-- prefer deterministic tests
-- isolate file I/O behind temp directories
-- mock external dependencies when appropriate (e.g., TFLite interpreter)
-
-### 5.2 Running Tests Locally
-The repo must include:
-- `pytest` configuration
-- a single command to run unit+integration tests
-- a command to run tests continuously on file changes
-
-Required commands:
-- `pytest` (all tests)
-- `pytest -q` (quiet)
-- `pytest -k <pattern>` (focused)
-- "watch mode" (choose one):
-  - `pytest-watch` (`ptw`) OR
-  - `watchexec -r pytest` OR
-  - `entr -r pytest`
-
-Document the chosen tool in README and add it to dev dependencies.
-
-### 5.3 End-to-End Smoke Test (E2E)
-Add a minimal E2E test that:
-1. Starts API + worker (in-process for tests or via subprocess)
-2. Uploads a small fixture audio file
-3. Queues a ProcessingJob
-4. Polls until job completes
-5. Verifies EmbeddingSet exists and parquet file is readable
-6. Queues a ClusteringJob on that embedding set
-7. Polls until complete
-8. Verifies clusters and assignments exist and are consistent
-
-Constraints:
-- E2E must run in under a few minutes locally
-- Use a tiny audio fixture (e.g., 10–20 seconds)
-- Use a tiny embedding model stub if needed (see below)
-
-### 5.4 Frontend Tests (Playwright)
-When changing UI components, add or update Playwright tests in `frontend/e2e/`.
-
-**When to add tests:**
-- Any new interactive feature (buttons, forms, expandable rows, audio playback)
-- Changes to data flow between frontend and backend (API calls, query hooks)
-- Bug fixes for UI behavior (regression tests)
-
-**Test patterns:**
-- **API-level tests** — use `request` fixture to hit backend endpoints directly and validate response content (e.g., WAV duration, JSON shape). These are fast and don't need a browser page.
-- **UI interaction tests** — use `page` fixture to navigate, click, and assert DOM state. Verify that user actions produce correct side effects (e.g., audio element src, table expansion, form submission).
-- **Hydrophone regressions** — include timestamp-mapping playback checks and Extract-button activation checks when fixing Hydrophone tab playback/label workflows.
-- Skip gracefully when preconditions aren't met (e.g., no completed jobs) using `test.skip()`.
-
-**Running:**
-```bash
-cd frontend
-npx playwright test                    # all tests
-npx playwright test e2e/some.spec.ts   # specific file
-npx playwright test -g "test name"     # by name pattern
-npx playwright test --headed           # see the browser
-```
-
-**Requirements:**
-- Tests run against `localhost:5173` (frontend dev server) proxying to `localhost:8000` (backend)
-- Backend must be running with real or fixture data
-- Config is in `frontend/playwright.config.ts`; tests go in `frontend/e2e/*.spec.ts`
-- Install browsers once: `cd frontend && npx playwright install chromium`
-
-### 5.5 Model Stub Strategy (So Tests Are Fast)
-For unit/integration/E2E tests:
-- Provide a "FakeTFLiteModel" implementation that returns deterministic embeddings
-  (e.g., sine/cosine transforms of window index)
-- Gate real Perch model execution behind an environment flag
-  - default tests use FakeTFLiteModel
-  - optional manual run uses real model if available
-
----
-
-## 6. Definition of Done (Engineering)
-A PR/change is "done" only if:
-- unit tests added/updated for changed behavior
-- test suite passes locally
-- E2E smoke test passes locally
-- Playwright tests added/updated for UI changes (`cd frontend && npx playwright test`)
-- idempotency rules preserved (no duplicate embedding sets)
-
----
-
-## 7. Non-Goals (MVP)
-- Model fine-tuning
-- Real-time streaming inference
-- Multi-tenant support
-- Distributed GPU execution
+```markdown
 
 ---
 
@@ -418,6 +179,13 @@ humpback-acoustic-embed/
 │   └── plans/             (implementation plans + backlog)
 └── data/                  (runtime data)
 ```
+```
+
+- [ ] **Step 2: Add section 8.3 — Data Model Summary**
+
+Append after section 8.2:
+
+```markdown
 
 ### 8.3 Data Model Summary
 
@@ -439,6 +207,13 @@ Condensed model reference. For full field lists, see `src/humpback/database.py`.
 - **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, row_id, label, source)
 - **LabelingAnnotation** (`labeling_annotations`) — sub-window annotation boundary (detection_job_id, row_id, start_sec, end_sec, label)
 - **RetrainWorkflow** (`retrain_workflows`) — orchestrated reimport+reprocess+retrain (status, step, provenance)
+```
+
+- [ ] **Step 3: Add section 8.4 — Signal Processing Parameters**
+
+Append after section 8.3:
+
+```markdown
 
 ### 8.4 Signal Processing Parameters
 
@@ -520,6 +295,13 @@ flowchart TD
     M --> N["Metrics<br/>Silhouette / DB / CH / ARI / NMI"]
     M --> O["Outputs<br/>clusters.json, assignments.parquet,<br/>umap_coords.parquet, parameter_sweep.json"]
 ```
+```
+
+- [ ] **Step 4: Add sections 8.5-8.7**
+
+Append after section 8.4:
+
+```markdown
 
 ### 8.5 Storage Layout
 
@@ -574,6 +356,37 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
 - **Prefetch semantics**: `time_covered_sec` tracks summed processed audio duration rather than wall-clock range coverage
 - **Parquet row-store upgrade**: completed/paused/canceled detection jobs lazily upgrade into a canonical Parquet row store; TSV is synchronized from that store for download/legacy flows
+```
+
+- [ ] **Step 5: Verify section 8**
+
+Run: `grep -c "^### 8\." CLAUDE.md`
+
+Expected: `7` (subsections 8.1 through 8.7)
+
+Run: `grep -n "Technology Stack\|Repository Layout\|Data Model Summary\|Signal Processing\|Storage Layout\|Runtime Configuration\|Behavioral Constraints" CLAUDE.md`
+
+Expected: all 7 subsection headings appear.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add CLAUDE.md
+git commit -m "Add CLAUDE.md section 8: project reference (absorbed from MEMORY.md)"
+```
+
+---
+
+### Task 4: Add CLAUDE.md Section 9 — Current State
+
+**Files:**
+- Modify: `CLAUDE.md` (append after section 8)
+
+- [ ] **Step 1: Add section 9**
+
+Append after section 8.7:
+
+```markdown
 
 ---
 
@@ -616,12 +429,39 @@ Non-obvious constraints that are not immediately derivable from code:
 - The UI remains polling-based rather than real-time.
 - Deployment is still single-machine MVP infrastructure.
 - Exactly one TensorFlow extra must be selected per environment; `uv sync --all-extras` is invalid.
-- Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels.
 - Model files must be present on disk; there is no remote model registry.
+- Linux GPU installs assume a modern glibc baseline compatible with TensorFlow CUDA wheels.
 - Pyright enforcement covers `src/humpback`, `scripts/`, and `tests/`.
 - `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax such as `*.example.com`, not `.example.com`.
 - Audio shorter than `window_size_seconds` (5 seconds) is skipped entirely.
 - Imported audio must remain at its original path for in-place reads.
+```
+
+- [ ] **Step 2: Verify section 9**
+
+Run: `grep -c "^### 9\." CLAUDE.md`
+
+Expected: `4`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add CLAUDE.md
+git commit -m "Add CLAUDE.md section 9: current state (absorbed from STATUS.md)"
+```
+
+---
+
+### Task 5: Add CLAUDE.md Section 10 — Workflow
+
+**Files:**
+- Modify: `CLAUDE.md` (append after section 9)
+
+- [ ] **Step 1: Add section 10**
+
+Append after section 9.4:
+
+```markdown
 
 ---
 
@@ -683,3 +523,336 @@ Before claiming work is complete, run these in order:
 Codex follows the same phase sequence as superpowers but uses only Codex-available
 tools (file read/write, bash, grep, glob). See AGENTS.md for Codex-specific
 workflow instructions.
+```
+
+- [ ] **Step 2: Verify section 10**
+
+Run: `grep -c "^### 10\." CLAUDE.md`
+
+Expected: `4`
+
+Run: `wc -l CLAUDE.md`
+
+Expected: approximately 450-500 lines (was 371, added ~120 lines of new sections, removed ~13 lines of preamble).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add CLAUDE.md
+git commit -m "Add CLAUDE.md section 10: superpowers workflow integration"
+```
+
+---
+
+### Task 6: Rewrite AGENTS.md
+
+**Files:**
+- Modify: `AGENTS.md`
+
+- [ ] **Step 1: Replace AGENTS.md contents**
+
+Replace the entire file with:
+
+```markdown
+# Humpback Acoustic Embed — Codex Agent Instructions
+
+CLAUDE.md is the authoritative project rulebook — read it first.
+
+## Codex Workflow
+
+Follow these phases in order for any task:
+
+### Phase 1: Context
+- Read CLAUDE.md (rules + reference)
+- Read DECISIONS.md (recent ADRs)
+- Check docs/plans/ for active work
+- Understand what's being asked before acting
+
+### Phase 2: Design
+- For new features or significant changes:
+  - Explore affected code
+  - Identify 2-3 approaches with trade-offs
+  - Write a design spec to docs/specs/YYYY-MM-DD-<topic>-design.md
+  - Commit the spec before implementing
+- For bug fixes: skip to Phase 3 after root-cause investigation
+
+### Phase 3: Plan
+- Write an implementation plan to docs/plans/YYYY-MM-DD-<feature>.md
+- Break into small tasks (2-5 minutes each)
+- Include affected files, test strategy, verification commands
+- Commit the plan before implementing
+
+### Phase 4: Implement
+- Create a feature branch: codex/<slug>
+- TDD: write failing test -> implement -> verify green -> refactor
+- One task at a time, commit after each
+- Follow all CLAUDE.md rules (uv, migrations, doc updates)
+
+### Phase 5: Verify
+- Run the project verification gates (CLAUDE.md §10.3)
+- All must pass before proceeding
+
+### Phase 6: Finish
+- Push branch, create PR targeting main
+- PR body includes: summary, test plan, verification results
+
+## Key Constraints
+
+- Package manager: uv only (never pip/conda/poetry)
+- Frontend: npm from frontend/ directory
+- DB migrations: Alembic with op.batch_alter_table() for SQLite
+- Testing: every change needs tests (uv run pytest tests/)
+- Idempotency: never create duplicate embedding sets for same encoding_signature
+```
+
+- [ ] **Step 2: Verify**
+
+Run: `wc -l AGENTS.md`
+
+Expected: approximately 45-50 lines.
+
+Run: `grep -c "Phase" AGENTS.md`
+
+Expected: `6`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add AGENTS.md
+git commit -m "Rewrite AGENTS.md with Codex-compatible 6-phase workflow"
+```
+
+---
+
+### Task 7: Append ADR-041 to DECISIONS.md
+
+**Files:**
+- Modify: `DECISIONS.md` (append at end)
+
+- [ ] **Step 1: Append ADR-041**
+
+Append at the end of `DECISIONS.md`:
+
+```markdown
+
+---
+
+## ADR-041: Adopt superpowers workflow, consolidate documentation
+
+**Date**: 2026-03-24
+**Status**: Accepted
+
+**Context**: The project had 6 repo-root .md files with overlapping concerns and
+6 custom session-* skills that duplicated superpowers functionality while missing
+key capabilities (brainstorming, TDD enforcement, subagent execution, code review).
+
+**Decision**: Adopt superpowers as the canonical workflow. Consolidate to 3 repo-root
+files (CLAUDE.md, DECISIONS.md, AGENTS.md). Move specs to docs/specs/, plans to
+docs/plans/. Rewrite AGENTS.md for Codex-compatible workflow.
+
+**Consequences**:
+- Single workflow system instead of two competing ones
+- CLAUDE.md is larger (~450 lines) but self-contained
+- Codex follows same phase sequence with its own tooling
+- Session-* skills deleted; all workflow orchestration via superpowers
+- Backlog items preserved in docs/plans/backlog.md
+```
+
+- [ ] **Step 2: Verify**
+
+Run: `grep "^## ADR-041" DECISIONS.md`
+
+Expected: `## ADR-041: Adopt superpowers workflow, consolidate documentation`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add DECISIONS.md
+git commit -m "ADR-041: Adopt superpowers workflow, consolidate documentation"
+```
+
+---
+
+### Task 8: Delete Session Skills, Command Wrappers, and Retired Files
+
+**Files:**
+- Delete: `.agents/skills/session-start/SKILL.md`
+- Delete: `.agents/skills/session-transition/SKILL.md`
+- Delete: `.agents/skills/session-implement/SKILL.md`
+- Delete: `.agents/skills/session-review/SKILL.md`
+- Delete: `.agents/skills/session-end/SKILL.md`
+- Delete: `.agents/skills/session-debug/SKILL.md`
+- Delete: `.claude/commands/session-start.md`
+- Delete: `.claude/commands/session-transition.md`
+- Delete: `.claude/commands/session-implement.md`
+- Delete: `.claude/commands/session-review.md`
+- Delete: `.claude/commands/session-end.md`
+- Delete: `.claude/commands/session-debug.md`
+- Delete: `.agents/` directory
+- Delete: `.claude/commands/` directory
+- Delete: `STATUS.md`
+- Delete: `PLANS.md`
+- Delete: `MEMORY.md`
+
+- [ ] **Step 1: Delete session skill files**
+
+```bash
+rm .agents/skills/session-start/SKILL.md
+rm .agents/skills/session-transition/SKILL.md
+rm .agents/skills/session-implement/SKILL.md
+rm .agents/skills/session-review/SKILL.md
+rm .agents/skills/session-end/SKILL.md
+rm .agents/skills/session-debug/SKILL.md
+```
+
+- [ ] **Step 2: Delete command wrapper files**
+
+```bash
+rm .claude/commands/session-start.md
+rm .claude/commands/session-transition.md
+rm .claude/commands/session-implement.md
+rm .claude/commands/session-review.md
+rm .claude/commands/session-end.md
+rm .claude/commands/session-debug.md
+```
+
+- [ ] **Step 3: Remove empty directories**
+
+```bash
+rm -rf .agents/
+rm -rf .claude/commands/
+```
+
+Do NOT delete `.claude/` — it contains `hooks/`, `settings.json`, `settings.local.json`.
+
+- [ ] **Step 4: Delete retired repo-root files**
+
+```bash
+rm STATUS.md PLANS.md MEMORY.md
+```
+
+- [ ] **Step 5: Verify deletions**
+
+Run: `ls .agents/ 2>&1`
+
+Expected: `ls: .agents/: No such file or directory`
+
+Run: `ls .claude/commands/ 2>&1`
+
+Expected: `ls: .claude/commands/: No such file or directory`
+
+Run: `ls .claude/`
+
+Expected: should contain `hooks/`, `settings.json`, `settings.local.json` (NOT `commands/`)
+
+Run: `ls STATUS.md PLANS.md MEMORY.md 2>&1`
+
+Expected: `ls: STATUS.md: No such file or directory` (etc. for each)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -u .agents/ .claude/commands/ STATUS.md PLANS.md MEMORY.md
+git commit -m "Remove session-* skills, command wrappers, and retired doc files"
+```
+
+---
+
+### Task 9: Update Auto-Memory
+
+**Files:**
+- Modify: `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/MEMORY.md`
+
+- [ ] **Step 1: Replace auto-memory index**
+
+Replace the entire contents of `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/MEMORY.md` with:
+
+```markdown
+# Humpback Acoustic Embed — Session Memory
+
+## Project Documentation Structure
+- `CLAUDE.md` — rules, reference material, project state (auto-loaded)
+- `DECISIONS.md` — append-only architecture decision log
+- `AGENTS.md` — Codex entry point with phase-based workflow
+- `docs/specs/` — design specs from brainstorming
+- `docs/plans/` — implementation plans + backlog
+
+## Workflow
+- Canonical flow: brainstorming -> writing-plans -> subagent-driven-development -> finishing-a-development-branch
+- TDD enforced for all implementation
+- Git worktrees in .worktrees/ for isolation
+- Codex follows same phases (see AGENTS.md)
+
+## Key Patterns
+- Package manager: `uv` only (never pip)
+- Frontend: `npm` from `frontend/`
+- DB migrations: Alembic with `op.batch_alter_table()` for SQLite
+- Tests: `uv run pytest tests/`
+
+## TFLite Performance
+- See `project-tflite-perf-benchmark.md` — perch_v2 benchmark results, CoreML status
+
+## humpback-hoplite Sibling Project
+- Location: `~/development/humpback-hoplite/`
+- Standalone CLI for Perch+Hoplite vector search/clustering experiments
+- perch_v2.tflite produces **1536-d** embeddings (not 1280 as shown in CLAUDE.md §8.4)
+- Confirmed incompatibility: tensorflow-macos 2.16 (numpy<2.0) vs perch-hoplite (numpy>=2.0)
+
+## Classifier Training Parameters
+- `classifier_type`: `"logistic_regression"` (default) or `"mlp"` (ADR-007)
+- `l2_normalize`: `False` (default), `True` prepends `Normalizer(norm="l2")` to pipeline
+- `class_weight`: `"balanced"` (default) or `None`
+- `C`: regularization strength for LogisticRegression (default 1.0)
+```
+
+- [ ] **Step 2: Verify**
+
+Run: `grep "STATUS.md\|PLANS.md\|MEMORY.md\|session-" ~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/MEMORY.md`
+
+Expected: no matches (all stale references removed).
+
+- [ ] **Step 3: No commit needed** (auto-memory is outside the repo)
+
+---
+
+### Task 10: Final Verification
+
+- [ ] **Step 1: Verify repo-root .md files**
+
+Run: `ls *.md`
+
+Expected: exactly `AGENTS.md`, `CLAUDE.md`, `DECISIONS.md`, `README.md` (README.md was always there and is untouched)
+
+- [ ] **Step 2: Verify no dangling references in CLAUDE.md**
+
+Run: `grep "STATUS.md\|PLANS.md\|MEMORY.md\|session-start\|session-transition\|session-implement\|session-review\|session-end\|session-debug" CLAUDE.md`
+
+Expected: no matches.
+
+- [ ] **Step 3: Verify docs structure**
+
+Run: `find docs/ -type f | sort`
+
+Expected:
+```
+docs/plans/backlog.md
+docs/specs/2026-03-24-superpowers-workflow-adoption-design.md
+```
+
+- [ ] **Step 4: Verify .gitignore**
+
+Run: `grep ".worktrees/" .gitignore`
+
+Expected: `.worktrees/`
+
+- [ ] **Step 5: Verify CLAUDE.md section count**
+
+Run: `grep "^## " CLAUDE.md | head -20`
+
+Expected: sections 1 through 10 present.
+
+- [ ] **Step 6: Verify no broken AGENTS.md references**
+
+Run: `grep "CLAUDE.md\|DECISIONS.md\|docs/specs\|docs/plans" AGENTS.md`
+
+Expected: references to all four, all valid files/directories.

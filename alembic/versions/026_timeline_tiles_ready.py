@@ -1,15 +1,15 @@
 """Add timeline_tiles_ready column to detection_jobs.
 
-Revision ID: 025
-Revises: 024
+Revision ID: 026
+Revises: 025
 Create Date: 2026-03-24
 """
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "025"
-down_revision = "024"
+revision = "026"
+down_revision = "025"
 branch_labels = None
 depends_on = None
 

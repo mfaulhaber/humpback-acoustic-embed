@@ -1,13 +1,13 @@
 {
   "title": "NOAA archive source metadata",
-  "version": "2026-03-16",
+  "version": "2026-03-24",
   "records": [
     {
-      "id": "sanctsound_ci01",
-      "canonical_slug": "sanctsound_ci01",
-      "code": "ci01",
+      "id": "sanctsound_ci",
+      "canonical_slug": "sanctsound_ci",
+      "code": "ci",
       "program": "SanctSound",
-      "record_scope": "top_level_bucket_folder",
+      "record_scope": "region_umbrella",
       "name": "NOAA SanctSound (Channel Islands)",
       "location": "Channel Islands National Marine Sanctuary",
       "friendly_name": "Channel Islands",
@@ -20,13 +20,13 @@
       "audio_subpath": "audio/",
       "supports_segment_prefetch": false,
       "include_in_detection_ui": true,
-      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/ci01/",
-      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
-      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/",
+      "temporal_partitioning": "Region umbrella resolved through Channel Islands site/deployment child folders under sanctsound/audio/",
+      "station_identity": "Region umbrella spanning multiple SanctSound site codes within Channel Islands",
       "latitude": null,
       "longitude": null,
       "depth_m": null,
-      "notes": "SanctSound studied sound at 30 recording sites across seven sanctuaries and one marine national monument from 2018 to 2021; Channel Islands encompasses sub-sites ci01, ci02, ci03, and ci04 with 27 deployment folders total.",
+      "notes": "Channel Islands is exposed in the Hydrophone UI as one umbrella source covering verified child folders across ci01, ci02, ci03, and ci04. Site-scoped records remain available separately for precise matching to deployment-specific metadata products.",
       "confidence": "high",
       "sources": [
         "NOAA SanctSound Raw Passive Acoustic Data",
@@ -172,6 +172,79 @@
       ]
     },
     {
+      "id": "sanctsound_ci01",
+      "canonical_slug": "sanctsound_ci01",
+      "code": "ci01",
+      "program": "SanctSound",
+      "record_scope": "site_folder_group",
+      "name": "NOAA SanctSound (Channel Islands CI01)",
+      "location": "Channel Islands National Marine Sanctuary",
+      "friendly_name": "Channel Islands CI01",
+      "protected_area_name": "Channel Islands National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US West Coast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/ci01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/ci01/",
+      "temporal_partitioning": "Site folder with deployment subfolders beneath ci01/",
+      "station_identity": "Single SanctSound site code ci01 within Channel Islands",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "Hidden site-scoped Channel Islands ci01 source for workflows that need the exact ci01 deployment lineage instead of the Channel Islands umbrella source.",
+      "confidence": "high",
+      "sources": [
+        "NOAA SanctSound Raw Passive Acoustic Data",
+        "Data.gov resource naming using sanctsound_ci01_*"
+      ],
+      "child_folder_hints": [
+        {
+          "prefix": "sanctsound_ci01_01/",
+          "start_utc": "2018-10-31T22:00:00Z",
+          "end_utc": "2018-12-15T04:26:35Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_02/",
+          "start_utc": "2019-03-25T21:00:00Z",
+          "end_utc": "2019-08-04T00:21:55Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_03/",
+          "start_utc": "2019-08-14T00:00:00Z",
+          "end_utc": "2019-10-09T06:11:54Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_04/",
+          "start_utc": "2020-01-24T07:00:00Z",
+          "end_utc": "2020-06-04T17:41:04Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_05/",
+          "start_utc": "2020-06-04T23:00:00Z",
+          "end_utc": "2020-10-10T18:23:46Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_06/",
+          "start_utc": "2020-10-22T16:00:00Z",
+          "end_utc": "2021-02-23T18:29:15Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_07/",
+          "start_utc": "2021-03-06T01:59:50Z",
+          "end_utc": "2021-07-01T20:24:30Z"
+        },
+        {
+          "prefix": "sanctsound_ci01_08/",
+          "start_utc": "2021-07-08T18:00:02Z",
+          "end_utc": "2021-09-11T18:36:48Z"
+        }
+      ]
+    },
+    {
       "id": "sanctsound_fk01",
       "canonical_slug": "sanctsound_fk01",
       "code": "fk01",
@@ -300,11 +373,11 @@
       "child_folder_hints": []
     },
     {
-      "id": "sanctsound_oc01",
-      "canonical_slug": "sanctsound_oc01",
-      "code": "oc01",
+      "id": "sanctsound_oc",
+      "canonical_slug": "sanctsound_oc",
+      "code": "oc",
       "program": "SanctSound",
-      "record_scope": "top_level_bucket_folder",
+      "record_scope": "region_umbrella",
       "name": "NOAA SanctSound (Olympic Coast)",
       "location": "Olympic Coast National Marine Sanctuary",
       "friendly_name": "Olympic Coast",
@@ -317,13 +390,13 @@
       "audio_subpath": "audio/",
       "supports_segment_prefetch": false,
       "include_in_detection_ui": true,
-      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/oc01/",
-      "temporal_partitioning": "Expected beneath top-level folder; exact substructure not verified here",
-      "station_identity": "Top-level program/location code, not a single verified hydrophone station",
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/",
+      "temporal_partitioning": "Region umbrella resolved through Olympic Coast site/deployment child folders under sanctsound/audio/",
+      "station_identity": "Region umbrella spanning multiple SanctSound site codes within Olympic Coast",
       "latitude": null,
       "longitude": null,
       "depth_m": null,
-      "notes": "Olympic Coast encompasses sub-sites oc01, oc02, oc03, and oc04 with 12 deployment folders total; oc01 appears in public SanctSound product naming for sonar and fin-whale products.",
+      "notes": "Olympic Coast is exposed in the Hydrophone UI as one umbrella source covering verified child folders across oc01, oc02, oc03, and oc04. Site-scoped records remain available separately for precise matching to deployment-specific metadata products.",
       "confidence": "high",
       "sources": [
         "Data.gov resource naming using sanctsound_oc01_*"
@@ -388,6 +461,53 @@
           "prefix": "oc04/sanctsound_oc04_04/",
           "start_utc": "2020-08-04T18:00:00Z",
           "end_utc": "2020-12-21T13:39:40Z"
+        }
+      ]
+    },
+    {
+      "id": "sanctsound_oc01",
+      "canonical_slug": "sanctsound_oc01",
+      "code": "oc01",
+      "program": "SanctSound",
+      "record_scope": "site_folder_group",
+      "name": "NOAA SanctSound (Olympic Coast OC01)",
+      "location": "Olympic Coast National Marine Sanctuary",
+      "friendly_name": "Olympic Coast OC01",
+      "protected_area_name": "Olympic Coast National Marine Sanctuary",
+      "protected_area_type": "national_marine_sanctuary",
+      "region": "US West Coast",
+      "provider_kind": "noaa_gcs",
+      "bucket": "noaa-passive-bioacoustic",
+      "prefix": "sanctsound/audio/oc01/",
+      "audio_subpath": "audio/",
+      "supports_segment_prefetch": false,
+      "include_in_detection_ui": false,
+      "canonical_bucket_path": "gs://noaa-passive-bioacoustic/sanctsound/audio/oc01/",
+      "temporal_partitioning": "Site folder with deployment subfolders beneath oc01/",
+      "station_identity": "Single SanctSound site code oc01 within Olympic Coast",
+      "latitude": null,
+      "longitude": null,
+      "depth_m": null,
+      "notes": "Hidden site-scoped Olympic Coast oc01 source for workflows that need the exact oc01 deployment lineage instead of the Olympic Coast umbrella source.",
+      "confidence": "high",
+      "sources": [
+        "Data.gov resource naming using sanctsound_oc01_*"
+      ],
+      "child_folder_hints": [
+        {
+          "prefix": "sanctsound_oc01_01/",
+          "start_utc": "2019-03-08T19:00:00Z",
+          "end_utc": "2019-07-17T17:40:35Z"
+        },
+        {
+          "prefix": "sanctsound_oc01_03/",
+          "start_utc": "2019-11-02T19:00:00Z",
+          "end_utc": "2020-04-10T18:48:11Z"
+        },
+        {
+          "prefix": "sanctsound_oc01_04/",
+          "start_utc": "2020-07-31T02:00:00Z",
+          "end_utc": "2020-09-22T23:51:47Z"
         }
       ]
     },

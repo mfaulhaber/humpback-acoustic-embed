@@ -1152,3 +1152,62 @@ All contamination and annotation config parameters are now exposed through the w
 
 **Consequences:** Simple frontend (no WebGL), human-inspectable tile cache, colormap changes require re-render.
 - No Alembic migration is required in this phase because the schema is intentionally retained for compatibility.
+
+---
+
+## ADR-040: Split SanctSound umbrella archive IDs from site-scoped IDs
+
+**Date**: 2026-03-24
+**Status**: Accepted
+
+**Context**: NOAA archive sources are metadata-driven, but the Hydrophone UI
+surfaced `sanctsound_ci01` and `sanctsound_oc01` as if they were single-site
+sources. In reality those records acted as region umbrellas and included
+overlapping child-folder hints from multiple sites. That made job IDs
+misleading, allowed progress to exceed the requested wall-clock range without
+clear explanation, and caused deployment-specific workflows to reuse IDs with
+the wrong semantics.
+
+**Decision**:
+- Add explicit umbrella source IDs `sanctsound_ci` and `sanctsound_oc` for the
+  UI-visible Channel Islands and Olympic Coast archive choices.
+- Keep `sanctsound_ci01` and `sanctsound_oc01` as hidden site-scoped sources
+  whose child-folder hints only reference same-site deployment folders.
+- Migrate historical detection jobs from legacy umbrella-in-site IDs
+  (`sanctsound_ci01`, `sanctsound_oc01`) to the new umbrella IDs so playback,
+  extraction, and job history keep their original semantics.
+- Keep progress accounting as summed processed audio duration, but clarify the
+  UI wording so umbrella sources can legitimately exceed the selected
+  wall-clock range when multiple overlapping site feeds are processed.
+
+**Consequences**:
+- The Hydrophone UI keeps one visible Channel Islands source and one visible
+  Olympic Coast source, but their IDs now match their umbrella behavior.
+- Scripted or metadata-driven workflows can still target exact sites with
+  hidden IDs such as `sanctsound_ci01` and `sanctsound_oc01`.
+- Future SanctSound metadata mistakes are easier to catch because site-scoped
+  records now have explicit same-site child-folder expectations.
+- Added Alembic migration `025_normalize_sanctsound_source_ids.py` to preserve
+  historical job semantics on existing databases.
+
+---
+
+## ADR-041: Adopt superpowers workflow, consolidate documentation
+
+**Date**: 2026-03-24
+**Status**: Accepted
+
+**Context**: The project had 6 repo-root .md files with overlapping concerns and
+6 custom session-* skills that duplicated superpowers functionality while missing
+key capabilities (brainstorming, TDD enforcement, subagent execution, code review).
+
+**Decision**: Adopt superpowers as the canonical workflow. Consolidate to 3 repo-root
+files (CLAUDE.md, DECISIONS.md, AGENTS.md). Move specs to docs/specs/, plans to
+docs/plans/. Rewrite AGENTS.md for Codex-compatible workflow.
+
+**Consequences**:
+- Single workflow system instead of two competing ones
+- CLAUDE.md is larger (~450 lines) but self-contained
+- Codex follows same phase sequence with its own tooling
+- Session-* skills deleted; all workflow orchestration via superpowers
+- Backlog items preserved in docs/plans/backlog.md

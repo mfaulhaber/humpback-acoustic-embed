@@ -99,6 +99,11 @@ uv run python scripts/noaa_detection_metadata.py \
 
 ## Notes
 
+* Use a site-scoped SanctSound source ID such as `sanctsound_ci01` or
+  `sanctsound_oc01` when the CSV corresponds to a specific deployment/site.
+  The Hydrophone UI now exposes umbrella IDs such as `sanctsound_ci` and
+  `sanctsound_oc`, but the site-scoped IDs remain valid for scripted NOAA
+  metadata workflows.
 * The CSV source is the NOAA SanctSound CI01 deployment 01 daily humpback
   presence product (`Presence=0` or `1`), covering Oct 31 – Dec 15, 2018.
 * `--days-per-job` is capped at 7 to respect the API's max 7-day range per job.

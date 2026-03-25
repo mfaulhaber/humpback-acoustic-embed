@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import humpback.config as config_module
+import pytest
 
 from humpback.config import (
     ARCHIVE_SOURCE_IDS,
@@ -99,21 +100,66 @@ def test_from_repo_env_loads_repo_root_dotenv(tmp_path, monkeypatch):
 def test_noaa_archive_metadata_loads_runtime_and_reference_records():
     record_ids = {record["id"] for record in NOAA_ARCHIVE_METADATA}
 
+    assert "sanctsound_ci" in record_ids
     assert "sanctsound_ci01" in record_ids
+    assert "sanctsound_oc" in record_ids
+    assert "sanctsound_oc01" in record_ids
     assert "sanctsound_pmmn" in record_ids
     assert "noaa_glacier_bay" in record_ids
 
+    assert "sanctsound_ci" in ARCHIVE_SOURCE_IDS
     assert "sanctsound_ci01" in ARCHIVE_SOURCE_IDS
+    assert "sanctsound_oc" in ARCHIVE_SOURCE_IDS
+    assert "sanctsound_oc01" in ARCHIVE_SOURCE_IDS
     assert "noaa_glacier_bay" in ARCHIVE_SOURCE_IDS
     assert "sanctsound_pmmn" not in ARCHIVE_SOURCE_IDS
+
+    ci = get_archive_source("sanctsound_ci")
+    assert ci is not None
+    assert ci["audio_subpath"] == "audio/"
+    assert ci["include_in_detection_ui"] is True
+    assert ci["supports_segment_prefetch"] is False
+    assert len(ci["child_folder_hints"]) == 27
 
     ci01 = get_archive_source("sanctsound_ci01")
     assert ci01 is not None
     assert ci01["audio_subpath"] == "audio/"
-    assert ci01["include_in_detection_ui"] is True
+    assert ci01["prefix"] == "sanctsound/audio/ci01/"
+    assert ci01["include_in_detection_ui"] is False
     assert ci01["supports_segment_prefetch"] is False
-    assert len(ci01["child_folder_hints"]) == 27
+    assert len(ci01["child_folder_hints"]) == 8
+    assert all("_ci01_" in hint["prefix"] for hint in ci01["child_folder_hints"])
+
+    oc = get_archive_source("sanctsound_oc")
+    assert oc is not None
+    assert oc["audio_subpath"] == "audio/"
+    assert oc["include_in_detection_ui"] is True
+    assert oc["supports_segment_prefetch"] is False
+    assert len(oc["child_folder_hints"]) == 12
+
+    oc01 = get_archive_source("sanctsound_oc01")
+    assert oc01 is not None
+    assert oc01["prefix"] == "sanctsound/audio/oc01/"
+    assert oc01["include_in_detection_ui"] is False
+    assert len(oc01["child_folder_hints"]) == 3
+    assert all("_oc01_" in hint["prefix"] for hint in oc01["child_folder_hints"])
 
     glacier_bay = get_archive_source("noaa_glacier_bay")
     assert glacier_bay is not None
     assert glacier_bay["supports_segment_prefetch"] is True
+
+
+def test_validate_noaa_archive_metadata_rejects_cross_site_sanctsound_hints():
+    with pytest.raises(ValueError, match="sanctsound_oc01"):
+        config_module._validate_noaa_archive_metadata(
+            [
+                {
+                    "id": "sanctsound_oc01",
+                    "program": "SanctSound",
+                    "code": "oc01",
+                    "child_folder_hints": [
+                        {"prefix": "oc02/sanctsound_oc02_01/"},
+                    ],
+                }
+            ]
+        )

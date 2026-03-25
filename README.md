@@ -552,11 +552,12 @@ Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.
 - `POST /clustering/jobs` requires at least one `embedding_set_id` (`422` on empty list).
 - `POST /classifier/detection-jobs` and `POST /classifier/hydrophone-detection-jobs` now create windowed jobs only; sending `detection_mode` is rejected.
-- `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the two UI-visible NOAA sources (`sanctsound_ci01` and legacy `noaa_glacier_bay`) alongside the Orcasound hydrophones.
+- `GET /classifier/hydrophones` is the legacy archive-source list endpoint and now includes the three UI-visible NOAA sources (`sanctsound_ci`, `sanctsound_oc`, and legacy `noaa_glacier_bay`) alongside the Orcasound hydrophones. Hidden site-scoped SanctSound IDs such as `sanctsound_ci01` and `sanctsound_oc01` remain available for scripted workflows.
 - Hydrophone detection jobs with no overlapping stream audio fail explicitly (`status=failed`) with a range-specific error message.
 - Hydrophone detection summaries include provider/runtime metadata such as
   `provider_mode`, `execution_mode`, end-to-end `avg_audio_x_realtime`,
   `peak_worker_rss_mb`, and `child_pid` (for subprocess-backed TF2 runs).
+- `time_covered_sec` reports summed processed audio duration, which can exceed the requested wall-clock range for umbrella archive sources that span overlapping site feeds.
 - Legacy merged-mode jobs remain readable (`/download`, `/content`) but reject label saves, row-state edits, and extraction; rerun them in windowed mode first.
 - `PUT /classifier/detection-jobs/{id}/labels` only accepts label values `0`, `1`, or `null`.
 - `POST /classifier/detection-jobs/extract` accepts optional `positive_selection_smoothing_window`
@@ -711,49 +712,25 @@ The project includes structured workflows for AI coding agents (Claude Code and 
 
 ### Claude Code Commands
 
-Available as `/project:<name>` in Claude Code sessions:
+The project uses the [superpowers](https://github.com/anthropics/claude-code) skill system as its canonical development workflow:
 
-| Command | Purpose |
-|---------|---------|
-| `/start` | Load project context (STATUS, PLANS, DECISIONS) and summarize state. No coding. |
-| `/implement` | Structured implementation: restate task, identify files, implement, test, update docs. |
-| `/review` | Pre-commit checklist: architecture violations, missing tests/migrations, stale docs. |
-| `/handoff` | End-of-session: update STATUS.md, PLANS.md, DECISIONS.md for next session. |
-| `/debug` | Root-cause debugging: symptom, reproduce, fix, regression test. |
+**brainstorming** -> **writing-plans** -> **subagent-driven-development** -> **finishing-a-development-branch**
 
-Command files are in `.claude/commands/` and each points to `.agents/skills/<name>/SKILL.md`.
+Design specs are saved to `docs/specs/`, implementation plans to `docs/plans/`.
 
+### Codex App
 
-/start     → initialized session
-/plan (Claude command), exit plan option 4 with this command : Save this plan to PLANS.md and then implement it.
-/implement → executes plan
-/review    → checks plan implementation
-/handoff   → records outcome
+Codex reads `AGENTS.md` as its entry point, which defines a 6-phase workflow (Context -> Design -> Plan -> Implement -> Verify -> Finish) mirroring the superpowers flow using only Codex-available tools.
 
-### Codex App Skills
-
-Available as skills in Codex:
-
-| Skill | Purpose |
-|-------|---------|
-| `implement` | Same as `/project:implement` above |
-| `review` | Same as `/project:review` above |
-| `debug` | Same as `/project:debug` above |
-
-Skill definitions are in `.agents/skills/<name>/SKILL.md`. Codex also reads `AGENTS.md` as its entry point, which points to `CLAUDE.md` as the authoritative spec.
-
-### Memory Files
-
-Both agents share persistent project memory via root-level markdown files:
+### Project Documentation
 
 | File | Purpose |
 |------|---------|
-| `CLAUDE.md` | Behavioral rules, development constraints, testing requirements |
-| `MEMORY.md` | Data models, workflows, signal parameters, storage layout |
-| `AGENTS.md` | Codex entry point with key constraints |
+| `CLAUDE.md` | Rules, reference material, project state (auto-loaded by Claude Code) |
 | `DECISIONS.md` | Architecture decision log (append-only) |
-| `STATUS.md` | Current project state, capabilities, constraints |
-| `PLANS.md` | Active and backlog development plans |
+| `AGENTS.md` | Codex entry point with phase-based workflow |
+| `docs/specs/` | Design specs from brainstorming |
+| `docs/plans/` | Implementation plans + backlog |
 
 ---
 
