@@ -100,7 +100,7 @@ export function DetectionPopover({
       >
         Avg confidence:{" "}
         <span style={{ color: COLORS.textBright }}>
-          {row.avg_confidence.toFixed(3)}
+          {row.avg_confidence != null ? row.avg_confidence.toFixed(3) : "—"}
         </span>
       </div>
       <div
@@ -112,7 +112,7 @@ export function DetectionPopover({
       >
         Peak confidence:{" "}
         <span style={{ color: COLORS.textBright }}>
-          {row.peak_confidence.toFixed(3)}
+          {row.peak_confidence != null ? row.peak_confidence.toFixed(3) : "—"}
         </span>
       </div>
 

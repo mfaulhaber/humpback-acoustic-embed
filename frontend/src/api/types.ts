@@ -468,8 +468,8 @@ export interface DetectionRow {
   filename: string;
   start_sec: number;
   end_sec: number;
-  avg_confidence: number;
-  peak_confidence: number;
+  avg_confidence: number | null;
+  peak_confidence: number | null;
   n_windows: number | null;
   detection_filename?: string | null;
   extract_filename?: string | null;

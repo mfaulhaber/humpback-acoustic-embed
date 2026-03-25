@@ -313,8 +313,8 @@ def normalize_detection_row(
     filename = (row.get("filename", "") or "").strip()
     start_sec = safe_float(row.get("start_sec"), 0.0)
     end_sec = safe_float(row.get("end_sec"), 0.0)
-    avg_confidence = safe_float(row.get("avg_confidence"), 0.0)
-    peak_confidence = safe_float(row.get("peak_confidence"), 0.0)
+    avg_confidence = safe_optional_float(row.get("avg_confidence"))
+    peak_confidence = safe_optional_float(row.get("peak_confidence"))
     n_windows = safe_int(row.get("n_windows"), None)
 
     detection_filename = (row.get("detection_filename", "") or "").strip() or None

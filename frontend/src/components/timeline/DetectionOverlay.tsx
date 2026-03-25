@@ -96,8 +96,8 @@ export function DetectionOverlay({
         label,
         startTime: formatTime(jobStart + row.start_sec),
         endTime: formatTime(jobStart + row.end_sec),
-        avgConfidence: row.avg_confidence,
-        peakConfidence: row.peak_confidence,
+        avgConfidence: row.avg_confidence ?? 0,
+        peakConfidence: row.peak_confidence ?? 0,
       });
     },
     [jobStart],

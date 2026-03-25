@@ -2106,7 +2106,7 @@ function HydrophoneContentTable({
                   <div className="font-mono clip-range">{row._clipRange}</div>
                 </td>
                 <td className="px-3 py-1.5 clip-duration">{row._clipDurationSec.toFixed(1)}</td>
-                <td className="px-3 py-1.5">{row.avg_confidence.toFixed(3)}</td>
+                <td className="px-3 py-1.5">{row.avg_confidence != null ? row.avg_confidence.toFixed(3) : "—"}</td>
                 <td className="px-3 py-1.5 text-center">
                   <input
                     type="checkbox"
