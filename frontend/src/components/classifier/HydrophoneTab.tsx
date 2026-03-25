@@ -24,6 +24,7 @@ import {
   Globe,
   Search,
   Settings,
+  Activity,
 } from "lucide-react";
 import {
   Dialog,
@@ -455,7 +456,7 @@ export function HydrophoneTab() {
   const previousJobs = jobs.filter((j) => j.status !== "running" && j.status !== "queued" && j.status !== "paused");
 
   // Previous Jobs preferences
-  type PrevJobsColumnId = "status" | "created" | "hydrophone" | "date" | "threshold" | "results" | "download" | "extract" | "error";
+  type PrevJobsColumnId = "status" | "created" | "hydrophone" | "date" | "threshold" | "results" | "download" | "extract" | "timeline" | "error";
   const ALL_PREV_COLUMNS: { id: PrevJobsColumnId; label: string }[] = [
     { id: "status", label: "Status" },
     { id: "created", label: "Created" },
@@ -465,6 +466,7 @@ export function HydrophoneTab() {
     { id: "results", label: "Results" },
     { id: "download", label: "Download" },
     { id: "extract", label: "Extract" },
+    { id: "timeline", label: "Timeline" },
     { id: "error", label: "Error" },
   ];
   const [prevJobsPageSize, setPrevJobsPageSize] = useState(20);
@@ -1245,6 +1247,9 @@ export function HydrophoneTab() {
                 {prevJobsVisibleCols.has("extract") && (
                   <th className="px-3 py-2 text-left font-medium">Extract</th>
                 )}
+                {prevJobsVisibleCols.has("timeline") && (
+                  <th className="px-3 py-2 text-left font-medium">Timeline</th>
+                )}
                 {prevJobsVisibleCols.has("error") && (
                   <th className="px-3 py-2 text-left font-medium">Error</th>
                 )}
@@ -1454,6 +1459,7 @@ function HydrophoneJobRow({
   cancelPending?: boolean;
   visibleColumns?: Set<string>;
 }) {
+  const navigate = useNavigate();
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
   const isLegacyMerged = isLegacyMergedMode(job.detection_mode);
@@ -1632,6 +1638,21 @@ function HydrophoneJobRow({
                   </Badge>
                 ) : (
                   <span className="text-muted-foreground">&mdash;</span>
+                )}
+              </td>
+            )}
+            {showCol("timeline") && (
+              <td className="px-3 py-2">
+                {job.status === "complete" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => navigate(`/app/classifier/timeline/${job.id}`)}
+                  >
+                    <Activity className="h-3 w-3 mr-1" />
+                    Timeline
+                  </Button>
                 )}
               </td>
             )}
