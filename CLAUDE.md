@@ -644,20 +644,48 @@ brainstorming -> writing-plans -> subagent-driven-development -> finishing-a-dev
 - systematic-debugging (before any fix attempt)
 
 **Artifact locations:**
-- Design specs: `docs/specs/YYYY-MM-DD-<topic>-design.md`
-- Implementation plans: `docs/plans/YYYY-MM-DD-<feature>.md`
+- Design specs: `docs/specs/YYYY-MM-DD-<topic>-design.md` (on feature branch)
+- Implementation plans: `docs/plans/YYYY-MM-DD-<feature>.md` (on feature branch)
 - Git worktrees: `.worktrees/` (gitignored)
 
-### 10.2 Session Start Checklist
+### 10.2 Feature Branch Lifecycle
+
+All work for a task — spec, plan, and implementation — lives on a single feature branch.
+Nothing is committed to `main` directly; `main` only advances via squash-merge of PRs.
+
+**Branch creation (start of brainstorming):**
+1. Ensure `main` is clean and up to date (`git pull --ff-only origin main`)
+2. Create and switch to `feature/<topic>` from main
+3. All subsequent commits (spec, plan, code) go to this branch
+
+**Implementation (subagent-driven-development):**
+- Worktrees branch from the feature branch (not main) for parallel subagent isolation
+- Worktree changes merge back into the feature branch
+
+**Completion (finishing-a-development-branch):**
+1. Push feature branch, create PR against main
+2. Squash-merge the PR
+3. Checkout main, `git pull --ff-only origin main`
+4. Delete local feature branch and any worktrees
+
+**Early exit (session ends before implementation is complete):**
+1. Commit any uncommitted work to the feature branch
+2. Push feature branch to remote
+3. Checkout main (leave working directory clean on main)
+4. Next session detects the feature branch and resumes — see §10.3
+
+### 10.3 Session Start Checklist
 
 At the start of every session:
 1. Normalize the repo onto local `main` (fast-forward from origin; stop if dirty or detached)
 2. Read CLAUDE.md and DECISIONS.md
-3. Check `docs/plans/` for active work
-4. Summarize current state for the user
-5. Resume active plan work, or begin superpowers brainstorming for the next task
+3. Check for active feature branches with in-progress work:
+   - Look for local/remote `feature/*` branches
+   - Check `docs/plans/` and `docs/specs/` on those branches for active specs/plans
+4. If an active feature branch exists, offer to resume on it
+5. If no active work, summarize current state and begin brainstorming for the next task
 
-### 10.3 Project Verification Gates
+### 10.4 Project Verification Gates
 
 Before claiming work is complete, run these in order:
 1. `uv run ruff format --check` on modified Python files
@@ -678,7 +706,7 @@ Before claiming work is complete, run these in order:
 | Architecture decision | DECISIONS.md |
 | Frontend routes/components | CLAUDE.md §3.7 |
 
-### 10.4 Codex Compatibility
+### 10.5 Codex Compatibility
 
 Codex follows the same phase sequence as superpowers but uses only Codex-available
 tools (file read/write, bash, grep, glob). See AGENTS.md for Codex-specific
