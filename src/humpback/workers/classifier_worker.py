@@ -32,6 +32,7 @@ from humpback.classifier.detection_rows import (
     format_optional_float,
     format_optional_int,
     normalize_detection_row,
+    read_detection_row_store,
 )
 from humpback.classifier.extractor import (
     DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
@@ -69,21 +70,6 @@ from humpback.workers.queue import (
 )
 
 logger = logging.getLogger(__name__)
-
-HYDROPHONE_TSV_FIELDNAMES = [
-    "filename",
-    "start_sec",
-    "end_sec",
-    "avg_confidence",
-    "peak_confidence",
-    "n_windows",
-    "raw_start_sec",
-    "raw_end_sec",
-    "merged_event_count",
-    "detection_filename",
-    "extract_filename",
-    "hydrophone_name",
-]
 
 
 def _detection_dicts_to_store_rows(
@@ -994,9 +980,12 @@ async def run_hydrophone_detection_job(
         skip_segments = 0
         prior_detections: list[dict] = []
         if job.segments_processed and job.segments_processed > 0 and rs_path.is_file():
-            from humpback.classifier.detection_rows import read_detection_row_store
-
             _, prior_rows = read_detection_row_store(rs_path)
+            # Row-store dicts (all-string, ROW_STORE_FIELDNAMES) join
+            # all_detections alongside raw detector dicts (mixed types,
+            # fewer fields).  Safe because all_detections is only used for
+            # counting (summary) and is no longer persisted from the return
+            # value — the incremental Parquet writes are the source of truth.
             prior_detections = prior_rows  # type: ignore[assignment]
             skip_segments = job.segments_processed
             logger.info(
