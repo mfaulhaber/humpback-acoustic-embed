@@ -299,7 +299,7 @@ test.describe("Timeline Viewer", () => {
     await expect(page.locator("button", { hasText: "1x" })).toBeVisible();
   });
 
-  test("label overlay shows only positive detections as bars", async ({ page }) => {
+  test("label overlay shows detections excluding negatives", async ({ page }) => {
     await setupTimelineMocks(page, { withDetections: true });
     await page.goto(`/app/classifier/timeline/${COMPLETE_JOB.id}`);
 
@@ -315,8 +315,8 @@ test.describe("Timeline Viewer", () => {
     const overlay = page.locator('[data-testid="detection-overlay"]');
     await expect(overlay).toBeVisible();
 
-    // Only positive labels (humpback + orca) should render bars; ship row should be excluded
-    // Mock has 3 rows: humpback, orca, ship — expect 2 bar divs inside the overlay
+    // All detections shown except negatives (ship/background are excluded)
+    // Mock has 3 rows: humpback, orca, ship — ship is negative so excluded, expect 2 bars
     const bars = overlay.locator("> div");
     // Wait for bars to appear (they are direct children of the overlay container)
     await expect(bars.first()).toBeVisible({ timeout: 5_000 });
