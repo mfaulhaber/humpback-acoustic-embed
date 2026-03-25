@@ -135,7 +135,6 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         high_threshold=job.high_threshold,
         low_threshold=job.low_threshold,
         detection_mode=job.detection_mode,
-        output_tsv_path=job.output_tsv_path,
         output_row_store_path=job.output_row_store_path,
         result_summary=json.loads(job.result_summary) if job.result_summary else None,
         error_message=job.error_message,

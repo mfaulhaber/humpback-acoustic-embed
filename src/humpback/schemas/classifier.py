@@ -85,7 +85,6 @@ class DetectionJobOut(BaseModel):
     high_threshold: float
     low_threshold: float
     detection_mode: Optional[str] = None
-    output_tsv_path: Optional[str] = None
     output_row_store_path: Optional[str] = None
     result_summary: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None

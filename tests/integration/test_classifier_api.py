@@ -217,7 +217,6 @@ async def test_extract_persists_positive_selection_config(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path="/tmp/fake.tsv",
             )
         )
         await session.commit()
@@ -311,7 +310,6 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(ddir / "detections.tsv"),
                 files_processed=1,
                 files_total=5,
             )
@@ -408,7 +406,6 @@ async def test_content_endpoint_parses_positive_selection_metadata(
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -512,7 +509,6 @@ async def test_content_uses_backfilled_auto_selection_for_legacy_job(
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -733,7 +729,6 @@ async def test_save_labels_rejects_invalid_values(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -819,7 +814,6 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -937,7 +931,6 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1044,7 +1037,6 @@ async def test_row_state_accepts_non_edge_aligned_window_multiple(client, app_se
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1091,7 +1083,6 @@ async def test_content_and_download_use_row_store_when_tsv_missing(
 
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
-    tsv_path = ddir / "detections.tsv"
     row_store_path = ddir / "detection_rows.parquet"
 
     write_detection_row_store(
@@ -1118,7 +1109,6 @@ async def test_content_and_download_use_row_store_when_tsv_missing(
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
                 output_row_store_path=str(row_store_path),
             )
         )
@@ -1186,7 +1176,6 @@ async def test_labels_and_row_state_update_row_store(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
                 output_row_store_path=str(row_store_path),
             )
         )
@@ -1385,7 +1374,6 @@ async def test_extracted_sidecar_png_matches_spectrogram_endpoint(client, app_se
                 classifier_model_id="fake-model-id",
                 audio_folder=str(audio_folder),
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1482,7 +1470,6 @@ async def test_save_labels_sets_has_positive_labels_true(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1555,7 +1542,6 @@ async def test_save_labels_clears_has_positive_labels(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
                 has_positive_labels=True,
             )
         )
@@ -1646,7 +1632,6 @@ async def test_partial_save_preserves_positive_flag_from_other_rows(
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1721,7 +1706,6 @@ async def test_save_orca_label_sets_has_positive_labels(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1796,7 +1780,6 @@ async def test_orca_label_round_trip(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1873,7 +1856,6 @@ async def test_detection_embedding_404_for_job_without_embeddings(client, app_se
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1907,7 +1889,6 @@ async def test_detection_embedding_404_for_job_without_output(client, app_settin
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                # no output_tsv_path
             )
         )
         await session.commit()
@@ -1980,7 +1961,6 @@ async def test_detection_embedding_returns_vector(client, app_settings):
                 classifier_model_id=model_id,
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
