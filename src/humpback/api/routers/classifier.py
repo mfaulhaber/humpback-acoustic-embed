@@ -22,12 +22,13 @@ from humpback.classifier.detection_rows import (
     DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
     ROW_STORE_FIELDNAMES,
     apply_effective_positive_selection,
+    apply_label_edits,
     ensure_detection_row_store,
     iter_detection_rows_as_tsv,
     normalize_detection_row,
     read_detection_row_store,
-    safe_float,
     resolve_clip_bounds,
+    safe_float,
     write_detection_row_store,
 )
 from humpback.classifier.detector import read_window_diagnostics_table
@@ -43,6 +44,7 @@ from humpback.schemas.classifier import (
     DiagnosticsSummaryResponse,
     HydrophoneDetectionJobCreate,
     HydrophoneInfo,
+    LabelEditRequest,
     PerFileDiagnosticSummary,
     RetrainFolderInfo,
     RetrainWorkflowCreate,
@@ -1136,6 +1138,75 @@ async def save_detection_row_state(
             window_size_seconds=window_size_seconds,
         ),
     }
+
+
+@router.patch("/detection-jobs/{job_id}/labels")
+async def batch_edit_labels(
+    job_id: str,
+    body: LabelEditRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> list[dict]:
+    """Apply a batch of label edits (add/move/delete/change_type) atomically."""
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+    if job.status not in ("paused", "complete", "canceled"):
+        raise HTTPException(400, "Detection job not complete or no output available")
+    _require_windowed_detection_job(job, operation="batch edit labels")
+
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
+    window_size_seconds = await _get_classifier_window_size(
+        session, job.classifier_model_id
+    )
+    is_hydrophone = job.hydrophone_id is not None
+
+    _fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
+        session,
+        job,
+        settings=settings,
+        window_size_seconds=window_size_seconds,
+    )
+
+    # Compute job_duration for bounds validation.
+    if is_hydrophone and job.start_timestamp and job.end_timestamp:
+        job_duration = float(job.end_timestamp - job.start_timestamp)
+    else:
+        # Local jobs: use max end_sec across all rows.
+        job_duration = max(
+            (safe_float(r.get("end_sec"), 0.0) for r in existing_rows),
+            default=0.0,
+        )
+
+    edit_dicts = [e.model_dump() for e in body.edits]
+
+    try:
+        updated_rows = apply_label_edits(
+            existing_rows, edit_dicts, job_duration=job_duration
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    # Re-apply positive selection on every row.
+    for row in updated_rows:
+        apply_effective_positive_selection(row, window_size_seconds=window_size_seconds)
+
+    write_detection_row_store(rs_path, updated_rows)
+
+    has_positive = any(
+        row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
+    )
+    job.has_positive_labels = has_positive
+    await session.commit()
+
+    return [
+        normalize_detection_row(
+            row,
+            is_hydrophone=is_hydrophone,
+            window_size_seconds=window_size_seconds,
+        )
+        for row in updated_rows
+    ]
 
 
 # ---- Audio Slice Streaming ----

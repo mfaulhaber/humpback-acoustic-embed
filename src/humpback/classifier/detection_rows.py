@@ -428,6 +428,136 @@ def build_detection_row_id(row: dict[str, Any]) -> str:
     return hashlib.sha1(material.encode("utf-8")).hexdigest()
 
 
+def _is_row_labeled(row: dict[str, str]) -> bool:
+    """Return True if any label field is set to '1'."""
+    return any(row.get(f, "").strip() == "1" for f in LABEL_FIELDNAMES)
+
+
+def _rows_overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
+    return a_start < b_end and a_end > b_start
+
+
+def apply_label_edits(
+    rows: list[dict[str, str]],
+    edits: list[dict[str, Any]],
+    *,
+    job_duration: float,
+) -> list[dict[str, str]]:
+    """Apply a batch of label edits (add/move/delete/change_type) to detection rows.
+
+    Returns an updated copy of the row list. Raises ``ValueError`` on invalid
+    operations (overlapping labeled rows, out-of-bounds moves, missing row IDs).
+    """
+    # Work on a shallow copy so the caller's list is not mutated.
+    result: list[dict[str, str]] = [dict(r) for r in rows]
+
+    # Build a lookup by row_id for quick access.
+    row_index: dict[str, dict[str, str]] = {
+        r["row_id"]: r for r in result if r.get("row_id")
+    }
+
+    # Collect new rows from "add" edits so we can check unlabeled replacement.
+    new_rows: list[dict[str, str]] = []
+    delete_ids: set[str] = set()
+
+    for edit in edits:
+        action = edit.get("action")
+
+        if action == "add":
+            start = float(edit["start_sec"])
+            end = float(edit["end_sec"])
+            label = edit.get("label")
+
+            new_row = {f: "" for f in ROW_STORE_FIELDNAMES}
+            new_row["start_sec"] = str(start)
+            new_row["end_sec"] = str(end)
+            if label:
+                new_row[label] = "1"
+            new_row["row_id"] = build_detection_row_id(new_row)
+            new_rows.append(new_row)
+
+        elif action == "move":
+            rid = edit.get("row_id", "")
+            target = row_index.get(rid)
+            if target is None:
+                raise ValueError(f"Row with row_id '{rid}' not found")
+            new_start = float(edit["new_start_sec"])
+            new_end = float(edit["new_end_sec"])
+            if new_start < 0 or new_end > job_duration:
+                raise ValueError(
+                    f"Move out of bounds: [{new_start}, {new_end}] "
+                    f"exceeds [0, {job_duration}]"
+                )
+            target["start_sec"] = str(new_start)
+            target["end_sec"] = str(new_end)
+
+        elif action == "delete":
+            rid = edit.get("row_id", "")
+            if rid not in row_index:
+                raise ValueError(f"Row with row_id '{rid}' not found")
+            delete_ids.add(rid)
+
+        elif action == "change_type":
+            rid = edit.get("row_id", "")
+            target = row_index.get(rid)
+            if target is None:
+                raise ValueError(f"Row with row_id '{rid}' not found")
+            label = edit.get("label", "")
+            # Clear all label fields, then set the target one.
+            for lf in LABEL_FIELDNAMES:
+                target[lf] = ""
+            if label:
+                target[label] = "1"
+
+        else:
+            raise ValueError(f"Unknown edit action: {action!r}")
+
+    # Apply deletes.
+    result = [r for r in result if r.get("row_id") not in delete_ids]
+
+    # Unlabeled replacement: remove unlabeled rows that overlap with new adds.
+    if new_rows:
+        labeled_new = [r for r in new_rows if _is_row_labeled(r)]
+        if labeled_new:
+            keep: list[dict[str, str]] = []
+            for r in result:
+                if _is_row_labeled(r):
+                    keep.append(r)
+                    continue
+                r_start = safe_float(r.get("start_sec"), 0.0)
+                r_end = safe_float(r.get("end_sec"), 0.0)
+                replaced = False
+                for nr in labeled_new:
+                    nr_start = safe_float(nr.get("start_sec"), 0.0)
+                    nr_end = safe_float(nr.get("end_sec"), 0.0)
+                    if _rows_overlap(r_start, r_end, nr_start, nr_end):
+                        replaced = True
+                        break
+                if not replaced:
+                    keep.append(r)
+            result = keep
+
+    # Append new rows.
+    result.extend(new_rows)
+
+    # Overlap validation: no two labeled rows may overlap.
+    labeled = [
+        (safe_float(r.get("start_sec"), 0.0), safe_float(r.get("end_sec"), 0.0), r)
+        for r in result
+        if _is_row_labeled(r)
+    ]
+    labeled.sort(key=lambda t: t[0])
+    for i in range(len(labeled) - 1):
+        a_start, a_end, _ = labeled[i]
+        b_start, b_end, _ = labeled[i + 1]
+        if _rows_overlap(a_start, a_end, b_start, b_end):
+            raise ValueError(
+                f"Labeled rows overlap: [{a_start}, {a_end}] and [{b_start}, {b_end}]"
+            )
+
+    return result
+
+
 def resolve_clip_bounds(
     row: dict[str, Any],
     *,

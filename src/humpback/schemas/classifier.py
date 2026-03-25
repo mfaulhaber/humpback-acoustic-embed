@@ -1,11 +1,28 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
 DETECTION_MODE_CREATE_ERROR = (
     "detection_mode is no longer accepted; new jobs are always created in windowed mode"
 )
+
+
+# ---- Batch Label Edit ----
+
+
+class LabelEditItem(BaseModel):
+    action: Literal["add", "move", "delete", "change_type"]
+    row_id: Optional[str] = None
+    start_sec: Optional[float] = None
+    end_sec: Optional[float] = None
+    new_start_sec: Optional[float] = None
+    new_end_sec: Optional[float] = None
+    label: Optional[Literal["humpback", "orca", "ship", "background"]] = None
+
+
+class LabelEditRequest(BaseModel):
+    edits: list[LabelEditItem]
 
 
 class ClassifierTrainingJobCreate(BaseModel):
