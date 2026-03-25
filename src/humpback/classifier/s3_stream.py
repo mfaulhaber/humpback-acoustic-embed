@@ -1231,3 +1231,120 @@ def _iter_audio_chunks(
     if len(accumulator) > 0 and accumulator_start_ts is not None:
         chunk_start_utc = datetime.fromtimestamp(accumulator_start_ts, tz=timezone.utc)
         yield accumulator, chunk_start_utc, segments_done, segments_total
+
+
+def build_hls_timeline_for_range(
+    *,
+    hydrophone_id: str,
+    local_cache_path: str,
+    start_epoch: float,
+    end_epoch: float,
+) -> list[tuple[str, float, float]]:
+    """Build ordered timeline of HLS segments overlapping [start_epoch, end_epoch].
+
+    Returns list of (segment_path, segment_start_epoch, segment_duration_sec).
+    Uses local HLS cache only (no S3 fallback).
+
+    The segment_path is the absolute filesystem path to the .ts file in the
+    local cache, suitable for direct reading.
+    """
+    client = LocalHLSClient(local_cache_path)
+    try:
+        stream_segments = _build_stream_timeline(
+            client, hydrophone_id, start_epoch, end_epoch
+        )
+    except FileNotFoundError:
+        return []
+
+    bucket = ORCASOUND_S3_BUCKET
+    cache_root = Path(local_cache_path) / bucket
+
+    result: list[tuple[str, float, float]] = []
+    for seg in stream_segments:
+        # Convert S3-style key to local filesystem path
+        seg_path = str(cache_root / seg.key)
+        result.append((seg_path, seg.start_ts, seg.duration_sec))
+
+    return result
+
+
+def _decode_local_ts_file(seg_path: str, target_sr: int) -> np.ndarray:
+    """Read and decode a local .ts segment file to float32 audio."""
+    ts_bytes = Path(seg_path).read_bytes()
+    return decode_ts_bytes(ts_bytes, target_sr)
+
+
+def decode_segments_to_audio(
+    *,
+    timeline: list[tuple[str, float, float]],
+    start_epoch: float,
+    end_epoch: float,
+    target_sr: int,
+) -> np.ndarray:
+    """Decode HLS segments and stitch into continuous audio array.
+
+    Gaps are filled with silence. Output covers exactly [start_epoch, end_epoch].
+
+    Parameters
+    ----------
+    timeline
+        List of (segment_path, segment_start_epoch, segment_duration_sec) tuples
+        as returned by :func:`build_hls_timeline_for_range`.
+    start_epoch, end_epoch
+        Absolute UTC epoch bounds for the output array.
+    target_sr
+        Target sample rate for decoded audio.
+
+    Returns
+    -------
+    np.ndarray
+        1-D float32 array of length ``int((end_epoch - start_epoch) * target_sr)``.
+    """
+    total_duration = end_epoch - start_epoch
+    n_samples = int(total_duration * target_sr)
+    output = np.zeros(n_samples, dtype=np.float32)
+
+    for seg_path, seg_start, seg_duration in timeline:
+        try:
+            audio = _decode_local_ts_file(seg_path, target_sr)
+        except Exception:
+            logger.warning(
+                "Failed to decode segment %s, filling with silence", seg_path
+            )
+            continue
+
+        if len(audio) == 0:
+            continue
+
+        # Calculate where this segment's audio fits in the output array
+        # Segment may start before start_epoch or end after end_epoch
+        seg_end = seg_start + seg_duration
+
+        # Overlap with [start_epoch, end_epoch]
+        overlap_start = max(seg_start, start_epoch)
+        overlap_end = min(seg_end, end_epoch)
+        if overlap_end <= overlap_start:
+            continue
+
+        # Position in the output array
+        out_start_sample = int((overlap_start - start_epoch) * target_sr)
+        out_end_sample = int((overlap_end - start_epoch) * target_sr)
+        out_end_sample = min(out_end_sample, n_samples)
+
+        # Position in the decoded audio
+        audio_start_sample = int((overlap_start - seg_start) * target_sr)
+        n_copy = out_end_sample - out_start_sample
+        audio_end_sample = audio_start_sample + n_copy
+
+        # Clamp to actual decoded audio length
+        if audio_end_sample > len(audio):
+            audio_end_sample = len(audio)
+            n_copy = audio_end_sample - audio_start_sample
+            if n_copy <= 0:
+                continue
+
+        output[out_start_sample : out_start_sample + n_copy] = audio[
+            audio_start_sample:audio_end_sample
+        ]
+
+    return output
