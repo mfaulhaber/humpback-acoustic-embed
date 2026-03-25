@@ -83,4 +83,4 @@ class TimelineTileCache:
         to_remove = len(job_dirs) - self.max_jobs
         for job_dir in job_dirs[:to_remove]:
             logger.info("Evicting tile cache for job %s", job_dir.name)
-            shutil.rmtree(job_dir)
+            shutil.rmtree(job_dir, ignore_errors=True)
