@@ -48,6 +48,17 @@ Current state of the humpback acoustic embedding and clustering platform.
 - Playback and labeled-sample extraction share the same stream-offset resolver and canonical snapped detection ranges; extraction over-fetches a small real-audio guard band, hard-trims hydrophone clips to the expected sample count when the archive contains enough audio, never zero-pads short archive clips, writes FLAC plus PNG sidecars into species/category-first output trees, and keeps partial TSV content usable while jobs are paused.
 - Hydrophone UI flows include active and previous job management, UTC-only range selection, persisted detection row state, whale badges and positive-selection metadata, and guardrails such as a 7-day maximum range and `hop_seconds <= window_size_seconds`.
 
+### Timeline Viewer
+
+- Timeline viewer for hydrophone detection jobs: Pattern Radio-inspired zoomable spectrogram spanning up to 24 hours.
+- Ocean Depth colormap with multi-resolution tile pyramid; 6 discrete zoom levels: 24h, 6h, 1h, 15m, 5m, 1m.
+- Confidence heatmap minimap with click-to-jump navigation.
+- Audio playback synchronized with spectrogram scroll position.
+- Detection label overlay and click-to-open row popover.
+- Coarse zoom levels pre-rendered on job completion; fine levels rendered on demand with global FIFO cache.
+- Timeline audio resolved from HLS local cache via `resolve_timeline_audio()`.
+- Accessible at `/app/classifier/timeline/:jobId`.
+
 ### Web UI
 
 - The frontend is a routed SPA with top navigation, side navigation, breadcrumbs, and dedicated views for Audio, Processing, Clustering, Classifier, Search, Label Processing, and Admin.
@@ -103,7 +114,7 @@ Current state of the humpback acoustic embedding and clustering platform.
 ## Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `024_labeling_annotations.py`
+- **Latest migration**: `025_timeline_tiles_ready.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, labeling_annotations
 
 ---

@@ -1134,4 +1134,21 @@ All contamination and annotation config parameters are now exposed through the w
 - The public detection workflow is now windowed-only.
 - Hydrophone spectrogram-bound editing is effectively retired because it only applied to merged jobs.
 - Legacy merged jobs remain visible for audit/download purposes but can no longer be modified or extracted.
+
+---
+
+## ADR-040: Timeline Viewer Tile Architecture
+
+**Status:** Accepted
+**Date:** 2026-03-24
+
+**Context:** Need a zoomable spectrogram viewer for hydrophone detection jobs spanning up to 24 hours.
+
+**Decision:** Canvas 2D with pre-colored PNG tiles at 6 discrete zoom levels. Ocean Depth colormap baked into tiles. Coarse levels pre-rendered on job completion, fine levels rendered on demand with global FIFO cache. Timeline audio resolved from HLS local cache via `resolve_timeline_audio()`.
+
+**Alternatives considered:**
+- WebGL shader rendering (rejected: over-complex for discrete zoom levels)
+- On-demand only (rejected: minimap/initial view would be slow)
+
+**Consequences:** Simple frontend (no WebGL), human-inspectable tile cache, colormap changes require re-render.
 - No Alembic migration is required in this phase because the schema is intentionally retained for compatibility.

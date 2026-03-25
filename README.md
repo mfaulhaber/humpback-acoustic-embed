@@ -25,6 +25,7 @@ Highlights:
 - Binary classifier training plus hydrophone/archive detection
 - Interactive web UI and REST API for review, labeling, and extraction
 - Local-first artifact storage using SQL and Parquet-backed outputs
+- Zoomable timeline viewer for hydrophone detection jobs (Pattern Radio-inspired, 6 zoom levels, Ocean Depth colormap, minimap navigation, synchronized audio playback)
 
 ---
 
@@ -536,6 +537,10 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | POST | `/search/similar-by-audio` | Queue an async search job — worker encodes detection audio via the model and stores the embedding; returns `{id, status: "queued"}` |
 | GET | `/search/jobs/{id}` | Poll a search job — returns status while encoding, or search results on completion (ephemeral: row is deleted after results are returned) |
 | GET | `/classifier/detection-jobs/{id}/embedding` | Retrieve the stored embedding for a specific detection row (returns vector, model_version, vector_dim) |
+| POST | `/classifier/detection-jobs/{id}/timeline/prepare` | Trigger pre-rendering of spectrogram tile pyramid for the detection job |
+| GET | `/classifier/detection-jobs/{id}/timeline/tile` | Fetch a single pre-colored PNG spectrogram tile (`?zoom=&x=&y=`) |
+| GET | `/classifier/detection-jobs/{id}/timeline/confidence` | Fetch confidence heatmap data for the minimap |
+| GET | `/classifier/detection-jobs/{id}/timeline/audio` | Stream audio segment for the timeline playback (`?start_sec=&duration_sec=`) |
 | GET | `/audio/{id}/spectrogram-png` | PNG spectrogram image for a time range of an audio file (disk-cached) |
 | POST | `/label-processing/jobs` | Create label processing job (classifier-scored extraction from annotated recordings) |
 | GET | `/label-processing/jobs` | List label processing jobs |
