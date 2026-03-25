@@ -1,14 +1,16 @@
 // frontend/src/components/timeline/TimelineViewer.tsx
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import type { ZoomLevel } from "@/api/types";
 import { useTimelineConfidence, useTimelineDetections } from "@/hooks/queries/useTimeline";
 import { useHydrophoneDetectionJobs } from "@/hooks/queries/useClassifier";
+import { timelineAudioUrl } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
 import { ZoomSelector } from "./ZoomSelector";
 import { PlaybackControls } from "./PlaybackControls";
 import { Minimap } from "./Minimap";
-import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS } from "./constants";
+import { SpectrogramViewport } from "./SpectrogramViewport";
+import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC } from "./constants";
 
 export function TimelineViewer() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -23,6 +25,9 @@ export function TimelineViewer() {
   const [showLabels, setShowLabels] = useState(false);
   const [speed, setSpeed] = useState(1);
 
+  // Audio element ref
+  const audioRef = useRef<HTMLAudioElement>(null);
+
   // Initialize center to job midpoint
   useEffect(() => {
     if (job?.start_timestamp && job?.end_timestamp && centerTimestamp === 0) {
@@ -31,6 +36,56 @@ export function TimelineViewer() {
       );
     }
   }, [job, centerTimestamp]);
+
+  // Start/stop audio when isPlaying or centerTimestamp changes at play start
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlaying) {
+      audio.src = timelineAudioUrl(jobId ?? "", centerTimestamp, AUDIO_PREFETCH_SEC);
+      audio.playbackRate = speed;
+      audio.play().catch(() => {
+        // Ignore AbortError when src is changed rapidly
+      });
+    } else {
+      audio.pause();
+    }
+    // Only re-run when isPlaying toggles, not on every centerTimestamp tick
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying]);
+
+  // Sync playback rate when speed changes
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.playbackRate = speed;
+  }, [speed]);
+
+  // RAF loop: advance centerTimestamp while playing
+  useEffect(() => {
+    if (!isPlaying) return;
+    let lastTime = performance.now();
+    let rafId: number;
+
+    const tick = (now: number) => {
+      const dt = (now - lastTime) / 1000; // seconds
+      lastTime = now;
+      setCenterTimestamp((prev) => {
+        const next = prev + dt * speed;
+        return Math.min(next, job?.end_timestamp ?? next);
+      });
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, speed, job]);
+
+  // Pan handler: pauses playback then updates position
+  const handlePan = useCallback((t: number) => {
+    setIsPlaying(false);
+    setCenterTimestamp(t);
+  }, []);
 
   // Data queries
   const { data: confidence } = useTimelineConfidence(jobId ?? "");
@@ -125,12 +180,25 @@ export function TimelineViewer() {
         onCenterChange={setCenterTimestamp}
       />
 
-      {/* Main spectrogram viewport placeholder — Task 11 */}
-      <div className="flex-1 mx-4 my-2 rounded relative" style={{ background: COLORS.bgDark }}>
-        <div className="flex items-center justify-center h-full" style={{ color: COLORS.textMuted }}>
-          Spectrogram viewport — implemented in Task 11
-        </div>
+      {/* Main spectrogram viewport */}
+      <div className="flex-1 mx-4 my-2 rounded relative overflow-hidden" style={{ background: COLORS.bgDark }}>
+        <SpectrogramViewport
+          jobId={jobId}
+          jobStart={job.start_timestamp ?? 0}
+          jobEnd={job.end_timestamp ?? 0}
+          centerTimestamp={centerTimestamp}
+          zoomLevel={zoomLevel}
+          freqRange={freqRange}
+          isPlaying={isPlaying}
+          scores={confidence?.scores ?? []}
+          showLabels={showLabels}
+          onCenterChange={setCenterTimestamp}
+          onPan={handlePan}
+        />
       </div>
+
+      {/* Hidden audio element for playback */}
+      <audio ref={audioRef} style={{ display: "none" }} />
 
       <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
       <PlaybackControls
