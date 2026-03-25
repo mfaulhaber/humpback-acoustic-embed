@@ -192,6 +192,7 @@ export function TimelineViewer() {
           isPlaying={isPlaying}
           scores={confidence?.scores ?? []}
           showLabels={showLabels}
+          detections={detections ?? []}
           onCenterChange={setCenterTimestamp}
           onPan={handlePan}
         />

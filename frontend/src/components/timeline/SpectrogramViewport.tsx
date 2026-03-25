@@ -1,7 +1,9 @@
 // frontend/src/components/timeline/SpectrogramViewport.tsx
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import type { ZoomLevel } from "@/api/types";
+import type { DetectionRow, ZoomLevel } from "@/api/types";
 import { TileCanvas } from "./TileCanvas";
+import { DetectionOverlay } from "./DetectionOverlay";
+import { DetectionPopover } from "./DetectionPopover";
 import {
   FREQ_AXIS_WIDTH_PX,
   VIEWPORT_SPAN,
@@ -22,6 +24,7 @@ export interface SpectrogramViewportProps {
   isPlaying: boolean;
   scores: (number | null)[];
   showLabels: boolean;
+  detections: DetectionRow[];
   onCenterChange: (t: number) => void;
   /** Called on drag-pan instead of onCenterChange when provided. */
   onPan?: (t: number) => void;
@@ -146,13 +149,18 @@ export function SpectrogramViewport({
   freqRange,
   isPlaying,
   scores,
-  showLabels: _showLabels,
+  showLabels,
+  detections,
   onCenterChange,
   onPan,
 }: SpectrogramViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
+
+  // Detection click popover state
+  const [selectedRow, setSelectedRow] = useState<DetectionRow | null>(null);
+  const [popoverPos, setPopoverPos] = useState({ x: 0, y: 0 });
 
   // Observe container size
   useEffect(() => {
@@ -225,6 +233,35 @@ export function SpectrogramViewport({
     window.addEventListener("mouseup", handleGlobalUp);
     return () => window.removeEventListener("mouseup", handleGlobalUp);
   }, []);
+
+  // Click handler: find detection row at click position
+  const handleCanvasClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (isPlaying) return;
+      // If a drag occurred (pointer moved), skip click
+      if (dragRef.current) return;
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      // Convert pixel position to timestamp
+      const clickTimestamp = centerTimestamp + (clickX - canvasWidth / 2) / pxPerSec;
+
+      // Find detection whose [jobStart + start_sec, jobStart + end_sec] contains this timestamp
+      const hit = detections.find((d) => {
+        const start = jobStart + d.start_sec;
+        const end = jobStart + d.end_sec;
+        return clickTimestamp >= start && clickTimestamp <= end;
+      });
+
+      if (hit) {
+        setSelectedRow(hit);
+        setPopoverPos({ x: clickX, y: 8 });
+      } else {
+        setSelectedRow(null);
+      }
+    },
+    [isPlaying, centerTimestamp, canvasWidth, pxPerSec, detections, jobStart],
+  );
 
   // Frequency labels
   const fLabels = useMemo(() => freqLabels(freqRange), [freqRange]);
@@ -333,6 +370,7 @@ export function SpectrogramViewport({
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onClick={handleCanvasClick}
         >
           {canvasWidth > 0 && canvasHeight > 0 && (
             <TileCanvas
@@ -344,6 +382,27 @@ export function SpectrogramViewport({
               freqRange={freqRange}
               width={canvasWidth}
               height={canvasHeight}
+            />
+          )}
+
+          {/* Detection label overlay */}
+          <DetectionOverlay
+            detections={detections}
+            jobStart={jobStart}
+            centerTimestamp={centerTimestamp}
+            zoomLevel={zoomLevel}
+            width={canvasWidth}
+            height={canvasHeight}
+            visible={showLabels}
+          />
+
+          {/* Detection click popover */}
+          {selectedRow !== null && (
+            <DetectionPopover
+              row={selectedRow}
+              jobStart={jobStart}
+              position={popoverPos}
+              onClose={() => setSelectedRow(null)}
             />
           )}
 
