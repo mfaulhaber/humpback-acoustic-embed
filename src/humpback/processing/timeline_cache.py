@@ -44,6 +44,10 @@ class TimelineTileCache:
             if p.is_dir() and not p.name.startswith(".")
         )
 
+    def has(self, job_id: str, zoom_level: str, tile_index: int) -> bool:
+        """Check if a tile exists without touching the job sentinel."""
+        return self._tile_path(job_id, zoom_level, tile_index).exists()
+
     def tile_count_for_zoom(self, job_id: str, zoom_level: str) -> int:
         zoom_dir = self.cache_dir / job_id / zoom_level
         if not zoom_dir.exists():

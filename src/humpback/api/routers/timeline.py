@@ -154,7 +154,7 @@ def _prepare_tiles_sync(
     for zoom in levels:
         count = tile_count(zoom, job_duration_sec=duration)
         for idx in range(count):
-            if cache.get(job.id, zoom, idx) is not None:
+            if cache.has(job.id, zoom, idx):
                 continue
             try:
                 _render_tile_sync(
@@ -205,7 +205,9 @@ def _encode_mp3(audio: np.ndarray, sample_rate: int) -> bytes:
         wav_path = wav_f.name
         wav_f.write(wav_bytes)
 
-    mp3_path = wav_path.replace(".wav", ".mp3")
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as mp3_f:
+        mp3_path = mp3_f.name
+
     try:
         subprocess.run(
             [
