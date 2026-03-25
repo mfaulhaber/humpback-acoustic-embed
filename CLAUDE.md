@@ -550,6 +550,13 @@ flowchart TD
   {detection_job_id}/run_summary.json
 ```
 
+/timeline_cache/
+  {job_id}/{zoom_level}/tile_{NNNN}.png   (per-job LRU-evicted spectrogram tiles)
+```
+
+Timeline audio endpoint supports `format=mp3` for compressed playback (128kbps mono, up to 600s segments).
+
+```
 Hydrophone extraction output:
 - Positive labels: `{positive_sample_path}/{humpback|orca}/{hydrophone_id}/YYYY/MM/DD/{start}_{end}.flac`
 - Negative labels: `{negative_sample_path}/{ship|background}/{hydrophone_id}/YYYY/MM/DD/{start}_{end}.flac`
@@ -563,6 +570,7 @@ Hydrophone extraction output:
 - `api_host` defaults to `0.0.0.0`, `api_port` to `8000`.
 - `allowed_hosts` defaults to `*`. `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax.
 - `positive_sample_path`, `negative_sample_path`, `s3_cache_path` derive from `storage_root` when unset.
+- `timeline_cache_max_jobs` defaults to `15`. `HUMPBACK_TIMELINE_CACHE_JOBS` controls how many detection jobs keep fully cached timeline tiles on disk (~8-16 GB at default). LRU eviction removes the oldest job when exceeded.
 
 ### 8.7 Behavioral Constraints
 
@@ -590,6 +598,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - Label processing: score-based + sample-builder workflows
 - Vocalization labeling: type classification, active learning, sub-window annotations
 - Retrain workflow: reimport -> reprocess -> retrain
+- Timeline viewer: zoomable spectrogram with background tile pre-caching (all zoom levels), positive-only detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Search, Label Processing, Admin
 
 ### 9.2 Database Schema
