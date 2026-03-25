@@ -45,7 +45,7 @@ class ConfidenceResponse(BaseModel):
 
 
 class PrepareResponse(BaseModel):
-    tiles_rendered: int
+    status: str
     timeline_tiles_ready: bool
 
 
@@ -328,7 +328,7 @@ async def prepare_tiles(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
-):
+) -> PrepareResponse:
     """Launch background rendering of all zoom-level tiles for the timeline viewer."""
     job = await _get_job_or_404(session, job_id)
 
@@ -353,7 +353,8 @@ async def prepare_tiles(
 
         threading.Thread(target=_background, daemon=True).start()
 
-    # Mark timeline_tiles_ready
+    # Mark timeline_tiles_ready immediately — signals that preparation was
+    # initiated.  Use /prepare-status for real per-zoom progress.
     from humpback.models.classifier import DetectionJob
     from sqlalchemy import select as sa_select
 
@@ -365,7 +366,7 @@ async def prepare_tiles(
         db_job.timeline_tiles_ready = True
         await session.commit()
 
-    return {"status": "preparing", "timeline_tiles_ready": True}
+    return PrepareResponse(status="preparing", timeline_tiles_ready=True)
 
 
 @router.get("/prepare-status")
@@ -373,7 +374,7 @@ async def prepare_status(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
-):
+) -> dict[str, dict[str, int]]:
     """Return per-zoom-level rendering progress for a detection job."""
     job = await _get_job_or_404(session, job_id)
     duration = _job_duration(job)
