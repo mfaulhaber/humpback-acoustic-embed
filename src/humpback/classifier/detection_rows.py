@@ -648,6 +648,17 @@ def write_detection_row_store(
         raise
 
 
+def append_detection_row_store(
+    path: Path,
+    new_rows: list[dict[str, str]],
+) -> None:
+    """Append rows to an existing Parquet row store, creating if needed."""
+    existing_rows: list[dict[str, str]] = []
+    if path.is_file():
+        _, existing_rows = read_detection_row_store(path)
+    write_detection_row_store(path, existing_rows + new_rows)
+
+
 def stream_detection_rows_as_tsv(
     rows: list[dict[str, str]],
     *,
@@ -1072,23 +1083,31 @@ def merge_detection_row_store_state(
 def ensure_detection_row_store(
     *,
     row_store_path: Path,
-    tsv_path: Path,
     diagnostics_path: Path | None,
     is_hydrophone: bool,
     window_size_seconds: float,
     refresh_existing: bool = False,
     detection_mode: str | None = None,
+    tsv_path: Path | None = None,
 ) -> tuple[list[str], list[dict[str, str]]]:
     if row_store_path.is_file() and not refresh_existing:
         return read_detection_row_store(row_store_path)
 
-    fieldnames, rows = read_tsv_rows(tsv_path)
-    if not rows:
+    # Determine the source rows.  When a TSV is provided (legacy fallback)
+    # prefer it as the source of truth for detection rows.  Otherwise use the
+    # existing row store.
+    source_rows: list[dict[str, str]] = []
+    if tsv_path is not None and tsv_path.is_file():
+        _, source_rows = read_tsv_rows(tsv_path)
+    elif row_store_path.is_file():
+        _, source_rows = read_detection_row_store(row_store_path)
+
+    if not source_rows:
         write_detection_row_store(row_store_path, [])
         return ROW_STORE_FIELDNAMES, []
 
     store_rows = build_detection_row_store_rows(
-        rows,
+        source_rows,
         diagnostics_path=diagnostics_path,
         is_hydrophone=is_hydrophone,
         window_size_seconds=window_size_seconds,

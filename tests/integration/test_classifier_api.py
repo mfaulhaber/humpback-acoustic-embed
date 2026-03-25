@@ -271,43 +271,37 @@ async def test_training_summary_not_found(client):
 
 
 async def test_content_endpoint_serves_running_job(client, app_settings):
-    """GET /content returns partial results when job is running with TSV on disk."""
+    """GET /content returns partial results when job is running with row store on disk."""
     from pathlib import Path
     from sqlalchemy import insert
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
+    from humpback.classifier.detection_rows import write_detection_row_store
 
     # Create a running detection job directly in the DB
     job_id = str(uuid.uuid4())
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    # Write a partial TSV to disk
+    # Write a partial row store to disk (as the worker now does during detection)
     storage_root = Path(app_settings.storage_root)
     ddir = storage_root / "detections" / job_id
     ddir.mkdir(parents=True)
-    tsv_path = ddir / "detections.tsv"
-    fieldnames = [
-        "filename",
-        "start_sec",
-        "end_sec",
-        "avg_confidence",
-        "peak_confidence",
-        "n_windows",
-    ]
-    with open(tsv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
-        writer.writeheader()
-        writer.writerow(
+    rs_path = ddir / "detection_rows.parquet"
+    write_detection_row_store(
+        rs_path,
+        [
             {
+                "row_id": "test-row-1",
                 "filename": "test.wav",
-                "start_sec": "1.0",
-                "end_sec": "6.0",
-                "avg_confidence": "0.85",
-                "peak_confidence": "0.9",
+                "start_sec": "1.000000",
+                "end_sec": "6.000000",
+                "avg_confidence": "0.850000",
+                "peak_confidence": "0.900000",
                 "n_windows": "2",
             }
-        )
+        ],
+    )
 
     async with sf() as session:
         await session.execute(
@@ -317,7 +311,7 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
+                output_tsv_path=str(ddir / "detections.tsv"),
                 files_processed=1,
                 files_total=5,
             )

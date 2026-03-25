@@ -26,7 +26,6 @@ from humpback.classifier.detection_rows import (
     iter_detection_rows_as_tsv,
     normalize_detection_row,
     read_detection_row_store,
-    read_tsv_rows,
     safe_float,
     resolve_clip_bounds,
     write_detection_row_store,
@@ -854,21 +853,16 @@ async def _ensure_detection_row_store_for_job(
 ) -> tuple[list[str], list[dict[str, str]]]:
     rs_path = detection_row_store_path(settings.storage_root, job.id)
     tsv = detection_tsv_path(settings.storage_root, job.id)
+    diag_path = detection_diagnostics_path(settings.storage_root, job.id)
 
-    if rs_path.is_file():
-        fieldnames, rows = read_detection_row_store(rs_path)
-    else:
-        if not tsv.is_file():
-            raise HTTPException(404, "Detection output not found on disk")
-        diag_path = detection_diagnostics_path(settings.storage_root, job.id)
-        fieldnames, rows = ensure_detection_row_store(
-            row_store_path=rs_path,
-            tsv_path=tsv,
-            diagnostics_path=diag_path if diag_path.exists() else None,
-            is_hydrophone=job.hydrophone_id is not None,
-            window_size_seconds=window_size_seconds,
-            detection_mode=job.detection_mode,
-        )
+    fieldnames, rows = ensure_detection_row_store(
+        row_store_path=rs_path,
+        diagnostics_path=diag_path if diag_path.exists() else None,
+        is_hydrophone=job.hydrophone_id is not None,
+        window_size_seconds=window_size_seconds,
+        detection_mode=job.detection_mode,
+        tsv_path=tsv,  # legacy fallback for pre-Parquet jobs
+    )
 
     return fieldnames, rows
 
@@ -916,11 +910,11 @@ async def get_detection_content(
     )
     is_hydrophone = job.hydrophone_id is not None
 
-    tsv = detection_tsv_path(settings.storage_root, job.id)
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
     if job.status == "running":
-        if not tsv.is_file():
-            raise HTTPException(404, "TSV file not found on disk")
-        _fieldnames, raw_rows = read_tsv_rows(tsv)
+        if not rs_path.is_file():
+            return []  # No detections yet
+        _fieldnames, raw_rows = read_detection_row_store(rs_path)
     else:
         _fieldnames, raw_rows = await _ensure_detection_row_store_for_job(
             session,
