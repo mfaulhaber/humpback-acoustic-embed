@@ -166,39 +166,18 @@ def _read_detection_rows(
     return fieldnames, rows, False
 
 
-def _write_tsv_rows(
-    path: Path, fieldnames: list[str], rows: list[dict[str, str]]
-) -> None:
-    """Atomically rewrite a TSV file with updated rows."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tsv")
-    try:
-        with os.fdopen(fd, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
-            writer.writeheader()
-            writer.writerows(rows)
-        os.replace(tmp_path, str(path))
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
 def _write_detection_rows(
-    tsv_path: Path,
-    fieldnames: list[str],
     rows: list[dict[str, str]],
     *,
     row_store_path: Path | None = None,
-    using_row_store: bool = False,
 ) -> None:
-    """Persist detection rows back to the active source of truth."""
-    if using_row_store and row_store_path is not None:
+    """Persist detection rows to the row store.
+
+    When row_store_path is None (legacy TSV-only mode) the update is a no-op;
+    callers that need persistence must supply a row_store_path.
+    """
+    if row_store_path is not None:
         write_detection_row_store(row_store_path, rows)
-        return
-    _write_tsv_rows(tsv_path, fieldnames, rows)
 
 
 def _ensure_fieldnames(fieldnames: list[str], required: list[str]) -> list[str]:
@@ -982,11 +961,8 @@ def extract_labeled_samples(
                         counts["n_skipped"] += 1
 
     _write_detection_rows(
-        tsv_path,
-        fieldnames,
         all_rows,
         row_store_path=row_store_path,
-        using_row_store=using_row_store,
     )
     return counts
 
@@ -1667,10 +1643,7 @@ def extract_hydrophone_labeled_samples(
                     counts["n_skipped"] += 1
 
     _write_detection_rows(
-        tsv_path,
-        fieldnames,
         all_rows,
         row_store_path=row_store_path,
-        using_row_store=using_row_store,
     )
     return counts

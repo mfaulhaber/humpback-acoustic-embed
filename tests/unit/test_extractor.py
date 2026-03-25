@@ -769,7 +769,7 @@ class TestPositiveWindowSelection:
         assert result.start_sec == 2.0
         assert result.end_sec == 7.0
 
-    def test_local_positive_selection_uses_stored_diagnostics_and_updates_tsv(
+    def test_local_positive_selection_uses_stored_diagnostics_and_updates_row_store(
         self, tmp_path
     ):
         audio_folder = tmp_path / "audio"
@@ -813,18 +813,20 @@ class TestPositiveWindowSelection:
             diagnostics_path,
         )
 
+        row_store_path = tmp_path / "detection_rows.parquet"
         summary = extract_labeled_samples(
             tsv_path,
             audio_folder,
             tmp_path / "positive",
             tmp_path / "negative",
             window_diagnostics_path=diagnostics_path,
+            row_store_path=row_store_path,
         )
 
         assert summary["n_humpback"] == 1
         assert summary["n_positive_selected"] == 1
 
-        rows = _read_tsv_rows(tsv_path)
+        _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_score_source"] == "stored_diagnostics"
         assert rows[0]["positive_selection_decision"] == "positive"
         assert rows[0]["positive_selection_start_sec"] == "2.000000"
@@ -973,6 +975,7 @@ class TestPositiveWindowSelection:
             diagnostics_path,
         )
 
+        row_store_path = tmp_path / "detection_rows.parquet"
         summary = extract_labeled_samples(
             tsv_path,
             audio_folder,
@@ -980,13 +983,14 @@ class TestPositiveWindowSelection:
             tmp_path / "negative",
             window_diagnostics_path=diagnostics_path,
             positive_selection_min_score=0.8,
+            row_store_path=row_store_path,
         )
 
         assert summary["n_orca"] == 0
         assert summary["n_positive_selection_skipped"] == 1
         assert not list((tmp_path / "positive").rglob("*.flac"))
 
-        rows = _read_tsv_rows(tsv_path)
+        _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_decision"] == "skip"
         assert rows[0]["positive_extract_filename"] == ""
 
@@ -1032,6 +1036,7 @@ class TestPositiveWindowSelection:
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
         provider = _provider_for_recording(source_name, audio=audio)
 
+        row_store_path = tmp_path / "detection_rows.parquet"
         summary = extract_hydrophone_labeled_samples(
             tsv_path,
             provider,
@@ -1040,12 +1045,13 @@ class TestPositiveWindowSelection:
             target_sample_rate=sr,
             window_size_seconds=5.0,
             window_diagnostics_path=diagnostics_path,
+            row_store_path=row_store_path,
         )
 
         assert summary["n_orca"] == 1
         assert summary["n_positive_selected"] == 1
 
-        rows = _read_tsv_rows(tsv_path)
+        _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_decision"] == "positive"
         assert rows[0]["positive_selection_score_source"] == "stored_diagnostics"
         assert rows[0]["positive_extract_filename"] == (
@@ -1110,6 +1116,7 @@ class TestPositiveWindowSelection:
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
         provider = _provider_for_recording(source_name, audio=audio)
 
+        row_store_path = tmp_path / "detection_rows.parquet"
         summary = extract_hydrophone_labeled_samples(
             tsv_path,
             provider,
@@ -1118,10 +1125,11 @@ class TestPositiveWindowSelection:
             target_sample_rate=sr,
             window_size_seconds=5.0,
             window_diagnostics_path=diagnostics_path,
+            row_store_path=row_store_path,
         )
 
         assert summary["n_humpback"] == 1
-        rows = _read_tsv_rows(tsv_path)
+        _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_start_sec"] == "3.000000"
         assert rows[0]["positive_selection_end_sec"] == "8.000000"
         assert rows[0]["positive_extract_filename"] == (
@@ -1167,17 +1175,19 @@ class TestPositiveWindowSelection:
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
         provider = _provider_for_recording(source_name, audio=audio)
 
+        row_store_path = tmp_path / "detection_rows.parquet"
         summary = extract_hydrophone_labeled_samples(
             tsv_path,
             provider,
             tmp_path / "positive",
             tmp_path / "negative",
             window_size_seconds=5.0,
+            row_store_path=row_store_path,
             **_positive_hydrophone_extraction_kwargs(sr),
         )
 
         assert summary["n_orca"] == 1
-        rows = _read_tsv_rows(tsv_path)
+        _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_score_source"] == "rescored_fallback"
         assert rows[0]["positive_selection_start_sec"] == "3.000000"
         assert rows[0]["positive_selection_end_sec"] == "8.000000"
@@ -1246,6 +1256,7 @@ class TestPositiveWindowSelection:
         old_png_path = old_path.with_suffix(".png")
         old_png_path.write_bytes(b"old png")
 
+        row_store_path = tmp_path / "detection_rows.parquet"
         summary = extract_hydrophone_labeled_samples(
             tsv_path,
             provider,
@@ -1271,6 +1282,7 @@ class TestPositiveWindowSelection:
             fallback_input_format="spectrogram",
             fallback_feature_config=None,
             target_sample_rate=sr,
+            row_store_path=row_store_path,
         )
 
         assert summary["n_humpback"] == 1
@@ -1290,7 +1302,7 @@ class TestPositiveWindowSelection:
         assert new_path.with_suffix(".png").exists()
         assert abs(_audio_duration(new_path) - 10.0) < 0.1
 
-        rows = _read_tsv_rows(tsv_path)
+        _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_score_source"] == "rescored_fallback"
         assert rows[0]["positive_selection_start_sec"] == "29.000000"
         assert rows[0]["positive_selection_end_sec"] == "39.000000"
