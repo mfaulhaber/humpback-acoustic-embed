@@ -61,6 +61,7 @@ import type {
   ActiveLearningCycleResponse,
   UncertaintyQueueRow,
   ConvergenceMetrics,
+  TimelineConfidenceResponse,
 } from "./types";
 
 class ApiError extends Error {
@@ -568,6 +569,37 @@ export const fetchUncertaintyQueue = (
 
 export const fetchConvergenceMetrics = (vocalizationModelId: string) =>
   api<ConvergenceMetrics>(`/labeling/convergence/${vocalizationModelId}`);
+
+// ---- Timeline viewer API ----
+
+export function timelineTileUrl(
+  jobId: string,
+  zoomLevel: string,
+  tileIndex: number,
+  freqMin = 0,
+  freqMax = 3000,
+): string {
+  return `/classifier/detection-jobs/${jobId}/timeline/tile?zoom_level=${zoomLevel}&tile_index=${tileIndex}&freq_min=${freqMin}&freq_max=${freqMax}`;
+}
+
+export function timelineAudioUrl(
+  jobId: string,
+  startSec: number,
+  durationSec = 30,
+): string {
+  return `/classifier/detection-jobs/${jobId}/timeline/audio?start_sec=${startSec}&duration_sec=${durationSec}`;
+}
+
+export const fetchTimelineConfidence = (jobId: string) =>
+  api<TimelineConfidenceResponse>(
+    `/classifier/detection-jobs/${jobId}/timeline/confidence`,
+  );
+
+export const prepareTimelineTiles = (jobId: string) =>
+  post<{ status: string }>(
+    `/classifier/detection-jobs/${jobId}/timeline/prepare`,
+    {},
+  );
 
 // ---- Health ----
 
