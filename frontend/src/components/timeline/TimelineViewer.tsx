@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import type { ZoomLevel } from "@/api/types";
-import { useTimelineConfidence, useTimelineDetections } from "@/hooks/queries/useTimeline";
+import { useTimelineConfidence, useTimelineDetections, usePrepareTimeline, usePrepareStatus } from "@/hooks/queries/useTimeline";
 import { useHydrophoneDetectionJobs } from "@/hooks/queries/useClassifier";
 import { timelineAudioUrl } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
@@ -16,6 +16,27 @@ export function TimelineViewer() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data: jobs } = useHydrophoneDetectionJobs(0);
   const job = jobs?.find((j) => j.id === jobId);
+
+  // Background tile cache state
+  const [cacheComplete, setCacheComplete] = useState(false);
+  const prepareMutation = usePrepareTimeline();
+
+  // Trigger prepare on mount
+  useEffect(() => {
+    if (jobId) prepareMutation.mutate(jobId);
+  }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll prepare status
+  const { data: prepareStatus } = usePrepareStatus(jobId ?? "", !cacheComplete && !!jobId);
+
+  // Check completion
+  useEffect(() => {
+    if (!prepareStatus) return;
+    const allDone = Object.values(prepareStatus).every(
+      (z) => z.rendered >= z.total,
+    );
+    if (allDone) setCacheComplete(true);
+  }, [prepareStatus]);
 
   // Core state
   const [centerTimestamp, setCenterTimestamp] = useState<number>(0);
@@ -234,7 +255,20 @@ export function TimelineViewer() {
   }
 
   return (
-    <div className="flex flex-col h-screen font-mono text-xs" style={{ background: COLORS.bg, color: COLORS.text }}>
+    <div className="flex flex-col h-screen font-mono text-xs" style={{ background: COLORS.bg, color: COLORS.text, position: "relative" }}>
+      {!cacheComplete && prepareStatus && (
+        <div style={{
+          position: "absolute", top: 4, right: 16,
+          fontSize: 11, color: COLORS.textMuted, zIndex: 10,
+        }}>
+          Caching: {
+            Object.entries(prepareStatus)
+              .filter(([, z]) => z.rendered < z.total)
+              .map(([zoom, z]) => `${zoom} ${z.rendered}/${z.total}`)
+              .join(", ")
+          }
+        </div>
+      )}
       <TimelineHeader
         hydrophone={job.hydrophone_name ?? job.hydrophone_id ?? ""}
         startTimestamp={job.start_timestamp ?? 0}

@@ -607,6 +607,16 @@ export const prepareTimelineTiles = (jobId: string) =>
     {},
   );
 
+export async function fetchPrepareStatus(
+  jobId: number | string,
+): Promise<Record<string, { total: number; rendered: number }>> {
+  const resp = await fetch(
+    `/classifier/detection-jobs/${jobId}/timeline/prepare-status`,
+  );
+  if (!resp.ok) throw new Error(`prepare-status ${resp.status}`);
+  return resp.json();
+}
+
 // ---- Health ----
 
 export function getHealth(): Promise<HealthStatus> {
