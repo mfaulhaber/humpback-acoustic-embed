@@ -929,11 +929,7 @@ class TestPositiveWindowSelection:
         assert stored_rows[0]["positive_extract_filename"] == (
             "20250615T080005.000000Z_20250615T080015.000000Z.flac"
         )
-
-        rows = _read_tsv_rows(tsv_path)
-        assert rows[0]["positive_selection_start_sec"] == "5.000000"
-        assert rows[0]["positive_selection_end_sec"] == "15.000000"
-        assert rows[0]["positive_selection_origin"] == "manual_override"
+        assert stored_rows[0]["positive_selection_origin"] == "manual_override"
 
     def test_local_positive_selection_skips_when_peak_below_threshold(self, tmp_path):
         audio_folder = tmp_path / "audio"

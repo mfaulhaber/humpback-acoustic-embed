@@ -93,10 +93,6 @@ ROW_STORE_FIELDNAMES = [
     *POSITIVE_SELECTION_FIELDNAMES,
 ]
 
-ROW_STORE_TSV_FIELDNAMES = [
-    field for field in ROW_STORE_FIELDNAMES if field != "row_id"
-]
-
 ROW_STORE_SCHEMA = pa.schema([(field, pa.string()) for field in ROW_STORE_FIELDNAMES])
 
 _TS_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z")
@@ -607,27 +603,6 @@ def read_tsv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return fieldnames, rows
 
 
-def write_tsv_rows(
-    path: Path,
-    fieldnames: list[str],
-    rows: list[dict[str, str]],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tsv")
-    try:
-        with os.fdopen(fd, "w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
-            writer.writeheader()
-            writer.writerows(rows)
-        os.replace(tmp_path, str(path))
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
 def ensure_fieldnames(fieldnames: list[str], required: list[str]) -> list[str]:
     for field in required:
         if field not in fieldnames:
@@ -671,20 +646,6 @@ def write_detection_row_store(
         except OSError:
             pass
         raise
-
-
-def sync_detection_tsv(
-    tsv_path: Path,
-    rows: list[dict[str, str]],
-    fieldnames: list[str] | None = None,
-) -> None:
-    export_fieldnames = list(fieldnames or ROW_STORE_TSV_FIELDNAMES)
-    export_fieldnames = [field for field in export_fieldnames if field != "row_id"]
-    write_tsv_rows(
-        tsv_path,
-        export_fieldnames,
-        [{field: row.get(field, "") for field in export_fieldnames} for row in rows],
-    )
 
 
 def stream_detection_rows_as_tsv(
@@ -1141,5 +1102,4 @@ def ensure_detection_row_store(
             window_size_seconds=window_size_seconds,
         )
     write_detection_row_store(row_store_path, store_rows)
-    sync_detection_tsv(tsv_path, store_rows)
     return ROW_STORE_FIELDNAMES, store_rows

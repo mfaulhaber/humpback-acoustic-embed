@@ -29,7 +29,6 @@ from humpback.classifier.detection_rows import (
     read_tsv_rows,
     safe_float,
     resolve_clip_bounds,
-    sync_detection_tsv,
     write_detection_row_store,
 )
 from humpback.classifier.detector import read_window_diagnostics_table
@@ -994,7 +993,6 @@ async def save_detection_labels(
     _require_windowed_detection_job(job, operation="save labels")
 
     rs_path = detection_row_store_path(settings.storage_root, job.id)
-    tsv = detection_tsv_path(settings.storage_root, job.id)
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
@@ -1031,7 +1029,6 @@ async def save_detection_labels(
         updated_rows.append(out_row)
 
     write_detection_row_store(rs_path, updated_rows)
-    sync_detection_tsv(tsv, updated_rows, fieldnames)
 
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
@@ -1058,7 +1055,6 @@ async def save_detection_row_state(
     _require_windowed_detection_job(job, operation="edit row state")
 
     rs_path = detection_row_store_path(settings.storage_root, job.id)
-    tsv = detection_tsv_path(settings.storage_root, job.id)
 
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
@@ -1132,7 +1128,6 @@ async def save_detection_row_state(
         raise HTTPException(404, "Detection row not found")
 
     write_detection_row_store(rs_path, existing_rows)
-    sync_detection_tsv(tsv, existing_rows, fieldnames)
 
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in existing_rows

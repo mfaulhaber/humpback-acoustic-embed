@@ -20,7 +20,6 @@ from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     read_detection_row_store,
     safe_float_list,
-    sync_detection_tsv,
     write_detection_row_store,
 )
 from humpback.classifier.detector import read_window_diagnostics_table
@@ -198,7 +197,6 @@ def _write_detection_rows(
     """Persist detection rows back to the active source of truth."""
     if using_row_store and row_store_path is not None:
         write_detection_row_store(row_store_path, rows)
-        sync_detection_tsv(tsv_path, rows, fieldnames)
         return
     _write_tsv_rows(tsv_path, fieldnames, rows)
 

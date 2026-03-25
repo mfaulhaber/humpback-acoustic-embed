@@ -766,6 +766,7 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
 
     from sqlalchemy import insert
 
+    from humpback.classifier.detection_rows import read_detection_row_store
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
 
@@ -776,6 +777,7 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
     tsv_dir.mkdir(parents=True)
     tsv_path = tsv_dir / "detections.tsv"
+    row_store_path = tsv_dir / "detection_rows.parquet"
     fieldnames = [
         "filename",
         "start_sec",
@@ -841,16 +843,8 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     )
     assert resp.status_code == 200
 
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        rows = list(reader)
-
-    assert reader.fieldnames is not None
-    assert "detection_filename" in reader.fieldnames
-    assert "extract_filename" in reader.fieldnames
-    assert "positive_selection_decision" in reader.fieldnames
-    assert "positive_selection_offsets" in reader.fieldnames
-    assert "positive_extract_filename" in reader.fieldnames
+    # TSV is no longer synced on write; verify the row store was updated instead
+    _fieldnames, rows = read_detection_row_store(row_store_path)
     assert len(rows) == 1
     assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
@@ -873,6 +867,7 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
 
     from sqlalchemy import insert
 
+    from humpback.classifier.detection_rows import read_detection_row_store
     from humpback.classifier.detector import write_window_diagnostics
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
@@ -884,6 +879,7 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
+    row_store_path = ddir / "detection_rows.parquet"
     diagnostics_path = ddir / "window_diagnostics.parquet"
     source_name = "20250615T080000Z.wav"
 
@@ -984,13 +980,8 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
     assert row["manual_positive_selection_start_sec"] == 0.0
     assert row["manual_positive_selection_end_sec"] == 10.0
 
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        saved_rows = list(reader)
-
-    assert reader.fieldnames is not None
-    assert "manual_positive_selection_start_sec" in reader.fieldnames
-    assert "manual_positive_selection_end_sec" in reader.fieldnames
+    # TSV is no longer synced on write; verify the row store was updated instead
+    _fieldnames, saved_rows = read_detection_row_store(row_store_path)
     assert saved_rows[0]["manual_positive_selection_start_sec"] == "0.000000"
     assert saved_rows[0]["manual_positive_selection_end_sec"] == "10.000000"
     assert saved_rows[0]["positive_selection_origin"] == "manual_override"
@@ -1154,13 +1145,16 @@ async def test_content_and_download_use_row_store_when_tsv_missing(
     await engine.dispose()
 
 
-async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_settings):
-    """Editing labels and row state should succeed even when the TSV adapter is missing."""
+async def test_labels_and_row_state_update_row_store(client, app_settings):
+    """Editing labels and row state should persist to the Parquet row store."""
     from pathlib import Path
 
     from sqlalchemy import insert
 
-    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.classifier.detection_rows import (
+        read_detection_row_store,
+        write_detection_row_store,
+    )
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
 
@@ -1216,11 +1210,9 @@ async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_sett
         ],
     )
     assert resp.status_code == 200
-    assert tsv_path.is_file()
-
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        saved_rows = list(reader)
+    # TSV is no longer synced on write; verify the row store was updated instead
+    assert not tsv_path.is_file()
+    _fieldnames, saved_rows = read_detection_row_store(row_store_path)
     assert saved_rows[0]["humpback"] == "1"
 
     resp = await client.put(
@@ -1238,10 +1230,7 @@ async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_sett
     assert payload["row"]["manual_positive_selection_start_sec"] == 0.0
     assert payload["row"]["manual_positive_selection_end_sec"] == 10.0
 
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        saved_rows = list(reader)
-
+    _fieldnames, saved_rows = read_detection_row_store(row_store_path)
     assert saved_rows[0]["manual_positive_selection_start_sec"] == "0.000000"
     assert saved_rows[0]["manual_positive_selection_end_sec"] == "10.000000"
     assert saved_rows[0]["positive_selection_origin"] == "manual_override"
