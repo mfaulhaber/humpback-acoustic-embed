@@ -874,6 +874,33 @@ async def _ensure_detection_row_store_for_job(
     return fieldnames, rows
 
 
+def _to_job_relative_offsets(rows: list[dict], job_start_timestamp: float) -> None:
+    """Convert file-relative start_sec/end_sec to job-relative for hydrophone rows.
+
+    Hydrophone detection rows store start_sec/end_sec as offsets within the
+    audio chunk file (e.g., 18 seconds into ``20190511T014900Z.wav``).  The
+    timeline viewer needs offsets relative to the job start.  This function
+    mutates each row in-place by parsing the chunk timestamp from ``filename``
+    and recomputing: ``job_relative = (chunk_epoch - job_start) + file_offset``.
+    """
+    from datetime import datetime, timezone
+
+    fmt = "%Y%m%dT%H%M%SZ"
+
+    for row in rows:
+        filename = row.get("filename") or ""
+        # Strip extension to get the compact UTC timestamp
+        base = filename.rsplit(".", 1)[0] if "." in filename else filename
+        try:
+            chunk_dt = datetime.strptime(base, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue  # non-timestamped filename — leave offsets as-is
+        chunk_epoch = chunk_dt.timestamp()
+        offset = chunk_epoch - job_start_timestamp
+        row["start_sec"] = row.get("start_sec", 0.0) + offset
+        row["end_sec"] = row.get("end_sec", 0.0) + offset
+
+
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(
     job_id: str, session: SessionDep, settings: SettingsDep
@@ -903,7 +930,7 @@ async def get_detection_content(
             window_size_seconds=window_size_seconds,
         )
 
-    return [
+    rows = [
         normalize_detection_row(
             row,
             is_hydrophone=is_hydrophone,
@@ -911,6 +938,14 @@ async def get_detection_content(
         )
         for row in raw_rows
     ]
+
+    # For hydrophone jobs, start_sec/end_sec are file-relative (offset within
+    # the audio chunk).  Convert to job-relative so the timeline viewer and
+    # skip-forward/back navigation work correctly.
+    if is_hydrophone and job.start_timestamp is not None:
+        _to_job_relative_offsets(rows, job.start_timestamp)
+
+    return rows
 
 
 # ---- Detection Labels ----
