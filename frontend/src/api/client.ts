@@ -62,6 +62,7 @@ import type {
   UncertaintyQueueRow,
   ConvergenceMetrics,
   TimelineConfidenceResponse,
+  LabelEditItem,
 } from "./types";
 
 class ApiError extends Error {
@@ -94,6 +95,14 @@ function post<T>(path: string, body: unknown): Promise<T> {
 function put<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, {
     method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function patch<T>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -600,6 +609,9 @@ export const fetchTimelineConfidence = (jobId: string) =>
   api<TimelineConfidenceResponse>(
     `/classifier/detection-jobs/${jobId}/timeline/confidence`,
   );
+
+export const patchDetectionLabels = (jobId: string, edits: LabelEditItem[]) =>
+  patch<DetectionRow[]>(`/classifier/detection-jobs/${jobId}/labels`, { edits });
 
 export const prepareTimelineTiles = (jobId: string) =>
   post<{ status: string }>(

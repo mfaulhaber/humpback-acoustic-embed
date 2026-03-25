@@ -869,3 +869,17 @@ export interface ZoomProgress {
 }
 
 export type PrepareStatusResponse = Record<string, ZoomProgress>;
+
+export interface LabelEditItem {
+  action: "add" | "move" | "delete" | "change_type";
+  row_id?: string;
+  start_sec?: number;
+  end_sec?: number;
+  new_start_sec?: number;
+  new_end_sec?: number;
+  label?: "humpback" | "orca" | "ship" | "background";
+}
+
+export interface LabelEditRequest {
+  edits: LabelEditItem[];
+}
