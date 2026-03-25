@@ -1312,11 +1312,10 @@ async def run_hydrophone_detection_job(
         try:
             from humpback.api.routers.timeline import _prepare_tiles_sync
             from humpback.processing.timeline_cache import TimelineTileCache
-            from humpback.storage import timeline_tiles_dir
 
-            tiles_dir = timeline_tiles_dir(settings.storage_root, job.id)
             tile_cache = TimelineTileCache(
-                tiles_dir, max_items=settings.timeline_tile_cache_max_items
+                cache_dir=settings.storage_root / "timeline_cache",
+                max_jobs=settings.timeline_cache_max_jobs,
             )
             await asyncio.to_thread(
                 _prepare_tiles_sync,

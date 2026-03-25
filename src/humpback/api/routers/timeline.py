@@ -22,7 +22,7 @@ from humpback.processing.timeline_tiles import (
     tile_time_range,
 )
 from humpback.services import classifier_service
-from humpback.storage import detection_diagnostics_path, timeline_tiles_dir
+from humpback.storage import detection_diagnostics_path
 
 logger = logging.getLogger(__name__)
 
@@ -232,9 +232,9 @@ async def get_tile(
             f"Tile index {tile_index} out of range (max {max_tiles - 1} for {zoom_level})",
         )
 
-    tiles_dir = timeline_tiles_dir(settings.storage_root, job.id)
     cache = TimelineTileCache(
-        tiles_dir, max_items=settings.timeline_tile_cache_max_items
+        cache_dir=settings.storage_root / "timeline_cache",
+        max_jobs=settings.timeline_cache_max_jobs,
     )
 
     # Check cache first
@@ -342,9 +342,9 @@ async def prepare_tiles(
     """Pre-render coarse tiles (24h + 6h zoom levels) for the timeline viewer."""
     job = await _get_job_or_404(session, job_id)
 
-    tiles_dir = timeline_tiles_dir(settings.storage_root, job.id)
     cache = TimelineTileCache(
-        tiles_dir, max_items=settings.timeline_tile_cache_max_items
+        cache_dir=settings.storage_root / "timeline_cache",
+        max_jobs=settings.timeline_cache_max_jobs,
     )
 
     rendered = await asyncio.to_thread(
