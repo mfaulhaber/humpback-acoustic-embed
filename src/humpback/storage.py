@@ -68,6 +68,10 @@ def detection_embeddings_path(storage_root: Path, detection_job_id: str) -> Path
     )
 
 
+def timeline_tiles_dir(storage_root: Path, detection_job_id: str) -> Path:
+    return detection_dir(storage_root, detection_job_id) / "timeline_tiles"
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path

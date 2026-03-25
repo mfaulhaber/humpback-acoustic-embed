@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     spectrogram_height_px: int = 320
     spectrogram_cache_max_items: int = 1000
 
+    # Timeline viewer settings
+    timeline_tile_width_px: int = 512
+    timeline_tile_height_px: int = 256
+    timeline_tile_cache_max_items: int = 5000
+    timeline_dynamic_range_db: float = 80.0
+
     @classmethod
     def from_repo_env(cls, **kwargs) -> "Settings":
         return cast(Any, cls)(_env_file=_repo_env_file(), **kwargs)

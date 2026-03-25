@@ -15,6 +15,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.api.routers.timeline import router as timeline_router
 from humpback.classifier.detection_rows import (
     DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
@@ -68,6 +69,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/classifier", tags=["classifier"])
+
+# Mount timeline sub-router
+router.include_router(
+    timeline_router,
+    prefix="/detection-jobs/{job_id}/timeline",
+    tags=["timeline"],
+)
 
 
 def _training_job_to_out(job) -> ClassifierTrainingJobOut:

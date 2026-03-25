@@ -851,3 +851,14 @@ export interface HealthStatus {
   db: string;
   detail?: string;
 }
+
+// ---- Timeline viewer ----
+
+export type ZoomLevel = "24h" | "6h" | "1h" | "15m" | "5m" | "1m";
+
+export interface TimelineConfidenceResponse {
+  window_sec: number;
+  scores: (number | null)[];
+  start_timestamp: number;
+  end_timestamp: number;
+}
