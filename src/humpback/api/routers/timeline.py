@@ -104,7 +104,7 @@ def _render_tile_sync(
 
     audio = resolve_timeline_audio(
         hydrophone_id=job.hydrophone_id or "",
-        local_cache_path=job.local_cache_path or "",
+        local_cache_path=job.local_cache_path or settings.s3_cache_path or "",
         job_start_timestamp=job.start_timestamp,
         job_end_timestamp=job.end_timestamp,
         start_sec=start_epoch,
@@ -350,7 +350,7 @@ async def get_audio(
     audio = await asyncio.to_thread(
         resolve_timeline_audio,
         hydrophone_id=job.hydrophone_id,
-        local_cache_path=job.local_cache_path or "",
+        local_cache_path=job.local_cache_path or settings.s3_cache_path or "",
         job_start_timestamp=job.start_timestamp or 0.0,
         job_end_timestamp=job.end_timestamp or 0.0,
         start_sec=start_sec,
