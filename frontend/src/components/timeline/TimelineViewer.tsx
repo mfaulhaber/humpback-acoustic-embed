@@ -2,15 +2,20 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import type { ZoomLevel } from "@/api/types";
-import { useTimelineConfidence, useTimelineDetections, usePrepareTimeline, usePrepareStatus } from "@/hooks/queries/useTimeline";
-import { useHydrophoneDetectionJobs } from "@/hooks/queries/useClassifier";
+import { useTimelineConfidence, useTimelineDetections, usePrepareTimeline, usePrepareStatus, useSaveLabels } from "@/hooks/queries/useTimeline";
+import { useHydrophoneDetectionJobs, useExtractLabeledSamples } from "@/hooks/queries/useClassifier";
+import { useLabelEdits } from "@/hooks/queries/useLabelEdits";
 import { timelineAudioUrl } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
 import { ZoomSelector } from "./ZoomSelector";
 import { PlaybackControls } from "./PlaybackControls";
 import { Minimap } from "./Minimap";
 import { SpectrogramViewport } from "./SpectrogramViewport";
+import { LabelToolbar } from "./LabelToolbar";
+import { LabelEditor } from "./LabelEditor";
+import { ExtractDialog } from "../classifier/ExtractDialog";
 import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC, AUDIO_FORMAT } from "./constants";
+import type { LabelType } from "./constants";
 
 export function TimelineViewer() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -45,6 +50,12 @@ export function TimelineViewer() {
   const [freqRange, setFreqRange] = useState<[number, number]>([0, 3000]);
   const [showLabels, setShowLabels] = useState(false);
   const [speed, setSpeed] = useState(1);
+
+  // Label mode state
+  const [labelMode, setLabelMode] = useState(false);
+  const [labelSubMode, setLabelSubMode] = useState<"select" | "add">("select");
+  const [selectedLabel, setSelectedLabel] = useState<LabelType>("humpback");
+  const [extractOpen, setExtractOpen] = useState(false);
 
   // Double-buffered audio elements for gapless playback
   const [playbackOriginEpoch, setPlaybackOriginEpoch] = useState(0);
@@ -186,6 +197,15 @@ export function TimelineViewer() {
   const { data: confidence } = useTimelineConfidence(jobId ?? "");
   const { data: detections } = useTimelineDetections(jobId ?? "");
 
+  // Label editing hooks
+  const { state: labelState, dispatch: labelDispatch, mergedRows, isDirty, selectedId } =
+    useLabelEdits(detections ?? []);
+  const saveMutation = useSaveLabels(jobId ?? "");
+  const extractMutation = useExtractLabeledSamples();
+
+  // Label mode is enabled only when paused and zoomed to 5m or 1m
+  const labelModeEnabled = !isPlaying && (zoomLevel === "1m" || zoomLevel === "5m");
+
   // confidence.scores is consumed by the Minimap below
 
   // Zoom in/out
@@ -199,10 +219,21 @@ export function TimelineViewer() {
     if (idx > 0) setZoomLevel(ZOOM_LEVELS[idx - 1]);
   }, [zoomLevel]);
 
-  // Play/pause
-  const togglePlay = useCallback(() => {
-    setIsPlaying((prev) => !prev);
+  // Enter label mode callback
+  const enterLabelMode = useCallback(() => {
+    setIsPlaying(false);
+    setLabelMode(true);
   }, []);
+
+  // Play/pause — exits label mode if active
+  const togglePlay = useCallback(() => {
+    if (labelMode) {
+      if (isDirty && !confirm("Discard unsaved label changes?")) return;
+      setLabelMode(false);
+      labelDispatch({ type: "clear" });
+    }
+    setIsPlaying((prev) => !prev);
+  }, [labelMode, isDirty, labelDispatch]);
 
   // Skip to next/prev detection
   // Note: detection row start_sec/end_sec are canonical snapped bounds (timeline-
@@ -245,6 +276,17 @@ export function TimelineViewer() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [togglePlay, zoomIn, zoomOut, zoomLevel, job]);
+
+  // Warn before navigating away with unsaved label edits
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
 
   if (!jobId || !job) {
     return (
@@ -303,12 +345,62 @@ export function TimelineViewer() {
           detections={detections ?? []}
           onCenterChange={setCenterTimestamp}
           onPan={handlePan}
+          labelMode={labelMode}
+          renderLabelEditor={(w, h) => (
+            <LabelEditor
+              mergedRows={mergedRows}
+              mode={labelSubMode}
+              selectedLabel={selectedLabel}
+              selectedId={selectedId}
+              dispatch={labelDispatch}
+              jobStart={job.start_timestamp ?? 0}
+              jobDuration={(job.end_timestamp ?? 0) - (job.start_timestamp ?? 0)}
+              centerTimestamp={centerTimestamp}
+              zoomLevel={zoomLevel}
+              width={w}
+              height={h}
+            />
+          )}
         />
       </div>
 
       {/* Double-buffered hidden audio elements for gapless playback */}
       <audio ref={audioRefA} preload="auto" style={{ display: "none" }} />
       <audio ref={audioRefB} preload="auto" style={{ display: "none" }} />
+
+      {/* Label toolbar (shown only in label mode) */}
+      {labelMode && (
+        <LabelToolbar
+          mode={labelSubMode}
+          onModeChange={setLabelSubMode}
+          selectedLabel={selectedLabel}
+          onLabelChange={setSelectedLabel}
+          onDelete={() => selectedId && labelDispatch({ type: "delete", row_id: selectedId })}
+          onSave={() => {
+            const items = labelState.edits.map((e) => ({
+              action: e.action,
+              row_id: e.row_id,
+              start_sec: e.start_sec,
+              end_sec: e.end_sec,
+              new_start_sec: e.new_start_sec,
+              new_end_sec: e.new_end_sec,
+              label: e.label,
+            }));
+            saveMutation.mutate(items, {
+              onSuccess: () => labelDispatch({ type: "clear" }),
+            });
+          }}
+          onExtract={() => setExtractOpen(true)}
+          onCancel={() => {
+            if (isDirty && !confirm("Discard unsaved label changes?")) return;
+            setLabelMode(false);
+            labelDispatch({ type: "clear" });
+          }}
+          isDirty={isDirty}
+          isSaving={saveMutation.isPending}
+          hasSelection={selectedId !== null}
+        />
+      )}
 
       <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
       <PlaybackControls
@@ -321,7 +413,20 @@ export function TimelineViewer() {
         onSpeedChange={setSpeed}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
+        onLabelMode={enterLabelMode}
+        labelModeEnabled={labelModeEnabled}
       />
+
+      {/* Extract dialog */}
+      {extractOpen && (
+        <ExtractDialog
+          open={extractOpen}
+          onOpenChange={setExtractOpen}
+          selectedIds={new Set([jobId ?? ""])}
+          extractMutation={extractMutation}
+          onSuccess={() => setExtractOpen(false)}
+        />
+      )}
     </div>
   );
 }
