@@ -1308,6 +1308,38 @@ async def run_hydrophone_detection_job(
         )
         await complete_detection_job(session, job.id)
 
+        # Pre-render coarse timeline tiles (best-effort, don't fail the job)
+        try:
+            from humpback.api.routers.timeline import _prepare_tiles_sync
+            from humpback.processing.timeline_cache import TimelineTileCache
+            from humpback.storage import timeline_tiles_dir
+
+            tiles_dir = timeline_tiles_dir(settings.storage_root, job.id)
+            tile_cache = TimelineTileCache(
+                tiles_dir, max_items=settings.timeline_tile_cache_max_items
+            )
+            await asyncio.to_thread(
+                _prepare_tiles_sync,
+                job=job,
+                settings=settings,
+                cache=tile_cache,
+            )
+
+            # Mark tiles ready
+            await session.execute(
+                update(DetectionJob)
+                .where(DetectionJob.id == job.id)
+                .values(timeline_tiles_ready=True)
+            )
+            await session.commit()
+            logger.info("Pre-rendered timeline tiles for job %s", job.id)
+        except Exception:
+            logger.warning(
+                "Failed to pre-render timeline tiles for job %s",
+                job.id,
+                exc_info=True,
+            )
+
     except Exception as e:
         logger.exception("Hydrophone detection job %s failed", job.id)
         try:
