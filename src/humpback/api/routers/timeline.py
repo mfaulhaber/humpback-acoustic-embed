@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import threading
 import wave
 
 import numpy as np
@@ -22,11 +23,15 @@ from humpback.processing.timeline_tiles import (
     tile_time_range,
 )
 from humpback.services import classifier_service
-from humpback.storage import detection_diagnostics_path, timeline_tiles_dir
+from humpback.storage import detection_diagnostics_path
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Module-level set to track in-progress prepare jobs (prevents duplicate work)
+_preparing: set[str] = set()
+_preparing_lock = threading.Lock()
 
 
 # ---- Response models ----
@@ -40,7 +45,7 @@ class ConfidenceResponse(BaseModel):
 
 
 class PrepareResponse(BaseModel):
-    tiles_rendered: int
+    status: str
     timeline_tiles_ready: bool
 
 
@@ -127,61 +132,46 @@ def _render_tile_sync(
     return tile_bytes
 
 
+_PREPARE_PRIORITY = ["1h", "15m", "5m", "1m", "6h", "24h"]
+
+
 def _prepare_tiles_sync(
     *,
     job,
     settings,
     cache: TimelineTileCache,
+    zoom_levels: list[str] | None = None,
 ) -> int:
-    """Pre-render coarse tiles (24h + 6h zoom levels). Returns count rendered."""
-    from humpback.processing.timeline_audio import resolve_timeline_audio
-
+    """Render tiles for requested zoom levels in priority order. Skips cached."""
     duration = _job_duration(job)
+    if duration <= 0:
+        return 0
+    levels = zoom_levels or list(_PREPARE_PRIORITY)
+    priority = {z: i for i, z in enumerate(_PREPARE_PRIORITY)}
+    levels.sort(key=lambda z: priority.get(z, 99))
+
     rendered = 0
-
-    for level in ("24h", "6h"):
-        n_tiles = tile_count(level, job_duration_sec=duration)
-        for idx in range(n_tiles):
-            # Skip if already cached
-            if cache.get(job.id, level, idx) is not None:
-                rendered += 1
+    for zoom in levels:
+        count = tile_count(zoom, job_duration_sec=duration)
+        for idx in range(count):
+            if cache.has(job.id, zoom, idx):
                 continue
-
-            start_epoch, end_epoch = tile_time_range(
-                level, tile_index=idx, job_start_timestamp=job.start_timestamp
-            )
-            tile_dur = end_epoch - start_epoch
-
-            sr = _tile_sample_rate(tile_dur, settings.timeline_tile_width_px)
-
-            audio = resolve_timeline_audio(
-                hydrophone_id=job.hydrophone_id or "",
-                local_cache_path=job.local_cache_path or "",
-                job_start_timestamp=job.start_timestamp,
-                job_end_timestamp=job.end_timestamp,
-                start_sec=start_epoch,
-                duration_sec=tile_dur,
-                target_sr=sr,
-                noaa_cache_path=settings.noaa_cache_path,
-            )
-
-            n_fft = min(2048, len(audio))
-            if n_fft < 16:
-                n_fft = 16
-            hop_length = max(1, n_fft // 8)
-
-            tile_bytes = generate_timeline_tile(
-                audio,
-                sample_rate=sr,
-                n_fft=n_fft,
-                hop_length=hop_length,
-                width_px=settings.timeline_tile_width_px,
-                height_px=settings.timeline_tile_height_px,
-                dynamic_range_db=settings.timeline_dynamic_range_db,
-            )
-            cache.put(job.id, level, idx, tile_bytes)
-            rendered += 1
-
+            try:
+                _render_tile_sync(
+                    job=job,
+                    zoom_level=zoom,
+                    tile_index=idx,
+                    settings=settings,
+                    cache=cache,
+                )
+                rendered += 1
+            except Exception:
+                logger.exception(
+                    "Failed to render tile %s/%d for job %s",
+                    zoom,
+                    idx,
+                    job.id,
+                )
     return rendered
 
 
@@ -201,6 +191,45 @@ def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:
         wf.setframerate(sample_rate)
         wf.writeframes(pcm.tobytes())
     return buf.getvalue()
+
+
+def _encode_mp3(audio: np.ndarray, sample_rate: int) -> bytes:
+    """Encode float32 audio to MP3 via ffmpeg subprocess."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    wav_bytes = _encode_wav(audio, sample_rate)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_f:
+        wav_path = wav_f.name
+        wav_f.write(wav_bytes)
+
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as mp3_f:
+        mp3_path = mp3_f.name
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                wav_path,
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                "128k",
+                "-ac",
+                "1",
+                mp3_path,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        return Path(mp3_path).read_bytes()
+    finally:
+        Path(wav_path).unlink(missing_ok=True)
+        Path(mp3_path).unlink(missing_ok=True)
 
 
 # ---- Endpoints ----
@@ -232,9 +261,9 @@ async def get_tile(
             f"Tile index {tile_index} out of range (max {max_tiles - 1} for {zoom_level})",
         )
 
-    tiles_dir = timeline_tiles_dir(settings.storage_root, job.id)
     cache = TimelineTileCache(
-        tiles_dir, max_items=settings.timeline_tile_cache_max_items
+        cache_dir=settings.storage_root / "timeline_cache",
+        max_jobs=settings.timeline_cache_max_jobs,
     )
 
     # Check cache first
@@ -303,10 +332,11 @@ async def get_audio(
         ..., description="Timeline-absolute start position (epoch seconds)"
     ),
     duration_sec: float = Query(..., gt=0, description="Duration in seconds"),
+    format: str = Query("wav", pattern="^(wav|mp3)$"),
 ) -> Response:
-    """Return WAV audio for an arbitrary timeline position."""
-    if duration_sec > 120.0:
-        raise HTTPException(400, "Maximum audio duration is 120 seconds")
+    """Return audio for an arbitrary timeline position (WAV or MP3)."""
+    if duration_sec > 600.0:
+        raise HTTPException(400, "Maximum audio duration is 600 seconds")
 
     job = await _get_job_or_404(session, job_id)
 
@@ -329,8 +359,12 @@ async def get_audio(
         noaa_cache_path=settings.noaa_cache_path,
     )
 
-    wav_bytes = _encode_wav(audio, sample_rate=32000)
-    return Response(content=wav_bytes, media_type="audio/wav")
+    if format == "mp3":
+        data = _encode_mp3(audio, 32000)
+        return Response(content=data, media_type="audio/mpeg")
+    else:
+        data = _encode_wav(audio, sample_rate=32000)
+        return Response(content=data, media_type="audio/wav")
 
 
 @router.post("/prepare")
@@ -339,22 +373,32 @@ async def prepare_tiles(
     session: SessionDep,
     settings: SettingsDep,
 ) -> PrepareResponse:
-    """Pre-render coarse tiles (24h + 6h zoom levels) for the timeline viewer."""
+    """Launch background rendering of all zoom-level tiles for the timeline viewer."""
     job = await _get_job_or_404(session, job_id)
 
-    tiles_dir = timeline_tiles_dir(settings.storage_root, job.id)
     cache = TimelineTileCache(
-        tiles_dir, max_items=settings.timeline_tile_cache_max_items
+        cache_dir=settings.storage_root / "timeline_cache",
+        max_jobs=settings.timeline_cache_max_jobs,
     )
 
-    rendered = await asyncio.to_thread(
-        _prepare_tiles_sync,
-        job=job,
-        settings=settings,
-        cache=cache,
-    )
+    with _preparing_lock:
+        already_running = job.id in _preparing
+        if not already_running:
+            _preparing.add(job.id)
 
-    # Mark job as timeline_tiles_ready
+    if not already_running:
+
+        def _background():
+            try:
+                _prepare_tiles_sync(job=job, settings=settings, cache=cache)
+            finally:
+                with _preparing_lock:
+                    _preparing.discard(job.id)
+
+        threading.Thread(target=_background, daemon=True).start()
+
+    # Mark timeline_tiles_ready immediately — signals that preparation was
+    # initiated.  Use /prepare-status for real per-zoom progress.
     from humpback.models.classifier import DetectionJob
     from sqlalchemy import select as sa_select
 
@@ -362,11 +406,29 @@ async def prepare_tiles(
         sa_select(DetectionJob).where(DetectionJob.id == job_id)
     )
     db_job = result.scalar_one_or_none()
-    if db_job is not None:
+    if db_job is not None and not db_job.timeline_tiles_ready:
         db_job.timeline_tiles_ready = True
         await session.commit()
 
-    return PrepareResponse(
-        tiles_rendered=rendered,
-        timeline_tiles_ready=True,
+    return PrepareResponse(status="preparing", timeline_tiles_ready=True)
+
+
+@router.get("/prepare-status")
+async def prepare_status(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> dict[str, dict[str, int]]:
+    """Return per-zoom-level rendering progress for a detection job."""
+    job = await _get_job_or_404(session, job_id)
+    duration = _job_duration(job)
+    cache = TimelineTileCache(
+        cache_dir=settings.storage_root / "timeline_cache",
+        max_jobs=settings.timeline_cache_max_jobs,
     )
+    status: dict[str, dict[str, int]] = {}
+    for zoom in ZOOM_LEVELS:
+        total = tile_count(zoom, job_duration_sec=duration)
+        rendered = cache.tile_count_for_zoom(job.id, zoom)
+        status[zoom] = {"total": total, "rendered": min(rendered, total)}
+    return status

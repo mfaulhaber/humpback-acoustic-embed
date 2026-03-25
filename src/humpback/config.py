@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Timeline viewer settings
     timeline_tile_width_px: int = 512
     timeline_tile_height_px: int = 256
-    timeline_tile_cache_max_items: int = 5000
+    timeline_cache_max_jobs: int = 15
     timeline_dynamic_range_db: float = 80.0
 
     @classmethod

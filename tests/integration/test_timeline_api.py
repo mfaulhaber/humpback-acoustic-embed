@@ -230,14 +230,14 @@ async def test_audio_endpoint_returns_wav(client, app_settings):
 
 
 async def test_audio_endpoint_max_duration(client, app_settings):
-    """Requesting > 120 seconds returns 400."""
+    """Requesting > 600 seconds returns 400."""
     job_id = await _create_completed_hydrophone_job(app_settings)
 
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/timeline/audio",
-        params={"start_sec": 1000.0, "duration_sec": 200.0},
+        params={"start_sec": 1000.0, "duration_sec": 601.0},
     )
-    assert resp.status_code == 400
+    assert resp.status_code in (400, 422)
 
 
 async def test_audio_endpoint_job_not_found(client):
@@ -290,7 +290,7 @@ async def test_audio_endpoint_non_hydrophone_job(client, app_settings):
 
 
 async def test_prepare_endpoint(client, app_settings):
-    """POST /prepare renders coarse tiles and marks job ready."""
+    """POST /prepare renders tiles and marks job ready."""
     job_id = await _create_completed_hydrophone_job(app_settings)
 
     resp = await client.post(
@@ -298,14 +298,65 @@ async def test_prepare_endpoint(client, app_settings):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["tiles_rendered"] > 0
     assert data["timeline_tiles_ready"] is True
 
-    # Verify the job is now marked as ready in DB
-    get_resp = await client.get(f"/classifier/detection-jobs/{job_id}")
-    assert get_resp.status_code == 200
-    # The DetectionJobOut schema may or may not expose timeline_tiles_ready,
-    # but we verified it via the prepare response
+
+async def test_prepare_all_zoom_levels(client, app_settings):
+    """POST /prepare with all zoom levels should render tiles for each level."""
+    import time
+
+    job_id = await _create_completed_hydrophone_job(app_settings)
+    resp = await client.post(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare",
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timeline_tiles_ready"] is True
+
+    # Give background thread a moment to finish (stub audio is fast)
+    time.sleep(0.5)
+
+    # Check that tiles were rendered for at least some zoom levels via status
+    status_resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare-status",
+    )
+    assert status_resp.status_code == 200
+    status_data = status_resp.json()
+    # The 100s test job should have tiles at the 1h level at minimum
+    assert "1h" in status_data
+    total_rendered = sum(v["rendered"] for v in status_data.values())
+    assert total_rendered > 0
+
+
+async def test_prepare_status_endpoint(client, app_settings):
+    """GET /prepare-status should return per-zoom progress."""
+    import time
+
+    job_id = await _create_completed_hydrophone_job(app_settings)
+    # Trigger prepare first
+    await client.post(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare",
+    )
+    # Give background thread a moment to finish
+    time.sleep(0.5)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare-status",
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # Should have entries for each zoom level
+    assert "1h" in data
+    assert "total" in data["1h"]
+    assert "rendered" in data["1h"]
+
+
+async def test_prepare_status_job_not_found(client):
+    """GET /prepare-status for missing job should 404."""
+    resp = await client.get(
+        "/classifier/detection-jobs/99999/timeline/prepare-status",
+    )
+    assert resp.status_code == 404
 
 
 async def test_prepare_endpoint_job_not_found(client):
@@ -314,3 +365,50 @@ async def test_prepare_endpoint_job_not_found(client):
         "/classifier/detection-jobs/nonexistent/timeline/prepare",
     )
     assert resp.status_code == 404
+
+
+async def test_audio_endpoint_mp3_format(client, app_settings):
+    """GET /audio with format=mp3 should return audio/mpeg content."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 5.0, "format": "mp3"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/mpeg"
+    # MP3 starts with ID3 tag or sync word 0xFF
+    assert resp.content[:3] == b"ID3" or resp.content[0] == 0xFF
+
+
+async def test_audio_endpoint_600s_accepted(client, app_settings):
+    """GET /audio should accept duration_sec up to 600."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 600.0},
+    )
+    assert resp.status_code == 200
+
+
+async def test_audio_endpoint_601s_rejected(client, app_settings):
+    """GET /audio should reject duration_sec > 600."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 601.0},
+    )
+    assert resp.status_code in (400, 422)
+
+
+async def test_audio_endpoint_invalid_format(client, app_settings):
+    """GET /audio with invalid format should return 422."""
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/audio",
+        params={"start_sec": 1000.0, "duration_sec": 5.0, "format": "ogg"},
+    )
+    assert resp.status_code == 422

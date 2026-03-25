@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import type { ZoomLevel } from "@/api/types";
-import { useTimelineConfidence, useTimelineDetections } from "@/hooks/queries/useTimeline";
+import { useTimelineConfidence, useTimelineDetections, usePrepareTimeline, usePrepareStatus } from "@/hooks/queries/useTimeline";
 import { useHydrophoneDetectionJobs } from "@/hooks/queries/useClassifier";
 import { timelineAudioUrl } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
@@ -10,12 +10,33 @@ import { ZoomSelector } from "./ZoomSelector";
 import { PlaybackControls } from "./PlaybackControls";
 import { Minimap } from "./Minimap";
 import { SpectrogramViewport } from "./SpectrogramViewport";
-import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC } from "./constants";
+import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC, AUDIO_FORMAT } from "./constants";
 
 export function TimelineViewer() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data: jobs } = useHydrophoneDetectionJobs(0);
   const job = jobs?.find((j) => j.id === jobId);
+
+  // Background tile cache state
+  const [cacheComplete, setCacheComplete] = useState(false);
+  const prepareMutation = usePrepareTimeline();
+
+  // Trigger prepare on mount
+  useEffect(() => {
+    if (jobId) prepareMutation.mutate(jobId);
+  }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll prepare status
+  const { data: prepareStatus } = usePrepareStatus(jobId ?? "", !cacheComplete && !!jobId);
+
+  // Check completion
+  useEffect(() => {
+    if (!prepareStatus) return;
+    const allDone = Object.values(prepareStatus).every(
+      (z) => z.rendered >= z.total,
+    );
+    if (allDone) setCacheComplete(true);
+  }, [prepareStatus]);
 
   // Core state
   const [centerTimestamp, setCenterTimestamp] = useState<number>(0);
@@ -25,8 +46,29 @@ export function TimelineViewer() {
   const [showLabels, setShowLabels] = useState(false);
   const [speed, setSpeed] = useState(1);
 
-  // Audio element ref
-  const audioRef = useRef<HTMLAudioElement>(null);
+  // Double-buffered audio elements for gapless playback
+  const [playbackOriginEpoch, setPlaybackOriginEpoch] = useState(0);
+  const audioRefA = useRef<HTMLAudioElement>(null);
+  const audioRefB = useRef<HTMLAudioElement>(null);
+  const activeRef = useRef<"A" | "B">("A");
+
+  const getActiveAudio = useCallback(
+    () => (activeRef.current === "A" ? audioRefA.current : audioRefB.current),
+    [],
+  );
+  const getStandbyAudio = useCallback(
+    () => (activeRef.current === "A" ? audioRefB.current : audioRefA.current),
+    [],
+  );
+
+  const loadChunk = useCallback(
+    (startEpoch: number, element: HTMLAudioElement) => {
+      element.src = timelineAudioUrl(jobId ?? "", startEpoch, AUDIO_PREFETCH_SEC, AUDIO_FORMAT);
+      element.playbackRate = speed;
+      element.load();
+    },
+    [jobId, speed],
+  );
 
   // Initialize center to job midpoint
   useEffect(() => {
@@ -37,18 +79,29 @@ export function TimelineViewer() {
     }
   }, [job, centerTimestamp]);
 
-  // Start/stop audio when isPlaying or centerTimestamp changes at play start
+  // Play/pause: load first chunk into active element, prefetch next into standby
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const active = getActiveAudio();
+    if (!active) return;
+
     if (isPlaying) {
-      audio.src = timelineAudioUrl(jobId ?? "", centerTimestamp, AUDIO_PREFETCH_SEC);
-      audio.playbackRate = speed;
-      audio.play().catch(() => {
-        // Ignore AbortError when src is changed rapidly
-      });
+      const origin = centerTimestamp;
+      setPlaybackOriginEpoch(origin);
+      loadChunk(origin, active);
+
+      const onCanPlay = () => {
+        active.play().catch(() => {});
+        const standby = getStandbyAudio();
+        if (standby) {
+          loadChunk(origin + AUDIO_PREFETCH_SEC, standby);
+        }
+      };
+      active.addEventListener("canplay", onCanPlay, { once: true });
+      return () => active.removeEventListener("canplay", onCanPlay);
     } else {
-      audio.pause();
+      active.pause();
+      const standby = getStandbyAudio();
+      if (standby) standby.pause();
     }
     // Only re-run when isPlaying toggles, not on every centerTimestamp tick
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -56,44 +109,72 @@ export function TimelineViewer() {
 
   // Sync playback rate when speed changes
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.playbackRate = speed;
+    const a = audioRefA.current;
+    const b = audioRefB.current;
+    if (a) a.playbackRate = speed;
+    if (b) b.playbackRate = speed;
   }, [speed]);
 
-  // When the audio clip ends, load the next chunk from the current position
+  // Chunk-ended swap: when active audio ends, swap to standby and prefetch next
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const handleEnded = () => {
-      if (!isPlaying) return;
-      audio.src = timelineAudioUrl(jobId ?? "", centerTimestamp, AUDIO_PREFETCH_SEC);
-      audio.playbackRate = speed;
-      audio.play().catch(() => {});
-    };
-    audio.addEventListener("ended", handleEnded);
-    return () => audio.removeEventListener("ended", handleEnded);
-  }, [isPlaying, jobId, centerTimestamp, speed]);
+    const handleEnded = (source: "A" | "B") => () => {
+      if (activeRef.current !== source) return; // stale event
+      const standby = getStandbyAudio();
+      const newOrigin = playbackOriginEpoch + AUDIO_PREFETCH_SEC;
 
-  // RAF loop: advance centerTimestamp while playing
+      if (!standby || standby.readyState < 3) {
+        // Standby not ready — reload from current position (gap fallback)
+        const active = getActiveAudio();
+        if (active) {
+          setPlaybackOriginEpoch(newOrigin);
+          loadChunk(newOrigin, active);
+          active.addEventListener(
+            "canplay",
+            () => active.play().catch(() => {}),
+            { once: true },
+          );
+        }
+        return;
+      }
+
+      setPlaybackOriginEpoch(newOrigin);
+      activeRef.current = activeRef.current === "A" ? "B" : "A";
+      standby.play().catch(() => {});
+
+      // Prefetch next into now-idle element
+      const nowIdle = getStandbyAudio();
+      if (nowIdle) {
+        loadChunk(newOrigin + AUDIO_PREFETCH_SEC, nowIdle);
+      }
+    };
+
+    const a = audioRefA.current;
+    const b = audioRefB.current;
+    const handleA = handleEnded("A");
+    const handleB = handleEnded("B");
+    a?.addEventListener("ended", handleA);
+    b?.addEventListener("ended", handleB);
+    return () => {
+      a?.removeEventListener("ended", handleA);
+      b?.removeEventListener("ended", handleB);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playbackOriginEpoch, speed]);
+
+  // Audio-authoritative RAF loop: sync centerTimestamp from active audio element
   useEffect(() => {
     if (!isPlaying) return;
-    let lastTime = performance.now();
-    let rafId: number;
-
-    const tick = (now: number) => {
-      const dt = (now - lastTime) / 1000; // seconds
-      lastTime = now;
-      setCenterTimestamp((prev) => {
-        const next = prev + dt * speed;
-        return Math.min(next, job?.end_timestamp ?? next);
-      });
-      rafId = requestAnimationFrame(tick);
+    let raf: number;
+    const tick = () => {
+      const active = getActiveAudio();
+      if (active && !active.paused) {
+        setCenterTimestamp(playbackOriginEpoch + active.currentTime);
+      }
+      raf = requestAnimationFrame(tick);
     };
-    rafId = requestAnimationFrame(tick);
-
-    return () => cancelAnimationFrame(rafId);
-  }, [isPlaying, speed, job]);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, playbackOriginEpoch, getActiveAudio]);
 
   // Pan handler: pauses playback then updates position
   const handlePan = useCallback((t: number) => {
@@ -174,7 +255,20 @@ export function TimelineViewer() {
   }
 
   return (
-    <div className="flex flex-col h-screen font-mono text-xs" style={{ background: COLORS.bg, color: COLORS.text }}>
+    <div className="flex flex-col h-screen font-mono text-xs" style={{ background: COLORS.bg, color: COLORS.text, position: "relative" }}>
+      {!cacheComplete && prepareStatus && (
+        <div style={{
+          position: "absolute", top: 4, right: 16,
+          fontSize: 11, color: COLORS.textMuted, zIndex: 10,
+        }}>
+          Caching: {
+            Object.entries(prepareStatus)
+              .filter(([, z]) => z.rendered < z.total)
+              .map(([zoom, z]) => `${zoom} ${z.rendered}/${z.total}`)
+              .join(", ")
+          }
+        </div>
+      )}
       <TimelineHeader
         hydrophone={job.hydrophone_name ?? job.hydrophone_id ?? ""}
         startTimestamp={job.start_timestamp ?? 0}
@@ -212,8 +306,9 @@ export function TimelineViewer() {
         />
       </div>
 
-      {/* Hidden audio element for playback */}
-      <audio ref={audioRef} style={{ display: "none" }} />
+      {/* Double-buffered hidden audio elements for gapless playback */}
+      <audio ref={audioRefA} preload="auto" style={{ display: "none" }} />
+      <audio ref={audioRefB} preload="auto" style={{ display: "none" }} />
 
       <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
       <PlaybackControls

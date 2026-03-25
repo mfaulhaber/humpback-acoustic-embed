@@ -862,3 +862,10 @@ export interface TimelineConfidenceResponse {
   start_timestamp: number;
   end_timestamp: number;
 }
+
+export interface ZoomProgress {
+  total: number;
+  rendered: number;
+}
+
+export type PrepareStatusResponse = Record<string, ZoomProgress>;

@@ -3,6 +3,7 @@ import {
   fetchTimelineConfidence,
   fetchDetectionContent,
   prepareTimelineTiles,
+  fetchPrepareStatus,
 } from "@/api/client";
 
 export function useTimelineConfidence(jobId: string) {
@@ -28,5 +29,14 @@ export function usePrepareTimeline() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
     },
+  });
+}
+
+export function usePrepareStatus(jobId: number | string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["timelinePrepareStatus", jobId],
+    queryFn: () => fetchPrepareStatus(jobId),
+    enabled,
+    refetchInterval: enabled ? 3000 : false,
   });
 }

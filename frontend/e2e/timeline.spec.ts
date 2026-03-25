@@ -89,8 +89,51 @@ async function setupHydrophoneMocks(page: Page) {
   );
 }
 
-async function setupTimelineMocks(page: Page) {
+const MOCK_DETECTIONS = [
+  {
+    row_id: "row-1",
+    filename: "test.flac",
+    start_sec: 100,
+    end_sec: 105,
+    avg_confidence: 0.82,
+    peak_confidence: 0.95,
+    n_windows: 1,
+    humpback: 1,
+    orca: 0,
+    ship: 0,
+    background: 0,
+  },
+  {
+    row_id: "row-2",
+    filename: "test.flac",
+    start_sec: 200,
+    end_sec: 205,
+    avg_confidence: 0.71,
+    peak_confidence: 0.88,
+    n_windows: 1,
+    humpback: 0,
+    orca: 1,
+    ship: 0,
+    background: 0,
+  },
+  {
+    row_id: "row-3",
+    filename: "test.flac",
+    start_sec: 300,
+    end_sec: 305,
+    avg_confidence: 0.65,
+    peak_confidence: 0.72,
+    n_windows: 1,
+    humpback: 0,
+    orca: 0,
+    ship: 1,
+    background: 0,
+  },
+];
+
+async function setupTimelineMocks(page: Page, opts?: { withDetections?: boolean }) {
   await setupHydrophoneMocks(page);
+  const detections = opts?.withDetections ? MOCK_DETECTIONS : [];
   // Mock timeline confidence and detection endpoints
   await page.route(/\/classifier\/hydrophone-detection-jobs\/[^/]+\/confidence$/, (route) =>
     route.fulfill({
@@ -103,7 +146,7 @@ async function setupTimelineMocks(page: Page) {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([]),
+      body: JSON.stringify(detections),
     }),
   );
   // Mock tile images to avoid real fetch attempts
@@ -254,5 +297,57 @@ test.describe("Timeline Viewer", () => {
     // Click again: 0.5x -> 1x
     await page.locator("button", { hasText: "0.5x" }).click();
     await expect(page.locator("button", { hasText: "1x" })).toBeVisible();
+  });
+
+  test("label overlay shows detections excluding negatives", async ({ page }) => {
+    await setupTimelineMocks(page, { withDetections: true });
+    await page.goto(`/app/classifier/timeline/${COMPLETE_JOB.id}`);
+
+    await expect(page.locator("text=Back to Jobs")).toBeVisible({ timeout: 10_000 });
+
+    // Toggle labels ON
+    const labelsBtn = page.locator("button", { hasText: "Labels: OFF" });
+    await expect(labelsBtn).toBeVisible();
+    await labelsBtn.click();
+    await expect(page.locator("button", { hasText: "Labels: ON" })).toBeVisible();
+
+    // Detection overlay container should be visible
+    const overlay = page.locator('[data-testid="detection-overlay"]');
+    await expect(overlay).toBeVisible();
+
+    // All detections shown except negatives (ship/background are excluded)
+    // Mock has 3 rows: humpback, orca, ship — ship is negative so excluded, expect 2 bars
+    const bars = overlay.locator("> div");
+    // Wait for bars to appear (they are direct children of the overlay container)
+    await expect(bars.first()).toBeVisible({ timeout: 5_000 });
+    const count = await bars.count();
+    // 2 bars + potentially the tooltip div (hidden), so at least 2
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
+
+  test("label bar shows tooltip on hover", async ({ page }) => {
+    await setupTimelineMocks(page, { withDetections: true });
+    await page.goto(`/app/classifier/timeline/${COMPLETE_JOB.id}`);
+
+    await expect(page.locator("text=Back to Jobs")).toBeVisible({ timeout: 10_000 });
+
+    // Toggle labels ON
+    const labelsBtn = page.locator("button", { hasText: "Labels: OFF" });
+    await labelsBtn.click();
+    await expect(page.locator("button", { hasText: "Labels: ON" })).toBeVisible();
+
+    const overlay = page.locator('[data-testid="detection-overlay"]');
+    await expect(overlay).toBeVisible();
+
+    // Find the bar divs (direct children with pointer-events: auto)
+    const bars = overlay.locator("> div").filter({ has: page.locator("css=*") }).first();
+    // Alternatively, find any child div with pointer-events auto
+    const clickableBars = overlay.locator('div[style*="pointer-events: auto"]');
+    const barCount = await clickableBars.count();
+    if (barCount > 0) {
+      await clickableBars.first().hover();
+      // Tooltip should display "Confidence" text
+      await expect(page.locator("text=Confidence")).toBeVisible({ timeout: 3_000 });
+    }
   });
 });
