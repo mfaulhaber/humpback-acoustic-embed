@@ -54,16 +54,20 @@ async def _create_completed_hydrophone_job(app_settings, *, num_windows: int = 2
     diag_path = detection_diagnostics_path(app_settings.storage_root, job_id)
     diag_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build a parquet with offset_sec and score columns
+    # Build a parquet matching WINDOW_DIAGNOSTICS_SCHEMA columns
     offsets = [float(i * 5) for i in range(num_windows)]
     scores = [0.1 + 0.8 * (i / max(1, num_windows - 1)) for i in range(num_windows)]
     filenames = ["stream.ts"] * num_windows
 
     table = pa.table(
         {
-            "offset_sec": pa.array(offsets, type=pa.float64()),
-            "score": pa.array(scores, type=pa.float64()),
             "filename": pa.array(filenames, type=pa.string()),
+            "window_index": pa.array(list(range(num_windows)), type=pa.int32()),
+            "offset_sec": pa.array(offsets, type=pa.float32()),
+            "end_sec": pa.array([o + 5.0 for o in offsets], type=pa.float32()),
+            "confidence": pa.array(scores, type=pa.float32()),
+            "is_overlapped": pa.array([False] * num_windows, type=pa.bool_()),
+            "overlap_sec": pa.array([0.0] * num_windows, type=pa.float32()),
         }
     )
     pq.write_table(table, str(diag_path))

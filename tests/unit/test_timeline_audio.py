@@ -182,6 +182,40 @@ def test_resolve_calls_hls_cache_with_clamped_params():
     assert abs(call_kwargs["duration_sec"] - expected_duration) < 1e-6
 
 
+def test_resolve_dispatches_to_provider_for_noaa():
+    """NOAA source IDs should dispatch to _resolve_audio_from_provider."""
+    from humpback.processing.timeline_audio import resolve_timeline_audio
+
+    sr = 32000
+    duration = 5.0
+    fake_audio = np.ones(int(sr * duration), dtype=np.float32) * 0.7
+
+    with (
+        patch(
+            "humpback.processing.timeline_audio._resolve_audio_from_provider"
+        ) as mock_provider,
+        patch("humpback.config.get_archive_source") as mock_source,
+    ):
+        mock_source.return_value = {"provider_kind": "noaa_gcs"}
+        mock_provider.return_value = fake_audio
+        result = resolve_timeline_audio(
+            hydrophone_id="sanctsound_oc",
+            local_cache_path="",
+            job_start_timestamp=1000000.0,
+            job_end_timestamp=1086400.0,
+            start_sec=1000050.0,
+            duration_sec=duration,
+            target_sr=sr,
+            noaa_cache_path="/fake/noaa-cache",
+        )
+    mock_provider.assert_called_once()
+    call_kwargs = mock_provider.call_args[1]
+    assert call_kwargs["hydrophone_id"] == "sanctsound_oc"
+    assert call_kwargs["noaa_cache_path"] == "/fake/noaa-cache"
+    assert len(result) == int(sr * duration)
+    assert np.allclose(result, 0.7)
+
+
 def test_build_hls_timeline_for_range_integration(tmp_path):
     """build_hls_timeline_for_range discovers local cache segments."""
     from humpback.classifier.s3_stream import build_hls_timeline_for_range

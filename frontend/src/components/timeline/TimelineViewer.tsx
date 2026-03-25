@@ -61,6 +61,20 @@ export function TimelineViewer() {
     audio.playbackRate = speed;
   }, [speed]);
 
+  // When the audio clip ends, load the next chunk from the current position
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const handleEnded = () => {
+      if (!isPlaying) return;
+      audio.src = timelineAudioUrl(jobId ?? "", centerTimestamp, AUDIO_PREFETCH_SEC);
+      audio.playbackRate = speed;
+      audio.play().catch(() => {});
+    };
+    audio.addEventListener("ended", handleEnded);
+    return () => audio.removeEventListener("ended", handleEnded);
+  }, [isPlaying, jobId, centerTimestamp, speed]);
+
   // RAF loop: advance centerTimestamp while playing
   useEffect(() => {
     if (!isPlaying) return;
@@ -181,7 +195,7 @@ export function TimelineViewer() {
       />
 
       {/* Main spectrogram viewport */}
-      <div className="flex-1 mx-4 my-2 rounded relative overflow-hidden" style={{ background: COLORS.bgDark }}>
+      <div className="flex-1 flex flex-col mx-4 my-2 rounded relative overflow-hidden" style={{ background: COLORS.bgDark }}>
         <SpectrogramViewport
           jobId={jobId}
           jobStart={job.start_timestamp ?? 0}

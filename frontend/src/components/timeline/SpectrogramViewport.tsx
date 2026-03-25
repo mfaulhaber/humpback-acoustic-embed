@@ -339,7 +339,7 @@ export function SpectrogramViewport({
             fontSize: "9px",
           }}
         >
-          {fLabels.map((l) => {
+          {fLabels.map((l, i) => {
             // Position: top = 0 is high freq, bottom = canvasHeight is low freq
             const frac =
               freqRange[1] === freqRange[0]
@@ -347,7 +347,7 @@ export function SpectrogramViewport({
                 : (freqRange[1] - l.hz) / (freqRange[1] - freqRange[0]);
             return (
               <div
-                key={l.hz}
+                key={`${l.hz}-${i}`}
                 className="absolute"
                 style={{
                   top: `${frac * 100}%`,

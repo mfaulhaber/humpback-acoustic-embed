@@ -105,6 +105,7 @@ def _render_tile_sync(
         start_sec=start_epoch,
         duration_sec=duration_sec,
         target_sr=sr,
+        noaa_cache_path=settings.noaa_cache_path,
     )
 
     # Adapt n_fft so it does not exceed the audio length
@@ -161,6 +162,7 @@ def _prepare_tiles_sync(
                 start_sec=start_epoch,
                 duration_sec=tile_dur,
                 target_sr=sr,
+                noaa_cache_path=settings.noaa_cache_path,
             )
 
             n_fft = min(2048, len(audio))
@@ -184,8 +186,11 @@ def _prepare_tiles_sync(
 
 
 def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:
-    """Encode float32 audio to 16-bit PCM WAV bytes."""
-    # Clip and convert to int16
+    """Encode float32 audio to 16-bit PCM WAV bytes with peak normalization."""
+    # Peak-normalize so raw hydrophone audio is audible
+    peak = float(np.max(np.abs(audio)))
+    if peak > 0:
+        audio = audio / peak
     audio_clipped = np.clip(audio, -1.0, 1.0)
     pcm = (audio_clipped * 32767).astype(np.int16)
 
@@ -265,7 +270,7 @@ async def get_confidence(
     table = pq.read_table(str(diag_path))
 
     offset_col = table.column("offset_sec").to_pylist()
-    score_col = table.column("score").to_pylist()
+    score_col = table.column("confidence").to_pylist()
 
     # Sort by offset
     pairs = sorted(zip(offset_col, score_col), key=lambda p: p[0])
@@ -321,6 +326,7 @@ async def get_audio(
         start_sec=start_sec,
         duration_sec=duration_sec,
         target_sr=32000,
+        noaa_cache_path=settings.noaa_cache_path,
     )
 
     wav_bytes = _encode_wav(audio, sample_rate=32000)
