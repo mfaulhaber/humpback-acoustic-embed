@@ -134,9 +134,12 @@ def test_apply_label_edits_change_type() -> None:
 
 
 def test_apply_label_edits_overlap_rejected() -> None:
-    """Adding a labeled row that overlaps another labeled row raises ValueError."""
-    rows = [_make_row("r1", 5, 10, "humpback")]
-    edits = [{"action": "add", "start_sec": 8.0, "end_sec": 13.0, "label": "orca"}]
+    """Two adds in the same batch that overlap are rejected."""
+    rows: list[dict[str, str]] = []
+    edits = [
+        {"action": "add", "start_sec": 5.0, "end_sec": 10.0, "label": "humpback"},
+        {"action": "add", "start_sec": 8.0, "end_sec": 13.0, "label": "orca"},
+    ]
     with pytest.raises(ValueError, match="overlap"):
         apply_label_edits(rows, edits, job_duration=JOB_DURATION)
 
@@ -195,3 +198,40 @@ def test_apply_label_edits_missing_row_id() -> None:
     edits = [{"action": "delete", "row_id": "nonexistent"}]
     with pytest.raises(ValueError, match="not found"):
         apply_label_edits(rows, edits, job_duration=JOB_DURATION)
+
+
+def test_apply_label_edits_preexisting_overlaps_tolerated() -> None:
+    """Pre-existing overlapping labeled rows do not block unrelated edits."""
+    # Simulate hydrophone detection rows from different audio chunks that
+    # happen to share file-relative timestamps.
+    rows = [
+        _make_row("r1", 0, 5, "humpback"),
+        _make_row("r2", 3, 8, "humpback"),  # overlaps r1
+        _make_row("r3", 50, 55),  # unlabeled
+    ]
+    # Adding a non-overlapping label should succeed despite the r1/r2 overlap.
+    edits = [{"action": "add", "start_sec": 40.0, "end_sec": 45.0, "label": "orca"}]
+    result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
+    labels = [r for r in result if r.get("orca") == "1"]
+    assert len(labels) == 1
+    assert labels[0]["start_sec"] == "40.0"
+
+
+def test_apply_label_edits_new_overlap_still_rejected() -> None:
+    """Two adds in the same batch that overlap each other are still rejected."""
+    rows: list[dict[str, str]] = []
+    edits = [
+        {"action": "add", "start_sec": 10.0, "end_sec": 15.0, "label": "humpback"},
+        {"action": "add", "start_sec": 12.0, "end_sec": 17.0, "label": "orca"},
+    ]
+    with pytest.raises(ValueError, match="overlap"):
+        apply_label_edits(rows, edits, job_duration=JOB_DURATION)
+
+
+def test_apply_label_edits_add_overlapping_existing_tolerated() -> None:
+    """Adding a label that overlaps a pre-existing labeled row is tolerated."""
+    rows = [_make_row("r1", 10, 15, "humpback")]
+    edits = [{"action": "add", "start_sec": 12.0, "end_sec": 17.0, "label": "orca"}]
+    result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
+    labels = [r for r in result if r.get("orca") == "1"]
+    assert len(labels) == 1
