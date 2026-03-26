@@ -1,5 +1,5 @@
 // frontend/src/components/timeline/LabelEditor.tsx
-import React, { useState, useRef, useMemo, useCallback } from "react";
+import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import type { DetectionRow } from "@/api/types";
 import type { ZoomLevel } from "@/api/types";
 import { VIEWPORT_SPAN, LABEL_COLORS, type LabelType } from "./constants";
@@ -243,6 +243,46 @@ export function LabelEditor({
     [mode, dispatch, getMouseSec],
   );
 
+  // --- Global drag listeners for select mode ---
+  // In select mode the container has pointerEvents: "none" so viewport pan
+  // works, but we still need to track mousemove/mouseup during bar drags.
+  useEffect(() => {
+    if (mode !== "select") return;
+
+    const handleGlobalMove = (e: MouseEvent) => {
+      if (!dragRef.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const sec = (px - width / 2) / pxPerSec + centerTimestamp - jobStart;
+      const drag = dragRef.current;
+      const delta = sec - drag.dragStartSec;
+      const candidate = snapToGrid(drag.originalStartSec + delta);
+      const clamped = clampDrag(candidate, drag.duration, drag.rowId);
+      setDragOffset(clamped);
+    };
+
+    const handleGlobalUp = () => {
+      if (dragRef.current && dragOffset !== null) {
+        const drag = dragRef.current;
+        dispatch({
+          type: "move",
+          row_id: drag.rowId,
+          new_start_sec: dragOffset,
+          new_end_sec: dragOffset + drag.duration,
+        });
+      }
+      dragRef.current = null;
+      setDragOffset(null);
+    };
+
+    window.addEventListener("mousemove", handleGlobalMove);
+    window.addEventListener("mouseup", handleGlobalUp);
+    return () => {
+      window.removeEventListener("mousemove", handleGlobalMove);
+      window.removeEventListener("mouseup", handleGlobalUp);
+    };
+  }, [mode, width, pxPerSec, centerTimestamp, jobStart, clampDrag, dragOffset, dispatch]);
+
   if (width <= 0 || height <= 0) return null;
 
   // --- Build bar data ---
@@ -294,6 +334,12 @@ export function LabelEditor({
 
   const isDragging = dragRef.current !== null;
 
+  // In select mode: container is transparent to pointer events so viewport
+  // pan still works.  Only individual label bars capture clicks/drags.
+  // In add mode: container captures events for ghost tracking and placement,
+  // but only when NOT panning (no drag in progress on the viewport).
+  const containerInteractive = mode === "add";
+
   return (
     <div
       ref={containerRef}
@@ -304,15 +350,15 @@ export function LabelEditor({
         left: 0,
         width,
         height,
-        pointerEvents: "auto",
+        pointerEvents: containerInteractive ? "auto" : "none",
         zIndex: 10,
         overflow: "hidden",
         cursor: mode === "add" ? "crosshair" : isDragging ? "grabbing" : "default",
       }}
-      onMouseMove={handleContainerMouseMove}
-      onMouseUp={handleContainerMouseUp}
-      onMouseLeave={handleContainerMouseLeave}
-      onClick={handleContainerClick}
+      onMouseMove={containerInteractive ? handleContainerMouseMove : undefined}
+      onMouseUp={containerInteractive ? handleContainerMouseUp : undefined}
+      onMouseLeave={containerInteractive ? handleContainerMouseLeave : undefined}
+      onClick={containerInteractive ? handleContainerClick : undefined}
     >
       {/* Render all bars */}
       {bars.map(({ row, x, w, label, isSelected, isManual, dimmed }) => {
