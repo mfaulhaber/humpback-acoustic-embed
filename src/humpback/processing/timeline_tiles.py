@@ -72,6 +72,44 @@ def tile_time_range(
     return start, end
 
 
+# ---- Power Statistics (for per-job normalization) ----
+
+
+def compute_power_db_stats(
+    audio: np.ndarray,
+    sample_rate: int,
+    freq_min: int = 0,
+    freq_max: int = 3000,
+    n_fft: int = 2048,
+    hop_length: int = 256,
+) -> dict[str, float]:
+    """Compute dB power statistics for an audio chunk.
+
+    Returns dict with keys: min_db, max_db, p95_db, mean_db.
+    """
+    if len(audio) < n_fft:
+        audio = np.pad(audio, (0, n_fft - len(audio)))
+
+    noverlap = n_fft - hop_length
+    f, _t, Zxx = stft(
+        audio, fs=sample_rate, window="hann", nperseg=n_fft, noverlap=noverlap
+    )
+
+    power = np.abs(Zxx) ** 2
+    power = np.maximum(power, 1e-12)
+    power_db = 10.0 * np.log10(power)
+
+    freq_mask = (f >= freq_min) & (f <= freq_max)
+    power_db = power_db[freq_mask, :]
+
+    return {
+        "min_db": float(np.min(power_db)),
+        "max_db": float(np.max(power_db)),
+        "p95_db": float(np.percentile(power_db, 95)),
+        "mean_db": float(np.mean(power_db)),
+    }
+
+
 # ---- Tile Renderer ----
 
 
@@ -83,6 +121,7 @@ def generate_timeline_tile(
     n_fft: int = 2048,
     hop_length: int = 256,
     dynamic_range_db: float = 80.0,
+    ref_db: float = -50.0,
     width_px: int = 512,
     height_px: int = 256,
 ) -> bytes:
@@ -106,8 +145,8 @@ def generate_timeline_tile(
     freq_mask = (f >= freq_min) & (f <= freq_max)
     power_db = power_db[freq_mask, :]
 
-    vmax = float(power_db.max())
-    vmin = vmax - dynamic_range_db
+    vmax = ref_db
+    vmin = ref_db - dynamic_range_db
 
     cmap = get_ocean_depth_colormap()
 

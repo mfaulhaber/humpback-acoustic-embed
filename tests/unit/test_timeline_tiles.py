@@ -122,6 +122,137 @@ def test_generate_timeline_tile_custom_freq_range():
     assert png_narrow != png_wide
 
 
+def test_generate_timeline_tile_fixed_ref_db():
+    """Tiles with different amplitudes should produce different pixel data
+    (not normalized to the same brightness)."""
+    from humpback.processing.timeline_tiles import generate_timeline_tile
+
+    sr = 32000
+    np.random.seed(42)
+    quiet = np.random.randn(sr * 5).astype(np.float32) * 0.001
+    loud = np.random.randn(sr * 5).astype(np.float32) * 1.0
+
+    png_quiet = generate_timeline_tile(audio=quiet, sample_rate=sr)
+    png_loud = generate_timeline_tile(audio=loud, sample_rate=sr)
+    # With fixed ref_db, different amplitudes produce different tiles
+    assert png_quiet != png_loud
+
+
+def test_generate_timeline_tile_same_ref_db_produces_consistent_tiles():
+    """Two tiles from audio with the same amplitude but different random content
+    should look similar (not wildly different brightness) when using the same ref_db."""
+    from humpback.processing.timeline_tiles import generate_timeline_tile
+
+    sr = 32000
+    np.random.seed(10)
+    audio_a = np.random.randn(sr * 5).astype(np.float32) * 0.01
+    np.random.seed(20)
+    audio_b = np.random.randn(sr * 5).astype(np.float32) * 0.01
+
+    ref = -60.0
+    png_a = generate_timeline_tile(audio=audio_a, sample_rate=sr, ref_db=ref)
+    png_b = generate_timeline_tile(audio=audio_b, sample_rate=sr, ref_db=ref)
+    # Both are valid PNGs; they may differ in content but both should render
+    assert png_a[:8] == b"\x89PNG\r\n\x1a\n"
+    assert png_b[:8] == b"\x89PNG\r\n\x1a\n"
+    # File sizes should be in the same ballpark (within 50%) since amplitude is the same
+    ratio = len(png_a) / len(png_b)
+    assert 0.5 < ratio < 2.0
+
+
+# ---- compute_power_db_stats tests ----
+
+
+def test_compute_power_db_stats_returns_expected_keys():
+    from humpback.processing.timeline_tiles import compute_power_db_stats
+
+    sr = 32000
+    audio = np.random.randn(sr * 5).astype(np.float32) * 0.01
+    stats = compute_power_db_stats(audio, sr)
+    assert set(stats.keys()) == {"min_db", "max_db", "p95_db", "mean_db"}
+    for v in stats.values():
+        assert isinstance(v, float)
+
+
+def test_compute_power_db_stats_ordering():
+    """min_db <= mean_db <= p95_db <= max_db."""
+    from humpback.processing.timeline_tiles import compute_power_db_stats
+
+    sr = 32000
+    audio = np.random.randn(sr * 5).astype(np.float32) * 0.05
+    stats = compute_power_db_stats(audio, sr)
+    assert stats["min_db"] <= stats["mean_db"]
+    assert stats["mean_db"] <= stats["p95_db"]
+    assert stats["p95_db"] <= stats["max_db"]
+
+
+def test_compute_power_db_stats_louder_audio_has_higher_values():
+    from humpback.processing.timeline_tiles import compute_power_db_stats
+
+    sr = 32000
+    np.random.seed(42)
+    quiet = np.random.randn(sr * 5).astype(np.float32) * 0.001
+    loud = np.random.randn(sr * 5).astype(np.float32) * 1.0
+
+    stats_quiet = compute_power_db_stats(quiet, sr)
+    stats_loud = compute_power_db_stats(loud, sr)
+    assert stats_loud["max_db"] > stats_quiet["max_db"]
+    assert stats_loud["p95_db"] > stats_quiet["p95_db"]
+
+
+def test_compute_power_db_stats_short_audio():
+    """Audio shorter than n_fft should still produce valid stats (via padding)."""
+    from humpback.processing.timeline_tiles import compute_power_db_stats
+
+    sr = 32000
+    audio = np.random.randn(100).astype(np.float32) * 0.01
+    stats = compute_power_db_stats(audio, sr)
+    assert stats["min_db"] < stats["max_db"]
+
+
+# ---- TimelineTileCache ref_db tests ----
+
+
+def test_cache_ref_db_roundtrip(tmp_path):
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    cache = TimelineTileCache(cache_dir=tmp_path, max_jobs=5)
+    job_id = "test-job-123"
+
+    # Initially None
+    assert cache.get_ref_db(job_id) is None
+
+    # Store and retrieve
+    cache.put_ref_db(job_id, -62.5)
+    assert cache.get_ref_db(job_id) == pytest.approx(-62.5)
+
+
+def test_cache_ref_db_survives_reopen(tmp_path):
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    job_id = "test-job-456"
+
+    cache1 = TimelineTileCache(cache_dir=tmp_path, max_jobs=5)
+    cache1.put_ref_db(job_id, -55.0)
+
+    cache2 = TimelineTileCache(cache_dir=tmp_path, max_jobs=5)
+    assert cache2.get_ref_db(job_id) == pytest.approx(-55.0)
+
+
+def test_cache_ref_db_corrupt_file_returns_none(tmp_path):
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    cache = TimelineTileCache(cache_dir=tmp_path, max_jobs=5)
+    job_id = "test-job-corrupt"
+
+    # Write corrupt JSON
+    job_dir = tmp_path / job_id
+    job_dir.mkdir(parents=True)
+    (job_dir / ".ref_db.json").write_text("not valid json")
+
+    assert cache.get_ref_db(job_id) is None
+
+
 def test_generate_timeline_tile_silence():
     from humpback.processing.timeline_tiles import generate_timeline_tile
 

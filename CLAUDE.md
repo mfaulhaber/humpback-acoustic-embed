@@ -127,7 +127,7 @@ frontend/
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, DetectionTab, BulkDeleteDialog)
-    │   ├── timeline/            (TimelineViewer, Minimap, SpectrogramViewport, TileCanvas, LabelEditor, LabelToolbar, etc.)
+    │   ├── timeline/            (TimelineViewer, SpectrogramViewport, TileCanvas, LabelEditor, LabelToolbar, etc.)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
     │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
@@ -654,7 +654,8 @@ session-begin -> brainstorm -> session-plan -> session-implement -> [session-deb
 
 **Brainstorming overrides:**
 - Spec path: `docs/specs/YYYY-MM-DD-<topic>-design.md` (not `docs/superpowers/specs/`)
-- Spec is written but not committed on main — `session-plan` commits it on the feature branch
+- Spec is NOT written to disk during brainstorming — `session-plan` writes and commits it on the feature branch
+- Brainstorming skill steps 6–8 (write doc, self-review, user review file) are skipped; the approved design lives in conversation context until `session-plan` writes it
 - After brainstorming, control passes to `session-plan` (not superpowers `writing-plans`)
 
 **Artifact locations:**

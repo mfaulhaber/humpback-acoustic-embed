@@ -4,8 +4,7 @@ import type { ZoomLevel } from "@/api/types";
 import { timelineTileUrl } from "@/api/client";
 import {
   TILE_DURATION,
-  TILE_WIDTH_PX,
-  PIXELS_PER_SEC,
+  VIEWPORT_SPAN,
   COLORS,
   CROSSFADE_DURATION_MS,
 } from "./constants";
@@ -150,8 +149,8 @@ export function TileCanvas({
   const getVisibleTiles = useCallback(
     (zoom: ZoomLevel) => {
       const tileDuration = TILE_DURATION[zoom];
-      const pxPerSec = PIXELS_PER_SEC[zoom];
-      const halfWidthSec = width / 2 / pxPerSec;
+      const viewportSpan = VIEWPORT_SPAN[zoom];
+      const halfWidthSec = viewportSpan / 2;
 
       const viewStart = centerTimestamp - halfWidthSec;
       const viewEnd = centerTimestamp + halfWidthSec;
@@ -244,7 +243,8 @@ export function TileCanvas({
     const drawLayer = (zoom: ZoomLevel, alpha: number) => {
       if (alpha <= 0) return;
       const tileDuration = TILE_DURATION[zoom];
-      const pxPerSec = PIXELS_PER_SEC[zoom];
+      const viewportSpan = VIEWPORT_SPAN[zoom];
+      const pxPerSec = width / viewportSpan;
       const tiles = getVisibleTiles(zoom);
 
       ctx.globalAlpha = alpha;

@@ -1,7 +1,7 @@
 // frontend/src/components/timeline/DetectionOverlay.tsx
 import React, { useState, useCallback } from "react";
 import type { DetectionRow, ZoomLevel } from "@/api/types";
-import { TILE_DURATION, TILE_WIDTH_PX, LABEL_COLORS, type LabelType } from "./constants";
+import { VIEWPORT_SPAN, LABEL_COLORS, type LabelType } from "./constants";
 
 export interface DetectionOverlayProps {
   detections: DetectionRow[];
@@ -106,7 +106,7 @@ export function DetectionOverlay({
 
   if (!visible || width <= 0 || height <= 0) return null;
 
-  const pxPerSec = TILE_WIDTH_PX / TILE_DURATION[zoomLevel];
+  const pxPerSec = width / VIEWPORT_SPAN[zoomLevel];
 
   // Build bars for all detections
   const bars: {
