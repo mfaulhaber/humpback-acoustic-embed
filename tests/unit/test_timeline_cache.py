@@ -1,5 +1,6 @@
 """Tests for timeline tile disk cache."""
 
+import threading
 import time
 from pathlib import Path
 
@@ -48,6 +49,48 @@ def test_put_is_atomic(cache_dir: Path):
     cache.put("j1", "1m", 0, b"data")
     tmp_files = list(cache_dir.rglob("*.tmp"))
     assert tmp_files == []
+
+
+def test_concurrent_put_same_tile_uses_distinct_temp_files(
+    cache_dir: Path, monkeypatch
+):
+    """Concurrent writers for the same tile should not collide on a shared tmp path."""
+    import os
+
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    cache_a = TimelineTileCache(cache_dir, max_jobs=5)
+    cache_b = TimelineTileCache(cache_dir, max_jobs=5)
+
+    barrier = threading.Barrier(2)
+    real_replace = os.replace
+    exceptions: list[Exception] = []
+
+    def replace_with_barrier(src: str | Path, dst: str | Path) -> None:
+        if str(src).endswith(".tmp"):
+            barrier.wait(timeout=1.0)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace_with_barrier)
+
+    def writer(cache: TimelineTileCache, payload: bytes) -> None:
+        try:
+            cache.put("job-race", "1h", 7, payload)
+        except Exception as exc:  # pragma: no cover - asserted below
+            exceptions.append(exc)
+
+    thread_a = threading.Thread(target=writer, args=(cache_a, b"a-data"))
+    thread_b = threading.Thread(target=writer, args=(cache_b, b"b-data"))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+
+    assert exceptions == []
+    tile_path = cache_dir / "job-race" / "1h" / "tile_0007.png"
+    assert tile_path.exists()
+    assert tile_path.read_bytes() in {b"a-data", b"b-data"}
+    assert list(cache_dir.rglob("*.tmp")) == []
 
 
 def test_touch_job_creates_sentinel(cache_dir: Path):
@@ -114,6 +157,24 @@ def test_job_count_returns_cached_job_count(cache_dir: Path):
     cache.put("job_a", "1h", 0, b"data")
     cache.put("job_b", "1h", 0, b"data")
     assert cache.job_count() == 2
+
+
+def test_try_acquire_prepare_lock_is_exclusive(cache_dir: Path):
+    """Only one cache instance should own a job prepare lock at a time."""
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    cache_a = TimelineTileCache(cache_dir=cache_dir, max_jobs=5)
+    cache_b = TimelineTileCache(cache_dir=cache_dir, max_jobs=5)
+
+    lock_a = cache_a.try_acquire_prepare_lock("job_a")
+    assert lock_a is not None
+    assert cache_b.try_acquire_prepare_lock("job_a") is None
+
+    lock_a.release()
+
+    lock_b = cache_b.try_acquire_prepare_lock("job_a")
+    assert lock_b is not None
+    lock_b.release()
 
 
 def test_tile_count_for_zoom(cache_dir: Path):

@@ -1342,21 +1342,31 @@ async def run_hydrophone_detection_job(
                 cache_dir=settings.storage_root / "timeline_cache",
                 max_jobs=settings.timeline_cache_max_jobs,
             )
-            await asyncio.to_thread(
-                _prepare_tiles_sync,
-                job=job,
-                settings=settings,
-                cache=tile_cache,
-            )
+            prepare_lock = tile_cache.try_acquire_prepare_lock(job.id)
+            if prepare_lock is None:
+                logger.info(
+                    "Timeline tiles already being prepared for job %s; skipping duplicate worker pre-render",
+                    job.id,
+                )
+            else:
+                try:
+                    await asyncio.to_thread(
+                        _prepare_tiles_sync,
+                        job=job,
+                        settings=settings,
+                        cache=tile_cache,
+                    )
+                finally:
+                    prepare_lock.release()
 
-            # Mark tiles ready
-            await session.execute(
-                update(DetectionJob)
-                .where(DetectionJob.id == job.id)
-                .values(timeline_tiles_ready=True)
-            )
-            await session.commit()
-            logger.info("Pre-rendered timeline tiles for job %s", job.id)
+                # Mark tiles ready
+                await session.execute(
+                    update(DetectionJob)
+                    .where(DetectionJob.id == job.id)
+                    .values(timeline_tiles_ready=True)
+                )
+                await session.commit()
+                logger.info("Pre-rendered timeline tiles for job %s", job.id)
         except Exception:
             logger.warning(
                 "Failed to pre-render timeline tiles for job %s",

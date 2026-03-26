@@ -1,5 +1,7 @@
 """Integration tests for timeline API endpoints."""
 
+import threading
+import time
 import uuid
 
 import pyarrow as pa
@@ -365,6 +367,74 @@ async def test_prepare_endpoint_job_not_found(client):
         "/classifier/detection-jobs/nonexistent/timeline/prepare",
     )
     assert resp.status_code == 404
+
+
+async def test_prepare_endpoint_is_idempotent_while_local_prepare_is_running(
+    client, app_settings, monkeypatch
+):
+    """Repeated prepare requests should not start duplicate local background work."""
+    from humpback.api.routers import timeline as timeline_router
+
+    job_id = await _create_completed_hydrophone_job(app_settings)
+    started = threading.Event()
+    release = threading.Event()
+    call_count = 0
+
+    def fake_prepare_tiles_sync(*, job, settings, cache, zoom_levels=None):
+        nonlocal call_count
+        call_count += 1
+        started.set()
+        assert release.wait(timeout=1.0)
+        return 0
+
+    monkeypatch.setattr(timeline_router, "_prepare_tiles_sync", fake_prepare_tiles_sync)
+
+    resp1 = await client.post(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare",
+    )
+    assert resp1.status_code == 200
+    assert started.wait(timeout=1.0)
+
+    resp2 = await client.post(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare",
+    )
+    assert resp2.status_code == 200
+    assert call_count == 1
+
+    release.set()
+    time.sleep(0.1)
+    assert call_count == 1
+
+
+async def test_prepare_endpoint_succeeds_when_other_process_holds_lock(
+    client, app_settings, monkeypatch
+):
+    """Prepare should stay idempotent when another process already owns the lock."""
+    from humpback.api.routers import timeline as timeline_router
+
+    job_id = await _create_completed_hydrophone_job(app_settings)
+
+    monkeypatch.setattr(
+        timeline_router.TimelineTileCache,
+        "try_acquire_prepare_lock",
+        lambda self, job_id: None,
+    )
+
+    def fail_launch_prepare_thread(**kwargs):
+        raise AssertionError(
+            "prepare thread should not launch when lock is unavailable"
+        )
+
+    monkeypatch.setattr(
+        timeline_router, "_launch_prepare_thread", fail_launch_prepare_thread
+    )
+
+    resp = await client.post(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare",
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timeline_tiles_ready"] is True
 
 
 async def test_audio_endpoint_mp3_format(client, app_settings):

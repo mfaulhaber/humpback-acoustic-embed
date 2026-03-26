@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import shutil
 from pathlib import Path
+from typing import BinaryIO
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+
+
+class TimelinePrepareLock:
+    """Advisory file lock that coordinates prepare work across processes."""
+
+    def __init__(self, handle: BinaryIO) -> None:
+        self._handle = handle
+
+    def release(self) -> None:
+        if self._handle.closed:
+            return
+
+        import fcntl
+
+        try:
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._handle.close()
 
 
 class TimelineTileCache:
@@ -27,11 +48,9 @@ class TimelineTileCache:
         return path.read_bytes()
 
     def put(self, job_id: str, zoom_level: str, tile_index: int, data: bytes) -> None:
+        self._touch_job(job_id)
         path = self._tile_path(job_id, zoom_level, tile_index)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, path)
+        self._write_atomic(path, data)
         self._touch_job(job_id)
         self._evict_lru_jobs()
 
@@ -71,12 +90,25 @@ class TimelineTileCache:
         """Store the per-job reference dB level."""
         import json
 
-        job_dir = self.cache_dir / job_id
-        job_dir.mkdir(parents=True, exist_ok=True)
-        path = job_dir / ".ref_db.json"
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"ref_db": ref_db}))
-        os.replace(tmp, path)
+        self._touch_job(job_id)
+        path = self.cache_dir / job_id / ".ref_db.json"
+        self._write_atomic(path, json.dumps({"ref_db": ref_db}))
+
+    def try_acquire_prepare_lock(self, job_id: str) -> TimelinePrepareLock | None:
+        """Try to claim exclusive prepare ownership for a job."""
+        import fcntl
+
+        lock_path = self.cache_dir / job_id / ".prepare.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("a+b")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            handle.close()
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                return None
+            raise
+        return TimelinePrepareLock(handle)
 
     # -- internals --
 
@@ -88,6 +120,18 @@ class TimelineTileCache:
         job_dir.mkdir(parents=True, exist_ok=True)
         sentinel = job_dir / ".last_access"
         sentinel.touch()
+
+    def _write_atomic(self, path: Path, data: bytes | str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            if isinstance(data, bytes):
+                tmp.write_bytes(data)
+            else:
+                tmp.write_text(data)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _evict_lru_jobs(self) -> None:
         if not self.cache_dir.exists():

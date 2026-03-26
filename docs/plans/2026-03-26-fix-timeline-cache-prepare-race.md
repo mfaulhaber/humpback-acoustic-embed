@@ -13,10 +13,10 @@
 - Modify: `tests/unit/test_timeline_cache.py`
 
 **Acceptance criteria:**
-- [ ] `TimelineTileCache.put()` uses a unique temp file per write attempt instead of a shared `tile_NNNN.tmp` path
-- [ ] Concurrent writes to the same tile do not raise `FileNotFoundError`
-- [ ] Successful writes still leave the final tile in the expected cache path and do not leave stray temp files behind
-- [ ] Job access sentinels continue to update for successful writes
+- [x] `TimelineTileCache.put()` uses a unique temp file per write attempt instead of a shared `tile_NNNN.tmp` path
+- [x] Concurrent writes to the same tile do not raise `FileNotFoundError`
+- [x] Successful writes still leave the final tile in the expected cache path and do not leave stray temp files behind
+- [x] Job access sentinels continue to update for successful writes
 
 **Tests needed:**
 - Add a regression test that two cache instances can race on the same tile path without shared-temp collisions
@@ -33,10 +33,10 @@
 - Modify: `tests/integration/test_timeline_api.py`
 
 **Acceptance criteria:**
-- [ ] The worker pre-render path and the API `POST /timeline/prepare` path coordinate so the same job is not prepared twice at the same time across processes
-- [ ] The coordination mechanism is external to the module-level `_preparing` set so it works between `api.1` and `worker.1`
-- [ ] Repeated prepare requests while a job is already being prepared remain idempotent and do not fail the request
-- [ ] Cache progress and tile availability still behave correctly when a prepare is already in flight
+- [x] The worker pre-render path and the API `POST /timeline/prepare` path coordinate so the same job is not prepared twice at the same time across processes
+- [x] The coordination mechanism is external to the module-level `_preparing` set so it works between `api.1` and `worker.1`
+- [x] Repeated prepare requests while a job is already being prepared remain idempotent and do not fail the request
+- [x] Cache progress and tile availability still behave correctly when a prepare is already in flight
 
 **Tests needed:**
 - Add regression coverage for repeated prepare triggers on the same job while tiles are uncached

@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from humpback.api.deps import SessionDep, SettingsDep
-from humpback.processing.timeline_cache import TimelineTileCache
+from humpback.processing.timeline_cache import TimelinePrepareLock, TimelineTileCache
 from humpback.processing.timeline_tiles import (
     ZOOM_LEVELS,
     generate_timeline_tile,
@@ -283,6 +283,30 @@ def _prepare_tiles_sync(
                     job.id,
                 )
     return rendered
+
+
+def _launch_prepare_thread(
+    *,
+    job,
+    settings,
+    cache: TimelineTileCache,
+    prepare_lock: TimelinePrepareLock,
+) -> None:
+    def _background() -> None:
+        try:
+            _prepare_tiles_sync(job=job, settings=settings, cache=cache)
+        finally:
+            prepare_lock.release()
+            with _preparing_lock:
+                _preparing.discard(job.id)
+
+    try:
+        threading.Thread(target=_background, daemon=True).start()
+    except Exception:
+        prepare_lock.release()
+        with _preparing_lock:
+            _preparing.discard(job.id)
+        raise
 
 
 def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:
@@ -561,21 +585,24 @@ async def prepare_tiles(
         max_jobs=settings.timeline_cache_max_jobs,
     )
 
+    reserved_locally = False
     with _preparing_lock:
-        already_running = job.id in _preparing
-        if not already_running:
+        if job.id not in _preparing:
             _preparing.add(job.id)
+            reserved_locally = True
 
-    if not already_running:
-
-        def _background():
-            try:
-                _prepare_tiles_sync(job=job, settings=settings, cache=cache)
-            finally:
-                with _preparing_lock:
-                    _preparing.discard(job.id)
-
-        threading.Thread(target=_background, daemon=True).start()
+    if reserved_locally:
+        prepare_lock = cache.try_acquire_prepare_lock(job.id)
+        if prepare_lock is None:
+            with _preparing_lock:
+                _preparing.discard(job.id)
+        else:
+            _launch_prepare_thread(
+                job=job,
+                settings=settings,
+                cache=cache,
+                prepare_lock=prepare_lock,
+            )
 
     # Mark timeline_tiles_ready immediately — signals that preparation was
     # initiated.  Use /prepare-status for real per-zoom progress.
