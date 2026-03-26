@@ -459,6 +459,8 @@ def apply_label_edits(
     # Collect new rows from "add" edits so we can check unlabeled replacement.
     new_rows: list[dict[str, str]] = []
     delete_ids: set[str] = set()
+    # Track row_ids touched by edits for scoped overlap validation.
+    touched_ids: set[str] = set()
 
     for edit in edits:
         action = edit.get("action")
@@ -475,6 +477,7 @@ def apply_label_edits(
                 new_row[label] = "1"
             new_row["row_id"] = build_detection_row_id(new_row)
             new_rows.append(new_row)
+            touched_ids.add(new_row["row_id"])
 
         elif action == "move":
             rid = edit.get("row_id", "")
@@ -490,6 +493,7 @@ def apply_label_edits(
                 )
             target["start_sec"] = str(new_start)
             target["end_sec"] = str(new_end)
+            touched_ids.add(rid)
 
         elif action == "delete":
             rid = edit.get("row_id", "")
@@ -508,6 +512,7 @@ def apply_label_edits(
                 target[lf] = ""
             if label:
                 target[label] = "1"
+            touched_ids.add(rid)
 
         else:
             raise ValueError(f"Unknown edit action: {action!r}")
@@ -540,20 +545,25 @@ def apply_label_edits(
     # Append new rows.
     result.extend(new_rows)
 
-    # Overlap validation: no two labeled rows may overlap.
-    labeled = [
-        (safe_float(r.get("start_sec"), 0.0), safe_float(r.get("end_sec"), 0.0), r)
-        for r in result
-        if _is_row_labeled(r)
-    ]
-    labeled.sort(key=lambda t: t[0])
-    for i in range(len(labeled) - 1):
-        a_start, a_end, _ = labeled[i]
-        b_start, b_end, _ = labeled[i + 1]
-        if _rows_overlap(a_start, a_end, b_start, b_end):
-            raise ValueError(
-                f"Labeled rows overlap: [{a_start}, {a_end}] and [{b_start}, {b_end}]"
-            )
+    # Overlap validation: only reject overlaps where BOTH rows were touched
+    # by this edit batch.  Detection pipelines legitimately produce overlapping
+    # windows (hop < window size), so a new edit overlapping pre-existing data
+    # is tolerated — the frontend already prevents this via ghost overlap checks.
+    if len(touched_ids) >= 2:
+        touched_labeled = [
+            (safe_float(r.get("start_sec"), 0.0), safe_float(r.get("end_sec"), 0.0), r)
+            for r in result
+            if _is_row_labeled(r) and r.get("row_id", "") in touched_ids
+        ]
+        touched_labeled.sort(key=lambda t: t[0])
+        for i in range(len(touched_labeled) - 1):
+            a_start, a_end, _ = touched_labeled[i]
+            b_start, b_end, _ = touched_labeled[i + 1]
+            if _rows_overlap(a_start, a_end, b_start, b_end):
+                raise ValueError(
+                    f"Labeled rows overlap: [{a_start}, {a_end}] "
+                    f"and [{b_start}, {b_end}]"
+                )
 
     return result
 
