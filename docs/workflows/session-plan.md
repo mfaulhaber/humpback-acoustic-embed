@@ -6,12 +6,13 @@ Create an implementation plan from a spec, create the feature branch, and commit
 
 When using the superpowers brainstorming skill before this step:
 - **Spec path:** `docs/specs/YYYY-MM-DD-<topic>-design.md` (not `docs/superpowers/specs/`)
-- **No commit:** Leave the spec uncommitted on main. This skill handles the commit on the feature branch.
+- **No file on disk:** The spec is NOT written to disk during brainstorming. The approved design exists only in conversation context. This skill writes it to disk on the feature branch.
+- **Skip brainstorming steps 6–8:** The brainstorming skill's "write doc", "self-review", and "user reviews file" steps are skipped — this skill handles all of that.
 - **No writing-plans handoff:** After brainstorming, control passes here (not superpowers `writing-plans`)
 
 ## Preconditions
 
-- A spec exists in `docs/specs/` (written by brainstorming, uncommitted on main)
+- A design has been approved in conversation context (via brainstorming)
 - Currently on `main`
 
 ## Steps

@@ -2,7 +2,7 @@
 import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import type { DetectionRow } from "@/api/types";
 import type { ZoomLevel } from "@/api/types";
-import { TILE_WIDTH_PX, TILE_DURATION, VIEWPORT_SPAN, LABEL_COLORS, type LabelType } from "./constants";
+import { VIEWPORT_SPAN, LABEL_COLORS, type LabelType } from "./constants";
 import type { Action } from "@/hooks/queries/useLabelEdits";
 
 export interface LabelEditorProps {
@@ -65,10 +65,7 @@ export function LabelEditor({
   const dragRef = useRef<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Must match DetectionOverlay's coordinate system: pixels-per-second is
-  // derived from tile dimensions, not viewport width, because the viewport
-  // may span multiple tiles.
-  const pxPerSec = TILE_WIDTH_PX / TILE_DURATION[zoomLevel];
+  const pxPerSec = width / VIEWPORT_SPAN[zoomLevel];
 
   // Sorted labeled rows for overlap checks
   const labeledOthers = useMemo(() => {

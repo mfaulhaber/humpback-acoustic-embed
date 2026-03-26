@@ -295,7 +295,7 @@ export function SpectrogramViewport({
     return labels;
   }, [centerTimestamp, viewportSpan, zoomLevel, canvasWidth, pxPerSec]);
 
-  // Confidence strip: compute which scores fall in view
+  // Confidence strip: compute which scores fall in view using timestamp-based positioning
   const confidenceStrip = useMemo(() => {
     if (scores.length === 0 || canvasWidth <= 0) return null;
 
@@ -305,8 +305,7 @@ export function SpectrogramViewport({
     const viewStart = centerTimestamp - halfSpan;
     const viewEnd = centerTimestamp + halfSpan;
 
-    // Map each pixel column to a score
-    const barWidth = Math.max(1, canvasWidth / ((viewEnd - viewStart) / windowSec));
+    const barWidthPx = windowSec * pxPerSec;
     const startIdx = Math.max(0, Math.floor((viewStart - jobStart) / windowSec));
     const endIdx = Math.min(
       scores.length - 1,
@@ -315,11 +314,11 @@ export function SpectrogramViewport({
 
     const bars: { x: number; w: number; color: string }[] = [];
     for (let i = startIdx; i <= endIdx; i++) {
-      const barStart = jobStart + i * windowSec;
-      const x = (barStart - centerTimestamp) * pxPerSec + canvasWidth / 2;
+      const windowStart = jobStart + i * windowSec;
+      const x = (windowStart - centerTimestamp) * pxPerSec + canvasWidth / 2;
       bars.push({
         x,
-        w: Math.max(1, barWidth),
+        w: Math.max(1, barWidthPx),
         color: confidenceColor(scores[i]),
       });
     }

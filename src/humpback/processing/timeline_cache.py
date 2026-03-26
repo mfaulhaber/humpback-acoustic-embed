@@ -54,6 +54,30 @@ class TimelineTileCache:
             return 0
         return sum(1 for f in zoom_dir.iterdir() if f.suffix == ".png")
 
+    def get_ref_db(self, job_id: str) -> float | None:
+        """Return the cached per-job reference dB level, or None if not yet computed."""
+        import json
+
+        path = self.cache_dir / job_id / ".ref_db.json"
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+            return float(data["ref_db"])
+        except (json.JSONDecodeError, KeyError, ValueError):
+            return None
+
+    def put_ref_db(self, job_id: str, ref_db: float) -> None:
+        """Store the per-job reference dB level."""
+        import json
+
+        job_dir = self.cache_dir / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        path = job_dir / ".ref_db.json"
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"ref_db": ref_db}))
+        os.replace(tmp, path)
+
     # -- internals --
 
     def _tile_path(self, job_id: str, zoom_level: str, tile_index: int) -> Path:

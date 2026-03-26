@@ -9,7 +9,6 @@ import { timelineAudioUrl } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
 import { ZoomSelector } from "./ZoomSelector";
 import { PlaybackControls } from "./PlaybackControls";
-import { Minimap } from "./Minimap";
 import { SpectrogramViewport } from "./SpectrogramViewport";
 import { LabelToolbar } from "./LabelToolbar";
 import { LabelEditor } from "./LabelEditor";
@@ -297,7 +296,7 @@ export function TimelineViewer() {
   }
 
   return (
-    <div className="flex flex-col h-screen font-mono text-xs" style={{ background: COLORS.bg, color: COLORS.text, position: "relative" }}>
+    <div className="flex flex-col h-screen font-mono text-xs overflow-hidden" style={{ background: COLORS.bg, color: COLORS.text, position: "relative" }}>
       {!cacheComplete && prepareStatus && (
         <div style={{
           position: "absolute", top: 4, right: 16,
@@ -321,17 +320,8 @@ export function TimelineViewer() {
         onFreqRangeChange={setFreqRange}
       />
 
-      <Minimap
-        scores={confidence?.scores ?? []}
-        jobStart={job.start_timestamp ?? 0}
-        jobEnd={job.end_timestamp ?? 0}
-        centerTimestamp={centerTimestamp}
-        viewportSpan={VIEWPORT_SPAN[zoomLevel]}
-        onCenterChange={setCenterTimestamp}
-      />
-
       {/* Main spectrogram viewport */}
-      <div className="flex-1 flex flex-col mx-4 my-2 rounded relative overflow-hidden" style={{ background: COLORS.bgDark }}>
+      <div className="flex-1 flex flex-col mx-4 my-2 rounded relative overflow-hidden min-h-0" style={{ background: COLORS.bgDark }}>
         <SpectrogramViewport
           jobId={jobId}
           jobStart={job.start_timestamp ?? 0}
@@ -368,54 +358,60 @@ export function TimelineViewer() {
       <audio ref={audioRefA} preload="auto" style={{ display: "none" }} />
       <audio ref={audioRefB} preload="auto" style={{ display: "none" }} />
 
-      {/* Label toolbar (shown only in label mode) */}
-      {labelMode && (
-        <LabelToolbar
-          mode={labelSubMode}
-          onModeChange={setLabelSubMode}
-          selectedLabel={selectedLabel}
-          onLabelChange={setSelectedLabel}
-          onDelete={() => selectedId && labelDispatch({ type: "delete", row_id: selectedId })}
-          onSave={() => {
-            const items = labelState.edits.map((e) => ({
-              action: e.action,
-              row_id: e.row_id,
-              start_sec: e.start_sec,
-              end_sec: e.end_sec,
-              new_start_sec: e.new_start_sec,
-              new_end_sec: e.new_end_sec,
-              label: e.label,
-            }));
-            saveMutation.mutate(items, {
-              onSuccess: () => labelDispatch({ type: "clear" }),
-            });
-          }}
-          onExtract={() => setExtractOpen(true)}
-          onCancel={() => {
-            if (isDirty && !confirm("Discard unsaved label changes?")) return;
-            setLabelMode(false);
-            labelDispatch({ type: "clear" });
-          }}
-          isDirty={isDirty}
-          isSaving={saveMutation.isPending}
-          hasSelection={selectedId !== null}
-        />
-      )}
+      {/* Pinned footer: zoom, playback controls, label toolbar */}
+      <div
+        className="shrink-0"
+        style={{ background: COLORS.headerBg, borderTop: `1px solid ${COLORS.border}` }}
+      >
+        {/* Label toolbar (shown only in label mode) */}
+        {labelMode && (
+          <LabelToolbar
+            mode={labelSubMode}
+            onModeChange={setLabelSubMode}
+            selectedLabel={selectedLabel}
+            onLabelChange={setSelectedLabel}
+            onDelete={() => selectedId && labelDispatch({ type: "delete", row_id: selectedId })}
+            onSave={() => {
+              const items = labelState.edits.map((e) => ({
+                action: e.action,
+                row_id: e.row_id,
+                start_sec: e.start_sec,
+                end_sec: e.end_sec,
+                new_start_sec: e.new_start_sec,
+                new_end_sec: e.new_end_sec,
+                label: e.label,
+              }));
+              saveMutation.mutate(items, {
+                onSuccess: () => labelDispatch({ type: "clear" }),
+              });
+            }}
+            onExtract={() => setExtractOpen(true)}
+            onCancel={() => {
+              if (isDirty && !confirm("Discard unsaved label changes?")) return;
+              setLabelMode(false);
+              labelDispatch({ type: "clear" });
+            }}
+            isDirty={isDirty}
+            isSaving={saveMutation.isPending}
+            hasSelection={selectedId !== null}
+          />
+        )}
 
-      <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
-      <PlaybackControls
-        centerTimestamp={centerTimestamp}
-        isPlaying={isPlaying}
-        speed={speed}
-        onPlayPause={togglePlay}
-        onSkipBack={skipBack}
-        onSkipForward={skipForward}
-        onSpeedChange={setSpeed}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        onLabelMode={enterLabelMode}
-        labelModeEnabled={labelModeEnabled}
-      />
+        <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
+        <PlaybackControls
+          centerTimestamp={centerTimestamp}
+          isPlaying={isPlaying}
+          speed={speed}
+          onPlayPause={togglePlay}
+          onSkipBack={skipBack}
+          onSkipForward={skipForward}
+          onSpeedChange={setSpeed}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onLabelMode={enterLabelMode}
+          labelModeEnabled={labelModeEnabled}
+        />
+      </div>
 
       {/* Extract dialog */}
       {extractOpen && (
