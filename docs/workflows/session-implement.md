@@ -1,0 +1,59 @@
+# session-implement
+
+Work through the plan tasks sequentially, then commit all changes as a single batch.
+
+## Preconditions
+
+- On a `feature/*` branch
+- A plan exists in `docs/plans/`
+
+## Steps
+
+1. **Confirm branch and read plan**
+   - Verify you are on a `feature/*` branch; if on main, stop
+   - Read the plan from `docs/plans/`
+   - Restate the task scope in one sentence
+
+2. **Identify affected files** before editing anything
+
+3. **Check DECISIONS.md** for prior decisions that may conflict with the approach
+
+4. **Work through tasks sequentially**
+   - Read existing code before modifying
+   - Implement the change
+   - Write tests alongside or after implementation (tests are required, ordering is not)
+   - Check off acceptance criteria in the plan as you go
+
+5. **Run verification gates** after all tasks complete:
+   - `uv run ruff format --check` on modified Python files
+   - `uv run ruff check` on modified Python files
+   - `uv run pyright` on modified Python files
+   - `uv run pytest tests/`
+   - `cd frontend && npx tsc --noEmit` (if frontend files changed)
+
+6. **Fix any verification failures**
+
+7. **Update documentation** per CLAUDE.md §3.6 doc-update matrix
+
+8. **Single batched commit** covering all tasks and test additions
+
+## Rules
+
+- Prefer editing existing files over creating new ones
+- Keep changes focused — don't refactor surrounding code
+- Follow all CLAUDE.md conventions (uv, migrations, file structure)
+
+## Does NOT
+
+- Commit after each individual task (one batch commit at the end)
+- Enforce test-before-implementation ordering
+- Dispatch subagents
+- Push to remote (that's `session-end`)
+
+## Output
+
+All tasks implemented, tests passing, one commit on feature branch.
+
+## Next Step
+
+Manual testing, then `session-debug` if issues found, or `session-review` if clean.

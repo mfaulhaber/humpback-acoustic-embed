@@ -637,46 +637,50 @@ Non-obvious constraints that are not immediately derivable from code:
 
 ## 10. Workflow
 
-### 10.1 Superpowers Integration
+### 10.1 Session Workflow
 
-This project uses the superpowers skill system as its canonical development workflow.
+This project uses lightweight session workflow skills stored in `docs/workflows/`.
 
 **Canonical flow for every task:**
 
-brainstorming -> writing-plans -> subagent-driven-development -> finishing-a-development-branch
+```
+session-begin -> brainstorm -> session-plan -> session-implement -> [session-debug]* -> session-review -> session-end
+```
 
-**During implementation (enforced by subagent-driven-development):**
-- test-driven-development (per task — write failing test first)
-- requesting-code-review (per task + final review)
-- verification-before-completion (before any completion claim)
+- `brainstorm` uses the superpowers brainstorming skill (unchanged)
+- `[session-debug]*` means zero or more rounds of debugging after manual testing
+- All other steps use `docs/workflows/session-*.md`
+- In Claude Code, invoke as `/session-begin`, `/session-plan`, etc.
 
-**When debugging:**
-- systematic-debugging (before any fix attempt)
+**Brainstorming overrides:**
+- Spec path: `docs/specs/YYYY-MM-DD-<topic>-design.md` (not `docs/superpowers/specs/`)
+- Spec is written but not committed on main — `session-plan` commits it on the feature branch
+- After brainstorming, control passes to `session-plan` (not superpowers `writing-plans`)
 
 **Artifact locations:**
-- Design specs: `docs/specs/YYYY-MM-DD-<topic>-design.md` (on feature branch)
-- Implementation plans: `docs/plans/YYYY-MM-DD-<feature>.md` (on feature branch)
-- Git worktrees: `.worktrees/` (gitignored)
+- Workflow skills: `docs/workflows/session-*.md`
+- Design specs: `docs/specs/YYYY-MM-DD-<topic>-design.md`
+- Implementation plans: `docs/plans/YYYY-MM-DD-<feature>.md`
 
 ### 10.2 Feature Branch Lifecycle
 
 All work for a task — spec, plan, and implementation — lives on a single feature branch.
 Nothing is committed to `main` directly; `main` only advances via squash-merge of PRs.
 
-**Branch creation (start of brainstorming):**
-1. Ensure `main` is clean and up to date (`git pull --ff-only origin main`)
-2. Create and switch to `feature/<topic>` from main
-3. All subsequent commits (spec, plan, code) go to this branch
+**Branch creation (session-plan):**
+1. Brainstorming writes the spec on main (uncommitted)
+2. `session-plan` creates `feature/<feature-name>` from main
+3. Spec and plan are committed as the first commit on the feature branch
 
-**Implementation (subagent-driven-development):**
-- Worktrees branch from the feature branch (not main) for parallel subagent isolation
-- Worktree changes merge back into the feature branch
+**Implementation (session-implement):**
+- Work directly on the feature branch (no worktrees or subagents)
+- Single batched commit after all plan tasks complete
 
-**Completion (finishing-a-development-branch):**
+**Completion (session-end):**
 1. Push feature branch, create PR against main
 2. Squash-merge the PR
 3. Checkout main, `git pull --ff-only origin main`
-4. Delete local feature branch and any worktrees
+4. Delete local feature branch
 
 **Early exit (session ends before implementation is complete):**
 1. Commit any uncommitted work to the feature branch
@@ -686,7 +690,9 @@ Nothing is committed to `main` directly; `main` only advances via squash-merge o
 
 ### 10.3 Session Start Checklist
 
-At the start of every session:
+Use `session-begin` (`/session-begin` in Claude Code) at the start of every session.
+See `docs/workflows/session-begin.md` for full steps. Summary:
+
 1. Normalize the repo onto local `main` (fast-forward from origin; stop if dirty or detached)
 2. Read CLAUDE.md and DECISIONS.md
 3. Check for active feature branches with in-progress work:
@@ -718,6 +724,7 @@ Before claiming work is complete, run these in order:
 
 ### 10.5 Codex Compatibility
 
-Codex follows the same phase sequence as superpowers but uses only Codex-available
-tools (file read/write, bash, grep, glob). See AGENTS.md for Codex-specific
-workflow instructions.
+Codex follows the same session workflow phases but uses only Codex-available
+tools (file read/write, bash, grep, glob). The workflow files in `docs/workflows/`
+are the shared source of truth for both Claude Code and Codex. See AGENTS.md for
+Codex-specific phase mapping.

@@ -1,0 +1,1 @@
+Read and execute the workflow defined in docs/workflows/session-plan.md
