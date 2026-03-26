@@ -48,6 +48,15 @@ export const COLORS = {
   labelBackground: "rgba(160, 160, 160, 0.15)",
 } as const;
 
+export const LABEL_COLORS = {
+  humpback: { fill: "rgba(234, 179, 8, 0.45)", hover: "rgba(234, 179, 8, 0.65)", border: "rgb(234, 179, 8)" },
+  orca: { fill: "rgba(249, 115, 22, 0.45)", hover: "rgba(249, 115, 22, 0.65)", border: "rgb(249, 115, 22)" },
+  ship: { fill: "rgba(100, 149, 237, 0.35)", hover: "rgba(100, 149, 237, 0.55)", border: "rgb(100, 149, 237)" },
+  background: { fill: "rgba(156, 163, 175, 0.30)", hover: "rgba(156, 163, 175, 0.50)", border: "rgb(156, 163, 175)" },
+} as const;
+
+export type LabelType = keyof typeof LABEL_COLORS;
+
 export const CONFIDENCE_GRADIENT = [
   [0.0, "#0a1a0a"],
   [0.3, "#2a5a20"],

@@ -127,7 +127,7 @@ frontend/
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, DetectionTab, BulkDeleteDialog)
-    │   ├── timeline/            (TimelineViewer, Minimap, SpectrogramViewport, TileCanvas, etc.)
+    │   ├── timeline/            (TimelineViewer, Minimap, SpectrogramViewport, TileCanvas, LabelEditor, LabelToolbar, etc.)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
     │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
@@ -545,7 +545,7 @@ flowchart TD
   {classifier_model_id}/training_summary.json
 /detections/
   {detection_job_id}/detection_rows.parquet       (canonical editable row store)
-  {detection_job_id}/detections.tsv               (download/export adapter synchronized from row store)
+  {detection_job_id}/detections.tsv               (generated on-the-fly for download; not persisted)
   {detection_job_id}/window_diagnostics.parquet   (local: single file; hydrophone: shard directory)
   {detection_job_id}/run_summary.json
 ```
@@ -581,7 +581,8 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Job status transitions**: `queued -> running -> complete`, `queued -> running -> failed`, `queued -> canceled`
 - **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
 - **Prefetch semantics**: `time_covered_sec` tracks summed processed audio duration rather than wall-clock range coverage
-- **Parquet row-store upgrade**: completed/paused/canceled detection jobs lazily upgrade into a canonical Parquet row store; TSV is synchronized from that store for download/legacy flows
+- **Parquet row-store**: detection jobs write directly to Parquet row store during detection; TSV is generated on-the-fly for download only; legacy jobs with only TSV are lazily upgraded on first access
+- **Timeline label editing**: enforces single-label-per-row (mutual exclusivity of humpback/orca/ship/background); batch edits via `PATCH /classifier/detection-jobs/{id}/labels` with overlap validation
 
 ---
 
@@ -598,13 +599,13 @@ Non-obvious constraints that are not immediately derivable from code:
 - Label processing: score-based + sample-builder workflows
 - Vocalization labeling: type classification, active learning, sub-window annotations
 - Retrain workflow: reimport -> reprocess -> retrain
-- Timeline viewer: zoomable spectrogram with background tile pre-caching (all zoom levels), positive-only detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
+- Timeline viewer: zoomable spectrogram with background tile pre-caching (all zoom levels), interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Search, Label Processing, Admin
 
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `025_normalize_sanctsound_source_ids.py`
+- **Latest migration**: `027_drop_output_tsv_path.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, labeling_annotations
 
 ### 9.3 Sensitive Components

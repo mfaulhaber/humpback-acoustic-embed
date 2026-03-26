@@ -4,7 +4,9 @@ import {
   fetchDetectionContent,
   prepareTimelineTiles,
   fetchPrepareStatus,
+  patchDetectionLabels,
 } from "@/api/client";
+import type { LabelEditItem } from "@/api/types";
 
 export function useTimelineConfidence(jobId: string) {
   return useQuery({
@@ -38,5 +40,15 @@ export function usePrepareStatus(jobId: number | string, enabled: boolean) {
     queryFn: () => fetchPrepareStatus(jobId),
     enabled,
     refetchInterval: enabled ? 3000 : false,
+  });
+}
+
+export function useSaveLabels(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (edits: LabelEditItem[]) => patchDetectionLabels(jobId, edits),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["timelineDetections", jobId] });
+    },
   });
 }

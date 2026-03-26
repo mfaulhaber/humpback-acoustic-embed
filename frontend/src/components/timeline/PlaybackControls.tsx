@@ -1,5 +1,5 @@
 // frontend/src/components/timeline/PlaybackControls.tsx
-import { Play, Pause, SkipBack, SkipForward, Plus, Minus } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Plus, Minus, Tag } from "lucide-react";
 import { COLORS } from "./constants";
 
 interface PlaybackControlsProps {
@@ -12,6 +12,8 @@ interface PlaybackControlsProps {
   onSpeedChange: (speed: number) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onLabelMode?: () => void;
+  labelModeEnabled: boolean;
 }
 
 const SPEEDS = [0.5, 1, 2];
@@ -26,6 +28,8 @@ export function PlaybackControls({
   onSpeedChange,
   onZoomIn,
   onZoomOut,
+  onLabelMode,
+  labelModeEnabled,
 }: PlaybackControlsProps) {
   const timeStr = new Date(centerTimestamp * 1000).toISOString().slice(11, 19) + " UTC";
 
@@ -75,6 +79,20 @@ export function PlaybackControls({
           <Plus size={14} />
         </button>
       </div>
+      <button
+        className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium ml-4"
+        style={{
+          background: "transparent",
+          color: labelModeEnabled ? COLORS.accent : COLORS.textMuted,
+          opacity: labelModeEnabled ? 1 : 0.3,
+          border: `1px solid ${labelModeEnabled ? COLORS.accent : COLORS.border}`,
+        }}
+        onClick={onLabelMode}
+        disabled={!labelModeEnabled}
+        title={labelModeEnabled ? "Enter label mode" : "Zoom to 5m or closer to edit labels"}
+      >
+        <Tag size={12} /> Label
+      </button>
     </div>
   );
 }

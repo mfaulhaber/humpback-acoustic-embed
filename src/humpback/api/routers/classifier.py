@@ -22,14 +22,13 @@ from humpback.classifier.detection_rows import (
     DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
     ROW_STORE_FIELDNAMES,
     apply_effective_positive_selection,
+    apply_label_edits,
     ensure_detection_row_store,
     iter_detection_rows_as_tsv,
     normalize_detection_row,
     read_detection_row_store,
-    read_tsv_rows,
-    safe_float,
     resolve_clip_bounds,
-    sync_detection_tsv,
+    safe_float,
     write_detection_row_store,
 )
 from humpback.classifier.detector import read_window_diagnostics_table
@@ -45,6 +44,7 @@ from humpback.schemas.classifier import (
     DiagnosticsSummaryResponse,
     HydrophoneDetectionJobCreate,
     HydrophoneInfo,
+    LabelEditRequest,
     PerFileDiagnosticSummary,
     RetrainFolderInfo,
     RetrainWorkflowCreate,
@@ -137,7 +137,6 @@ def _detection_job_to_out(job) -> DetectionJobOut:
         high_threshold=job.high_threshold,
         low_threshold=job.low_threshold,
         detection_mode=job.detection_mode,
-        output_tsv_path=job.output_tsv_path,
         output_row_store_path=job.output_row_store_path,
         result_summary=json.loads(job.result_summary) if job.result_summary else None,
         error_message=job.error_message,
@@ -855,21 +854,16 @@ async def _ensure_detection_row_store_for_job(
 ) -> tuple[list[str], list[dict[str, str]]]:
     rs_path = detection_row_store_path(settings.storage_root, job.id)
     tsv = detection_tsv_path(settings.storage_root, job.id)
+    diag_path = detection_diagnostics_path(settings.storage_root, job.id)
 
-    if rs_path.is_file():
-        fieldnames, rows = read_detection_row_store(rs_path)
-    else:
-        if not tsv.is_file():
-            raise HTTPException(404, "Detection output not found on disk")
-        diag_path = detection_diagnostics_path(settings.storage_root, job.id)
-        fieldnames, rows = ensure_detection_row_store(
-            row_store_path=rs_path,
-            tsv_path=tsv,
-            diagnostics_path=diag_path if diag_path.exists() else None,
-            is_hydrophone=job.hydrophone_id is not None,
-            window_size_seconds=window_size_seconds,
-            detection_mode=job.detection_mode,
-        )
+    fieldnames, rows = ensure_detection_row_store(
+        row_store_path=rs_path,
+        diagnostics_path=diag_path if diag_path.exists() else None,
+        is_hydrophone=job.hydrophone_id is not None,
+        window_size_seconds=window_size_seconds,
+        detection_mode=job.detection_mode,
+        tsv_path=tsv,  # legacy fallback for pre-Parquet jobs
+    )
 
     return fieldnames, rows
 
@@ -917,11 +911,11 @@ async def get_detection_content(
     )
     is_hydrophone = job.hydrophone_id is not None
 
-    tsv = detection_tsv_path(settings.storage_root, job.id)
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
     if job.status == "running":
-        if not tsv.is_file():
-            raise HTTPException(404, "TSV file not found on disk")
-        _fieldnames, raw_rows = read_tsv_rows(tsv)
+        if not rs_path.is_file():
+            return []  # No detections yet
+        _fieldnames, raw_rows = read_detection_row_store(rs_path)
     else:
         _fieldnames, raw_rows = await _ensure_detection_row_store_for_job(
             session,
@@ -994,7 +988,6 @@ async def save_detection_labels(
     _require_windowed_detection_job(job, operation="save labels")
 
     rs_path = detection_row_store_path(settings.storage_root, job.id)
-    tsv = detection_tsv_path(settings.storage_root, job.id)
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
@@ -1031,7 +1024,6 @@ async def save_detection_labels(
         updated_rows.append(out_row)
 
     write_detection_row_store(rs_path, updated_rows)
-    sync_detection_tsv(tsv, updated_rows, fieldnames)
 
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
@@ -1058,7 +1050,6 @@ async def save_detection_row_state(
     _require_windowed_detection_job(job, operation="edit row state")
 
     rs_path = detection_row_store_path(settings.storage_root, job.id)
-    tsv = detection_tsv_path(settings.storage_root, job.id)
 
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
@@ -1132,7 +1123,6 @@ async def save_detection_row_state(
         raise HTTPException(404, "Detection row not found")
 
     write_detection_row_store(rs_path, existing_rows)
-    sync_detection_tsv(tsv, existing_rows, fieldnames)
 
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in existing_rows
@@ -1148,6 +1138,75 @@ async def save_detection_row_state(
             window_size_seconds=window_size_seconds,
         ),
     }
+
+
+@router.patch("/detection-jobs/{job_id}/labels")
+async def batch_edit_labels(
+    job_id: str,
+    body: LabelEditRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> list[dict]:
+    """Apply a batch of label edits (add/move/delete/change_type) atomically."""
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+    if job.status not in ("paused", "complete", "canceled"):
+        raise HTTPException(400, "Detection job not complete or no output available")
+    _require_windowed_detection_job(job, operation="batch edit labels")
+
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
+    window_size_seconds = await _get_classifier_window_size(
+        session, job.classifier_model_id
+    )
+    is_hydrophone = job.hydrophone_id is not None
+
+    _fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
+        session,
+        job,
+        settings=settings,
+        window_size_seconds=window_size_seconds,
+    )
+
+    # Compute job_duration for bounds validation.
+    if is_hydrophone and job.start_timestamp and job.end_timestamp:
+        job_duration = float(job.end_timestamp - job.start_timestamp)
+    else:
+        # Local jobs: use max end_sec across all rows.
+        job_duration = max(
+            (safe_float(r.get("end_sec"), 0.0) for r in existing_rows),
+            default=0.0,
+        )
+
+    edit_dicts = [e.model_dump() for e in body.edits]
+
+    try:
+        updated_rows = apply_label_edits(
+            existing_rows, edit_dicts, job_duration=job_duration
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    # Re-apply positive selection on every row.
+    for row in updated_rows:
+        apply_effective_positive_selection(row, window_size_seconds=window_size_seconds)
+
+    write_detection_row_store(rs_path, updated_rows)
+
+    has_positive = any(
+        row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
+    )
+    job.has_positive_labels = has_positive
+    await session.commit()
+
+    return [
+        normalize_detection_row(
+            row,
+            is_hydrophone=is_hydrophone,
+            window_size_seconds=window_size_seconds,
+        )
+        for row in updated_rows
+    ]
 
 
 # ---- Audio Slice Streaming ----

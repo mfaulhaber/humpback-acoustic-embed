@@ -1,5 +1,5 @@
 // frontend/src/components/timeline/SpectrogramViewport.tsx
-import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import type { DetectionRow, ZoomLevel } from "@/api/types";
 import { TileCanvas } from "./TileCanvas";
 import { DetectionOverlay } from "./DetectionOverlay";
@@ -28,6 +28,10 @@ export interface SpectrogramViewportProps {
   onCenterChange: (t: number) => void;
   /** Called on drag-pan instead of onCenterChange when provided. */
   onPan?: (t: number) => void;
+  /** When true, replaces DetectionOverlay with a label editor element. */
+  labelMode?: boolean;
+  /** Render function for the label editor; receives canvas width and height. */
+  renderLabelEditor?: (width: number, height: number) => React.ReactNode;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +157,8 @@ export function SpectrogramViewport({
   detections,
   onCenterChange,
   onPan,
+  labelMode,
+  renderLabelEditor,
 }: SpectrogramViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -385,20 +391,23 @@ export function SpectrogramViewport({
             />
           )}
 
-          {/* Detection label overlay */}
-          <DetectionOverlay
-            detections={detections}
-            jobStart={jobStart}
-            centerTimestamp={centerTimestamp}
-            zoomLevel={zoomLevel}
-            width={canvasWidth}
-            height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
-            visible={showLabels}
-            onDetectionClick={(row, x, y) => {
-              setSelectedRow(row);
-              setPopoverPos({ x, y });
-            }}
-          />
+          {/* Detection label overlay (view mode) or label editor (edit mode) */}
+          {!labelMode && (
+            <DetectionOverlay
+              detections={detections}
+              jobStart={jobStart}
+              centerTimestamp={centerTimestamp}
+              zoomLevel={zoomLevel}
+              width={canvasWidth}
+              height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
+              visible={showLabels}
+              onDetectionClick={(row, x, y) => {
+                setSelectedRow(row);
+                setPopoverPos({ x, y });
+              }}
+            />
+          )}
+          {labelMode && renderLabelEditor?.(canvasWidth, canvasHeight + CONFIDENCE_STRIP_HEIGHT)}
 
           {/* Detection click popover */}
           {selectedRow !== null && (

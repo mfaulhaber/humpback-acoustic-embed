@@ -217,7 +217,6 @@ async def test_extract_persists_positive_selection_config(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path="/tmp/fake.tsv",
             )
         )
         await session.commit()
@@ -271,43 +270,37 @@ async def test_training_summary_not_found(client):
 
 
 async def test_content_endpoint_serves_running_job(client, app_settings):
-    """GET /content returns partial results when job is running with TSV on disk."""
+    """GET /content returns partial results when job is running with row store on disk."""
     from pathlib import Path
     from sqlalchemy import insert
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
+    from humpback.classifier.detection_rows import write_detection_row_store
 
     # Create a running detection job directly in the DB
     job_id = str(uuid.uuid4())
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    # Write a partial TSV to disk
+    # Write a partial row store to disk (as the worker now does during detection)
     storage_root = Path(app_settings.storage_root)
     ddir = storage_root / "detections" / job_id
     ddir.mkdir(parents=True)
-    tsv_path = ddir / "detections.tsv"
-    fieldnames = [
-        "filename",
-        "start_sec",
-        "end_sec",
-        "avg_confidence",
-        "peak_confidence",
-        "n_windows",
-    ]
-    with open(tsv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
-        writer.writeheader()
-        writer.writerow(
+    rs_path = ddir / "detection_rows.parquet"
+    write_detection_row_store(
+        rs_path,
+        [
             {
+                "row_id": "test-row-1",
                 "filename": "test.wav",
-                "start_sec": "1.0",
-                "end_sec": "6.0",
-                "avg_confidence": "0.85",
-                "peak_confidence": "0.9",
+                "start_sec": "1.000000",
+                "end_sec": "6.000000",
+                "avg_confidence": "0.850000",
+                "peak_confidence": "0.900000",
                 "n_windows": "2",
             }
-        )
+        ],
+    )
 
     async with sf() as session:
         await session.execute(
@@ -317,7 +310,6 @@ async def test_content_endpoint_serves_running_job(client, app_settings):
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
                 files_processed=1,
                 files_total=5,
             )
@@ -414,7 +406,6 @@ async def test_content_endpoint_parses_positive_selection_metadata(
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -518,7 +509,6 @@ async def test_content_uses_backfilled_auto_selection_for_legacy_job(
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -739,7 +729,6 @@ async def test_save_labels_rejects_invalid_values(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -766,6 +755,7 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
 
     from sqlalchemy import insert
 
+    from humpback.classifier.detection_rows import read_detection_row_store
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
 
@@ -776,6 +766,7 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
     tsv_dir.mkdir(parents=True)
     tsv_path = tsv_dir / "detections.tsv"
+    row_store_path = tsv_dir / "detection_rows.parquet"
     fieldnames = [
         "filename",
         "start_sec",
@@ -823,7 +814,6 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -841,16 +831,8 @@ async def test_save_labels_preserves_extract_filename_column(client, app_setting
     )
     assert resp.status_code == 200
 
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        rows = list(reader)
-
-    assert reader.fieldnames is not None
-    assert "detection_filename" in reader.fieldnames
-    assert "extract_filename" in reader.fieldnames
-    assert "positive_selection_decision" in reader.fieldnames
-    assert "positive_selection_offsets" in reader.fieldnames
-    assert "positive_extract_filename" in reader.fieldnames
+    # TSV is no longer synced on write; verify the row store was updated instead
+    _fieldnames, rows = read_detection_row_store(row_store_path)
     assert len(rows) == 1
     assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
     assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
@@ -873,6 +855,7 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
 
     from sqlalchemy import insert
 
+    from humpback.classifier.detection_rows import read_detection_row_store
     from humpback.classifier.detector import write_window_diagnostics
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
@@ -884,6 +867,7 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
     tsv_path = ddir / "detections.tsv"
+    row_store_path = ddir / "detection_rows.parquet"
     diagnostics_path = ddir / "window_diagnostics.parquet"
     source_name = "20250615T080000Z.wav"
 
@@ -947,7 +931,6 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -984,13 +967,8 @@ async def test_row_state_endpoint_persists_manual_selection(client, app_settings
     assert row["manual_positive_selection_start_sec"] == 0.0
     assert row["manual_positive_selection_end_sec"] == 10.0
 
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        saved_rows = list(reader)
-
-    assert reader.fieldnames is not None
-    assert "manual_positive_selection_start_sec" in reader.fieldnames
-    assert "manual_positive_selection_end_sec" in reader.fieldnames
+    # TSV is no longer synced on write; verify the row store was updated instead
+    _fieldnames, saved_rows = read_detection_row_store(row_store_path)
     assert saved_rows[0]["manual_positive_selection_start_sec"] == "0.000000"
     assert saved_rows[0]["manual_positive_selection_end_sec"] == "10.000000"
     assert saved_rows[0]["positive_selection_origin"] == "manual_override"
@@ -1059,7 +1037,6 @@ async def test_row_state_accepts_non_edge_aligned_window_multiple(client, app_se
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1106,7 +1083,6 @@ async def test_content_and_download_use_row_store_when_tsv_missing(
 
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
-    tsv_path = ddir / "detections.tsv"
     row_store_path = ddir / "detection_rows.parquet"
 
     write_detection_row_store(
@@ -1133,7 +1109,6 @@ async def test_content_and_download_use_row_store_when_tsv_missing(
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
                 output_row_store_path=str(row_store_path),
             )
         )
@@ -1154,13 +1129,16 @@ async def test_content_and_download_use_row_store_when_tsv_missing(
     await engine.dispose()
 
 
-async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_settings):
-    """Editing labels and row state should succeed even when the TSV adapter is missing."""
+async def test_labels_and_row_state_update_row_store(client, app_settings):
+    """Editing labels and row state should persist to the Parquet row store."""
     from pathlib import Path
 
     from sqlalchemy import insert
 
-    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.classifier.detection_rows import (
+        read_detection_row_store,
+        write_detection_row_store,
+    )
     from humpback.database import create_engine, create_session_factory
     from humpback.models.classifier import DetectionJob
 
@@ -1198,7 +1176,6 @@ async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_sett
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
                 output_row_store_path=str(row_store_path),
             )
         )
@@ -1216,11 +1193,9 @@ async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_sett
         ],
     )
     assert resp.status_code == 200
-    assert tsv_path.is_file()
-
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        saved_rows = list(reader)
+    # TSV is no longer synced on write; verify the row store was updated instead
+    assert not tsv_path.is_file()
+    _fieldnames, saved_rows = read_detection_row_store(row_store_path)
     assert saved_rows[0]["humpback"] == "1"
 
     resp = await client.put(
@@ -1238,10 +1213,7 @@ async def test_labels_and_row_state_recreate_tsv_from_row_store(client, app_sett
     assert payload["row"]["manual_positive_selection_start_sec"] == 0.0
     assert payload["row"]["manual_positive_selection_end_sec"] == 10.0
 
-    with open(tsv_path, newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        saved_rows = list(reader)
-
+    _fieldnames, saved_rows = read_detection_row_store(row_store_path)
     assert saved_rows[0]["manual_positive_selection_start_sec"] == "0.000000"
     assert saved_rows[0]["manual_positive_selection_end_sec"] == "10.000000"
     assert saved_rows[0]["positive_selection_origin"] == "manual_override"
@@ -1402,7 +1374,6 @@ async def test_extracted_sidecar_png_matches_spectrogram_endpoint(client, app_se
                 classifier_model_id="fake-model-id",
                 audio_folder=str(audio_folder),
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1499,7 +1470,6 @@ async def test_save_labels_sets_has_positive_labels_true(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1572,7 +1542,6 @@ async def test_save_labels_clears_has_positive_labels(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
                 has_positive_labels=True,
             )
         )
@@ -1663,7 +1632,6 @@ async def test_partial_save_preserves_positive_flag_from_other_rows(
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1738,7 +1706,6 @@ async def test_save_orca_label_sets_has_positive_labels(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1813,7 +1780,6 @@ async def test_orca_label_round_trip(client, app_settings):
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1890,7 +1856,6 @@ async def test_detection_embedding_404_for_job_without_embeddings(client, app_se
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1924,7 +1889,6 @@ async def test_detection_embedding_404_for_job_without_output(client, app_settin
                 classifier_model_id="fake-model-id",
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                # no output_tsv_path
             )
         )
         await session.commit()
@@ -1997,7 +1961,6 @@ async def test_detection_embedding_returns_vector(client, app_settings):
                 classifier_model_id=model_id,
                 audio_folder="/tmp/fake",
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()

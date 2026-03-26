@@ -500,7 +500,6 @@ async def test_paused_job_content_endpoint_returns_rows(client, app_settings):
                 start_timestamp=1751760000.0,
                 end_timestamp=1751846400.0,
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -577,7 +576,6 @@ async def test_canceled_job_content_and_download(client, app_settings):
                 start_timestamp=1751644800.0,
                 end_timestamp=1751648400.0,
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -686,7 +684,6 @@ async def test_hydrophone_content_includes_extract_filename(client, app_settings
                 start_timestamp=1751439600.0,
                 end_timestamp=1751461200.0,
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -754,7 +751,6 @@ async def test_hydrophone_content_derives_detection_filename_for_legacy_rows(
                 start_timestamp=1751439600.0,
                 end_timestamp=1751461200.0,
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -826,7 +822,6 @@ async def test_hydrophone_download_normalizes_legacy_detection_filename(
                 start_timestamp=1751439600.0,
                 end_timestamp=1751461200.0,
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -900,7 +895,6 @@ async def test_hydrophone_download_returns_streaming_response(client, app_settin
                 start_timestamp=1751439600.0,
                 end_timestamp=1751461200.0,
                 confidence_threshold=0.5,
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()
@@ -1335,7 +1329,6 @@ async def _create_paused_job_with_tsv(app_settings):
                 end_timestamp=1751461200.0,
                 confidence_threshold=0.5,
                 detection_mode="windowed",
-                output_tsv_path=str(tsv_path),
             )
         )
         await session.commit()

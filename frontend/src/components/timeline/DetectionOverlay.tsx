@@ -1,7 +1,7 @@
 // frontend/src/components/timeline/DetectionOverlay.tsx
 import React, { useState, useCallback } from "react";
 import type { DetectionRow, ZoomLevel } from "@/api/types";
-import { TILE_DURATION, TILE_WIDTH_PX } from "./constants";
+import { TILE_DURATION, TILE_WIDTH_PX, LABEL_COLORS, type LabelType } from "./constants";
 
 export interface DetectionOverlayProps {
   detections: DetectionRow[];
@@ -13,17 +13,6 @@ export interface DetectionOverlayProps {
   visible: boolean;
   onDetectionClick?: (row: DetectionRow, x: number, y: number) => void;
 }
-
-// Positive labels get bright, distinctive colors
-const POSITIVE_COLORS: Record<string, string> = {
-  humpback: "rgba(64, 224, 192, 0.35)",
-  orca: "rgba(224, 176, 64, 0.35)",
-};
-
-const POSITIVE_HOVER_COLORS: Record<string, string> = {
-  humpback: "rgba(64, 224, 192, 0.6)",
-  orca: "rgba(224, 176, 64, 0.6)",
-};
 
 // Unlabeled detections use confidence-based subtle coloring
 function confidenceColor(conf: number): string {
@@ -37,22 +26,16 @@ function confidenceHoverColor(conf: number): string {
   return `rgba(64, 224, 192, ${alpha.toFixed(3)})`;
 }
 
-function getPositiveLabel(row: DetectionRow): string | null {
+function getLabel(row: DetectionRow): LabelType | null {
   if (row.humpback === 1) return "humpback";
   if (row.orca === 1) return "orca";
+  if (row.ship === 1) return "ship";
+  if (row.background === 1) return "background";
   return null;
 }
 
-function isNegativeLabel(row: DetectionRow): boolean {
-  return row.ship === 1 || row.background === 1;
-}
-
 function getDisplayLabel(row: DetectionRow): string {
-  const pos = getPositiveLabel(row);
-  if (pos) return pos;
-  if (row.ship === 1) return "ship";
-  if (row.background === 1) return "background";
-  return "detection";
+  return getLabel(row) ?? "detection";
 }
 
 function formatTime(epoch: number): string {
@@ -96,8 +79,8 @@ export function DetectionOverlay({
         label,
         startTime: formatTime(jobStart + row.start_sec),
         endTime: formatTime(jobStart + row.end_sec),
-        avgConfidence: row.avg_confidence,
-        peakConfidence: row.peak_confidence,
+        avgConfidence: row.avg_confidence ?? 0,
+        peakConfidence: row.peak_confidence ?? 0,
       });
     },
     [jobStart],
@@ -125,7 +108,7 @@ export function DetectionOverlay({
 
   const pxPerSec = TILE_WIDTH_PX / TILE_DURATION[zoomLevel];
 
-  // Build bars for all detections (skip negatives)
+  // Build bars for all detections
   const bars: {
     row: DetectionRow;
     label: string;
@@ -139,9 +122,6 @@ export function DetectionOverlay({
   for (let i = 0; i < detections.length; i++) {
     const row = detections[i];
 
-    // Skip explicitly negative-labeled rows (ship, background)
-    if (isNegativeLabel(row)) continue;
-
     const startEpoch = jobStart + row.start_sec;
     const endEpoch = jobStart + row.end_sec;
 
@@ -151,17 +131,17 @@ export function DetectionOverlay({
     // Skip if entirely out of view
     if (x + w < 0 || x > width) continue;
 
-    const positiveLabel = getPositiveLabel(row);
+    const labelType = getLabel(row);
     const label = getDisplayLabel(row);
     const conf = row.avg_confidence ?? 0;
 
     let color: string;
     let hoverColor: string;
 
-    if (positiveLabel) {
-      // Labeled positive — bright distinctive color
-      color = POSITIVE_COLORS[positiveLabel];
-      hoverColor = POSITIVE_HOVER_COLORS[positiveLabel];
+    if (labelType) {
+      // Labeled row — use warm/cool palette from LABEL_COLORS
+      color = LABEL_COLORS[labelType].fill;
+      hoverColor = LABEL_COLORS[labelType].hover;
     } else {
       // Unlabeled — subtle confidence-based coloring
       color = confidenceColor(conf);

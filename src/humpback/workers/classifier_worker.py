@@ -19,15 +19,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.classifier.detector import (
     AUDIO_EXTENSIONS,
-    append_detections_tsv,
-    read_detections_tsv,
     read_window_diagnostics_table,
     run_detection,
-    write_detections_tsv,
     write_window_diagnostics,
     write_window_diagnostics_shard,
 )
-from humpback.classifier.detection_rows import ensure_detection_row_store
+from humpback.classifier.detection_rows import (
+    ROW_STORE_FIELDNAMES,
+    append_detection_row_store,
+    build_detection_row_id,
+    ensure_detection_row_store,
+    format_optional_float,
+    format_optional_int,
+    normalize_detection_row,
+    read_detection_row_store,
+)
 from humpback.classifier.extractor import (
     DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
@@ -47,7 +53,12 @@ from humpback.models.classifier import (
 )
 from humpback.processing.embeddings import read_embeddings
 from humpback.services.model_registry_service import get_model_by_name
-from humpback.storage import classifier_dir, detection_dir, ensure_dir
+from humpback.storage import (
+    classifier_dir,
+    detection_dir,
+    detection_row_store_path,
+    ensure_dir,
+)
 from humpback.workers.model_cache import get_model_by_version
 from humpback.workers.queue import (
     complete_detection_job,
@@ -60,20 +71,51 @@ from humpback.workers.queue import (
 
 logger = logging.getLogger(__name__)
 
-HYDROPHONE_TSV_FIELDNAMES = [
-    "filename",
-    "start_sec",
-    "end_sec",
-    "avg_confidence",
-    "peak_confidence",
-    "n_windows",
-    "raw_start_sec",
-    "raw_end_sec",
-    "merged_event_count",
-    "detection_filename",
-    "extract_filename",
-    "hydrophone_name",
-]
+
+def _detection_dicts_to_store_rows(
+    detections: list[dict],
+    *,
+    is_hydrophone: bool,
+    window_size_seconds: float,
+) -> list[dict[str, str]]:
+    """Convert raw detection dicts (from the detector) to row-store format.
+
+    Each detection dict has string values for fields like filename, start_sec,
+    etc. We normalize through the row-store pipeline to produce dicts keyed by
+    ROW_STORE_FIELDNAMES with string values.
+    """
+    store_rows: list[dict[str, str]] = []
+    for det in detections:
+        # Convert to string dict for normalize_detection_row
+        str_det: dict[str, str] = {k: str(v) for k, v in det.items()}
+        normalized = normalize_detection_row(
+            str_det,
+            is_hydrophone=is_hydrophone,
+            window_size_seconds=window_size_seconds,
+        )
+        out_row: dict[str, str] = {field: "" for field in ROW_STORE_FIELDNAMES}
+        out_row["row_id"] = normalized["row_id"] or build_detection_row_id(normalized)
+        out_row["filename"] = normalized["filename"]
+        out_row["start_sec"] = format_optional_float(normalized["start_sec"])
+        out_row["end_sec"] = format_optional_float(normalized["end_sec"])
+        out_row["avg_confidence"] = format_optional_float(normalized["avg_confidence"])
+        out_row["peak_confidence"] = format_optional_float(
+            normalized["peak_confidence"]
+        )
+        out_row["n_windows"] = format_optional_int(normalized["n_windows"])
+        out_row["raw_start_sec"] = format_optional_float(normalized["raw_start_sec"])
+        out_row["raw_end_sec"] = format_optional_float(normalized["raw_end_sec"])
+        out_row["merged_event_count"] = format_optional_int(
+            normalized["merged_event_count"]
+        )
+        out_row["detection_filename"] = normalized["detection_filename"] or ""
+        out_row["extract_filename"] = normalized["extract_filename"] or ""
+        out_row["hydrophone_name"] = normalized["hydrophone_name"] or ""
+        for label in ("humpback", "orca", "ship", "background"):
+            value = normalized[label]
+            out_row[label] = "" if value is None else str(value)
+        store_rows.append(out_row)
+    return store_rows
 
 
 def _peak_rss_mb() -> float | None:
@@ -756,10 +798,9 @@ async def run_detection_job(
 
         feature_config = json.loads(cm.feature_config) if cm.feature_config else None
 
-        # Set up output directory and TSV path early for incremental writes
+        # Set up output directory and row store path for incremental writes
         ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
-        tsv_path = ddir / "detections.tsv"
-        row_store_path = ddir / "detection_rows.parquet"
+        rs_path = detection_row_store_path(settings.storage_root, job.id)
         if not job.audio_folder:
             raise ValueError("Detection job missing audio_folder")
         audio_folder = Path(job.audio_folder)
@@ -770,9 +811,9 @@ async def run_detection_job(
         )
         files_total = len(audio_files)
 
-        # Remove stale TSV from prior run to prevent duplicate appends
-        if tsv_path.exists():
-            tsv_path.unlink()
+        # Remove stale row store from prior run to prevent duplicate appends
+        if rs_path.exists():
+            rs_path.unlink()
 
         await session.execute(
             update(DetectionJob)
@@ -788,9 +829,14 @@ async def run_detection_job(
         loop = asyncio.get_event_loop()
 
         def on_file_complete(file_detections: list[dict], files_done: int, total: int):
-            # Append detections to TSV (synchronous file I/O, safe from thread)
+            # Append detections to Parquet row store (synchronous file I/O, safe from thread)
             if file_detections:
-                append_detections_tsv(file_detections, tsv_path)
+                store_rows = _detection_dicts_to_store_rows(
+                    file_detections,
+                    is_hydrophone=False,
+                    window_size_seconds=cm.window_size_seconds,
+                )
+                append_detection_row_store(rs_path, store_rows)
 
             # Schedule async DB progress update on the event loop
             if session_factory is not None:
@@ -836,9 +882,6 @@ async def run_detection_job(
             True,  # emit_embeddings
         )
 
-        # Overwrite TSV with final authoritative version
-        write_detections_tsv(detections, tsv_path)
-
         # Write window diagnostics
         if diagnostics:
             diag_path = ddir / "window_diagnostics.parquet"
@@ -856,8 +899,7 @@ async def run_detection_job(
             summary["has_detection_embeddings"] = True
 
         ensure_detection_row_store(
-            row_store_path=row_store_path,
-            tsv_path=tsv_path,
+            row_store_path=rs_path,
             diagnostics_path=diag_path,
             is_hydrophone=False,
             window_size_seconds=cm.window_size_seconds,
@@ -927,26 +969,25 @@ async def run_hydrophone_detection_job(
 
         feature_config = json.loads(cm.feature_config) if cm.feature_config else None
 
-        # Set up output directory and TSV path
+        # Set up output directory and row store path
         ddir = ensure_dir(detection_dir(settings.storage_root, job.id))
-        tsv_path = ddir / "detections.tsv"
+        rs_path = detection_row_store_path(settings.storage_root, job.id)
         diag_path = ddir / "window_diagnostics.parquet"
-        row_store_path = ddir / "detection_rows.parquet"
 
         await session.commit()
 
         # Resume support: if segments were already processed, read prior detections
         skip_segments = 0
         prior_detections: list[dict] = []
-        if job.segments_processed and job.segments_processed > 0 and tsv_path.exists():
-            prior_detections = read_detections_tsv(
-                tsv_path, fieldnames=HYDROPHONE_TSV_FIELDNAMES
-            )
+        if job.segments_processed and job.segments_processed > 0 and rs_path.is_file():
+            _, prior_rows = read_detection_row_store(rs_path)
+            # Row-store dicts (all-string, ROW_STORE_FIELDNAMES) join
+            # all_detections alongside raw detector dicts (mixed types,
+            # fewer fields).  Safe because all_detections is only used for
+            # counting (summary) and is no longer persisted from the return
+            # value — the incremental Parquet writes are the source of truth.
+            prior_detections = prior_rows  # type: ignore[assignment]
             skip_segments = job.segments_processed
-            # Rewrite TSV cleanly with prior detections only (removes partial appends)
-            write_detections_tsv(
-                prior_detections, tsv_path, fieldnames=HYDROPHONE_TSV_FIELDNAMES
-            )
             logger.info(
                 "Resuming hydrophone job %s from segment %d with %d prior detections",
                 job.id,
@@ -1014,11 +1055,12 @@ async def run_hydrophone_detection_job(
             if chunk_detections:
                 for det in chunk_detections:
                     det["hydrophone_name"] = hydrophone_short_name
-                append_detections_tsv(
+                store_rows = _detection_dicts_to_store_rows(
                     chunk_detections,
-                    tsv_path,
-                    fieldnames=HYDROPHONE_TSV_FIELDNAMES,
+                    is_hydrophone=True,
+                    window_size_seconds=cm.window_size_seconds,
                 )
+                append_detection_row_store(rs_path, store_rows)
 
             if session_factory is not None:
 
@@ -1228,17 +1270,9 @@ async def run_hydrophone_detection_job(
                 peak_worker_rss_mb=peak_worker_rss_mb,
                 child_pid=child_pid,
             )
-            # Write what we have
-            for det in detections:
-                det.setdefault("hydrophone_name", hydrophone_short_name)
-            write_detections_tsv(
-                detections,
-                tsv_path,
-                fieldnames=HYDROPHONE_TSV_FIELDNAMES,
-            )
+            # Finalize row store with diagnostics enrichment
             ensure_detection_row_store(
-                row_store_path=row_store_path,
-                tsv_path=tsv_path,
+                row_store_path=rs_path,
                 diagnostics_path=diag_path if diag_path.exists() else None,
                 is_hydrophone=True,
                 window_size_seconds=cm.window_size_seconds,
@@ -1260,18 +1294,9 @@ async def run_hydrophone_detection_job(
             await session.commit()
             return
 
-        # Write final TSV
-        for det in detections:
-            det.setdefault("hydrophone_name", hydrophone_short_name)
-        write_detections_tsv(
-            detections,
-            tsv_path,
-            fieldnames=HYDROPHONE_TSV_FIELDNAMES,
-        )
-
+        # Finalize row store with diagnostics enrichment
         ensure_detection_row_store(
-            row_store_path=row_store_path,
-            tsv_path=tsv_path,
+            row_store_path=rs_path,
             diagnostics_path=diag_path if diag_path.exists() else None,
             is_hydrophone=True,
             window_size_seconds=cm.window_size_seconds,
@@ -1418,11 +1443,11 @@ async def run_extraction_job(
 
         ensure_detection_row_store(
             row_store_path=row_store_path,
-            tsv_path=tsv_path,
             diagnostics_path=diagnostics_path if diagnostics_path.exists() else None,
             is_hydrophone=job.hydrophone_id is not None,
             window_size_seconds=ws,
             detection_mode=job.detection_mode,
+            tsv_path=tsv_path,
         )
 
         if job.hydrophone_id:

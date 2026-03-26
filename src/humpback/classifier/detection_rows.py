@@ -93,10 +93,6 @@ ROW_STORE_FIELDNAMES = [
     *POSITIVE_SELECTION_FIELDNAMES,
 ]
 
-ROW_STORE_TSV_FIELDNAMES = [
-    field for field in ROW_STORE_FIELDNAMES if field != "row_id"
-]
-
 ROW_STORE_SCHEMA = pa.schema([(field, pa.string()) for field in ROW_STORE_FIELDNAMES])
 
 _TS_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z")
@@ -317,8 +313,8 @@ def normalize_detection_row(
     filename = (row.get("filename", "") or "").strip()
     start_sec = safe_float(row.get("start_sec"), 0.0)
     end_sec = safe_float(row.get("end_sec"), 0.0)
-    avg_confidence = safe_float(row.get("avg_confidence"), 0.0)
-    peak_confidence = safe_float(row.get("peak_confidence"), 0.0)
+    avg_confidence = safe_optional_float(row.get("avg_confidence"))
+    peak_confidence = safe_optional_float(row.get("peak_confidence"))
     n_windows = safe_int(row.get("n_windows"), None)
 
     detection_filename = (row.get("detection_filename", "") or "").strip() or None
@@ -430,6 +426,136 @@ def build_detection_row_id(row: dict[str, Any]) -> str:
         f"{safe_float(row.get('end_sec'), 0.0):.6f}"
     )
     return hashlib.sha1(material.encode("utf-8")).hexdigest()
+
+
+def _is_row_labeled(row: dict[str, str]) -> bool:
+    """Return True if any label field is set to '1'."""
+    return any(row.get(f, "").strip() == "1" for f in LABEL_FIELDNAMES)
+
+
+def _rows_overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
+    return a_start < b_end and a_end > b_start
+
+
+def apply_label_edits(
+    rows: list[dict[str, str]],
+    edits: list[dict[str, Any]],
+    *,
+    job_duration: float,
+) -> list[dict[str, str]]:
+    """Apply a batch of label edits (add/move/delete/change_type) to detection rows.
+
+    Returns an updated copy of the row list. Raises ``ValueError`` on invalid
+    operations (overlapping labeled rows, out-of-bounds moves, missing row IDs).
+    """
+    # Work on a shallow copy so the caller's list is not mutated.
+    result: list[dict[str, str]] = [dict(r) for r in rows]
+
+    # Build a lookup by row_id for quick access.
+    row_index: dict[str, dict[str, str]] = {
+        r["row_id"]: r for r in result if r.get("row_id")
+    }
+
+    # Collect new rows from "add" edits so we can check unlabeled replacement.
+    new_rows: list[dict[str, str]] = []
+    delete_ids: set[str] = set()
+
+    for edit in edits:
+        action = edit.get("action")
+
+        if action == "add":
+            start = float(edit["start_sec"])
+            end = float(edit["end_sec"])
+            label = edit.get("label")
+
+            new_row = {f: "" for f in ROW_STORE_FIELDNAMES}
+            new_row["start_sec"] = str(start)
+            new_row["end_sec"] = str(end)
+            if label:
+                new_row[label] = "1"
+            new_row["row_id"] = build_detection_row_id(new_row)
+            new_rows.append(new_row)
+
+        elif action == "move":
+            rid = edit.get("row_id", "")
+            target = row_index.get(rid)
+            if target is None:
+                raise ValueError(f"Row with row_id '{rid}' not found")
+            new_start = float(edit["new_start_sec"])
+            new_end = float(edit["new_end_sec"])
+            if new_start < 0 or new_end > job_duration:
+                raise ValueError(
+                    f"Move out of bounds: [{new_start}, {new_end}] "
+                    f"exceeds [0, {job_duration}]"
+                )
+            target["start_sec"] = str(new_start)
+            target["end_sec"] = str(new_end)
+
+        elif action == "delete":
+            rid = edit.get("row_id", "")
+            if rid not in row_index:
+                raise ValueError(f"Row with row_id '{rid}' not found")
+            delete_ids.add(rid)
+
+        elif action == "change_type":
+            rid = edit.get("row_id", "")
+            target = row_index.get(rid)
+            if target is None:
+                raise ValueError(f"Row with row_id '{rid}' not found")
+            label = edit.get("label", "")
+            # Clear all label fields, then set the target one.
+            for lf in LABEL_FIELDNAMES:
+                target[lf] = ""
+            if label:
+                target[label] = "1"
+
+        else:
+            raise ValueError(f"Unknown edit action: {action!r}")
+
+    # Apply deletes.
+    result = [r for r in result if r.get("row_id") not in delete_ids]
+
+    # Unlabeled replacement: remove unlabeled rows that overlap with new adds.
+    if new_rows:
+        labeled_new = [r for r in new_rows if _is_row_labeled(r)]
+        if labeled_new:
+            keep: list[dict[str, str]] = []
+            for r in result:
+                if _is_row_labeled(r):
+                    keep.append(r)
+                    continue
+                r_start = safe_float(r.get("start_sec"), 0.0)
+                r_end = safe_float(r.get("end_sec"), 0.0)
+                replaced = False
+                for nr in labeled_new:
+                    nr_start = safe_float(nr.get("start_sec"), 0.0)
+                    nr_end = safe_float(nr.get("end_sec"), 0.0)
+                    if _rows_overlap(r_start, r_end, nr_start, nr_end):
+                        replaced = True
+                        break
+                if not replaced:
+                    keep.append(r)
+            result = keep
+
+    # Append new rows.
+    result.extend(new_rows)
+
+    # Overlap validation: no two labeled rows may overlap.
+    labeled = [
+        (safe_float(r.get("start_sec"), 0.0), safe_float(r.get("end_sec"), 0.0), r)
+        for r in result
+        if _is_row_labeled(r)
+    ]
+    labeled.sort(key=lambda t: t[0])
+    for i in range(len(labeled) - 1):
+        a_start, a_end, _ = labeled[i]
+        b_start, b_end, _ = labeled[i + 1]
+        if _rows_overlap(a_start, a_end, b_start, b_end):
+            raise ValueError(
+                f"Labeled rows overlap: [{a_start}, {a_end}] and [{b_start}, {b_end}]"
+            )
+
+    return result
 
 
 def resolve_clip_bounds(
@@ -607,27 +733,6 @@ def read_tsv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return fieldnames, rows
 
 
-def write_tsv_rows(
-    path: Path,
-    fieldnames: list[str],
-    rows: list[dict[str, str]],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tsv")
-    try:
-        with os.fdopen(fd, "w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
-            writer.writeheader()
-            writer.writerows(rows)
-        os.replace(tmp_path, str(path))
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
 def ensure_fieldnames(fieldnames: list[str], required: list[str]) -> list[str]:
     for field in required:
         if field not in fieldnames:
@@ -673,18 +778,15 @@ def write_detection_row_store(
         raise
 
 
-def sync_detection_tsv(
-    tsv_path: Path,
-    rows: list[dict[str, str]],
-    fieldnames: list[str] | None = None,
+def append_detection_row_store(
+    path: Path,
+    new_rows: list[dict[str, str]],
 ) -> None:
-    export_fieldnames = list(fieldnames or ROW_STORE_TSV_FIELDNAMES)
-    export_fieldnames = [field for field in export_fieldnames if field != "row_id"]
-    write_tsv_rows(
-        tsv_path,
-        export_fieldnames,
-        [{field: row.get(field, "") for field in export_fieldnames} for row in rows],
-    )
+    """Append rows to an existing Parquet row store, creating if needed."""
+    existing_rows: list[dict[str, str]] = []
+    if path.is_file():
+        _, existing_rows = read_detection_row_store(path)
+    write_detection_row_store(path, existing_rows + new_rows)
 
 
 def stream_detection_rows_as_tsv(
@@ -1111,23 +1213,31 @@ def merge_detection_row_store_state(
 def ensure_detection_row_store(
     *,
     row_store_path: Path,
-    tsv_path: Path,
     diagnostics_path: Path | None,
     is_hydrophone: bool,
     window_size_seconds: float,
     refresh_existing: bool = False,
     detection_mode: str | None = None,
+    tsv_path: Path | None = None,
 ) -> tuple[list[str], list[dict[str, str]]]:
     if row_store_path.is_file() and not refresh_existing:
         return read_detection_row_store(row_store_path)
 
-    fieldnames, rows = read_tsv_rows(tsv_path)
-    if not rows:
+    # Determine the source rows.  When a TSV is provided (legacy fallback)
+    # prefer it as the source of truth for detection rows.  Otherwise use the
+    # existing row store.
+    source_rows: list[dict[str, str]] = []
+    if tsv_path is not None and tsv_path.is_file():
+        _, source_rows = read_tsv_rows(tsv_path)
+    elif row_store_path.is_file():
+        _, source_rows = read_detection_row_store(row_store_path)
+
+    if not source_rows:
         write_detection_row_store(row_store_path, [])
         return ROW_STORE_FIELDNAMES, []
 
     store_rows = build_detection_row_store_rows(
-        rows,
+        source_rows,
         diagnostics_path=diagnostics_path,
         is_hydrophone=is_hydrophone,
         window_size_seconds=window_size_seconds,
@@ -1141,5 +1251,4 @@ def ensure_detection_row_store(
             window_size_seconds=window_size_seconds,
         )
     write_detection_row_store(row_store_path, store_rows)
-    sync_detection_tsv(tsv_path, store_rows)
     return ROW_STORE_FIELDNAMES, store_rows

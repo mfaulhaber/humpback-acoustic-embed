@@ -214,7 +214,7 @@ export function LabelingTab() {
 
     const sorted = [...filtered];
     if (sortMode === "confidence") {
-      sorted.sort((a, b) => b.peak_confidence - a.peak_confidence);
+      sorted.sort((a, b) => (b.peak_confidence ?? 0) - (a.peak_confidence ?? 0));
     } else if (sortMode === "uncertainty") {
       // Sort by prediction uncertainty (least confident first)
       sorted.sort((a, b) => {
@@ -803,11 +803,11 @@ export function LabelingTab() {
               </span>
               <span>
                 <strong>Avg conf:</strong>{" "}
-                {currentRow.avg_confidence.toFixed(3)}
+                {currentRow.avg_confidence != null ? currentRow.avg_confidence.toFixed(3) : "—"}
               </span>
               <span>
                 <strong>Peak conf:</strong>{" "}
-                {currentRow.peak_confidence.toFixed(3)}
+                {currentRow.peak_confidence != null ? currentRow.peak_confidence.toFixed(3) : "—"}
               </span>
             </div>
 
