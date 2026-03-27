@@ -27,11 +27,17 @@ By contrast, the frontend only needs a small neighborhood of tiles around the cu
 
 `src/humpback/api/routers/timeline.py` renders all tiles for all zoom levels during `/prepare`. Even though this now runs off the detection critical path, it still turns “open the timeline” into “start a very large background rendering job”.
 
-### 2. Audio/timeline resolution is rebuilt per tile
+### 2. Shared `ref_db` normalization is correct, but expensive on first render
+
+The current code already fixed the earlier “tile brightness inconsistency” bugs by computing a per-job shared `ref_db` in `src/humpback/api/routers/timeline.py` and reusing it across tiles. That behavior is correct and should remain a hard invariant.
+
+However, `_compute_job_ref_db()` samples up to 10 tiles across multiple zoom levels, resolving audio and running STFT stats before the first visible tile can render when the value is not yet cached. That makes the normalization pass itself part of the startup latency.
+
+### 3. Audio/timeline resolution is rebuilt per tile
 
 `src/humpback/processing/timeline_audio.py` calls into HLS/provider timeline builders on each tile render. For Orcasound HLS this means rebuilding the segment timeline and decoding overlapping `.ts` segments even when adjacent tiles share most of the same source data.
 
-### 3. The renderer has high fixed Python overhead per tile
+### 4. The renderer has high fixed Python overhead per tile
 
 `src/humpback/processing/timeline_tiles.py` computes an STFT and then creates a Matplotlib figure, paints the image, and saves it to PNG bytes for every tile. That is a relatively expensive path for something repeated thousands of times.
 
@@ -69,17 +75,19 @@ Cons:
 Introduce job-scoped reuse for the expensive non-image work:
 
 - build a timeline manifest once per job and reuse it across tile renders
+- persist and reuse the job-level shared `ref_db` without changing the normalization behavior
 - during a prepare batch, keep an in-memory render session with:
   - resolved segment timeline
-  - cached decoded segment audio keyed by segment path and target sample rate
+  - cached decoded and/or resampled PCM keyed by segment path and target sample rate
   - cached per-job normalization data
+- optionally keep a small hot tile-bytes memory cache in front of the disk cache
 - on single-tile misses, reuse the persisted manifest and opportunistically prewarm adjacent tiles
 
 Pros:
 
 - Speeds both `/prepare` and ad hoc cache misses
 - Directly attacks repeated folder listing, playlist parsing, and ffmpeg decode work
-- Preserves current visual output
+- Preserves current visual output and the shared-normalization fix
 
 Cons:
 
@@ -111,11 +119,14 @@ Cons:
 
 Implement a phased fix:
 
-1. **Adopt Option 1 immediately** by making timeline preparation viewport-first and bounded by default.
-2. **Pair it with the bounded parts of Option 2** so adjacent tiles reuse timeline and decoded segment work within a prepare batch and on common miss paths.
-3. **Defer Option 3** until after we measure the post-change timings. If the renderer still dominates, we can replace the Matplotlib path in a follow-up without redoing the scheduling/caching work.
+1. **Preserve the shared per-job `ref_db` behavior as a non-negotiable invariant.** No optimization should reintroduce per-tile normalization or mixed normalization within a job.
+2. **Adopt Option 1 immediately** by making timeline preparation viewport-first and bounded by default.
+3. **Pair it with the bounded parts of Option 2** so startup and miss paths reuse timeline metadata, decoded PCM, and cached `ref_db`, plus a small bounded worker pool for preparing targeted tile batches.
+4. **Defer Option 3** until after we measure the post-change timings. If the renderer still dominates, we can replace the Matplotlib path in a follow-up without redoing the scheduling/caching work.
 
 This sequence is recommended because the current biggest problem is not just “tile rendering is slow”, but “we are rendering far too many tiles up front”. Once that is corrected, reuse gives the next highest payoff with lower risk than a renderer rewrite.
+
+I do **not** recommend using lossy MP3 as an intermediate cache for spectrogram tile generation. That would change the underlying spectral content and risks undoing the visual-consistency fixes. For tile rendering, cache decoded or resampled PCM instead. If we later add caching for the `/timeline/audio` playback endpoint, MP3 chunk caching can be considered there because the client already consumes MP3 on that path.
 
 ## Proposed Behavior
 
@@ -123,18 +134,20 @@ This sequence is recommended because the current biggest problem is not just “
 
 - Clicking `Timeline` should start a bounded startup prepare around the default initial viewport instead of launching a full all-zoom warmup.
 - The viewer should navigate immediately.
+- If shared `ref_db` is missing, compute it once using the manifest-backed stats path and persist it before the first startup tile batch is rendered.
 - `prepare-status` should reflect the active target set for the startup prepare, not imply that every tile for every zoom is expected up front.
 
 ### Miss path
 
 - A requested uncached tile should still render on demand.
 - After rendering a miss, the backend should opportunistically queue a small number of adjacent tiles for the same zoom level.
-- The miss path should reuse any available job manifest and decoded-segment cache.
+- The miss path should reuse any available job manifest, cached shared `ref_db`, and decoded-segment cache.
 
 ### Full-cache path
 
 - Full all-zoom prewarming should remain available as an explicit mode for offline warming or benchmarking.
 - It should reuse the same manifest and render-session helpers as the startup path.
+- Full and startup prepare runs may use a small bounded worker pool, but all tiles for a job must still share the same `ref_db`.
 
 ## Files likely changed
 
@@ -144,6 +157,7 @@ This sequence is recommended because the current biggest problem is not just “
 | `src/humpback/processing/timeline_audio.py` | Add reusable job manifest / render-session helpers for timeline audio resolution |
 | `src/humpback/processing/timeline_cache.py` | Persist manifest/metadata and bounded cache bookkeeping for render reuse |
 | `src/humpback/classifier/s3_stream.py` | Expose helpers for reusable HLS timeline metadata and segment reuse |
+| `src/humpback/config.py` | Add bounded worker-count / memory-cache settings for timeline preparation |
 | `frontend/src/api/client.ts` | Send scoped prepare requests, handle updated status shape if needed |
 | `frontend/src/hooks/queries/useTimeline.ts` | Adjust prepare mutation / status polling |
 | `frontend/src/components/classifier/HydrophoneTab.tsx` | Trigger startup-scoped prepare before navigation |
@@ -151,11 +165,15 @@ This sequence is recommended because the current biggest problem is not just “
 | `tests/integration/test_timeline_api.py` | Cover scoped prepare, miss-triggered neighbor warming, and status semantics |
 | `tests/unit/test_timeline_audio.py` | Cover manifest reuse and bounded decoded-segment caching |
 | `tests/unit/test_timeline_cache.py` | Cover manifest persistence and cache bookkeeping |
+| `tests/unit/test_timeline_tiles.py` | Cover shared-normalization invariants that must remain true after the performance work |
 
 ## Testing
 
 - **Startup prepare:** verify the default prepare path only targets a bounded tile neighborhood and returns without scheduling a full all-zoom render.
+- **Normalization stability:** verify all tiles for a job continue to use a shared `ref_db`, and cached `ref_db` values are reused rather than recomputed on hot paths.
 - **Reuse:** verify repeated tile renders for the same job reuse the timeline manifest and avoid rebuilding the HLS timeline unnecessarily.
+- **Bounded memory:** verify in-memory manifest / decoded-PCM caches respect configured size limits.
+- **Concurrency:** verify bounded threaded prepare does not change `ref_db` selection, does not duplicate locked work, and remains idempotent.
 - **Miss smoothing:** verify a cache miss can trigger adjacent same-zoom tile warming without duplicate work.
 - **Status correctness:** verify prepare status reflects startup-scoped progress accurately.
 - **Regression:** existing tile PNG generation, cache locking, and timeline API tests continue to pass.
