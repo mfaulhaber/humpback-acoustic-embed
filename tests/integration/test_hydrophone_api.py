@@ -1356,6 +1356,55 @@ async def test_save_labels_paused_job(client, app_settings):
     await engine.dispose()
 
 
+async def test_save_labels_hydrophone_job_relative_offsets_round_trip(
+    client, app_settings
+):
+    """Hydrophone label saves accept the job-relative offsets returned by GET /content."""
+    job_id, engine = await _create_paused_job_with_tsv(app_settings)
+
+    content_resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert content_resp.status_code == 200
+    rows = content_resp.json()
+    assert len(rows) == 1
+
+    row = rows[0]
+    expected_offset = (
+        datetime.strptime("20250702T080118", "%Y%m%dT%H%M%S")
+        .replace(tzinfo=timezone.utc)
+        .timestamp()
+        - 1751439600.0
+    )
+    assert row["start_sec"] == expected_offset
+    assert row["end_sec"] == expected_offset + 5.0
+    assert row["humpback"] is None
+
+    save_resp = await client.put(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json=[
+            {
+                "filename": row["filename"],
+                "start_sec": row["start_sec"],
+                "end_sec": row["end_sec"],
+                "humpback": 1,
+            }
+        ],
+    )
+    assert save_resp.status_code == 200
+
+    verify_resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
+    assert verify_resp.status_code == 200
+    updated = verify_resp.json()[0]
+    assert updated["start_sec"] == expected_offset
+    assert updated["end_sec"] == expected_offset + 5.0
+    assert updated["humpback"] == 1
+
+    job_resp = await client.get(f"/classifier/detection-jobs/{job_id}")
+    assert job_resp.status_code == 200
+    assert job_resp.json()["has_positive_labels"] is True
+
+    await engine.dispose()
+
+
 async def test_download_paused_job(client, app_settings):
     """GET /download on a paused job with TSV should return 200."""
     job_id, engine = await _create_paused_job_with_tsv(app_settings)

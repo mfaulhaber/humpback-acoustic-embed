@@ -895,6 +895,28 @@ def _to_job_relative_offsets(rows: list[dict], job_start_timestamp: float) -> No
         row["end_sec"] = row.get("end_sec", 0.0) + offset
 
 
+def _to_file_relative_offset(
+    filename: str,
+    offset_sec: float,
+    job_start_timestamp: float | None,
+) -> float:
+    """Convert a hydrophone job-relative offset back to the stored file-relative value."""
+    if job_start_timestamp is None:
+        return offset_sec
+
+    from datetime import datetime, timezone
+
+    fmt = "%Y%m%dT%H%M%SZ"
+    base = filename.rsplit(".", 1)[0] if "." in filename else filename
+    try:
+        chunk_dt = datetime.strptime(base, fmt).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return offset_sec
+
+    chunk_epoch = chunk_dt.timestamp()
+    return offset_sec - (chunk_epoch - job_start_timestamp)
+
+
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(
     job_id: str, session: SessionDep, settings: SettingsDep
@@ -991,10 +1013,24 @@ async def save_detection_labels(
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
+    is_hydrophone = job.hydrophone_id is not None
 
     label_map: dict[tuple[str, float, float], DetectionLabelRow] = {}
     for row in body:
-        label_map[(row.filename, row.start_sec, row.end_sec)] = row
+        start_sec = row.start_sec
+        end_sec = row.end_sec
+        if is_hydrophone:
+            start_sec = _to_file_relative_offset(
+                row.filename,
+                start_sec,
+                job.start_timestamp,
+            )
+            end_sec = _to_file_relative_offset(
+                row.filename,
+                end_sec,
+                job.start_timestamp,
+            )
+        label_map[(row.filename, start_sec, end_sec)] = row
 
     fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
         session,
