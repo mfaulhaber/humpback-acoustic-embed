@@ -288,3 +288,193 @@ def test_decode_segments_to_audio_fills_gaps():
     assert np.all(result[sr * 10 : sr * 20] == 0.0)
     # Last 10 seconds should have signal from seg2
     assert np.allclose(result[sr * 20 : sr * 30], 0.8)
+
+
+def test_resolve_reuses_hls_manifest_and_pcm_cache(tmp_path):
+    """Repeated HLS resolves should reuse the manifest and decoded PCM."""
+    from humpback.processing.timeline_audio import (
+        clear_timeline_audio_caches,
+        get_timeline_audio_cache_stats,
+        resolve_timeline_audio,
+    )
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    sr = 32000
+    clear_timeline_audio_caches()
+    cache = TimelineTileCache(tmp_path / "tile_cache", max_jobs=5)
+
+    with (
+        patch(
+            "humpback.classifier.s3_stream.build_hls_timeline_for_range",
+            return_value=[("/fake/seg1.ts", 1000.0, 10.0)],
+        ) as mock_build,
+        patch(
+            "humpback.processing.timeline_audio._decode_hls_segment_file",
+            return_value=np.ones(sr * 10, dtype=np.float32),
+        ) as mock_decode,
+    ):
+        resolve_timeline_audio(
+            hydrophone_id="rpi_north_sjc",
+            local_cache_path="/fake/cache",
+            job_start_timestamp=1000.0,
+            job_end_timestamp=1010.0,
+            start_sec=1000.0,
+            duration_sec=10.0,
+            target_sr=sr,
+            timeline_cache=cache,
+            job_id="job_a",
+            manifest_cache_items=4,
+            pcm_cache_max_bytes=sr * 10 * 8,
+        )
+        resolve_timeline_audio(
+            hydrophone_id="rpi_north_sjc",
+            local_cache_path="/fake/cache",
+            job_start_timestamp=1000.0,
+            job_end_timestamp=1010.0,
+            start_sec=1000.0,
+            duration_sec=10.0,
+            target_sr=sr,
+            timeline_cache=cache,
+            job_id="job_a",
+            manifest_cache_items=4,
+            pcm_cache_max_bytes=sr * 10 * 8,
+        )
+
+    assert mock_build.call_count == 1
+    assert mock_decode.call_count == 1
+    stats = get_timeline_audio_cache_stats()
+    assert stats["manifest_items"] == 1
+    assert stats["pcm_items"] == 1
+
+
+def test_resolve_uses_persisted_manifest_before_rebuilding(tmp_path):
+    """Persisted manifests should be loaded before rebuilding the HLS timeline."""
+    from humpback.processing.timeline_audio import (
+        clear_timeline_audio_caches,
+        resolve_timeline_audio,
+    )
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    sr = 32000
+    clear_timeline_audio_caches()
+    cache = TimelineTileCache(tmp_path / "tile_cache", max_jobs=5)
+    cache.put_audio_manifest(
+        "job_a",
+        {
+            "provider_kind": "orcasound_hls",
+            "hydrophone_id": "rpi_north_sjc",
+            "local_cache_path": "/fake/cache",
+            "job_start_timestamp": 1000.0,
+            "job_end_timestamp": 1010.0,
+            "entries": [
+                {
+                    "segment_path": "/fake/seg1.ts",
+                    "start_epoch": 1000.0,
+                    "duration_sec": 10.0,
+                }
+            ],
+        },
+    )
+
+    with (
+        patch(
+            "humpback.classifier.s3_stream.build_hls_timeline_for_range"
+        ) as mock_build,
+        patch(
+            "humpback.processing.timeline_audio._decode_hls_segment_file",
+            return_value=np.ones(sr * 10, dtype=np.float32),
+        ) as mock_decode,
+    ):
+        result = resolve_timeline_audio(
+            hydrophone_id="rpi_north_sjc",
+            local_cache_path="/fake/cache",
+            job_start_timestamp=1000.0,
+            job_end_timestamp=1010.0,
+            start_sec=1000.0,
+            duration_sec=10.0,
+            target_sr=sr,
+            timeline_cache=cache,
+            job_id="job_a",
+            manifest_cache_items=4,
+            pcm_cache_max_bytes=sr * 10 * 8,
+        )
+
+    assert len(result) == sr * 10
+    assert mock_build.call_count == 0
+    assert mock_decode.call_count == 1
+
+
+def test_pcm_cache_respects_max_bytes(tmp_path):
+    """PCM cache should evict old segments when the byte cap is exceeded."""
+    from humpback.processing.timeline_audio import (
+        clear_timeline_audio_caches,
+        get_timeline_audio_cache_stats,
+        resolve_timeline_audio,
+    )
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    sr = 32000
+    clear_timeline_audio_caches()
+    cache = TimelineTileCache(tmp_path / "tile_cache", max_jobs=5)
+
+    with (
+        patch(
+            "humpback.classifier.s3_stream.build_hls_timeline_for_range",
+            return_value=[
+                ("/fake/seg1.ts", 1000.0, 10.0),
+                ("/fake/seg2.ts", 1010.0, 10.0),
+            ],
+        ),
+        patch(
+            "humpback.processing.timeline_audio._decode_hls_segment_file"
+        ) as mock_decode,
+    ):
+        mock_decode.side_effect = [
+            np.ones(sr * 10, dtype=np.float32),
+            np.ones(sr * 10, dtype=np.float32) * 2.0,
+            np.ones(sr * 10, dtype=np.float32),
+        ]
+
+        resolve_timeline_audio(
+            hydrophone_id="rpi_north_sjc",
+            local_cache_path="/fake/cache",
+            job_start_timestamp=1000.0,
+            job_end_timestamp=1020.0,
+            start_sec=1000.0,
+            duration_sec=10.0,
+            target_sr=sr,
+            timeline_cache=cache,
+            job_id="job_a",
+            manifest_cache_items=4,
+            pcm_cache_max_bytes=sr * 10 * 4,
+        )
+        resolve_timeline_audio(
+            hydrophone_id="rpi_north_sjc",
+            local_cache_path="/fake/cache",
+            job_start_timestamp=1000.0,
+            job_end_timestamp=1020.0,
+            start_sec=1010.0,
+            duration_sec=10.0,
+            target_sr=sr,
+            timeline_cache=cache,
+            job_id="job_a",
+            manifest_cache_items=4,
+            pcm_cache_max_bytes=sr * 10 * 4,
+        )
+        resolve_timeline_audio(
+            hydrophone_id="rpi_north_sjc",
+            local_cache_path="/fake/cache",
+            job_start_timestamp=1000.0,
+            job_end_timestamp=1020.0,
+            start_sec=1000.0,
+            duration_sec=10.0,
+            target_sr=sr,
+            timeline_cache=cache,
+            job_id="job_a",
+            manifest_cache_items=4,
+            pcm_cache_max_bytes=sr * 10 * 4,
+        )
+
+    assert mock_decode.call_count == 3
+    stats = get_timeline_audio_cache_stats()
+    assert stats["pcm_items"] == 1

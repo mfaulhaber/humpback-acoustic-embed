@@ -1653,7 +1653,16 @@ function HydrophoneJobRow({
                     disabled={prepareTimeline.isPending}
                     onClick={async () => {
                       try {
-                        await prepareTimeline.mutateAsync(job.id);
+                        const start = job.start_timestamp ?? 0;
+                        const end = job.end_timestamp ?? start;
+                        await prepareTimeline.mutateAsync({
+                          jobId: job.id,
+                          request: {
+                            scope: "startup",
+                            zoomLevel: "1h",
+                            centerTimestamp: start + (end - start) / 2,
+                          },
+                        });
                         navigate(`/app/classifier/timeline/${job.id}`, {
                           state: { prepareRequested: true },
                         });

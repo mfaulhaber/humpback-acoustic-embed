@@ -16,12 +16,12 @@
 - Modify: `tests/integration/test_timeline_api.py`
 
 **Acceptance criteria:**
-- [ ] `POST /classifier/detection-jobs/{job_id}/timeline/prepare` supports a startup-scoped mode that targets only a bounded set of tiles around a requested center timestamp and zoom level
-- [ ] The default `Timeline` button path uses the startup-scoped mode rather than an implicit full all-zoom warmup
-- [ ] The startup-scoped mode prioritizes the requested zoom level before any optional coarse zoom levels
-- [ ] Existing full-cache behavior remains available through an explicit mode instead of being the default open-path behavior
-- [ ] Startup-scoped prepare still uses exactly one shared `ref_db` per job and does not reintroduce per-tile normalization
-- [ ] `prepare-status` reports progress for the active target set in a way that matches the new startup-scoped semantics
+- [x] `POST /classifier/detection-jobs/{job_id}/timeline/prepare` supports a startup-scoped mode that targets only a bounded set of tiles around a requested center timestamp and zoom level
+- [x] The default `Timeline` button path uses the startup-scoped mode rather than an implicit full all-zoom warmup
+- [x] The startup-scoped mode prioritizes the requested zoom level before any optional coarse zoom levels
+- [x] Existing full-cache behavior remains available through an explicit mode instead of being the default open-path behavior
+- [x] Startup-scoped prepare still uses exactly one shared `ref_db` per job and does not reintroduce per-tile normalization
+- [x] `prepare-status` reports progress for the active target set in a way that matches the new startup-scoped semantics
 
 **Tests needed:**
 - Add integration coverage that the default prepare path schedules only a bounded startup tile set
@@ -43,12 +43,12 @@
 - Modify: `tests/integration/test_timeline_api.py`
 
 **Acceptance criteria:**
-- [ ] Timeline preparation builds or loads a reusable job-level manifest instead of rebuilding the provider timeline for every tile
-- [ ] Shared `ref_db` computation is preserved but reuses the manifest and hot decoded-PCM caches instead of rebuilding work on each startup path
-- [ ] Adjacent tile renders within the same prepare batch can reuse decoded segment audio when they touch the same source segments and target sample rate
-- [ ] Reuse is bounded by explicit cache limits so memory growth stays controlled
-- [ ] Single-tile miss rendering can consume the same manifest helpers and cached `ref_db` without requiring a full prepare run first
-- [ ] Existing cache locking and idempotency guarantees remain intact across processes
+- [x] Timeline preparation builds or loads a reusable job-level manifest instead of rebuilding the provider timeline for every tile
+- [x] Shared `ref_db` computation is preserved but reuses the manifest and hot decoded-PCM caches instead of rebuilding work on each startup path
+- [x] Adjacent tile renders within the same prepare batch can reuse decoded segment audio when they touch the same source segments and target sample rate
+- [x] Reuse is bounded by explicit cache limits so memory growth stays controlled
+- [x] Single-tile miss rendering can consume the same manifest helpers and cached `ref_db` without requiring a full prepare run first
+- [x] Existing cache locking and idempotency guarantees remain intact across processes
 
 **Tests needed:**
 - Add unit coverage that repeated tile audio resolution for the same job reuses manifest data
@@ -69,11 +69,11 @@
 - Modify: `tests/integration/test_timeline_api.py`
 
 **Acceptance criteria:**
-- [ ] The server keeps a bounded in-memory cache for hot timeline manifests and decoded/resampled PCM used by tile preparation
-- [ ] Timeline startup/full prepare can use a small configurable worker pool to render targeted tile sets concurrently
-- [ ] Worker-count and in-memory cache limits are configurable and have safe defaults
-- [ ] Concurrency does not change the chosen shared `ref_db`, violate prepare-lock idempotency, or duplicate same-job work
-- [ ] Lossy MP3 is not used as an intermediate cache for spectrogram tile rendering
+- [x] The server keeps a bounded in-memory cache for hot timeline manifests and decoded/resampled PCM used by tile preparation
+- [x] Timeline startup/full prepare can use a small configurable worker pool to render targeted tile sets concurrently
+- [x] Worker-count and in-memory cache limits are configurable and have safe defaults
+- [x] Concurrency does not change the chosen shared `ref_db`, violate prepare-lock idempotency, or duplicate same-job work
+- [x] Lossy MP3 is not used as an intermediate cache for spectrogram tile rendering
 
 **Tests needed:**
 - Add unit coverage that in-memory cache bounds are enforced
@@ -89,10 +89,10 @@
 - Modify: `tests/integration/test_timeline_api.py`
 
 **Acceptance criteria:**
-- [ ] When an uncached tile is requested, the requested tile still renders immediately
-- [ ] After serving a miss, the backend can queue a bounded number of adjacent same-zoom tiles without blocking the response
-- [ ] Neighbor warming stays idempotent under repeated requests and respects the existing per-job prepare lock coordination
-- [ ] Neighbor warming never expands into an unbounded all-zoom prepare
+- [x] When an uncached tile is requested, the requested tile still renders immediately
+- [x] After serving a miss, the backend can queue a bounded number of adjacent same-zoom tiles without blocking the response
+- [x] Neighbor warming stays idempotent under repeated requests and respects the existing per-job prepare lock coordination
+- [x] Neighbor warming never expands into an unbounded all-zoom prepare
 
 **Tests needed:**
 - Add integration coverage that a tile miss can trigger bounded neighbor warming
