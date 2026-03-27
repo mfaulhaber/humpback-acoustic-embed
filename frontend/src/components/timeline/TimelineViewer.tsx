@@ -1,8 +1,8 @@
 // frontend/src/components/timeline/TimelineViewer.tsx
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import type { ZoomLevel } from "@/api/types";
-import { useTimelineConfidence, useTimelineDetections, usePrepareTimeline, usePrepareStatus, useSaveLabels } from "@/hooks/queries/useTimeline";
+import { useTimelineConfidence, useTimelineDetections, usePrepareStatus, useSaveLabels } from "@/hooks/queries/useTimeline";
 import { useHydrophoneDetectionJobs, useExtractLabeledSamples } from "@/hooks/queries/useClassifier";
 import { useLabelEdits } from "@/hooks/queries/useLabelEdits";
 import { timelineAudioUrl } from "@/api/client";
@@ -18,20 +18,21 @@ import type { LabelType } from "./constants";
 
 export function TimelineViewer() {
   const { jobId } = useParams<{ jobId: string }>();
+  const location = useLocation();
   const { data: jobs } = useHydrophoneDetectionJobs(0);
   const job = jobs?.find((j) => j.id === jobId);
+  const prepareRequested = Boolean(
+    (location.state as { prepareRequested?: boolean } | null)?.prepareRequested,
+  );
 
   // Background tile cache state
   const [cacheComplete, setCacheComplete] = useState(false);
-  const prepareMutation = usePrepareTimeline();
-
-  // Trigger prepare on mount
-  useEffect(() => {
-    if (jobId) prepareMutation.mutate(jobId);
-  }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll prepare status
-  const { data: prepareStatus } = usePrepareStatus(jobId ?? "", !cacheComplete && !!jobId);
+  const { data: prepareStatus } = usePrepareStatus(
+    jobId ?? "",
+    prepareRequested && !cacheComplete && !!jobId,
+  );
 
   // Check completion
   useEffect(() => {

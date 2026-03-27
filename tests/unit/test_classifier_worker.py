@@ -483,6 +483,7 @@ async def test_hydrophone_detection_success_updates_progress_and_completes(
     assert capture["provider"] is not None
     assert job.result_summary is not None
     assert json.loads(job.result_summary)["has_diagnostics"] is True
+    assert job.timeline_tiles_ready is False
 
 
 def test_hydrophone_provider_mode_reports_cache_strategy() -> None:
@@ -829,5 +830,6 @@ async def test_tf2_hydrophone_detection_uses_subprocess_path(
         assert summary["avg_audio_x_realtime"] == 15.0
         assert summary["peak_worker_rss_mb"] == 256.0
         assert summary["child_pid"] == 424242
+        assert job.timeline_tiles_ready is False
 
     assert subprocess_calls == [jobs[0].id, jobs[1].id]
