@@ -1333,47 +1333,6 @@ async def run_hydrophone_detection_job(
         )
         await complete_detection_job(session, job.id)
 
-        # Pre-render coarse timeline tiles (best-effort, don't fail the job)
-        try:
-            from humpback.api.routers.timeline import _prepare_tiles_sync
-            from humpback.processing.timeline_cache import TimelineTileCache
-
-            tile_cache = TimelineTileCache(
-                cache_dir=settings.storage_root / "timeline_cache",
-                max_jobs=settings.timeline_cache_max_jobs,
-            )
-            prepare_lock = tile_cache.try_acquire_prepare_lock(job.id)
-            if prepare_lock is None:
-                logger.info(
-                    "Timeline tiles already being prepared for job %s; skipping duplicate worker pre-render",
-                    job.id,
-                )
-            else:
-                try:
-                    await asyncio.to_thread(
-                        _prepare_tiles_sync,
-                        job=job,
-                        settings=settings,
-                        cache=tile_cache,
-                    )
-                finally:
-                    prepare_lock.release()
-
-                # Mark tiles ready
-                await session.execute(
-                    update(DetectionJob)
-                    .where(DetectionJob.id == job.id)
-                    .values(timeline_tiles_ready=True)
-                )
-                await session.commit()
-                logger.info("Pre-rendered timeline tiles for job %s", job.id)
-        except Exception:
-            logger.warning(
-                "Failed to pre-render timeline tiles for job %s",
-                job.id,
-                exc_info=True,
-            )
-
     except Exception as e:
         logger.exception("Hydrophone detection job %s failed", job.id)
         try:

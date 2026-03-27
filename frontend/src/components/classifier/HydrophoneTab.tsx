@@ -48,6 +48,7 @@ import {
   useExtractLabeledSamples,
   useBrowseDirectories,
 } from "@/hooks/queries/useClassifier";
+import { usePrepareTimeline } from "@/hooks/queries/useTimeline";
 import { detectionTsvUrl, detectionAudioSliceUrl, detectionSpectrogramUrl } from "@/api/client";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
 import { ExtractDialog } from "./ExtractDialog";
@@ -1460,6 +1461,7 @@ function HydrophoneJobRow({
   visibleColumns?: Set<string>;
 }) {
   const navigate = useNavigate();
+  const prepareTimeline = usePrepareTimeline();
   const summary = job.result_summary as Record<string, unknown> | null;
   const isRunning = job.status === "running";
   const isLegacyMerged = isLegacyMergedMode(job.detection_mode);
@@ -1648,7 +1650,18 @@ function HydrophoneJobRow({
                     variant="outline"
                     size="sm"
                     className="h-6 px-2 text-xs"
-                    onClick={() => navigate(`/app/classifier/timeline/${job.id}`)}
+                    disabled={prepareTimeline.isPending}
+                    onClick={async () => {
+                      try {
+                        await prepareTimeline.mutateAsync(job.id);
+                        navigate(`/app/classifier/timeline/${job.id}`, {
+                          state: { prepareRequested: true },
+                        });
+                      } catch {
+                        showMsg("warning", "Could not start timeline cache prep; opening Timeline view anyway.");
+                        navigate(`/app/classifier/timeline/${job.id}`);
+                      }
+                    }}
                   >
                     <Activity className="h-3 w-3 mr-1" />
                     Timeline
