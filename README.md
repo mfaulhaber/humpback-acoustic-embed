@@ -25,7 +25,7 @@ Highlights:
 - Binary classifier training plus hydrophone/archive detection
 - Interactive web UI and REST API for review, labeling, and extraction
 - Local-first artifact storage using SQL and Parquet-backed outputs
-- Zoomable timeline viewer for hydrophone detection jobs (Pattern Radio-inspired, 6 zoom levels, Ocean Depth colormap, minimap navigation, synchronized audio playback)
+- Zoomable timeline viewer for hydrophone detection jobs (Pattern Radio-inspired, 6 zoom levels, Ocean Depth colormap, startup-scoped tile warming, synchronized audio playback)
 
 ---
 
@@ -537,9 +537,9 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | POST | `/search/similar-by-audio` | Queue an async search job — worker encodes detection audio via the model and stores the embedding; returns `{id, status: "queued"}` |
 | GET | `/search/jobs/{id}` | Poll a search job — returns status while encoding, or search results on completion (ephemeral: row is deleted after results are returned) |
 | GET | `/classifier/detection-jobs/{id}/embedding` | Retrieve the stored embedding for a specific detection row (returns vector, model_version, vector_dim) |
-| POST | `/classifier/detection-jobs/{id}/timeline/prepare` | Trigger pre-rendering of spectrogram tile pyramid for the detection job |
-| GET | `/classifier/detection-jobs/{id}/timeline/tile` | Fetch a single pre-colored PNG spectrogram tile (`?zoom=&x=&y=`) |
-| GET | `/classifier/detection-jobs/{id}/timeline/confidence` | Fetch confidence heatmap data for the minimap |
+| POST | `/classifier/detection-jobs/{id}/timeline/prepare` | Trigger startup-scoped tile warming by default (or explicit full warmup with `{"scope":"full"}`) |
+| GET | `/classifier/detection-jobs/{id}/timeline/tile` | Fetch a single pre-colored PNG spectrogram tile (`?zoom_level=&tile_index=`) |
+| GET | `/classifier/detection-jobs/{id}/timeline/confidence` | Fetch confidence heatmap data for the timeline viewer |
 | GET | `/classifier/detection-jobs/{id}/timeline/audio` | Stream audio segment for the timeline playback (`?start_sec=&duration_sec=`) |
 | GET | `/audio/{id}/spectrogram-png` | PNG spectrogram image for a time range of an audio file (disk-cached) |
 | POST | `/label-processing/jobs` | Create label processing job (classifier-scored extraction from annotated recordings) |
@@ -762,6 +762,13 @@ Environment variables (prefix `HUMPBACK_`):
 | `HUMPBACK_HYDROPHONE_PREFETCH_ENABLED` | `true` | Enable ordered concurrent segment prefetch for hydrophone providers that support raw-byte prefetch (for example Orcasound HLS) |
 | `HUMPBACK_HYDROPHONE_PREFETCH_WORKERS` | `4` | Worker threads for hydrophone segment prefetch |
 | `HUMPBACK_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS` | `16` | Max queued segment fetches ahead of decode |
+| `HUMPBACK_TIMELINE_PREPARE_WORKERS` | `2` | Worker threads for bounded startup/full timeline tile preparation |
+| `HUMPBACK_TIMELINE_STARTUP_RADIUS_TILES` | `2` | Same-zoom tile radius warmed around the initial timeline viewport |
+| `HUMPBACK_TIMELINE_STARTUP_COARSE_LEVELS` | `1` | Number of coarser zoom levels warmed alongside the requested startup zoom |
+| `HUMPBACK_TIMELINE_NEIGHBOR_PREFETCH_RADIUS` | `1` | Same-zoom neighbor radius opportunistically warmed after an uncached tile miss |
+| `HUMPBACK_TIMELINE_TILE_MEMORY_CACHE_ITEMS` | `256` | In-memory hot tile-byte cache entries layered in front of disk tile cache |
+| `HUMPBACK_TIMELINE_MANIFEST_MEMORY_CACHE_ITEMS` | `8` | In-memory reusable HLS timeline manifests kept hot across tile/audio requests |
+| `HUMPBACK_TIMELINE_PCM_MEMORY_CACHE_MB` | `128` | Approximate MB budget for decoded/resampled PCM reused across timeline tile/audio requests |
 
 The repo-root `.env` file may also define deploy-time values like `TF_EXTRA`.
 Unknown keys are ignored by the app settings loader so one file can configure

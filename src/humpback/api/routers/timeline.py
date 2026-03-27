@@ -7,12 +7,14 @@ import io
 import logging
 import threading
 import wave
+from concurrent.futures import ThreadPoolExecutor
+from typing import Literal
 
 import numpy as np
 import pyarrow.parquet as pq
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.processing.timeline_cache import TimelinePrepareLock, TimelineTileCache
@@ -20,6 +22,7 @@ from humpback.processing.timeline_tiles import (
     ZOOM_LEVELS,
     generate_timeline_tile,
     tile_count,
+    tile_duration_sec,
     tile_time_range,
 )
 from humpback.services import classifier_service
@@ -49,7 +52,18 @@ class PrepareResponse(BaseModel):
     timeline_tiles_ready: bool
 
 
+class PrepareRequest(BaseModel):
+    scope: Literal["startup", "full"] = "startup"
+    zoom_level: str | None = None
+    center_timestamp: float | None = None
+    radius_tiles: int | None = Field(default=None, ge=0)
+
+
 # ---- Helpers ----
+
+
+PrepareTargets = dict[str, list[int] | None]
+_ALL_TILES = "all"
 
 
 async def _get_job_or_404(session, job_id: str):
@@ -63,6 +77,18 @@ def _job_duration(job) -> float:
     if job.start_timestamp is not None and job.end_timestamp is not None:
         return max(0.0, job.end_timestamp - job.start_timestamp)
     return 0.0
+
+
+def _timeline_cache(settings) -> TimelineTileCache:
+    return TimelineTileCache(
+        cache_dir=settings.storage_root / "timeline_cache",
+        max_jobs=settings.timeline_cache_max_jobs,
+        memory_cache_max_items=settings.timeline_tile_memory_cache_items,
+    )
+
+
+def _pcm_cache_bytes_limit(settings) -> int:
+    return int(settings.timeline_pcm_memory_cache_mb) * 1024 * 1024
 
 
 def _tile_sample_rate(duration_sec: float, width_px: int) -> int:
@@ -90,6 +116,7 @@ def _resolve_tile_audio(
     zoom_level: str,
     tile_index: int,
     settings,
+    cache: TimelineTileCache,
 ) -> tuple[np.ndarray, int]:
     """Resolve audio for a tile and return (audio, sample_rate)."""
     from humpback.processing.timeline_audio import resolve_timeline_audio
@@ -109,6 +136,10 @@ def _resolve_tile_audio(
         duration_sec=duration_sec,
         target_sr=sr,
         noaa_cache_path=settings.noaa_cache_path,
+        timeline_cache=cache,
+        job_id=job.id,
+        manifest_cache_items=settings.timeline_manifest_memory_cache_items,
+        pcm_cache_max_bytes=_pcm_cache_bytes_limit(settings),
     )
     return audio, sr
 
@@ -124,7 +155,11 @@ def _render_tile_sync(
 ) -> bytes:
     """Render a spectrogram tile (CPU-bound, runs in thread)."""
     audio, sr = _resolve_tile_audio(
-        job=job, zoom_level=zoom_level, tile_index=tile_index, settings=settings
+        job=job,
+        zoom_level=zoom_level,
+        tile_index=tile_index,
+        settings=settings,
+        cache=cache,
     )
 
     # Adapt n_fft so it does not exceed the audio length
@@ -154,6 +189,142 @@ _STATS_SAMPLE_COUNT = 10
 _STATS_ZOOM_PRIORITY = ["15m", "5m", "1h", "1m"]
 _SILENCE_FLOOR_DB = -115.0
 _DEFAULT_REF_DB = -50.0
+
+
+def _prepare_target_status_payload(
+    scope: Literal["startup", "full"], targets: PrepareTargets
+) -> dict[str, object]:
+    return {
+        "scope": scope,
+        "zooms": {
+            zoom: _ALL_TILES if indices is None else indices
+            for zoom, indices in targets.items()
+        },
+    }
+
+
+def _reserve_prepare_slot(job_id: str) -> bool:
+    with _preparing_lock:
+        if job_id in _preparing:
+            return False
+        _preparing.add(job_id)
+        return True
+
+
+def _release_prepare_slot(job_id: str) -> None:
+    with _preparing_lock:
+        _preparing.discard(job_id)
+
+
+def _tile_indices_around_center(
+    *,
+    zoom_level: str,
+    center_timestamp: float,
+    job_start_timestamp: float,
+    total_tiles: int,
+    radius_tiles: int,
+) -> list[int]:
+    if total_tiles <= 0:
+        return []
+    center_idx = int(
+        (center_timestamp - job_start_timestamp) // tile_duration_sec(zoom_level)
+    )
+    center_idx = min(max(center_idx, 0), total_tiles - 1)
+    first = max(0, center_idx - radius_tiles)
+    last = min(total_tiles - 1, center_idx + radius_tiles)
+    return list(range(first, last + 1))
+
+
+def _build_full_prepare_targets(job) -> PrepareTargets:
+    duration = _job_duration(job)
+    targets: PrepareTargets = {}
+    for zoom in _PREPARE_PRIORITY:
+        if tile_count(zoom, job_duration_sec=duration) > 0:
+            targets[zoom] = None
+    return targets
+
+
+def _build_startup_prepare_targets(
+    *,
+    job,
+    settings,
+    zoom_level: str,
+    center_timestamp: float,
+    radius_tiles: int,
+) -> PrepareTargets:
+    duration = _job_duration(job)
+    targets: PrepareTargets = {}
+    zoom_order = list(ZOOM_LEVELS)
+    zoom_index = next(
+        i for i, candidate in enumerate(zoom_order) if candidate == zoom_level
+    )
+
+    target_center = min(
+        max(center_timestamp, job.start_timestamp or center_timestamp),
+        job.end_timestamp or center_timestamp,
+    )
+
+    base_total = tile_count(zoom_level, job_duration_sec=duration)
+    targets[zoom_level] = _tile_indices_around_center(
+        zoom_level=zoom_level,
+        center_timestamp=target_center,
+        job_start_timestamp=job.start_timestamp or target_center,
+        total_tiles=base_total,
+        radius_tiles=radius_tiles,
+    )
+
+    for coarse_offset in range(1, settings.timeline_startup_coarse_levels + 1):
+        coarse_index = zoom_index - coarse_offset
+        if coarse_index < 0:
+            break
+        coarse_zoom = zoom_order[coarse_index]
+        coarse_total = tile_count(coarse_zoom, job_duration_sec=duration)
+        targets[coarse_zoom] = _tile_indices_around_center(
+            zoom_level=coarse_zoom,
+            center_timestamp=target_center,
+            job_start_timestamp=job.start_timestamp or target_center,
+            total_tiles=coarse_total,
+            radius_tiles=0,
+        )
+
+    return targets
+
+
+def _prepare_targets_from_request(
+    *,
+    job,
+    settings,
+    request: PrepareRequest,
+) -> tuple[PrepareTargets, dict[str, object]]:
+    if request.scope == "full":
+        targets = _build_full_prepare_targets(job)
+        return targets, _prepare_target_status_payload("full", targets)
+
+    zoom_level = request.zoom_level or "1h"
+    if zoom_level not in ZOOM_LEVELS:
+        raise HTTPException(
+            400, f"Invalid zoom level: {zoom_level}. Must be one of {ZOOM_LEVELS}"
+        )
+
+    center_timestamp = request.center_timestamp
+    if center_timestamp is None:
+        start = job.start_timestamp or 0.0
+        end = job.end_timestamp or start
+        center_timestamp = start + max(0.0, end - start) / 2.0
+
+    radius_tiles = (
+        request.radius_tiles
+        if request.radius_tiles is not None
+        else settings.timeline_startup_radius_tiles
+    )
+    targets = _build_startup_prepare_targets(
+        job=job,
+        settings=settings,
+        zoom_level=zoom_level,
+        center_timestamp=center_timestamp,
+        radius_tiles=radius_tiles,
+    )
+    return targets, _prepare_target_status_payload("startup", targets)
 
 
 def _compute_job_ref_db(
@@ -197,7 +368,11 @@ def _compute_job_ref_db(
         for idx in sample_indices:
             try:
                 audio, sr = _resolve_tile_audio(
-                    job=job, zoom_level=stats_zoom, tile_index=idx, settings=settings
+                    job=job,
+                    zoom_level=stats_zoom,
+                    tile_index=idx,
+                    settings=settings,
+                    cache=cache,
                 )
                 # Skip silence / zero-audio tiles
                 if float(np.max(np.abs(audio))) < 1e-10:
@@ -244,7 +419,7 @@ def _prepare_tiles_sync(
     job,
     settings,
     cache: TimelineTileCache,
-    zoom_levels: list[str] | None = None,
+    targets: PrepareTargets | None = None,
 ) -> int:
     """Render tiles for requested zoom levels in priority order. Skips cached."""
     duration = _job_duration(job)
@@ -254,35 +429,51 @@ def _prepare_tiles_sync(
     # Pass 1: compute per-job reference dB level
     ref_db = _compute_job_ref_db(job=job, settings=settings, cache=cache)
 
-    # Pass 2: render tiles with consistent normalization
-    levels = zoom_levels or list(_PREPARE_PRIORITY)
-    priority = {z: i for i, z in enumerate(_PREPARE_PRIORITY)}
-    levels.sort(key=lambda z: priority.get(z, 99))
+    prepare_targets = targets or _build_full_prepare_targets(job)
 
-    rendered = 0
-    for zoom in levels:
-        count = tile_count(zoom, job_duration_sec=duration)
-        for idx in range(count):
-            if cache.has(job.id, zoom, idx):
-                continue
-            try:
-                _render_tile_sync(
-                    job=job,
-                    zoom_level=zoom,
-                    tile_index=idx,
-                    settings=settings,
-                    cache=cache,
-                    ref_db=ref_db,
-                )
-                rendered += 1
-            except Exception:
-                logger.exception(
-                    "Failed to render tile %s/%d for job %s",
-                    zoom,
-                    idx,
-                    job.id,
-                )
-    return rendered
+    def _iter_targets():
+        for zoom, indices in prepare_targets.items():
+            count = tile_count(zoom, job_duration_sec=duration)
+            if indices is None:
+                for idx in range(count):
+                    yield zoom, idx
+            else:
+                for idx in indices:
+                    if 0 <= idx < count:
+                        yield zoom, idx
+
+    def _render_target(target: tuple[str, int]) -> int:
+        zoom, idx = target
+        if cache.has(job.id, zoom, idx):
+            return 0
+        try:
+            _render_tile_sync(
+                job=job,
+                zoom_level=zoom,
+                tile_index=idx,
+                settings=settings,
+                cache=cache,
+                ref_db=ref_db,
+            )
+            return 1
+        except Exception:
+            logger.exception(
+                "Failed to render tile %s/%d for job %s",
+                zoom,
+                idx,
+                job.id,
+            )
+            return 0
+
+    worker_count = max(1, settings.timeline_prepare_workers)
+    if worker_count == 1:
+        return sum(_render_target(target) for target in _iter_targets())
+
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="timeline-prepare",
+    ) as executor:
+        return sum(executor.map(_render_target, _iter_targets()))
 
 
 def _launch_prepare_thread(
@@ -291,22 +482,83 @@ def _launch_prepare_thread(
     settings,
     cache: TimelineTileCache,
     prepare_lock: TimelinePrepareLock,
+    targets: PrepareTargets | None = None,
 ) -> None:
     def _background() -> None:
         try:
-            _prepare_tiles_sync(job=job, settings=settings, cache=cache)
+            _prepare_tiles_sync(
+                job=job,
+                settings=settings,
+                cache=cache,
+                targets=targets,
+            )
         finally:
             prepare_lock.release()
-            with _preparing_lock:
-                _preparing.discard(job.id)
+            _release_prepare_slot(job.id)
 
     try:
         threading.Thread(target=_background, daemon=True).start()
     except Exception:
         prepare_lock.release()
-        with _preparing_lock:
-            _preparing.discard(job.id)
+        _release_prepare_slot(job.id)
         raise
+
+
+def _try_launch_prepare(
+    *,
+    job,
+    settings,
+    cache: TimelineTileCache,
+    targets: PrepareTargets,
+    status_payload: dict[str, object] | None,
+) -> bool:
+    if not targets:
+        return False
+    if not _reserve_prepare_slot(job.id):
+        return False
+
+    prepare_lock = cache.try_acquire_prepare_lock(job.id)
+    if prepare_lock is None:
+        _release_prepare_slot(job.id)
+        return False
+
+    if status_payload is not None:
+        cache.put_prepare_plan(job.id, status_payload)
+
+    _launch_prepare_thread(
+        job=job,
+        settings=settings,
+        cache=cache,
+        prepare_lock=prepare_lock,
+        targets=targets,
+    )
+    return True
+
+
+def _neighbor_prepare_targets(
+    *,
+    job,
+    zoom_level: str,
+    tile_index: int,
+    settings,
+) -> PrepareTargets | None:
+    radius = settings.timeline_neighbor_prefetch_radius
+    if radius <= 0:
+        return None
+    duration = _job_duration(job)
+    total = tile_count(zoom_level, job_duration_sec=duration)
+    if total <= 1:
+        return None
+    indices = [
+        idx
+        for idx in range(
+            max(0, tile_index - radius), min(total - 1, tile_index + radius) + 1
+        )
+        if idx != tile_index
+    ]
+    if not indices:
+        return None
+    return {zoom_level: indices}
 
 
 def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:
@@ -395,10 +647,7 @@ async def get_tile(
             f"Tile index {tile_index} out of range (max {max_tiles - 1} for {zoom_level})",
         )
 
-    cache = TimelineTileCache(
-        cache_dir=settings.storage_root / "timeline_cache",
-        max_jobs=settings.timeline_cache_max_jobs,
-    )
+    cache = _timeline_cache(settings)
 
     # Check cache first
     cached = cache.get(job.id, zoom_level, tile_index)
@@ -422,6 +671,21 @@ async def get_tile(
         cache=cache,
         ref_db=ref_db,
     )
+
+    neighbor_targets = _neighbor_prepare_targets(
+        job=job,
+        zoom_level=zoom_level,
+        tile_index=tile_index,
+        settings=settings,
+    )
+    if neighbor_targets is not None:
+        _try_launch_prepare(
+            job=job,
+            settings=settings,
+            cache=cache,
+            targets=neighbor_targets,
+            status_payload=None,
+        )
     return Response(content=tile_bytes, media_type="image/png")
 
 
@@ -551,6 +815,7 @@ async def get_audio(
 
     from humpback.processing.timeline_audio import resolve_timeline_audio
 
+    cache = _timeline_cache(settings)
     audio = await asyncio.to_thread(
         resolve_timeline_audio,
         hydrophone_id=job.hydrophone_id,
@@ -561,6 +826,10 @@ async def get_audio(
         duration_sec=duration_sec,
         target_sr=32000,
         noaa_cache_path=settings.noaa_cache_path,
+        timeline_cache=cache,
+        job_id=job.id,
+        manifest_cache_items=settings.timeline_manifest_memory_cache_items,
+        pcm_cache_max_bytes=_pcm_cache_bytes_limit(settings),
     )
 
     if format == "mp3":
@@ -576,33 +845,26 @@ async def prepare_tiles(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
+    request: PrepareRequest | None = Body(default=None),
 ) -> PrepareResponse:
-    """Launch background rendering of all zoom-level tiles for the timeline viewer."""
+    """Launch background rendering of startup or full timeline tile targets."""
     job = await _get_job_or_404(session, job_id)
+    prepare_request = request or PrepareRequest()
 
-    cache = TimelineTileCache(
-        cache_dir=settings.storage_root / "timeline_cache",
-        max_jobs=settings.timeline_cache_max_jobs,
+    cache = _timeline_cache(settings)
+    targets, status_payload = _prepare_targets_from_request(
+        job=job,
+        settings=settings,
+        request=prepare_request,
     )
 
-    reserved_locally = False
-    with _preparing_lock:
-        if job.id not in _preparing:
-            _preparing.add(job.id)
-            reserved_locally = True
-
-    if reserved_locally:
-        prepare_lock = cache.try_acquire_prepare_lock(job.id)
-        if prepare_lock is None:
-            with _preparing_lock:
-                _preparing.discard(job.id)
-        else:
-            _launch_prepare_thread(
-                job=job,
-                settings=settings,
-                cache=cache,
-                prepare_lock=prepare_lock,
-            )
+    _try_launch_prepare(
+        job=job,
+        settings=settings,
+        cache=cache,
+        targets=targets,
+        status_payload=status_payload,
+    )
 
     # Mark timeline_tiles_ready immediately — signals that preparation was
     # initiated.  Use /prepare-status for real per-zoom progress.
@@ -629,10 +891,34 @@ async def prepare_status(
     """Return per-zoom-level rendering progress for a detection job."""
     job = await _get_job_or_404(session, job_id)
     duration = _job_duration(job)
-    cache = TimelineTileCache(
-        cache_dir=settings.storage_root / "timeline_cache",
-        max_jobs=settings.timeline_cache_max_jobs,
-    )
+    cache = _timeline_cache(settings)
+    plan = cache.get_prepare_plan(job.id)
+
+    if isinstance(plan, dict):
+        zoom_payload = plan.get("zooms")
+        if isinstance(zoom_payload, dict):
+            status: dict[str, dict[str, int]] = {}
+            for zoom, plan_value in zoom_payload.items():
+                if zoom not in ZOOM_LEVELS:
+                    continue
+                if plan_value == _ALL_TILES:
+                    total = tile_count(zoom, job_duration_sec=duration)
+                    rendered = cache.tile_count_for_zoom(job.id, zoom)
+                elif isinstance(plan_value, list):
+                    indices = [
+                        int(item)
+                        for item in plan_value
+                        if isinstance(item, int)
+                        or (isinstance(item, float) and item.is_integer())
+                    ]
+                    total = len(indices)
+                    rendered = cache.count_cached_tiles(job.id, zoom, indices)
+                else:
+                    continue
+                status[zoom] = {"total": total, "rendered": min(rendered, total)}
+            if status:
+                return status
+
     status: dict[str, dict[str, int]] = {}
     for zoom in ZOOM_LEVELS:
         total = tile_count(zoom, job_duration_sec=duration)

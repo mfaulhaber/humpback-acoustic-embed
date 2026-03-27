@@ -613,10 +613,25 @@ export const fetchTimelineConfidence = (jobId: string) =>
 export const patchDetectionLabels = (jobId: string, edits: LabelEditItem[]) =>
   patch<DetectionRow[]>(`/classifier/detection-jobs/${jobId}/labels`, { edits });
 
-export const prepareTimelineTiles = (jobId: string) =>
+export interface PrepareTimelineTilesRequest {
+  scope?: "startup" | "full";
+  zoomLevel?: string;
+  centerTimestamp?: number;
+  radiusTiles?: number;
+}
+
+export const prepareTimelineTiles = (
+  jobId: string,
+  request: PrepareTimelineTilesRequest = {},
+) =>
   post<{ status: string }>(
     `/classifier/detection-jobs/${jobId}/timeline/prepare`,
-    {},
+    {
+      scope: request.scope,
+      zoom_level: request.zoomLevel,
+      center_timestamp: request.centerTimestamp,
+      radius_tiles: request.radiusTiles,
+    },
   );
 
 export async function fetchPrepareStatus(

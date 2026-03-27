@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     timeline_tile_height_px: int = 256
     timeline_cache_max_jobs: int = 15
     timeline_dynamic_range_db: float = 80.0
+    timeline_prepare_workers: int = 2
+    timeline_startup_radius_tiles: int = 2
+    timeline_startup_coarse_levels: int = 1
+    timeline_neighbor_prefetch_radius: int = 1
+    timeline_tile_memory_cache_items: int = 256
+    timeline_manifest_memory_cache_items: int = 8
+    timeline_pcm_memory_cache_mb: int = 128
 
     @classmethod
     def from_repo_env(cls, **kwargs) -> "Settings":
@@ -97,6 +104,20 @@ class Settings(BaseSettings):
             raise ValueError("hydrophone_prefetch_workers must be > 0")
         if self.hydrophone_prefetch_inflight_segments <= 0:
             raise ValueError("hydrophone_prefetch_inflight_segments must be > 0")
+        if self.timeline_prepare_workers <= 0:
+            raise ValueError("timeline_prepare_workers must be > 0")
+        if self.timeline_startup_radius_tiles < 0:
+            raise ValueError("timeline_startup_radius_tiles must be >= 0")
+        if self.timeline_startup_coarse_levels < 0:
+            raise ValueError("timeline_startup_coarse_levels must be >= 0")
+        if self.timeline_neighbor_prefetch_radius < 0:
+            raise ValueError("timeline_neighbor_prefetch_radius must be >= 0")
+        if self.timeline_tile_memory_cache_items < 0:
+            raise ValueError("timeline_tile_memory_cache_items must be >= 0")
+        if self.timeline_manifest_memory_cache_items < 0:
+            raise ValueError("timeline_manifest_memory_cache_items must be >= 0")
+        if self.timeline_pcm_memory_cache_mb < 0:
+            raise ValueError("timeline_pcm_memory_cache_mb must be >= 0")
         return self
 
     model_config = SettingsConfigDict(

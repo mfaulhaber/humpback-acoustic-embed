@@ -5,6 +5,7 @@ import {
   prepareTimelineTiles,
   fetchPrepareStatus,
   patchDetectionLabels,
+  type PrepareTimelineTilesRequest,
 } from "@/api/client";
 import type { LabelEditItem } from "@/api/types";
 
@@ -27,7 +28,13 @@ export function useTimelineDetections(jobId: string) {
 export function usePrepareTimeline() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => prepareTimelineTiles(jobId),
+    mutationFn: ({
+      jobId,
+      request,
+    }: {
+      jobId: string;
+      request?: PrepareTimelineTilesRequest;
+    }) => prepareTimelineTiles(jobId, request),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hydrophoneDetectionJobs"] });
     },

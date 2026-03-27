@@ -571,6 +571,9 @@ Hydrophone extraction output:
 - `allowed_hosts` defaults to `*`. `HUMPBACK_ALLOWED_HOSTS` uses Starlette wildcard syntax.
 - `positive_sample_path`, `negative_sample_path`, `s3_cache_path` derive from `storage_root` when unset.
 - `timeline_cache_max_jobs` defaults to `15`. `HUMPBACK_TIMELINE_CACHE_JOBS` controls how many detection jobs keep fully cached timeline tiles on disk (~8-16 GB at default). LRU eviction removes the oldest job when exceeded.
+- `timeline_prepare_workers` defaults to `2`; startup/full tile batches share one per-job `ref_db` and may render through a bounded worker pool.
+- `timeline_startup_radius_tiles` defaults to `2`; the Timeline button now triggers startup-scoped cache warming around the initial viewport rather than a full all-zoom warmup.
+- `timeline_startup_coarse_levels` defaults to `1`, `timeline_neighbor_prefetch_radius` defaults to `1`, `timeline_tile_memory_cache_items` defaults to `256`, `timeline_manifest_memory_cache_items` defaults to `8`, and `timeline_pcm_memory_cache_mb` defaults to `128` for bounded in-memory timeline reuse.
 
 ### 8.7 Behavioral Constraints
 
@@ -599,7 +602,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - Label processing: score-based + sample-builder workflows
 - Vocalization labeling: type classification, active learning, sub-window annotations
 - Retrain workflow: reimport -> reprocess -> retrain
-- Timeline viewer: zoomable spectrogram with background tile pre-caching (all zoom levels), interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
+- Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Search, Label Processing, Admin
 
 ### 9.2 Database Schema

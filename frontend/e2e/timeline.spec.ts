@@ -177,11 +177,11 @@ test.describe("Timeline Viewer", () => {
     await expect(page.locator("text=Back to Jobs")).toBeVisible({ timeout: 10_000 });
 
     // Default zoom level is "1h" — click "5m" and verify it becomes active
-    const zoomBtn5m = page.locator("button", { hasText: "5m" });
+    const zoomBtn5m = page.getByRole("button", { name: "5m", exact: true });
     await expect(zoomBtn5m).toBeVisible();
 
     // Before clicking, "1h" should be active (accent color), "5m" should not
-    const zoomBtn1h = page.locator("button", { hasText: "1h" });
+    const zoomBtn1h = page.getByRole("button", { name: "1h", exact: true });
     await expect(zoomBtn1h).toBeVisible();
 
     await zoomBtn5m.click();
@@ -272,7 +272,9 @@ test.describe("Timeline Viewer", () => {
 
     // All six zoom levels from constants.ts should be present
     for (const level of ["24h", "6h", "1h", "15m", "5m", "1m"]) {
-      await expect(page.locator("button", { hasText: level })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: level, exact: true }),
+      ).toBeVisible();
     }
   });
 

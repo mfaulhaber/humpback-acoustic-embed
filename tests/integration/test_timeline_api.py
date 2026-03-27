@@ -304,12 +304,13 @@ async def test_prepare_endpoint(client, app_settings):
 
 
 async def test_prepare_all_zoom_levels(client, app_settings):
-    """POST /prepare with all zoom levels should render tiles for each level."""
+    """Explicit full prepare should report all zoom levels."""
     import time
 
     job_id = await _create_completed_hydrophone_job(app_settings)
     resp = await client.post(
         f"/classifier/detection-jobs/{job_id}/timeline/prepare",
+        json={"scope": "full"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -324,14 +325,13 @@ async def test_prepare_all_zoom_levels(client, app_settings):
     )
     assert status_resp.status_code == 200
     status_data = status_resp.json()
-    # The 100s test job should have tiles at the 1h level at minimum
-    assert "1h" in status_data
+    assert set(status_data) == {"24h", "6h", "1h", "15m", "5m", "1m"}
     total_rendered = sum(v["rendered"] for v in status_data.values())
     assert total_rendered > 0
 
 
 async def test_prepare_status_endpoint(client, app_settings):
-    """GET /prepare-status should return per-zoom progress."""
+    """Startup prepare status should reflect the bounded startup target set."""
     import time
 
     job_id = await _create_completed_hydrophone_job(app_settings)
@@ -347,10 +347,39 @@ async def test_prepare_status_endpoint(client, app_settings):
     )
     assert resp.status_code == 200
     data = resp.json()
-    # Should have entries for each zoom level
-    assert "1h" in data
-    assert "total" in data["1h"]
-    assert "rendered" in data["1h"]
+    assert set(data) == {"1h", "6h"}
+    assert data["1h"]["total"] == 1
+    assert data["6h"]["total"] == 1
+    assert data["1h"]["rendered"] <= data["1h"]["total"]
+    assert data["6h"]["rendered"] <= data["6h"]["total"]
+
+
+async def test_prepare_status_startup_scope_uses_bounded_tile_set(client, app_settings):
+    """Startup prepare should target only the requested zoom neighborhood."""
+    import time
+
+    job_id = await _create_completed_hydrophone_job(app_settings, num_windows=400)
+
+    resp = await client.post(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare",
+        json={
+            "scope": "startup",
+            "zoom_level": "1h",
+            "center_timestamp": 2000.0,
+            "radius_tiles": 1,
+        },
+    )
+    assert resp.status_code == 200
+
+    time.sleep(0.2)
+
+    status_resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/prepare-status",
+    )
+    assert status_resp.status_code == 200
+    data = status_resp.json()
+    assert data["1h"]["total"] == 3
+    assert data["6h"]["total"] == 1
 
 
 async def test_prepare_status_job_not_found(client):
@@ -380,7 +409,7 @@ async def test_prepare_endpoint_is_idempotent_while_local_prepare_is_running(
     release = threading.Event()
     call_count = 0
 
-    def fake_prepare_tiles_sync(*, job, settings, cache, zoom_levels=None):
+    def fake_prepare_tiles_sync(*, job, settings, cache, targets=None):
         nonlocal call_count
         call_count += 1
         started.set()
@@ -435,6 +464,82 @@ async def test_prepare_endpoint_succeeds_when_other_process_holds_lock(
     assert resp.status_code == 200
     data = resp.json()
     assert data["timeline_tiles_ready"] is True
+
+
+def test_prepare_tiles_sync_passes_shared_ref_db_to_all_render_calls(
+    app_settings, monkeypatch, tmp_path
+):
+    """All prepared tiles for a job should use the same shared ref_db."""
+    from humpback.api.routers import timeline as timeline_router
+
+    job = type(
+        "FakeJob",
+        (),
+        {
+            "id": "job-a",
+            "start_timestamp": 1000.0,
+            "end_timestamp": 3000.0,
+        },
+    )()
+    cache = timeline_router.TimelineTileCache(tmp_path / "tile_cache", max_jobs=5)
+    seen_ref_db: list[float | None] = []
+
+    monkeypatch.setattr(timeline_router, "_compute_job_ref_db", lambda **kwargs: -42.5)
+
+    def fake_render_tile_sync(
+        *, job, zoom_level, tile_index, settings, cache, ref_db=None
+    ):
+        seen_ref_db.append(ref_db)
+        cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
+        return b"\x89PNG"
+
+    monkeypatch.setattr(timeline_router, "_render_tile_sync", fake_render_tile_sync)
+
+    rendered = timeline_router._prepare_tiles_sync(
+        job=job,
+        settings=app_settings,
+        cache=cache,
+        targets={"1h": [0, 1], "6h": [0]},
+    )
+
+    assert rendered == 3
+    assert seen_ref_db == [-42.5, -42.5, -42.5]
+
+
+async def test_tile_endpoint_miss_launches_neighbor_prepare(
+    client, app_settings, monkeypatch
+):
+    """A tile miss should queue bounded same-zoom neighbor warming."""
+    from humpback.api.routers import timeline as timeline_router
+
+    job_id = await _create_completed_hydrophone_job(app_settings, num_windows=400)
+    launched: dict[str, object] = {}
+
+    monkeypatch.setattr(timeline_router, "_compute_job_ref_db", lambda **kwargs: -55.0)
+
+    def fake_render_tile_sync(
+        *, job, zoom_level, tile_index, settings, cache, ref_db=None
+    ):
+        cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
+        return b"\x89PNG"
+
+    def fake_launch_prepare_thread(*, job, settings, cache, prepare_lock, targets=None):
+        launched["targets"] = targets
+        prepare_lock.release()
+        timeline_router._release_prepare_slot(job.id)
+
+    monkeypatch.setattr(timeline_router, "_render_tile_sync", fake_render_tile_sync)
+    monkeypatch.setattr(
+        timeline_router, "_launch_prepare_thread", fake_launch_prepare_thread
+    )
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/timeline/tile",
+        params={"zoom_level": "1h", "tile_index": 1},
+    )
+
+    assert resp.status_code == 200
+    assert launched["targets"] == {"1h": [0, 2]}
 
 
 async def test_audio_endpoint_mp3_format(client, app_settings):

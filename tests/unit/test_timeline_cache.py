@@ -188,3 +188,51 @@ def test_tile_count_for_zoom(cache_dir: Path):
     cache.put("job_a", "6h", 0, b"data")
     assert cache.tile_count_for_zoom("job_a", "1h") == 2
     assert cache.tile_count_for_zoom("job_a", "6h") == 1
+
+
+def test_prepare_plan_roundtrip(cache_dir: Path):
+    """Prepare plans should persist as JSON metadata per job."""
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    cache = TimelineTileCache(cache_dir=cache_dir, max_jobs=5)
+    plan = {"scope": "startup", "zooms": {"1h": [0, 1], "6h": [0]}}
+
+    cache.put_prepare_plan("job_a", plan)
+
+    assert cache.get_prepare_plan("job_a") == plan
+
+
+def test_audio_manifest_roundtrip(cache_dir: Path):
+    """Audio manifests should persist as JSON metadata per job."""
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    cache = TimelineTileCache(cache_dir=cache_dir, max_jobs=5)
+    manifest = {
+        "provider_kind": "orcasound_hls",
+        "hydrophone_id": "rpi_north_sjc",
+        "local_cache_path": "/tmp/cache",
+        "job_start_timestamp": 1000.0,
+        "job_end_timestamp": 1100.0,
+        "entries": [
+            {
+                "segment_path": "/tmp/cache/seg1.ts",
+                "start_epoch": 1000.0,
+                "duration_sec": 10.0,
+            }
+        ],
+    }
+
+    cache.put_audio_manifest("job_a", manifest)
+
+    assert cache.get_audio_manifest("job_a") == manifest
+
+
+def test_count_cached_tiles(cache_dir: Path):
+    """count_cached_tiles() should count only the requested tile indices."""
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    cache = TimelineTileCache(cache_dir=cache_dir, max_jobs=5)
+    cache.put("job_a", "1h", 0, b"data")
+    cache.put("job_a", "1h", 2, b"data")
+
+    assert cache.count_cached_tiles("job_a", "1h", [0, 1, 2, 3]) == 2
