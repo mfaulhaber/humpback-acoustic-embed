@@ -304,6 +304,133 @@ def derive_detection_filename(
     )
 
 
+def build_hydrophone_anchor_filename(job_start_timestamp: float) -> str:
+    anchor_dt = datetime.fromtimestamp(job_start_timestamp, tz=timezone.utc)
+    return f"{anchor_dt.strftime(_COMPACT_TS_FORMAT)}.wav"
+
+
+def _is_snapped_clip_fallback_anchor_row(
+    row: dict[str, str],
+    *,
+    start_sec: float,
+    end_sec: float,
+    window_size_seconds: float,
+) -> bool:
+    detection_filename = str(row.get("detection_filename", "") or "").strip()
+    extract_filename = str(row.get("extract_filename", "") or "").strip()
+    if not detection_filename or detection_filename != extract_filename:
+        return False
+
+    clip_fallback = (
+        row.get("positive_selection_origin", "").strip()
+        == POSITIVE_SELECTION_ORIGIN_CLIP
+        or row.get("positive_selection_score_source", "").strip()
+        == POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK_CLIP
+    )
+    if (
+        not clip_fallback
+        or row.get("positive_selection_decision", "").strip() != "positive"
+    ):
+        return False
+
+    snap_start, snap_end = snap_bounds_to_window(
+        start_sec, end_sec, window_size_seconds
+    )
+    selection_start = safe_optional_float(row.get("positive_selection_start_sec"))
+    selection_end = safe_optional_float(row.get("positive_selection_end_sec"))
+    if selection_start is None or selection_end is None:
+        return True
+    return math.isclose(selection_start, snap_start) and math.isclose(
+        selection_end, snap_end
+    )
+
+
+def backfill_hydrophone_row_metadata(
+    rows: list[dict[str, str]],
+    *,
+    job_start_timestamp: float,
+    window_size_seconds: float,
+) -> bool:
+    """Ensure hydrophone rows retain a timestamp anchor and derived clip names."""
+    anchor_filename = build_hydrophone_anchor_filename(job_start_timestamp)
+    changed = False
+
+    for row in rows:
+        filename = str(row.get("filename", "") or "").strip()
+        filename_was_blank = not filename
+        if not filename:
+            row["filename"] = anchor_filename
+            changed = True
+
+        start_sec = safe_float(row.get("start_sec"), 0.0)
+        end_sec = safe_float(row.get("end_sec"), 0.0)
+        exact_detection_filename = (
+            derive_detection_filename(row["filename"], start_sec, end_sec) or ""
+        )
+        existing_detection_filename = str(row.get("detection_filename", "") or "")
+        existing_extract_filename = str(row.get("extract_filename", "") or "")
+        missing_clip_metadata = not (
+            existing_detection_filename.strip() and existing_extract_filename.strip()
+        )
+        snapped_clip_fallback_anchor_row = row[
+            "filename"
+        ] == anchor_filename and _is_snapped_clip_fallback_anchor_row(
+            row,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            window_size_seconds=window_size_seconds,
+        )
+        refresh_clip_fallback_selection = (
+            filename_was_blank
+            or snapped_clip_fallback_anchor_row
+            or (row["filename"] == anchor_filename and missing_clip_metadata)
+        )
+
+        if filename_was_blank or snapped_clip_fallback_anchor_row:
+            detection_filename = exact_detection_filename
+            extract_filename = exact_detection_filename
+        elif row["filename"] == anchor_filename:
+            detection_filename = existing_detection_filename or exact_detection_filename
+            extract_filename = existing_extract_filename or exact_detection_filename
+        else:
+            normalized = normalize_detection_row(
+                row,
+                is_hydrophone=True,
+                window_size_seconds=window_size_seconds,
+            )
+            detection_filename = normalized["detection_filename"] or ""
+            extract_filename = normalized["extract_filename"] or ""
+
+        clip_fallback = (
+            row.get("positive_selection_origin", "").strip()
+            == POSITIVE_SELECTION_ORIGIN_CLIP
+            or row.get("positive_selection_score_source", "").strip()
+            == POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK_CLIP
+        )
+        if (
+            refresh_clip_fallback_selection
+            and clip_fallback
+            and row.get("positive_selection_decision", "").strip() == "positive"
+        ):
+            start_value = format_optional_float(start_sec)
+            end_value = format_optional_float(end_sec)
+            if row.get("positive_selection_start_sec", "") != start_value:
+                row["positive_selection_start_sec"] = start_value
+                changed = True
+            if row.get("positive_selection_end_sec", "") != end_value:
+                row["positive_selection_end_sec"] = end_value
+                changed = True
+
+        if str(row.get("detection_filename", "") or "") != detection_filename:
+            row["detection_filename"] = detection_filename
+            changed = True
+        if str(row.get("extract_filename", "") or "") != extract_filename:
+            row["extract_filename"] = extract_filename
+            changed = True
+
+    return changed
+
+
 def normalize_detection_row(
     row: dict[str, str],
     *,
@@ -471,8 +598,13 @@ def apply_label_edits(
             label = edit.get("label")
 
             new_row = {f: "" for f in ROW_STORE_FIELDNAMES}
+            new_row["filename"] = str(edit.get("filename", "") or "")
             new_row["start_sec"] = str(start)
             new_row["end_sec"] = str(end)
+            new_row["detection_filename"] = str(
+                edit.get("detection_filename", "") or ""
+            )
+            new_row["extract_filename"] = str(edit.get("extract_filename", "") or "")
             if label:
                 new_row[label] = "1"
             new_row["row_id"] = build_detection_row_id(new_row)
@@ -491,6 +623,14 @@ def apply_label_edits(
                     f"Move out of bounds: [{new_start}, {new_end}] "
                     f"exceeds [0, {job_duration}]"
                 )
+            if "filename" in edit:
+                target["filename"] = str(edit.get("filename", "") or "")
+            if "detection_filename" in edit:
+                target["detection_filename"] = str(
+                    edit.get("detection_filename", "") or ""
+                )
+            if "extract_filename" in edit:
+                target["extract_filename"] = str(edit.get("extract_filename", "") or "")
             target["start_sec"] = str(new_start)
             target["end_sec"] = str(new_end)
             touched_ids.add(rid)

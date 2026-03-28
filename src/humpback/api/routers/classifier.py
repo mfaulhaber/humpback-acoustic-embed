@@ -23,6 +23,9 @@ from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     apply_effective_positive_selection,
     apply_label_edits,
+    backfill_hydrophone_row_metadata,
+    build_hydrophone_anchor_filename,
+    derive_detection_filename,
     ensure_detection_row_store,
     iter_detection_rows_as_tsv,
     normalize_detection_row,
@@ -946,6 +949,18 @@ async def get_detection_content(
             window_size_seconds=window_size_seconds,
         )
 
+    if (
+        job.status != "running"
+        and is_hydrophone
+        and job.start_timestamp is not None
+        and backfill_hydrophone_row_metadata(
+            raw_rows,
+            job_start_timestamp=job.start_timestamp,
+            window_size_seconds=window_size_seconds,
+        )
+    ):
+        write_detection_row_store(rs_path, raw_rows)
+
     rows = [
         normalize_detection_row(
             row,
@@ -1215,6 +1230,28 @@ async def batch_edit_labels(
         )
 
     edit_dicts = [e.model_dump() for e in body.edits]
+    if is_hydrophone and job.start_timestamp is not None:
+        anchor_filename = build_hydrophone_anchor_filename(job.start_timestamp)
+        for edit in edit_dicts:
+            if edit.get("action") in {"add", "move"}:
+                start_key = (
+                    "new_start_sec" if edit.get("action") == "move" else "start_sec"
+                )
+                end_key = "new_end_sec" if edit.get("action") == "move" else "end_sec"
+                start_value = edit.get(start_key)
+                end_value = edit.get(end_key)
+                if start_value is None or end_value is None:
+                    raise HTTPException(
+                        422, "Hydrophone label edits require clip bounds"
+                    )
+                start_sec = float(start_value)
+                end_sec = float(end_value)
+                exact_detection_filename = (
+                    derive_detection_filename(anchor_filename, start_sec, end_sec) or ""
+                )
+                edit["filename"] = anchor_filename
+                edit["detection_filename"] = exact_detection_filename
+                edit["extract_filename"] = exact_detection_filename
 
     try:
         updated_rows = apply_label_edits(
@@ -1226,6 +1263,13 @@ async def batch_edit_labels(
     # Re-apply positive selection on every row.
     for row in updated_rows:
         apply_effective_positive_selection(row, window_size_seconds=window_size_seconds)
+
+    if is_hydrophone and job.start_timestamp is not None:
+        backfill_hydrophone_row_metadata(
+            updated_rows,
+            job_start_timestamp=job.start_timestamp,
+            window_size_seconds=window_size_seconds,
+        )
 
     write_detection_row_store(rs_path, updated_rows)
 
