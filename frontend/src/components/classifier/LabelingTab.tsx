@@ -59,6 +59,62 @@ function normalizeLabel(raw: string): string {
   return raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function formatUtcDateTime(timestampSeconds: number): string {
+  const date = new Date(timestampSeconds * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())} ${p(date.getUTCHours())}:${p(date.getUTCMinutes())} UTC`;
+}
+
+function formatUtcDateRange(startTs: number, endTs: number): string {
+  return `${formatUtcDateTime(startTs)} - ${formatUtcDateTime(endTs)}`;
+}
+
+function formatCreatedAtUtc(createdAtIso: string): string {
+  const date = new Date(createdAtIso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())} ${p(date.getUTCHours())}:${p(date.getUTCMinutes())} UTC`;
+}
+
+function stripKnownAudioExtension(value: string): string {
+  return value.replace(/\.(wav|flac|mp3|aif|aiff)$/i, "");
+}
+
+function parseCompactUtcMs(value: string): number | null {
+  const match = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) return null;
+  return Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+  );
+}
+
+function parseDetectionFilenameRange(
+  detectionFilename: string,
+): { startMs: number; endMs: number } | null {
+  const base = stripKnownAudioExtension(detectionFilename);
+  const parts = base.split("_");
+  if (parts.length !== 2) return null;
+  const startMs = parseCompactUtcMs(parts[0]);
+  const endMs = parseCompactUtcMs(parts[1]);
+  if (startMs === null || endMs === null || endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
+function hydrophoneJobRelativeToFileRelativeOffset(
+  filename: string,
+  offsetSec: number,
+  jobStartTimestamp: number | null | undefined,
+): number {
+  if (jobStartTimestamp == null) return offsetSec;
+  const baseTs = parseCompactUtcMs(stripKnownAudioExtension(filename));
+  if (baseTs === null) return offsetSec;
+  return offsetSec - (baseTs / 1000 - jobStartTimestamp);
+}
+
 export function LabelingTab() {
   // ---- Job selection ----
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -86,6 +142,11 @@ export function LabelingTab() {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
   }, [localJobsQuery.data, hydroJobsQuery.data]);
+
+  const selectedJob = useMemo(
+    () => allJobs.find((job) => job.id === selectedJobId) ?? null,
+    [allJobs, selectedJobId],
+  );
 
   // ---- Embedding set filter for neighbors ----
   const [esFilterSelected, setEsFilterSelected] = useState<Set<string>>(
@@ -241,16 +302,51 @@ export function LabelingTab() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  const currentClip = useMemo(() => {
+    if (!currentRow) return null;
+    const detectionFilename = currentRow.detection_filename?.trim()
+      || currentRow.extract_filename?.trim()
+      || "";
+    const baseTs = parseCompactUtcMs(stripKnownAudioExtension(currentRow.filename));
+    const detectedRange = detectionFilename
+      ? parseDetectionFilenameRange(detectionFilename)
+      : null;
+    const startSec =
+      baseTs !== null && detectedRange !== null
+        ? (detectedRange.startMs - baseTs) / 1000
+        : selectedJob?.hydrophone_id
+          ? hydrophoneJobRelativeToFileRelativeOffset(
+              currentRow.filename,
+              currentRow.start_sec,
+              selectedJob.start_timestamp,
+            )
+          : currentRow.start_sec;
+    const endSec =
+      baseTs !== null && detectedRange !== null
+        ? (detectedRange.endMs - baseTs) / 1000
+        : selectedJob?.hydrophone_id
+          ? hydrophoneJobRelativeToFileRelativeOffset(
+              currentRow.filename,
+              currentRow.end_sec,
+              selectedJob.start_timestamp,
+            )
+          : currentRow.end_sec;
+    return {
+      startSec,
+      endSec,
+      durationSec: Math.max(0.1, endSec - startSec),
+    };
+  }, [currentRow, selectedJob]);
+
   const audioUrl = useMemo(() => {
-    if (!selectedJobId || !currentRow) return null;
-    const duration = currentRow.end_sec - currentRow.start_sec;
+    if (!selectedJobId || !currentRow || !currentClip) return null;
     return detectionAudioSliceUrl(
       selectedJobId,
       currentRow.filename,
-      currentRow.start_sec,
-      duration,
+      currentClip.startSec,
+      currentClip.durationSec,
     );
-  }, [selectedJobId, currentRow]);
+  }, [selectedJobId, currentRow, currentClip]);
 
   useEffect(() => {
     setIsPlaying(false);
@@ -315,11 +411,20 @@ export function LabelingTab() {
     return [...esFilterSelected];
   }, [esFilterSelected, embeddingSets.length]);
 
+  const currentCanonicalDetectionFilename = useMemo(() => {
+    const detectionFilename = currentRow?.detection_filename?.trim();
+    if (detectionFilename) return detectionFilename;
+    const extractFilename = currentRow?.extract_filename?.trim();
+    if (extractFilename) return extractFilename;
+    return null;
+  }, [currentRow]);
+
   const neighborsQuery = useDetectionNeighbors(
     selectedJobId,
     currentRow?.filename ?? null,
     currentRow?.start_sec ?? null,
     currentRow?.end_sec ?? null,
+    currentCanonicalDetectionFilename,
     selectedEsIds,
   );
 
@@ -526,25 +631,40 @@ export function LabelingTab() {
 
   // ---- Spectrogram URL ----
   const spectrogramUrl = useMemo(() => {
-    if (!selectedJobId || !currentRow) return null;
-    const duration = currentRow.end_sec - currentRow.start_sec;
+    if (!selectedJobId || !currentRow || !currentClip) return null;
     return detectionSpectrogramUrl(
       selectedJobId,
       currentRow.filename,
-      currentRow.start_sec,
-      duration,
+      currentClip.startSec,
+      currentClip.durationSec,
     );
-  }, [selectedJobId, currentRow]);
+  }, [selectedJobId, currentRow, currentClip]);
+
+  const currentClipDuration = useMemo(() => {
+    return currentClip?.durationSec ?? 0;
+  }, [currentClip]);
+
+  const currentDetectionName = useMemo(() => {
+    if (!currentRow) return null;
+    const detectionName = currentRow.detection_filename?.trim();
+    if (detectionName) return detectionName;
+    const extractName = currentRow.extract_filename?.trim();
+    if (extractName) return extractName;
+    return currentRow.filename;
+  }, [currentRow]);
 
   // ---- Job label for dropdown ----
   const jobLabel = useCallback((job: DetectionJob) => {
-    const date = new Date(job.created_at).toLocaleDateString();
     const source = job.hydrophone_name
       ? job.hydrophone_name
       : job.audio_folder
         ? job.audio_folder.split("/").pop()
         : "local";
-    return `${date} — ${source} (${job.status})`;
+    const rangeLabel =
+      job.start_timestamp !== null && job.end_timestamp !== null
+        ? formatUtcDateRange(job.start_timestamp, job.end_timestamp)
+        : formatCreatedAtUtc(job.created_at);
+    return `${source} - ${rangeLabel}`;
   }, []);
 
   // ---- Vocabulary suggestions for autocomplete ----
@@ -683,7 +803,7 @@ export function LabelingTab() {
                 />
                 {annotationMode && currentRow && (
                   <AnnotationOverlay
-                    windowDuration={currentRow.end_sec - currentRow.start_sec}
+                    windowDuration={currentClipDuration}
                     annotations={annotationsQuery.data ?? []}
                     highlightedId={highlightedAnnotationId}
                     onCreateRegion={handleCreateRegion}
@@ -795,19 +915,13 @@ export function LabelingTab() {
             {/* Detection metadata */}
             <div className="flex flex-wrap gap-4 text-xs text-slate-500 mb-3">
               <span>
-                <strong>File:</strong> {currentRow.filename}
+                <strong>Detection:</strong> {currentDetectionName}
               </span>
               <span>
-                <strong>Range:</strong> {currentRow.start_sec.toFixed(1)}s &ndash;{" "}
-                {currentRow.end_sec.toFixed(1)}s
-              </span>
-              <span>
-                <strong>Avg conf:</strong>{" "}
-                {currentRow.avg_confidence != null ? currentRow.avg_confidence.toFixed(3) : "—"}
-              </span>
-              <span>
-                <strong>Peak conf:</strong>{" "}
-                {currentRow.peak_confidence != null ? currentRow.peak_confidence.toFixed(3) : "—"}
+                <strong>Confidence:</strong>{" "}
+                {currentRow.peak_confidence != null
+                  ? currentRow.peak_confidence.toFixed(3)
+                  : "—"}
               </span>
             </div>
 

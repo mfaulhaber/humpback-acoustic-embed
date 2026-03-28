@@ -1,6 +1,7 @@
 """Integration tests for vocalization labeling API."""
 
 import uuid
+from datetime import datetime, timezone
 
 import numpy as np
 import pyarrow as pa
@@ -125,6 +126,97 @@ async def _seed_detection_job(app_settings, tmp_path):
     pq.write_table(table, emb_path)
 
     return job_id, model_id
+
+
+async def _seed_hydrophone_detection_job(app_settings):
+    """Create a completed hydrophone detection job with row store and embeddings."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    storage_root = app_settings.storage_root
+
+    model_id = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
+    filename = "20250702T080118Z.wav"
+    job_start_ts = 1751439600.0
+    job_relative_start = (
+        datetime.strptime("20250702T080118", "%Y%m%dT%H%M%S")
+        .replace(tzinfo=timezone.utc)
+        .timestamp()
+        - job_start_ts
+    )
+
+    async with sf() as session:
+        cm = ClassifierModel(
+            id=model_id,
+            name="test-hydrophone-classifier",
+            model_path="/fake/model.pkl",
+            model_version="test_v1",
+            vector_dim=4,
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+        )
+        session.add(cm)
+
+        dj = DetectionJob(
+            id=job_id,
+            status="complete",
+            classifier_model_id=model_id,
+            hydrophone_id="rpi_orcasound_lab",
+            start_timestamp=job_start_ts,
+            end_timestamp=job_start_ts + 3600.0,
+            detection_mode="windowed",
+        )
+        session.add(dj)
+        await session.commit()
+
+    row_store = detection_row_store_path(storage_root, job_id)
+    row_store.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "row_id": "row-hydro-001",
+            "filename": filename,
+            "start_sec": "0.0",
+            "end_sec": "5.0",
+            "raw_start_sec": "0.0",
+            "raw_end_sec": "5.0",
+            "merged_event_count": "1",
+            "avg_confidence": "0.85",
+            "peak_confidence": "0.92",
+            "n_windows": "1",
+            "detection_filename": "",
+            "extract_filename": "",
+            "hydrophone_name": "orcasound_lab",
+            "humpback": "",
+            "orca": "",
+            "ship": "",
+            "background": "",
+        }
+    ]
+    write_detection_row_store(row_store, rows)
+
+    emb_path = detection_embeddings_path(storage_root, job_id)
+    emb_path.parent.mkdir(parents=True, exist_ok=True)
+    schema = pa.schema(
+        [
+            ("filename", pa.string()),
+            ("start_sec", pa.float32()),
+            ("end_sec", pa.float32()),
+            ("embedding", pa.list_(pa.float32(), 4)),
+        ]
+    )
+    table = pa.table(
+        {
+            "filename": [filename],
+            "start_sec": [0.0],
+            "end_sec": [5.0],
+            "embedding": [[1.0, 0.0, 0.0, 0.0]],
+        },
+        schema=schema,
+    )
+    pq.write_table(table, emb_path)
+
+    return job_id, model_id, filename, job_relative_start
 
 
 async def _seed_reference_embeddings(app_settings, tmp_path):
@@ -377,6 +469,66 @@ async def test_detection_neighbors_nonexistent_job(client):
         },
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_detection_neighbors_hydrophone_job_relative_offsets(
+    client, app_settings, tmp_path
+):
+    """Hydrophone neighbor lookup accepts the job-relative offsets returned by GET /content."""
+    (
+        job_id,
+        _model_id,
+        filename,
+        job_relative_start,
+    ) = await _seed_hydrophone_detection_job(app_settings)
+    ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
+
+    resp = await client.post(
+        f"/labeling/detection-neighbors/{job_id}",
+        json={
+            "filename": filename,
+            "start_sec": job_relative_start,
+            "end_sec": job_relative_start + 5.0,
+            "top_k": 5,
+            "embedding_set_ids": [ref_es_id],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["hits"]) > 0
+    assert data["total_candidates"] > 0
+
+
+@pytest.mark.asyncio
+async def test_detection_neighbors_hydrophone_detection_filename_preferred(
+    client, app_settings, tmp_path
+):
+    """Canonical detection filename resolves the embedding even when fallback offsets are wrong."""
+    (
+        job_id,
+        _model_id,
+        filename,
+        _job_relative_start,
+    ) = await _seed_hydrophone_detection_job(app_settings)
+    ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
+
+    canonical_detection_filename = "20250702T080118Z_20250702T080123Z.flac"
+    resp = await client.post(
+        f"/labeling/detection-neighbors/{job_id}",
+        json={
+            "filename": filename,
+            "start_sec": 123.0,
+            "end_sec": 128.0,
+            "detection_filename": canonical_detection_filename,
+            "top_k": 5,
+            "embedding_set_ids": [ref_es_id],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["hits"]) > 0
+    assert data["total_candidates"] > 0
 
 
 # ---- Training Job Creation ----

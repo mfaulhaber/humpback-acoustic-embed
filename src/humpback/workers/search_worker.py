@@ -8,6 +8,9 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.classifier.detection_rows import (
+    hydrophone_job_relative_to_file_relative_offset,
+)
 from humpback.config import Settings
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.search import SearchJob
@@ -112,14 +115,23 @@ async def _resolve_audio(
     """Decode audio for a detection row. Returns (audio_array, sample_rate)."""
     import asyncio
 
-    duration_sec = end_sec - start_sec
-
     if det_job.hydrophone_id:
         from humpback.classifier.providers import build_archive_playback_provider
         from humpback.classifier.s3_stream import resolve_audio_slice
 
         if det_job.start_timestamp is None or det_job.end_timestamp is None:
             raise ValueError("Hydrophone job missing start/end timestamps")
+
+        start_sec = hydrophone_job_relative_to_file_relative_offset(
+            filename,
+            start_sec,
+            det_job.start_timestamp,
+        )
+        end_sec = hydrophone_job_relative_to_file_relative_offset(
+            filename,
+            end_sec,
+            det_job.start_timestamp,
+        )
 
         cache_path = det_job.local_cache_path or settings.s3_cache_path
         provider = build_archive_playback_provider(
@@ -129,6 +141,7 @@ async def _resolve_audio(
         )
 
         target_sr = 32000
+        duration_sec = end_sec - start_sec
         segment = await asyncio.to_thread(
             resolve_audio_slice,
             provider,
@@ -146,6 +159,7 @@ async def _resolve_audio(
     if det_job.audio_folder is None:
         raise ValueError("Detection job has no audio_folder")
 
+    duration_sec = end_sec - start_sec
     audio_folder = Path(det_job.audio_folder)
     file_path = audio_folder / filename
     audio, sr = await asyncio.to_thread(decode_audio, file_path)

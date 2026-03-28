@@ -7,6 +7,11 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.classifier.detection_rows import (
+    hydrophone_job_relative_to_file_relative_offset,
+    normalize_detection_row,
+    read_detection_row_store,
+)
 from humpback.models.labeling import LabelingAnnotation, VocalizationLabel
 from humpback.schemas.labeling import (
     ActiveLearningCycleRequest,
@@ -34,6 +39,60 @@ from humpback.schemas.labeling import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/labeling", tags=["labeling"])
+
+
+async def _resolve_detection_embedding_lookup(
+    *,
+    session,
+    settings,
+    job,
+    filename: str,
+    start_sec: float,
+    end_sec: float,
+    detection_filename: str | None,
+) -> tuple[str, float, float]:
+    if detection_filename:
+        from humpback.models.classifier import ClassifierModel
+        from humpback.storage import detection_row_store_path
+
+        row_store_path = detection_row_store_path(settings.storage_root, job.id)
+        if row_store_path.exists():
+            cm_result = await session.execute(
+                select(ClassifierModel.window_size_seconds).where(
+                    ClassifierModel.id == job.classifier_model_id
+                )
+            )
+            window_size_seconds = float(cm_result.scalar_one_or_none() or 5.0)
+            _fieldnames, rows = read_detection_row_store(row_store_path)
+            for row in rows:
+                normalized = normalize_detection_row(
+                    row,
+                    is_hydrophone=job.hydrophone_id is not None,
+                    window_size_seconds=window_size_seconds,
+                )
+                if detection_filename in (
+                    normalized["detection_filename"],
+                    normalized["extract_filename"],
+                ):
+                    return (
+                        str(normalized["filename"]),
+                        float(normalized["start_sec"]),
+                        float(normalized["end_sec"]),
+                    )
+
+    if job.hydrophone_id is not None:
+        start_sec = hydrophone_job_relative_to_file_relative_offset(
+            filename,
+            start_sec,
+            job.start_timestamp,
+        )
+        end_sec = hydrophone_job_relative_to_file_relative_offset(
+            filename,
+            end_sec,
+            job.start_timestamp,
+        )
+
+    return filename, start_sec, end_sec
 
 
 # ---- Vocalization Label CRUD ----
@@ -279,8 +338,25 @@ async def get_detection_neighbors(
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
+    (
+        lookup_filename,
+        lookup_start_sec,
+        lookup_end_sec,
+    ) = await _resolve_detection_embedding_lookup(
+        session=session,
+        settings=settings,
+        job=job,
+        filename=body.filename,
+        start_sec=body.start_sec,
+        end_sec=body.end_sec,
+        detection_filename=body.detection_filename,
+    )
+
     embedding = read_detection_embedding(
-        emb_path, body.filename, body.start_sec, body.end_sec
+        emb_path,
+        lookup_filename,
+        lookup_start_sec,
+        lookup_end_sec,
     )
     if embedding is None:
         raise HTTPException(404, "Embedding not found for specified detection row")

@@ -111,6 +111,7 @@ export function useDetectionNeighbors(
   filename: string | null,
   startSec: number | null,
   endSec: number | null,
+  detectionFilename: string | null,
   embeddingSetIds?: string[],
 ) {
   return useQuery({
@@ -121,6 +122,7 @@ export function useDetectionNeighbors(
       filename,
       startSec,
       endSec,
+      detectionFilename,
       embeddingSetIds,
     ],
     queryFn: () =>
@@ -128,6 +130,7 @@ export function useDetectionNeighbors(
         filename: filename!,
         start_sec: startSec!,
         end_sec: endSec!,
+        detection_filename: detectionFilename ?? undefined,
         embedding_set_ids: embeddingSetIds,
       }),
     enabled:

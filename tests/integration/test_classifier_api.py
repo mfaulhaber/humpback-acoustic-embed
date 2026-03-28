@@ -3,6 +3,7 @@
 import csv
 import json
 import uuid
+from datetime import datetime, timezone
 
 
 async def test_create_training_job_missing_embedding_sets(client):
@@ -1977,5 +1978,87 @@ async def test_detection_embedding_returns_vector(client, app_settings):
     import pytest as _pt
 
     assert data["vector"][0] == _pt.approx(0.1, abs=1e-5)
+
+    await engine.dispose()
+
+
+async def test_detection_embedding_hydrophone_job_relative_offsets(
+    client, app_settings
+):
+    """Hydrophone embedding lookup accepts the job-relative offsets returned by GET /content."""
+    from pathlib import Path
+
+    from sqlalchemy import insert
+
+    from humpback.classifier.detector import write_detection_embeddings
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+
+    job_id = str(uuid.uuid4())
+    model_id = str(uuid.uuid4())
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    filename = "20250702T080118Z.wav"
+    chunk_start_ts = datetime.strptime("20250702T080118", "%Y%m%dT%H%M%S").replace(
+        tzinfo=timezone.utc
+    )
+    job_start_ts = 1751439600.0
+    job_relative_start = chunk_start_ts.timestamp() - job_start_ts
+
+    tsv_dir = Path(app_settings.storage_root) / "detections" / job_id
+    tsv_dir.mkdir(parents=True)
+
+    emb_path = tsv_dir / "detection_embeddings.parquet"
+    write_detection_embeddings(
+        [
+            {
+                "filename": filename,
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "embedding": [0.1, 0.2, 0.3, 0.4],
+            }
+        ],
+        emb_path,
+    )
+
+    async with sf() as session:
+        await session.execute(
+            insert(ClassifierModel).values(
+                id=model_id,
+                name="test-model",
+                model_path="/tmp/fake.pkl",
+                model_version="perch_v1",
+                vector_dim=4,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        await session.execute(
+            insert(DetectionJob).values(
+                id=job_id,
+                status="complete",
+                classifier_model_id=model_id,
+                hydrophone_id="rpi_orcasound_lab",
+                start_timestamp=job_start_ts,
+                end_timestamp=job_start_ts + 3600,
+                confidence_threshold=0.5,
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(
+        f"/classifier/detection-jobs/{job_id}/embedding",
+        params={
+            "filename": filename,
+            "start_sec": job_relative_start,
+            "end_sec": job_relative_start + 5.0,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model_version"] == "perch_v1"
+    assert data["vector_dim"] == 4
+    assert len(data["vector"]) == 4
 
     await engine.dispose()

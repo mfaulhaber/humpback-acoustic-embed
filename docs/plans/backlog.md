@@ -11,6 +11,7 @@
 - Optimize `/audio/{id}/spectrogram` to avoid materializing all windows when only one index is requested.
 - Optimize hydrophone incremental lookback discovery to avoid repeated full S3 folder scans during startup.
 - Add an integration and performance harness for hydrophone S3 prefetch so worker defaults can be tuned on real S3-backed runs.
+- Unify detection item identity around canonical UTC time ranges end-to-end, removing frontend/backend derived offset conversions for hydrophone detection rows and making all workflows/UI consume the same canonical detection range metadata.
 - Investigate a lower-overhead Orcasound decode path, likely chunk-level or persistent-stream decode, and treat it as a signal-processing/runtime change that needs validation plus an ADR.
 - Make `hydrophone_id` optional for local-cache detection jobs in the backend API, service layer, and worker.
 - Remove vestigial `output_tsv_path` and `output_row_store_path` fields from the detection model, schema, and database via migration.

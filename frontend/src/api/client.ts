@@ -489,6 +489,7 @@ export const fetchDetectionNeighbors = (
     filename: string;
     start_sec: number;
     end_sec: number;
+    detection_filename?: string;
     top_k?: number;
     metric?: string;
     embedding_set_ids?: string[];

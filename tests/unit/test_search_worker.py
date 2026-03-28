@@ -1,6 +1,7 @@
 """Unit tests for the search worker."""
 
 import json
+from datetime import datetime, timezone
 
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.search import SearchJob
-from humpback.workers.search_worker import run_search_job
+from humpback.workers.search_worker import _resolve_audio, run_search_job
 
 
 @pytest.fixture
@@ -176,3 +177,73 @@ async def test_run_search_job_missing_classifier_model(db_session, settings):
         assert job is not None
         assert job.status == "failed"
         assert "not found" in (job.error_message or "")
+
+
+async def test_resolve_audio_hydrophone_converts_job_relative_offsets(
+    settings, monkeypatch
+):
+    """Hydrophone search audio uses file-relative offsets when the UI sends job-relative values."""
+    captured: dict[str, float] = {}
+    expected_audio = np.ones(160000, dtype=np.float32)
+
+    def fake_build_archive_playback_provider(*args, **kwargs):
+        return object()
+
+    def fake_resolve_audio_slice(
+        provider,
+        stream_start_ts,
+        stream_end_ts,
+        filename,
+        row_start_sec,
+        duration_sec,
+        target_sr=32000,
+        legacy_anchor_start_ts=None,
+        timeline=None,
+        processing_start_ts=None,
+    ):
+        captured["row_start_sec"] = row_start_sec
+        captured["duration_sec"] = duration_sec
+        captured["stream_start_ts"] = stream_start_ts
+        captured["stream_end_ts"] = stream_end_ts
+        return expected_audio
+
+    monkeypatch.setattr(
+        "humpback.classifier.providers.build_archive_playback_provider",
+        fake_build_archive_playback_provider,
+    )
+    monkeypatch.setattr(
+        "humpback.classifier.s3_stream.resolve_audio_slice",
+        fake_resolve_audio_slice,
+    )
+
+    det_job = DetectionJob(
+        classifier_model_id="model-1",
+        hydrophone_id="rpi_orcasound_lab",
+        start_timestamp=1751439600.0,
+        end_timestamp=1751443200.0,
+        status="complete",
+    )
+    assert det_job.start_timestamp is not None
+    assert det_job.end_timestamp is not None
+
+    filename = "20250702T080118Z.wav"
+    job_relative_start = (
+        datetime.strptime("20250702T080118", "%Y%m%dT%H%M%S")
+        .replace(tzinfo=timezone.utc)
+        .timestamp()
+        - det_job.start_timestamp
+    )
+    audio, sr = await _resolve_audio(
+        det_job,
+        settings,
+        filename,
+        job_relative_start,
+        job_relative_start + 5.0,
+    )
+
+    assert sr == 32000
+    assert np.array_equal(audio, expected_audio)
+    assert captured["row_start_sec"] == pytest.approx(0.0)
+    assert captured["duration_sec"] == pytest.approx(5.0)
+    assert captured["stream_start_ts"] == pytest.approx(det_job.start_timestamp)
+    assert captured["stream_end_ts"] == pytest.approx(det_job.end_timestamp)
