@@ -14,6 +14,7 @@ import soundfile as sf
 
 from humpback.classifier.archive import StreamSegment
 from humpback.classifier.detection_rows import (
+    ROW_STORE_FIELDNAMES,
     read_detection_row_store,
     write_detection_row_store,
 )
@@ -1552,6 +1553,137 @@ class TestExtractHydrophoneLabeledSamples:
         assert out.exists()
         duration = _audio_duration(out)
         assert abs(duration - 3.0) < 0.1
+
+    def test_hydrophone_extraction_repairs_blank_filename_row_store(self, tmp_path):
+        """Hydrophone row-store extraction should repair timeline-added rows in place."""
+
+        source_name = "20250615T080000Z.wav"
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [])
+
+        row_store_path = tmp_path / "detection_rows.parquet"
+        row = {field: "" for field in ROW_STORE_FIELDNAMES}
+        row["row_id"] = "broken-row"
+        row["filename"] = ""
+        row["start_sec"] = "3.0"
+        row["end_sec"] = "8.0"
+        row["humpback"] = "1"
+        row["positive_selection_origin"] = "clip_bounds_fallback"
+        row["positive_selection_score_source"] = "clip_bounds_fallback"
+        row["positive_selection_decision"] = "positive"
+        row["positive_selection_start_sec"] = "3.000000"
+        row["positive_selection_end_sec"] = "8.000000"
+        write_detection_row_store(row_store_path, [row])
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
+        provider = _provider_for_recording(source_name, audio=audio)
+        recording_ts = parse_recording_timestamp(source_name)
+        assert recording_ts is not None
+
+        pos_out = tmp_path / "positive"
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            tmp_path / "negative",
+            row_store_path=row_store_path,
+            window_size_seconds=5.0,
+            stream_start_timestamp=recording_ts.timestamp(),
+            stream_end_timestamp=recording_ts.timestamp() + 60.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
+        )
+
+        assert summary["n_humpback"] == 1
+        out = (
+            pos_out
+            / "humpback"
+            / "rpi_orcasound_lab"
+            / "2025"
+            / "06"
+            / "15"
+            / "20250615T080003Z_20250615T080008Z.flac"
+        )
+        assert out.exists()
+
+        _fieldnames, stored_rows = read_detection_row_store(row_store_path)
+        assert stored_rows[0]["filename"] == source_name
+        assert stored_rows[0]["detection_filename"] == (
+            "20250615T080003Z_20250615T080008Z.flac"
+        )
+        assert stored_rows[0]["extract_filename"] == (
+            "20250615T080003Z_20250615T080008Z.flac"
+        )
+        assert stored_rows[0]["positive_extract_filename"] == (
+            "20250615T080003Z_20250615T080008Z.flac"
+        )
+
+    def test_hydrophone_extraction_repairs_snapped_anchor_row_store(self, tmp_path):
+        """Synthetic anchor rows should extract exact 5s clips instead of snapped 10s ranges."""
+
+        source_name = "20250615T080000Z.wav"
+        tsv_path = tmp_path / "detections.tsv"
+        _make_tsv(tsv_path, [])
+
+        row_store_path = tmp_path / "detection_rows.parquet"
+        row = {field: "" for field in ROW_STORE_FIELDNAMES}
+        row["row_id"] = "snapped-anchor-row"
+        row["filename"] = source_name
+        row["start_sec"] = "123.0"
+        row["end_sec"] = "128.0"
+        row["detection_filename"] = "20250615T080200Z_20250615T080210Z.flac"
+        row["extract_filename"] = "20250615T080200Z_20250615T080210Z.flac"
+        row["humpback"] = "1"
+        row["positive_selection_origin"] = "clip_bounds_fallback"
+        row["positive_selection_score_source"] = "clip_bounds_fallback"
+        row["positive_selection_decision"] = "positive"
+        row["positive_selection_start_sec"] = "120.000000"
+        row["positive_selection_end_sec"] = "130.000000"
+        write_detection_row_store(row_store_path, [row])
+
+        sr = 32000
+        audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 240)).astype(np.float32)
+        provider = _provider_for_recording(source_name, audio=audio, seg_dur=240.0)
+        recording_ts = parse_recording_timestamp(source_name)
+        assert recording_ts is not None
+
+        pos_out = tmp_path / "positive"
+        summary = extract_hydrophone_labeled_samples(
+            tsv_path,
+            provider,
+            pos_out,
+            tmp_path / "negative",
+            row_store_path=row_store_path,
+            window_size_seconds=5.0,
+            stream_start_timestamp=recording_ts.timestamp(),
+            stream_end_timestamp=recording_ts.timestamp() + 240.0,
+            **_positive_hydrophone_extraction_kwargs(sr),
+        )
+
+        assert summary["n_humpback"] == 1
+        out = (
+            pos_out
+            / "humpback"
+            / "rpi_orcasound_lab"
+            / "2025"
+            / "06"
+            / "15"
+            / "20250615T080203Z_20250615T080208Z.flac"
+        )
+        assert out.exists()
+
+        _fieldnames, stored_rows = read_detection_row_store(row_store_path)
+        assert stored_rows[0]["detection_filename"] == (
+            "20250615T080203Z_20250615T080208Z.flac"
+        )
+        assert stored_rows[0]["extract_filename"] == (
+            "20250615T080203Z_20250615T080208Z.flac"
+        )
+        assert stored_rows[0]["positive_selection_start_sec"] == "123.000000"
+        assert stored_rows[0]["positive_selection_end_sec"] == "128.000000"
+        assert stored_rows[0]["positive_extract_filename"] == (
+            "20250615T080203Z_20250615T080208Z.flac"
+        )
 
     def test_hydrophone_negative_paths_include_hydrophone_id(self, tmp_path):
         """Hydrophone negatives write under {negative_root}/{hydrophone_id}/{label}/..."""

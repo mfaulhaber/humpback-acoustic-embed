@@ -3,7 +3,9 @@
 import csv
 
 from humpback.classifier.detection_rows import (
+    ROW_STORE_FIELDNAMES,
     append_detection_row_store,
+    backfill_hydrophone_row_metadata,
     ensure_detection_row_store,
     read_detection_row_store,
     write_detection_row_store,
@@ -163,3 +165,26 @@ def test_ensure_detection_row_store_reads_existing_parquet(tmp_path) -> None:
     )
     assert len(rows) == 1
     assert rows[0]["row_id"] == "abc"
+
+
+def test_backfill_hydrophone_row_metadata_preserves_explicit_anchor_extract_range() -> (
+    None
+):
+    """Anchor rows with explicit extract metadata should not be clobbered."""
+    row = {field: "" for field in ROW_STORE_FIELDNAMES}
+    row["row_id"] = "anchor-row"
+    row["filename"] = "20250704T160000Z.wav"
+    row["start_sec"] = "10.0"
+    row["end_sec"] = "16.0"
+    row["detection_filename"] = "20250704T160010Z_20250704T160016Z.flac"
+    row["extract_filename"] = "20250704T160010Z_20250704T160020Z.flac"
+
+    changed = backfill_hydrophone_row_metadata(
+        [row],
+        job_start_timestamp=1751644800.0,
+        window_size_seconds=5.0,
+    )
+
+    assert changed is False
+    assert row["detection_filename"] == "20250704T160010Z_20250704T160016Z.flac"
+    assert row["extract_filename"] == "20250704T160010Z_20250704T160020Z.flac"
