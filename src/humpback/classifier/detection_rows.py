@@ -144,6 +144,23 @@ def strip_known_audio_extension(filename: str) -> str:
     return filename
 
 
+def hydrophone_job_relative_to_file_relative_offset(
+    filename: str,
+    offset_sec: float,
+    job_start_timestamp: float | None,
+) -> float:
+    """Convert a hydrophone UI/job-relative offset back to the stored file-relative value."""
+    if job_start_timestamp is None:
+        return offset_sec
+
+    recording_start = parse_recording_timestamp(filename)
+    if recording_start is None:
+        return offset_sec
+
+    chunk_epoch = recording_start.timestamp()
+    return offset_sec - (chunk_epoch - job_start_timestamp)
+
+
 def safe_float(value: str | float | int | None, default: float = 0.0) -> float:
     try:
         return float(value) if value not in (None, "") else default

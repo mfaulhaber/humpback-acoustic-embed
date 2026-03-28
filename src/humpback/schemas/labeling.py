@@ -65,6 +65,7 @@ class DetectionNeighborsRequest(BaseModel):
     filename: str
     start_sec: float = Field(ge=0)
     end_sec: float = Field(gt=0)
+    detection_filename: str | None = None
     top_k: int = Field(default=10, ge=1, le=100)
     metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
     embedding_set_ids: list[str] | None = None

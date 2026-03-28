@@ -27,6 +27,7 @@ from humpback.classifier.detection_rows import (
     build_hydrophone_anchor_filename,
     derive_detection_filename,
     ensure_detection_row_store,
+    hydrophone_job_relative_to_file_relative_offset,
     iter_detection_rows_as_tsv,
     normalize_detection_row,
     read_detection_row_store,
@@ -898,28 +899,6 @@ def _to_job_relative_offsets(rows: list[dict], job_start_timestamp: float) -> No
         row["end_sec"] = row.get("end_sec", 0.0) + offset
 
 
-def _to_file_relative_offset(
-    filename: str,
-    offset_sec: float,
-    job_start_timestamp: float | None,
-) -> float:
-    """Convert a hydrophone job-relative offset back to the stored file-relative value."""
-    if job_start_timestamp is None:
-        return offset_sec
-
-    from datetime import datetime, timezone
-
-    fmt = "%Y%m%dT%H%M%SZ"
-    base = filename.rsplit(".", 1)[0] if "." in filename else filename
-    try:
-        chunk_dt = datetime.strptime(base, fmt).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return offset_sec
-
-    chunk_epoch = chunk_dt.timestamp()
-    return offset_sec - (chunk_epoch - job_start_timestamp)
-
-
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(
     job_id: str, session: SessionDep, settings: SettingsDep
@@ -1035,12 +1014,12 @@ async def save_detection_labels(
         start_sec = row.start_sec
         end_sec = row.end_sec
         if is_hydrophone:
-            start_sec = _to_file_relative_offset(
+            start_sec = hydrophone_job_relative_to_file_relative_offset(
                 row.filename,
                 start_sec,
                 job.start_timestamp,
             )
-            end_sec = _to_file_relative_offset(
+            end_sec = hydrophone_job_relative_to_file_relative_offset(
                 row.filename,
                 end_sec,
                 job.start_timestamp,
@@ -1621,6 +1600,18 @@ async def get_detection_embedding(
     emb_path = detection_embeddings_path(settings.storage_root, job.id)
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
+
+    if job.hydrophone_id is not None:
+        start_sec = hydrophone_job_relative_to_file_relative_offset(
+            filename,
+            start_sec,
+            job.start_timestamp,
+        )
+        end_sec = hydrophone_job_relative_to_file_relative_offset(
+            filename,
+            end_sec,
+            job.start_timestamp,
+        )
 
     embedding = read_detection_embedding(emb_path, filename, start_sec, end_sec)
     if embedding is None:
