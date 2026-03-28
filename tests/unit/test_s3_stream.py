@@ -857,7 +857,6 @@ class TestResolveHydrophoneAudioSliceOrdering:
 
     def test_resolver_does_not_jump_to_lexicographic_segment(self):
         """Slice crossing live100->live101 boundary should never include live1000."""
-        from datetime import datetime, timezone
 
         from humpback.classifier.archive import StreamSegment
         from humpback.classifier.s3_stream import resolve_audio_slice
@@ -880,17 +879,12 @@ class TestResolveHydrophoneAudioSliceOrdering:
             decode_fn=fake_decode,
         )
 
-        filename = (
-            datetime.fromtimestamp(1500, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            + ".wav"
-        )
-
+        # filename epoch 1500 + offset 19 = absolute 1519
         audio = resolve_audio_slice(
             provider=provider,
             stream_start_ts=1000.0,
             stream_end_ts=3000.0,
-            filename=filename,
-            row_start_sec=19.0,  # 1s before boundary between live100 and live101
+            start_utc=1519.0,  # 1s before boundary between live100 and live101
             duration_sec=5.0,
             target_sr=10,
         )
@@ -908,7 +902,6 @@ class TestResolveAudioSliceChunkedDecode:
     def test_chunked_provider_skips_full_decode(self):
         """A chunked provider should use iter_decoded_segment_chunks, not
         decode_segment, when resolving a playback slice."""
-        from datetime import datetime, timezone
 
         from humpback.classifier.archive import StreamSegment
         from humpback.classifier.s3_stream import resolve_audio_slice
@@ -944,17 +937,12 @@ class TestResolveAudioSliceChunkedDecode:
             chunk_decode_fn=fake_chunk_decode,
         )
 
-        filename = (
-            datetime.fromtimestamp(1000, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            + ".wav"
-        )
-
+        # filename epoch 1000 + offset 10 = absolute 1010
         audio = resolve_audio_slice(
             provider=provider,
             stream_start_ts=1000.0,
             stream_end_ts=4600.0,
-            filename=filename,
-            row_start_sec=10.0,
+            start_utc=1010.0,
             duration_sec=5.0,
             target_sr=100,
         )
@@ -965,7 +953,6 @@ class TestResolveAudioSliceChunkedDecode:
 
     def test_cached_segment_skips_fetch(self):
         """When is_segment_cached returns True, fetch_segment should not be called."""
-        from datetime import datetime, timezone
 
         from humpback.classifier.archive import StreamSegment
         from humpback.classifier.s3_stream import resolve_audio_slice
@@ -999,17 +986,12 @@ class TestResolveAudioSliceChunkedDecode:
         # Add is_segment_cached to the provider instance
         provider.is_segment_cached = lambda key: True  # type: ignore[attr-defined]
 
-        filename = (
-            datetime.fromtimestamp(1000, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            + ".wav"
-        )
-
+        # filename epoch 1000 + offset 10 = absolute 1010
         audio = resolve_audio_slice(
             provider=provider,
             stream_start_ts=1000.0,
             stream_end_ts=4600.0,
-            filename=filename,
-            row_start_sec=10.0,
+            start_utc=1010.0,
             duration_sec=5.0,
             target_sr=100,
         )
@@ -1019,7 +1001,6 @@ class TestResolveAudioSliceChunkedDecode:
 
     def test_guard_fetch_recovers_boundary_samples_from_following_segment(self):
         """A small over-fetch should recover a few missing boundary samples."""
-        from datetime import datetime, timezone
 
         from humpback.classifier.archive import StreamSegment
         from humpback.classifier.s3_stream import resolve_audio_slice
@@ -1044,19 +1025,14 @@ class TestResolveAudioSliceChunkedDecode:
             decode_fn=fake_decode,
         )
 
-        filename = (
-            datetime.fromtimestamp(1000, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            + ".wav"
-        )
+        # filename epoch 1000 + offset 0 = absolute 1000
         audio = resolve_audio_slice(
             provider=provider,
             stream_start_ts=1000.0,
             stream_end_ts=1010.0,
-            filename=filename,
-            row_start_sec=0.0,
+            start_utc=1000.0,
             duration_sec=5.0,
             target_sr=sr,
-            legacy_anchor_start_ts=1000.0,
         )
 
         assert len(audio) == expected_samples
@@ -1071,7 +1047,6 @@ class TestSparseLocalCacheTimeline:
         self, tmp_path, monkeypatch
     ):
         """Local-only playback should resolve sparse mid-sequence cached segments."""
-        from datetime import datetime, timezone
 
         from humpback.classifier.providers import LocalHLSCacheProvider
         from humpback.classifier.s3_stream import (
@@ -1111,19 +1086,14 @@ class TestSparseLocalCacheTimeline:
         assert timeline[0].start_ts == pytest.approx(1800.0, abs=1e-3)
         assert timeline[-1].key.endswith("live089.ts")
 
-        filename = (
-            datetime.fromtimestamp(1800, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            + ".wav"
-        )
+        # filename epoch 1800 + offset 0 = absolute 1800
         audio = resolve_audio_slice(
             provider=provider,
             stream_start_ts=1800.0,
             stream_end_ts=1900.0,
-            filename=filename,
-            row_start_sec=0.0,
+            start_utc=1800.0,
             duration_sec=5.0,
             target_sr=10,
-            legacy_anchor_start_ts=1800.0,
             timeline=timeline,
         )
         assert len(audio) == 50

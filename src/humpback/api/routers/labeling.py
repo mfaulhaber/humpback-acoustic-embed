@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.classifier.detection_rows import (
-    hydrophone_job_relative_to_file_relative_offset,
     normalize_detection_row,
     read_detection_row_store,
 )

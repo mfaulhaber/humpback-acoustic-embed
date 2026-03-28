@@ -18,7 +18,6 @@ import soundfile as sf
 from humpback.classifier.archive import ArchiveProvider
 from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
-    backfill_hydrophone_row_metadata,
     read_detection_row_store,
     safe_float_list,
     write_detection_row_store,
@@ -1149,17 +1148,8 @@ def extract_hydrophone_labeled_samples(
         tsv_path,
         row_store_path=row_store_path,
     )
-    if (
-        using_row_store
-        and row_store_path is not None
-        and stream_start_timestamp is not None
-        and backfill_hydrophone_row_metadata(
-            all_rows,
-            job_start_timestamp=float(stream_start_timestamp),
-            window_size_seconds=window_size_seconds,
-        )
-    ):
-        write_detection_row_store(row_store_path, all_rows)
+    # Note: backfill_hydrophone_row_metadata removed in UTC identity refactor;
+    # rows now carry canonical start_utc/end_utc and no longer need anchor backfill.
     if using_row_store:
         fieldnames = list(ROW_STORE_FIELDNAMES)
     _ensure_fieldnames(fieldnames, POSITIVE_SELECTION_FIELDNAMES)

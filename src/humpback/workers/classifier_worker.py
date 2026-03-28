@@ -27,7 +27,6 @@ from humpback.classifier.detector import (
 from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     append_detection_row_store,
-    build_detection_row_id,
     ensure_detection_row_store,
     format_optional_float,
     format_optional_int,
@@ -74,42 +73,30 @@ logger = logging.getLogger(__name__)
 
 def _detection_dicts_to_store_rows(
     detections: list[dict],
-    *,
-    is_hydrophone: bool,
-    window_size_seconds: float,
 ) -> list[dict[str, str]]:
     """Convert raw detection dicts (from the detector) to row-store format.
 
-    Each detection dict has string values for fields like filename, start_sec,
-    etc. We normalize through the row-store pipeline to produce dicts keyed by
-    ROW_STORE_FIELDNAMES with string values.
+    Each detection dict has UTC fields (start_utc, end_utc, etc.) produced by
+    the detector.  We normalize through the row-store pipeline to produce dicts
+    keyed by ROW_STORE_FIELDNAMES with string values.
     """
     store_rows: list[dict[str, str]] = []
     for det in detections:
-        # Convert to string dict for normalize_detection_row
         str_det: dict[str, str] = {k: str(v) for k, v in det.items()}
-        normalized = normalize_detection_row(
-            str_det,
-            is_hydrophone=is_hydrophone,
-            window_size_seconds=window_size_seconds,
-        )
+        normalized = normalize_detection_row(str_det)
         out_row: dict[str, str] = {field: "" for field in ROW_STORE_FIELDNAMES}
-        out_row["row_id"] = normalized["row_id"] or build_detection_row_id(normalized)
-        out_row["filename"] = normalized["filename"]
-        out_row["start_sec"] = format_optional_float(normalized["start_sec"])
-        out_row["end_sec"] = format_optional_float(normalized["end_sec"])
+        out_row["start_utc"] = format_optional_float(normalized["start_utc"])
+        out_row["end_utc"] = format_optional_float(normalized["end_utc"])
         out_row["avg_confidence"] = format_optional_float(normalized["avg_confidence"])
         out_row["peak_confidence"] = format_optional_float(
             normalized["peak_confidence"]
         )
         out_row["n_windows"] = format_optional_int(normalized["n_windows"])
-        out_row["raw_start_sec"] = format_optional_float(normalized["raw_start_sec"])
-        out_row["raw_end_sec"] = format_optional_float(normalized["raw_end_sec"])
+        out_row["raw_start_utc"] = format_optional_float(normalized["raw_start_utc"])
+        out_row["raw_end_utc"] = format_optional_float(normalized["raw_end_utc"])
         out_row["merged_event_count"] = format_optional_int(
             normalized["merged_event_count"]
         )
-        out_row["detection_filename"] = normalized["detection_filename"] or ""
-        out_row["extract_filename"] = normalized["extract_filename"] or ""
         out_row["hydrophone_name"] = normalized["hydrophone_name"] or ""
         for label in ("humpback", "orca", "ship", "background"):
             value = normalized[label]
@@ -831,11 +818,7 @@ async def run_detection_job(
         def on_file_complete(file_detections: list[dict], files_done: int, total: int):
             # Append detections to Parquet row store (synchronous file I/O, safe from thread)
             if file_detections:
-                store_rows = _detection_dicts_to_store_rows(
-                    file_detections,
-                    is_hydrophone=False,
-                    window_size_seconds=cm.window_size_seconds,
-                )
+                store_rows = _detection_dicts_to_store_rows(file_detections)
                 append_detection_row_store(rs_path, store_rows)
 
             # Schedule async DB progress update on the event loop
@@ -901,7 +884,6 @@ async def run_detection_job(
         ensure_detection_row_store(
             row_store_path=rs_path,
             diagnostics_path=diag_path,
-            is_hydrophone=False,
             window_size_seconds=cm.window_size_seconds,
             refresh_existing=True,
             detection_mode=job.detection_mode,
@@ -1030,7 +1012,6 @@ async def run_hydrophone_detection_job(
             s3_cache_path=settings.s3_cache_path,
             noaa_cache_path=settings.noaa_cache_path,
         )
-        hydrophone_short_name = hydrophone_provider.source_id
         provider_mode = _hydrophone_provider_mode(
             hydrophone_id,
             local_cache_path=job.local_cache_path,
@@ -1053,13 +1034,7 @@ async def run_hydrophone_detection_job(
             time_covered_sec: float,
         ):
             if chunk_detections:
-                for det in chunk_detections:
-                    det["hydrophone_name"] = hydrophone_short_name
-                store_rows = _detection_dicts_to_store_rows(
-                    chunk_detections,
-                    is_hydrophone=True,
-                    window_size_seconds=cm.window_size_seconds,
-                )
+                store_rows = _detection_dicts_to_store_rows(chunk_detections)
                 append_detection_row_store(rs_path, store_rows)
 
             if session_factory is not None:
@@ -1274,7 +1249,6 @@ async def run_hydrophone_detection_job(
             ensure_detection_row_store(
                 row_store_path=rs_path,
                 diagnostics_path=diag_path if diag_path.exists() else None,
-                is_hydrophone=True,
                 window_size_seconds=cm.window_size_seconds,
                 refresh_existing=True,
                 detection_mode=job.detection_mode,
@@ -1298,7 +1272,6 @@ async def run_hydrophone_detection_job(
         ensure_detection_row_store(
             row_store_path=rs_path,
             diagnostics_path=diag_path if diag_path.exists() else None,
-            is_hydrophone=True,
             window_size_seconds=cm.window_size_seconds,
             refresh_existing=True,
             detection_mode=job.detection_mode,
@@ -1413,7 +1386,6 @@ async def run_extraction_job(
         ensure_detection_row_store(
             row_store_path=row_store_path,
             diagnostics_path=diagnostics_path if diagnostics_path.exists() else None,
-            is_hydrophone=job.hydrophone_id is not None,
             window_size_seconds=ws,
             detection_mode=job.detection_mode,
             tsv_path=tsv_path,

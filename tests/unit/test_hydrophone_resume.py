@@ -15,7 +15,9 @@ from humpback.classifier.detector import read_detections_tsv, write_detections_t
 
 def test_hydrophone_detection_filename_uses_canonical_snapped_bounds():
     """Snapped canonical bounds should collapse raw-event collisions."""
-    from humpback.classifier.hydrophone_detector import _build_detection_filename
+    from datetime import datetime, timezone
+
+    from humpback.classifier.detection_rows import derive_detection_filename
     from humpback.classifier.detector import snap_and_merge_detection_events
 
     raw_events = [
@@ -36,11 +38,15 @@ def test_hydrophone_detection_filename_uses_canonical_snapped_bounds():
     ]
     canonical = snap_and_merge_detection_events(raw_events, window_size_seconds=5.0)
     assert len(canonical) == 1
-    f = _build_detection_filename(
-        "20250712T011600Z.wav",
-        canonical[0]["start_sec"],
-        canonical[0]["end_sec"],
+    # Convert file-relative to UTC using chunk base epoch
+    chunk_epoch = (
+        datetime.strptime("20250712T011600Z", "%Y%m%dT%H%M%SZ")
+        .replace(tzinfo=timezone.utc)
+        .timestamp()
     )
+    start_utc = chunk_epoch + canonical[0]["start_sec"]
+    end_utc = chunk_epoch + canonical[0]["end_sec"]
+    f = derive_detection_filename(start_utc, end_utc)
     assert f == "20250712T011615Z_20250712T011625Z.flac"
 
 

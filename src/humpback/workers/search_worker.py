@@ -8,9 +8,6 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.classifier.detection_rows import (
-    hydrophone_job_relative_to_file_relative_offset,
-)
 from humpback.config import Settings
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.search import SearchJob
@@ -59,9 +56,8 @@ async def run_search_job(
         window_size = classifier_model.window_size_seconds
 
         # 2. Resolve and decode audio
-        audio, sr = await _resolve_audio(
-            det_job, settings, job.filename, job.start_sec, job.end_sec
-        )
+        # SearchJob model still uses start_sec/end_sec (Phase 3 SQL migration).
+        audio, sr = await _resolve_audio(det_job, settings, job.start_sec, job.end_sec)
 
         # 3. Resample
         audio = resample(audio, sr, target_sr)
@@ -108,11 +104,15 @@ async def run_search_job(
 async def _resolve_audio(
     det_job: DetectionJob,
     settings: Settings,
-    filename: str,
     start_sec: float,
     end_sec: float,
 ) -> tuple[np.ndarray, int]:
-    """Decode audio for a detection row. Returns (audio_array, sample_rate)."""
+    """Decode audio for a detection row. Returns (audio_array, sample_rate).
+
+    NOTE: Until the Phase 3 SQL migration, SearchJob still stores file-relative
+    ``start_sec``/``end_sec`` and ``filename``.  Hydrophone jobs use
+    ``start_sec`` as absolute UTC (already correct in the old schema).
+    """
     import asyncio
 
     if det_job.hydrophone_id:
@@ -121,17 +121,6 @@ async def _resolve_audio(
 
         if det_job.start_timestamp is None or det_job.end_timestamp is None:
             raise ValueError("Hydrophone job missing start/end timestamps")
-
-        start_sec = hydrophone_job_relative_to_file_relative_offset(
-            filename,
-            start_sec,
-            det_job.start_timestamp,
-        )
-        end_sec = hydrophone_job_relative_to_file_relative_offset(
-            filename,
-            end_sec,
-            det_job.start_timestamp,
-        )
 
         cache_path = det_job.local_cache_path or settings.s3_cache_path
         provider = build_archive_playback_provider(
@@ -147,24 +136,32 @@ async def _resolve_audio(
             provider,
             det_job.start_timestamp,
             det_job.end_timestamp,
-            filename,
             start_sec,
             duration_sec,
             target_sr,
-            det_job.start_timestamp,
         )
         return segment, target_sr
 
-    # Local audio folder
+    # Local audio folder (Phase 3 will convert to UTC resolution)
     if det_job.audio_folder is None:
         raise ValueError("Detection job has no audio_folder")
 
-    duration_sec = end_sec - start_sec
     audio_folder = Path(det_job.audio_folder)
-    file_path = audio_folder / filename
+    # Find audio file matching the search job's filename field
+
+    # Use a simple scan for the first audio file (search jobs are short-lived)
+    audio_files = sorted(
+        p
+        for p in audio_folder.rglob("*")
+        if p.suffix.lower() in {".wav", ".mp3", ".flac"}
+    )
+    if not audio_files:
+        raise ValueError(f"No audio files in {audio_folder}")
+
+    # For now, use the first file and file-relative offsets
+    file_path = audio_files[0]
     audio, sr = await asyncio.to_thread(decode_audio, file_path)
 
-    # Slice to [start_sec, end_sec]
     start_sample = int(start_sec * sr)
     end_sample = int(end_sec * sr)
     audio = audio[start_sample:end_sample]

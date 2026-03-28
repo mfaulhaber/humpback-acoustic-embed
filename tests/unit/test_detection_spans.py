@@ -210,17 +210,15 @@ def test_write_tsv_preserves_n_windows():
 
     detections = [
         {
-            "filename": "a.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 1000.0,
+            "end_utc": 1005.0,
             "avg_confidence": 0.8,
             "peak_confidence": 0.9,
             "n_windows": 3,
         },
         {
-            "filename": "a.wav",
-            "start_sec": 5.0,
-            "end_sec": 12.0,
+            "start_utc": 1005.0,
+            "end_utc": 1012.0,
             "avg_confidence": 0.7,
             "peak_confidence": 0.85,
             "n_windows": 5,
@@ -241,14 +239,13 @@ def test_write_tsv_preserves_n_windows():
         # All expected fieldnames present
         assert reader.fieldnames is not None
         assert set(reader.fieldnames) == {
-            "filename",
-            "start_sec",
-            "end_sec",
+            "start_utc",
+            "end_utc",
             "avg_confidence",
             "peak_confidence",
             "n_windows",
-            "raw_start_sec",
-            "raw_end_sec",
+            "raw_start_utc",
+            "raw_end_utc",
             "merged_event_count",
         }
 
@@ -262,9 +259,8 @@ def test_append_detections_tsv_creates_with_header(tmp_path):
     tsv_path = tmp_path / "detections.tsv"
     detections = [
         {
-            "filename": "a.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 1000.0,
+            "end_utc": 1005.0,
             "avg_confidence": 0.8,
             "peak_confidence": 0.9,
             "n_windows": 2,
@@ -277,17 +273,16 @@ def test_append_detections_tsv_creates_with_header(tmp_path):
         rows = list(reader)
 
     assert len(rows) == 1
-    assert rows[0]["filename"] == "a.wav"
+    assert rows[0]["start_utc"] == "1000.0"
     assert reader.fieldnames is not None
     assert set(reader.fieldnames) == {
-        "filename",
-        "start_sec",
-        "end_sec",
+        "start_utc",
+        "end_utc",
         "avg_confidence",
         "peak_confidence",
         "n_windows",
-        "raw_start_sec",
-        "raw_end_sec",
+        "raw_start_utc",
+        "raw_end_utc",
         "merged_event_count",
     }
 
@@ -301,9 +296,8 @@ def test_append_detections_tsv_appends_without_duplicate_header(tmp_path):
     tsv_path = tmp_path / "detections.tsv"
     det1 = [
         {
-            "filename": "a.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 1000.0,
+            "end_utc": 1005.0,
             "avg_confidence": 0.8,
             "peak_confidence": 0.9,
             "n_windows": 2,
@@ -311,9 +305,8 @@ def test_append_detections_tsv_appends_without_duplicate_header(tmp_path):
     ]
     det2 = [
         {
-            "filename": "b.wav",
-            "start_sec": 1.0,
-            "end_sec": 6.0,
+            "start_utc": 2000.0,
+            "end_utc": 2005.0,
             "avg_confidence": 0.7,
             "peak_confidence": 0.85,
             "n_windows": 3,
@@ -327,8 +320,8 @@ def test_append_detections_tsv_appends_without_duplicate_header(tmp_path):
         rows = list(reader)
 
     assert len(rows) == 2
-    assert rows[0]["filename"] == "a.wav"
-    assert rows[1]["filename"] == "b.wav"
+    assert rows[0]["start_utc"] == "1000.0"
+    assert rows[1]["start_utc"] == "2000.0"
 
 
 def test_append_detections_tsv_noop_on_empty():
@@ -352,25 +345,21 @@ def test_write_tsv_with_hydrophone_extract_filename_column(tmp_path):
 
     tsv_path = tmp_path / "hydrophone_detections.tsv"
     fieldnames = [
-        "filename",
-        "start_sec",
-        "end_sec",
+        "start_utc",
+        "end_utc",
         "avg_confidence",
         "peak_confidence",
         "n_windows",
-        "detection_filename",
-        "extract_filename",
+        "hydrophone_name",
     ]
     detections = [
         {
-            "filename": "20250702T080118Z.wav",
-            "start_sec": 37.0,
-            "end_sec": 45.0,
+            "start_utc": 1719907315.0,
+            "end_utc": 1719907325.0,
             "avg_confidence": 0.95,
             "peak_confidence": 0.97,
             "n_windows": 4,
-            "detection_filename": "20250702T080155Z_20250702T080205Z.flac",
-            "extract_filename": "20250702T080155Z_20250702T080205Z.flac",
+            "hydrophone_name": "rpi_north",
         },
     ]
 
@@ -381,8 +370,7 @@ def test_write_tsv_with_hydrophone_extract_filename_column(tmp_path):
         rows = list(reader)
 
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.flac"
-    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
+    assert rows[0]["hydrophone_name"] == "rpi_north"
     assert reader.fieldnames == fieldnames
 
 
@@ -394,37 +382,31 @@ def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
 
     tsv_path = tmp_path / "hydrophone_detections.tsv"
     fieldnames = [
-        "filename",
-        "start_sec",
-        "end_sec",
+        "start_utc",
+        "end_utc",
         "avg_confidence",
         "peak_confidence",
         "n_windows",
-        "detection_filename",
-        "extract_filename",
+        "hydrophone_name",
     ]
     det1 = [
         {
-            "filename": "20250702T080118Z.wav",
-            "start_sec": 37.0,
-            "end_sec": 45.0,
+            "start_utc": 1719907315.0,
+            "end_utc": 1719907325.0,
             "avg_confidence": 0.95,
             "peak_confidence": 0.97,
             "n_windows": 4,
-            "detection_filename": "20250702T080155Z_20250702T080205Z.flac",
-            "extract_filename": "20250702T080155Z_20250702T080205Z.flac",
+            "hydrophone_name": "rpi_north",
         },
     ]
     det2 = [
         {
-            "filename": "20250702T080218Z.wav",
-            "start_sec": 8.0,
-            "end_sec": 14.0,
+            "start_utc": 1719907400.0,
+            "end_utc": 1719907410.0,
             "avg_confidence": 0.91,
             "peak_confidence": 0.93,
             "n_windows": 3,
-            "detection_filename": "20250702T080225Z_20250702T080235Z.flac",
-            "extract_filename": "20250702T080225Z_20250702T080235Z.flac",
+            "hydrophone_name": "rpi_north",
         },
     ]
 
@@ -436,10 +418,8 @@ def test_append_tsv_with_hydrophone_extract_filename_column(tmp_path):
         rows = list(reader)
 
     assert len(rows) == 2
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.flac"
-    assert rows[1]["detection_filename"] == "20250702T080225Z_20250702T080235Z.flac"
-    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
-    assert rows[1]["extract_filename"] == "20250702T080225Z_20250702T080235Z.flac"
+    assert rows[0]["start_utc"] == "1719907315.0"
+    assert rows[1]["start_utc"] == "1719907400.0"
     assert reader.fieldnames == fieldnames
 
 
