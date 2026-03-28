@@ -19,7 +19,7 @@ Start of every session — normalize repo state, read context, ask what to work 
    - `DECISIONS.md` — recent architecture decisions
 
 4. **Check for active feature branches**
-   - Look for local and remote `feature/*` branches
+   - Look for local `feature/*` branches
    - If found, check for in-progress specs in `docs/specs/` or plans in `docs/plans/` on those branches
    - If active work exists, offer to resume on that branch
 

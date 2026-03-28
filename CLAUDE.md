@@ -67,6 +67,7 @@ Use these commands for managing dependencies:
 *   When troubleshooting, use `uv cache clean` as a last resort.
 
 ### 3.5 Database Migrations
+*   Honor database file location defined with HUMPBACK_DATABASE_URL, check .env override.  
 *   When a change adds, removes, or renames columns on any SQL table, **always** create an Alembic migration in `alembic/versions/` and run it with `uv run alembic upgrade head` before verifying the change works.
 *   Migration files follow the naming convention `NNN_short_description.py` (e.g., `007_negative_embedding_set_ids.py`), incrementing from the latest revision.
 *   Use `op.batch_alter_table()` for SQLite compatibility.
