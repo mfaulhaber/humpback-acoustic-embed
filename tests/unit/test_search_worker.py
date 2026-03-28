@@ -44,7 +44,7 @@ async def seed_data(db_session, tmp_path):
 
     audio_dir = tmp_path / "audio"
     audio_dir.mkdir()
-    wav_path = audio_dir / "test.wav"
+    wav_path = audio_dir / "20240615T080000Z.wav"
     sr = 16000
     duration = 6.0
     n = int(sr * duration)
@@ -100,9 +100,8 @@ async def test_run_search_job_success(db_session, settings, seed_data):
     async with db_session() as session:
         sj = SearchJob(
             detection_job_id=ids["dj_id"],
-            filename="test.wav",
-            start_sec=0.0,
-            end_sec=5.0,
+            start_utc=1718438400.0,
+            end_utc=1718438405.0,
         )
         session.add(sj)
         await session.commit()
@@ -128,9 +127,8 @@ async def test_run_search_job_missing_detection_job(db_session, settings):
     async with db_session() as session:
         sj = SearchJob(
             detection_job_id="nonexistent-id",
-            filename="test.wav",
-            start_sec=0.0,
-            end_sec=5.0,
+            start_utc=1718438400.0,
+            end_utc=1718438405.0,
         )
         session.add(sj)
         await session.commit()
@@ -160,9 +158,8 @@ async def test_run_search_job_missing_classifier_model(db_session, settings):
 
         sj = SearchJob(
             detection_job_id=dj.id,
-            filename="test.wav",
-            start_sec=0.0,
-            end_sec=5.0,
+            start_utc=1718438400.0,
+            end_utc=1718438405.0,
         )
         session.add(sj)
         await session.commit()

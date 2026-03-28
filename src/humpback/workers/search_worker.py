@@ -56,8 +56,7 @@ async def run_search_job(
         window_size = classifier_model.window_size_seconds
 
         # 2. Resolve and decode audio
-        # SearchJob model still uses start_sec/end_sec (Phase 3 SQL migration).
-        audio, sr = await _resolve_audio(det_job, settings, job.start_sec, job.end_sec)
+        audio, sr = await _resolve_audio(det_job, settings, job.start_utc, job.end_utc)
 
         # 3. Resample
         audio = resample(audio, sr, target_sr)
@@ -104,15 +103,10 @@ async def run_search_job(
 async def _resolve_audio(
     det_job: DetectionJob,
     settings: Settings,
-    start_sec: float,
-    end_sec: float,
+    start_utc: float,
+    end_utc: float,
 ) -> tuple[np.ndarray, int]:
-    """Decode audio for a detection row. Returns (audio_array, sample_rate).
-
-    NOTE: Until the Phase 3 SQL migration, SearchJob still stores file-relative
-    ``start_sec``/``end_sec`` and ``filename``.  Hydrophone jobs use
-    ``start_sec`` as absolute UTC (already correct in the old schema).
-    """
+    """Decode audio for a search job. Uses start_utc/end_utc absolute timestamps."""
     import asyncio
 
     if det_job.hydrophone_id:
@@ -130,40 +124,39 @@ async def _resolve_audio(
         )
 
         target_sr = 32000
-        duration_sec = end_sec - start_sec
+        duration_sec = end_utc - start_utc
         segment = await asyncio.to_thread(
             resolve_audio_slice,
             provider,
             det_job.start_timestamp,
             det_job.end_timestamp,
-            start_sec,
+            start_utc,
             duration_sec,
             target_sr,
         )
         return segment, target_sr
 
-    # Local audio folder (Phase 3 will convert to UTC resolution)
+    # Local audio: resolve start_utc to file + offset
     if det_job.audio_folder is None:
         raise ValueError("Detection job has no audio_folder")
 
-    audio_folder = Path(det_job.audio_folder)
-    # Find audio file matching the search job's filename field
-
-    # Use a simple scan for the first audio file (search jobs are short-lived)
-    audio_files = sorted(
-        p
-        for p in audio_folder.rglob("*")
-        if p.suffix.lower() in {".wav", ".mp3", ".flac"}
+    from humpback.classifier.extractor import (
+        _build_local_audio_index,
+        _resolve_local_audio_for_row,
     )
-    if not audio_files:
-        raise ValueError(f"No audio files in {audio_folder}")
 
-    # For now, use the first file and file-relative offsets
-    file_path = audio_files[0]
+    audio_folder = Path(det_job.audio_folder)
+    audio_index = _build_local_audio_index(audio_folder)
+    resolved = _resolve_local_audio_for_row(start_utc, audio_index)
+    if resolved is None:
+        raise ValueError(f"No audio file found for start_utc={start_utc}")
+
+    file_path, _base_epoch, offset_sec = resolved
     audio, sr = await asyncio.to_thread(decode_audio, file_path)
 
-    start_sample = int(start_sec * sr)
-    end_sample = int(end_sec * sr)
+    duration_sec = end_utc - start_utc
+    start_sample = int(offset_sec * sr)
+    end_sample = int((offset_sec + duration_sec) * sr)
     audio = audio[start_sample:end_sample]
 
     return audio, sr

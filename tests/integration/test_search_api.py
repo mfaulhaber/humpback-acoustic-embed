@@ -422,9 +422,8 @@ async def test_create_audio_search_201(detection_job_id, client):
         "/search/similar-by-audio",
         json={
             "detection_job_id": detection_job_id,
-            "filename": "test.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 1000.0,
+            "end_utc": 1005.0,
         },
     )
     assert resp.status_code == 201
@@ -439,9 +438,8 @@ async def test_create_audio_search_404_missing_detection(client):
         "/search/similar-by-audio",
         json={
             "detection_job_id": "nonexistent-id",
-            "filename": "test.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 1000.0,
+            "end_utc": 1005.0,
         },
     )
     assert resp.status_code == 404
@@ -453,9 +451,8 @@ async def test_poll_search_job_queued(detection_job_id, client):
         "/search/similar-by-audio",
         json={
             "detection_job_id": detection_job_id,
-            "filename": "test.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 1000.0,
+            "end_utc": 1005.0,
         },
     )
     job_id = resp.json()["id"]
@@ -482,9 +479,8 @@ async def test_poll_completed_search_job(
         "/search/similar-by-audio",
         json={
             "detection_job_id": detection_job_id,
-            "filename": "test.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 1000.0,
+            "end_utc": 1005.0,
         },
     )
     job_id = resp.json()["id"]

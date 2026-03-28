@@ -634,12 +634,12 @@ async def _run_vocalization_training_job(
             )
             voc_labels = result.scalars().all()
 
-            # Index labels by row_id (vocalization labels take priority)
-            label_by_row_id: dict[str, str] = {}
+            # Index labels by (start_utc, end_utc) composite key
+            label_by_utc: dict[tuple[float, float], str] = {}
             for vl in voc_labels:
-                # Use the first label per row_id (if multiple, take the first)
-                if vl.row_id not in label_by_row_id:
-                    label_by_row_id[vl.row_id] = vl.label
+                key = (vl.start_utc, vl.end_utc)
+                if key not in label_by_utc:
+                    label_by_utc[key] = vl.label
 
             # Fall back to annotation labels for rows without vocalization labels
             ann_result = await session.execute(
@@ -648,57 +648,33 @@ async def _run_vocalization_training_job(
                 )
             )
             for ann in ann_result.scalars().all():
-                if ann.row_id not in label_by_row_id:
-                    label_by_row_id[ann.row_id] = ann.label
+                key = (ann.start_utc, ann.end_utc)
+                if key not in label_by_utc:
+                    label_by_utc[key] = ann.label
 
-            # Read row store to map embedding position -> row_id
+            # Map embedding rows to UTC keys via filename timestamps
             from humpback.classifier.detection_rows import (
-                read_detection_row_store,
+                parse_recording_timestamp,
             )
-            from humpback.storage import detection_row_store_path
 
-            row_store = detection_row_store_path(settings.storage_root, det_job_id)
-            row_id_by_index: dict[int, str] = {}
-            if not row_store.exists():
-                logger.warning(
-                    "No row store for detection job %s at %s, "
-                    "cannot match embeddings to labels",
-                    det_job_id,
-                    row_store,
-                )
-            if row_store.exists():
-                _fnames, store_rows = read_detection_row_store(row_store)
-                # Build a normalized key -> row_id map from the row store
-                row_id_by_key: dict[str, str] = {}
-                for row in store_rows:
-                    fn = row.get("filename", "")
-                    ss = f"{float(row.get('start_sec', 0))}"
-                    es = f"{float(row.get('end_sec', 0))}"
-                    row_id_by_key[f"{fn}:{ss}:{es}"] = row.get("row_id", "")
-
-                # Match embedding rows to row store by normalized key
-                for i in range(table.num_rows):
-                    key = f"{filenames[i]}:{float(start_secs[i])}:{float(end_secs[i])}"
-                    rid = row_id_by_key.get(key, "")
-                    if rid:
-                        row_id_by_index[i] = rid
-
-            # Match embeddings to labels
             matched = 0
             for i in range(table.num_rows):
-                row_id = row_id_by_index.get(i, "")
-                if row_id in label_by_row_id:
+                fname = filenames[i]
+                ts = parse_recording_timestamp(fname)
+                base_epoch = ts.timestamp() if ts else 0.0
+                row_start_utc = base_epoch + float(start_secs[i])
+                row_end_utc = base_epoch + float(end_secs[i])
+                utc_key = (row_start_utc, row_end_utc)
+                if utc_key in label_by_utc:
                     vec = np.array(embeddings_col[i].as_py(), dtype=np.float32)
                     all_embeddings.append(vec)
-                    all_labels.append(label_by_row_id[row_id])
+                    all_labels.append(label_by_utc[utc_key])
                     matched += 1
             logger.info(
-                "Detection job %s: %d embeddings, %d labels (voc+ann), "
-                "%d row-store entries, %d matched",
+                "Detection job %s: %d embeddings, %d labels (voc+ann), %d matched",
                 det_job_id,
                 table.num_rows,
-                len(label_by_row_id),
-                len(row_id_by_index),
+                len(label_by_utc),
                 matched,
             )
 

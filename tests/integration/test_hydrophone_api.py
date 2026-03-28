@@ -508,7 +508,10 @@ async def test_paused_job_content_endpoint_returns_rows(client, app_settings):
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
-    assert rows[0]["filename"] == "20250706T002900Z.wav"
+    # Legacy TSV row (filename=20250706T002900Z.wav, start_sec=20, end_sec=25)
+    # is migrated to UTC: recording_ts(20250706T002900Z) + offsets
+    assert rows[0]["start_utc"] == 1751761760.0
+    assert rows[0]["end_utc"] == 1751761765.0
 
     await engine.dispose()
 
@@ -586,8 +589,9 @@ async def test_canceled_job_content_and_download(client, app_settings):
     rows = resp.json()
     assert len(rows) == 1
     assert rows[0]["hydrophone_name"] == "rpi_north_sjc"
-    assert rows[0]["detection_filename"] == "20250704T160010Z_20250704T160016Z.flac"
-    assert rows[0]["extract_filename"] == "20250704T160010Z_20250704T160020Z.flac"
+    # Legacy TSV migrated: filename=20250704T160000Z.wav + start_sec=10 -> start_utc
+    assert rows[0]["start_utc"] == 1751644810.0
+    assert rows[0]["end_utc"] == 1751644816.0
 
     # Download endpoint works for canceled jobs
     resp = await client.get(f"/classifier/detection-jobs/{job_id}/download")
@@ -631,8 +635,8 @@ async def test_detection_job_out_has_hydrophone_fields(client, app_settings):
     await engine.dispose()
 
 
-async def test_hydrophone_content_includes_extract_filename(client, app_settings):
-    """Hydrophone detection content surfaces extract_filename when present in TSV."""
+async def test_hydrophone_content_returns_utc_identity(client, app_settings):
+    """Hydrophone detection content returns start_utc/end_utc from migrated legacy TSV."""
     import csv
 
     from sqlalchemy import insert
@@ -692,16 +696,16 @@ async def test_hydrophone_content_includes_extract_filename(client, app_settings
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
-    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.flac"
+    # detection_filename 20250702T080155Z_20250702T080203Z.flac is primary source
+    assert rows[0]["start_utc"] == 1751443315.0
+    assert rows[0]["end_utc"] == 1751443323.0
+    assert rows[0]["avg_confidence"] == 0.951
 
     await engine.dispose()
 
 
-async def test_hydrophone_content_derives_detection_filename_for_legacy_rows(
-    client, app_settings
-):
-    """Legacy rows without detection_filename should reuse extract_filename when available."""
+async def test_hydrophone_content_migrates_legacy_rows_to_utc(client, app_settings):
+    """Legacy rows without detection_filename are migrated using filename + offsets."""
     import csv
 
     from sqlalchemy import insert
@@ -759,19 +763,22 @@ async def test_hydrophone_content_derives_detection_filename_for_legacy_rows(
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["raw_start_sec"] == 37.0
-    assert rows[0]["raw_end_sec"] == 45.0
+    # Legacy migration: base(20250702T080118Z) + 37/45 -> UTC epochs
+    assert rows[0]["start_utc"] == 1751443315.0
+    assert rows[0]["end_utc"] == 1751443323.0
+    # raw_start_sec/raw_end_sec missing from TSV -> defaults to 0.0 -> base epoch
+    base_epoch = datetime(2025, 7, 2, 8, 1, 18, tzinfo=timezone.utc).timestamp()
+    assert rows[0]["raw_start_utc"] == base_epoch
+    assert rows[0]["raw_end_utc"] == base_epoch
     assert rows[0]["merged_event_count"] == 1
 
     await engine.dispose()
 
 
-async def test_hydrophone_download_normalizes_legacy_detection_filename(
+async def test_hydrophone_download_includes_derived_detection_filename(
     client, app_settings
 ):
-    """Download endpoint should normalize legacy rows without rewriting source TSV."""
+    """Download endpoint should derive detection_filename from UTC bounds in TSV export."""
     import csv
     import io
 
@@ -832,11 +839,13 @@ async def test_hydrophone_download_normalizes_legacy_detection_filename(
     reader = csv.DictReader(io.StringIO(resp.text), delimiter="\t")
     rows = list(reader)
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["raw_start_sec"] == "37.000000"
-    assert rows[0]["raw_end_sec"] == "45.000000"
-    assert rows[0]["merged_event_count"] == "1"
+    # TSV export: start_utc/end_utc columns + derived detection_filename
+    assert reader.fieldnames is not None
+    assert "start_utc" in reader.fieldnames
+    assert "end_utc" in reader.fieldnames
+    assert "detection_filename" in reader.fieldnames
+    # Migrated from filename+offsets -> detection_filename derived from UTC bounds
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
 
     await engine.dispose()
 
@@ -915,11 +924,11 @@ async def test_hydrophone_download_returns_streaming_response(client, app_settin
     rows = list(reader)
 
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["extract_filename"] == "20250702T080155Z_20250702T080205Z.wav"
-    assert rows[0]["raw_start_sec"] == "37.000000"
-    assert rows[0]["raw_end_sec"] == "45.000000"
-    assert rows[0]["merged_event_count"] == "1"
+    # TSV export derives detection_filename from UTC bounds
+    assert rows[0]["detection_filename"] == "20250702T080155Z_20250702T080203Z.flac"
+    assert reader.fieldnames is not None
+    assert "start_utc" in reader.fieldnames
+    assert "end_utc" in reader.fieldnames
 
     await engine.dispose()
 
@@ -977,15 +986,10 @@ async def test_hydrophone_audio_slice_late_row_uses_first_folder_anchor(
         lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
     )
 
-    # 2350 is too far from job.start (legacy anchor), but valid from first folder (1500)
-    filename = (
-        datetime.fromtimestamp(2350, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        + ".wav"
-    )
-
+    # start_utc=2350.0 is within job range [1000, 3000] and resolvable from folder 1500
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/audio-slice",
-        params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
+        params={"start_utc": 2350.0, "duration_sec": 5.0},
     )
     assert resp.status_code == 200
     assert resp.content[:4] == b"RIFF"
@@ -993,10 +997,10 @@ async def test_hydrophone_audio_slice_late_row_uses_first_folder_anchor(
     await engine.dispose()
 
 
-async def test_hydrophone_audio_slice_legacy_anchor_fallback_still_works(
+async def test_hydrophone_audio_slice_returns_404_for_uncovered_timestamp(
     client, app_settings, monkeypatch
 ):
-    """Older jobs still resolve rows anchored to job.start_timestamp."""
+    """Timestamps before any cached stream segments return 404."""
     from sqlalchemy import insert
 
     from humpback.database import create_engine, create_session_factory
@@ -1046,19 +1050,12 @@ async def test_hydrophone_audio_slice_legacy_anchor_fallback_still_works(
         lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
     )
 
-    # 1200 is before first folder (1500) so first-anchor offset is negative.
-    # Legacy job.start anchor should resolve this row.
-    filename = (
-        datetime.fromtimestamp(1200, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        + ".wav"
-    )
-
+    # start_utc=1200.0 is before the only folder (1500) — no audio available
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/audio-slice",
-        params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
+        params={"start_utc": 1200.0, "duration_sec": 5.0},
     )
-    assert resp.status_code == 200
-    assert resp.content[:4] == b"RIFF"
+    assert resp.status_code == 404
 
     await engine.dispose()
 
@@ -1116,14 +1113,10 @@ async def test_hydrophone_audio_slice_rejects_rows_beyond_job_end(
         lambda _ts_bytes, _sr: np.ones(32000 * 10, dtype=np.float32),
     )
 
-    # Synthetic row starts after end_timestamp=1525.
-    filename = (
-        datetime.fromtimestamp(1530, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        + ".wav"
-    )
+    # start_utc=1530 is beyond end_timestamp=1525 — should be rejected
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/audio-slice",
-        params={"filename": filename, "start_sec": 0.0, "duration_sec": 5.0},
+        params={"start_utc": 1530.0, "duration_sec": 5.0},
     )
     assert resp.status_code == 404
 
@@ -1183,8 +1176,7 @@ async def test_hydrophone_audio_slice_supports_noaa_provider_without_cache(
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/audio-slice",
         params={
-            "filename": "20150725T000009Z.wav",
-            "start_sec": 0.0,
+            "start_utc": 1437782409.0,
             "duration_sec": 5.0,
         },
     )
@@ -1268,12 +1260,8 @@ def test_hydrophone_detection_respects_end_timestamp_with_local_hls_cache(
 
     assert detections
     for det in detections:
-        chunk_ts = (
-            datetime.strptime(det["filename"][:-4], "%Y%m%dT%H%M%SZ")
-            .replace(tzinfo=timezone.utc)
-            .timestamp()
-        )
-        assert chunk_ts + float(det["end_sec"]) <= 1025.01
+        # Detector now outputs absolute UTC epoch floats
+        assert float(det["end_utc"]) <= 1025.01
 
 
 # ---- Paused job label/download/extract gates ----
@@ -1339,11 +1327,14 @@ async def _create_paused_job_with_tsv(app_settings):
 async def test_hydrophone_batch_add_populates_detection_range_metadata(
     client, app_settings
 ):
-    """PATCH /labels should persist hydrophone timeline adds with extractable metadata."""
+    """PATCH /labels should persist hydrophone timeline adds with UTC identity."""
     from humpback.classifier.detection_rows import read_detection_row_store
 
     job_id, engine = await _create_paused_job_with_tsv(app_settings)
     job_start = 1751439600.0
+
+    add_start_utc = job_start + 123.0
+    add_end_utc = job_start + 128.0
 
     resp = await client.patch(
         f"/classifier/detection-jobs/{job_id}/labels",
@@ -1351,8 +1342,8 @@ async def test_hydrophone_batch_add_populates_detection_range_metadata(
             "edits": [
                 {
                     "action": "add",
-                    "start_sec": 123.0,
-                    "end_sec": 128.0,
+                    "start_utc": add_start_utc,
+                    "end_utc": add_end_utc,
                     "label": "humpback",
                 }
             ]
@@ -1360,28 +1351,12 @@ async def test_hydrophone_batch_add_populates_detection_range_metadata(
     )
     assert resp.status_code == 200
 
-    expected_anchor = (
-        datetime.fromtimestamp(job_start, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        + ".wav"
-    )
-    expected_range = (
-        datetime.fromtimestamp(job_start + 123.0, tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
-        + "_"
-        + datetime.fromtimestamp(job_start + 128.0, tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
-        + ".flac"
-    )
-
     content_resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
     assert content_resp.status_code == 200
     content_rows = content_resp.json()
     added = next(row for row in content_rows if row["humpback"] == 1)
-    assert added["filename"] == expected_anchor
-    assert added["detection_filename"] == expected_range
-    assert added["extract_filename"] == expected_range
+    assert added["start_utc"] == add_start_utc
+    assert added["end_utc"] == add_end_utc
 
     row_store_path = (
         Path(app_settings.storage_root)
@@ -1391,17 +1366,14 @@ async def test_hydrophone_batch_add_populates_detection_range_metadata(
     )
     _fieldnames, stored_rows = read_detection_row_store(row_store_path)
     stored = next(row for row in stored_rows if row.get("humpback") == "1")
-    assert stored["filename"] == expected_anchor
-    assert stored["detection_filename"] == expected_range
-    assert stored["extract_filename"] == expected_range
-    assert stored["positive_selection_start_sec"] == "123.000000"
-    assert stored["positive_selection_end_sec"] == "128.000000"
+    assert stored["start_utc"] == str(add_start_utc)
+    assert stored["end_utc"] == str(add_end_utc)
 
     await engine.dispose()
 
 
-async def test_hydrophone_content_repairs_blank_filename_rows(client, app_settings):
-    """GET /content should repair legacy blank-filename hydrophone timeline rows."""
+async def test_hydrophone_content_returns_utc_row_store_rows(client, app_settings):
+    """GET /content should return rows with start_utc/end_utc from new-schema row store."""
     from humpback.classifier.detection_rows import (
         ROW_STORE_FIELDNAMES,
         read_detection_row_store,
@@ -1417,54 +1389,37 @@ async def test_hydrophone_content_repairs_blank_filename_rows(client, app_settin
         / "detection_rows.parquet"
     )
 
-    broken_row = {field: "" for field in ROW_STORE_FIELDNAMES}
-    broken_row["row_id"] = "broken-row"
-    broken_row["filename"] = ""
-    broken_row["start_sec"] = "180.0"
-    broken_row["end_sec"] = "185.0"
-    broken_row["humpback"] = "1"
-    broken_row["positive_selection_origin"] = "clip_bounds_fallback"
-    broken_row["positive_selection_score_source"] = "clip_bounds_fallback"
-    broken_row["positive_selection_decision"] = "positive"
-    broken_row["positive_selection_start_sec"] = "180.000000"
-    broken_row["positive_selection_end_sec"] = "185.000000"
-    write_detection_row_store(row_store_path, [broken_row])
-
-    expected_anchor = (
-        datetime.fromtimestamp(job_start, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        + ".wav"
-    )
-    expected_range = (
-        datetime.fromtimestamp(job_start + 180.0, tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
-        + "_"
-        + datetime.fromtimestamp(job_start + 185.0, tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
-        + ".flac"
-    )
+    utc_row = {field: "" for field in ROW_STORE_FIELDNAMES}
+    utc_row["start_utc"] = str(job_start + 180.0)
+    utc_row["end_utc"] = str(job_start + 185.0)
+    utc_row["humpback"] = "1"
+    utc_row["positive_selection_origin"] = "clip_bounds_fallback"
+    utc_row["positive_selection_score_source"] = "clip_bounds_fallback"
+    utc_row["positive_selection_decision"] = "positive"
+    utc_row["positive_selection_start_utc"] = str(job_start + 180.0)
+    utc_row["positive_selection_end_utc"] = str(job_start + 185.0)
+    write_detection_row_store(row_store_path, [utc_row])
 
     resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
-    assert rows[0]["filename"] == expected_anchor
-    assert rows[0]["detection_filename"] == expected_range
-    assert rows[0]["extract_filename"] == expected_range
+    assert rows[0]["start_utc"] == job_start + 180.0
+    assert rows[0]["end_utc"] == job_start + 185.0
+    assert rows[0]["positive_selection_start_utc"] == job_start + 180.0
+    assert rows[0]["positive_selection_end_utc"] == job_start + 185.0
 
     _fieldnames, stored_rows = read_detection_row_store(row_store_path)
-    assert stored_rows[0]["filename"] == expected_anchor
-    assert stored_rows[0]["detection_filename"] == expected_range
-    assert stored_rows[0]["extract_filename"] == expected_range
+    assert stored_rows[0]["start_utc"] == str(job_start + 180.0)
+    assert stored_rows[0]["end_utc"] == str(job_start + 185.0)
 
     await engine.dispose()
 
 
-async def test_hydrophone_content_repairs_anchor_rows_to_exact_clip_ranges(
+async def test_hydrophone_content_returns_positive_selection_utc_fields(
     client, app_settings
 ):
-    """GET /content should unsnap synthetic hydrophone anchor rows back to exact 5s clips."""
+    """GET /content should return positive_selection_start_utc/end_utc from row store."""
     from humpback.classifier.detection_rows import (
         ROW_STORE_FIELDNAMES,
         read_detection_row_store,
@@ -1473,10 +1428,6 @@ async def test_hydrophone_content_repairs_anchor_rows_to_exact_clip_ranges(
 
     job_id, engine = await _create_paused_job_with_tsv(app_settings)
     job_start = 1751439600.0
-    anchor_filename = (
-        datetime.fromtimestamp(job_start, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        + ".wav"
-    )
     row_store_path = (
         Path(app_settings.storage_root)
         / "detections"
@@ -1484,46 +1435,29 @@ async def test_hydrophone_content_repairs_anchor_rows_to_exact_clip_ranges(
         / "detection_rows.parquet"
     )
 
-    snapped_row = {field: "" for field in ROW_STORE_FIELDNAMES}
-    snapped_row["row_id"] = "snapped-anchor-row"
-    snapped_row["filename"] = anchor_filename
-    snapped_row["start_sec"] = "18323.0"
-    snapped_row["end_sec"] = "18328.0"
-    snapped_row["detection_filename"] = "20250702T131520Z_20250702T131530Z.flac"
-    snapped_row["extract_filename"] = "20250702T131520Z_20250702T131530Z.flac"
-    snapped_row["humpback"] = "1"
-    snapped_row["positive_selection_origin"] = "clip_bounds_fallback"
-    snapped_row["positive_selection_score_source"] = "clip_bounds_fallback"
-    snapped_row["positive_selection_decision"] = "positive"
-    snapped_row["positive_selection_start_sec"] = "18320.000000"
-    snapped_row["positive_selection_end_sec"] = "18330.000000"
-    write_detection_row_store(row_store_path, [snapped_row])
-
-    expected_range = (
-        datetime.fromtimestamp(job_start + 18323.0, tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
-        + "_"
-        + datetime.fromtimestamp(job_start + 18328.0, tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
-        + ".flac"
-    )
+    utc_row = {field: "" for field in ROW_STORE_FIELDNAMES}
+    utc_row["start_utc"] = str(job_start + 18323.0)
+    utc_row["end_utc"] = str(job_start + 18328.0)
+    utc_row["humpback"] = "1"
+    utc_row["positive_selection_origin"] = "clip_bounds_fallback"
+    utc_row["positive_selection_score_source"] = "clip_bounds_fallback"
+    utc_row["positive_selection_decision"] = "positive"
+    utc_row["positive_selection_start_utc"] = str(job_start + 18323.0)
+    utc_row["positive_selection_end_utc"] = str(job_start + 18328.0)
+    write_detection_row_store(row_store_path, [utc_row])
 
     resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
-    assert rows[0]["detection_filename"] == expected_range
-    assert rows[0]["extract_filename"] == expected_range
-    assert rows[0]["positive_selection_start_sec"] == 18323.0
-    assert rows[0]["positive_selection_end_sec"] == 18328.0
+    assert rows[0]["start_utc"] == job_start + 18323.0
+    assert rows[0]["end_utc"] == job_start + 18328.0
+    assert rows[0]["positive_selection_start_utc"] == job_start + 18323.0
+    assert rows[0]["positive_selection_end_utc"] == job_start + 18328.0
 
     _fieldnames, stored_rows = read_detection_row_store(row_store_path)
-    assert stored_rows[0]["detection_filename"] == expected_range
-    assert stored_rows[0]["extract_filename"] == expected_range
-    assert stored_rows[0]["positive_selection_start_sec"] == "18323.000000"
-    assert stored_rows[0]["positive_selection_end_sec"] == "18328.000000"
+    assert stored_rows[0]["positive_selection_start_utc"] == str(job_start + 18323.0)
+    assert stored_rows[0]["positive_selection_end_utc"] == str(job_start + 18328.0)
 
     await engine.dispose()
 
@@ -1532,13 +1466,17 @@ async def test_save_labels_paused_job(client, app_settings):
     """PUT /labels on a paused job with TSV should succeed."""
     job_id, engine = await _create_paused_job_with_tsv(app_settings)
 
+    # Legacy TSV row: filename=20250702T080118Z.wav, start_sec=0, end_sec=5
+    # After migration: start_utc = recording_ts(20250702T080118Z) + 0.0
+    start_utc = datetime(2025, 7, 2, 8, 1, 18, tzinfo=timezone.utc).timestamp()
+    end_utc = start_utc + 5.0
+
     resp = await client.put(
         f"/classifier/detection-jobs/{job_id}/labels",
         json=[
             {
-                "filename": "20250702T080118Z.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "start_utc": start_utc,
+                "end_utc": end_utc,
                 "humpback": 1,
             }
         ],
@@ -1548,10 +1486,8 @@ async def test_save_labels_paused_job(client, app_settings):
     await engine.dispose()
 
 
-async def test_save_labels_hydrophone_job_relative_offsets_round_trip(
-    client, app_settings
-):
-    """Hydrophone label saves accept the job-relative offsets returned by GET /content."""
+async def test_save_labels_utc_identity_round_trip(client, app_settings):
+    """Label saves accept the UTC identity returned by GET /content (round-trip)."""
     job_id, engine = await _create_paused_job_with_tsv(app_settings)
 
     content_resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
@@ -1560,23 +1496,18 @@ async def test_save_labels_hydrophone_job_relative_offsets_round_trip(
     assert len(rows) == 1
 
     row = rows[0]
-    expected_offset = (
-        datetime.strptime("20250702T080118", "%Y%m%dT%H%M%S")
-        .replace(tzinfo=timezone.utc)
-        .timestamp()
-        - 1751439600.0
-    )
-    assert row["start_sec"] == expected_offset
-    assert row["end_sec"] == expected_offset + 5.0
+    # Legacy TSV: filename=20250702T080118Z.wav + start_sec=0 -> start_utc
+    expected_utc = datetime(2025, 7, 2, 8, 1, 18, tzinfo=timezone.utc).timestamp()
+    assert row["start_utc"] == expected_utc
+    assert row["end_utc"] == expected_utc + 5.0
     assert row["humpback"] is None
 
     save_resp = await client.put(
         f"/classifier/detection-jobs/{job_id}/labels",
         json=[
             {
-                "filename": row["filename"],
-                "start_sec": row["start_sec"],
-                "end_sec": row["end_sec"],
+                "start_utc": row["start_utc"],
+                "end_utc": row["end_utc"],
                 "humpback": 1,
             }
         ],
@@ -1586,8 +1517,8 @@ async def test_save_labels_hydrophone_job_relative_offsets_round_trip(
     verify_resp = await client.get(f"/classifier/detection-jobs/{job_id}/content")
     assert verify_resp.status_code == 200
     updated = verify_resp.json()[0]
-    assert updated["start_sec"] == expected_offset
-    assert updated["end_sec"] == expected_offset + 5.0
+    assert updated["start_utc"] == expected_utc
+    assert updated["end_utc"] == expected_utc + 5.0
     assert updated["humpback"] == 1
 
     job_resp = await client.get(f"/classifier/detection-jobs/{job_id}")
@@ -1612,13 +1543,14 @@ async def test_extract_paused_job(client, app_settings):
     job_id, engine = await _create_paused_job_with_tsv(app_settings)
 
     # First save a label so extraction has something to do
+    # Legacy TSV: filename=20250702T080118Z.wav, start_sec=0.0 -> start_utc
+    start_utc = datetime(2025, 7, 2, 8, 1, 18, tzinfo=timezone.utc).timestamp()
     await client.put(
         f"/classifier/detection-jobs/{job_id}/labels",
         json=[
             {
-                "filename": "20250702T080118Z.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "start_utc": start_utc,
+                "end_utc": start_utc + 5.0,
                 "humpback": 1,
             }
         ],
@@ -1704,9 +1636,8 @@ async def test_save_labels_running_job_rejected(client, app_settings):
         f"/classifier/detection-jobs/{job_id}/labels",
         json=[
             {
-                "filename": "test.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "start_utc": 1751644800.0,
+                "end_utc": 1751644805.0,
                 "humpback": 1,
             }
         ],

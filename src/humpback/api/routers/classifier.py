@@ -23,7 +23,6 @@ from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     apply_effective_positive_selection,
     apply_label_edits,
-    derive_detection_filename,
     ensure_detection_row_store,
     iter_detection_rows_as_tsv,
     normalize_detection_row,
@@ -860,7 +859,6 @@ async def _ensure_detection_row_store_for_job(
     fieldnames, rows = ensure_detection_row_store(
         row_store_path=rs_path,
         diagnostics_path=diag_path if diag_path.exists() else None,
-        is_hydrophone=job.hydrophone_id is not None,
         window_size_seconds=window_size_seconds,
         detection_mode=job.detection_mode,
         tsv_path=tsv,  # legacy fallback for pre-Parquet jobs
@@ -869,38 +867,11 @@ async def _ensure_detection_row_store_for_job(
     return fieldnames, rows
 
 
-def _to_job_relative_offsets(rows: list[dict], job_start_timestamp: float) -> None:
-    """Convert file-relative start_sec/end_sec to job-relative for hydrophone rows.
-
-    Hydrophone detection rows store start_sec/end_sec as offsets within the
-    audio chunk file (e.g., 18 seconds into ``20190511T014900Z.wav``).  The
-    timeline viewer needs offsets relative to the job start.  This function
-    mutates each row in-place by parsing the chunk timestamp from ``filename``
-    and recomputing: ``job_relative = (chunk_epoch - job_start) + file_offset``.
-    """
-    from datetime import datetime, timezone
-
-    fmt = "%Y%m%dT%H%M%SZ"
-
-    for row in rows:
-        filename = row.get("filename") or ""
-        # Strip extension to get the compact UTC timestamp
-        base = filename.rsplit(".", 1)[0] if "." in filename else filename
-        try:
-            chunk_dt = datetime.strptime(base, fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue  # non-timestamped filename — leave offsets as-is
-        chunk_epoch = chunk_dt.timestamp()
-        offset = chunk_epoch - job_start_timestamp
-        row["start_sec"] = row.get("start_sec", 0.0) + offset
-        row["end_sec"] = row.get("end_sec", 0.0) + offset
-
-
 @router.get("/detection-jobs/{job_id}/content")
 async def get_detection_content(
     job_id: str, session: SessionDep, settings: SettingsDep
 ) -> list[dict]:
-    """Return normalized detection rows from the active artifact source."""
+    """Return normalized detection rows with canonical UTC identity."""
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
@@ -910,7 +881,6 @@ async def get_detection_content(
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
-    is_hydrophone = job.hydrophone_id is not None
 
     rs_path = detection_row_store_path(settings.storage_root, job.id)
     if job.status == "running":
@@ -925,43 +895,15 @@ async def get_detection_content(
             window_size_seconds=window_size_seconds,
         )
 
-    if (
-        job.status != "running"
-        and is_hydrophone
-        and job.start_timestamp is not None
-        and backfill_hydrophone_row_metadata(
-            raw_rows,
-            job_start_timestamp=job.start_timestamp,
-            window_size_seconds=window_size_seconds,
-        )
-    ):
-        write_detection_row_store(rs_path, raw_rows)
-
-    rows = [
-        normalize_detection_row(
-            row,
-            is_hydrophone=is_hydrophone,
-            window_size_seconds=window_size_seconds,
-        )
-        for row in raw_rows
-    ]
-
-    # For hydrophone jobs, start_sec/end_sec are file-relative (offset within
-    # the audio chunk).  Convert to job-relative so the timeline viewer and
-    # skip-forward/back navigation work correctly.
-    if is_hydrophone and job.start_timestamp is not None:
-        _to_job_relative_offsets(rows, job.start_timestamp)
-
-    return rows
+    return [normalize_detection_row(row) for row in raw_rows]
 
 
 # ---- Detection Labels ----
 
 
 class DetectionLabelRow(BaseModel):
-    filename: str
-    start_sec: float
-    end_sec: float
+    start_utc: float
+    end_utc: float
     humpback: Optional[Literal[0, 1]] = None
     orca: Optional[Literal[0, 1]] = None
     ship: Optional[Literal[0, 1]] = None
@@ -969,13 +911,14 @@ class DetectionLabelRow(BaseModel):
 
 
 class DetectionRowStateUpdate(BaseModel):
-    row_id: str
+    start_utc: float
+    end_utc: float
     humpback: Optional[Literal[0, 1]] = None
     orca: Optional[Literal[0, 1]] = None
     ship: Optional[Literal[0, 1]] = None
     background: Optional[Literal[0, 1]] = None
-    manual_positive_selection_start_sec: float | None = None
-    manual_positive_selection_end_sec: float | None = None
+    manual_positive_selection_start_utc: float | None = None
+    manual_positive_selection_end_utc: float | None = None
 
 
 def _serialize_label(value: int | None) -> str:
@@ -1004,24 +947,10 @@ async def save_detection_labels(
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
-    is_hydrophone = job.hydrophone_id is not None
 
-    label_map: dict[tuple[str, float, float], DetectionLabelRow] = {}
+    label_map: dict[tuple[float, float], DetectionLabelRow] = {}
     for row in body:
-        start_sec = row.start_sec
-        end_sec = row.end_sec
-        if is_hydrophone:
-            start_sec = hydrophone_job_relative_to_file_relative_offset(
-                row.filename,
-                start_sec,
-                job.start_timestamp,
-            )
-            end_sec = hydrophone_job_relative_to_file_relative_offset(
-                row.filename,
-                end_sec,
-                job.start_timestamp,
-            )
-        label_map[(row.filename, start_sec, end_sec)] = row
+        label_map[(row.start_utc, row.end_utc)] = row
 
     fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
         session,
@@ -1033,9 +962,8 @@ async def save_detection_labels(
     updated_rows: list[dict[str, str]] = []
     for row in existing_rows:
         key = (
-            row.get("filename", ""),
-            safe_float(row.get("start_sec"), 0.0),
-            safe_float(row.get("end_sec"), 0.0),
+            safe_float(row.get("start_utc"), 0.0),
+            safe_float(row.get("end_utc"), 0.0),
         )
         update = label_map.get(key)
         out_row = {field: row.get(field, "") for field in ROW_STORE_FIELDNAMES}
@@ -1044,10 +972,7 @@ async def save_detection_labels(
             out_row["orca"] = _serialize_label(update.orca)
             out_row["ship"] = _serialize_label(update.ship)
             out_row["background"] = _serialize_label(update.background)
-        apply_effective_positive_selection(
-            out_row,
-            window_size_seconds=window_size_seconds,
-        )
+        apply_effective_positive_selection(out_row)
         updated_rows.append(out_row)
 
     write_detection_row_store(rs_path, updated_rows)
@@ -1090,7 +1015,10 @@ async def save_detection_row_state(
 
     matched_row: dict[str, str] | None = None
     for row in existing_rows:
-        if row.get("row_id") != body.row_id:
+        if (
+            safe_float(row.get("start_utc"), -1.0) != body.start_utc
+            or safe_float(row.get("end_utc"), -1.0) != body.end_utc
+        ):
             continue
         row["humpback"] = _serialize_label(body.humpback)
         row["orca"] = _serialize_label(body.orca)
@@ -1098,28 +1026,21 @@ async def save_detection_row_state(
         row["background"] = _serialize_label(body.background)
 
         if (
-            body.manual_positive_selection_start_sec is None
-            and body.manual_positive_selection_end_sec is None
+            body.manual_positive_selection_start_utc is None
+            and body.manual_positive_selection_end_utc is None
         ):
-            row["manual_positive_selection_start_sec"] = ""
-            row["manual_positive_selection_end_sec"] = ""
+            row["manual_positive_selection_start_utc"] = ""
+            row["manual_positive_selection_end_utc"] = ""
         else:
             if (
-                body.manual_positive_selection_start_sec is None
-                or body.manual_positive_selection_end_sec is None
+                body.manual_positive_selection_start_utc is None
+                or body.manual_positive_selection_end_utc is None
             ):
                 raise HTTPException(400, "Both manual bounds are required")
-            normalized = normalize_detection_row(
-                row,
-                is_hydrophone=job.hydrophone_id is not None,
-                window_size_seconds=window_size_seconds,
-            )
-            clip_start, clip_end = resolve_clip_bounds(
-                normalized,
-                window_size_seconds=window_size_seconds,
-            )
-            manual_start = body.manual_positive_selection_start_sec
-            manual_end = body.manual_positive_selection_end_sec
+            normalized = normalize_detection_row(row)
+            clip_start, clip_end = resolve_clip_bounds(normalized)
+            manual_start = body.manual_positive_selection_start_utc
+            manual_end = body.manual_positive_selection_end_utc
             if manual_end <= manual_start:
                 raise HTTPException(400, "Manual bounds must have positive duration")
             if manual_start + 1e-6 < clip_start or manual_end - 1e-6 > clip_end:
@@ -1136,13 +1057,10 @@ async def save_detection_row_state(
                     400,
                     "Manual bounds must move in whole window-size steps",
                 )
-            row["manual_positive_selection_start_sec"] = f"{manual_start:.6f}"
-            row["manual_positive_selection_end_sec"] = f"{manual_end:.6f}"
+            row["manual_positive_selection_start_utc"] = f"{manual_start:.6f}"
+            row["manual_positive_selection_end_utc"] = f"{manual_end:.6f}"
 
-        apply_effective_positive_selection(
-            row,
-            window_size_seconds=window_size_seconds,
-        )
+        apply_effective_positive_selection(row)
         matched_row = row
         break
 
@@ -1159,11 +1077,7 @@ async def save_detection_row_state(
 
     return {
         "status": "ok",
-        "row": normalize_detection_row(
-            matched_row,
-            is_hydrophone=job.hydrophone_id is not None,
-            window_size_seconds=window_size_seconds,
-        ),
+        "row": normalize_detection_row(matched_row),
     }
 
 
@@ -1186,7 +1100,6 @@ async def batch_edit_labels(
     window_size_seconds = await _get_classifier_window_size(
         session, job.classifier_model_id
     )
-    is_hydrophone = job.hydrophone_id is not None
 
     _fieldnames, existing_rows = await _ensure_detection_row_store_for_job(
         session,
@@ -1196,38 +1109,15 @@ async def batch_edit_labels(
     )
 
     # Compute job_duration for bounds validation.
-    if is_hydrophone and job.start_timestamp and job.end_timestamp:
+    if job.start_timestamp and job.end_timestamp:
         job_duration = float(job.end_timestamp - job.start_timestamp)
     else:
-        # Local jobs: use max end_sec across all rows.
         job_duration = max(
-            (safe_float(r.get("end_sec"), 0.0) for r in existing_rows),
+            (safe_float(r.get("end_utc"), 0.0) for r in existing_rows),
             default=0.0,
         )
 
     edit_dicts = [e.model_dump() for e in body.edits]
-    if is_hydrophone and job.start_timestamp is not None:
-        anchor_filename = build_hydrophone_anchor_filename(job.start_timestamp)
-        for edit in edit_dicts:
-            if edit.get("action") in {"add", "move"}:
-                start_key = (
-                    "new_start_sec" if edit.get("action") == "move" else "start_sec"
-                )
-                end_key = "new_end_sec" if edit.get("action") == "move" else "end_sec"
-                start_value = edit.get(start_key)
-                end_value = edit.get(end_key)
-                if start_value is None or end_value is None:
-                    raise HTTPException(
-                        422, "Hydrophone label edits require clip bounds"
-                    )
-                start_sec = float(start_value)
-                end_sec = float(end_value)
-                exact_detection_filename = (
-                    derive_detection_filename(anchor_filename, start_sec, end_sec) or ""
-                )
-                edit["filename"] = anchor_filename
-                edit["detection_filename"] = exact_detection_filename
-                edit["extract_filename"] = exact_detection_filename
 
     try:
         updated_rows = apply_label_edits(
@@ -1238,14 +1128,7 @@ async def batch_edit_labels(
 
     # Re-apply positive selection on every row.
     for row in updated_rows:
-        apply_effective_positive_selection(row, window_size_seconds=window_size_seconds)
-
-    if is_hydrophone and job.start_timestamp is not None:
-        backfill_hydrophone_row_metadata(
-            updated_rows,
-            job_start_timestamp=job.start_timestamp,
-            window_size_seconds=window_size_seconds,
-        )
+        apply_effective_positive_selection(row)
 
     write_detection_row_store(rs_path, updated_rows)
 
@@ -1255,14 +1138,7 @@ async def batch_edit_labels(
     job.has_positive_labels = has_positive
     await session.commit()
 
-    return [
-        normalize_detection_row(
-            row,
-            is_hydrophone=is_hydrophone,
-            window_size_seconds=window_size_seconds,
-        )
-        for row in updated_rows
-    ]
+    return [normalize_detection_row(row) for row in updated_rows]
 
 
 # ---- Audio Slice Streaming ----
@@ -1304,14 +1180,14 @@ class _DecodedAudioCache:
 
         self._max = max_entries
         self._cache: collections.OrderedDict[
-            tuple[str, str, float, float], tuple[np.ndarray, int]
+            tuple[str, float, float], tuple[np.ndarray, int]
         ] = collections.OrderedDict()
         self._lock = threading.Lock()
 
     def get(
-        self, job_id: str, filename: str, start_sec: float, duration_sec: float
+        self, job_id: str, start_utc: float, duration_sec: float
     ) -> tuple[np.ndarray, int] | None:
-        key = (job_id, filename, start_sec, duration_sec)
+        key = (job_id, start_utc, duration_sec)
         with self._lock:
             val = self._cache.get(key)
             if val is not None:
@@ -1321,13 +1197,12 @@ class _DecodedAudioCache:
     def put(
         self,
         job_id: str,
-        filename: str,
-        start_sec: float,
+        start_utc: float,
         duration_sec: float,
         audio: np.ndarray,
         sr: int,
     ) -> None:
-        key = (job_id, filename, start_sec, duration_sec)
+        key = (job_id, start_utc, duration_sec)
         with self._lock:
             if key in self._cache:
                 self._cache.move_to_end(key)
@@ -1380,14 +1255,15 @@ _noaa_provider_registry = _NoaaPlaybackProviderRegistry()
 
 
 async def _resolve_detection_audio(
-    job, settings, filename: str, start_sec: float, duration_sec: float
+    job, settings, start_utc: float, duration_sec: float
 ) -> tuple:
     """Decode audio for a detection row. Returns (audio_array, sample_rate).
 
-    Results are cached in an in-memory LRU so the second request (e.g.
-    spectrogram after audio-slice) returns instantly.
+    For hydrophone jobs, passes start_utc directly to resolve_audio_slice.
+    For local jobs, resolves file + offset from start_utc using the audio folder.
+    Results are cached in an in-memory LRU.
     """
-    cached = _decoded_audio_cache.get(job.id, filename, start_sec, duration_sec)
+    cached = _decoded_audio_cache.get(job.id, start_utc, duration_sec)
     if cached is not None:
         return cached
 
@@ -1432,11 +1308,9 @@ async def _resolve_detection_audio(
                 local_provider,
                 job.start_timestamp,
                 job.end_timestamp,
-                filename,
-                start_sec,
+                start_utc,
                 duration_sec,
                 target_sr,
-                job.start_timestamp,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc))
@@ -1452,40 +1326,41 @@ async def _resolve_detection_audio(
             )
 
         result = (segment, target_sr)
-        _decoded_audio_cache.put(
-            job.id, filename, start_sec, duration_sec, segment, target_sr
-        )
+        _decoded_audio_cache.put(job.id, start_utc, duration_sec, segment, target_sr)
         return result
 
-    # Local audio folder path
+    # Local audio: resolve start_utc → (file_path, file_offset)
+    from humpback.classifier.extractor import (
+        _build_local_audio_index,
+        _resolve_local_audio_for_row,
+    )
     from humpback.processing.audio_io import decode_audio
 
     audio_folder = Path(job.audio_folder)
-    file_path = audio_folder / filename
-
-    try:
-        file_path.resolve().relative_to(audio_folder.resolve())
-    except ValueError:
-        raise HTTPException(400, "Invalid filename (path traversal)")
-
-    if not file_path.is_file():
-        raise HTTPException(404, f"Audio file not found: {filename}")
+    audio_index = _build_local_audio_index(audio_folder)
+    resolved = _resolve_local_audio_for_row(start_utc, audio_index)
+    if resolved is None:
+        raise HTTPException(
+            404,
+            f"No audio file found for start_utc={start_utc} in {audio_folder}",
+        )
+    file_path, base_epoch, offset_sec = resolved
 
     audio, sr = await asyncio.to_thread(decode_audio, file_path)
 
     total_duration = len(audio) / sr
-    end_sec_requested = start_sec + duration_sec
+    end_sec_requested = offset_sec + duration_sec
     if end_sec_requested > total_duration:
-        start_sec = max(0.0, total_duration - duration_sec)
+        offset_sec = max(0.0, total_duration - duration_sec)
 
-    start_sample = int(start_sec * sr)
-    end_sample = int((start_sec + duration_sec) * sr)
+    start_sample = int(offset_sec * sr)
+    end_sample = int((offset_sec + duration_sec) * sr)
     start_sample = min(start_sample, len(audio))
     end_sample = min(end_sample, len(audio))
     segment = audio[start_sample:end_sample]
 
     result_arr = np.asarray(segment)
-    _decoded_audio_cache.put(job.id, filename, start_sec, duration_sec, result_arr, sr)
+    _decoded_audio_cache.put(job.id, start_utc, duration_sec, result_arr, sr)
     return result_arr, sr
 
 
@@ -1494,20 +1369,72 @@ async def get_detection_audio_slice(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
-    filename: str = Query(...),
-    start_sec: float = Query(..., ge=0),
+    start_utc: float = Query(...),
     duration_sec: float = Query(..., gt=0),
     normalize: bool = Query(True),
 ):
-    """Stream a WAV slice from a detection job's audio folder or S3."""
+    """Stream a WAV slice from a detection job's audio source."""
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    segment, sr = await _resolve_detection_audio(
-        job, settings, filename, start_sec, duration_sec
-    )
+    segment, sr = await _resolve_detection_audio(job, settings, start_utc, duration_sec)
     return _encode_wav_response(segment, sr, normalize)
+
+
+def _resolve_embedding_coords(
+    settings, job, start_utc: float, end_utc: float
+) -> tuple[str, float, float]:
+    """Map (start_utc, end_utc) to (filename, start_sec, end_sec) for embedding lookup.
+
+    The detection embedding parquet still uses file-relative coordinates.
+    We scan the window diagnostics to find the matching file-relative window.
+    """
+    diag_path = detection_diagnostics_path(settings.storage_root, job.id)
+    if diag_path.exists():
+        import pyarrow.parquet as pq
+
+        from humpback.classifier.detection_rows import parse_recording_timestamp
+
+        table = read_window_diagnostics_table(diag_path)
+        filenames_col = table.column("filename").to_pylist()
+        offsets_col = table.column("offset_sec").to_pylist()
+        has_end = "end_sec" in table.column_names
+        end_col = table.column("end_sec").to_pylist() if has_end else None
+
+        for i in range(table.num_rows):
+            fname = filenames_col[i]
+            offset = float(offsets_col[i])
+            ts = parse_recording_timestamp(fname)
+            base_epoch = ts.timestamp() if ts else 0.0
+            window_start_utc = base_epoch + offset
+            if abs(window_start_utc - start_utc) < 0.01:
+                end_val = float(end_col[i]) if end_col else offset + 5.0
+                return fname, offset, end_val
+
+    # Fallback: scan the embedding parquet directly
+    emb_path = detection_embeddings_path(settings.storage_root, job.id)
+    if emb_path.exists():
+        import pyarrow.parquet as pq
+
+        from humpback.classifier.detection_rows import parse_recording_timestamp
+
+        emb_table = pq.read_table(
+            str(emb_path), columns=["filename", "start_sec", "end_sec"]
+        )
+        for i in range(emb_table.num_rows):
+            fname = emb_table.column("filename")[i].as_py()
+            s = float(emb_table.column("start_sec")[i].as_py())
+            e = float(emb_table.column("end_sec")[i].as_py())
+            ts = parse_recording_timestamp(fname)
+            base_epoch = ts.timestamp() if ts else 0.0
+            if (
+                abs(base_epoch + s - start_utc) < 0.01
+                and abs(base_epoch + e - end_utc) < 0.01
+            ):
+                return fname, s, e
+
+    raise HTTPException(404, "Cannot resolve embedding coordinates for UTC range")
 
 
 # ---- Spectrogram ----
@@ -1525,8 +1452,7 @@ async def get_detection_spectrogram(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
-    filename: str = Query(...),
-    start_sec: float = Query(..., ge=0),
+    start_utc: float = Query(...),
     duration_sec: float = Query(..., gt=0),
 ):
     """Return a PNG spectrogram for a detection clip."""
@@ -1541,8 +1467,8 @@ async def get_detection_spectrogram(
     cache = _get_spectrogram_cache(settings)
     cache_key = SpectrogramCache._make_key(
         job_id,
-        filename,
-        start_sec,
+        str(start_utc),
+        start_utc,
         duration_sec,
         settings.spectrogram_hop_length,
         settings.spectrogram_dynamic_range_db,
@@ -1555,9 +1481,7 @@ async def get_detection_spectrogram(
     if cached is not None:
         return Response(content=cached, media_type="image/png")
 
-    segment, sr = await _resolve_detection_audio(
-        job, settings, filename, start_sec, duration_sec
-    )
+    segment, sr = await _resolve_detection_audio(job, settings, start_utc, duration_sec)
 
     from humpback.processing.spectrogram import generate_spectrogram_png
 
@@ -1583,9 +1507,8 @@ async def get_detection_embedding(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
-    filename: str = Query(...),
-    start_sec: float = Query(..., ge=0),
-    end_sec: float = Query(..., gt=0),
+    start_utc: float = Query(...),
+    end_utc: float = Query(...),
 ):
     """Return the stored embedding vector for a detection row."""
     from humpback.classifier.detector import read_detection_embedding
@@ -1598,19 +1521,13 @@ async def get_detection_embedding(
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
-    if job.hydrophone_id is not None:
-        start_sec = hydrophone_job_relative_to_file_relative_offset(
-            filename,
-            start_sec,
-            job.start_timestamp,
-        )
-        end_sec = hydrophone_job_relative_to_file_relative_offset(
-            filename,
-            end_sec,
-            job.start_timestamp,
-        )
+    # Embedding parquet still uses filename/start_sec/end_sec.
+    # Resolve via window diagnostics or row-relative lookup.
+    emb_filename, emb_start, emb_end = _resolve_embedding_coords(
+        settings, job, start_utc, end_utc
+    )
 
-    embedding = read_detection_embedding(emb_path, filename, start_sec, end_sec)
+    embedding = read_detection_embedding(emb_path, emb_filename, emb_start, emb_end)
     if embedding is None:
         raise HTTPException(404, "Embedding not found for specified detection row")
 

@@ -11,9 +11,8 @@ class SearchJob(UUIDMixin, TimestampMixin, Base):
 
     status: Mapped[str] = mapped_column(default="queued")
     detection_job_id: Mapped[str]
-    filename: Mapped[str]
-    start_sec: Mapped[float]
-    end_sec: Mapped[float]
+    start_utc: Mapped[float]
+    end_utc: Mapped[float]
     top_k: Mapped[int] = mapped_column(default=20)
     metric: Mapped[str] = mapped_column(default="cosine")
     embedding_set_ids: Mapped[Optional[str]] = mapped_column(Text, default=None)

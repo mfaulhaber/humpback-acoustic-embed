@@ -13,11 +13,10 @@ DETECTION_MODE_CREATE_ERROR = (
 
 class LabelEditItem(BaseModel):
     action: Literal["add", "move", "delete", "change_type"]
-    row_id: Optional[str] = None
-    start_sec: Optional[float] = None
-    end_sec: Optional[float] = None
-    new_start_sec: Optional[float] = None
-    new_end_sec: Optional[float] = None
+    start_utc: Optional[float] = None
+    end_utc: Optional[float] = None
+    new_start_utc: Optional[float] = None
+    new_end_utc: Optional[float] = None
     label: Optional[Literal["humpback", "orca", "ship", "background"]] = None
 
 

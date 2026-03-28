@@ -1107,9 +1107,9 @@ class TestDecodedAudioCache:
 
         cache = _DecodedAudioCache(max_entries=4)
         audio = np.ones(100, dtype=np.float32)
-        cache.put("job1", "file.flac", 10.0, 5.0, audio, 32000)
+        cache.put("job1", 1000.0, 5.0, audio, 32000)
 
-        result = cache.get("job1", "file.flac", 10.0, 5.0)
+        result = cache.get("job1", 1000.0, 5.0)
         assert result is not None
         arr, sr = result
         assert sr == 32000
@@ -1119,7 +1119,7 @@ class TestDecodedAudioCache:
         from humpback.api.routers.classifier import _DecodedAudioCache
 
         cache = _DecodedAudioCache(max_entries=4)
-        assert cache.get("job1", "file.flac", 10.0, 5.0) is None
+        assert cache.get("job1", 1000.0, 5.0) is None
 
     def test_cache_evicts_oldest(self):
         from humpback.api.routers.classifier import _DecodedAudioCache
@@ -1129,15 +1129,15 @@ class TestDecodedAudioCache:
         a2 = np.ones(20, dtype=np.float32) * 2
         a3 = np.ones(30, dtype=np.float32) * 3
 
-        cache.put("j1", "f1", 0.0, 5.0, a1, 100)
-        cache.put("j2", "f2", 0.0, 5.0, a2, 100)
-        cache.put("j3", "f3", 0.0, 5.0, a3, 100)
+        cache.put("j1", 100.0, 5.0, a1, 100)
+        cache.put("j2", 200.0, 5.0, a2, 100)
+        cache.put("j3", 300.0, 5.0, a3, 100)
 
         # j1 should have been evicted
-        assert cache.get("j1", "f1", 0.0, 5.0) is None
+        assert cache.get("j1", 100.0, 5.0) is None
         # j2 and j3 should still be present
-        assert cache.get("j2", "f2", 0.0, 5.0) is not None
-        assert cache.get("j3", "f3", 0.0, 5.0) is not None
+        assert cache.get("j2", 200.0, 5.0) is not None
+        assert cache.get("j3", 300.0, 5.0) is not None
 
 
 class TestOrcasoundS3ClientRetry:

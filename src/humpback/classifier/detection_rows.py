@@ -1213,14 +1213,20 @@ def ensure_detection_row_store(
         return read_detection_row_store(row_store_path)
 
     source_rows: list[dict[str, str]] = []
+    is_legacy_tsv = False
     if tsv_path is not None and tsv_path.is_file():
         _, source_rows = read_tsv_rows(tsv_path)
+        is_legacy_tsv = True
     elif row_store_path.is_file():
         _, source_rows = read_detection_row_store(row_store_path)
 
     if not source_rows:
         write_detection_row_store(row_store_path, [])
         return ROW_STORE_FIELDNAMES, []
+
+    # Migrate legacy TSV rows to UTC schema before building row store.
+    if is_legacy_tsv and source_rows and "start_utc" not in source_rows[0]:
+        source_rows = [_migrate_legacy_row(r) for r in source_rows]
 
     store_rows = build_detection_row_store_rows(
         source_rows,

@@ -68,9 +68,8 @@ async def create_audio_search(
 
     job = SearchJob(
         detection_job_id=request.detection_job_id,
-        filename=request.filename,
-        start_sec=request.start_sec,
-        end_sec=request.end_sec,
+        start_utc=request.start_utc,
+        end_utc=request.end_utc,
         top_k=request.top_k,
         metric=request.metric,
         embedding_set_ids=(
