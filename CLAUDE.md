@@ -700,8 +700,8 @@ See `docs/workflows/session-begin.md` for full steps. Summary:
 
 1. Normalize the repo onto local `main` (fast-forward from origin; stop if dirty or detached)
 2. Read CLAUDE.md and DECISIONS.md
-3. Check for active feature branches with in-progress work:
-   - Look for local/remote `feature/*` branches
+3. Check for active local feature branches with in-progress work:
+   - Look for local `feature/*` branches
    - Check `docs/plans/` and `docs/specs/` on those branches for active specs/plans
 4. If an active feature branch exists, offer to resume on it
 5. If no active work, summarize current state and begin brainstorming for the next task
