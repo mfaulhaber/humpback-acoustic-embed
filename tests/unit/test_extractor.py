@@ -15,7 +15,9 @@ import soundfile as sf
 from humpback.classifier.archive import StreamSegment
 from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
+    parse_recording_timestamp,
     read_detection_row_store,
+    select_positive_window,
     write_detection_row_store,
 )
 from humpback.classifier.detector import write_window_diagnostics
@@ -24,10 +26,8 @@ from humpback.classifier.extractor import (
     DEFAULT_SPECTROGRAM_HEIGHT_PX,
     DEFAULT_SPECTROGRAM_HOP_LENGTH,
     DEFAULT_SPECTROGRAM_WIDTH_PX,
-    _select_positive_window,
     extract_hydrophone_labeled_samples,
     extract_labeled_samples,
-    parse_recording_timestamp,
     write_flac_file,
 )
 from humpback.processing.audio_io import decode_audio
@@ -522,8 +522,8 @@ class TestExtractLabeledSamples:
 
         bg_files = list((neg_out / "background").rglob("*.flac"))
         assert len(bg_files) == 1
-        assert "recording_001" in bg_files[0].name
-        assert "unknown_date" in str(bg_files[0])
+        # Non-timestamp files now get UTC-derived filenames from mtime.
+        assert bg_files[0].name.endswith(".flac")
         assert bg_files[0].with_suffix(".png").exists()
 
     def test_multiple_labels_same_row(self, tmp_path):
@@ -682,9 +682,9 @@ class TestExtractionBounds:
 
 class TestPositiveWindowSelection:
     def test_select_positive_window_extends_right_for_noaa_style_scores(self):
-        result = _select_positive_window(
-            row_start_sec=25.0,
-            row_end_sec=40.0,
+        result = select_positive_window(
+            row_start_utc=25.0,
+            row_end_utc=40.0,
             window_size_seconds=5.0,
             window_records=[
                 {
@@ -713,13 +713,13 @@ class TestPositiveWindowSelection:
         )
 
         assert result.decision == "positive"
-        assert result.start_sec == 29.0
-        assert result.end_sec == 39.0
+        assert result.start_utc == 29.0
+        assert result.end_utc == 39.0
 
     def test_select_positive_window_can_extend_both_sides(self):
-        result = _select_positive_window(
-            row_start_sec=0.0,
-            row_end_sec=20.0,
+        result = select_positive_window(
+            row_start_utc=0.0,
+            row_end_utc=20.0,
             window_size_seconds=5.0,
             window_records=[
                 {
@@ -741,13 +741,13 @@ class TestPositiveWindowSelection:
         )
 
         assert result.decision == "positive"
-        assert result.start_sec == 0.0
-        assert result.end_sec == 15.0
+        assert result.start_utc == 0.0
+        assert result.end_utc == 15.0
 
     def test_select_positive_window_requires_exact_adjacent_chunk(self):
-        result = _select_positive_window(
-            row_start_sec=0.0,
-            row_end_sec=15.0,
+        result = select_positive_window(
+            row_start_utc=0.0,
+            row_end_utc=15.0,
             window_size_seconds=5.0,
             window_records=[
                 {
@@ -767,8 +767,8 @@ class TestPositiveWindowSelection:
         )
 
         assert result.decision == "positive"
-        assert result.start_sec == 2.0
-        assert result.end_sec == 7.0
+        assert result.start_utc == 2.0
+        assert result.end_utc == 7.0
 
     def test_local_positive_selection_uses_stored_diagnostics_and_updates_row_store(
         self, tmp_path
@@ -830,10 +830,10 @@ class TestPositiveWindowSelection:
         _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_score_source"] == "stored_diagnostics"
         assert rows[0]["positive_selection_decision"] == "positive"
-        assert rows[0]["positive_selection_start_sec"] == "2.000000"
-        assert rows[0]["positive_selection_end_sec"] == "7.000000"
+        assert rows[0]["positive_selection_start_utc"] == "1749974402.000000"
+        assert rows[0]["positive_selection_end_utc"] == "1749974407.000000"
         assert rows[0]["positive_extract_filename"] == (
-            "20250615T080002.000000Z_20250615T080007.000000Z.flac"
+            "20250615T080002Z_20250615T080007Z.flac"
         )
 
     def test_local_extraction_honors_stored_manual_window_from_row_store(
@@ -861,26 +861,24 @@ class TestPositiveWindowSelection:
             ],
         )
 
+        base_epoch = parse_recording_timestamp(source_name).timestamp()  # type: ignore[union-attr]
         row_store_path = tmp_path / "detection_rows.parquet"
         write_detection_row_store(
             row_store_path,
             [
                 {
-                    "row_id": "row-1",
-                    "filename": source_name,
-                    "start_sec": "0.000000",
-                    "end_sec": "15.000000",
+                    "start_utc": str(base_epoch + 0.0),
+                    "end_utc": str(base_epoch + 15.0),
                     "avg_confidence": "0.900000",
                     "peak_confidence": "0.950000",
-                    "detection_filename": "20250615T080000Z_20250615T080015Z.flac",
                     "humpback": "1",
-                    "manual_positive_selection_start_sec": "5.000000",
-                    "manual_positive_selection_end_sec": "15.000000",
+                    "manual_positive_selection_start_utc": f"{base_epoch + 5.0:.6f}",
+                    "manual_positive_selection_end_utc": f"{base_epoch + 15.0:.6f}",
                     "positive_selection_origin": "manual_override",
                     "positive_selection_score_source": "manual_override",
                     "positive_selection_decision": "positive",
-                    "positive_selection_start_sec": "5.000000",
-                    "positive_selection_end_sec": "15.000000",
+                    "positive_selection_start_utc": f"{base_epoch + 5.0:.6f}",
+                    "positive_selection_end_utc": f"{base_epoch + 15.0:.6f}",
                 }
             ],
         )
@@ -925,12 +923,22 @@ class TestPositiveWindowSelection:
         assert png_path.read_bytes() != full_row_png
 
         _fieldnames, stored_rows = read_detection_row_store(row_store_path)
-        assert stored_rows[0]["manual_positive_selection_start_sec"] == "5.000000"
-        assert stored_rows[0]["manual_positive_selection_end_sec"] == "15.000000"
-        assert stored_rows[0]["positive_selection_start_sec"] == "5.000000"
-        assert stored_rows[0]["positive_selection_end_sec"] == "15.000000"
+        assert (
+            stored_rows[0]["manual_positive_selection_start_utc"]
+            == f"{base_epoch + 5.0:.6f}"
+        )
+        assert (
+            stored_rows[0]["manual_positive_selection_end_utc"]
+            == f"{base_epoch + 15.0:.6f}"
+        )
+        assert (
+            stored_rows[0]["positive_selection_start_utc"] == f"{base_epoch + 5.0:.6f}"
+        )
+        assert (
+            stored_rows[0]["positive_selection_end_utc"] == f"{base_epoch + 15.0:.6f}"
+        )
         assert stored_rows[0]["positive_extract_filename"] == (
-            "20250615T080005.000000Z_20250615T080015.000000Z.flac"
+            "20250615T080005Z_20250615T080015Z.flac"
         )
         assert stored_rows[0]["positive_selection_origin"] == "manual_override"
 
@@ -1131,8 +1139,8 @@ class TestPositiveWindowSelection:
 
         assert summary["n_humpback"] == 1
         _fieldnames, rows = read_detection_row_store(row_store_path)
-        assert rows[0]["positive_selection_start_sec"] == "3.000000"
-        assert rows[0]["positive_selection_end_sec"] == "8.000000"
+        assert rows[0]["positive_selection_start_utc"] == "1749974403.000000"
+        assert rows[0]["positive_selection_end_utc"] == "1749974408.000000"
         assert rows[0]["positive_extract_filename"] == (
             "20250615T080003Z_20250615T080008Z.flac"
         )
@@ -1190,8 +1198,8 @@ class TestPositiveWindowSelection:
         assert summary["n_orca"] == 1
         _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_score_source"] == "rescored_fallback"
-        assert rows[0]["positive_selection_start_sec"] == "3.000000"
-        assert rows[0]["positive_selection_end_sec"] == "8.000000"
+        assert rows[0]["positive_selection_start_utc"] == "1749974403.000000"
+        assert rows[0]["positive_selection_end_utc"] == "1749974408.000000"
         assert rows[0]["positive_extract_filename"] == (
             "20250615T080003Z_20250615T080008Z.flac"
         )
@@ -1305,8 +1313,8 @@ class TestPositiveWindowSelection:
 
         _fieldnames, rows = read_detection_row_store(row_store_path)
         assert rows[0]["positive_selection_score_source"] == "rescored_fallback"
-        assert rows[0]["positive_selection_start_sec"] == "29.000000"
-        assert rows[0]["positive_selection_end_sec"] == "39.000000"
+        assert rows[0]["positive_selection_start_utc"] == "1438985702.000000"
+        assert rows[0]["positive_selection_end_utc"] == "1438985712.000000"
         assert rows[0]["positive_extract_filename"] == (
             "20150807T221502Z_20150807T221512Z.flac"
         )
@@ -1554,32 +1562,32 @@ class TestExtractHydrophoneLabeledSamples:
         duration = _audio_duration(out)
         assert abs(duration - 3.0) < 0.1
 
-    def test_hydrophone_extraction_repairs_blank_filename_row_store(self, tmp_path):
-        """Hydrophone row-store extraction should repair timeline-added rows in place."""
+    def test_hydrophone_extraction_row_store_utc_identity(self, tmp_path):
+        """Row-store extraction uses start_utc/end_utc directly."""
 
         source_name = "20250615T080000Z.wav"
         tsv_path = tmp_path / "detections.tsv"
         _make_tsv(tsv_path, [])
 
+        recording_ts = parse_recording_timestamp(source_name)
+        assert recording_ts is not None
+        base_epoch = recording_ts.timestamp()
+
         row_store_path = tmp_path / "detection_rows.parquet"
         row = {field: "" for field in ROW_STORE_FIELDNAMES}
-        row["row_id"] = "broken-row"
-        row["filename"] = ""
-        row["start_sec"] = "3.0"
-        row["end_sec"] = "8.0"
+        row["start_utc"] = str(base_epoch + 3.0)
+        row["end_utc"] = str(base_epoch + 8.0)
         row["humpback"] = "1"
         row["positive_selection_origin"] = "clip_bounds_fallback"
         row["positive_selection_score_source"] = "clip_bounds_fallback"
         row["positive_selection_decision"] = "positive"
-        row["positive_selection_start_sec"] = "3.000000"
-        row["positive_selection_end_sec"] = "8.000000"
+        row["positive_selection_start_utc"] = f"{base_epoch + 3.0:.6f}"
+        row["positive_selection_end_utc"] = f"{base_epoch + 8.0:.6f}"
         write_detection_row_store(row_store_path, [row])
 
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 60)).astype(np.float32)
         provider = _provider_for_recording(source_name, audio=audio)
-        recording_ts = parse_recording_timestamp(source_name)
-        assert recording_ts is not None
 
         pos_out = tmp_path / "positive"
         summary = extract_hydrophone_labeled_samples(
@@ -1589,8 +1597,8 @@ class TestExtractHydrophoneLabeledSamples:
             tmp_path / "negative",
             row_store_path=row_store_path,
             window_size_seconds=5.0,
-            stream_start_timestamp=recording_ts.timestamp(),
-            stream_end_timestamp=recording_ts.timestamp() + 60.0,
+            stream_start_timestamp=base_epoch,
+            stream_end_timestamp=base_epoch + 60.0,
             **_positive_hydrophone_extraction_kwargs(sr),
         )
 
@@ -1607,45 +1615,36 @@ class TestExtractHydrophoneLabeledSamples:
         assert out.exists()
 
         _fieldnames, stored_rows = read_detection_row_store(row_store_path)
-        assert stored_rows[0]["filename"] == source_name
-        assert stored_rows[0]["detection_filename"] == (
-            "20250615T080003Z_20250615T080008Z.flac"
-        )
-        assert stored_rows[0]["extract_filename"] == (
-            "20250615T080003Z_20250615T080008Z.flac"
-        )
         assert stored_rows[0]["positive_extract_filename"] == (
             "20250615T080003Z_20250615T080008Z.flac"
         )
 
-    def test_hydrophone_extraction_repairs_snapped_anchor_row_store(self, tmp_path):
-        """Synthetic anchor rows should extract exact 5s clips instead of snapped 10s ranges."""
+    def test_hydrophone_extraction_uses_utc_selection_from_row_store(self, tmp_path):
+        """Row store positive selection in UTC drives exact extraction bounds."""
 
         source_name = "20250615T080000Z.wav"
         tsv_path = tmp_path / "detections.tsv"
         _make_tsv(tsv_path, [])
 
+        recording_ts = parse_recording_timestamp(source_name)
+        assert recording_ts is not None
+        base_epoch = recording_ts.timestamp()
+
         row_store_path = tmp_path / "detection_rows.parquet"
         row = {field: "" for field in ROW_STORE_FIELDNAMES}
-        row["row_id"] = "snapped-anchor-row"
-        row["filename"] = source_name
-        row["start_sec"] = "123.0"
-        row["end_sec"] = "128.0"
-        row["detection_filename"] = "20250615T080200Z_20250615T080210Z.flac"
-        row["extract_filename"] = "20250615T080200Z_20250615T080210Z.flac"
+        row["start_utc"] = str(base_epoch + 123.0)
+        row["end_utc"] = str(base_epoch + 128.0)
         row["humpback"] = "1"
         row["positive_selection_origin"] = "clip_bounds_fallback"
         row["positive_selection_score_source"] = "clip_bounds_fallback"
         row["positive_selection_decision"] = "positive"
-        row["positive_selection_start_sec"] = "120.000000"
-        row["positive_selection_end_sec"] = "130.000000"
+        row["positive_selection_start_utc"] = f"{base_epoch + 123.0:.6f}"
+        row["positive_selection_end_utc"] = f"{base_epoch + 128.0:.6f}"
         write_detection_row_store(row_store_path, [row])
 
         sr = 32000
         audio = np.sin(np.linspace(0, 2 * np.pi * 440, sr * 240)).astype(np.float32)
         provider = _provider_for_recording(source_name, audio=audio, seg_dur=240.0)
-        recording_ts = parse_recording_timestamp(source_name)
-        assert recording_ts is not None
 
         pos_out = tmp_path / "positive"
         summary = extract_hydrophone_labeled_samples(
@@ -1655,8 +1654,8 @@ class TestExtractHydrophoneLabeledSamples:
             tmp_path / "negative",
             row_store_path=row_store_path,
             window_size_seconds=5.0,
-            stream_start_timestamp=recording_ts.timestamp(),
-            stream_end_timestamp=recording_ts.timestamp() + 240.0,
+            stream_start_timestamp=base_epoch,
+            stream_end_timestamp=base_epoch + 240.0,
             **_positive_hydrophone_extraction_kwargs(sr),
         )
 
@@ -1673,14 +1672,13 @@ class TestExtractHydrophoneLabeledSamples:
         assert out.exists()
 
         _fieldnames, stored_rows = read_detection_row_store(row_store_path)
-        assert stored_rows[0]["detection_filename"] == (
-            "20250615T080203Z_20250615T080208Z.flac"
+        assert (
+            stored_rows[0]["positive_selection_start_utc"]
+            == f"{base_epoch + 123.0:.6f}"
         )
-        assert stored_rows[0]["extract_filename"] == (
-            "20250615T080203Z_20250615T080208Z.flac"
+        assert (
+            stored_rows[0]["positive_selection_end_utc"] == f"{base_epoch + 128.0:.6f}"
         )
-        assert stored_rows[0]["positive_selection_start_sec"] == "123.000000"
-        assert stored_rows[0]["positive_selection_end_sec"] == "128.000000"
         assert stored_rows[0]["positive_extract_filename"] == (
             "20250615T080203Z_20250615T080208Z.flac"
         )
