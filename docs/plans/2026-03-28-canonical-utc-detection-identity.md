@@ -1,11 +1,28 @@
-# Canonical UTC Detection Identity — Implementation Plan
+# Canonical UTC Detection Identity — Phased Implementation Plan
 
 **Goal:** Replace all detection row identity with canonical `(start_utc, end_utc)` epoch float pairs, eliminating file-relative offsets, derived filenames, and coordinate-system conversions across the entire stack.
 **Spec:** [docs/specs/2026-03-28-canonical-utc-detection-identity-design.md](../specs/2026-03-28-canonical-utc-detection-identity-design.md)
+**Approach:** Big-bang internal, phased external. All phases on one feature branch, merged together at the end. The app may not work end-to-end between phases.
 
 ---
 
-### Task 1: Core Row Store Schema and Identity
+## Resume Protocol
+
+Each completed phase gets a commit with prefix `phase-N: <description>`. To resume after a context clear:
+
+1. Read this plan — find the first unchecked phase
+2. Run `uv run pytest tests/` to confirm prior phases' tests pass
+3. Read the spec for design reference
+4. Read `memory/project_utc_refactor_report.md` for the dependency graph and complexity notes
+5. Pick up from the first unchecked phase
+
+---
+
+## Phase 1: Core Schema + Detection Workers
+
+**Commit:** `phase-1: core schema + detection workers`
+
+### Task 1.1: Row Store Schema and Identity (`detection_rows.py`)
 
 **Files:**
 - Modify: `src/humpback/classifier/detection_rows.py`
@@ -13,203 +30,286 @@
 **Acceptance criteria:**
 - [ ] `ROW_STORE_FIELDNAMES` updated: `start_utc`, `end_utc`, `raw_start_utc`, `raw_end_utc` replace `row_id`, `filename`, `start_sec`, `end_sec`, `raw_start_sec`, `raw_end_sec`, `detection_filename`, `extract_filename`
 - [ ] `ROW_STORE_SCHEMA` rebuilt from updated fieldnames
-- [ ] All `positive_selection_*` and `auto_positive_selection_*` `_start_sec`/`_end_sec` subfields renamed to `_start_utc`/`_end_utc` in fieldname lists and throughout the module
-- [ ] `POSITIVE_SELECTION_FIELDNAMES`, `AUTO_POSITIVE_SELECTION_FIELDNAMES`, `MANUAL_POSITIVE_SELECTION_FIELDNAMES` updated
-- [ ] `PositiveSelectionResult` dataclass fields renamed from `start_sec`/`end_sec` to `start_utc`/`end_utc`
+- [ ] `PositiveSelectionResult` dataclass: `start_sec`/`end_sec` → `start_utc`/`end_utc`
+- [ ] `POSITIVE_SELECTION_FIELDNAMES`: `positive_selection_start_sec`/`_end_sec` → `_start_utc`/`_end_utc`
+- [ ] `AUTO_POSITIVE_SELECTION_FIELDNAMES`: `auto_positive_selection_start_sec`/`_end_sec` → `_start_utc`/`_end_utc`
+- [ ] `MANUAL_POSITIVE_SELECTION_FIELDNAMES`: `manual_positive_selection_start_sec`/`_end_sec` → `_start_utc`/`_end_utc`
 - [ ] `build_detection_row_id()` deleted
-- [ ] `derive_detection_filename()` retained as a utility but renamed to clarify it formats UTC epochs to compact filename strings; signature changes to accept `(start_utc: float, end_utc: float) -> str`
+- [ ] `derive_detection_filename()` signature changed to `(start_utc: float, end_utc: float) -> str`
 - [ ] `hydrophone_job_relative_to_file_relative_offset()` deleted
 - [ ] `build_hydrophone_anchor_filename()` deleted
-- [ ] `normalize_detection_row()` rewritten: accepts row with `start_utc`/`end_utc`, no longer derives `detection_filename`/`extract_filename`/`row_id`; validates and parses UTC epoch floats
-- [ ] `apply_label_edits()` rewritten: row lookup by `(start_utc, end_utc)` composite key instead of `row_id`; add/move/delete/change_type all use UTC pairs; move edits update `start_utc`/`end_utc` directly
-- [ ] `backfill_hydrophone_row_metadata()` deleted or simplified (no longer needs to derive filenames/anchors)
-- [ ] `resolve_clip_bounds()` rewritten: reads `start_utc`/`end_utc` directly instead of parsing `detection_filename`
-- [ ] `merge_detection_row_store_state()` uses `(start_utc, end_utc)` for matching instead of `row_id`
-- [ ] `build_detection_row_store_rows()` updated to produce new-schema rows
-- [ ] `read_detection_row_store()` includes lazy migration: detects old schema, derives `start_utc`/`end_utc` from `detection_filename` (primary) or `filename` + offsets (fallback), rewrites atomically
+- [ ] `normalize_detection_row()` rewritten: accepts row with `start_utc`/`end_utc`, validates UTC epoch floats, no longer derives `detection_filename`/`extract_filename`/`row_id`
+- [ ] `apply_label_edits()` rewritten: row lookup by `(start_utc, end_utc)` composite key; add/move/delete/change_type all use UTC pairs; move edits update `start_utc`/`end_utc` directly
+- [ ] `backfill_hydrophone_row_metadata()` deleted or simplified (no filename/anchor derivation)
+- [ ] `resolve_clip_bounds()` rewritten: reads `start_utc`/`end_utc` directly
+- [ ] `merge_detection_row_store_state()` uses `(start_utc, end_utc)` for matching
+- [ ] `build_detection_row_store_rows()` produces new-schema rows
+- [ ] `read_detection_row_store()` includes lazy migration: detects old schema (absence of `start_utc` column), derives UTC from `detection_filename` (primary) or `filename` + offsets (fallback), rewrites atomically
 - [ ] `write_detection_row_store()` writes new schema only
 - [ ] `stream_detection_rows_as_tsv()` / `iter_detection_rows_as_tsv()` export `start_utc`, `end_utc`, plus derived `detection_filename` for readability
-- [ ] `select_positive_window()` and related selection functions use UTC-based offset fields
+- [ ] `select_positive_window()` and related selection functions use `_start_utc`/`_end_utc` offset fields
 - [ ] `apply_effective_positive_selection()` uses `_start_utc`/`_end_utc` fields; derives `positive_extract_filename` from UTC pair on-the-fly
 - [ ] `compute_auto_selection_update()` produces `_start_utc`/`_end_utc` keyed results
-- [ ] Helper functions (`selection_result_to_row_update`, `prefixed_selection_result_to_row_update`) output `_utc` keys
+- [ ] `selection_result_to_row_update()` and `prefixed_selection_result_to_row_update()` output `_utc` keys
+- [ ] `append_detection_row_store()` writes new schema
+- [ ] `ensure_detection_row_store()` creates new schema header
 
 **Tests needed:**
-- `read_detection_row_store` lazy migration from old-schema Parquet (hydrophone and local fixtures)
+- `read_detection_row_store` lazy migration from old-schema Parquet (hydrophone fixture with `detection_filename`, local fixture with `filename` + offsets)
 - `apply_label_edits` add/move/delete/change_type with UTC composite keys
 - `normalize_detection_row` with new UTC fields
 - `merge_detection_row_store_state` matching by UTC pair
 - Round-trip: write → read → verify field integrity
+- `derive_detection_filename(start_utc, end_utc)` produces correct compact UTC format
 
----
-
-### Task 2: Detection Workers — Emit UTC Events
+### Task 1.2: Local Detector UTC Emission (`detector.py`)
 
 **Files:**
 - Modify: `src/humpback/classifier/detector.py`
+
+**Acceptance criteria:**
+- [ ] `_file_base_epoch(filepath)` inline helper added: parses timestamp-named files to epoch float; falls back to file mtime; last resort `0.0`
+- [ ] `merge_detection_events()` produces `start_utc`/`end_utc` and `raw_start_utc`/`raw_end_utc` by adding offsets to base epoch
+- [ ] `snap_and_merge_detection_events()` produces same UTC fields
+- [ ] `merge_detection_spans()` internal function keeps file-relative `start_sec`/`end_sec` (not exposed externally, only consumed by `merge_detection_events`)
+- [ ] `run_detection()` passes filepath to `_file_base_epoch()` for UTC computation
+- [ ] `select_peak_windows_from_events()` updated if it references old fields
+
+**Tests needed:**
+- `merge_detection_events` output contains `start_utc`/`end_utc`, no `filename`
+- `snap_and_merge_detection_events` output contains UTC fields + `raw_start_utc`/`raw_end_utc`
+- `_file_base_epoch` with timestamp-named file, non-timestamp file, missing file
+
+### Task 1.3: Hydrophone Detector UTC Emission (`hydrophone_detector.py`)
+
+**Files:**
 - Modify: `src/humpback/classifier/hydrophone_detector.py`
+
+**Acceptance criteria:**
+- [ ] `_build_detection_filename()` deleted
+- [ ] `run_hydrophone_detection()` computes `start_utc = chunk_epoch + offset` directly for each event
+- [ ] Events yield `start_utc`/`end_utc` and `raw_start_utc`/`raw_end_utc` in UTC epoch seconds
+- [ ] No synthetic filename generation; `hydrophone_name` still populated
+
+**Tests needed:**
+- `run_hydrophone_detection` output events contain UTC fields, no `detection_filename`
+- Verify `hydrophone_name` still present in output
+
+### Task 1.4: Classifier Worker Store Row Conversion (`classifier_worker.py`)
+
+**Files:**
 - Modify: `src/humpback/workers/classifier_worker.py`
 
 **Acceptance criteria:**
-- [ ] `detector.py`: `TSV_FIELDNAMES` updated to use `start_utc`/`end_utc` etc.
-- [ ] `detector.py`: `run_detection()` computes `start_utc`/`end_utc` for each event by adding offsets to parsed filename timestamp (for timestamp-named files) or file modification time (fallback)
-- [ ] `detector.py`: `merge_detection_events()` / `snap_and_merge_detection_events()` produce `start_utc`/`end_utc` and `raw_start_utc`/`raw_end_utc` in UTC epoch seconds
-- [ ] `detector.py`: No more `filename` field on events (the worker knows the file but doesn't pass it as row identity)
-- [ ] `hydrophone_detector.py`: `run_hydrophone_detection()` computes `start_utc = chunk_epoch + offset` directly; no synthetic filename generation
-- [ ] `hydrophone_detector.py`: `_build_detection_filename()` deleted
-- [ ] `classifier_worker.py`: `_detection_dicts_to_store_rows()` maps new UTC fields to store rows; no `row_id` generation, no `detection_filename`/`extract_filename` storage
+- [ ] `_detection_dicts_to_store_rows()` maps new UTC fields to store rows; no `row_id` generation, no `detection_filename`/`extract_filename` storage
+- [ ] Remove `build_detection_row_id` import
+- [ ] Remove `is_hydrophone` branching in store row conversion (both paths now produce same UTC fields)
+- [ ] Any remaining `format_optional_float`/`format_optional_int` calls updated for new field names
 
 **Tests needed:**
-- Local detector emits `start_utc`/`end_utc` for timestamp-named files
-- Local detector handles non-timestamp filenames (modification time fallback)
-- Hydrophone detector emits `start_utc`/`end_utc` directly from chunk epoch
-- `_detection_dicts_to_store_rows` produces valid new-schema rows
+- `_detection_dicts_to_store_rows` produces rows with `start_utc`/`end_utc`, no `row_id`
+- Round-trip: detection event → store row → write → read back
+
+### Task 1.5: Search Worker + S3 Stream (`search_worker.py`, `s3_stream.py`)
+
+**Files:**
+- Modify: `src/humpback/workers/search_worker.py`
+- Modify: `src/humpback/classifier/s3_stream.py`
+
+**Acceptance criteria:**
+- [ ] `search_worker.py`: uses `start_utc`/`end_utc` from job, no offset conversion via `hydrophone_job_relative_to_file_relative_offset`
+- [ ] `s3_stream.py`: `resolve_audio_slice()` accepts `start_utc` directly (parameter rename, no coordinate conversion needed)
+
+**Tests needed:**
+- `test_search_worker.py` updated for new job field names
+- `test_s3_stream.py` updated for `resolve_audio_slice` signature
+
+### Task 1.6: Phase 1 Unit Tests
+
+**Files:**
+- Modify: `tests/unit/test_detection_rows.py`
+- Modify: `tests/unit/test_detection_spans.py`
+- Modify: `tests/unit/test_classifier_worker.py`
+- Modify: `tests/unit/test_s3_stream.py`
+- Modify: `tests/unit/test_search_worker.py`
+- Modify: `tests/unit/test_hydrophone_resume.py`
+- Create: `tests/unit/test_legacy_parquet_migration.py`
+
+**Acceptance criteria:**
+- [ ] All existing test assertions updated to use `start_utc`/`end_utc` instead of `row_id`/`filename`/`start_sec`/`end_sec`
+- [ ] All fixture rows updated to new schema
+- [ ] `test_legacy_parquet_migration.py` covers: old hydrophone schema → new, old local schema → new, round-trip integrity, positive selection field migration
+- [ ] All Phase 1 tests pass: `uv run pytest tests/unit/test_detection_rows.py tests/unit/test_detection_spans.py tests/unit/test_classifier_worker.py tests/unit/test_s3_stream.py tests/unit/test_search_worker.py tests/unit/test_hydrophone_resume.py tests/unit/test_legacy_parquet_migration.py`
+
+### Phase 1 Verification
+
+```bash
+uv run pytest tests/unit/test_detection_rows.py tests/unit/test_detection_spans.py tests/unit/test_classifier_worker.py tests/unit/test_s3_stream.py tests/unit/test_search_worker.py tests/unit/test_hydrophone_resume.py tests/unit/test_legacy_parquet_migration.py -v
+```
 
 ---
 
-### Task 3: Extraction and Audio Resolution
+## Phase 2: Extractor
+
+**Commit:** `phase-2: extractor UTC conversion`
+
+### Task 2.1: Extractor UTC Conversion (`extractor.py`)
 
 **Files:**
 - Modify: `src/humpback/classifier/extractor.py`
-- Modify: `src/humpback/classifier/s3_stream.py`
-- Modify: `src/humpback/workers/search_worker.py`
 
 **Acceptance criteria:**
-- [ ] `extractor.py`: `extract_labeled_samples()` and `extract_hydrophone_labeled_samples()` resolve audio from `start_utc`/`end_utc` instead of `detection_filename`/`filename` + offsets
-- [ ] `extractor.py`: Output filenames for extracted clips derived from `start_utc`/`end_utc` on-the-fly
-- [ ] `extractor.py`: Remove `_parse_compact_range_filename` usage for identity (may keep utility if still needed for legacy file discovery)
-- [ ] `s3_stream.py`: `resolve_audio_slice()` accepts `start_utc` (absolute epoch) and `duration_sec` instead of `filename` + `row_start_sec`; no anchor-filename parsing internally
-- [ ] `search_worker.py`: `_resolve_audio()` accepts `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`; no `hydrophone_job_relative_to_file_relative_offset` calls
-- [ ] `search_worker.py`: `run_search_job()` reads `job.start_utc`/`job.end_utc` instead of `job.filename`/`job.start_sec`/`job.end_sec`
+- [ ] `PositiveSelectionResult` dataclass: `start_sec`/`end_sec` → `start_utc`/`end_utc`
+- [ ] `POSITIVE_SELECTION_FIELDNAMES` local copy: `_start_sec`/`_end_sec` → `_start_utc`/`_end_utc`
+- [ ] Row grouping for hydrophone extraction uses `start_utc` ranges against timeline metadata instead of grouping by `filename`
+- [ ] `_resolve_local_audio_for_row()` — new or refactored internal helper that maps `start_utc` back to `(file_path, offset_sec)` for local extraction using anchor parsing (same logic as `_file_base_epoch` in `detector.py`)
+- [ ] Hydrophone extraction path accepts `start_utc`/`end_utc` directly from rows
+- [ ] `backfill_hydrophone_row_metadata()` usage removed or simplified (no filename/anchor derivation)
+- [ ] Extract filename derivation: on-the-fly from `(start_utc, end_utc)` via `derive_detection_filename()`
+- [ ] All positive selection field access uses `_start_utc`/`_end_utc` suffixes
+- [ ] `_build_absolute_window_records()` in classifier_worker.py (if referenced by extractor) still converts diagnostics to absolute UTC correctly
 
-**Tests needed:**
-- Extraction produces correct output filenames from UTC pair
-- `resolve_audio_slice` works with absolute epoch input
-- Search worker audio resolution with UTC params
+### Task 2.2: Phase 2 Unit Tests
+
+**Files:**
+- Modify: `tests/unit/test_extractor.py`
+
+**Acceptance criteria:**
+- [ ] All fixture rows updated to new schema (no `filename`, `start_sec`, `end_sec`, `row_id`)
+- [ ] Positive selection field names use `_start_utc`/`_end_utc`
+- [ ] Extract filename derivation tests use UTC pair input
+- [ ] Local audio resolution tests verify `start_utc` → `(file_path, offset)` mapping
+- [ ] All Phase 2 tests pass
+- [ ] Phase 1 tests still pass (regression check)
+
+### Phase 2 Verification
+
+```bash
+uv run pytest tests/unit/test_extractor.py tests/unit/test_detection_rows.py tests/unit/test_detection_spans.py tests/unit/test_classifier_worker.py tests/unit/test_s3_stream.py tests/unit/test_search_worker.py tests/unit/test_hydrophone_resume.py tests/unit/test_legacy_parquet_migration.py -v
+```
 
 ---
 
-### Task 4: API Endpoints
+## Phase 3: API Layer + SQL Migration
+
+**Commit:** `phase-3: API layer + SQL migration`
+
+### Task 3.1: Classifier API Routes (`classifier.py`)
 
 **Files:**
 - Modify: `src/humpback/api/routers/classifier.py`
+
+**Acceptance criteria:**
+- [ ] `_to_job_relative_offsets()` deleted entirely
+- [ ] `build_hydrophone_anchor_filename` and `hydrophone_job_relative_to_file_relative_offset` imports removed
+- [ ] Content endpoint (`GET /content`): returns `start_utc`/`end_utc` directly, no hydrophone/local branching for offset conversion
+- [ ] Audio-slice endpoint: accepts `start_utc` query param instead of `filename` + `start_sec`
+- [ ] Spectrogram endpoint: accepts `start_utc` query param instead of `filename` + `start_sec`
+- [ ] Embedding endpoint: accepts `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`
+- [ ] Label PUT: `DetectionLabelRow` keyed by `start_utc`/`end_utc`
+- [ ] Label PATCH (batch): `LabelEditItem` uses `start_utc`/`end_utc` (no `row_id`)
+- [ ] Row-state PUT: `DetectionRowStateUpdate` keyed by `start_utc`/`end_utc`
+- [ ] `_resolve_detection_audio()` accepts `start_utc` — for local jobs, resolves file + offset internally; for hydrophone jobs, passes to `resolve_audio_slice()` directly
+- [ ] TSV download: columns include `start_utc`, `end_utc`, derived `detection_filename`
+
+### Task 3.2: Labeling API Routes (`labeling.py`)
+
+**Files:**
 - Modify: `src/humpback/api/routers/labeling.py`
+
+**Acceptance criteria:**
+- [ ] `hydrophone_job_relative_to_file_relative_offset` import removed
+- [ ] Vocalization label CRUD routes: `/{row_id}` path param → `?start_utc=&end_utc=` query params
+- [ ] Annotation CRUD routes: `/{row_id}` path param → `?start_utc=&end_utc=` query params
+- [ ] `_resolve_detection_embedding_lookup` offset conversion deleted
+- [ ] Prediction/uncertainty endpoints return `start_utc`/`end_utc` instead of `row_id`
+- [ ] Neighbors request uses `start_utc`/`end_utc`
+
+### Task 3.3: Pydantic Schemas
+
+**Files:**
 - Modify: `src/humpback/schemas/classifier.py`
 - Modify: `src/humpback/schemas/labeling.py`
 
 **Acceptance criteria:**
-- [ ] `classifier.py`: `_to_job_relative_offsets()` deleted
-- [ ] `classifier.py`: `get_detection_content()` returns rows with `start_utc`/`end_utc`, derives `detection_filename` on-the-fly for each row; no offset conversion for hydrophone vs local
-- [ ] `classifier.py`: `get_detection_audio_slice()` query params change to `start_utc` + `duration_sec`; internal resolution computes file-relative offset from UTC when needed (encapsulated in resolver)
-- [ ] `classifier.py`: `get_detection_spectrogram()` query params change to `start_utc` + `duration_sec`
-- [ ] `classifier.py`: `get_detection_embedding()` query params change to `start_utc` + `end_utc`
-- [ ] `classifier.py`: `save_detection_labels()` (PUT) request body uses `start_utc`/`end_utc` for row matching
-- [ ] `classifier.py`: `batch_edit_labels()` (PATCH) uses `start_utc`/`end_utc` instead of `row_id` in edit items
-- [ ] `classifier.py`: `save_detection_row_state()` (PUT) uses `start_utc`/`end_utc` instead of `row_id`
-- [ ] `classifier.py`: `_resolve_detection_audio()` accepts `start_utc` + `duration_sec`; resolves file path internally for local jobs
-- [ ] `classifier.py`: Audio decode cache key changes to `(job_id, start_utc, duration_sec)`
-- [ ] `labeling.py`: `_resolve_detection_embedding_lookup()` uses `start_utc`/`end_utc`; no `hydrophone_job_relative_to_file_relative_offset` calls
-- [ ] `labeling.py`: Vocalization label endpoints use `start_utc`/`end_utc` query params instead of `row_id` path param
-- [ ] `labeling.py`: Annotation endpoints use `start_utc`/`end_utc` query params instead of `row_id` path param
-- [ ] `schemas/classifier.py`: `LabelEditItem` uses `start_utc`/`end_utc` and `new_start_utc`/`new_end_utc`; no `row_id`
-- [ ] `schemas/classifier.py`: `DetectionLabelRow` (if defined as Pydantic) uses `start_utc`/`end_utc`
-- [ ] `schemas/classifier.py`: `DetectionRowStateUpdate` (if defined as Pydantic) uses `start_utc`/`end_utc`; no `row_id`; manual bounds become `_start_utc`/`_end_utc`
-- [ ] `schemas/labeling.py`: `DetectionNeighborsRequest` uses `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`/`detection_filename`
-- [ ] `schemas/labeling.py`: `UncertaintyQueueRow` uses `start_utc`/`end_utc` instead of `row_id`/`filename`/`start_sec`/`end_sec`
-- [ ] `schemas/labeling.py`: `PredictionRow` uses `start_utc`/`end_utc` instead of `row_id`
-- [ ] `schemas/labeling.py`: `VocalizationLabelOut`, `AnnotationOut` use `start_utc`/`end_utc` instead of `row_id`
+- [ ] `LabelEditItem`: `row_id`/`start_sec`/`end_sec` → `start_utc`/`end_utc`
+- [ ] `DetectionLabelRow`: `filename`/`start_sec`/`end_sec` → `start_utc`/`end_utc`
+- [ ] `DetectionRowStateUpdate`: `row_id` → `start_utc`/`end_utc`
+- [ ] `VocalizationLabelOut`: `row_id` → `start_utc`/`end_utc`
+- [ ] `AnnotationOut`: `row_id` → `start_utc`/`end_utc`
+- [ ] `DetectionNeighborsRequest`: `filename`/`start_sec`/`end_sec`/`detection_filename` → `start_utc`/`end_utc`
+- [ ] `UncertaintyQueueRow`, `PredictionRow`: `row_id` → `start_utc`/`end_utc`
 
-**Tests needed:**
-- Content endpoint returns `start_utc`/`end_utc`, no `filename`/`start_sec`/`end_sec`
-- Audio slice resolves from `start_utc` for both local and hydrophone
-- Label PUT matches on `(start_utc, end_utc)`
-- Label PATCH add/move/delete/change_type with UTC pairs
-- Row-state PUT identifies row by `(start_utc, end_utc)`
-- Vocalization label CRUD via `start_utc`/`end_utc` query params
-- Annotation CRUD via `start_utc`/`end_utc` query params
-
----
-
-### Task 5: SQL Schema Migration
+### Task 3.4: SQL Models + Alembic Migration
 
 **Files:**
-- Create: `alembic/versions/028_canonical_utc_detection_identity.py`
 - Modify: `src/humpback/models/labeling.py`
 - Modify: `src/humpback/models/search.py`
+- Create: `alembic/versions/028_canonical_utc_detection_identity.py`
 
 **Acceptance criteria:**
-- [ ] Alembic migration `028` uses `op.batch_alter_table()` for SQLite compatibility
-- [ ] `search_jobs`: adds `start_utc` (Float), `end_utc` (Float); drops `filename`, `start_sec`, `end_sec`
-- [ ] `vocalization_labels`: adds `start_utc` (Float), `end_utc` (Float); drops `row_id`; index updated to `(detection_job_id, start_utc, end_utc)`
-- [ ] `labeling_annotations`: adds `start_utc` (Float), `end_utc` (Float); drops `row_id`; index updated to `(detection_job_id, start_utc, end_utc)`
-- [ ] Data migration populates new columns from old values where possible (search_jobs from filename parsing; labels/annotations from Parquet row store lookup by row_id)
-- [ ] `models/labeling.py`: `VocalizationLabel` and `LabelingAnnotation` models use `start_utc`/`end_utc` instead of `row_id`
-- [ ] `models/search.py`: `SearchJob` model uses `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`
-- [ ] Migration runs cleanly on empty and populated databases
+- [ ] `VocalizationLabel`: `row_id` column → `start_utc` (Float) + `end_utc` (Float); index updated to `(detection_job_id, start_utc, end_utc)`
+- [ ] `LabelingAnnotation`: `row_id` column → `start_utc` (Float) + `end_utc` (Float); index updated to `(detection_job_id, start_utc, end_utc)`
+- [ ] `SearchJob`: `filename`/`start_sec`/`end_sec` → `start_utc`/`end_utc`
+- [ ] Alembic 028: uses `batch_alter_table()` for SQLite compatibility
+- [ ] Alembic 028: data migration for `vocalization_labels` and `labeling_annotations` maps old `row_id` to `(start_utc, end_utc)` via Parquet row store lookup; orphaned rows deleted
+- [ ] Alembic 028: data migration for `search_jobs` derives UTC from `filename` + `start_sec`/`end_sec`
+- [ ] `uv run alembic upgrade head` succeeds on a fresh database and on an existing database with data
 
-**Tests needed:**
-- Migration upgrade and downgrade on empty database
-- Migration with existing vocalization labels resolves row_id to UTC pair
+### Task 3.5: Search Service
+
+**Files:**
+- Modify: `src/humpback/services/search_service.py`
+
+**Acceptance criteria:**
+- [ ] Search hit building uses `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`
+
+### Task 3.6: Phase 3 Integration Tests
+
+**Files:**
+- Modify: `tests/unit/test_label_batch_endpoint.py`
+- Modify: `tests/integration/test_classifier_api.py`
+- Modify: `tests/integration/test_labeling_api.py`
+
+**Acceptance criteria:**
+- [ ] `test_label_batch_endpoint.py`: edit items use `start_utc`/`end_utc`, no `row_id`
+- [ ] `test_classifier_api.py`: response shape assertions updated (no `row_id`/`filename`/`start_sec`/`end_sec` in content responses), request bodies use UTC params, URL params use `start_utc`
+- [ ] `test_labeling_api.py`: route params use query `start_utc`/`end_utc` instead of path `row_id`, response shapes updated
+- [ ] Full test suite passes: `uv run pytest tests/`
+
+### Phase 3 Verification
+
+```bash
+uv run alembic upgrade head
+uv run pytest tests/ -v
+uv run ruff check src/humpback/api/ src/humpback/schemas/ src/humpback/models/ src/humpback/services/
+uv run pyright src/humpback/api/ src/humpback/schemas/ src/humpback/models/ src/humpback/services/
+```
 
 ---
 
-### Task 6: Frontend Types, Client, and Utilities
+## Phase 4: Frontend
+
+**Commit:** `phase-4: frontend UTC identity`
+
+### Task 4.1: Types and API Client
 
 **Files:**
 - Modify: `frontend/src/api/types.ts`
 - Modify: `frontend/src/api/client.ts`
-- Modify: `frontend/src/utils/format.ts` (or create utility)
 
 **Acceptance criteria:**
-- [ ] `types.ts`: `DetectionRow` removes `row_id`, `filename`, `start_sec`, `end_sec`, `raw_start_sec`, `raw_end_sec`, `detection_filename`, `extract_filename`; adds `start_utc`, `end_utc`, `raw_start_utc`, `raw_end_utc`
-- [ ] `types.ts`: `DetectionLabelRow` uses `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`
-- [ ] `types.ts`: `DetectionRowStateUpdate` uses `start_utc`/`end_utc` instead of `row_id`; manual bounds become `_start_utc`/`_end_utc`
-- [ ] `types.ts`: `LabelEditItem` uses `start_utc`/`end_utc` and `new_start_utc`/`new_end_utc`; no `row_id`
-- [ ] `types.ts`: Vocalization/annotation response types use `start_utc`/`end_utc` instead of `row_id`
-- [ ] `client.ts`: `detectionAudioSliceUrl()` takes `(jobId, startUtc, durationSec)` — no `filename` param
-- [ ] `client.ts`: `detectionSpectrogramUrl()` takes `(jobId, startUtc, durationSec)` — no `filename` param
-- [ ] `client.ts`: `saveDetectionLabels()` sends `start_utc`/`end_utc` per row
-- [ ] `client.ts`: `saveDetectionRowState()` sends `start_utc`/`end_utc` instead of `row_id`
-- [ ] `client.ts`: `fetchDetectionEmbedding()` sends `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`
-- [ ] `client.ts`: `patchDetectionLabels()` sends UTC-based edit items
-- [ ] `client.ts`: `fetchDetectionNeighbors()` sends `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`/`detection_filename`
-- [ ] `client.ts`: Vocalization label and annotation endpoints use `start_utc`/`end_utc` query params instead of `row_id` path param
-- [ ] Add `formatDetectionFilename(startUtc: number, endUtc: number): string` utility for derived display name
+- [ ] `DetectionRow` type: remove `row_id`, `filename`, `start_sec`, `end_sec`, `raw_start_sec`, `raw_end_sec`, `detection_filename`, `extract_filename`; add `start_utc`, `end_utc`, `raw_start_utc`, `raw_end_utc`
+- [ ] `DetectionLabelRow`, `DetectionRowStateUpdate`, `LabelEditItem` types updated to use UTC fields
+- [ ] All detection API functions in `client.ts` updated: audio-slice URLs, spectrogram URLs, label save, row-state, embedding, neighbors, vocalization/annotation endpoints use UTC params
+- [ ] `detectionAudioSliceUrl` and `detectionSpectrogramUrl` accept `start_utc` instead of `filename`/`start_sec`
 
-**Tests needed:**
-- TypeScript compilation passes with no errors (`npx tsc --noEmit`)
-
----
-
-### Task 7: Frontend Components — Classifier Tabs
+### Task 4.2: Components
 
 **Files:**
 - Modify: `frontend/src/components/classifier/HydrophoneTab.tsx`
 - Modify: `frontend/src/components/classifier/LabelingTab.tsx`
 - Modify: `frontend/src/components/search/SearchTab.tsx`
-
-**Acceptance criteria:**
-- [ ] `HydrophoneTab.tsx`: Delete `computeUtcRange()` — no longer needed, display derived from `formatDetectionFilename(row.start_utc, row.end_utc)`
-- [ ] `HydrophoneTab.tsx`: Delete `rowKey()` — replaced by `${row.start_utc}:${row.end_utc}`
-- [ ] `HydrophoneTab.tsx`: `resolveClipTiming()` simplified — reads `start_utc`/`end_utc` directly, no filename parsing
-- [ ] `HydrophoneTab.tsx`: `resolvePositiveSelectionMarkerBounds()` and `resolveManualSelectionMarkerBounds()` use `_start_utc`/`_end_utc` fields
-- [ ] `HydrophoneTab.tsx`: `handleApplySpectrogramEdit()` sends `start_utc`/`end_utc` instead of `row_id`
-- [ ] `HydrophoneTab.tsx`: Audio playback uses `detectionAudioSliceUrl(jobId, row.start_utc, duration)`
-- [ ] `HydrophoneTab.tsx`: Label edit buffer keyed by `${start_utc}:${end_utc}` instead of `filename:start_sec:end_sec`
-- [ ] `LabelingTab.tsx`: Delete `hydrophoneJobRelativeToFileRelativeOffset()` entirely
-- [ ] `LabelingTab.tsx`: Clip timing reads `start_utc`/`end_utc` directly — no offset conversion, no hydrophone/local branching
-- [ ] `LabelingTab.tsx`: Vocalization labels queried by `start_utc`/`end_utc` instead of `row_id`
-- [ ] `LabelingTab.tsx`: Detection neighbor request sends `start_utc`/`end_utc`
-- [ ] `SearchTab.tsx`: Detection-sourced search sends `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`
-
-**Tests needed:**
-- Frontend compiles (`npx tsc --noEmit`)
-
----
-
-### Task 8: Frontend Components — Timeline Viewer
-
-**Files:**
 - Modify: `frontend/src/components/timeline/TimelineViewer.tsx`
 - Modify: `frontend/src/components/timeline/LabelEditor.tsx`
 - Modify: `frontend/src/components/timeline/DetectionOverlay.tsx`
@@ -217,70 +317,17 @@
 - Modify: `frontend/src/hooks/queries/useLabeling.ts`
 
 **Acceptance criteria:**
-- [ ] `useLabelEdits.ts`: `LabelEdit` interface uses `start_utc`/`end_utc` and `new_start_utc`/`new_end_utc` instead of `row_id`/`start_sec`/`end_sec`
-- [ ] `useLabelEdits.ts`: Reducer actions dispatch/match by `(start_utc, end_utc)` instead of `row_id` or UUID `id`
-- [ ] `useLabelEdits.ts`: `mergedRows` computation applies edits by matching `(start_utc, end_utc)` on original rows
-- [ ] `useLabelEdits.ts`: New adds generate `(start_utc, end_utc)` directly — no client-side UUID
-- [ ] `LabelEditor.tsx`: Row keying, drag handling, ghost overlap detection all use `(start_utc, end_utc)`
-- [ ] `LabelEditor.tsx`: Bar rendering positions from `start_utc`/`end_utc`
-- [ ] `DetectionOverlay.tsx`: React keys use `${row.start_utc}:${row.end_utc}` instead of `row.row_id ?? idx`
-- [ ] `DetectionOverlay.tsx`: Tooltip times derived from `start_utc`/`end_utc` directly
-- [ ] `TimelineViewer.tsx`: Save handler maps edits with `start_utc`/`end_utc` fields
-- [ ] `TimelineViewer.tsx`: Skip navigation uses `row.start_utc`/`row.end_utc` directly
-- [ ] `useLabeling.ts`: Query keys use `start_utc`/`end_utc` instead of `rowId`
-- [ ] `useLabeling.ts`: API calls pass `start_utc`/`end_utc` query params instead of `rowId` path param
+- [ ] `HydrophoneTab.tsx`: delete `computeUtcRange`, `rowKey`, offset conversion. Simplify `resolveClipTiming` to use `start_utc`/`end_utc` directly.
+- [ ] `LabelingTab.tsx`: delete `hydrophoneJobRelativeToFileRelativeOffset`. Direct UTC usage.
+- [ ] `SearchTab.tsx`: detection-sourced search sends `start_utc`/`end_utc` fields
+- [ ] `TimelineViewer.tsx`: save handler and skip navigation use UTC
+- [ ] `LabelEditor.tsx`: row keying and drag handling use `(start_utc, end_utc)` pair
+- [ ] `DetectionOverlay.tsx`: React keys use `${start_utc}:${end_utc}`
+- [ ] `useLabelEdits.ts`: edit dispatch/match by UTC pair
+- [ ] `useLabeling.ts`: query keys and API calls use UTC
+- [ ] All `if (job.hydrophone_id)` branches for offset conversion deleted throughout
 
-**Tests needed:**
-- Frontend compiles (`npx tsc --noEmit`)
-
----
-
-### Task 9: Update Existing Tests
-
-**Files:**
-- Modify: `tests/unit/test_detection_rows.py`
-- Modify: `tests/unit/test_detection_spans.py`
-- Modify: `tests/unit/test_classifier_worker.py`
-- Modify: `tests/unit/test_extractor.py`
-- Modify: `tests/unit/test_hydrophone_resume.py`
-- Modify: `tests/unit/test_s3_stream.py`
-- Modify: `tests/unit/test_search_worker.py`
-- Modify: `tests/unit/test_label_batch_endpoint.py`
-- Modify: `tests/integration/test_classifier_api.py`
-- Modify: `tests/integration/test_hydrophone_api.py`
-- Modify: `tests/integration/test_labeling_api.py`
-
-**Acceptance criteria:**
-- [ ] All existing detection-related tests updated to use `start_utc`/`end_utc` instead of `filename`/`start_sec`/`end_sec`/`row_id`
-- [ ] No references to `row_id`, `filename` (as detection identity), or file-relative `start_sec`/`end_sec` in test assertions
-- [ ] Test fixtures produce new-schema rows
-- [ ] All tests pass: `uv run pytest tests/`
-
-**Tests needed:**
-- This task IS the test update — ensure full suite passes
-
----
-
-### Task 10: Legacy Migration Tests
-
-**Files:**
-- Create: `tests/unit/test_legacy_parquet_migration.py`
-
-**Acceptance criteria:**
-- [ ] Test fixture: old-schema Parquet with hydrophone rows (synthetic filename, file-relative offsets, detection_filename present)
-- [ ] Test fixture: old-schema Parquet with local rows (timestamp-named files, detection_filename present)
-- [ ] Test fixture: old-schema Parquet with local rows (non-timestamp filenames, detection_filename derived)
-- [ ] Verify `read_detection_row_store` migrates old schema to new, producing correct `start_utc`/`end_utc`
-- [ ] Verify migrated Parquet file is rewritten in new schema on disk
-- [ ] Verify second read does NOT re-migrate (already in new schema)
-- [ ] Verify rows that cannot derive UTC (no parseable timestamp, no detection_filename) are logged and skipped
-
-**Tests needed:**
-- This task IS the test creation
-
----
-
-### Task 11: Playwright Tests
+### Task 4.3: Playwright Tests
 
 **Files:**
 - Modify: `frontend/e2e/hydrophone-utc-timezone.spec.ts`
@@ -289,42 +336,64 @@
 - Modify: `frontend/e2e/detection-spectrogram.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Playwright tests updated to match new API response shapes (no `row_id`/`filename`/`start_sec` in assertions)
-- [ ] Any URL assertions for audio-slice or spectrogram endpoints use `start_utc` param instead of `filename`+`start_sec`
-- [ ] Tests pass: `cd frontend && npx playwright test`
+- [ ] Response shape assertions updated (no `row_id`, fields use `start_utc`/`end_utc`)
+- [ ] URL param assertions use `start_utc` instead of `filename`/`start_sec`
+- [ ] `npx tsc --noEmit` passes
+- [ ] `npx playwright test` passes
 
-**Tests needed:**
-- This task IS the Playwright test update
+### Phase 4 Verification
+
+```bash
+cd frontend && npx tsc --noEmit
+cd frontend && npx playwright test
+```
 
 ---
 
-### Task 12: Documentation Updates
+## Phase 5: Docs + Cleanup
+
+**Commit:** `phase-5: docs + cleanup`
+
+### Task 5.1: Documentation Updates
 
 **Files:**
 - Modify: `CLAUDE.md`
 - Modify: `DECISIONS.md`
-- Modify: `README.md`
 
 **Acceptance criteria:**
-- [ ] `CLAUDE.md` §4.6 (Hydrophone Detection TSV Metadata): updated field names
-- [ ] `CLAUDE.md` §8.3 (Data Model Summary): VocalizationLabel, LabelingAnnotation, SearchJob descriptions updated
-- [ ] `CLAUDE.md` §8.5 (Storage Layout): detection file descriptions updated
-- [ ] `CLAUDE.md` §9.2: latest migration updated to 028
-- [ ] `DECISIONS.md`: new ADR for canonical UTC detection identity
-- [ ] `README.md`: API endpoint documentation updated if detection endpoints are listed
+- [ ] `CLAUDE.md` §4.6: TSV metadata fields updated to `start_utc`/`end_utc`, remove `detection_filename`/`extract_filename` from stored fields, add as derived
+- [ ] `CLAUDE.md` §8.3: data model summary updated for `VocalizationLabel`, `LabelingAnnotation`, `SearchJob` — `row_id`/`filename` → `start_utc`/`end_utc`
+- [ ] `CLAUDE.md` §8.5: storage layout references updated if needed
+- [ ] `CLAUDE.md` §9.2: migration number → `028_canonical_utc_detection_identity.py`
+- [ ] `DECISIONS.md`: new ADR for canonical UTC detection identity (date, context, decision, consequences)
 
-**Tests needed:**
-- None (documentation only)
+### Task 5.2: Dead Code Cleanup
+
+**Acceptance criteria:**
+- [ ] Grep for `row_id`, `start_sec`, `end_sec`, `detection_filename`, `extract_filename`, `raw_start_sec`, `raw_end_sec` across production code — no stale references remain (test fixtures and comments excepted)
+- [ ] Grep for `_to_job_relative_offsets`, `build_detection_row_id`, `build_hydrophone_anchor_filename`, `hydrophoneJobRelativeToFileRelativeOffset`, `computeUtcRange`, `parseDetectionFilenameRange` — all deleted
+- [ ] No orphaned imports
+
+### Phase 5 Verification
+
+```bash
+uv run ruff format --check src/humpback/ scripts/
+uv run ruff check src/humpback/ scripts/
+uv run pyright src/humpback/ scripts/ tests/
+uv run pytest tests/ -v
+cd frontend && npx tsc --noEmit
+```
 
 ---
 
-### Verification
+## Final Verification (All Phases)
 
-Run in order after all tasks:
-1. `uv run ruff format --check src/humpback/ tests/ scripts/`
-2. `uv run ruff check src/humpback/ tests/ scripts/`
-3. `uv run pyright src/humpback/ tests/ scripts/`
-4. `uv run alembic upgrade head`
-5. `uv run pytest tests/`
-6. `cd frontend && npx tsc --noEmit`
-7. `cd frontend && npx playwright test` (if backend running with test data)
+Run in order after all phases complete:
+
+1. `uv run ruff format --check src/humpback/ scripts/ tests/`
+2. `uv run ruff check src/humpback/ scripts/ tests/`
+3. `uv run pyright src/humpback/ scripts/ tests/`
+4. `uv run pytest tests/ -v`
+5. `cd frontend && npx tsc --noEmit`
+6. `cd frontend && npx playwright test`
+7. `uv run alembic upgrade head` (on fresh DB)

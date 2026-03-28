@@ -1,7 +1,8 @@
-# Canonical UTC Detection Identity — Design Spec
+# Canonical UTC Detection Identity — Design Spec (Phased)
 
 **Date:** 2026-03-28
 **Status:** Approved
+**Approach:** Big-bang internal, phased external — all phases on one feature branch, merged together at the end
 
 ## Problem
 
@@ -165,8 +166,36 @@ Data migration for existing rows:
 - `DetectionNeighborsRequest`: `filename`/`start_sec`/`end_sec`/`detection_filename` → `start_utc`/`end_utc`
 - `UncertaintyQueueRow`, `PredictionRow`: `row_id` → `start_utc`/`end_utc`
 
+## Phasing Strategy
+
+### Approach
+
+Big-bang internal, phased external: the Parquet schema changes fully in Phase 1, but the API contract and frontend aren't updated until Phases 3-4. The app may not work end-to-end between phases. All phases live on one feature branch and are merged together via a single PR.
+
+### Resume Protocol
+
+Each phase has a checklist in the implementation plan. Each completed phase gets its own commit with a structured prefix (e.g., `phase-1: core schema + detection workers`). To resume after a context clear:
+
+1. Read the implementation plan, find the first unchecked phase
+2. Run `uv run pytest tests/` to confirm prior phases' tests pass
+3. Pick up from the unchecked phase
+
+### Phase Overview
+
+| Phase | Scope | Verification Gate |
+|-------|-------|-------------------|
+| 1 | Core schema (`detection_rows.py`), detection workers (`detector.py`, `hydrophone_detector.py`), classifier worker, search worker, s3_stream | Unit tests for all modified modules pass |
+| 2 | Extractor (`extractor.py`) | Extractor unit tests pass + Phase 1 tests still pass |
+| 3 | API routes (`classifier.py`, `labeling.py`), schemas, SQL models, Alembic 028 | Full `pytest` suite passes, `alembic upgrade head` succeeds |
+| 4 | Frontend types, client, components, Playwright tests | `npx tsc --noEmit` passes, Playwright tests pass |
+| 5 | CLAUDE.md, DECISIONS.md, dead code grep, cleanup | All linters + full test suite + `tsc --noEmit` clean |
+
 ## Testing
 
-- Unit tests for UTC identity, derivation, overlap validation, legacy migration
-- API integration tests for all changed endpoints
-- Playwright tests for detection display, playback, label editing
+Each phase includes unit/integration tests for the code changed in that phase:
+
+- **Phase 1:** `test_detection_rows.py`, `test_detection_spans.py`, `test_classifier_worker.py`, `test_s3_stream.py`, `test_search_worker.py`, `test_hydrophone_resume.py`, new `test_legacy_parquet_migration.py`
+- **Phase 2:** `test_extractor.py`
+- **Phase 3:** `test_label_batch_endpoint.py`, `test_classifier_api.py`, `test_labeling_api.py`
+- **Phase 4:** Playwright e2e tests (hydrophone-utc-timezone, hydrophone-canceled-job, hydrophone-active-queue, detection-spectrogram)
+- **Phase 5:** Lint/type-check verification only (no new tests)
