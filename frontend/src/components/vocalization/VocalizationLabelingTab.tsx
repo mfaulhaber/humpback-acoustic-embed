@@ -4,22 +4,21 @@ import { EmbeddingStatusPanel } from "./EmbeddingStatusPanel";
 import { InferencePanel } from "./InferencePanel";
 import { LabelingWorkspace } from "./LabelingWorkspace";
 import { RetrainFooter } from "./RetrainFooter";
+import { useEmbeddingStatus } from "@/hooks/queries/useVocalization";
 
 export function VocalizationLabelingTab() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [embeddingsReady, setEmbeddingsReady] = useState(false);
   const [inferenceJobId, setInferenceJobId] = useState<string | null>(null);
   const [labelCount, setLabelCount] = useState(0);
 
+  // Embedding status is query-driven, not callback-driven
+  const { data: embeddingStatus } = useEmbeddingStatus(selectedJobId);
+  const embeddingsReady = embeddingStatus?.has_embeddings === true;
+
   const handleSelectJob = useCallback((jobId: string | null) => {
     setSelectedJobId(jobId);
-    setEmbeddingsReady(false);
     setInferenceJobId(null);
     setLabelCount(0);
-  }, []);
-
-  const handleEmbeddingsReady = useCallback(() => {
-    setEmbeddingsReady(true);
   }, []);
 
   const handleInferenceReady = useCallback((jobId: string) => {
@@ -42,7 +41,6 @@ export function VocalizationLabelingTab() {
       {selectedJobId && (
         <EmbeddingStatusPanel
           detectionJobId={selectedJobId}
-          onReady={handleEmbeddingsReady}
         />
       )}
 

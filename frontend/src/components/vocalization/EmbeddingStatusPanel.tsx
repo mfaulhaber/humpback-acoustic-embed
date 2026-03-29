@@ -11,10 +11,9 @@ import { useEffect } from "react";
 
 interface Props {
   detectionJobId: string | null;
-  onReady: () => void;
 }
 
-export function EmbeddingStatusPanel({ detectionJobId, onReady }: Props) {
+export function EmbeddingStatusPanel({ detectionJobId }: Props) {
   const { data: status } = useEmbeddingStatus(detectionJobId);
   const { data: genJob } = useEmbeddingGenerationStatus(detectionJobId);
   const generateMut = useGenerateEmbeddings();
@@ -22,13 +21,6 @@ export function EmbeddingStatusPanel({ detectionJobId, onReady }: Props) {
 
   const isGenerating =
     genJob?.status === "queued" || genJob?.status === "running";
-
-  // Notify parent when embeddings are ready
-  useEffect(() => {
-    if (status?.has_embeddings) {
-      onReady();
-    }
-  }, [status?.has_embeddings, onReady]);
 
   // Re-check embedding status when generation completes
   useEffect(() => {

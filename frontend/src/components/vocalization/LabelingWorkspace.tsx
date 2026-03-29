@@ -95,11 +95,10 @@ export function LabelingWorkspace({
     return m;
   }, [vocabulary]);
 
-  // Fetch all results to allow client-side sorting
-  // For large jobs we'd want server-side sorting, but for MVP this works
+  // Fetch results (API max is 1000 per page)
   const { data: allRows = [], isLoading } = useVocClassifierInferenceResults(
     job?.status === "complete" ? inferenceJobId : null,
-    { offset: 0, limit: 10000 },
+    { offset: 0, limit: 1000 },
   );
 
   // Sort rows
@@ -272,8 +271,19 @@ function LabelingRow({
 
   const existingTypeNames = new Set(existingLabels.map((l) => l.label));
 
-  // Available types to add (not already assigned)
-  const availableTypes = allTypes.filter((t) => !existingTypeNames.has(t));
+  // Inference-predicted tags above threshold (suggestions)
+  const predictedTags = useMemo(() => {
+    return Object.entries(row.scores)
+      .filter(([type, score]) => score >= (thresholds[type] ?? 0.5))
+      .sort(([, a], [, b]) => b - a);
+  }, [row.scores, thresholds]);
+
+  const predictedTypeNames = new Set(predictedTags.map(([t]) => t));
+
+  // Available types to add (not already assigned or predicted)
+  const availableTypes = allTypes.filter(
+    (t) => !existingTypeNames.has(t),
+  );
 
   // Max score for display
   const maxScore = Math.max(...Object.values(row.scores), 0);
@@ -386,7 +396,24 @@ function LabelingRow({
           )}
 
           <span className="text-xs text-muted-foreground ml-2">Voc:</span>
-          {existingLabels.map((lbl) => (
+          {predictedTags.map(([type, score]) => (
+            <Badge
+              key={`pred-${type}`}
+              variant="outline"
+              className={`text-xs ${typeColorMap.get(type) ?? ""} ${
+                existingTypeNames.has(type) ? "ring-1 ring-offset-1" : "opacity-70"
+              } cursor-pointer`}
+              title={`Predicted: ${(score * 100).toFixed(0)}% — click to add as label`}
+              onClick={() => {
+                if (!existingTypeNames.has(type)) handleAdd(type);
+              }}
+            >
+              {type} {(score * 100).toFixed(0)}%
+            </Badge>
+          ))}
+          {existingLabels
+            .filter((lbl) => !predictedTypeNames.has(lbl.label))
+            .map((lbl) => (
             <Badge
               key={lbl.id}
               variant="outline"

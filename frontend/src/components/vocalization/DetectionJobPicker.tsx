@@ -8,9 +8,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchDetectionJobs } from "@/api/client";
-import type { DetectionJob } from "@/api/types";
+import {
+  fetchDetectionJobs,
+  fetchHydrophoneDetectionJobs,
+  fetchHydrophones,
+} from "@/api/client";
+import type { DetectionJob, HydrophoneInfo } from "@/api/types";
 
 interface Props {
   selectedJobId: string | null;
@@ -22,9 +27,16 @@ function formatUtcDate(epoch: number): string {
   return d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
 }
 
-function formatJobLabel(job: DetectionJob): string {
-  if (job.hydrophone_name && job.start_timestamp && job.end_timestamp) {
-    return `${job.hydrophone_name}    ${formatUtcDate(job.start_timestamp)} — ${formatUtcDate(job.end_timestamp)}`;
+function formatJobLabel(
+  job: DetectionJob,
+  hydrophoneMap: Map<string, HydrophoneInfo>,
+): string {
+  if (job.hydrophone_id && job.start_timestamp && job.end_timestamp) {
+    const info = hydrophoneMap.get(job.hydrophone_id);
+    const displayName = info
+      ? `${info.name} (${info.location})`
+      : (job.hydrophone_name ?? job.hydrophone_id);
+    return `${displayName}    ${formatUtcDate(job.start_timestamp)} — ${formatUtcDate(job.end_timestamp)}`;
   }
   const windowCount =
     (job.result_summary as Record<string, unknown> | null)?.n_total_windows ??
@@ -35,14 +47,30 @@ function formatJobLabel(job: DetectionJob): string {
 }
 
 export function DetectionJobPicker({ selectedJobId, onSelect }: Props) {
-  const { data: jobs = [] } = useQuery({
+  const { data: localJobs = [] } = useQuery({
     queryKey: ["detectionJobs"],
     queryFn: fetchDetectionJobs,
   });
+  const { data: hydrophoneJobs = [] } = useQuery({
+    queryKey: ["hydrophoneDetectionJobs"],
+    queryFn: fetchHydrophoneDetectionJobs,
+  });
+  const { data: hydrophones = [] } = useQuery({
+    queryKey: ["hydrophones"],
+    queryFn: fetchHydrophones,
+    staleTime: 60_000,
+  });
 
-  const completedJobs = jobs.filter((j) => j.status === "complete");
-  const hydrophone = completedJobs.filter((j) => j.hydrophone_name);
-  const local = completedJobs.filter((j) => !j.hydrophone_name);
+  const hydrophoneMap = useMemo(() => {
+    const m = new Map<string, HydrophoneInfo>();
+    for (const h of hydrophones) m.set(h.id, h);
+    return m;
+  }, [hydrophones]);
+
+  const allJobs = [...localJobs, ...hydrophoneJobs];
+  const completedJobs = allJobs.filter((j) => j.status === "complete");
+  const hydrophone = completedJobs.filter((j) => j.hydrophone_id);
+  const local = completedJobs.filter((j) => !j.hydrophone_id);
 
   return (
     <Card>
@@ -63,7 +91,7 @@ export function DetectionJobPicker({ selectedJobId, onSelect }: Props) {
                 <SelectLabel>Hydrophone</SelectLabel>
                 {hydrophone.map((j) => (
                   <SelectItem key={j.id} value={j.id}>
-                    {formatJobLabel(j)}
+                    {formatJobLabel(j, hydrophoneMap)}
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -73,7 +101,7 @@ export function DetectionJobPicker({ selectedJobId, onSelect }: Props) {
                 <SelectLabel>Local</SelectLabel>
                 {local.map((j) => (
                   <SelectItem key={j.id} value={j.id}>
-                    {formatJobLabel(j)}
+                    {formatJobLabel(j, hydrophoneMap)}
                   </SelectItem>
                 ))}
               </SelectGroup>

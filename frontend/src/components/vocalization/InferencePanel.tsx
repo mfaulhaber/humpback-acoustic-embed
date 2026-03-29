@@ -67,7 +67,18 @@ export function InferencePanel({
     setActiveJobId(null);
   }, [detectionJobId]);
 
-  if (!detectionJobId || !embeddingsReady) return null;
+  if (!detectionJobId) return null;
+  if (!embeddingsReady) {
+    return (
+      <Card>
+        <CardHeader className="pb-2 pt-3">
+          <CardTitle className="text-sm text-muted-foreground">
+            Inference — waiting for embeddings...
+          </CardTitle>
+        </CardHeader>
+      </Card>
+    );
+  }
 
   const isRunning =
     polledJob?.status === "queued" || polledJob?.status === "running";
