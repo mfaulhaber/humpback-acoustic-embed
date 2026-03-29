@@ -9,7 +9,7 @@ import {
   audioWindowUrl,
   audioSpectrogramPngUrl,
 } from "@/api/client";
-import type { DetectionJob, DetectionRow, NeighborHit, PredictionRow } from "@/api/types";
+import type { DetectionJob, DetectionRow, NeighborHit } from "@/api/types";
 import {
   useLabelingSummary,
   useVocalizationLabels,
@@ -17,11 +17,6 @@ import {
   useDeleteVocalizationLabel,
   useLabelVocabulary,
   useDetectionNeighbors,
-  useVocalizationModels,
-  usePredictVocalizationLabels,
-  useAnnotations,
-  useCreateAnnotation,
-  useDeleteAnnotation,
 } from "@/hooks/queries/useLabeling";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
@@ -34,10 +29,6 @@ import {
   makeToggleCollapse,
   EmbeddingSetPanel,
 } from "@/components/shared/EmbeddingSetPanel";
-import { ActiveLearningDashboard } from "./ActiveLearningDashboard";
-import { VocalizationTrainingPanel } from "./VocalizationTrainingPanel";
-import { AnnotationOverlay } from "./AnnotationOverlay";
-import { AnnotationList } from "./AnnotationList";
 import { SpectrogramPopup } from "./SpectrogramPopup";
 import {
   ChevronLeft,
@@ -49,11 +40,10 @@ import {
   SkipForward,
   X,
   Volume2,
-  PenTool,
 } from "lucide-react";
 
 type FilterMode = "all" | "unlabeled" | "labeled";
-type SortMode = "confidence" | "time" | "uncertainty";
+type SortMode = "confidence" | "time";
 
 function normalizeLabel(raw: string): string {
   return raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -131,14 +121,6 @@ export function LabelingTab() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const summaryQuery = useLabelingSummary(selectedJobId);
 
-  // ---- Vocalization classifier ----
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const vocModelsQuery = useVocalizationModels();
-  const predictionsQuery = usePredictVocalizationLabels(
-    selectedJobId,
-    selectedModelId,
-  );
-
   // ---- Embedding sets for neighbor filter ----
   const { data: embeddingSets = [] } = useEmbeddingSets();
   const { data: audioFiles = [] } = useAudioFiles();
@@ -195,14 +177,6 @@ export function LabelingTab() {
   );
 
   // Index predictions by UTC key for fast lookup
-  const predictionsByUtcKey = useMemo(() => {
-    const map = new Map<string, PredictionRow>();
-    for (const p of predictionsQuery.data ?? []) {
-      map.set(`${p.start_utc}:${p.end_utc}`, p);
-    }
-    return map;
-  }, [predictionsQuery.data]);
-
   const filteredRows = useMemo(() => {
     const rows = contentQuery.data ?? [];
     let filtered = rows;
@@ -228,20 +202,11 @@ export function LabelingTab() {
     const sorted = [...filtered];
     if (sortMode === "confidence") {
       sorted.sort((a, b) => (b.peak_confidence ?? 0) - (a.peak_confidence ?? 0));
-    } else if (sortMode === "uncertainty") {
-      // Sort by prediction uncertainty (least confident first)
-      sorted.sort((a, b) => {
-        const pa = predictionsByUtcKey.get(`${a.start_utc}:${a.end_utc}`);
-        const pb = predictionsByUtcKey.get(`${b.start_utc}:${b.end_utc}`);
-        const ca = pa?.confidence ?? 1;
-        const cb = pb?.confidence ?? 1;
-        return ca - cb; // ascending = least confident first
-      });
     } else {
       sorted.sort((a, b) => a.start_utc - b.start_utc);
     }
     return sorted;
-  }, [contentQuery.data, filterMode, sortMode, predictionsByUtcKey]);
+  }, [contentQuery.data, filterMode, sortMode]);
 
   const currentRow = filteredRows[currentIndex] ?? null;
 
@@ -400,66 +365,6 @@ export function LabelingTab() {
     }
     return options;
   }, [neighborsQuery.data]);
-
-  // ---- Annotation mode ----
-  const [annotationMode, setAnnotationMode] = useState(false);
-  const [highlightedAnnotationId, setHighlightedAnnotationId] = useState<
-    string | null
-  >(null);
-  const [pendingRegion, setPendingRegion] = useState<{
-    start: number;
-    end: number;
-  } | null>(null);
-  const [annotationLabelInput, setAnnotationLabelInput] = useState("");
-
-  const annotationsQuery = useAnnotations(selectedJobId, currentStartUtc, currentEndUtc);
-  const createAnn = useCreateAnnotation();
-  const deleteAnn = useDeleteAnnotation();
-
-  const handleCreateRegion = useCallback(
-    (startSec: number, endSec: number) => {
-      setPendingRegion({ start: startSec, end: endSec });
-      setAnnotationLabelInput("");
-    },
-    [],
-  );
-
-  const handleConfirmAnnotation = useCallback(() => {
-    if (
-      !selectedJobId ||
-      currentStartUtc == null ||
-      currentEndUtc == null ||
-      !pendingRegion ||
-      !annotationLabelInput.trim()
-    )
-      return;
-    createAnn.mutate({
-      detectionJobId: selectedJobId,
-      startUtc: currentStartUtc,
-      endUtc: currentEndUtc,
-      start_offset_sec: pendingRegion.start,
-      end_offset_sec: pendingRegion.end,
-      label: annotationLabelInput.trim(),
-    });
-    setPendingRegion(null);
-    setAnnotationLabelInput("");
-  }, [selectedJobId, currentStartUtc, currentEndUtc, pendingRegion, annotationLabelInput, createAnn]);
-
-  const handleDeleteAnnotation = useCallback(
-    (annotationId: string) => {
-      if (!selectedJobId || currentStartUtc == null || currentEndUtc == null) return;
-      deleteAnn.mutate({
-        annotationId,
-        detectionJobId: selectedJobId,
-        startUtc: currentStartUtc,
-        endUtc: currentEndUtc,
-      });
-      if (highlightedAnnotationId === annotationId) {
-        setHighlightedAnnotationId(null);
-      }
-    },
-    [selectedJobId, currentStartUtc, currentEndUtc, deleteAnn, highlightedAnnotationId],
-  );
 
   // ---- Navigation helpers ----
   const goNext = useCallback(() => {
@@ -637,26 +542,7 @@ export function LabelingTab() {
         >
           <option value="confidence">Sort: Confidence</option>
           <option value="time">Sort: Time</option>
-          {selectedModelId && (
-            <option value="uncertainty">Sort: Uncertainty</option>
-          )}
         </select>
-
-        {/* Classifier selector */}
-        {(vocModelsQuery.data ?? []).length > 0 && (
-          <select
-            value={selectedModelId ?? ""}
-            onChange={(e) => setSelectedModelId(e.target.value || null)}
-            className="border rounded px-2 py-1.5 text-sm"
-          >
-            <option value="">No classifier</option>
-            {(vocModelsQuery.data ?? []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        )}
 
         {/* Progress bar */}
         {summaryQuery.data && (
@@ -722,71 +608,6 @@ export function LabelingTab() {
                   alt="Detection spectrogram"
                   className="w-full h-auto"
                 />
-                {annotationMode && currentRow && (
-                  <AnnotationOverlay
-                    windowDuration={currentClipDuration}
-                    annotations={annotationsQuery.data ?? []}
-                    highlightedId={highlightedAnnotationId}
-                    onCreateRegion={handleCreateRegion}
-                    onDeleteAnnotation={handleDeleteAnnotation}
-                    onSelectAnnotation={setHighlightedAnnotationId}
-                  />
-                )}
-              </div>
-            )}
-
-            {/* Pending annotation label input */}
-            {pendingRegion && (
-              <div className="mb-3 flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm">
-                <span className="text-xs text-slate-600 font-mono">
-                  {pendingRegion.start.toFixed(2)}s &ndash;{" "}
-                  {pendingRegion.end.toFixed(2)}s
-                </span>
-                {inferredLabelOptions.length > 0 ? (
-                  <select
-                    value={annotationLabelInput}
-                    onChange={(e) => setAnnotationLabelInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleConfirmAnnotation();
-                      if (e.key === "Escape") setPendingRegion(null);
-                    }}
-                    className="flex-1 border rounded px-2 py-1 text-sm bg-white"
-                    autoFocus
-                  >
-                    <option value="">Select label...</option>
-                    {inferredLabelOptions.map((opt) => (
-                      <option key={opt.raw} value={opt.value}>
-                        {opt.value}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={annotationLabelInput}
-                    onChange={(e) => setAnnotationLabelInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleConfirmAnnotation();
-                      if (e.key === "Escape") setPendingRegion(null);
-                    }}
-                    placeholder="Label (e.g. whup, moan)..."
-                    className="flex-1 border rounded px-2 py-1 text-sm"
-                    autoFocus
-                  />
-                )}
-                <button
-                  onClick={handleConfirmAnnotation}
-                  disabled={!annotationLabelInput.trim()}
-                  className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 disabled:opacity-50"
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => setPendingRegion(null)}
-                  className="px-2 py-1 bg-slate-200 rounded text-xs hover:bg-slate-300"
-                >
-                  Cancel
-                </button>
               </div>
             )}
 
@@ -817,19 +638,6 @@ export function LabelingTab() {
               >
                 <SkipForward className="h-4 w-4" />
                 Next unlabeled
-              </button>
-
-              <button
-                onClick={() => setAnnotationMode((m) => !m)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm ${
-                  annotationMode
-                    ? "bg-blue-500 text-white hover:bg-blue-600"
-                    : "bg-slate-100 hover:bg-slate-200"
-                }`}
-                title="Toggle annotation mode"
-              >
-                <PenTool className="h-4 w-4" />
-                {annotationMode ? "Annotating" : "Annotate"}
               </button>
             </div>
 
@@ -869,50 +677,6 @@ export function LabelingTab() {
                 </span>
               )}
             </div>
-
-            {/* Classifier prediction */}
-            {selectedModelId && currentRow && (() => {
-              const pred = predictionsByUtcKey.get(`${currentRow.start_utc}:${currentRow.end_utc}`);
-              if (!pred) return null;
-              const sortedProbs = Object.entries(pred.probabilities).sort(
-                ([, a], [, b]) => (b as number) - (a as number),
-              );
-              return (
-                <div className="border rounded p-3 bg-amber-50 mb-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-xs text-slate-500 font-medium">
-                      Classifier Prediction
-                    </div>
-                    <button
-                      onClick={() => handleAddLabel(pred.predicted_label)}
-                      className="text-xs px-2 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded font-medium"
-                    >
-                      Accept &ldquo;{pred.predicted_label}&rdquo;
-                    </button>
-                  </div>
-                  <div className="space-y-1">
-                    {sortedProbs.map(([name, prob]) => (
-                      <div key={name} className="flex items-center gap-2 text-xs">
-                        <span className="w-20 text-slate-600 truncate">{name}</span>
-                        <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${
-                              name === pred.predicted_label
-                                ? "bg-amber-500"
-                                : "bg-slate-300"
-                            }`}
-                            style={{ width: `${(prob as number) * 100}%` }}
-                          />
-                        </div>
-                        <span className="w-10 text-right text-slate-500 font-mono">
-                          {((prob as number) * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
 
             {/* Vocalization type labels */}
             <div className="border rounded p-3 bg-white">
@@ -970,20 +734,6 @@ export function LabelingTab() {
               </div>
             </div>
 
-            {/* Annotation list (when annotation mode is active) */}
-            {annotationMode && (
-              <div className="border rounded p-3 bg-white">
-                <div className="text-xs text-slate-500 font-medium mb-2">
-                  Annotations
-                </div>
-                <AnnotationList
-                  annotations={annotationsQuery.data ?? []}
-                  highlightedId={highlightedAnnotationId}
-                  onSelect={setHighlightedAnnotationId}
-                  onDelete={handleDeleteAnnotation}
-                />
-              </div>
-            )}
           </div>
 
           {/* Similar sounds panel (35%) */}
@@ -1121,29 +871,6 @@ export function LabelingTab() {
                 </div>
               )}
 
-            {/* Vocalization classifier training */}
-            <div className="mt-4 pt-4 border-t">
-              <VocalizationTrainingPanel
-                onModelReady={(modelId) => {
-                  setSelectedModelId(modelId);
-                  vocModelsQuery.refetch();
-                }}
-              />
-            </div>
-
-            {/* Active Learning Dashboard */}
-            {selectedModelId && selectedJobId && (
-              <div className="mt-4 pt-4 border-t">
-                <div className="text-sm font-medium text-slate-700 mb-3">
-                  Active Learning
-                </div>
-                <ActiveLearningDashboard
-                  selectedModelId={selectedModelId}
-                  selectedJobId={selectedJobId}
-                  onCycleStarted={() => {}}
-                />
-              </div>
-            )}
           </div>
         </div>
       )}
