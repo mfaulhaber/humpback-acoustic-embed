@@ -1,7 +1,6 @@
 """Integration tests for vocalization labeling API."""
 
 import uuid
-from datetime import datetime, timezone
 
 import numpy as np
 import pyarrow as pa
@@ -20,6 +19,9 @@ from humpback.storage import (
     detection_embeddings_path,
     detection_row_store_path,
 )
+
+# Consistent base epoch: 2024-06-15T08:00:00Z
+BASE_EPOCH = 1718438400.0
 
 
 async def _seed_detection_job(app_settings, tmp_path):
@@ -55,23 +57,19 @@ async def _seed_detection_job(app_settings, tmp_path):
         session.add(dj)
         await session.commit()
 
-    # Write detection row store
+    # Write detection row store (UTC identity schema)
     row_store = detection_row_store_path(storage_root, job_id)
     row_store.parent.mkdir(parents=True, exist_ok=True)
     rows = [
         {
-            "row_id": "row-001",
-            "filename": "test.wav",
-            "start_sec": "0.0",
-            "end_sec": "5.0",
-            "raw_start_sec": "0.0",
-            "raw_end_sec": "5.0",
+            "start_utc": str(BASE_EPOCH),
+            "end_utc": str(BASE_EPOCH + 5.0),
+            "raw_start_utc": str(BASE_EPOCH),
+            "raw_end_utc": str(BASE_EPOCH + 5.0),
             "merged_event_count": "1",
             "avg_confidence": "0.85",
             "peak_confidence": "0.92",
             "n_windows": "1",
-            "detection_filename": "",
-            "extract_filename": "",
             "hydrophone_name": "",
             "humpback": "",
             "orca": "",
@@ -79,18 +77,14 @@ async def _seed_detection_job(app_settings, tmp_path):
             "background": "",
         },
         {
-            "row_id": "row-002",
-            "filename": "test.wav",
-            "start_sec": "5.0",
-            "end_sec": "10.0",
-            "raw_start_sec": "5.0",
-            "raw_end_sec": "10.0",
+            "start_utc": str(BASE_EPOCH + 5.0),
+            "end_utc": str(BASE_EPOCH + 10.0),
+            "raw_start_utc": str(BASE_EPOCH + 5.0),
+            "raw_end_utc": str(BASE_EPOCH + 10.0),
             "merged_event_count": "1",
             "avg_confidence": "0.70",
             "peak_confidence": "0.75",
             "n_windows": "1",
-            "detection_filename": "",
-            "extract_filename": "",
             "hydrophone_name": "",
             "humpback": "1",
             "orca": "",
@@ -100,9 +94,12 @@ async def _seed_detection_job(app_settings, tmp_path):
     ]
     write_detection_row_store(row_store, rows)
 
-    # Write detection embeddings
+    # Write detection embeddings (still uses filename/start_sec/end_sec schema)
     emb_path = detection_embeddings_path(storage_root, job_id)
     emb_path.parent.mkdir(parents=True, exist_ok=True)
+    # The embedding file uses a filename with an embedded UTC timestamp so that
+    # parse_recording_timestamp can derive BASE_EPOCH from it.
+    emb_filename = "20240615T080000Z.wav"
     schema = pa.schema(
         [
             ("filename", pa.string()),
@@ -113,7 +110,7 @@ async def _seed_detection_job(app_settings, tmp_path):
     )
     table = pa.table(
         {
-            "filename": ["test.wav", "test.wav"],
+            "filename": [emb_filename, emb_filename],
             "start_sec": [0.0, 5.0],
             "end_sec": [5.0, 10.0],
             "embedding": [
@@ -137,14 +134,10 @@ async def _seed_hydrophone_detection_job(app_settings):
 
     model_id = str(uuid.uuid4())
     job_id = str(uuid.uuid4())
-    filename = "20250702T080118Z.wav"
+    # Hydrophone job: row UTC = 1751439678.0 (2025-07-02T00:01:18Z)
+    hydro_start_utc = 1751439678.0
+    hydro_end_utc = hydro_start_utc + 5.0
     job_start_ts = 1751439600.0
-    job_relative_start = (
-        datetime.strptime("20250702T080118", "%Y%m%dT%H%M%S")
-        .replace(tzinfo=timezone.utc)
-        .timestamp()
-        - job_start_ts
-    )
 
     async with sf() as session:
         cm = ClassifierModel(
@@ -174,18 +167,14 @@ async def _seed_hydrophone_detection_job(app_settings):
     row_store.parent.mkdir(parents=True, exist_ok=True)
     rows = [
         {
-            "row_id": "row-hydro-001",
-            "filename": filename,
-            "start_sec": "0.0",
-            "end_sec": "5.0",
-            "raw_start_sec": "0.0",
-            "raw_end_sec": "5.0",
+            "start_utc": str(hydro_start_utc),
+            "end_utc": str(hydro_end_utc),
+            "raw_start_utc": str(hydro_start_utc),
+            "raw_end_utc": str(hydro_end_utc),
             "merged_event_count": "1",
             "avg_confidence": "0.85",
             "peak_confidence": "0.92",
             "n_windows": "1",
-            "detection_filename": "",
-            "extract_filename": "",
             "hydrophone_name": "orcasound_lab",
             "humpback": "",
             "orca": "",
@@ -195,6 +184,9 @@ async def _seed_hydrophone_detection_job(app_settings):
     ]
     write_detection_row_store(row_store, rows)
 
+    # Embedding file uses timestamp-based filename for UTC resolution.
+    # parse_recording_timestamp("20250702T070118Z.wav") => 1751439678.0
+    emb_filename = "20250702T070118Z.wav"
     emb_path = detection_embeddings_path(storage_root, job_id)
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     schema = pa.schema(
@@ -207,7 +199,7 @@ async def _seed_hydrophone_detection_job(app_settings):
     )
     table = pa.table(
         {
-            "filename": [filename],
+            "filename": [emb_filename],
             "start_sec": [0.0],
             "end_sec": [5.0],
             "embedding": [[1.0, 0.0, 0.0, 0.0]],
@@ -216,7 +208,7 @@ async def _seed_hydrophone_detection_job(app_settings):
     )
     pq.write_table(table, emb_path)
 
-    return job_id, model_id, filename, job_relative_start
+    return job_id, model_id, hydro_start_utc, hydro_end_utc
 
 
 async def _seed_reference_embeddings(app_settings, tmp_path):
@@ -253,15 +245,24 @@ async def _seed_reference_embeddings(app_settings, tmp_path):
         return es.id
 
 
+# Helper to build query string for UTC-keyed label/annotation endpoints
+def _utc_qs(start_utc: float, end_utc: float) -> str:
+    return f"?start_utc={start_utc}&end_utc={end_utc}"
+
+
 # ---- CRUD tests ----
 
 
 @pytest.mark.asyncio
 async def test_create_and_list_vocalization_labels(client):
     """Test creating and listing vocalization labels."""
+    s_utc = BASE_EPOCH
+    e_utc = BASE_EPOCH + 5.0
+    qs = _utc_qs(s_utc, e_utc)
+
     # Create a label (no detection job needed for basic CRUD)
     resp = await client.post(
-        "/labeling/vocalization-labels/fake-job/fake-row",
+        f"/labeling/vocalization-labels/fake-job{qs}",
         json={"label": "whup", "source": "manual"},
     )
     assert resp.status_code == 201
@@ -269,25 +270,27 @@ async def test_create_and_list_vocalization_labels(client):
     assert data["label"] == "whup"
     assert data["source"] == "manual"
     assert data["detection_job_id"] == "fake-job"
-    assert data["row_id"] == "fake-row"
+    assert data["start_utc"] == s_utc
+    assert data["end_utc"] == e_utc
     label_id = data["id"]
 
     # Create another label
     resp2 = await client.post(
-        "/labeling/vocalization-labels/fake-job/fake-row",
+        f"/labeling/vocalization-labels/fake-job{qs}",
         json={"label": "moan", "confidence": 0.85, "source": "search"},
     )
     assert resp2.status_code == 201
 
     # List labels for the row
-    resp3 = await client.get("/labeling/vocalization-labels/fake-job/fake-row")
+    resp3 = await client.get(f"/labeling/vocalization-labels/fake-job{qs}")
     assert resp3.status_code == 200
     labels = resp3.json()
     assert len(labels) == 2
     assert {lbl["label"] for lbl in labels} == {"whup", "moan"}
 
-    # List labels for non-existent row
-    resp4 = await client.get("/labeling/vocalization-labels/fake-job/other-row")
+    # List labels for different UTC range — empty
+    other_qs = _utc_qs(BASE_EPOCH + 100.0, BASE_EPOCH + 105.0)
+    resp4 = await client.get(f"/labeling/vocalization-labels/fake-job{other_qs}")
     assert resp4.status_code == 200
     assert resp4.json() == []
 
@@ -297,8 +300,12 @@ async def test_create_and_list_vocalization_labels(client):
 @pytest.mark.asyncio
 async def test_update_vocalization_label(client):
     """Test updating a vocalization label."""
+    s_utc = BASE_EPOCH + 200.0
+    e_utc = BASE_EPOCH + 205.0
+    qs = _utc_qs(s_utc, e_utc)
+
     resp = await client.post(
-        "/labeling/vocalization-labels/job1/row1",
+        f"/labeling/vocalization-labels/job1{qs}",
         json={"label": "whup"},
     )
     label_id = resp.json()["id"]
@@ -316,8 +323,12 @@ async def test_update_vocalization_label(client):
 @pytest.mark.asyncio
 async def test_delete_vocalization_label(client):
     """Test deleting a vocalization label."""
+    s_utc = BASE_EPOCH + 300.0
+    e_utc = BASE_EPOCH + 305.0
+    qs = _utc_qs(s_utc, e_utc)
+
     resp = await client.post(
-        "/labeling/vocalization-labels/job1/row1",
+        f"/labeling/vocalization-labels/job1{qs}",
         json={"label": "shriek"},
     )
     label_id = resp.json()["id"]
@@ -326,7 +337,7 @@ async def test_delete_vocalization_label(client):
     assert resp2.status_code == 204
 
     # Should be gone
-    resp3 = await client.get("/labeling/vocalization-labels/job1/row1")
+    resp3 = await client.get(f"/labeling/vocalization-labels/job1{qs}")
     labels = resp3.json()
     assert not any(lbl["id"] == label_id for lbl in labels)
 
@@ -344,16 +355,20 @@ async def test_delete_nonexistent_label(client):
 @pytest.mark.asyncio
 async def test_label_vocabulary(client):
     """Test that vocabulary returns distinct labels."""
+    qs1 = _utc_qs(BASE_EPOCH + 400.0, BASE_EPOCH + 405.0)
+    qs2 = _utc_qs(BASE_EPOCH + 410.0, BASE_EPOCH + 415.0)
+    qs3 = _utc_qs(BASE_EPOCH + 420.0, BASE_EPOCH + 425.0)
+
     await client.post(
-        "/labeling/vocalization-labels/j1/r1",
+        f"/labeling/vocalization-labels/j1{qs1}",
         json={"label": "whup"},
     )
     await client.post(
-        "/labeling/vocalization-labels/j1/r2",
+        f"/labeling/vocalization-labels/j1{qs2}",
         json={"label": "moan"},
     )
     await client.post(
-        "/labeling/vocalization-labels/j2/r1",
+        f"/labeling/vocalization-labels/j2{qs3}",
         json={"label": "whup"},
     )
 
@@ -382,17 +397,20 @@ async def test_labeling_summary(client, app_settings, tmp_path):
     assert data["unlabeled_rows"] == 2
     assert data["label_distribution"] == {}
 
-    # Add labels
+    # Add labels using UTC identity of the seeded rows
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-001",
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-001",
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
         json={"label": "moan"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-002",
+        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
         json={"label": "whup"},
     )
 
@@ -424,9 +442,8 @@ async def test_detection_neighbors(client, app_settings, tmp_path):
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
         json={
-            "filename": "test.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": BASE_EPOCH,
+            "end_utc": BASE_EPOCH + 5.0,
             "top_k": 5,
             "embedding_set_ids": [ref_es_id],
         },
@@ -449,9 +466,8 @@ async def test_detection_neighbors_missing_embedding(client, app_settings, tmp_p
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
         json={
-            "filename": "nonexistent.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": 9999999999.0,
+            "end_utc": 9999999999.0 + 5.0,
         },
     )
     assert resp.status_code == 404
@@ -463,64 +479,29 @@ async def test_detection_neighbors_nonexistent_job(client):
     resp = await client.post(
         "/labeling/detection-neighbors/nonexistent",
         json={
-            "filename": "test.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "start_utc": BASE_EPOCH,
+            "end_utc": BASE_EPOCH + 5.0,
         },
     )
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_detection_neighbors_hydrophone_job_relative_offsets(
-    client, app_settings, tmp_path
-):
-    """Hydrophone neighbor lookup accepts the job-relative offsets returned by GET /content."""
+async def test_detection_neighbors_hydrophone_utc(client, app_settings, tmp_path):
+    """Hydrophone neighbor lookup works with UTC identity params."""
     (
         job_id,
         _model_id,
-        filename,
-        job_relative_start,
+        hydro_start_utc,
+        hydro_end_utc,
     ) = await _seed_hydrophone_detection_job(app_settings)
     ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
 
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
         json={
-            "filename": filename,
-            "start_sec": job_relative_start,
-            "end_sec": job_relative_start + 5.0,
-            "top_k": 5,
-            "embedding_set_ids": [ref_es_id],
-        },
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["hits"]) > 0
-    assert data["total_candidates"] > 0
-
-
-@pytest.mark.asyncio
-async def test_detection_neighbors_hydrophone_detection_filename_preferred(
-    client, app_settings, tmp_path
-):
-    """Canonical detection filename resolves the embedding even when fallback offsets are wrong."""
-    (
-        job_id,
-        _model_id,
-        filename,
-        _job_relative_start,
-    ) = await _seed_hydrophone_detection_job(app_settings)
-    ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
-
-    canonical_detection_filename = "20250702T080118Z_20250702T080123Z.flac"
-    resp = await client.post(
-        f"/labeling/detection-neighbors/{job_id}",
-        json={
-            "filename": filename,
-            "start_sec": 123.0,
-            "end_sec": 128.0,
-            "detection_filename": canonical_detection_filename,
+            "start_utc": hydro_start_utc,
+            "end_utc": hydro_end_utc,
             "top_k": 5,
             "embedding_set_ids": [ref_es_id],
         },
@@ -540,12 +521,15 @@ async def test_create_vocalization_training_job(client, app_settings, tmp_path):
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # Add vocalization labels (need at least 2 distinct labels)
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-001",
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-002",
+        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
         json={"label": "moan"},
     )
 
@@ -570,12 +554,15 @@ async def test_get_vocalization_training_job(client, app_settings, tmp_path):
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # Add vocalization labels (need at least 2 distinct labels)
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-001",
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-002",
+        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
         json={"label": "moan"},
     )
 
@@ -618,8 +605,9 @@ async def test_create_vocalization_training_job_too_few_labels(
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # Only one label
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}/row-001",
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
         json={"label": "whup"},
     )
 
@@ -665,9 +653,13 @@ async def test_predict_nonexistent_model(client, app_settings, tmp_path):
 @pytest.mark.asyncio
 async def test_annotation_crud(client):
     """Test create, list, update, and delete annotations."""
+    s_utc = BASE_EPOCH + 500.0
+    e_utc = BASE_EPOCH + 505.0
+    qs = _utc_qs(s_utc, e_utc)
+
     # Create
     resp = await client.post(
-        "/labeling/annotations/job-1/row-1",
+        f"/labeling/annotations/job-1{qs}",
         json={
             "start_offset_sec": 1.0,
             "end_offset_sec": 3.5,
@@ -681,10 +673,12 @@ async def test_annotation_crud(client):
     assert data["end_offset_sec"] == 3.5
     assert data["label"] == "whup"
     assert data["notes"] == "clear call"
+    assert data["start_utc"] == s_utc
+    assert data["end_utc"] == e_utc
     ann_id = data["id"]
 
     # List
-    resp2 = await client.get("/labeling/annotations/job-1/row-1")
+    resp2 = await client.get(f"/labeling/annotations/job-1{qs}")
     assert resp2.status_code == 200
     anns = resp2.json()
     assert len(anns) == 1
@@ -704,15 +698,16 @@ async def test_annotation_crud(client):
     assert resp4.status_code == 204
 
     # List again — empty
-    resp5 = await client.get("/labeling/annotations/job-1/row-1")
+    resp5 = await client.get(f"/labeling/annotations/job-1{qs}")
     assert resp5.json() == []
 
 
 @pytest.mark.asyncio
 async def test_annotation_invalid_bounds(client):
     """Reject annotation where end <= start."""
+    qs = _utc_qs(BASE_EPOCH + 600.0, BASE_EPOCH + 605.0)
     resp = await client.post(
-        "/labeling/annotations/job-1/row-1",
+        f"/labeling/annotations/job-1{qs}",
         json={
             "start_offset_sec": 3.0,
             "end_offset_sec": 2.0,
@@ -725,7 +720,8 @@ async def test_annotation_invalid_bounds(client):
 @pytest.mark.asyncio
 async def test_annotation_list_empty(client):
     """List annotations for row with none returns empty list."""
-    resp = await client.get("/labeling/annotations/job-1/nonexistent-row")
+    qs = _utc_qs(BASE_EPOCH + 700.0, BASE_EPOCH + 705.0)
+    resp = await client.get(f"/labeling/annotations/job-1{qs}")
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -740,16 +736,20 @@ async def test_annotation_delete_nonexistent(client):
 @pytest.mark.asyncio
 async def test_multiple_annotations_per_row(client):
     """Multiple annotations can exist on the same detection row."""
+    s_utc = BASE_EPOCH + 800.0
+    e_utc = BASE_EPOCH + 805.0
+    qs = _utc_qs(s_utc, e_utc)
+
     await client.post(
-        "/labeling/annotations/job-2/row-1",
+        f"/labeling/annotations/job-2{qs}",
         json={"start_offset_sec": 0.0, "end_offset_sec": 1.5, "label": "whup"},
     )
     await client.post(
-        "/labeling/annotations/job-2/row-1",
+        f"/labeling/annotations/job-2{qs}",
         json={"start_offset_sec": 2.0, "end_offset_sec": 4.0, "label": "moan"},
     )
 
-    resp = await client.get("/labeling/annotations/job-2/row-1")
+    resp = await client.get(f"/labeling/annotations/job-2{qs}")
     anns = resp.json()
     assert len(anns) == 2
     # Should be sorted by start_offset_sec
@@ -762,12 +762,15 @@ async def test_summary_includes_annotation_labels(client, app_settings, tmp_path
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # No vocalization labels — only annotations
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+
     await client.post(
-        f"/labeling/annotations/{job_id}/row-001",
+        f"/labeling/annotations/{job_id}{row1_qs}",
         json={"start_offset_sec": 0.5, "end_offset_sec": 3.0, "label": "whup"},
     )
     await client.post(
-        f"/labeling/annotations/{job_id}/row-002",
+        f"/labeling/annotations/{job_id}{row2_qs}",
         json={"start_offset_sec": 1.0, "end_offset_sec": 4.0, "label": "moan"},
     )
 
@@ -785,12 +788,15 @@ async def test_training_summary_aggregates_across_jobs(client, app_settings, tmp
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # Add annotations to this job
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+
     await client.post(
-        f"/labeling/annotations/{job_id}/row-001",
+        f"/labeling/annotations/{job_id}{row1_qs}",
         json={"start_offset_sec": 0.5, "end_offset_sec": 3.0, "label": "whup"},
     )
     await client.post(
-        f"/labeling/annotations/{job_id}/row-002",
+        f"/labeling/annotations/{job_id}{row2_qs}",
         json={"start_offset_sec": 1.0, "end_offset_sec": 4.0, "label": "moan"},
     )
 
@@ -811,12 +817,15 @@ async def test_training_job_accepts_annotation_only_labels(
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # Only annotations, no vocalization labels
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+
     await client.post(
-        f"/labeling/annotations/{job_id}/row-001",
+        f"/labeling/annotations/{job_id}{row1_qs}",
         json={"start_offset_sec": 0.5, "end_offset_sec": 3.0, "label": "whup"},
     )
     await client.post(
-        f"/labeling/annotations/{job_id}/row-002",
+        f"/labeling/annotations/{job_id}{row2_qs}",
         json={"start_offset_sec": 1.0, "end_offset_sec": 4.0, "label": "moan"},
     )
 

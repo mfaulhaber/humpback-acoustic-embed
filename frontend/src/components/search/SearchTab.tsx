@@ -46,9 +46,8 @@ import type { ParentNode } from "@/components/shared/EmbeddingSetPanel";
 interface DetectionSearchState {
   source: "detection";
   detectionJobId: string;
-  filename: string;
-  startSec: number;
-  endSec: number;
+  startUtc: number;
+  endUtc: number;
   clipDuration: number;
 }
 
@@ -230,9 +229,8 @@ export function SearchTab() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             detection_job_id: detectionState.detectionJobId,
-            filename: detectionState.filename,
-            start_sec: detectionState.startSec,
-            end_sec: detectionState.endSec,
+            start_utc: detectionState.startUtc,
+            end_utc: detectionState.endUtc,
             top_k: topK,
             metric,
           }),
@@ -653,20 +651,18 @@ function DetectionQueryCard({
   onSpectrogramClick: (url: string, dur: number, e: React.MouseEvent) => void;
   onSwitchToStandalone: () => void;
 }) {
-  const clipDuration = state.endSec - state.startSec;
+  const clipDuration = state.endUtc - state.startUtc;
   const specUrl = detectionSpectrogramUrl(
     state.detectionJobId,
-    state.filename,
-    state.startSec,
+    state.startUtc,
     clipDuration,
   );
   const audioUrl = detectionAudioSliceUrl(
     state.detectionJobId,
-    state.filename,
-    state.startSec,
+    state.startUtc,
     clipDuration,
   );
-  const playKey = `det:${state.detectionJobId}:${state.startSec}`;
+  const playKey = `det:${state.detectionJobId}:${state.startUtc}`;
   const isPlaying = playingKey === playKey;
 
   return (
@@ -681,10 +677,7 @@ function DetectionQueryCard({
         <div className="flex-1 text-sm space-y-0.5">
           <div className="font-medium">Detection Query</div>
           <div className="text-muted-foreground">
-            Job: {state.detectionJobId.slice(0, 8)}... | {state.startSec.toFixed(1)}s - {state.endSec.toFixed(1)}s
-          </div>
-          <div className="text-muted-foreground truncate text-xs">
-            {state.filename}
+            Job: {state.detectionJobId.slice(0, 8)}... | {clipDuration.toFixed(1)}s clip
           </div>
         </div>
         <button

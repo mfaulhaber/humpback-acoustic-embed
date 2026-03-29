@@ -19,7 +19,8 @@ class VocalizationLabelUpdate(BaseModel):
 class VocalizationLabelOut(BaseModel):
     id: str
     detection_job_id: str
-    row_id: str
+    start_utc: float
+    end_utc: float
     label: str
     confidence: float | None = None
     source: str
@@ -62,10 +63,8 @@ class TrainingSummary(BaseModel):
 
 
 class DetectionNeighborsRequest(BaseModel):
-    filename: str
-    start_sec: float = Field(ge=0)
-    end_sec: float = Field(gt=0)
-    detection_filename: str | None = None
+    start_utc: float
+    end_utc: float
     top_k: int = Field(default=10, ge=1, le=100)
     metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
     embedding_set_ids: list[str] | None = None
@@ -110,7 +109,8 @@ class PredictRequest(BaseModel):
 
 
 class PredictionRow(BaseModel):
-    row_id: str
+    start_utc: float
+    end_utc: float
     predicted_label: str
     confidence: float
     probabilities: dict[str, float]
@@ -136,7 +136,8 @@ class AnnotationUpdate(BaseModel):
 class AnnotationOut(BaseModel):
     id: str
     detection_job_id: str
-    row_id: str
+    start_utc: float
+    end_utc: float
     start_offset_sec: float
     end_offset_sec: float
     label: str
@@ -162,10 +163,8 @@ class ActiveLearningCycleResponse(BaseModel):
 
 
 class UncertaintyQueueRow(BaseModel):
-    row_id: str
-    filename: str
-    start_sec: float
-    end_sec: float
+    start_utc: float
+    end_utc: float
     avg_confidence: float
     peak_confidence: float
     predicted_label: str | None = None

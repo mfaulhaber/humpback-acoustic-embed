@@ -39,9 +39,8 @@ class SimilaritySearchResponse(BaseModel):
 
 class AudioSearchRequest(BaseModel):
     detection_job_id: str
-    filename: str
-    start_sec: float = Field(ge=0)
-    end_sec: float = Field(gt=0)
+    start_utc: float
+    end_utc: float
     top_k: int = Field(default=20, ge=1, le=500)
     metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
     embedding_set_ids: list[str] | None = None

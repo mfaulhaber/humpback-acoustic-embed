@@ -16,12 +16,11 @@ from humpback.classifier.detection_rows import (
 
 
 def _make_row(
-    row_id: str, start: float, end: float, label: str | None = None
+    start_utc: float, end_utc: float, label: str | None = None
 ) -> dict[str, str]:
     row = {f: "" for f in ROW_STORE_FIELDNAMES}
-    row["row_id"] = row_id
-    row["start_sec"] = str(start)
-    row["end_sec"] = str(end)
+    row["start_utc"] = str(float(start_utc))
+    row["end_utc"] = str(float(end_utc))
     if label:
         row[label] = "1"
     return row
@@ -35,14 +34,13 @@ def _make_row(
 def test_normalize_null_confidence_row() -> None:
     """normalize_detection_row returns None for avg/peak confidence when fields are empty."""
     row = {
-        "filename": "test.wav",
-        "start_sec": "0.0",
-        "end_sec": "5.0",
+        "start_utc": "1000.0",
+        "end_utc": "1005.0",
         "avg_confidence": "",
         "peak_confidence": "",
         "humpback": "1",
     }
-    result = normalize_detection_row(row, is_hydrophone=False, window_size_seconds=5.0)
+    result = normalize_detection_row(row)
     assert result["avg_confidence"] is None
     assert result["peak_confidence"] is None
 
@@ -50,13 +48,12 @@ def test_normalize_null_confidence_row() -> None:
 def test_normalize_confidence_row_with_values() -> None:
     """normalize_detection_row correctly parses numeric confidence values."""
     row = {
-        "filename": "test.wav",
-        "start_sec": "0.0",
-        "end_sec": "5.0",
+        "start_utc": "1000.0",
+        "end_utc": "1005.0",
         "avg_confidence": "0.85",
         "peak_confidence": "0.92",
     }
-    result = normalize_detection_row(row, is_hydrophone=False, window_size_seconds=5.0)
+    result = normalize_detection_row(row)
     assert result["avg_confidence"] == 0.85
     assert result["peak_confidence"] == 0.92
 
@@ -64,11 +61,10 @@ def test_normalize_confidence_row_with_values() -> None:
 def test_normalize_confidence_row_with_none_values() -> None:
     """normalize_detection_row returns None when confidence fields are absent."""
     row = {
-        "filename": "test.wav",
-        "start_sec": "1.0",
-        "end_sec": "6.0",
+        "start_utc": "1001.0",
+        "end_utc": "1006.0",
     }
-    result = normalize_detection_row(row, is_hydrophone=False, window_size_seconds=5.0)
+    result = normalize_detection_row(row)
     assert result["avg_confidence"] is None
     assert result["peak_confidence"] is None
 
@@ -82,13 +78,13 @@ JOB_DURATION = 60.0
 
 def test_apply_label_edits_add() -> None:
     """Adding a new labeled row creates it with the correct label."""
-    rows = [_make_row("r1", 0, 5)]
-    edits = [{"action": "add", "start_sec": 10.0, "end_sec": 15.0, "label": "humpback"}]
+    rows = [_make_row(0, 5)]
+    edits = [{"action": "add", "start_utc": 10.0, "end_utc": 15.0, "label": "humpback"}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
-    added = [r for r in result if r["row_id"] != "r1"]
+    added = [r for r in result if r.get("start_utc") == "10.0"]
     assert len(added) == 1
-    assert added[0]["start_sec"] == "10.0"
-    assert added[0]["end_sec"] == "15.0"
+    assert added[0]["start_utc"] == "10.0"
+    assert added[0]["end_utc"] == "15.0"
     assert added[0]["humpback"] == "1"
     # Other label fields should be empty
     for lbl in LABEL_FIELDNAMES:
@@ -97,35 +93,38 @@ def test_apply_label_edits_add() -> None:
 
 
 def test_apply_label_edits_move() -> None:
-    """Moving a row updates its start_sec and end_sec."""
-    rows = [_make_row("r1", 5, 10, "humpback")]
+    """Moving a row updates its start_utc and end_utc."""
+    rows = [_make_row(5, 10, "humpback")]
     edits = [
         {
             "action": "move",
-            "row_id": "r1",
-            "new_start_sec": 15.0,
-            "new_end_sec": 20.0,
+            "start_utc": 5.0,
+            "end_utc": 10.0,
+            "new_start_utc": 15.0,
+            "new_end_utc": 20.0,
         }
     ]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     assert len(result) == 1
-    assert result[0]["start_sec"] == "15.0"
-    assert result[0]["end_sec"] == "20.0"
+    assert result[0]["start_utc"] == "15.0"
+    assert result[0]["end_utc"] == "20.0"
 
 
 def test_apply_label_edits_delete() -> None:
     """Deleting a row removes it from the result."""
-    rows = [_make_row("r1", 0, 5, "humpback"), _make_row("r2", 10, 15, "orca")]
-    edits = [{"action": "delete", "row_id": "r1"}]
+    rows = [_make_row(0, 5, "humpback"), _make_row(10, 15, "orca")]
+    edits = [{"action": "delete", "start_utc": 0.0, "end_utc": 5.0}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     assert len(result) == 1
-    assert result[0]["row_id"] == "r2"
+    assert result[0]["start_utc"] == "10.0"
 
 
 def test_apply_label_edits_change_type() -> None:
     """Changing type sets the target label and clears all others."""
-    rows = [_make_row("r1", 0, 5, "humpback")]
-    edits = [{"action": "change_type", "row_id": "r1", "label": "orca"}]
+    rows = [_make_row(0, 5, "humpback")]
+    edits = [
+        {"action": "change_type", "start_utc": 0.0, "end_utc": 5.0, "label": "orca"}
+    ]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     assert result[0]["orca"] == "1"
     assert result[0]["humpback"] == ""
@@ -137,54 +136,50 @@ def test_apply_label_edits_overlap_rejected() -> None:
     """Two adds in the same batch that overlap are rejected."""
     rows: list[dict[str, str]] = []
     edits = [
-        {"action": "add", "start_sec": 5.0, "end_sec": 10.0, "label": "humpback"},
-        {"action": "add", "start_sec": 8.0, "end_sec": 13.0, "label": "orca"},
+        {"action": "add", "start_utc": 5.0, "end_utc": 10.0, "label": "humpback"},
+        {"action": "add", "start_utc": 8.0, "end_utc": 13.0, "label": "orca"},
     ]
     with pytest.raises(ValueError, match="overlap"):
         apply_label_edits(rows, edits, job_duration=JOB_DURATION)
 
 
-def test_apply_label_edits_move_out_of_bounds() -> None:
-    """Moving a row out of [0, job_duration] raises ValueError."""
-    rows = [_make_row("r1", 5, 10, "humpback")]
-    # Move before 0
-    edits_before = [
-        {"action": "move", "row_id": "r1", "new_start_sec": -1.0, "new_end_sec": 4.0}
-    ]
-    with pytest.raises(ValueError, match="out of bounds"):
-        apply_label_edits(rows, edits_before, job_duration=JOB_DURATION)
-
-    # Move after job_duration
-    edits_after = [
+def test_apply_label_edits_move_succeeds() -> None:
+    """Moving a row updates its UTC coordinates."""
+    rows = [_make_row(5, 10, "humpback")]
+    edits = [
         {
             "action": "move",
-            "row_id": "r1",
-            "new_start_sec": 55.0,
-            "new_end_sec": 65.0,
+            "start_utc": 5.0,
+            "end_utc": 10.0,
+            "new_start_utc": 55.0,
+            "new_end_utc": 60.0,
         }
     ]
-    with pytest.raises(ValueError, match="out of bounds"):
-        apply_label_edits(rows, edits_after, job_duration=JOB_DURATION)
+    result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
+    assert len(result) == 1
+    assert result[0]["start_utc"] == "55.0"
+    assert result[0]["end_utc"] == "60.0"
 
 
 def test_apply_label_edits_unlabeled_replacement() -> None:
     """Adding a labeled row over an unlabeled row replaces the unlabeled row."""
-    rows = [_make_row("r1", 10, 15)]  # no label = unlabeled
-    edits = [{"action": "add", "start_sec": 10.0, "end_sec": 15.0, "label": "humpback"}]
+    rows = [_make_row(10, 15)]  # no label = unlabeled
+    edits = [{"action": "add", "start_utc": 10.0, "end_utc": 15.0, "label": "humpback"}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     # The unlabeled row should have been removed, replaced by the new one
     assert len(result) == 1
     assert result[0]["humpback"] == "1"
-    assert result[0]["row_id"] != "r1"  # new row gets a generated ID
 
 
 def test_apply_label_edits_single_label_enforcement() -> None:
     """change_type clears all label fields and sets only the target one."""
-    row = _make_row("r1", 0, 5)
+    row = _make_row(0, 5)
     row["humpback"] = "1"
-    row["orca"] = "1"  # shouldn't normally happen, but enforce clearing
+    row["orca"] = "1"
     rows = [row]
-    edits = [{"action": "change_type", "row_id": "r1", "label": "ship"}]
+    edits = [
+        {"action": "change_type", "start_utc": 0.0, "end_utc": 5.0, "label": "ship"}
+    ]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     assert result[0]["ship"] == "1"
     for lbl in LABEL_FIELDNAMES:
@@ -193,36 +188,33 @@ def test_apply_label_edits_single_label_enforcement() -> None:
 
 
 def test_apply_label_edits_missing_row_id() -> None:
-    """Referencing a non-existent row_id raises ValueError."""
-    rows = [_make_row("r1", 0, 5, "humpback")]
-    edits = [{"action": "delete", "row_id": "nonexistent"}]
+    """Referencing a non-existent (start_utc, end_utc) raises ValueError."""
+    rows = [_make_row(0, 5, "humpback")]
+    edits = [{"action": "delete", "start_utc": 99.0, "end_utc": 104.0}]
     with pytest.raises(ValueError, match="not found"):
         apply_label_edits(rows, edits, job_duration=JOB_DURATION)
 
 
 def test_apply_label_edits_preexisting_overlaps_tolerated() -> None:
     """Pre-existing overlapping labeled rows do not block unrelated edits."""
-    # Simulate hydrophone detection rows from different audio chunks that
-    # happen to share file-relative timestamps.
     rows = [
-        _make_row("r1", 0, 5, "humpback"),
-        _make_row("r2", 3, 8, "humpback"),  # overlaps r1
-        _make_row("r3", 50, 55),  # unlabeled
+        _make_row(0, 5, "humpback"),
+        _make_row(3, 8, "humpback"),  # overlaps first
+        _make_row(50, 55),  # unlabeled
     ]
-    # Adding a non-overlapping label should succeed despite the r1/r2 overlap.
-    edits = [{"action": "add", "start_sec": 40.0, "end_sec": 45.0, "label": "orca"}]
+    edits = [{"action": "add", "start_utc": 40.0, "end_utc": 45.0, "label": "orca"}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     labels = [r for r in result if r.get("orca") == "1"]
     assert len(labels) == 1
-    assert labels[0]["start_sec"] == "40.0"
+    assert labels[0]["start_utc"] == "40.0"
 
 
 def test_apply_label_edits_new_overlap_still_rejected() -> None:
     """Two adds in the same batch that overlap each other are still rejected."""
     rows: list[dict[str, str]] = []
     edits = [
-        {"action": "add", "start_sec": 10.0, "end_sec": 15.0, "label": "humpback"},
-        {"action": "add", "start_sec": 12.0, "end_sec": 17.0, "label": "orca"},
+        {"action": "add", "start_utc": 10.0, "end_utc": 15.0, "label": "humpback"},
+        {"action": "add", "start_utc": 12.0, "end_utc": 17.0, "label": "orca"},
     ]
     with pytest.raises(ValueError, match="overlap"):
         apply_label_edits(rows, edits, job_duration=JOB_DURATION)
@@ -230,8 +222,8 @@ def test_apply_label_edits_new_overlap_still_rejected() -> None:
 
 def test_apply_label_edits_add_overlapping_existing_tolerated() -> None:
     """Adding a label that overlaps a pre-existing labeled row is tolerated."""
-    rows = [_make_row("r1", 10, 15, "humpback")]
-    edits = [{"action": "add", "start_sec": 12.0, "end_sec": 17.0, "label": "orca"}]
+    rows = [_make_row(10, 15, "humpback")]
+    edits = [{"action": "add", "start_utc": 12.0, "end_utc": 17.0, "label": "orca"}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     labels = [r for r in result if r.get("orca") == "1"]
     assert len(labels) == 1

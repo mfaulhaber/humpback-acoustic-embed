@@ -27,7 +27,6 @@ from humpback.classifier.detector import (
 from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     append_detection_row_store,
-    build_detection_row_id,
     ensure_detection_row_store,
     format_optional_float,
     format_optional_int,
@@ -74,42 +73,30 @@ logger = logging.getLogger(__name__)
 
 def _detection_dicts_to_store_rows(
     detections: list[dict],
-    *,
-    is_hydrophone: bool,
-    window_size_seconds: float,
 ) -> list[dict[str, str]]:
     """Convert raw detection dicts (from the detector) to row-store format.
 
-    Each detection dict has string values for fields like filename, start_sec,
-    etc. We normalize through the row-store pipeline to produce dicts keyed by
-    ROW_STORE_FIELDNAMES with string values.
+    Each detection dict has UTC fields (start_utc, end_utc, etc.) produced by
+    the detector.  We normalize through the row-store pipeline to produce dicts
+    keyed by ROW_STORE_FIELDNAMES with string values.
     """
     store_rows: list[dict[str, str]] = []
     for det in detections:
-        # Convert to string dict for normalize_detection_row
         str_det: dict[str, str] = {k: str(v) for k, v in det.items()}
-        normalized = normalize_detection_row(
-            str_det,
-            is_hydrophone=is_hydrophone,
-            window_size_seconds=window_size_seconds,
-        )
+        normalized = normalize_detection_row(str_det)
         out_row: dict[str, str] = {field: "" for field in ROW_STORE_FIELDNAMES}
-        out_row["row_id"] = normalized["row_id"] or build_detection_row_id(normalized)
-        out_row["filename"] = normalized["filename"]
-        out_row["start_sec"] = format_optional_float(normalized["start_sec"])
-        out_row["end_sec"] = format_optional_float(normalized["end_sec"])
+        out_row["start_utc"] = format_optional_float(normalized["start_utc"])
+        out_row["end_utc"] = format_optional_float(normalized["end_utc"])
         out_row["avg_confidence"] = format_optional_float(normalized["avg_confidence"])
         out_row["peak_confidence"] = format_optional_float(
             normalized["peak_confidence"]
         )
         out_row["n_windows"] = format_optional_int(normalized["n_windows"])
-        out_row["raw_start_sec"] = format_optional_float(normalized["raw_start_sec"])
-        out_row["raw_end_sec"] = format_optional_float(normalized["raw_end_sec"])
+        out_row["raw_start_utc"] = format_optional_float(normalized["raw_start_utc"])
+        out_row["raw_end_utc"] = format_optional_float(normalized["raw_end_utc"])
         out_row["merged_event_count"] = format_optional_int(
             normalized["merged_event_count"]
         )
-        out_row["detection_filename"] = normalized["detection_filename"] or ""
-        out_row["extract_filename"] = normalized["extract_filename"] or ""
         out_row["hydrophone_name"] = normalized["hydrophone_name"] or ""
         for label in ("humpback", "orca", "ship", "background"):
             value = normalized[label]
@@ -647,12 +634,12 @@ async def _run_vocalization_training_job(
             )
             voc_labels = result.scalars().all()
 
-            # Index labels by row_id (vocalization labels take priority)
-            label_by_row_id: dict[str, str] = {}
+            # Index labels by (start_utc, end_utc) composite key
+            label_by_utc: dict[tuple[float, float], str] = {}
             for vl in voc_labels:
-                # Use the first label per row_id (if multiple, take the first)
-                if vl.row_id not in label_by_row_id:
-                    label_by_row_id[vl.row_id] = vl.label
+                key = (vl.start_utc, vl.end_utc)
+                if key not in label_by_utc:
+                    label_by_utc[key] = vl.label
 
             # Fall back to annotation labels for rows without vocalization labels
             ann_result = await session.execute(
@@ -661,57 +648,33 @@ async def _run_vocalization_training_job(
                 )
             )
             for ann in ann_result.scalars().all():
-                if ann.row_id not in label_by_row_id:
-                    label_by_row_id[ann.row_id] = ann.label
+                key = (ann.start_utc, ann.end_utc)
+                if key not in label_by_utc:
+                    label_by_utc[key] = ann.label
 
-            # Read row store to map embedding position -> row_id
+            # Map embedding rows to UTC keys via filename timestamps
             from humpback.classifier.detection_rows import (
-                read_detection_row_store,
+                parse_recording_timestamp,
             )
-            from humpback.storage import detection_row_store_path
 
-            row_store = detection_row_store_path(settings.storage_root, det_job_id)
-            row_id_by_index: dict[int, str] = {}
-            if not row_store.exists():
-                logger.warning(
-                    "No row store for detection job %s at %s, "
-                    "cannot match embeddings to labels",
-                    det_job_id,
-                    row_store,
-                )
-            if row_store.exists():
-                _fnames, store_rows = read_detection_row_store(row_store)
-                # Build a normalized key -> row_id map from the row store
-                row_id_by_key: dict[str, str] = {}
-                for row in store_rows:
-                    fn = row.get("filename", "")
-                    ss = f"{float(row.get('start_sec', 0))}"
-                    es = f"{float(row.get('end_sec', 0))}"
-                    row_id_by_key[f"{fn}:{ss}:{es}"] = row.get("row_id", "")
-
-                # Match embedding rows to row store by normalized key
-                for i in range(table.num_rows):
-                    key = f"{filenames[i]}:{float(start_secs[i])}:{float(end_secs[i])}"
-                    rid = row_id_by_key.get(key, "")
-                    if rid:
-                        row_id_by_index[i] = rid
-
-            # Match embeddings to labels
             matched = 0
             for i in range(table.num_rows):
-                row_id = row_id_by_index.get(i, "")
-                if row_id in label_by_row_id:
+                fname = filenames[i]
+                ts = parse_recording_timestamp(fname)
+                base_epoch = ts.timestamp() if ts else 0.0
+                row_start_utc = base_epoch + float(start_secs[i])
+                row_end_utc = base_epoch + float(end_secs[i])
+                utc_key = (row_start_utc, row_end_utc)
+                if utc_key in label_by_utc:
                     vec = np.array(embeddings_col[i].as_py(), dtype=np.float32)
                     all_embeddings.append(vec)
-                    all_labels.append(label_by_row_id[row_id])
+                    all_labels.append(label_by_utc[utc_key])
                     matched += 1
             logger.info(
-                "Detection job %s: %d embeddings, %d labels (voc+ann), "
-                "%d row-store entries, %d matched",
+                "Detection job %s: %d embeddings, %d labels (voc+ann), %d matched",
                 det_job_id,
                 table.num_rows,
-                len(label_by_row_id),
-                len(row_id_by_index),
+                len(label_by_utc),
                 matched,
             )
 
@@ -831,11 +794,7 @@ async def run_detection_job(
         def on_file_complete(file_detections: list[dict], files_done: int, total: int):
             # Append detections to Parquet row store (synchronous file I/O, safe from thread)
             if file_detections:
-                store_rows = _detection_dicts_to_store_rows(
-                    file_detections,
-                    is_hydrophone=False,
-                    window_size_seconds=cm.window_size_seconds,
-                )
+                store_rows = _detection_dicts_to_store_rows(file_detections)
                 append_detection_row_store(rs_path, store_rows)
 
             # Schedule async DB progress update on the event loop
@@ -901,7 +860,6 @@ async def run_detection_job(
         ensure_detection_row_store(
             row_store_path=rs_path,
             diagnostics_path=diag_path,
-            is_hydrophone=False,
             window_size_seconds=cm.window_size_seconds,
             refresh_existing=True,
             detection_mode=job.detection_mode,
@@ -1030,7 +988,6 @@ async def run_hydrophone_detection_job(
             s3_cache_path=settings.s3_cache_path,
             noaa_cache_path=settings.noaa_cache_path,
         )
-        hydrophone_short_name = hydrophone_provider.source_id
         provider_mode = _hydrophone_provider_mode(
             hydrophone_id,
             local_cache_path=job.local_cache_path,
@@ -1053,13 +1010,7 @@ async def run_hydrophone_detection_job(
             time_covered_sec: float,
         ):
             if chunk_detections:
-                for det in chunk_detections:
-                    det["hydrophone_name"] = hydrophone_short_name
-                store_rows = _detection_dicts_to_store_rows(
-                    chunk_detections,
-                    is_hydrophone=True,
-                    window_size_seconds=cm.window_size_seconds,
-                )
+                store_rows = _detection_dicts_to_store_rows(chunk_detections)
                 append_detection_row_store(rs_path, store_rows)
 
             if session_factory is not None:
@@ -1274,7 +1225,6 @@ async def run_hydrophone_detection_job(
             ensure_detection_row_store(
                 row_store_path=rs_path,
                 diagnostics_path=diag_path if diag_path.exists() else None,
-                is_hydrophone=True,
                 window_size_seconds=cm.window_size_seconds,
                 refresh_existing=True,
                 detection_mode=job.detection_mode,
@@ -1298,7 +1248,6 @@ async def run_hydrophone_detection_job(
         ensure_detection_row_store(
             row_store_path=rs_path,
             diagnostics_path=diag_path if diag_path.exists() else None,
-            is_hydrophone=True,
             window_size_seconds=cm.window_size_seconds,
             refresh_existing=True,
             detection_mode=job.detection_mode,
@@ -1413,7 +1362,6 @@ async def run_extraction_job(
         ensure_detection_row_store(
             row_store_path=row_store_path,
             diagnostics_path=diagnostics_path if diagnostics_path.exists() else None,
-            is_hydrophone=job.hydrophone_id is not None,
             window_size_seconds=ws,
             detection_mode=job.detection_mode,
             tsv_path=tsv_path,

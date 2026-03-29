@@ -302,20 +302,18 @@ export const extractLabeledSamples = (
 
 export function detectionAudioSliceUrl(
   jobId: string,
-  filename: string,
-  startSec: number,
+  startUtc: number,
   durationSec: number,
 ) {
-  return `/classifier/detection-jobs/${jobId}/audio-slice?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&duration_sec=${durationSec}`;
+  return `/classifier/detection-jobs/${jobId}/audio-slice?start_utc=${startUtc}&duration_sec=${durationSec}`;
 }
 
 export function detectionSpectrogramUrl(
   jobId: string,
-  filename: string,
-  startSec: number,
+  startUtc: number,
   durationSec: number,
 ) {
-  return `/classifier/detection-jobs/${jobId}/spectrogram?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&duration_sec=${durationSec}`;
+  return `/classifier/detection-jobs/${jobId}/spectrogram?start_utc=${startUtc}&duration_sec=${durationSec}`;
 }
 
 // ---- Hydrophone Detection ----
@@ -379,12 +377,11 @@ export const searchSimilarByVector = (body: {
 
 export const fetchDetectionEmbedding = (
   jobId: string,
-  filename: string,
-  startSec: number,
-  endSec: number,
+  startUtc: number,
+  endUtc: number,
 ) =>
   api<DetectionEmbeddingResponse>(
-    `/classifier/detection-jobs/${jobId}/embedding?filename=${encodeURIComponent(filename)}&start_sec=${startSec}&end_sec=${endSec}`,
+    `/classifier/detection-jobs/${jobId}/embedding?start_utc=${startUtc}&end_utc=${endUtc}`,
   );
 
 export const createAudioSearch = (body: AudioSearchRequest) =>
@@ -443,19 +440,21 @@ export { ApiError };
 
 export const fetchVocalizationLabels = (
   detectionJobId: string,
-  rowId: string,
+  startUtc: number,
+  endUtc: number,
 ) =>
   api<VocalizationLabel[]>(
-    `/labeling/vocalization-labels/${detectionJobId}/${encodeURIComponent(rowId)}`,
+    `/labeling/vocalization-labels/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
   );
 
 export const createVocalizationLabel = (
   detectionJobId: string,
-  rowId: string,
+  startUtc: number,
+  endUtc: number,
   body: { label: string; confidence?: number; source?: string; notes?: string },
 ) =>
   post<VocalizationLabel>(
-    `/labeling/vocalization-labels/${detectionJobId}/${encodeURIComponent(rowId)}`,
+    `/labeling/vocalization-labels/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
     body,
   );
 
@@ -486,10 +485,8 @@ export const fetchTrainingSummary = () =>
 export const fetchDetectionNeighbors = (
   detectionJobId: string,
   params: {
-    filename: string;
-    start_sec: number;
-    end_sec: number;
-    detection_filename?: string;
+    start_utc: number;
+    end_utc: number;
     top_k?: number;
     metric?: string;
     embedding_set_ids?: string[];
@@ -502,14 +499,19 @@ export const fetchDetectionNeighbors = (
 
 // ---- Annotations ----
 
-export const fetchAnnotations = (detectionJobId: string, rowId: string) =>
+export const fetchAnnotations = (
+  detectionJobId: string,
+  startUtc: number,
+  endUtc: number,
+) =>
   api<LabelingAnnotation[]>(
-    `/labeling/annotations/${detectionJobId}/${encodeURIComponent(rowId)}`,
+    `/labeling/annotations/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
   );
 
 export const createAnnotation = (
   detectionJobId: string,
-  rowId: string,
+  startUtc: number,
+  endUtc: number,
   body: {
     start_offset_sec: number;
     end_offset_sec: number;
@@ -518,7 +520,7 @@ export const createAnnotation = (
   },
 ) =>
   post<LabelingAnnotation>(
-    `/labeling/annotations/${detectionJobId}/${encodeURIComponent(rowId)}`,
+    `/labeling/annotations/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
     body,
   );
 

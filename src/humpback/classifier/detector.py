@@ -3,7 +3,10 @@
 import csv
 import logging
 import math
+import os
+import re
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,36 @@ from humpback.processing.windowing import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TS_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z")
+
+
+def _file_base_epoch(filepath: Path) -> float:
+    """Return the UTC epoch for a file: from timestamp in name, mtime, or 0.0."""
+    match = _TS_PATTERN.search(filepath.name)
+    if match is not None:
+        year, month, day, hour, minute, second = (int(g) for g in match.groups()[:6])
+        frac_str = match.group(7)
+        microsecond = 0
+        if frac_str:
+            frac_str = frac_str[:6].ljust(6, "0")
+            microsecond = int(frac_str)
+        dt = datetime(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            microsecond,
+            tzinfo=timezone.utc,
+        )
+        return dt.timestamp()
+    try:
+        return os.path.getmtime(filepath)
+    except OSError:
+        return 0.0
+
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
 
@@ -332,7 +365,7 @@ def run_detection(
     """Scan audio folder, classify each window, merge events.
 
     Returns (detections_list, summary_dict, diagnostics_or_none, embeddings_or_none).
-    Each detection: {filename, start_sec, end_sec, avg_confidence, peak_confidence, n_windows}.
+    Each detection: {start_utc, end_utc, raw_start_utc, raw_end_utc, avg_confidence, peak_confidence, n_windows}.
     When emit_diagnostics=True, diagnostics is a list of per-window records.
     When emit_embeddings=True, embeddings is a list of per-detection embedding records.
 
@@ -440,6 +473,7 @@ def run_detection(
             window_confidences = proba.tolist()
 
             rel_path = str(audio_path.relative_to(audio_folder))
+            base_epoch = _file_base_epoch(audio_path)
 
             # Build window records for event merging
             window_records = [
@@ -520,8 +554,20 @@ def run_detection(
                             }
                         )
 
+            # Convert file-relative events to UTC.
             for event in events:
-                event["filename"] = rel_path
+                event["start_utc"] = base_epoch + float(event.pop("start_sec"))
+                event["end_utc"] = base_epoch + float(event.pop("end_sec"))
+                raw_s = event.pop("raw_start_sec", None)
+                raw_e = event.pop("raw_end_sec", None)
+                event["raw_start_utc"] = (
+                    base_epoch + float(raw_s)
+                    if raw_s is not None
+                    else event["start_utc"]
+                )
+                event["raw_end_utc"] = (
+                    base_epoch + float(raw_e) if raw_e is not None else event["end_utc"]
+                )
                 all_detections.append(event)
 
             total_positive += sum(
@@ -588,14 +634,13 @@ def run_detection(
 
 
 TSV_FIELDNAMES = [
-    "filename",
-    "start_sec",
-    "end_sec",
+    "start_utc",
+    "end_utc",
     "avg_confidence",
     "peak_confidence",
     "n_windows",
-    "raw_start_sec",
-    "raw_end_sec",
+    "raw_start_utc",
+    "raw_end_utc",
     "merged_event_count",
 ]
 

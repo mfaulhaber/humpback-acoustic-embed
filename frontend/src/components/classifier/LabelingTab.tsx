@@ -75,45 +75,6 @@ function formatCreatedAtUtc(createdAtIso: string): string {
   return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())} ${p(date.getUTCHours())}:${p(date.getUTCMinutes())} UTC`;
 }
 
-function stripKnownAudioExtension(value: string): string {
-  return value.replace(/\.(wav|flac|mp3|aif|aiff)$/i, "");
-}
-
-function parseCompactUtcMs(value: string): number | null {
-  const match = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-  if (!match) return null;
-  return Date.UTC(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5]),
-    Number(match[6]),
-  );
-}
-
-function parseDetectionFilenameRange(
-  detectionFilename: string,
-): { startMs: number; endMs: number } | null {
-  const base = stripKnownAudioExtension(detectionFilename);
-  const parts = base.split("_");
-  if (parts.length !== 2) return null;
-  const startMs = parseCompactUtcMs(parts[0]);
-  const endMs = parseCompactUtcMs(parts[1]);
-  if (startMs === null || endMs === null || endMs <= startMs) return null;
-  return { startMs, endMs };
-}
-
-function hydrophoneJobRelativeToFileRelativeOffset(
-  filename: string,
-  offsetSec: number,
-  jobStartTimestamp: number | null | undefined,
-): number {
-  if (jobStartTimestamp == null) return offsetSec;
-  const baseTs = parseCompactUtcMs(stripKnownAudioExtension(filename));
-  if (baseTs === null) return offsetSec;
-  return offsetSec - (baseTs / 1000 - jobStartTimestamp);
-}
 
 export function LabelingTab() {
   // ---- Job selection ----
@@ -233,23 +194,14 @@ export function LabelingTab() {
     [],
   );
 
-  // Index predictions by row_id for fast lookup
-  const predictionsByRowId = useMemo(() => {
+  // Index predictions by UTC key for fast lookup
+  const predictionsByUtcKey = useMemo(() => {
     const map = new Map<string, PredictionRow>();
     for (const p of predictionsQuery.data ?? []) {
-      map.set(p.row_id, p);
+      map.set(`${p.start_utc}:${p.end_utc}`, p);
     }
     return map;
   }, [predictionsQuery.data]);
-
-  // Track which row_ids have vocalization labels (from summary)
-  const labeledRowIds = useMemo(() => {
-    if (!summaryQuery.data) return new Set<string>();
-    // We'll use labels query per row, but for filter we need bulk info.
-    // For now, we re-derive from vocalization labels queries.
-    // TODO: optimize with bulk endpoint if needed.
-    return new Set<string>();
-  }, [summaryQuery.data]);
 
   const filteredRows = useMemo(() => {
     const rows = contentQuery.data ?? [];
@@ -279,17 +231,17 @@ export function LabelingTab() {
     } else if (sortMode === "uncertainty") {
       // Sort by prediction uncertainty (least confident first)
       sorted.sort((a, b) => {
-        const pa = predictionsByRowId.get(a.row_id ?? "");
-        const pb = predictionsByRowId.get(b.row_id ?? "");
+        const pa = predictionsByUtcKey.get(`${a.start_utc}:${a.end_utc}`);
+        const pb = predictionsByUtcKey.get(`${b.start_utc}:${b.end_utc}`);
         const ca = pa?.confidence ?? 1;
         const cb = pb?.confidence ?? 1;
         return ca - cb; // ascending = least confident first
       });
     } else {
-      sorted.sort((a, b) => a.start_sec - b.start_sec);
+      sorted.sort((a, b) => a.start_utc - b.start_utc);
     }
     return sorted;
-  }, [contentQuery.data, filterMode, sortMode, predictionsByRowId]);
+  }, [contentQuery.data, filterMode, sortMode, predictionsByUtcKey]);
 
   const currentRow = filteredRows[currentIndex] ?? null;
 
@@ -304,49 +256,21 @@ export function LabelingTab() {
 
   const currentClip = useMemo(() => {
     if (!currentRow) return null;
-    const detectionFilename = currentRow.detection_filename?.trim()
-      || currentRow.extract_filename?.trim()
-      || "";
-    const baseTs = parseCompactUtcMs(stripKnownAudioExtension(currentRow.filename));
-    const detectedRange = detectionFilename
-      ? parseDetectionFilenameRange(detectionFilename)
-      : null;
-    const startSec =
-      baseTs !== null && detectedRange !== null
-        ? (detectedRange.startMs - baseTs) / 1000
-        : selectedJob?.hydrophone_id
-          ? hydrophoneJobRelativeToFileRelativeOffset(
-              currentRow.filename,
-              currentRow.start_sec,
-              selectedJob.start_timestamp,
-            )
-          : currentRow.start_sec;
-    const endSec =
-      baseTs !== null && detectedRange !== null
-        ? (detectedRange.endMs - baseTs) / 1000
-        : selectedJob?.hydrophone_id
-          ? hydrophoneJobRelativeToFileRelativeOffset(
-              currentRow.filename,
-              currentRow.end_sec,
-              selectedJob.start_timestamp,
-            )
-          : currentRow.end_sec;
     return {
-      startSec,
-      endSec,
-      durationSec: Math.max(0.1, endSec - startSec),
+      startUtc: currentRow.start_utc,
+      endUtc: currentRow.end_utc,
+      durationSec: Math.max(0.1, currentRow.end_utc - currentRow.start_utc),
     };
-  }, [currentRow, selectedJob]);
+  }, [currentRow]);
 
   const audioUrl = useMemo(() => {
-    if (!selectedJobId || !currentRow || !currentClip) return null;
+    if (!selectedJobId || !currentClip) return null;
     return detectionAudioSliceUrl(
       selectedJobId,
-      currentRow.filename,
-      currentClip.startSec,
+      currentClip.startUtc,
       currentClip.durationSec,
     );
-  }, [selectedJobId, currentRow, currentClip]);
+  }, [selectedJobId, currentClip]);
 
   useEffect(() => {
     setIsPlaying(false);
@@ -370,8 +294,9 @@ export function LabelingTab() {
   }, [audioUrl, isPlaying]);
 
   // ---- Vocalization labels for current row ----
-  const rowId = currentRow?.row_id ?? null;
-  const vocLabelsQuery = useVocalizationLabels(selectedJobId, rowId);
+  const currentStartUtc = currentRow?.start_utc ?? null;
+  const currentEndUtc = currentRow?.end_utc ?? null;
+  const vocLabelsQuery = useVocalizationLabels(selectedJobId, currentStartUtc, currentEndUtc);
   const addLabel = useAddVocalizationLabel();
   const removeLabel = useDeleteVocalizationLabel();
   const vocabularyQuery = useLabelVocabulary();
@@ -379,27 +304,29 @@ export function LabelingTab() {
 
   const handleAddLabel = useCallback(
     (labelText: string) => {
-      if (!selectedJobId || !rowId || !labelText.trim()) return;
+      if (!selectedJobId || currentStartUtc == null || currentEndUtc == null || !labelText.trim()) return;
       addLabel.mutate({
         detectionJobId: selectedJobId,
-        rowId,
+        startUtc: currentStartUtc,
+        endUtc: currentEndUtc,
         label: labelText.trim(),
       });
       setLabelInput("");
     },
-    [selectedJobId, rowId, addLabel],
+    [selectedJobId, currentStartUtc, currentEndUtc, addLabel],
   );
 
   const handleRemoveLabel = useCallback(
     (labelId: string) => {
-      if (!selectedJobId || !rowId) return;
+      if (!selectedJobId || currentStartUtc == null || currentEndUtc == null) return;
       removeLabel.mutate({
         labelId,
         detectionJobId: selectedJobId,
-        rowId,
+        startUtc: currentStartUtc,
+        endUtc: currentEndUtc,
       });
     },
-    [selectedJobId, rowId, removeLabel],
+    [selectedJobId, currentStartUtc, currentEndUtc, removeLabel],
   );
 
   // ---- Neighbors (vector search) ----
@@ -411,20 +338,10 @@ export function LabelingTab() {
     return [...esFilterSelected];
   }, [esFilterSelected, embeddingSets.length]);
 
-  const currentCanonicalDetectionFilename = useMemo(() => {
-    const detectionFilename = currentRow?.detection_filename?.trim();
-    if (detectionFilename) return detectionFilename;
-    const extractFilename = currentRow?.extract_filename?.trim();
-    if (extractFilename) return extractFilename;
-    return null;
-  }, [currentRow]);
-
   const neighborsQuery = useDetectionNeighbors(
     selectedJobId,
-    currentRow?.filename ?? null,
-    currentRow?.start_sec ?? null,
-    currentRow?.end_sec ?? null,
-    currentCanonicalDetectionFilename,
+    currentStartUtc,
+    currentEndUtc,
     selectedEsIds,
   );
 
@@ -495,7 +412,7 @@ export function LabelingTab() {
   } | null>(null);
   const [annotationLabelInput, setAnnotationLabelInput] = useState("");
 
-  const annotationsQuery = useAnnotations(selectedJobId, rowId);
+  const annotationsQuery = useAnnotations(selectedJobId, currentStartUtc, currentEndUtc);
   const createAnn = useCreateAnnotation();
   const deleteAnn = useDeleteAnnotation();
 
@@ -510,35 +427,38 @@ export function LabelingTab() {
   const handleConfirmAnnotation = useCallback(() => {
     if (
       !selectedJobId ||
-      !rowId ||
+      currentStartUtc == null ||
+      currentEndUtc == null ||
       !pendingRegion ||
       !annotationLabelInput.trim()
     )
       return;
     createAnn.mutate({
       detectionJobId: selectedJobId,
-      rowId,
+      startUtc: currentStartUtc,
+      endUtc: currentEndUtc,
       start_offset_sec: pendingRegion.start,
       end_offset_sec: pendingRegion.end,
       label: annotationLabelInput.trim(),
     });
     setPendingRegion(null);
     setAnnotationLabelInput("");
-  }, [selectedJobId, rowId, pendingRegion, annotationLabelInput, createAnn]);
+  }, [selectedJobId, currentStartUtc, currentEndUtc, pendingRegion, annotationLabelInput, createAnn]);
 
   const handleDeleteAnnotation = useCallback(
     (annotationId: string) => {
-      if (!selectedJobId || !rowId) return;
+      if (!selectedJobId || currentStartUtc == null || currentEndUtc == null) return;
       deleteAnn.mutate({
         annotationId,
         detectionJobId: selectedJobId,
-        rowId,
+        startUtc: currentStartUtc,
+        endUtc: currentEndUtc,
       });
       if (highlightedAnnotationId === annotationId) {
         setHighlightedAnnotationId(null);
       }
     },
-    [selectedJobId, rowId, deleteAnn, highlightedAnnotationId],
+    [selectedJobId, currentStartUtc, currentEndUtc, deleteAnn, highlightedAnnotationId],
   );
 
   // ---- Navigation helpers ----
@@ -631,14 +551,13 @@ export function LabelingTab() {
 
   // ---- Spectrogram URL ----
   const spectrogramUrl = useMemo(() => {
-    if (!selectedJobId || !currentRow || !currentClip) return null;
+    if (!selectedJobId || !currentClip) return null;
     return detectionSpectrogramUrl(
       selectedJobId,
-      currentRow.filename,
-      currentClip.startSec,
+      currentClip.startUtc,
       currentClip.durationSec,
     );
-  }, [selectedJobId, currentRow, currentClip]);
+  }, [selectedJobId, currentClip]);
 
   const currentClipDuration = useMemo(() => {
     return currentClip?.durationSec ?? 0;
@@ -646,11 +565,13 @@ export function LabelingTab() {
 
   const currentDetectionName = useMemo(() => {
     if (!currentRow) return null;
-    const detectionName = currentRow.detection_filename?.trim();
-    if (detectionName) return detectionName;
-    const extractName = currentRow.extract_filename?.trim();
-    if (extractName) return extractName;
-    return currentRow.filename;
+    // Format UTC range as compact detection name
+    const d = (epoch: number) => {
+      const dt = new Date(epoch * 1000);
+      const p = (n: number) => String(n).padStart(2, "0");
+      return `${dt.getUTCFullYear()}${p(dt.getUTCMonth() + 1)}${p(dt.getUTCDate())}T${p(dt.getUTCHours())}${p(dt.getUTCMinutes())}${p(dt.getUTCSeconds())}Z`;
+    };
+    return `${d(currentRow.start_utc)}_${d(currentRow.end_utc)}`;
   }, [currentRow]);
 
   // ---- Job label for dropdown ----
@@ -950,11 +871,11 @@ export function LabelingTab() {
             </div>
 
             {/* Classifier prediction */}
-            {selectedModelId && currentRow?.row_id && (() => {
-              const pred = predictionsByRowId.get(currentRow.row_id ?? "");
+            {selectedModelId && currentRow && (() => {
+              const pred = predictionsByUtcKey.get(`${currentRow.start_utc}:${currentRow.end_utc}`);
               if (!pred) return null;
               const sortedProbs = Object.entries(pred.probabilities).sort(
-                ([, a], [, b]) => b - a,
+                ([, a], [, b]) => (b as number) - (a as number),
               );
               return (
                 <div className="border rounded p-3 bg-amber-50 mb-3">
@@ -980,11 +901,11 @@ export function LabelingTab() {
                                 ? "bg-amber-500"
                                 : "bg-slate-300"
                             }`}
-                            style={{ width: `${prob * 100}%` }}
+                            style={{ width: `${(prob as number) * 100}%` }}
                           />
                         </div>
                         <span className="w-10 text-right text-slate-500 font-mono">
-                          {(prob * 100).toFixed(0)}%
+                          {((prob as number) * 100).toFixed(0)}%
                         </span>
                       </div>
                     ))}

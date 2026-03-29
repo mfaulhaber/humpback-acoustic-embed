@@ -464,37 +464,33 @@ export interface DirectoryListing {
 // ---- Detection Content ----
 
 export interface DetectionRow {
-  row_id?: string | null;
-  filename: string;
-  start_sec: number;
-  end_sec: number;
+  start_utc: number;
+  end_utc: number;
   avg_confidence: number | null;
   peak_confidence: number | null;
   n_windows: number | null;
-  detection_filename?: string | null;
-  extract_filename?: string | null;
   hydrophone_name?: string | null;
-  raw_start_sec?: number | null;
-  raw_end_sec?: number | null;
+  raw_start_utc?: number | null;
+  raw_end_utc?: number | null;
   merged_event_count?: number | null;
   auto_positive_selection_score_source?: string | null;
   auto_positive_selection_decision?: "positive" | "skip" | null;
   auto_positive_selection_offsets?: number[] | null;
   auto_positive_selection_raw_scores?: number[] | null;
   auto_positive_selection_smoothed_scores?: number[] | null;
-  auto_positive_selection_start_sec?: number | null;
-  auto_positive_selection_end_sec?: number | null;
+  auto_positive_selection_start_utc?: number | null;
+  auto_positive_selection_end_utc?: number | null;
   auto_positive_selection_peak_score?: number | null;
-  manual_positive_selection_start_sec?: number | null;
-  manual_positive_selection_end_sec?: number | null;
+  manual_positive_selection_start_utc?: number | null;
+  manual_positive_selection_end_utc?: number | null;
   positive_selection_origin?: string | null;
   positive_selection_score_source?: string | null;
   positive_selection_decision?: "positive" | "skip" | null;
   positive_selection_offsets?: number[] | null;
   positive_selection_raw_scores?: number[] | null;
   positive_selection_smoothed_scores?: number[] | null;
-  positive_selection_start_sec?: number | null;
-  positive_selection_end_sec?: number | null;
+  positive_selection_start_utc?: number | null;
+  positive_selection_end_utc?: number | null;
   positive_selection_peak_score?: number | null;
   positive_extract_filename?: string | null;
   humpback: number | null;
@@ -504,9 +500,8 @@ export interface DetectionRow {
 }
 
 export interface DetectionLabelRow {
-  filename: string;
-  start_sec: number;
-  end_sec: number;
+  start_utc: number;
+  end_utc: number;
   humpback: number | null;
   orca: number | null;
   ship: number | null;
@@ -514,13 +509,14 @@ export interface DetectionLabelRow {
 }
 
 export interface DetectionRowStateUpdate {
-  row_id: string;
+  start_utc: number;
+  end_utc: number;
   humpback: number | null;
   orca: number | null;
   ship: number | null;
   background: number | null;
-  manual_positive_selection_start_sec: number | null;
-  manual_positive_selection_end_sec: number | null;
+  manual_positive_selection_start_utc: number | null;
+  manual_positive_selection_end_utc: number | null;
 }
 
 export interface DetectionRowStateResponse {
@@ -663,9 +659,8 @@ export interface DetectionEmbeddingResponse {
 
 export interface AudioSearchRequest {
   detection_job_id: string;
-  filename: string;
-  start_sec: number;
-  end_sec: number;
+  start_utc: number;
+  end_utc: number;
   top_k?: number;
   metric?: string;
   embedding_set_ids?: string[];
@@ -728,7 +723,8 @@ export interface LabelProcessingPreview {
 export interface VocalizationLabel {
   id: string;
   detection_job_id: string;
-  row_id: string;
+  start_utc: number;
+  end_utc: number;
   label: string;
   confidence: number | null;
   source: string;
@@ -771,7 +767,8 @@ export interface TrainingSummary {
 export interface LabelingAnnotation {
   id: string;
   detection_job_id: string;
-  row_id: string;
+  start_utc: number;
+  end_utc: number;
   start_offset_sec: number;
   end_offset_sec: number;
   label: string;
@@ -812,7 +809,8 @@ export interface VocalizationModelOut {
 }
 
 export interface PredictionRow {
-  row_id: string;
+  start_utc: number;
+  end_utc: number;
   predicted_label: string;
   confidence: number;
   probabilities: Record<string, number>;
@@ -826,10 +824,8 @@ export interface ActiveLearningCycleResponse {
 }
 
 export interface UncertaintyQueueRow {
-  row_id: string;
-  filename: string;
-  start_sec: number;
-  end_sec: number;
+  start_utc: number;
+  end_utc: number;
   avg_confidence: number;
   peak_confidence: number;
   predicted_label: string | null;
@@ -872,11 +868,10 @@ export type PrepareStatusResponse = Record<string, ZoomProgress>;
 
 export interface LabelEditItem {
   action: "add" | "move" | "delete" | "change_type";
-  row_id?: string;
-  start_sec?: number;
-  end_sec?: number;
-  new_start_sec?: number;
-  new_end_sec?: number;
+  start_utc?: number;
+  end_utc?: number;
+  new_start_utc?: number;
+  new_end_utc?: number;
   label?: "humpback" | "orca" | "ship" | "background";
 }
 

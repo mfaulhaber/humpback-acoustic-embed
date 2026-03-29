@@ -4,7 +4,6 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
 
 import numpy as np
 from sklearn.pipeline import Pipeline
@@ -26,39 +25,6 @@ from humpback.processing.inference import EmbeddingModel
 from humpback.processing.windowing import slice_windows_with_metadata
 
 logger = logging.getLogger(__name__)
-
-_TS_FORMAT = "%Y%m%dT%H%M%SZ"
-_KNOWN_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3"}
-
-
-def _strip_known_audio_extension(filename: str) -> str:
-    """Strip a supported audio extension from a chunk filename."""
-    for suffix in _KNOWN_AUDIO_EXTENSIONS:
-        if filename.endswith(suffix):
-            return filename[: -len(suffix)]
-    return filename
-
-
-def _build_detection_filename(
-    chunk_filename: str,
-    start_sec: float,
-    end_sec: float,
-) -> str | None:
-    """Build canonical detection filename from chunk filename and event bounds."""
-    if end_sec <= start_sec:
-        return None
-
-    basename = _strip_known_audio_extension(chunk_filename)
-    try:
-        chunk_start = datetime.strptime(basename, _TS_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        return None
-
-    abs_start = chunk_start + timedelta(seconds=start_sec)
-    abs_end = chunk_start + timedelta(seconds=end_sec)
-    return f"{abs_start.strftime(_TS_FORMAT)}_{abs_end.strftime(_TS_FORMAT)}.flac"
 
 
 def run_hydrophone_detection(
@@ -298,16 +264,20 @@ def run_hydrophone_detection(
             if chunk_embedding_records:
                 on_chunk_embeddings(chunk_embedding_records)
 
+        # Convert file-relative events to UTC using chunk epoch.
+        chunk_epoch = chunk_start_utc.timestamp()
         for event in events:
-            event["filename"] = synthetic_filename
-            detection_filename = _build_detection_filename(
-                synthetic_filename,
-                event["start_sec"],
-                event["end_sec"],
+            event["start_utc"] = chunk_epoch + float(event.pop("start_sec"))
+            event["end_utc"] = chunk_epoch + float(event.pop("end_sec"))
+            raw_s = event.pop("raw_start_sec", None)
+            raw_e = event.pop("raw_end_sec", None)
+            event["raw_start_utc"] = (
+                chunk_epoch + float(raw_s) if raw_s is not None else event["start_utc"]
             )
-            # Keep extract_filename as a legacy alias so existing consumers continue to work.
-            event["detection_filename"] = detection_filename
-            event["extract_filename"] = detection_filename
+            event["raw_end_utc"] = (
+                chunk_epoch + float(raw_e) if raw_e is not None else event["end_utc"]
+            )
+            event["hydrophone_name"] = provider.source_id
             all_detections.append(event)
 
         total_positive += sum(

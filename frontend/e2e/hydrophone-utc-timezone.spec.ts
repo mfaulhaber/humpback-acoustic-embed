@@ -243,14 +243,13 @@ test.describe("Hydrophone UTC timezone semantics", () => {
       ],
       detectionRows: [
         {
-          filename: "20250704T165000Z.wav",
-          start_sec: 10,
-          end_sec: 16,
+          start_utc: 1751647810,
+          end_utc: 1751647816,
           avg_confidence: 0.82,
           peak_confidence: 0.86,
           n_windows: 2,
-          detection_filename: "20250704T165010Z_20250704T165016Z.wav",
-          extract_filename: "20250704T165010Z_20250704T165020Z.wav",
+          raw_start_utc: 1751647810,
+          raw_end_utc: 1751647816,
           humpback: null,
           ship: null,
           background: null,

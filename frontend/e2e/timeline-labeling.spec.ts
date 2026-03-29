@@ -64,10 +64,8 @@ const COMPLETE_JOB = {
 // Two detection rows: one humpback, one unlabeled
 const MOCK_DETECTIONS = [
   {
-    row_id: "row-label-1",
-    filename: "test.flac",
-    start_sec: 30,
-    end_sec: 35,
+    start_utc: 1751644830,
+    end_utc: 1751644835,
     avg_confidence: 0.85,
     peak_confidence: 0.95,
     n_windows: 1,
@@ -77,10 +75,8 @@ const MOCK_DETECTIONS = [
     background: 0,
   },
   {
-    row_id: "row-label-2",
-    filename: "test.flac",
-    start_sec: 120,
-    end_sec: 125,
+    start_utc: 1751644920,
+    end_utc: 1751644925,
     avg_confidence: 0.61,
     peak_confidence: 0.78,
     n_windows: 1,

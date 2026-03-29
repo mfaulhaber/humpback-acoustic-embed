@@ -44,7 +44,7 @@ async def seed_data(db_session, tmp_path):
 
     audio_dir = tmp_path / "audio"
     audio_dir.mkdir()
-    wav_path = audio_dir / "test.wav"
+    wav_path = audio_dir / "20240615T080000Z.wav"
     sr = 16000
     duration = 6.0
     n = int(sr * duration)
@@ -100,9 +100,8 @@ async def test_run_search_job_success(db_session, settings, seed_data):
     async with db_session() as session:
         sj = SearchJob(
             detection_job_id=ids["dj_id"],
-            filename="test.wav",
-            start_sec=0.0,
-            end_sec=5.0,
+            start_utc=1718438400.0,
+            end_utc=1718438405.0,
         )
         session.add(sj)
         await session.commit()
@@ -128,9 +127,8 @@ async def test_run_search_job_missing_detection_job(db_session, settings):
     async with db_session() as session:
         sj = SearchJob(
             detection_job_id="nonexistent-id",
-            filename="test.wav",
-            start_sec=0.0,
-            end_sec=5.0,
+            start_utc=1718438400.0,
+            end_utc=1718438405.0,
         )
         session.add(sj)
         await session.commit()
@@ -160,9 +158,8 @@ async def test_run_search_job_missing_classifier_model(db_session, settings):
 
         sj = SearchJob(
             detection_job_id=dj.id,
-            filename="test.wav",
-            start_sec=0.0,
-            end_sec=5.0,
+            start_utc=1718438400.0,
+            end_utc=1718438405.0,
         )
         session.add(sj)
         await session.commit()
@@ -179,10 +176,8 @@ async def test_run_search_job_missing_classifier_model(db_session, settings):
         assert "not found" in (job.error_message or "")
 
 
-async def test_resolve_audio_hydrophone_converts_job_relative_offsets(
-    settings, monkeypatch
-):
-    """Hydrophone search audio uses file-relative offsets when the UI sends job-relative values."""
+async def test_resolve_audio_hydrophone_passes_utc_directly(settings, monkeypatch):
+    """Hydrophone search audio passes start_sec directly as absolute UTC timestamp."""
     captured: dict[str, float] = {}
     expected_audio = np.ones(160000, dtype=np.float32)
 
@@ -193,15 +188,12 @@ async def test_resolve_audio_hydrophone_converts_job_relative_offsets(
         provider,
         stream_start_ts,
         stream_end_ts,
-        filename,
-        row_start_sec,
+        start_utc,
         duration_sec,
         target_sr=32000,
-        legacy_anchor_start_ts=None,
         timeline=None,
-        processing_start_ts=None,
     ):
-        captured["row_start_sec"] = row_start_sec
+        captured["start_utc"] = start_utc
         captured["duration_sec"] = duration_sec
         captured["stream_start_ts"] = stream_start_ts
         captured["stream_end_ts"] = stream_end_ts
@@ -223,27 +215,23 @@ async def test_resolve_audio_hydrophone_converts_job_relative_offsets(
         end_timestamp=1751443200.0,
         status="complete",
     )
-    assert det_job.start_timestamp is not None
-    assert det_job.end_timestamp is not None
 
-    filename = "20250702T080118Z.wav"
-    job_relative_start = (
+    # Absolute UTC timestamp for the chunk start
+    chunk_start_utc = (
         datetime.strptime("20250702T080118", "%Y%m%dT%H%M%S")
         .replace(tzinfo=timezone.utc)
         .timestamp()
-        - det_job.start_timestamp
     )
     audio, sr = await _resolve_audio(
         det_job,
         settings,
-        filename,
-        job_relative_start,
-        job_relative_start + 5.0,
+        chunk_start_utc,
+        chunk_start_utc + 5.0,
     )
 
     assert sr == 32000
     assert np.array_equal(audio, expected_audio)
-    assert captured["row_start_sec"] == pytest.approx(0.0)
+    assert captured["start_utc"] == pytest.approx(chunk_start_utc)
     assert captured["duration_sec"] == pytest.approx(5.0)
     assert captured["stream_start_ts"] == pytest.approx(det_job.start_timestamp)
     assert captured["stream_end_ts"] == pytest.approx(det_job.end_timestamp)

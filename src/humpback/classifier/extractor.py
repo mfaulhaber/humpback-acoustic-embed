@@ -1,26 +1,36 @@
 """Extract labeled audio samples from detection TSV files."""
 
 import csv
-import json
 import logging
-import math
 import os
-import re
 import tempfile
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import soundfile as sf
 
 from humpback.classifier.archive import ArchiveProvider
 from humpback.classifier.detection_rows import (
+    POSITIVE_SELECTION_FIELDNAMES,
+    POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK,
+    POSITIVE_SELECTION_SCORE_SOURCE_STORED,
     ROW_STORE_FIELDNAMES,
-    backfill_hydrophone_row_metadata,
+    PositiveSelectionResult,
+    blank_positive_selection_fields,
+    derive_detection_filename,
+    is_negative_row,
+    is_positive_row,
+    negative_labels_for_row,
+    parse_recording_timestamp,
+    positive_labels_for_row,
     read_detection_row_store,
+    safe_float,
     safe_float_list,
+    safe_optional_float,
+    select_positive_window,
+    selection_result_to_row_update,
     write_detection_row_store,
 )
 from humpback.classifier.detector import read_window_diagnostics_table
@@ -38,9 +48,6 @@ from humpback.processing.windowing import slice_windows_with_metadata
 
 logger = logging.getLogger(__name__)
 
-# Regex patterns for parsing timestamps from filenames
-# e.g. "20250115T143022Z_..." or "20250115T143022.123456Z_..."
-_TS_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.(\d+))?Z")
 _COMPACT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
 _KNOWN_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
 _OUTPUT_AUDIO_EXTENSION = ".flac"
@@ -51,75 +58,136 @@ DEFAULT_SPECTROGRAM_HEIGHT_PX = 320
 DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW = 3
 DEFAULT_POSITIVE_SELECTION_MIN_SCORE = 0.70
 DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE = 0.60
-POSITIVE_SELECTION_SCORE_SOURCE_STORED = "stored_diagnostics"
-POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK = "rescored_fallback"
-POSITIVE_SELECTION_FIELDNAMES = [
-    "positive_selection_score_source",
-    "positive_selection_decision",
-    "positive_selection_offsets",
-    "positive_selection_raw_scores",
-    "positive_selection_smoothed_scores",
-    "positive_selection_start_sec",
-    "positive_selection_end_sec",
-    "positive_selection_peak_score",
-    "positive_extract_filename",
-]
 
 
-@dataclass(slots=True)
-class PositiveSelectionResult:
-    score_source: str
-    decision: Literal["positive", "skip"]
-    offsets: list[float]
-    raw_scores: list[float]
-    smoothed_scores: list[float]
-    start_sec: float | None
-    end_sec: float | None
-    peak_score: float | None
-
-
-def parse_recording_timestamp(filename: str) -> datetime | None:
-    """Extract a recording start timestamp from a filename.
-
-    Looks for ISO-like pattern YYYYMMDDTHHMMSSZ or YYYYMMDDTHHMMSS.ffffffZ.
-    Returns a timezone-aware UTC datetime, or None if no pattern found.
-    """
-    m = _TS_PATTERN.search(filename)
-    if m is None:
-        return None
-    year, month, day, hour, minute, second = (int(g) for g in m.groups()[:6])
-    frac_str = m.group(7)
-    microsecond = 0
-    if frac_str:
-        # Pad or truncate to 6 digits
-        frac_str = frac_str[:6].ljust(6, "0")
-        microsecond = int(frac_str)
-    return datetime(
-        year, month, day, hour, minute, second, microsecond, tzinfo=timezone.utc
-    )
-
-
-def _format_ts(dt: datetime) -> str:
-    """Format datetime as YYYYMMDDTHHMMss.ffffffZ."""
-    return dt.strftime("%Y%m%dT%H%M%S.%fZ")
-
-
-def _date_folder(dt: datetime) -> str:
-    """Return YYYY/MM/dd path component."""
+def _date_folder_from_epoch(epoch: float) -> str:
+    """Return YYYY/MM/dd path component from a UTC epoch float."""
+    dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
     return dt.strftime("%Y/%m/%d")
 
 
-def _strip_known_audio_extension(filename: str) -> str:
-    """Strip a supported audio extension from a filename."""
-    suffix = Path(filename).suffix.lower()
-    if suffix in _KNOWN_AUDIO_EXTENSIONS:
-        return filename[: -len(suffix)]
-    return filename
+def _file_base_epoch(filepath: Path) -> float:
+    """Return the UTC epoch for a file: from timestamp in name, mtime, or 0.0."""
+    ts = parse_recording_timestamp(filepath.name)
+    if ts is not None:
+        return ts.timestamp()
+    try:
+        return os.path.getmtime(filepath)
+    except OSError:
+        return 0.0
+
+
+def _build_local_audio_index(
+    audio_folder: Path,
+) -> list[tuple[float, Path]]:
+    """Build a sorted index of (base_epoch, path) for audio files in a folder."""
+    index: list[tuple[float, Path]] = []
+    for child in sorted(audio_folder.iterdir()):
+        if child.suffix.lower() in _KNOWN_AUDIO_EXTENSIONS and child.is_file():
+            index.append((_file_base_epoch(child), child))
+    index.sort(key=lambda x: x[0])
+    return index
+
+
+def _resolve_local_audio_for_row(
+    start_utc: float,
+    audio_index: list[tuple[float, Path]],
+) -> tuple[Path, float, float] | None:
+    """Map start_utc to (file_path, base_epoch, offset_sec).
+
+    Returns the audio file whose base_epoch is largest among those <= start_utc.
+    """
+    best: tuple[Path, float, float] | None = None
+    for base_epoch, path in audio_index:
+        if base_epoch <= start_utc + 1e-6:
+            best = (path, base_epoch, start_utc - base_epoch)
+        else:
+            break
+    return best
+
+
+def _normalize_local_rows_to_utc(
+    rows: list[dict[str, str]],
+    audio_index: list[tuple[float, Path]],
+) -> None:
+    """Ensure every row has ``start_utc``/``end_utc``.
+
+    For rows already carrying these fields (row-store) this is a no-op.
+    For legacy TSV rows we derive UTC from ``filename`` + ``start_sec``.
+    """
+    for row in rows:
+        if row.get("start_utc"):
+            continue
+        filename = row.get("filename", "")
+        start_sec = safe_float(row.get("start_sec"), 0.0)
+        end_sec = safe_float(row.get("end_sec"), 0.0)
+        base_epoch = 0.0
+        if filename:
+            ts = parse_recording_timestamp(filename)
+            if ts is not None:
+                base_epoch = ts.timestamp()
+            else:
+                for epoch, path in audio_index:
+                    if path.name == filename:
+                        base_epoch = epoch
+                        break
+        row["start_utc"] = str(base_epoch + start_sec)
+        row["end_utc"] = str(base_epoch + end_sec)
+
+
+def _normalize_hydrophone_rows_to_utc(
+    rows: list[dict[str, str]],
+    window_size_seconds: float,
+) -> None:
+    """Ensure every hydrophone row has ``start_utc``/``end_utc``.
+
+    For rows already carrying these fields (row-store) this is a no-op.
+    For legacy TSV rows we derive UTC from ``detection_filename``,
+    ``extract_filename``, or ``filename`` + ``start_sec``/``end_sec``.
+    """
+    for row in rows:
+        if row.get("start_utc"):
+            continue
+        filename = row.get("filename", "")
+        recording_ts = parse_recording_timestamp(filename) if filename else None
+        start_sec = safe_float(row.get("start_sec"), 0.0)
+        end_sec = safe_float(row.get("end_sec"), 0.0)
+
+        # Try detection_filename or extract_filename for exact UTC bounds.
+        for field in ("detection_filename", "extract_filename"):
+            candidate = row.get(field, "").strip()
+            if candidate:
+                parsed = _parse_compact_range_filename(candidate)
+                if parsed is not None:
+                    abs_start, abs_end = parsed
+                    row["start_utc"] = str(abs_start.timestamp())
+                    row["end_utc"] = str(abs_end.timestamp())
+                    break
+        else:
+            if recording_ts is not None:
+                import math
+
+                snap_start = (
+                    math.floor(start_sec / window_size_seconds) * window_size_seconds
+                )
+                snap_end = (
+                    math.ceil(end_sec / window_size_seconds) * window_size_seconds
+                )
+                if snap_end <= snap_start:
+                    snap_end = snap_start + window_size_seconds
+                base_epoch = recording_ts.timestamp()
+                row["start_utc"] = str(base_epoch + snap_start)
+                row["end_utc"] = str(base_epoch + snap_end)
+            else:
+                row["start_utc"] = str(start_sec)
+                row["end_utc"] = str(end_sec)
 
 
 def _with_output_audio_extension(filename: str) -> str:
     """Return filename with the configured extracted-audio extension."""
-    return f"{_strip_known_audio_extension(filename)}{_OUTPUT_AUDIO_EXTENSION}"
+    from humpback.classifier.detection_rows import strip_known_audio_extension
+
+    return f"{strip_known_audio_extension(filename)}{_OUTPUT_AUDIO_EXTENSION}"
 
 
 def _spectrogram_sidecar_path(audio_output_path: Path) -> Path:
@@ -189,55 +257,12 @@ def _ensure_fieldnames(fieldnames: list[str], required: list[str]) -> list[str]:
     return fieldnames
 
 
-def _is_positive_row(row: dict[str, str]) -> bool:
-    return row.get("humpback", "").strip() == "1" or row.get("orca", "").strip() == "1"
-
-
-def _is_negative_row(row: dict[str, str]) -> bool:
-    return (
-        row.get("ship", "").strip() == "1" or row.get("background", "").strip() == "1"
-    )
-
-
-def _positive_labels_for_row(row: dict[str, str]) -> list[str]:
-    labels: list[str] = []
-    if row.get("humpback", "").strip() == "1":
-        labels.append("humpback")
-    if row.get("orca", "").strip() == "1":
-        labels.append("orca")
-    return labels
-
-
-def _negative_labels_for_row(row: dict[str, str]) -> list[str]:
-    labels: list[str] = []
-    if row.get("ship", "").strip() == "1":
-        labels.append("ship")
-    if row.get("background", "").strip() == "1":
-        labels.append("background")
-    return labels
-
-
-def _serialize_json_list(values: list[float]) -> str:
-    """Serialize float lists compactly for TSV storage."""
-    rounded = [round(float(v), 6) for v in values]
-    return json.dumps(rounded, separators=(",", ":"))
-
-
-def _parse_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _selection_from_effective_row(
     row: dict[str, str],
 ) -> PositiveSelectionResult | None:
     decision = row.get("positive_selection_decision", "").strip()
-    start_sec = _parse_float(row.get("positive_selection_start_sec"))
-    end_sec = _parse_float(row.get("positive_selection_end_sec"))
+    start_utc = safe_optional_float(row.get("positive_selection_start_utc"))
+    end_utc = safe_optional_float(row.get("positive_selection_end_utc"))
     if not decision:
         return None
     return PositiveSelectionResult(
@@ -248,68 +273,24 @@ def _selection_from_effective_row(
         raw_scores=safe_float_list(row.get("positive_selection_raw_scores")) or [],
         smoothed_scores=safe_float_list(row.get("positive_selection_smoothed_scores"))
         or [],
-        start_sec=start_sec,
-        end_sec=end_sec,
-        peak_score=_parse_float(row.get("positive_selection_peak_score")),
+        start_utc=start_utc,
+        end_utc=end_utc,
+        peak_score=safe_optional_float(row.get("positive_selection_peak_score")),
     )
-
-
-def _blank_positive_selection_fields() -> dict[str, str]:
-    return {field: "" for field in POSITIVE_SELECTION_FIELDNAMES}
-
-
-def _selection_result_to_row_update(
-    result: PositiveSelectionResult,
-    *,
-    positive_extract_filename: str | None,
-) -> dict[str, str]:
-    """Convert a positive-selection result into TSV row fields."""
-    return {
-        "positive_selection_score_source": result.score_source,
-        "positive_selection_decision": result.decision,
-        "positive_selection_offsets": _serialize_json_list(result.offsets),
-        "positive_selection_raw_scores": _serialize_json_list(result.raw_scores),
-        "positive_selection_smoothed_scores": _serialize_json_list(
-            result.smoothed_scores
-        ),
-        "positive_selection_start_sec": (
-            f"{result.start_sec:.6f}" if result.start_sec is not None else ""
-        ),
-        "positive_selection_end_sec": (
-            f"{result.end_sec:.6f}" if result.end_sec is not None else ""
-        ),
-        "positive_selection_peak_score": (
-            f"{result.peak_score:.6f}" if result.peak_score is not None else ""
-        ),
-        "positive_extract_filename": positive_extract_filename or "",
-    }
-
-
-def _smooth_scores(scores: list[float], window_size: int) -> list[float]:
-    """Smooth scores with centered moving average and edge padding."""
-    if not scores:
-        return []
-    if window_size <= 1 or len(scores) == 1:
-        return [float(v) for v in scores]
-    arr = np.asarray(scores, dtype=np.float32)
-    pad = window_size // 2
-    padded = np.pad(arr, (pad, pad), mode="edge")
-    kernel = np.ones(window_size, dtype=np.float32) / float(window_size)
-    smoothed = np.convolve(padded, kernel, mode="valid")
-    return [float(v) for v in smoothed]
-
-
-def _candidate_offset_key(offset_sec: float) -> float:
-    """Normalize candidate offsets for exact-window lookup."""
-    return round(float(offset_sec), 6)
 
 
 def _load_window_records(
     diagnostics_path: Path | None,
     *,
     filename: str,
+    base_epoch: float = 0.0,
 ) -> list[dict[str, float]] | None:
-    """Load stored diagnostics rows for a single source filename."""
+    """Load stored diagnostics rows for a source filename, shifted to UTC.
+
+    When *base_epoch* is non-zero the file-relative ``offset_sec``/``end_sec``
+    values are shifted to absolute UTC epoch seconds so they are directly
+    comparable with ``start_utc``/``end_utc`` row identity fields.
+    """
     if diagnostics_path is None or not diagnostics_path.exists():
         return None
     try:
@@ -327,8 +308,8 @@ def _load_window_records(
     for i in range(table.num_rows):
         records.append(
             {
-                "offset_sec": float(table.column("offset_sec")[i].as_py()),
-                "end_sec": float(table.column("end_sec")[i].as_py()),
+                "offset_sec": float(table.column("offset_sec")[i].as_py()) + base_epoch,
+                "end_sec": float(table.column("end_sec")[i].as_py()) + base_epoch,
                 "confidence": float(table.column("confidence")[i].as_py()),
             }
         )
@@ -339,7 +320,7 @@ def _score_segment_windows(
     audio_segment: np.ndarray,
     *,
     source_sr: int,
-    row_start_sec: float,
+    row_start_utc: float,
     pipeline: Any,
     model: EmbeddingModel,
     window_size_seconds: float,
@@ -366,7 +347,7 @@ def _score_segment_windows(
         hop_seconds=hop_seconds,
     ):
         raw_windows.append(window)
-        offsets.append(row_start_sec + meta.offset_sec)
+        offsets.append(row_start_utc + meta.offset_sec)
 
     if not raw_windows:
         return []
@@ -401,119 +382,6 @@ def _score_segment_windows(
     ]
 
 
-def _select_positive_window(
-    *,
-    row_start_sec: float,
-    row_end_sec: float,
-    window_size_seconds: float,
-    window_records: list[dict[str, float]],
-    smoothing_window: int,
-    min_score: float,
-    extend_min_score: float,
-    score_source: str,
-) -> PositiveSelectionResult:
-    """Select the best-scoring candidate window within a labeled positive row."""
-    deduped: dict[tuple[float, float], dict[str, float]] = {}
-    for rec in window_records:
-        offset_sec = float(rec["offset_sec"])
-        end_sec = float(rec["end_sec"])
-        if offset_sec + 1e-6 < row_start_sec or end_sec - 1e-6 > row_end_sec:
-            continue
-        deduped[(offset_sec, end_sec)] = {
-            "offset_sec": offset_sec,
-            "end_sec": end_sec,
-            "confidence": float(rec["confidence"]),
-        }
-
-    candidates = sorted(
-        deduped.values(),
-        key=lambda rec: (rec["offset_sec"], rec["end_sec"]),
-    )
-    if not candidates:
-        return PositiveSelectionResult(
-            score_source=score_source,
-            decision="skip",
-            offsets=[],
-            raw_scores=[],
-            smoothed_scores=[],
-            start_sec=None,
-            end_sec=None,
-            peak_score=None,
-        )
-
-    offsets = [float(rec["offset_sec"]) for rec in candidates]
-    raw_scores = [float(rec["confidence"]) for rec in candidates]
-    smoothed_scores = _smooth_scores(raw_scores, smoothing_window)
-    best_idx = int(np.argmax(np.asarray(smoothed_scores, dtype=np.float32)))
-    peak_score = float(smoothed_scores[best_idx])
-    best = candidates[best_idx]
-    start_sec = float(best["offset_sec"])
-    end_sec = float(best["end_sec"])
-
-    if peak_score >= min_score:
-        candidates_by_offset = {
-            _candidate_offset_key(float(rec["offset_sec"])): (
-                rec,
-                float(smoothed_scores[idx]),
-            )
-            for idx, rec in enumerate(candidates)
-        }
-
-        while True:
-            left_key = _candidate_offset_key(start_sec - window_size_seconds)
-            right_key = _candidate_offset_key(end_sec)
-            left_candidate = candidates_by_offset.get(left_key)
-            right_candidate = candidates_by_offset.get(right_key)
-
-            left_score = left_candidate[1] if left_candidate is not None else None
-            right_score = right_candidate[1] if right_candidate is not None else None
-            can_extend_left = left_score is not None and left_score >= extend_min_score
-            can_extend_right = (
-                right_score is not None and right_score >= extend_min_score
-            )
-            if not can_extend_left and not can_extend_right:
-                break
-
-            if can_extend_left and (not can_extend_right or left_score >= right_score):
-                assert left_candidate is not None
-                start_sec = float(left_candidate[0]["offset_sec"])
-            else:
-                assert right_candidate is not None
-                end_sec = float(right_candidate[0]["end_sec"])
-
-    return PositiveSelectionResult(
-        score_source=score_source,
-        decision="positive" if peak_score >= min_score else "skip",
-        offsets=offsets,
-        raw_scores=raw_scores,
-        smoothed_scores=smoothed_scores,
-        start_sec=start_sec,
-        end_sec=end_sec,
-        peak_score=peak_score,
-    )
-
-
-def _resolve_local_clip_name(
-    source_filename: str,
-    start_sec: float,
-    end_sec: float,
-) -> tuple[str, str]:
-    """Build a local extracted filename and date folder for clip bounds."""
-    recording_ts = parse_recording_timestamp(source_filename)
-    if recording_ts:
-        abs_start = recording_ts + timedelta(seconds=start_sec)
-        abs_end = recording_ts + timedelta(seconds=end_sec)
-        clip_name = (
-            f"{_format_ts(abs_start)}_{_format_ts(abs_end)}{_OUTPUT_AUDIO_EXTENSION}"
-        )
-        date_folder = _date_folder(abs_start)
-    else:
-        stem = Path(source_filename).stem
-        clip_name = f"{stem}_{start_sec}_{end_sec}{_OUTPUT_AUDIO_EXTENSION}"
-        date_folder = "unknown_date"
-    return clip_name, date_folder
-
-
 def _resolve_positive_output_path(
     root: Path,
     *,
@@ -523,7 +391,9 @@ def _resolve_positive_output_path(
 ) -> Path:
     """Resolve the final positive artifact path from its filename."""
     clip_start = parse_recording_timestamp(clip_name)
-    date_folder = _date_folder(clip_start) if clip_start is not None else "unknown_date"
+    date_folder = (
+        clip_start.strftime("%Y/%m/%d") if clip_start is not None else "unknown_date"
+    )
     if source_id:
         return root / label / source_id / date_folder / clip_name
     return root / label / date_folder / clip_name
@@ -725,21 +595,35 @@ def extract_labeled_samples(
     process_rows = [
         row
         for row in all_rows
-        if _is_positive_row(row)
-        or _is_negative_row(row)
+        if is_positive_row(row)
+        or is_negative_row(row)
         or bool(row.get("positive_extract_filename", "").strip())
     ]
     if not process_rows:
         return counts
 
-    by_file: dict[str, list[dict[str, str]]] = {}
-    for row in process_rows:
-        by_file.setdefault(row.get("filename", ""), []).append(row)
+    # Build audio file index and normalize legacy rows to UTC.
+    audio_index = _build_local_audio_index(audio_folder)
+    _normalize_local_rows_to_utc(process_rows, audio_index)
 
-    for source_filename, file_rows in by_file.items():
-        source_path = audio_folder / source_filename
+    # Group rows by resolved source file.
+    by_file: dict[Path, tuple[float, list[dict[str, str]]]] = {}
+    for row in process_rows:
+        row_start_utc = safe_float(row.get("start_utc"), 0.0)
+        resolved = _resolve_local_audio_for_row(row_start_utc, audio_index)
+        if resolved is None:
+            logger.warning("No source audio resolved for start_utc=%.1f", row_start_utc)
+            continue
+        file_path, base_epoch, _ = resolved
+        entry = by_file.get(file_path)
+        if entry is None:
+            by_file[file_path] = (base_epoch, [row])
+        else:
+            entry[1].append(row)
+
+    for source_path, (base_epoch, file_rows) in by_file.items():
         needs_audio = any(
-            _is_positive_row(row) or _is_negative_row(row) for row in file_rows
+            is_positive_row(row) or is_negative_row(row) for row in file_rows
         )
         audio: np.ndarray | None = None
         sr: int | None = None
@@ -750,25 +634,29 @@ def extract_labeled_samples(
             audio, sr = decode_audio(source_path)
 
         stored_records = _load_window_records(
-            diagnostics_path, filename=source_filename
+            diagnostics_path,
+            filename=source_path.name,
+            base_epoch=base_epoch,
         )
 
         for row in file_rows:
-            row_start_sec = float(row.get("start_sec", 0))
-            row_end_sec = float(row.get("end_sec", 0))
-            positive_labels = _positive_labels_for_row(row)
-            negative_labels = _negative_labels_for_row(row)
+            row_start_utc = safe_float(row.get("start_utc"), 0.0)
+            row_end_utc = safe_float(row.get("end_utc"), 0.0)
+            row_offset = row_start_utc - base_epoch
+            row_end_offset = row_end_utc - base_epoch
+            pos_labels = positive_labels_for_row(row)
+            neg_labels = negative_labels_for_row(row)
             old_positive_filename = row.get("positive_extract_filename", "").strip()
 
-            if positive_labels:
+            if pos_labels:
                 selection = (
                     _selection_from_effective_row(row) if using_row_store else None
                 )
                 if selection is None:
                     selection = (
-                        _select_positive_window(
-                            row_start_sec=row_start_sec,
-                            row_end_sec=row_end_sec,
+                        select_positive_window(
+                            row_start_utc=row_start_utc,
+                            row_end_utc=row_end_utc,
                             window_size_seconds=window_size_seconds,
                             window_records=stored_records,
                             smoothing_window=positive_selection_smoothing_window,
@@ -788,13 +676,13 @@ def extract_labeled_samples(
                         and sr is not None
                     )
                 ):
-                    row_start_sample = min(int(row_start_sec * sr), len(audio))
-                    row_end_sample = min(int(row_end_sec * sr), len(audio))
+                    row_start_sample = min(int(row_offset * sr), len(audio))
+                    row_end_sample = min(int(row_end_offset * sr), len(audio))
                     row_segment = audio[row_start_sample:row_end_sample]
                     fallback_records = _score_segment_windows(
                         row_segment,
                         source_sr=sr,
-                        row_start_sec=row_start_sec,
+                        row_start_utc=row_start_utc,
                         pipeline=fallback_pipeline,
                         model=fallback_model,
                         window_size_seconds=window_size_seconds,
@@ -802,9 +690,9 @@ def extract_labeled_samples(
                         input_format=fallback_input_format,
                         feature_config=fallback_feature_config,
                     )
-                    selection = _select_positive_window(
-                        row_start_sec=row_start_sec,
-                        row_end_sec=row_end_sec,
+                    selection = select_positive_window(
+                        row_start_utc=row_start_utc,
+                        row_end_utc=row_end_utc,
                         window_size_seconds=window_size_seconds,
                         window_records=fallback_records,
                         smoothing_window=positive_selection_smoothing_window,
@@ -819,31 +707,35 @@ def extract_labeled_samples(
                         offsets=[],
                         raw_scores=[],
                         smoothed_scores=[],
-                        start_sec=None,
-                        end_sec=None,
+                        start_utc=None,
+                        end_utc=None,
                         peak_score=None,
                     )
 
                 if (
                     selection.decision == "positive"
-                    and selection.start_sec is not None
-                    and selection.end_sec is not None
+                    and selection.start_utc is not None
+                    and selection.end_utc is not None
                     and audio is not None
                     and sr is not None
                 ):
-                    clip_name, date_folder = _resolve_local_clip_name(
-                        source_filename,
-                        selection.start_sec,
-                        selection.end_sec,
+                    clip_name = (
+                        derive_detection_filename(
+                            selection.start_utc, selection.end_utc
+                        )
+                        or ""
                     )
+                    date_folder = _date_folder_from_epoch(selection.start_utc)
                     if old_positive_filename and old_positive_filename != clip_name:
                         _delete_stale_positive_outputs(
                             positive_output_path,
                             clip_name=old_positive_filename,
                             labels=["humpback", "orca"],
                         )
-                    selected_start = min(int(selection.start_sec * sr), len(audio))
-                    selected_end = min(int(selection.end_sec * sr), len(audio))
+                    sel_offset = selection.start_utc - base_epoch
+                    sel_end_offset = selection.end_utc - base_epoch
+                    selected_start = min(int(sel_offset * sr), len(audio))
+                    selected_end = min(int(sel_end_offset * sr), len(audio))
                     selected_segment = audio[selected_start:selected_end]
                     if len(selected_segment) == 0:
                         selection = PositiveSelectionResult(
@@ -852,8 +744,8 @@ def extract_labeled_samples(
                             offsets=selection.offsets,
                             raw_scores=selection.raw_scores,
                             smoothed_scores=selection.smoothed_scores,
-                            start_sec=selection.start_sec,
-                            end_sec=selection.end_sec,
+                            start_utc=selection.start_utc,
+                            end_utc=selection.end_utc,
                             peak_score=selection.peak_score,
                         )
                         _delete_stale_positive_outputs(
@@ -865,14 +757,14 @@ def extract_labeled_samples(
                             row["positive_extract_filename"] = ""
                         else:
                             row.update(
-                                _selection_result_to_row_update(
+                                selection_result_to_row_update(
                                     selection,
                                     positive_extract_filename=None,
                                 )
                             )
                         counts["n_positive_selection_skipped"] += 1
                     else:
-                        for label_name in positive_labels:
+                        for label_name in pos_labels:
                             out_dir = positive_output_path / label_name / date_folder
                             out_path = out_dir / clip_name
                             if _output_artifacts_complete(out_path):
@@ -895,7 +787,7 @@ def extract_labeled_samples(
                             row["positive_extract_filename"] = clip_name
                         else:
                             row.update(
-                                _selection_result_to_row_update(
+                                selection_result_to_row_update(
                                     selection,
                                     positive_extract_filename=clip_name,
                                 )
@@ -912,7 +804,7 @@ def extract_labeled_samples(
                         row["positive_extract_filename"] = ""
                     else:
                         row.update(
-                            _selection_result_to_row_update(
+                            selection_result_to_row_update(
                                 selection,
                                 positive_extract_filename=None,
                             )
@@ -928,20 +820,17 @@ def extract_labeled_samples(
                 if using_row_store:
                     row["positive_extract_filename"] = ""
                 else:
-                    row.update(_blank_positive_selection_fields())
+                    row.update(blank_positive_selection_fields())
 
-            if negative_labels and audio is not None and sr is not None:
-                start_sample = min(int(row_start_sec * sr), len(audio))
-                end_sample = min(int(row_end_sec * sr), len(audio))
+            if neg_labels and audio is not None and sr is not None:
+                start_sample = min(int(row_offset * sr), len(audio))
+                end_sample = min(int(row_end_offset * sr), len(audio))
                 segment = audio[start_sample:end_sample]
                 if len(segment) == 0:
                     continue
-                clip_name, date_folder = _resolve_local_clip_name(
-                    source_filename,
-                    row_start_sec,
-                    row_end_sec,
-                )
-                for label_name in negative_labels:
+                clip_name = derive_detection_filename(row_start_utc, row_end_utc) or ""
+                date_folder = _date_folder_from_epoch(row_start_utc)
+                for label_name in neg_labels:
                     out_dir = negative_output_path / label_name / date_folder
                     out_path = out_dir / clip_name
                     if _output_artifacts_complete(out_path):
@@ -1021,7 +910,9 @@ def _parse_compact_range_filename(
     filename: str,
 ) -> tuple[datetime, datetime] | None:
     """Parse compact UTC range filename into (start, end) datetimes."""
-    base = _strip_known_audio_extension(filename)
+    from humpback.classifier.detection_rows import strip_known_audio_extension
+
+    base = strip_known_audio_extension(filename)
     parts = base.split("_")
     if len(parts) != 2:
         return None
@@ -1063,41 +954,6 @@ def fetch_hydrophone_audio_range(
         target_sr,
         expected_samples=expected_audio_samples(duration_sec, target_sr),
     )
-
-
-def _resolve_hydrophone_clip_name(
-    source_filename: str,
-    start_sec: float,
-    end_sec: float,
-) -> tuple[str, datetime, datetime] | None:
-    """Build a compact UTC filename for a hydrophone clip."""
-    recording_ts = parse_recording_timestamp(source_filename)
-    if recording_ts is None:
-        return None
-    abs_start = recording_ts + timedelta(seconds=start_sec)
-    abs_end = recording_ts + timedelta(seconds=end_sec)
-    clip_name = (
-        f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}"
-        f"{_OUTPUT_AUDIO_EXTENSION}"
-    )
-    return clip_name, abs_start, abs_end
-
-
-def _snap_range_for_window(
-    start_sec: float,
-    end_sec: float,
-    window_size_seconds: float,
-) -> tuple[float, float]:
-    """Snap bounds outward to window-size multiples."""
-    if window_size_seconds <= 0:
-        raise ValueError("window_size_seconds must be > 0")
-    if end_sec <= start_sec:
-        return start_sec, end_sec
-    start_sec = math.floor(start_sec / window_size_seconds) * window_size_seconds
-    end_sec = math.ceil(end_sec / window_size_seconds) * window_size_seconds
-    if end_sec <= start_sec:
-        end_sec = start_sec + window_size_seconds
-    return float(start_sec), float(end_sec)
 
 
 def extract_hydrophone_labeled_samples(
@@ -1149,17 +1005,6 @@ def extract_hydrophone_labeled_samples(
         tsv_path,
         row_store_path=row_store_path,
     )
-    if (
-        using_row_store
-        and row_store_path is not None
-        and stream_start_timestamp is not None
-        and backfill_hydrophone_row_metadata(
-            all_rows,
-            job_start_timestamp=float(stream_start_timestamp),
-            window_size_seconds=window_size_seconds,
-        )
-    ):
-        write_detection_row_store(row_store_path, all_rows)
     if using_row_store:
         fieldnames = list(ROW_STORE_FIELDNAMES)
     _ensure_fieldnames(fieldnames, POSITIVE_SELECTION_FIELDNAMES)
@@ -1178,22 +1023,25 @@ def extract_hydrophone_labeled_samples(
     process_rows = [
         row
         for row in all_rows
-        if _is_positive_row(row)
-        or _is_negative_row(row)
+        if is_positive_row(row)
+        or is_negative_row(row)
         or bool(row.get("positive_extract_filename", "").strip())
     ]
     if not process_rows:
         return counts
 
-    by_file: dict[str, list[dict[str, str]]] = {}
-    for row in process_rows:
-        fn = row.get("filename", "")
-        by_file.setdefault(fn, []).append(row)
+    # Normalize legacy rows to UTC.
+    _normalize_hydrophone_rows_to_utc(process_rows, window_size_seconds)
+
+    # Load diagnostics once (keyed by filename for legacy compat).
+    # For new-schema rows the filename column is absent; diagnostics
+    # are loaded per-file when needed below.
+    _diag_cache: dict[str, list[dict[str, float]] | None] = {}
+
     use_stream_resolver = (
         stream_start_timestamp is not None and stream_end_timestamp is not None
     )
     stream_timeline = None
-    processing_start_ts: float | None = None
     stream_start_ts_value: float | None = None
     stream_end_ts_value: float | None = None
 
@@ -1210,9 +1058,6 @@ def extract_hydrophone_labeled_samples(
                 stream_start_ts=stream_start_ts_value,
                 stream_end_ts=stream_end_ts_value,
             )
-            processing_start_ts = max(
-                stream_start_ts_value, stream_timeline[0].start_ts
-            )
         except Exception as exc:
             logger.warning(
                 "Hydrophone extraction timeline unavailable for %s [%.1f, %.1f]: %s",
@@ -1223,325 +1068,198 @@ def extract_hydrophone_labeled_samples(
             )
             stream_timeline = []
 
-    for source_filename, file_rows in by_file.items():
-        recording_ts = parse_recording_timestamp(source_filename)
-        stored_records = _load_window_records(
-            diagnostics_path, filename=source_filename
-        )
+    for row in process_rows:
+        row_start_utc = safe_float(row.get("start_utc"), 0.0)
+        row_end_utc = safe_float(row.get("end_utc"), 0.0)
+        pos_labels = positive_labels_for_row(row)
+        old_positive_filename = row.get("positive_extract_filename", "").strip()
 
-        for row in file_rows:
-            start_sec = float(row.get("start_sec", 0))
-            end_sec = float(row.get("end_sec", 0))
-            positive_labels = _positive_labels_for_row(row)
-            negative_labels = _negative_labels_for_row(row)
-            old_positive_filename = row.get("positive_extract_filename", "").strip()
-
-            if recording_ts is None:
-                logger.warning(
-                    "Skipping hydrophone extraction row with non-timestamped filename: %s",
-                    source_filename,
+        # Load stored diagnostics (cached per filename when available).
+        diag_filename = row.get("filename", "").strip() or None
+        if diag_filename is not None:
+            if diag_filename not in _diag_cache:
+                recording_ts = parse_recording_timestamp(diag_filename)
+                base_epoch = recording_ts.timestamp() if recording_ts else 0.0
+                _diag_cache[diag_filename] = _load_window_records(
+                    diagnostics_path,
+                    filename=diag_filename,
+                    base_epoch=base_epoch,
                 )
-                if old_positive_filename:
-                    _delete_stale_positive_outputs(
-                        positive_output_path,
-                        clip_name=old_positive_filename,
-                        labels=["humpback", "orca"],
-                        source_id=provider.source_id,
-                    )
-                if positive_labels:
-                    if using_row_store:
-                        row["positive_extract_filename"] = ""
-                    else:
-                        row.update(
-                            _selection_result_to_row_update(
-                                PositiveSelectionResult(
-                                    score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-                                    decision="skip",
-                                    offsets=[],
-                                    raw_scores=[],
-                                    smoothed_scores=[],
-                                    start_sec=None,
-                                    end_sec=None,
-                                    peak_score=None,
-                                ),
-                                positive_extract_filename=None,
-                            )
-                        )
-                    counts["n_positive_selection_skipped"] += 1
-                else:
-                    if using_row_store:
-                        row["positive_extract_filename"] = ""
-                    else:
-                        row.update(_blank_positive_selection_fields())
-                if negative_labels:
-                    counts["n_skipped"] += len(negative_labels)
-                continue
+            stored_records = _diag_cache[diag_filename]
+        else:
+            stored_records = None
 
-            detection_filename = row.get("detection_filename", "").strip() or None
-            extract_filename = row.get("extract_filename", "").strip() or None
-            parsed_detection_range = (
-                _parse_compact_range_filename(detection_filename)
-                if detection_filename
-                else None
-            )
-            parsed_extract_range = (
-                _parse_compact_range_filename(extract_filename)
-                if extract_filename
-                else None
-            )
-
-            # Resolve bounds with precedence:
-            # detection_filename -> extract_filename -> snapped start/end fallback.
-            if parsed_detection_range is not None:
-                abs_start, abs_end = parsed_detection_range
-                start_sec = (abs_start - recording_ts).total_seconds()
-                end_sec = (abs_end - recording_ts).total_seconds()
-            elif parsed_extract_range is not None:
-                abs_start, abs_end = parsed_extract_range
-                start_sec = (abs_start - recording_ts).total_seconds()
-                end_sec = (abs_end - recording_ts).total_seconds()
-                detection_filename = (
-                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}"
-                    f"{_OUTPUT_AUDIO_EXTENSION}"
-                )
-            else:
-                start_sec, end_sec = _snap_range_for_window(
-                    start_sec, end_sec, window_size_seconds
-                )
-                abs_start = recording_ts + timedelta(seconds=start_sec)
-                abs_end = recording_ts + timedelta(seconds=end_sec)
-                detection_filename = (
-                    f"{_format_compact_ts(abs_start)}_{_format_compact_ts(abs_end)}"
-                    f"{_OUTPUT_AUDIO_EXTENSION}"
-                )
-
-            resolved_start_sec = start_sec
-            resolved_end_sec = end_sec
-
-            if positive_labels:
+        if pos_labels:
+            selection = _selection_from_effective_row(row) if using_row_store else None
+            if selection is None:
                 selection = (
-                    _selection_from_effective_row(row) if using_row_store else None
-                )
-                if selection is None:
-                    selection = (
-                        _select_positive_window(
-                            row_start_sec=resolved_start_sec,
-                            row_end_sec=resolved_end_sec,
-                            window_size_seconds=window_size_seconds,
-                            window_records=stored_records,
-                            smoothing_window=positive_selection_smoothing_window,
-                            min_score=positive_selection_min_score,
-                            extend_min_score=positive_selection_extend_min_score,
-                            score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-                        )
-                        if stored_records is not None
-                        else None
-                    )
-                if (selection is None or not selection.offsets) and (
-                    not using_row_store
-                    and (fallback_pipeline is not None and fallback_model is not None)
-                ):
-                    row_duration = max(0.0, resolved_end_sec - resolved_start_sec)
-                    fallback_segment: np.ndarray | None = None
-                    if use_stream_resolver:
-                        if stream_timeline:
-                            assert stream_start_ts_value is not None
-                            assert stream_end_ts_value is not None
-                            try:
-                                fallback_segment = resolve_audio_slice(
-                                    provider=provider,
-                                    stream_start_ts=stream_start_ts_value,
-                                    stream_end_ts=stream_end_ts_value,
-                                    filename=source_filename,
-                                    row_start_sec=resolved_start_sec,
-                                    duration_sec=row_duration,
-                                    target_sr=target_sample_rate,
-                                    legacy_anchor_start_ts=stream_start_ts_value,
-                                    timeline=stream_timeline,
-                                    processing_start_ts=processing_start_ts,
-                                )
-                            except Exception:
-                                fallback_segment = None
-                    else:
-                        if recording_ts is not None:
-                            abs_start_ts = (
-                                recording_ts + timedelta(seconds=resolved_start_sec)
-                            ).timestamp()
-                            abs_end_ts = (
-                                recording_ts + timedelta(seconds=resolved_end_sec)
-                            ).timestamp()
-                            fallback_segment = fetch_hydrophone_audio_range(
-                                provider,
-                                abs_start_ts,
-                                abs_end_ts,
-                                target_sample_rate,
-                            )
-                    if fallback_segment is not None and len(fallback_segment) > 0:
-                        fallback_records = _score_segment_windows(
-                            fallback_segment,
-                            source_sr=target_sample_rate,
-                            row_start_sec=resolved_start_sec,
-                            pipeline=fallback_pipeline,
-                            model=fallback_model,
-                            window_size_seconds=window_size_seconds,
-                            target_sample_rate=target_sample_rate,
-                            input_format=fallback_input_format,
-                            feature_config=fallback_feature_config,
-                        )
-                        selection = _select_positive_window(
-                            row_start_sec=resolved_start_sec,
-                            row_end_sec=resolved_end_sec,
-                            window_size_seconds=window_size_seconds,
-                            window_records=fallback_records,
-                            smoothing_window=positive_selection_smoothing_window,
-                            min_score=positive_selection_min_score,
-                            extend_min_score=positive_selection_extend_min_score,
-                            score_source=POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK,
-                        )
-                if selection is None:
-                    selection = PositiveSelectionResult(
+                    select_positive_window(
+                        row_start_utc=row_start_utc,
+                        row_end_utc=row_end_utc,
+                        window_size_seconds=window_size_seconds,
+                        window_records=stored_records,
+                        smoothing_window=positive_selection_smoothing_window,
+                        min_score=positive_selection_min_score,
+                        extend_min_score=positive_selection_extend_min_score,
                         score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-                        decision="skip",
-                        offsets=[],
-                        raw_scores=[],
-                        smoothed_scores=[],
-                        start_sec=None,
-                        end_sec=None,
-                        peak_score=None,
                     )
-
-                positive_written = False
-                if (
-                    selection.decision == "positive"
-                    and selection.start_sec is not None
-                    and selection.end_sec is not None
-                ):
-                    resolved_name = _resolve_hydrophone_clip_name(
-                        source_filename,
-                        selection.start_sec,
-                        selection.end_sec,
+                    if stored_records is not None
+                    else None
+                )
+            if (selection is None or not selection.offsets) and (
+                not using_row_store
+                and (fallback_pipeline is not None and fallback_model is not None)
+            ):
+                row_duration = max(0.0, row_end_utc - row_start_utc)
+                fallback_segment: np.ndarray | None = None
+                if use_stream_resolver:
+                    if stream_timeline:
+                        assert stream_start_ts_value is not None
+                        assert stream_end_ts_value is not None
+                        try:
+                            fallback_segment = resolve_audio_slice(
+                                provider=provider,
+                                stream_start_ts=stream_start_ts_value,
+                                stream_end_ts=stream_end_ts_value,
+                                start_utc=row_start_utc,
+                                duration_sec=row_duration,
+                                target_sr=target_sample_rate,
+                                timeline=stream_timeline,
+                            )
+                        except Exception:
+                            fallback_segment = None
+                else:
+                    fallback_segment = fetch_hydrophone_audio_range(
+                        provider,
+                        row_start_utc,
+                        row_end_utc,
+                        target_sample_rate,
                     )
-                    if resolved_name is None:
-                        selection = PositiveSelectionResult(
-                            score_source=selection.score_source,
-                            decision="skip",
-                            offsets=selection.offsets,
-                            raw_scores=selection.raw_scores,
-                            smoothed_scores=selection.smoothed_scores,
-                            start_sec=selection.start_sec,
-                            end_sec=selection.end_sec,
-                            peak_score=selection.peak_score,
-                        )
-                    else:
-                        clip_name, _, _ = resolved_name
-                        if old_positive_filename and old_positive_filename != clip_name:
-                            _delete_stale_positive_outputs(
-                                positive_output_path,
-                                clip_name=old_positive_filename,
-                                labels=["humpback", "orca"],
-                                source_id=provider.source_id,
-                            )
-                        duration = selection.end_sec - selection.start_sec
-                        segment: np.ndarray | None = None
-                        if use_stream_resolver:
-                            if stream_timeline:
-                                assert stream_start_ts_value is not None
-                                assert stream_end_ts_value is not None
-                                try:
-                                    segment = resolve_audio_slice(
-                                        provider=provider,
-                                        stream_start_ts=stream_start_ts_value,
-                                        stream_end_ts=stream_end_ts_value,
-                                        filename=source_filename,
-                                        row_start_sec=selection.start_sec,
-                                        duration_sec=duration,
-                                        target_sr=target_sample_rate,
-                                        legacy_anchor_start_ts=stream_start_ts_value,
-                                        timeline=stream_timeline,
-                                        processing_start_ts=processing_start_ts,
-                                    )
-                                except Exception:
-                                    segment = None
-                        else:
-                            if recording_ts is not None:
-                                segment = fetch_hydrophone_audio_range(
-                                    provider,
-                                    (
-                                        recording_ts
-                                        + timedelta(seconds=selection.start_sec)
-                                    ).timestamp(),
-                                    (
-                                        recording_ts
-                                        + timedelta(seconds=selection.end_sec)
-                                    ).timestamp(),
-                                    target_sample_rate,
-                                )
+                if fallback_segment is not None and len(fallback_segment) > 0:
+                    fallback_records = _score_segment_windows(
+                        fallback_segment,
+                        source_sr=target_sample_rate,
+                        row_start_utc=row_start_utc,
+                        pipeline=fallback_pipeline,
+                        model=fallback_model,
+                        window_size_seconds=window_size_seconds,
+                        target_sample_rate=target_sample_rate,
+                        input_format=fallback_input_format,
+                        feature_config=fallback_feature_config,
+                    )
+                    selection = select_positive_window(
+                        row_start_utc=row_start_utc,
+                        row_end_utc=row_end_utc,
+                        window_size_seconds=window_size_seconds,
+                        window_records=fallback_records,
+                        smoothing_window=positive_selection_smoothing_window,
+                        min_score=positive_selection_min_score,
+                        extend_min_score=positive_selection_extend_min_score,
+                        score_source=POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK,
+                    )
+            if selection is None:
+                selection = PositiveSelectionResult(
+                    score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
+                    decision="skip",
+                    offsets=[],
+                    raw_scores=[],
+                    smoothed_scores=[],
+                    start_utc=None,
+                    end_utc=None,
+                    peak_score=None,
+                )
 
-                        if segment is None or len(segment) == 0:
-                            selection = PositiveSelectionResult(
-                                score_source=selection.score_source,
-                                decision="skip",
-                                offsets=selection.offsets,
-                                raw_scores=selection.raw_scores,
-                                smoothed_scores=selection.smoothed_scores,
-                                start_sec=selection.start_sec,
-                                end_sec=selection.end_sec,
-                                peak_score=selection.peak_score,
-                            )
-                        else:
-                            for label_name in positive_labels:
-                                out_path = _resolve_positive_output_path(
-                                    positive_output_path,
-                                    label=label_name,
-                                    clip_name=clip_name,
-                                    source_id=provider.source_id,
-                                )
-                                if _output_artifacts_complete(out_path):
-                                    counts["n_skipped"] += 1
-                                    continue
-                                wrote_audio = ensure_output_artifacts(
-                                    segment,
-                                    target_sample_rate,
-                                    out_path,
-                                    spectrogram_hop_length=spectrogram_hop_length,
-                                    spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
-                                    spectrogram_width_px=spectrogram_width_px,
-                                    spectrogram_height_px=spectrogram_height_px,
-                                )
-                                if wrote_audio:
-                                    counts[f"n_{label_name}"] += 1
-                                else:
-                                    counts["n_skipped"] += 1
-                            if using_row_store:
-                                row["positive_extract_filename"] = clip_name
-                            else:
-                                row.update(
-                                    _selection_result_to_row_update(
-                                        selection,
-                                        positive_extract_filename=clip_name,
-                                    )
-                                )
-                            counts["n_positive_selected"] += 1
-                            positive_written = True
-                if not positive_written:
-                    if old_positive_filename:
+            positive_written = False
+            if (
+                selection.decision == "positive"
+                and selection.start_utc is not None
+                and selection.end_utc is not None
+            ):
+                clip_name = (
+                    derive_detection_filename(selection.start_utc, selection.end_utc)
+                    or ""
+                )
+                if clip_name:
+                    if old_positive_filename and old_positive_filename != clip_name:
                         _delete_stale_positive_outputs(
                             positive_output_path,
                             clip_name=old_positive_filename,
                             labels=["humpback", "orca"],
                             source_id=provider.source_id,
                         )
-                    if using_row_store:
-                        row["positive_extract_filename"] = ""
+                    duration = selection.end_utc - selection.start_utc
+                    segment: np.ndarray | None = None
+                    if use_stream_resolver:
+                        if stream_timeline:
+                            assert stream_start_ts_value is not None
+                            assert stream_end_ts_value is not None
+                            try:
+                                segment = resolve_audio_slice(
+                                    provider=provider,
+                                    stream_start_ts=stream_start_ts_value,
+                                    stream_end_ts=stream_end_ts_value,
+                                    start_utc=selection.start_utc,
+                                    duration_sec=duration,
+                                    target_sr=target_sample_rate,
+                                    timeline=stream_timeline,
+                                )
+                            except Exception:
+                                segment = None
                     else:
-                        row.update(
-                            _selection_result_to_row_update(
-                                selection,
-                                positive_extract_filename=None,
-                            )
+                        segment = fetch_hydrophone_audio_range(
+                            provider,
+                            selection.start_utc,
+                            selection.end_utc,
+                            target_sample_rate,
                         )
-                    counts["n_positive_selection_skipped"] += 1
-            else:
+
+                    if segment is None or len(segment) == 0:
+                        selection = PositiveSelectionResult(
+                            score_source=selection.score_source,
+                            decision="skip",
+                            offsets=selection.offsets,
+                            raw_scores=selection.raw_scores,
+                            smoothed_scores=selection.smoothed_scores,
+                            start_utc=selection.start_utc,
+                            end_utc=selection.end_utc,
+                            peak_score=selection.peak_score,
+                        )
+                    else:
+                        for label_name in pos_labels:
+                            out_path = _resolve_positive_output_path(
+                                positive_output_path,
+                                label=label_name,
+                                clip_name=clip_name,
+                                source_id=provider.source_id,
+                            )
+                            if _output_artifacts_complete(out_path):
+                                counts["n_skipped"] += 1
+                                continue
+                            wrote_audio = ensure_output_artifacts(
+                                segment,
+                                target_sample_rate,
+                                out_path,
+                                spectrogram_hop_length=spectrogram_hop_length,
+                                spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
+                                spectrogram_width_px=spectrogram_width_px,
+                                spectrogram_height_px=spectrogram_height_px,
+                            )
+                            if wrote_audio:
+                                counts[f"n_{label_name}"] += 1
+                            else:
+                                counts["n_skipped"] += 1
+                        if using_row_store:
+                            row["positive_extract_filename"] = clip_name
+                        else:
+                            row.update(
+                                selection_result_to_row_update(
+                                    selection,
+                                    positive_extract_filename=clip_name,
+                                )
+                            )
+                        counts["n_positive_selected"] += 1
+                        positive_written = True
+            if not positive_written:
                 if old_positive_filename:
                     _delete_stale_positive_outputs(
                         positive_output_path,
@@ -1552,107 +1270,115 @@ def extract_hydrophone_labeled_samples(
                 if using_row_store:
                     row["positive_extract_filename"] = ""
                 else:
-                    row.update(_blank_positive_selection_fields())
+                    row.update(
+                        selection_result_to_row_update(
+                            selection,
+                            positive_extract_filename=None,
+                        )
+                    )
+                counts["n_positive_selection_skipped"] += 1
+        else:
+            if old_positive_filename:
+                _delete_stale_positive_outputs(
+                    positive_output_path,
+                    clip_name=old_positive_filename,
+                    labels=["humpback", "orca"],
+                    source_id=provider.source_id,
+                )
+            if using_row_store:
+                row["positive_extract_filename"] = ""
+            else:
+                row.update(blank_positive_selection_fields())
 
-            if abs_end <= abs_start:
+        if row_end_utc <= row_start_utc:
+            counts["n_skipped"] += 1
+            continue
+
+        # Output filename and folder from UTC
+        det_filename = derive_detection_filename(row_start_utc, row_end_utc)
+        if det_filename is None:
+            counts["n_skipped"] += 1
+            continue
+        clip_name = _with_output_audio_extension(det_filename)
+        date_folder = _date_folder_from_epoch(row_start_utc)
+
+        # Route to label-specific folders (species/category before hydrophone_id)
+        labels_to_write: list[tuple[Path, str]] = []
+        if row.get("ship", "").strip() == "1":
+            out_dir = negative_output_path / "ship" / provider.source_id / date_folder
+            labels_to_write.append((out_dir, "ship"))
+        if row.get("background", "").strip() == "1":
+            out_dir = (
+                negative_output_path / "background" / provider.source_id / date_folder
+            )
+            labels_to_write.append((out_dir, "background"))
+
+        pending_writes: list[tuple[Path, str]] = []
+        for out_dir, label_name in labels_to_write:
+            out_path = out_dir / clip_name
+            if _output_artifacts_complete(out_path):
                 counts["n_skipped"] += 1
                 continue
+            pending_writes.append((out_path, label_name))
 
-            abs_start_ts = abs_start.timestamp()
-            abs_end_ts = abs_end.timestamp()
+        if not pending_writes:
+            continue
 
-            # Output filename and folder
-            assert detection_filename is not None
-            clip_name = _with_output_audio_extension(detection_filename)
-            date_folder = _date_folder(abs_start)
+        duration = row_end_utc - row_start_utc
+        segment = None
 
-            # Route to label-specific folders (species/category before hydrophone_id)
-            labels_to_write: list[tuple[Path, str]] = []
-            if row.get("ship", "").strip() == "1":
-                out_dir = (
-                    negative_output_path / "ship" / provider.source_id / date_folder
-                )
-                labels_to_write.append((out_dir, "ship"))
-            if row.get("background", "").strip() == "1":
-                out_dir = (
-                    negative_output_path
-                    / "background"
-                    / provider.source_id
-                    / date_folder
-                )
-                labels_to_write.append((out_dir, "background"))
-
-            pending_writes: list[tuple[Path, str]] = []
-            for out_dir, label_name in labels_to_write:
-                out_path = out_dir / clip_name
-                if _output_artifacts_complete(out_path):
-                    counts["n_skipped"] += 1
-                    continue
-                pending_writes.append((out_path, label_name))
-
-            if not pending_writes:
-                continue
-
-            duration = (abs_end - abs_start).total_seconds()
-            segment: np.ndarray | None = None
-
-            if use_stream_resolver:
-                if not stream_timeline:
-                    counts["n_skipped"] += len(pending_writes)
-                    continue
-                assert stream_start_ts_value is not None
-                assert stream_end_ts_value is not None
-                try:
-                    segment = resolve_audio_slice(
-                        provider=provider,
-                        stream_start_ts=stream_start_ts_value,
-                        stream_end_ts=stream_end_ts_value,
-                        filename=source_filename,
-                        row_start_sec=start_sec,
-                        duration_sec=duration,
-                        target_sr=target_sample_rate,
-                        legacy_anchor_start_ts=stream_start_ts_value,
-                        timeline=stream_timeline,
-                        processing_start_ts=processing_start_ts,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "No hydrophone audio for %s (%.1f-%.1f): %s",
-                        source_filename,
-                        start_sec,
-                        end_sec,
-                        exc,
-                    )
-            else:
-                # Backward-compatible fallback for direct callers that do not
-                # provide stream bounds.
-                combined = fetch_hydrophone_audio_range(
-                    provider,
-                    abs_start_ts,
-                    abs_end_ts,
-                    target_sample_rate,
-                )
-                if combined is not None:
-                    segment = combined
-
-            if segment is None or len(segment) == 0:
+        if use_stream_resolver:
+            if not stream_timeline:
                 counts["n_skipped"] += len(pending_writes)
                 continue
-
-            for out_path, label_name in pending_writes:
-                wrote_audio = ensure_output_artifacts(
-                    segment,
-                    target_sample_rate,
-                    out_path,
-                    spectrogram_hop_length=spectrogram_hop_length,
-                    spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
-                    spectrogram_width_px=spectrogram_width_px,
-                    spectrogram_height_px=spectrogram_height_px,
+            assert stream_start_ts_value is not None
+            assert stream_end_ts_value is not None
+            try:
+                segment = resolve_audio_slice(
+                    provider=provider,
+                    stream_start_ts=stream_start_ts_value,
+                    stream_end_ts=stream_end_ts_value,
+                    start_utc=row_start_utc,
+                    duration_sec=duration,
+                    target_sr=target_sample_rate,
+                    timeline=stream_timeline,
                 )
-                if wrote_audio:
-                    counts[f"n_{label_name}"] += 1
-                else:
-                    counts["n_skipped"] += 1
+            except Exception as exc:
+                logger.warning(
+                    "No hydrophone audio for start_utc=%.1f (%.1f-%.1f): %s",
+                    row_start_utc,
+                    row_start_utc,
+                    row_end_utc,
+                    exc,
+                )
+        else:
+            combined = fetch_hydrophone_audio_range(
+                provider,
+                row_start_utc,
+                row_end_utc,
+                target_sample_rate,
+            )
+            if combined is not None:
+                segment = combined
+
+        if segment is None or len(segment) == 0:
+            counts["n_skipped"] += len(pending_writes)
+            continue
+
+        for out_path, label_name in pending_writes:
+            wrote_audio = ensure_output_artifacts(
+                segment,
+                target_sample_rate,
+                out_path,
+                spectrogram_hop_length=spectrogram_hop_length,
+                spectrogram_dynamic_range_db=spectrogram_dynamic_range_db,
+                spectrogram_width_px=spectrogram_width_px,
+                spectrogram_height_px=spectrogram_height_px,
+            )
+            if wrote_audio:
+                counts[f"n_{label_name}"] += 1
+            else:
+                counts["n_skipped"] += 1
 
     _write_detection_rows(
         all_rows,

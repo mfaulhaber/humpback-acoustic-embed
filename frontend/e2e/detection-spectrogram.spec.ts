@@ -154,13 +154,12 @@ test.describe("Detection spectrogram", () => {
     expect(rows.length).toBeGreaterThan(0);
 
     const row = rows[0];
-    const duration = Math.max(row.end_sec - row.start_sec, 5);
+    const duration = Math.max(row.end_utc - row.start_utc, 5);
 
     // Request spectrogram
     const specRes = await request.get(
       `http://localhost:8000/classifier/detection-jobs/${completedJob.id}/spectrogram` +
-        `?filename=${encodeURIComponent(row.filename)}` +
-        `&start_sec=${row.start_sec}&duration_sec=${duration}`,
+        `?start_utc=${row.start_utc}&duration_sec=${duration}`,
     );
     if (!specRes.ok()) {
       test.skip(
@@ -182,7 +181,7 @@ test.describe("Detection spectrogram", () => {
   }) => {
     const res = await request.get(
       "http://localhost:8000/classifier/detection-jobs/nonexistent/spectrogram" +
-        "?filename=test.wav&start_sec=0&duration_sec=5",
+        "?start_utc=0&duration_sec=5",
     );
     expect(res.status()).toBe(404);
   });
@@ -192,9 +191,8 @@ test.describe("Detection spectrogram", () => {
   }) => {
     await setupUiMocks(page, [
       {
-        filename: "20250704T090000Z.wav",
-        start_sec: 0,
-        end_sec: 10,
+        start_utc: 1751619600,
+        end_utc: 1751619610,
         avg_confidence: 0.93,
         peak_confidence: 0.97,
         n_windows: 6,
@@ -202,10 +200,10 @@ test.describe("Detection spectrogram", () => {
         orca: null,
         ship: null,
         background: null,
-        detection_filename: "20250704T090000Z_20250704T090015Z.flac",
-        extract_filename: "20250704T090000Z_20250704T090015Z.flac",
-        positive_selection_start_sec: 5,
-        positive_selection_end_sec: 10,
+        raw_start_utc: 1751619600,
+        raw_end_utc: 1751619610,
+        positive_selection_start_utc: 1751619605,
+        positive_selection_end_utc: 1751619610,
       },
     ]);
 
@@ -227,10 +225,8 @@ test.describe("Detection spectrogram", () => {
 
     await setupUiMocks(page, [
       {
-        row_id: "row-1",
-        filename: "20250704T090000Z.wav",
-        start_sec: 0,
-        end_sec: 10,
+        start_utc: 1751619600,
+        end_utc: 1751619610,
         avg_confidence: 0.93,
         peak_confidence: 0.97,
         n_windows: 6,
@@ -238,12 +234,12 @@ test.describe("Detection spectrogram", () => {
         orca: null,
         ship: null,
         background: null,
-        detection_filename: "20250704T090000Z_20250704T090015Z.flac",
-        extract_filename: "20250704T090000Z_20250704T090015Z.flac",
-        auto_positive_selection_start_sec: 5,
-        auto_positive_selection_end_sec: 10,
-        positive_selection_start_sec: null,
-        positive_selection_end_sec: null,
+        raw_start_utc: 1751619600,
+        raw_end_utc: 1751619610,
+        auto_positive_selection_start_utc: 1751619605,
+        auto_positive_selection_end_utc: 1751619610,
+        positive_selection_start_utc: null,
+        positive_selection_end_utc: null,
       },
     ]);
 
@@ -255,10 +251,8 @@ test.describe("Detection spectrogram", () => {
         body: JSON.stringify({
           status: "ok",
           row: {
-            row_id: "row-1",
-            filename: "20250704T090000Z.wav",
-            start_sec: 0,
-            end_sec: 10,
+            start_utc: 1751619600,
+            end_utc: 1751619610,
             avg_confidence: 0.93,
             peak_confidence: 0.97,
             n_windows: 6,
@@ -266,13 +260,13 @@ test.describe("Detection spectrogram", () => {
             orca: null,
             ship: null,
             background: null,
-            detection_filename: "20250704T090000Z_20250704T090015Z.flac",
-            extract_filename: "20250704T090000Z_20250704T090015Z.flac",
-            manual_positive_selection_start_sec: 0,
-            manual_positive_selection_end_sec: 15,
+            raw_start_utc: 1751619600,
+            raw_end_utc: 1751619610,
+            manual_positive_selection_start_utc: 1751619600,
+            manual_positive_selection_end_utc: 1751619615,
             positive_selection_origin: "manual_override",
-            positive_selection_start_sec: 0,
-            positive_selection_end_sec: 15,
+            positive_selection_start_utc: 1751619600,
+            positive_selection_end_utc: 1751619615,
           },
         }),
       });
@@ -298,10 +292,11 @@ test.describe("Detection spectrogram", () => {
 
     await expect.poll(() => rowStatePayload).not.toBeNull();
     expect(rowStatePayload).toMatchObject({
-      row_id: "row-1",
+      start_utc: 1751619600,
+      end_utc: 1751619610,
       humpback: 1,
-      manual_positive_selection_start_sec: 0,
-      manual_positive_selection_end_sec: 15,
+      manual_positive_selection_start_utc: 1751619600,
+      manual_positive_selection_end_utc: 1751619615,
     });
     await expect(page.getByTestId("spectrogram-popup")).toHaveCount(0);
   });
@@ -313,10 +308,8 @@ test.describe("Detection spectrogram", () => {
 
     await setupUiMocks(page, [
       {
-        row_id: "row-edge-1",
-        filename: "20150808T014416Z.wav",
-        start_sec: 3,
-        end_sec: 8,
+        start_utc: 1438998259,
+        end_utc: 1438998264,
         avg_confidence: 0.93,
         peak_confidence: 0.97,
         n_windows: 6,
@@ -324,12 +317,12 @@ test.describe("Detection spectrogram", () => {
         orca: null,
         ship: null,
         background: null,
-        detection_filename: "20150808T014416Z_20150808T014431Z.flac",
-        extract_filename: "20150808T014416Z_20150808T014431Z.flac",
-        auto_positive_selection_start_sec: 3,
-        auto_positive_selection_end_sec: 8,
-        positive_selection_start_sec: null,
-        positive_selection_end_sec: null,
+        raw_start_utc: 1438998259,
+        raw_end_utc: 1438998264,
+        auto_positive_selection_start_utc: 1438998259,
+        auto_positive_selection_end_utc: 1438998264,
+        positive_selection_start_utc: null,
+        positive_selection_end_utc: null,
       },
     ]);
 
@@ -341,10 +334,8 @@ test.describe("Detection spectrogram", () => {
         body: JSON.stringify({
           status: "ok",
           row: {
-            row_id: "row-edge-1",
-            filename: "20150808T014416Z.wav",
-            start_sec: 3,
-            end_sec: 8,
+            start_utc: 1438998259,
+            end_utc: 1438998264,
             avg_confidence: 0.93,
             peak_confidence: 0.97,
             n_windows: 6,
@@ -352,13 +343,13 @@ test.describe("Detection spectrogram", () => {
             orca: null,
             ship: null,
             background: null,
-            detection_filename: "20150808T014416Z_20150808T014431Z.flac",
-            extract_filename: "20150808T014416Z_20150808T014431Z.flac",
-            manual_positive_selection_start_sec: 0,
-            manual_positive_selection_end_sec: 15,
+            raw_start_utc: 1438998259,
+            raw_end_utc: 1438998264,
+            manual_positive_selection_start_utc: 1438998256,
+            manual_positive_selection_end_utc: 1438998271,
             positive_selection_origin: "manual_override",
-            positive_selection_start_sec: 0,
-            positive_selection_end_sec: 15,
+            positive_selection_start_utc: 1438998256,
+            positive_selection_end_utc: 1438998271,
           },
         }),
       });
@@ -380,10 +371,11 @@ test.describe("Detection spectrogram", () => {
 
     await expect.poll(() => rowStatePayload).not.toBeNull();
     expect(rowStatePayload).toMatchObject({
-      row_id: "row-edge-1",
+      start_utc: 1438998259,
+      end_utc: 1438998264,
       humpback: 1,
-      manual_positive_selection_start_sec: 0,
-      manual_positive_selection_end_sec: 15,
+      manual_positive_selection_start_utc: 1438998256,
+      manual_positive_selection_end_utc: 1438998271,
     });
   });
 
@@ -394,10 +386,8 @@ test.describe("Detection spectrogram", () => {
 
     await setupUiMocks(page, [
       {
-        row_id: "row-edge-2",
-        filename: "20150807T221813Z.wav",
-        start_sec: 7,
-        end_sec: 12,
+        start_utc: 1438985900,
+        end_utc: 1438985905,
         avg_confidence: 0.94,
         peak_confidence: 0.98,
         n_windows: 6,
@@ -405,12 +395,12 @@ test.describe("Detection spectrogram", () => {
         orca: null,
         ship: null,
         background: null,
-        detection_filename: "20150807T221813Z_20150807T221828Z.flac",
-        extract_filename: "20150807T221813Z_20150807T221828Z.flac",
-        auto_positive_selection_start_sec: 7,
-        auto_positive_selection_end_sec: 12,
-        positive_selection_start_sec: null,
-        positive_selection_end_sec: null,
+        raw_start_utc: 1438985900,
+        raw_end_utc: 1438985905,
+        auto_positive_selection_start_utc: 1438985900,
+        auto_positive_selection_end_utc: 1438985905,
+        positive_selection_start_utc: null,
+        positive_selection_end_utc: null,
       },
     ]);
 
@@ -422,10 +412,8 @@ test.describe("Detection spectrogram", () => {
         body: JSON.stringify({
           status: "ok",
           row: {
-            row_id: "row-edge-2",
-            filename: "20150807T221813Z.wav",
-            start_sec: 7,
-            end_sec: 12,
+            start_utc: 1438985900,
+            end_utc: 1438985905,
             avg_confidence: 0.94,
             peak_confidence: 0.98,
             n_windows: 6,
@@ -433,13 +421,13 @@ test.describe("Detection spectrogram", () => {
             orca: null,
             ship: null,
             background: null,
-            detection_filename: "20150807T221813Z_20150807T221828Z.flac",
-            extract_filename: "20150807T221813Z_20150807T221828Z.flac",
-            manual_positive_selection_start_sec: 5,
-            manual_positive_selection_end_sec: 15,
+            raw_start_utc: 1438985900,
+            raw_end_utc: 1438985905,
+            manual_positive_selection_start_utc: 1438985898,
+            manual_positive_selection_end_utc: 1438985908,
             positive_selection_origin: "manual_override",
-            positive_selection_start_sec: 5,
-            positive_selection_end_sec: 15,
+            positive_selection_start_utc: 1438985898,
+            positive_selection_end_utc: 1438985908,
           },
         }),
       });
@@ -464,10 +452,11 @@ test.describe("Detection spectrogram", () => {
 
     await expect.poll(() => rowStatePayload).not.toBeNull();
     expect(rowStatePayload).toMatchObject({
-      row_id: "row-edge-2",
+      start_utc: 1438985900,
+      end_utc: 1438985905,
       humpback: 1,
-      manual_positive_selection_start_sec: 5,
-      manual_positive_selection_end_sec: 15,
+      manual_positive_selection_start_utc: 1438985898,
+      manual_positive_selection_end_utc: 1438985908,
     });
   });
 
@@ -476,9 +465,8 @@ test.describe("Detection spectrogram", () => {
   }) => {
     await setupUiMocks(page, [
       {
-        filename: "20250704T090000Z.wav",
-        start_sec: 0,
-        end_sec: 10,
+        start_utc: 1751619600,
+        end_utc: 1751619610,
         avg_confidence: 0.93,
         peak_confidence: 0.97,
         n_windows: 6,
@@ -486,8 +474,8 @@ test.describe("Detection spectrogram", () => {
         orca: null,
         ship: null,
         background: null,
-        detection_filename: "20250704T090000Z_20250704T090015Z.flac",
-        extract_filename: "20250704T090000Z_20250704T090015Z.flac",
+        raw_start_utc: 1751619600,
+        raw_end_utc: 1751619610,
       },
     ]);
 
@@ -506,9 +494,8 @@ test.describe("Detection spectrogram", () => {
   }) => {
     await setupUiMocks(page, [
       {
-        filename: "20150807T221433Z.wav",
-        start_sec: 25,
-        end_sec: 40,
+        start_utc: 1438985698,
+        end_utc: 1438985713,
         avg_confidence: 0.974968,
         peak_confidence: 0.99657,
         n_windows: 8,
@@ -516,10 +503,10 @@ test.describe("Detection spectrogram", () => {
         orca: 0,
         ship: null,
         background: null,
-        detection_filename: "20150807T221458Z_20150807T221513Z.flac",
-        extract_filename: "20150807T221458Z_20150807T221513Z.flac",
-        positive_selection_start_sec: null,
-        positive_selection_end_sec: null,
+        raw_start_utc: 1438985698,
+        raw_end_utc: 1438985713,
+        positive_selection_start_utc: null,
+        positive_selection_end_utc: null,
         positive_extract_filename: null,
       },
     ]);

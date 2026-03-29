@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import json
 import logging
@@ -12,7 +11,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,8 +44,8 @@ POSITIVE_SELECTION_FIELDNAMES = [
     "positive_selection_offsets",
     "positive_selection_raw_scores",
     "positive_selection_smoothed_scores",
-    "positive_selection_start_sec",
-    "positive_selection_end_sec",
+    "positive_selection_start_utc",
+    "positive_selection_end_utc",
     "positive_selection_peak_score",
     "positive_extract_filename",
 ]
@@ -57,31 +56,27 @@ AUTO_POSITIVE_SELECTION_FIELDNAMES = [
     "auto_positive_selection_offsets",
     "auto_positive_selection_raw_scores",
     "auto_positive_selection_smoothed_scores",
-    "auto_positive_selection_start_sec",
-    "auto_positive_selection_end_sec",
+    "auto_positive_selection_start_utc",
+    "auto_positive_selection_end_utc",
     "auto_positive_selection_peak_score",
 ]
 
 MANUAL_POSITIVE_SELECTION_FIELDNAMES = [
-    "manual_positive_selection_start_sec",
-    "manual_positive_selection_end_sec",
+    "manual_positive_selection_start_utc",
+    "manual_positive_selection_end_utc",
 ]
 
 LABEL_FIELDNAMES = ["humpback", "orca", "ship", "background"]
 
 ROW_STORE_FIELDNAMES = [
-    "row_id",
-    "filename",
-    "start_sec",
-    "end_sec",
+    "start_utc",
+    "end_utc",
     "avg_confidence",
     "peak_confidence",
     "n_windows",
-    "raw_start_sec",
-    "raw_end_sec",
+    "raw_start_utc",
+    "raw_end_utc",
     "merged_event_count",
-    "detection_filename",
-    "extract_filename",
     "hydrophone_name",
     "humpback",
     "orca",
@@ -107,8 +102,8 @@ class PositiveSelectionResult:
     offsets: list[float]
     raw_scores: list[float]
     smoothed_scores: list[float]
-    start_sec: float | None
-    end_sec: float | None
+    start_utc: float | None
+    end_utc: float | None
     peak_score: float | None
 
 
@@ -142,23 +137,6 @@ def strip_known_audio_extension(filename: str) -> str:
     if suffix in _KNOWN_AUDIO_EXTENSIONS:
         return filename[: -len(suffix)]
     return filename
-
-
-def hydrophone_job_relative_to_file_relative_offset(
-    filename: str,
-    offset_sec: float,
-    job_start_timestamp: float | None,
-) -> float:
-    """Convert a hydrophone UI/job-relative offset back to the stored file-relative value."""
-    if job_start_timestamp is None:
-        return offset_sec
-
-    recording_start = parse_recording_timestamp(filename)
-    if recording_start is None:
-        return offset_sec
-
-    chunk_epoch = recording_start.timestamp()
-    return offset_sec - (chunk_epoch - job_start_timestamp)
 
 
 def safe_float(value: str | float | int | None, default: float = 0.0) -> float:
@@ -300,202 +278,44 @@ def snap_bounds_to_window(
 
 
 def derive_detection_filename(
-    filename: str,
-    start_sec: float,
-    end_sec: float,
+    start_utc: float,
+    end_utc: float,
 ) -> str | None:
-    if end_sec <= start_sec:
+    """Format a detection filename from UTC epoch float pair."""
+    if end_utc <= start_utc:
         return None
-    base = strip_known_audio_extension(filename)
-    try:
-        chunk_start = datetime.strptime(base, _COMPACT_TS_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        return None
-    abs_start = chunk_start + timedelta(seconds=start_sec)
-    abs_end = chunk_start + timedelta(seconds=end_sec)
+    abs_start = datetime.fromtimestamp(start_utc, tz=timezone.utc)
+    abs_end = datetime.fromtimestamp(end_utc, tz=timezone.utc)
     return (
         f"{abs_start.strftime(_COMPACT_TS_FORMAT)}"
         f"_{abs_end.strftime(_COMPACT_TS_FORMAT)}.flac"
     )
 
 
-def build_hydrophone_anchor_filename(job_start_timestamp: float) -> str:
-    anchor_dt = datetime.fromtimestamp(job_start_timestamp, tz=timezone.utc)
-    return f"{anchor_dt.strftime(_COMPACT_TS_FORMAT)}.wav"
-
-
-def _is_snapped_clip_fallback_anchor_row(
-    row: dict[str, str],
-    *,
-    start_sec: float,
-    end_sec: float,
-    window_size_seconds: float,
-) -> bool:
-    detection_filename = str(row.get("detection_filename", "") or "").strip()
-    extract_filename = str(row.get("extract_filename", "") or "").strip()
-    if not detection_filename or detection_filename != extract_filename:
-        return False
-
-    clip_fallback = (
-        row.get("positive_selection_origin", "").strip()
-        == POSITIVE_SELECTION_ORIGIN_CLIP
-        or row.get("positive_selection_score_source", "").strip()
-        == POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK_CLIP
-    )
-    if (
-        not clip_fallback
-        or row.get("positive_selection_decision", "").strip() != "positive"
-    ):
-        return False
-
-    snap_start, snap_end = snap_bounds_to_window(
-        start_sec, end_sec, window_size_seconds
-    )
-    selection_start = safe_optional_float(row.get("positive_selection_start_sec"))
-    selection_end = safe_optional_float(row.get("positive_selection_end_sec"))
-    if selection_start is None or selection_end is None:
-        return True
-    return math.isclose(selection_start, snap_start) and math.isclose(
-        selection_end, snap_end
-    )
-
-
-def backfill_hydrophone_row_metadata(
-    rows: list[dict[str, str]],
-    *,
-    job_start_timestamp: float,
-    window_size_seconds: float,
-) -> bool:
-    """Ensure hydrophone rows retain a timestamp anchor and derived clip names."""
-    anchor_filename = build_hydrophone_anchor_filename(job_start_timestamp)
-    changed = False
-
-    for row in rows:
-        filename = str(row.get("filename", "") or "").strip()
-        filename_was_blank = not filename
-        if not filename:
-            row["filename"] = anchor_filename
-            changed = True
-
-        start_sec = safe_float(row.get("start_sec"), 0.0)
-        end_sec = safe_float(row.get("end_sec"), 0.0)
-        exact_detection_filename = (
-            derive_detection_filename(row["filename"], start_sec, end_sec) or ""
-        )
-        existing_detection_filename = str(row.get("detection_filename", "") or "")
-        existing_extract_filename = str(row.get("extract_filename", "") or "")
-        missing_clip_metadata = not (
-            existing_detection_filename.strip() and existing_extract_filename.strip()
-        )
-        snapped_clip_fallback_anchor_row = row[
-            "filename"
-        ] == anchor_filename and _is_snapped_clip_fallback_anchor_row(
-            row,
-            start_sec=start_sec,
-            end_sec=end_sec,
-            window_size_seconds=window_size_seconds,
-        )
-        refresh_clip_fallback_selection = (
-            filename_was_blank
-            or snapped_clip_fallback_anchor_row
-            or (row["filename"] == anchor_filename and missing_clip_metadata)
-        )
-
-        if filename_was_blank or snapped_clip_fallback_anchor_row:
-            detection_filename = exact_detection_filename
-            extract_filename = exact_detection_filename
-        elif row["filename"] == anchor_filename:
-            detection_filename = existing_detection_filename or exact_detection_filename
-            extract_filename = existing_extract_filename or exact_detection_filename
-        else:
-            normalized = normalize_detection_row(
-                row,
-                is_hydrophone=True,
-                window_size_seconds=window_size_seconds,
-            )
-            detection_filename = normalized["detection_filename"] or ""
-            extract_filename = normalized["extract_filename"] or ""
-
-        clip_fallback = (
-            row.get("positive_selection_origin", "").strip()
-            == POSITIVE_SELECTION_ORIGIN_CLIP
-            or row.get("positive_selection_score_source", "").strip()
-            == POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK_CLIP
-        )
-        if (
-            refresh_clip_fallback_selection
-            and clip_fallback
-            and row.get("positive_selection_decision", "").strip() == "positive"
-        ):
-            start_value = format_optional_float(start_sec)
-            end_value = format_optional_float(end_sec)
-            if row.get("positive_selection_start_sec", "") != start_value:
-                row["positive_selection_start_sec"] = start_value
-                changed = True
-            if row.get("positive_selection_end_sec", "") != end_value:
-                row["positive_selection_end_sec"] = end_value
-                changed = True
-
-        if str(row.get("detection_filename", "") or "") != detection_filename:
-            row["detection_filename"] = detection_filename
-            changed = True
-        if str(row.get("extract_filename", "") or "") != extract_filename:
-            row["extract_filename"] = extract_filename
-            changed = True
-
-    return changed
-
-
 def normalize_detection_row(
     row: dict[str, str],
-    *,
-    is_hydrophone: bool,
-    window_size_seconds: float,
 ) -> dict[str, Any]:
-    filename = (row.get("filename", "") or "").strip()
-    start_sec = safe_float(row.get("start_sec"), 0.0)
-    end_sec = safe_float(row.get("end_sec"), 0.0)
+    """Parse and validate a detection row with UTC identity fields."""
+    start_utc = safe_float(row.get("start_utc"), 0.0)
+    end_utc = safe_float(row.get("end_utc"), 0.0)
     avg_confidence = safe_optional_float(row.get("avg_confidence"))
     peak_confidence = safe_optional_float(row.get("peak_confidence"))
     n_windows = safe_int(row.get("n_windows"), None)
 
-    detection_filename = (row.get("detection_filename", "") or "").strip() or None
-    extract_filename = (row.get("extract_filename", "") or "").strip() or None
-
-    if detection_filename is None:
-        if parse_compact_range_filename(extract_filename) is not None:
-            detection_filename = extract_filename
-        else:
-            snap_start, snap_end = snap_bounds_to_window(
-                start_sec, end_sec, window_size_seconds
-            )
-            detection_filename = derive_detection_filename(
-                filename, snap_start, snap_end
-            )
-
-    if extract_filename is None and is_hydrophone:
-        extract_filename = detection_filename
-
-    raw_start_sec = safe_float(row.get("raw_start_sec"), start_sec)
-    raw_end_sec = safe_float(row.get("raw_end_sec"), end_sec)
+    raw_start_utc = safe_float(row.get("raw_start_utc"), start_utc)
+    raw_end_utc = safe_float(row.get("raw_end_utc"), end_utc)
     merged_event_count = safe_int(row.get("merged_event_count"), 1)
     positive_extract_filename = row.get("positive_extract_filename", "").strip() or None
 
     return {
-        "row_id": (row.get("row_id", "") or "").strip() or None,
-        "filename": filename,
-        "start_sec": start_sec,
-        "end_sec": end_sec,
+        "start_utc": start_utc,
+        "end_utc": end_utc,
         "avg_confidence": avg_confidence,
         "peak_confidence": peak_confidence,
         "n_windows": n_windows,
-        "detection_filename": detection_filename,
-        "extract_filename": extract_filename,
         "hydrophone_name": (row.get("hydrophone_name", "").strip() or None),
-        "raw_start_sec": raw_start_sec,
-        "raw_end_sec": raw_end_sec,
+        "raw_start_utc": raw_start_utc,
+        "raw_end_utc": raw_end_utc,
         "merged_event_count": merged_event_count,
         "humpback": parse_label(row.get("humpback")),
         "orca": parse_label(row.get("orca")),
@@ -516,20 +336,20 @@ def normalize_detection_row(
         "auto_positive_selection_smoothed_scores": safe_float_list(
             row.get("auto_positive_selection_smoothed_scores")
         ),
-        "auto_positive_selection_start_sec": safe_optional_float(
-            row.get("auto_positive_selection_start_sec")
+        "auto_positive_selection_start_utc": safe_optional_float(
+            row.get("auto_positive_selection_start_utc")
         ),
-        "auto_positive_selection_end_sec": safe_optional_float(
-            row.get("auto_positive_selection_end_sec")
+        "auto_positive_selection_end_utc": safe_optional_float(
+            row.get("auto_positive_selection_end_utc")
         ),
         "auto_positive_selection_peak_score": safe_optional_float(
             row.get("auto_positive_selection_peak_score")
         ),
-        "manual_positive_selection_start_sec": safe_optional_float(
-            row.get("manual_positive_selection_start_sec")
+        "manual_positive_selection_start_utc": safe_optional_float(
+            row.get("manual_positive_selection_start_utc")
         ),
-        "manual_positive_selection_end_sec": safe_optional_float(
-            row.get("manual_positive_selection_end_sec")
+        "manual_positive_selection_end_utc": safe_optional_float(
+            row.get("manual_positive_selection_end_utc")
         ),
         "positive_selection_origin": (
             row.get("positive_selection_origin", "").strip() or None
@@ -549,11 +369,11 @@ def normalize_detection_row(
         "positive_selection_smoothed_scores": safe_float_list(
             row.get("positive_selection_smoothed_scores")
         ),
-        "positive_selection_start_sec": safe_optional_float(
-            row.get("positive_selection_start_sec")
+        "positive_selection_start_utc": safe_optional_float(
+            row.get("positive_selection_start_utc")
         ),
-        "positive_selection_end_sec": safe_optional_float(
-            row.get("positive_selection_end_sec")
+        "positive_selection_end_utc": safe_optional_float(
+            row.get("positive_selection_end_utc")
         ),
         "positive_selection_peak_score": safe_optional_float(
             row.get("positive_selection_peak_score")
@@ -562,14 +382,9 @@ def normalize_detection_row(
     }
 
 
-def build_detection_row_id(row: dict[str, Any]) -> str:
-    detection_filename = row.get("detection_filename") or ""
-    material = (
-        f"{row.get('filename', '')}|{detection_filename}|"
-        f"{safe_float(row.get('start_sec'), 0.0):.6f}|"
-        f"{safe_float(row.get('end_sec'), 0.0):.6f}"
-    )
-    return hashlib.sha1(material.encode("utf-8")).hexdigest()
+def _row_key(row: dict[str, str]) -> tuple[str, str]:
+    """Return the (start_utc, end_utc) composite key for a detection row."""
+    return (row.get("start_utc", ""), row.get("end_utc", ""))
 
 
 def _is_row_labeled(row: dict[str, str]) -> bool:
@@ -589,93 +404,69 @@ def apply_label_edits(
 ) -> list[dict[str, str]]:
     """Apply a batch of label edits (add/move/delete/change_type) to detection rows.
 
-    Returns an updated copy of the row list. Raises ``ValueError`` on invalid
-    operations (overlapping labeled rows, out-of-bounds moves, missing row IDs).
+    Rows are identified by ``(start_utc, end_utc)`` composite key.
+    Returns an updated copy of the row list.  Raises ``ValueError`` on invalid
+    operations (overlapping labeled rows, out-of-bounds moves, missing keys).
     """
-    # Work on a shallow copy so the caller's list is not mutated.
     result: list[dict[str, str]] = [dict(r) for r in rows]
 
-    # Build a lookup by row_id for quick access.
-    row_index: dict[str, dict[str, str]] = {
-        r["row_id"]: r for r in result if r.get("row_id")
-    }
+    # Build lookup by (start_utc, end_utc) composite key.
+    row_index: dict[tuple[str, str], dict[str, str]] = {_row_key(r): r for r in result}
 
-    # Collect new rows from "add" edits so we can check unlabeled replacement.
     new_rows: list[dict[str, str]] = []
-    delete_ids: set[str] = set()
-    # Track row_ids touched by edits for scoped overlap validation.
-    touched_ids: set[str] = set()
+    delete_keys: set[tuple[str, str]] = set()
+    touched_keys: set[tuple[str, str]] = set()
 
     for edit in edits:
         action = edit.get("action")
 
         if action == "add":
-            start = float(edit["start_sec"])
-            end = float(edit["end_sec"])
+            start = float(edit["start_utc"])
+            end = float(edit["end_utc"])
             label = edit.get("label")
 
             new_row = {f: "" for f in ROW_STORE_FIELDNAMES}
-            new_row["filename"] = str(edit.get("filename", "") or "")
-            new_row["start_sec"] = str(start)
-            new_row["end_sec"] = str(end)
-            new_row["detection_filename"] = str(
-                edit.get("detection_filename", "") or ""
-            )
-            new_row["extract_filename"] = str(edit.get("extract_filename", "") or "")
+            new_row["start_utc"] = str(start)
+            new_row["end_utc"] = str(end)
             if label:
                 new_row[label] = "1"
-            new_row["row_id"] = build_detection_row_id(new_row)
             new_rows.append(new_row)
-            touched_ids.add(new_row["row_id"])
+            touched_keys.add(_row_key(new_row))
 
         elif action == "move":
-            rid = edit.get("row_id", "")
-            target = row_index.get(rid)
+            key = (str(edit.get("start_utc", "")), str(edit.get("end_utc", "")))
+            target = row_index.get(key)
             if target is None:
-                raise ValueError(f"Row with row_id '{rid}' not found")
-            new_start = float(edit["new_start_sec"])
-            new_end = float(edit["new_end_sec"])
-            if new_start < 0 or new_end > job_duration:
-                raise ValueError(
-                    f"Move out of bounds: [{new_start}, {new_end}] "
-                    f"exceeds [0, {job_duration}]"
-                )
-            if "filename" in edit:
-                target["filename"] = str(edit.get("filename", "") or "")
-            if "detection_filename" in edit:
-                target["detection_filename"] = str(
-                    edit.get("detection_filename", "") or ""
-                )
-            if "extract_filename" in edit:
-                target["extract_filename"] = str(edit.get("extract_filename", "") or "")
-            target["start_sec"] = str(new_start)
-            target["end_sec"] = str(new_end)
-            touched_ids.add(rid)
+                raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
+            new_start = float(edit["new_start_utc"])
+            new_end = float(edit["new_end_utc"])
+            target["start_utc"] = str(new_start)
+            target["end_utc"] = str(new_end)
+            touched_keys.add(_row_key(target))
 
         elif action == "delete":
-            rid = edit.get("row_id", "")
-            if rid not in row_index:
-                raise ValueError(f"Row with row_id '{rid}' not found")
-            delete_ids.add(rid)
+            key = (str(edit.get("start_utc", "")), str(edit.get("end_utc", "")))
+            if key not in row_index:
+                raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
+            delete_keys.add(key)
 
         elif action == "change_type":
-            rid = edit.get("row_id", "")
-            target = row_index.get(rid)
+            key = (str(edit.get("start_utc", "")), str(edit.get("end_utc", "")))
+            target = row_index.get(key)
             if target is None:
-                raise ValueError(f"Row with row_id '{rid}' not found")
+                raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
             label = edit.get("label", "")
-            # Clear all label fields, then set the target one.
             for lf in LABEL_FIELDNAMES:
                 target[lf] = ""
             if label:
                 target[label] = "1"
-            touched_ids.add(rid)
+            touched_keys.add(key)
 
         else:
             raise ValueError(f"Unknown edit action: {action!r}")
 
     # Apply deletes.
-    result = [r for r in result if r.get("row_id") not in delete_ids]
+    result = [r for r in result if _row_key(r) not in delete_keys]
 
     # Unlabeled replacement: remove unlabeled rows that overlap with new adds.
     if new_rows:
@@ -686,12 +477,12 @@ def apply_label_edits(
                 if _is_row_labeled(r):
                     keep.append(r)
                     continue
-                r_start = safe_float(r.get("start_sec"), 0.0)
-                r_end = safe_float(r.get("end_sec"), 0.0)
+                r_start = safe_float(r.get("start_utc"), 0.0)
+                r_end = safe_float(r.get("end_utc"), 0.0)
                 replaced = False
                 for nr in labeled_new:
-                    nr_start = safe_float(nr.get("start_sec"), 0.0)
-                    nr_end = safe_float(nr.get("end_sec"), 0.0)
+                    nr_start = safe_float(nr.get("start_utc"), 0.0)
+                    nr_end = safe_float(nr.get("end_utc"), 0.0)
                     if _rows_overlap(r_start, r_end, nr_start, nr_end):
                         replaced = True
                         break
@@ -699,18 +490,14 @@ def apply_label_edits(
                     keep.append(r)
             result = keep
 
-    # Append new rows.
     result.extend(new_rows)
 
-    # Overlap validation: only reject overlaps where BOTH rows were touched
-    # by this edit batch.  Detection pipelines legitimately produce overlapping
-    # windows (hop < window size), so a new edit overlapping pre-existing data
-    # is tolerated — the frontend already prevents this via ghost overlap checks.
-    if len(touched_ids) >= 2:
+    # Overlap validation: only reject overlaps where BOTH rows were touched.
+    if len(touched_keys) >= 2:
         touched_labeled = [
-            (safe_float(r.get("start_sec"), 0.0), safe_float(r.get("end_sec"), 0.0), r)
+            (safe_float(r.get("start_utc"), 0.0), safe_float(r.get("end_utc"), 0.0), r)
             for r in result
-            if _is_row_labeled(r) and r.get("row_id", "") in touched_ids
+            if _is_row_labeled(r) and _row_key(r) in touched_keys
         ]
         touched_labeled.sort(key=lambda t: t[0])
         for i in range(len(touched_labeled) - 1):
@@ -727,26 +514,12 @@ def apply_label_edits(
 
 def resolve_clip_bounds(
     row: dict[str, Any],
-    *,
-    window_size_seconds: float,
 ) -> tuple[float, float]:
-    filename = str(row.get("filename", "") or "")
-    start_sec = safe_float(row.get("start_sec"), 0.0)
-    end_sec = safe_float(row.get("end_sec"), 0.0)
-    detection_filename = str(row.get("detection_filename", "") or "") or None
-    extract_filename = str(row.get("extract_filename", "") or "") or None
-    recording_ts = parse_recording_timestamp(filename)
-
-    if recording_ts is not None:
-        for candidate in (detection_filename, extract_filename):
-            parsed = parse_compact_range_filename(candidate)
-            if parsed is not None:
-                return (
-                    float((parsed[0] - recording_ts).total_seconds()),
-                    float((parsed[1] - recording_ts).total_seconds()),
-                )
-
-    return snap_bounds_to_window(start_sec, end_sec, window_size_seconds)
+    """Return the (start_utc, end_utc) clip bounds directly from the row."""
+    return (
+        safe_float(row.get("start_utc"), 0.0),
+        safe_float(row.get("end_utc"), 0.0),
+    )
 
 
 def selection_result_to_row_update(
@@ -762,8 +535,8 @@ def selection_result_to_row_update(
         "positive_selection_smoothed_scores": serialize_json_list(
             result.smoothed_scores
         ),
-        "positive_selection_start_sec": format_optional_float(result.start_sec),
-        "positive_selection_end_sec": format_optional_float(result.end_sec),
+        "positive_selection_start_utc": format_optional_float(result.start_utc),
+        "positive_selection_end_utc": format_optional_float(result.end_utc),
         "positive_selection_peak_score": format_optional_float(result.peak_score),
         "positive_extract_filename": positive_extract_filename or "",
     }
@@ -780,8 +553,8 @@ def prefixed_selection_result_to_row_update(
         f"{prefix}offsets": serialize_json_list(result.offsets),
         f"{prefix}raw_scores": serialize_json_list(result.raw_scores),
         f"{prefix}smoothed_scores": serialize_json_list(result.smoothed_scores),
-        f"{prefix}start_sec": format_optional_float(result.start_sec),
-        f"{prefix}end_sec": format_optional_float(result.end_sec),
+        f"{prefix}start_utc": format_optional_float(result.start_utc),
+        f"{prefix}end_utc": format_optional_float(result.end_utc),
         f"{prefix}peak_score": format_optional_float(result.peak_score),
     }
 
@@ -805,8 +578,8 @@ def candidate_offset_key(offset_sec: float) -> float:
 
 def select_positive_window(
     *,
-    row_start_sec: float,
-    row_end_sec: float,
+    row_start_utc: float,
+    row_end_utc: float,
     window_size_seconds: float,
     window_records: list[dict[str, float]],
     smoothing_window: int,
@@ -818,7 +591,7 @@ def select_positive_window(
     for rec in window_records:
         offset_sec = float(rec["offset_sec"])
         end_sec = float(rec["end_sec"])
-        if offset_sec + 1e-6 < row_start_sec or end_sec - 1e-6 > row_end_sec:
+        if offset_sec + 1e-6 < row_start_utc or end_sec - 1e-6 > row_end_utc:
             continue
         deduped[(offset_sec, end_sec)] = {
             "offset_sec": offset_sec,
@@ -837,8 +610,8 @@ def select_positive_window(
             offsets=[],
             raw_scores=[],
             smoothed_scores=[],
-            start_sec=None,
-            end_sec=None,
+            start_utc=None,
+            end_utc=None,
             peak_score=None,
         )
 
@@ -848,8 +621,8 @@ def select_positive_window(
     best_idx = int(np.argmax(np.asarray(smoothed_scores, dtype=np.float32)))
     peak_score = float(smoothed_scores[best_idx])
     best = candidates[best_idx]
-    start_sec = float(best["offset_sec"])
-    end_sec = float(best["end_sec"])
+    sel_start = float(best["offset_sec"])
+    sel_end = float(best["end_sec"])
 
     if peak_score >= min_score:
         candidates_by_offset = {
@@ -860,8 +633,8 @@ def select_positive_window(
             for idx, rec in enumerate(candidates)
         }
         while True:
-            left_key = candidate_offset_key(start_sec - window_size_seconds)
-            right_key = candidate_offset_key(end_sec)
+            left_key = candidate_offset_key(sel_start - window_size_seconds)
+            right_key = candidate_offset_key(sel_end)
             left_candidate = candidates_by_offset.get(left_key)
             right_candidate = candidates_by_offset.get(right_key)
 
@@ -875,10 +648,10 @@ def select_positive_window(
                 break
             if can_extend_left and (not can_extend_right or left_score >= right_score):
                 assert left_candidate is not None
-                start_sec = float(left_candidate[0]["offset_sec"])
+                sel_start = float(left_candidate[0]["offset_sec"])
             else:
                 assert right_candidate is not None
-                end_sec = float(right_candidate[0]["end_sec"])
+                sel_end = float(right_candidate[0]["end_sec"])
 
     return PositiveSelectionResult(
         score_source=score_source,
@@ -886,8 +659,8 @@ def select_positive_window(
         offsets=offsets,
         raw_scores=raw_scores,
         smoothed_scores=smoothed_scores,
-        start_sec=start_sec,
-        end_sec=end_sec,
+        start_utc=sel_start,
+        end_utc=sel_end,
         peak_score=peak_score,
     )
 
@@ -907,18 +680,136 @@ def ensure_fieldnames(fieldnames: list[str], required: list[str]) -> list[str]:
     return fieldnames
 
 
+def _migrate_legacy_row(row: dict[str, str]) -> dict[str, str]:
+    """Convert a single old-schema row to the new UTC schema."""
+    new_row: dict[str, str] = {}
+
+    # Derive start_utc/end_utc from detection_filename (primary) or
+    # filename + offsets (fallback).
+    start_utc: float | None = None
+    end_utc: float | None = None
+
+    detection_filename = (row.get("detection_filename", "") or "").strip()
+    if detection_filename:
+        parsed = parse_compact_range_filename(detection_filename)
+        if parsed is not None:
+            start_utc = parsed[0].timestamp()
+            end_utc = parsed[1].timestamp()
+
+    if start_utc is None:
+        filename = (row.get("filename", "") or "").strip()
+        recording_ts = parse_recording_timestamp(filename) if filename else None
+        start_sec = safe_float(row.get("start_sec"), 0.0)
+        end_sec = safe_float(row.get("end_sec"), 0.0)
+        if recording_ts is not None:
+            base = recording_ts.timestamp()
+            start_utc = base + start_sec
+            end_utc = base + end_sec
+        else:
+            start_utc = start_sec
+            end_utc = end_sec
+
+    new_row["start_utc"] = str(start_utc)
+    new_row["end_utc"] = str(end_utc)
+
+    # Derive raw_start_utc/raw_end_utc
+    raw_start_sec = safe_float(row.get("raw_start_sec"), 0.0)
+    raw_end_sec = safe_float(row.get("raw_end_sec"), 0.0)
+    filename = (row.get("filename", "") or "").strip()
+    recording_ts = parse_recording_timestamp(filename) if filename else None
+    if recording_ts is not None:
+        base = recording_ts.timestamp()
+        new_row["raw_start_utc"] = str(base + raw_start_sec)
+        new_row["raw_end_utc"] = str(base + raw_end_sec)
+    else:
+        new_row["raw_start_utc"] = str(raw_start_sec)
+        new_row["raw_end_utc"] = str(raw_end_sec)
+
+    # Copy retained fields directly
+    for field in (
+        "avg_confidence",
+        "peak_confidence",
+        "n_windows",
+        "merged_event_count",
+        "hydrophone_name",
+        "humpback",
+        "orca",
+        "ship",
+        "background",
+        "positive_selection_origin",
+        "positive_selection_score_source",
+        "positive_selection_decision",
+        "positive_selection_offsets",
+        "positive_selection_raw_scores",
+        "positive_selection_smoothed_scores",
+        "positive_selection_peak_score",
+        "positive_extract_filename",
+        "auto_positive_selection_score_source",
+        "auto_positive_selection_decision",
+        "auto_positive_selection_offsets",
+        "auto_positive_selection_raw_scores",
+        "auto_positive_selection_smoothed_scores",
+        "auto_positive_selection_peak_score",
+    ):
+        new_row[field] = row.get(field, "")
+
+    # Migrate positive selection _sec -> _utc fields
+    _OLD_TO_NEW_SELECTION = [
+        ("positive_selection_start_sec", "positive_selection_start_utc"),
+        ("positive_selection_end_sec", "positive_selection_end_utc"),
+        ("auto_positive_selection_start_sec", "auto_positive_selection_start_utc"),
+        ("auto_positive_selection_end_sec", "auto_positive_selection_end_utc"),
+        ("manual_positive_selection_start_sec", "manual_positive_selection_start_utc"),
+        ("manual_positive_selection_end_sec", "manual_positive_selection_end_utc"),
+    ]
+    for old_key, new_key in _OLD_TO_NEW_SELECTION:
+        old_val = safe_optional_float(row.get(old_key))
+        if old_val is not None and recording_ts is not None:
+            new_row[new_key] = str(recording_ts.timestamp() + old_val)
+        elif old_val is not None:
+            new_row[new_key] = str(old_val)
+        else:
+            new_row[new_key] = ""
+
+    return new_row
+
+
 def read_detection_row_store(path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    table = pq.read_table(str(path), schema=ROW_STORE_SCHEMA)
-    fieldnames = list(table.column_names)
-    rows: list[dict[str, str]] = []
-    columns = table.to_pydict()
+    """Read a Parquet row store, lazily migrating old schema if needed."""
+    # Read without schema enforcement to detect old vs new format.
+    table = pq.read_table(str(path))
+    col_names = set(table.column_names)
+
+    if "start_utc" in col_names:
+        # New schema — read with enforced schema.
+        table = pq.read_table(str(path), schema=ROW_STORE_SCHEMA)
+        fieldnames = list(table.column_names)
+        rows: list[dict[str, str]] = []
+        columns = table.to_pydict()
+        for idx in range(table.num_rows):
+            row: dict[str, str] = {}
+            for field in fieldnames:
+                value = columns[field][idx]
+                row[field] = value if value is not None else ""
+            rows.append(row)
+        return fieldnames, rows
+
+    # Old schema — migrate.
+    logger.info("Migrating legacy detection row store: %s", path)
+    columns_dict = table.to_pydict()
+    old_fieldnames = list(table.column_names)
+    old_rows: list[dict[str, str]] = []
     for idx in range(table.num_rows):
-        row: dict[str, str] = {}
-        for field in fieldnames:
-            value = columns[field][idx]
-            row[field] = value if value is not None else ""
-        rows.append(row)
-    return fieldnames, rows
+        row_data: dict[str, str] = {}
+        for field in old_fieldnames:
+            value = columns_dict[field][idx]
+            row_data[field] = value if value is not None else ""
+        old_rows.append(row_data)
+
+    migrated = [_migrate_legacy_row(r) for r in old_rows]
+    # Atomically rewrite in new schema.
+    write_detection_row_store(path, migrated)
+    return ROW_STORE_FIELDNAMES, migrated
 
 
 def write_detection_row_store(
@@ -956,17 +847,37 @@ def append_detection_row_store(
     write_detection_row_store(path, existing_rows + new_rows)
 
 
+def _tsv_export_fieldnames(fieldnames: list[str]) -> list[str]:
+    """Build TSV export columns: add derived detection_filename after end_utc."""
+    export = list(fieldnames)
+    try:
+        idx = export.index("end_utc") + 1
+    except ValueError:
+        idx = 2
+    export.insert(idx, "detection_filename")
+    return export
+
+
+def _row_for_tsv(row: dict[str, str], export_fieldnames: list[str]) -> dict[str, str]:
+    """Produce a TSV row dict with derived detection_filename."""
+    out = {field: row.get(field, "") for field in export_fieldnames}
+    start = safe_float(row.get("start_utc"), 0.0)
+    end = safe_float(row.get("end_utc"), 0.0)
+    out["detection_filename"] = derive_detection_filename(start, end) or ""
+    return out
+
+
 def stream_detection_rows_as_tsv(
     rows: list[dict[str, str]],
     *,
     fieldnames: list[str],
 ) -> io.StringIO:
-    export_fieldnames = [field for field in fieldnames if field != "row_id"]
+    export_fieldnames = _tsv_export_fieldnames(fieldnames)
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=export_fieldnames, delimiter="\t")
     writer.writeheader()
     for row in rows:
-        writer.writerow({field: row.get(field, "") for field in export_fieldnames})
+        writer.writerow(_row_for_tsv(row, export_fieldnames))
     buf.seek(0)
     return buf
 
@@ -976,7 +887,7 @@ def iter_detection_rows_as_tsv(
     *,
     fieldnames: list[str],
 ):
-    export_fieldnames = [field for field in fieldnames if field != "row_id"]
+    export_fieldnames = _tsv_export_fieldnames(fieldnames)
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=export_fieldnames, delimiter="\t")
     writer.writeheader()
@@ -984,7 +895,7 @@ def iter_detection_rows_as_tsv(
     buf.seek(0)
     buf.truncate(0)
     for row in rows:
-        writer.writerow({field: row.get(field, "") for field in export_fieldnames})
+        writer.writerow(_row_for_tsv(row, export_fieldnames))
         yield buf.getvalue()
         buf.seek(0)
         buf.truncate(0)
@@ -1028,10 +939,10 @@ def _existing_selection_to_auto_update(row: dict[str, str]) -> dict[str, str]:
         "auto_positive_selection_smoothed_scores": row.get(
             "positive_selection_smoothed_scores", ""
         ),
-        "auto_positive_selection_start_sec": row.get(
-            "positive_selection_start_sec", ""
+        "auto_positive_selection_start_utc": row.get(
+            "positive_selection_start_utc", ""
         ),
-        "auto_positive_selection_end_sec": row.get("positive_selection_end_sec", ""),
+        "auto_positive_selection_end_utc": row.get("positive_selection_end_utc", ""),
         "auto_positive_selection_peak_score": row.get(
             "positive_selection_peak_score", ""
         ),
@@ -1061,110 +972,54 @@ def compute_auto_selection_update(
     row: dict[str, str],
     *,
     diagnostics_records: list[dict[str, Any]] | None,
-    diagnostics_by_filename: dict[str, list[dict[str, Any]]],
-    is_hydrophone: bool,
     window_size_seconds: float,
     smoothing_window: int = DEFAULT_POSITIVE_SELECTION_SMOOTHING_WINDOW,
     min_score: float = DEFAULT_POSITIVE_SELECTION_MIN_SCORE,
     extend_min_score: float = DEFAULT_POSITIVE_SELECTION_EXTEND_MIN_SCORE,
     detection_mode: str | None = None,
 ) -> dict[str, str]:
+    normalized = normalize_detection_row(row)
+    row_start_utc, row_end_utc = resolve_clip_bounds(normalized)
+
     # Windowed mode: the detection IS the positive window — trivial selection.
     if detection_mode == "windowed":
-        normalized = normalize_detection_row(
-            row,
-            is_hydrophone=is_hydrophone,
-            window_size_seconds=window_size_seconds,
-        )
-        row_start, row_end = resolve_clip_bounds(
-            normalized, window_size_seconds=window_size_seconds
-        )
         conf = safe_optional_float(row.get("peak_confidence")) or 0.0
         selection = PositiveSelectionResult(
             score_source="windowed_peak",
             decision="positive",
-            offsets=[row_start],
+            offsets=[row_start_utc],
             raw_scores=[conf],
             smoothed_scores=[conf],
-            start_sec=row_start,
-            end_sec=row_end,
+            start_utc=row_start_utc,
+            end_utc=row_end_utc,
             peak_score=conf,
         )
         return prefixed_selection_result_to_row_update(
             selection, prefix="auto_positive_selection_"
         )
 
-    if row.get("auto_positive_selection_start_sec", "").strip():
+    if row.get("auto_positive_selection_start_utc", "").strip():
         return {
             field: row.get(field, "") for field in AUTO_POSITIVE_SELECTION_FIELDNAMES
         }
 
-    if row.get("positive_selection_start_sec", "").strip():
+    if row.get("positive_selection_start_utc", "").strip():
         return _existing_selection_to_auto_update(row)
 
-    normalized = normalize_detection_row(
-        row,
-        is_hydrophone=is_hydrophone,
-        window_size_seconds=window_size_seconds,
-    )
-    row_start_sec, row_end_sec = resolve_clip_bounds(
-        normalized, window_size_seconds=window_size_seconds
-    )
-
-    source_filename = normalized["filename"]
-    exact_records = diagnostics_by_filename.get(source_filename, [])
+    # Convert all diagnostics to absolute UTC and select against row UTC bounds.
     selection: PositiveSelectionResult | None = None
-    if exact_records:
-        selection = select_positive_window(
-            row_start_sec=row_start_sec,
-            row_end_sec=row_end_sec,
-            window_size_seconds=window_size_seconds,
-            window_records=exact_records,
-            smoothing_window=smoothing_window,
-            min_score=min_score,
-            extend_min_score=extend_min_score,
-            score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-        )
-
-    if (
-        (selection is None or not selection.offsets)
-        and diagnostics_records
-        and parse_recording_timestamp(source_filename) is not None
-    ):
-        recording_ts = parse_recording_timestamp(source_filename)
-        assert recording_ts is not None
+    if diagnostics_records:
         absolute_records = _build_absolute_window_records(diagnostics_records)
-        absolute_selection = select_positive_window(
-            row_start_sec=recording_ts.timestamp() + row_start_sec,
-            row_end_sec=recording_ts.timestamp() + row_end_sec,
-            window_size_seconds=window_size_seconds,
-            window_records=absolute_records,
-            smoothing_window=smoothing_window,
-            min_score=min_score,
-            extend_min_score=extend_min_score,
-            score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
-        )
-        if absolute_selection.offsets:
-            selection = PositiveSelectionResult(
-                score_source=absolute_selection.score_source,
-                decision=absolute_selection.decision,
-                offsets=[
-                    float(offset - recording_ts.timestamp())
-                    for offset in absolute_selection.offsets
-                ],
-                raw_scores=list(absolute_selection.raw_scores),
-                smoothed_scores=list(absolute_selection.smoothed_scores),
-                start_sec=(
-                    absolute_selection.start_sec - recording_ts.timestamp()
-                    if absolute_selection.start_sec is not None
-                    else None
-                ),
-                end_sec=(
-                    absolute_selection.end_sec - recording_ts.timestamp()
-                    if absolute_selection.end_sec is not None
-                    else None
-                ),
-                peak_score=absolute_selection.peak_score,
+        if absolute_records:
+            selection = select_positive_window(
+                row_start_utc=row_start_utc,
+                row_end_utc=row_end_utc,
+                window_size_seconds=window_size_seconds,
+                window_records=absolute_records,
+                smoothing_window=smoothing_window,
+                min_score=min_score,
+                extend_min_score=extend_min_score,
+                score_source=POSITIVE_SELECTION_SCORE_SOURCE_STORED,
             )
 
     if selection is None:
@@ -1174,8 +1029,8 @@ def compute_auto_selection_update(
             offsets=[],
             raw_scores=[],
             smoothed_scores=[],
-            start_sec=None,
-            end_sec=None,
+            start_utc=None,
+            end_utc=None,
             peak_score=None,
         )
 
@@ -1186,8 +1041,6 @@ def compute_auto_selection_update(
 
 def apply_effective_positive_selection(
     row: dict[str, str],
-    *,
-    window_size_seconds: float,
 ) -> None:
     if not is_positive_row(row):
         positive_extract_filename = row.get("positive_extract_filename", "")
@@ -1196,8 +1049,8 @@ def apply_effective_positive_selection(
         row["positive_extract_filename"] = positive_extract_filename
         return
 
-    manual_start = safe_optional_float(row.get("manual_positive_selection_start_sec"))
-    manual_end = safe_optional_float(row.get("manual_positive_selection_end_sec"))
+    manual_start = safe_optional_float(row.get("manual_positive_selection_start_utc"))
+    manual_end = safe_optional_float(row.get("manual_positive_selection_end_utc"))
     if (
         manual_start is not None
         and manual_end is not None
@@ -1209,13 +1062,13 @@ def apply_effective_positive_selection(
         row["positive_selection_offsets"] = ""
         row["positive_selection_raw_scores"] = ""
         row["positive_selection_smoothed_scores"] = ""
-        row["positive_selection_start_sec"] = format_optional_float(manual_start)
-        row["positive_selection_end_sec"] = format_optional_float(manual_end)
+        row["positive_selection_start_utc"] = format_optional_float(manual_start)
+        row["positive_selection_end_utc"] = format_optional_float(manual_end)
         row["positive_selection_peak_score"] = ""
         return
 
-    auto_start = safe_optional_float(row.get("auto_positive_selection_start_sec"))
-    auto_end = safe_optional_float(row.get("auto_positive_selection_end_sec"))
+    auto_start = safe_optional_float(row.get("auto_positive_selection_start_utc"))
+    auto_end = safe_optional_float(row.get("auto_positive_selection_end_utc"))
     auto_decision = row.get("auto_positive_selection_decision", "").strip()
     if auto_decision == "positive" and auto_start is not None and auto_end is not None:
         row["positive_selection_origin"] = POSITIVE_SELECTION_ORIGIN_AUTO
@@ -1232,17 +1085,18 @@ def apply_effective_positive_selection(
         row["positive_selection_smoothed_scores"] = row.get(
             "auto_positive_selection_smoothed_scores", ""
         )
-        row["positive_selection_start_sec"] = row.get(
-            "auto_positive_selection_start_sec", ""
+        row["positive_selection_start_utc"] = row.get(
+            "auto_positive_selection_start_utc", ""
         )
-        row["positive_selection_end_sec"] = row.get(
-            "auto_positive_selection_end_sec", ""
+        row["positive_selection_end_utc"] = row.get(
+            "auto_positive_selection_end_utc", ""
         )
         row["positive_selection_peak_score"] = row.get(
             "auto_positive_selection_peak_score", ""
         )
         return
 
+    # Clip-bounds fallback: use the row's own start_utc/end_utc.
     row["positive_selection_origin"] = POSITIVE_SELECTION_ORIGIN_CLIP
     row["positive_selection_score_source"] = (
         POSITIVE_SELECTION_SCORE_SOURCE_FALLBACK_CLIP
@@ -1251,11 +1105,9 @@ def apply_effective_positive_selection(
     row["positive_selection_offsets"] = ""
     row["positive_selection_raw_scores"] = ""
     row["positive_selection_smoothed_scores"] = ""
-    clip_start, clip_end = resolve_clip_bounds(
-        row, window_size_seconds=window_size_seconds
-    )
-    row["positive_selection_start_sec"] = format_optional_float(clip_start)
-    row["positive_selection_end_sec"] = format_optional_float(clip_end)
+    clip_start, clip_end = resolve_clip_bounds(row)
+    row["positive_selection_start_utc"] = format_optional_float(clip_start)
+    row["positive_selection_end_utc"] = format_optional_float(clip_end)
     row["positive_selection_peak_score"] = ""
 
 
@@ -1263,52 +1115,37 @@ def build_detection_row_store_rows(
     rows: list[dict[str, str]],
     *,
     diagnostics_path: Path | None,
-    is_hydrophone: bool,
     window_size_seconds: float,
     detection_mode: str | None = None,
 ) -> list[dict[str, str]]:
     diagnostics_records = _load_all_window_records(diagnostics_path)
-    diagnostics_by_filename: dict[str, list[dict[str, Any]]] = {}
-    if diagnostics_records:
-        for record in diagnostics_records:
-            diagnostics_by_filename.setdefault(str(record["filename"]), []).append(
-                record
-            )
 
     store_rows: list[dict[str, str]] = []
     for row in rows:
-        normalized = normalize_detection_row(
-            row,
-            is_hydrophone=is_hydrophone,
-            window_size_seconds=window_size_seconds,
-        )
+        normalized = normalize_detection_row(row)
         out_row = {field: "" for field in ROW_STORE_FIELDNAMES}
-        out_row["row_id"] = normalized["row_id"] or build_detection_row_id(normalized)
-        out_row["filename"] = normalized["filename"]
-        out_row["start_sec"] = format_optional_float(normalized["start_sec"])
-        out_row["end_sec"] = format_optional_float(normalized["end_sec"])
+        out_row["start_utc"] = format_optional_float(normalized["start_utc"])
+        out_row["end_utc"] = format_optional_float(normalized["end_utc"])
         out_row["avg_confidence"] = format_optional_float(normalized["avg_confidence"])
         out_row["peak_confidence"] = format_optional_float(
             normalized["peak_confidence"]
         )
         out_row["n_windows"] = format_optional_int(normalized["n_windows"])
-        out_row["raw_start_sec"] = format_optional_float(normalized["raw_start_sec"])
-        out_row["raw_end_sec"] = format_optional_float(normalized["raw_end_sec"])
+        out_row["raw_start_utc"] = format_optional_float(normalized["raw_start_utc"])
+        out_row["raw_end_utc"] = format_optional_float(normalized["raw_end_utc"])
         out_row["merged_event_count"] = format_optional_int(
             normalized["merged_event_count"]
         )
-        out_row["detection_filename"] = normalized["detection_filename"] or ""
-        out_row["extract_filename"] = normalized["extract_filename"] or ""
         out_row["hydrophone_name"] = normalized["hydrophone_name"] or ""
         for label in ("humpback", "orca", "ship", "background"):
             value = normalized[label]
             out_row[label] = "" if value is None else str(value)
 
-        out_row["manual_positive_selection_start_sec"] = row.get(
-            "manual_positive_selection_start_sec", ""
+        out_row["manual_positive_selection_start_utc"] = row.get(
+            "manual_positive_selection_start_utc", ""
         )
-        out_row["manual_positive_selection_end_sec"] = row.get(
-            "manual_positive_selection_end_sec", ""
+        out_row["manual_positive_selection_end_utc"] = row.get(
+            "manual_positive_selection_end_utc", ""
         )
         out_row["positive_extract_filename"] = (
             normalized["positive_extract_filename"] or ""
@@ -1318,16 +1155,11 @@ def build_detection_row_store_rows(
             compute_auto_selection_update(
                 row,
                 diagnostics_records=diagnostics_records,
-                diagnostics_by_filename=diagnostics_by_filename,
-                is_hydrophone=is_hydrophone,
                 window_size_seconds=window_size_seconds,
                 detection_mode=detection_mode,
             )
         )
-        apply_effective_positive_selection(
-            out_row,
-            window_size_seconds=window_size_seconds,
-        )
+        apply_effective_positive_selection(out_row)
         store_rows.append(out_row)
 
     return store_rows
@@ -1336,19 +1168,13 @@ def build_detection_row_store_rows(
 def merge_detection_row_store_state(
     refreshed_rows: list[dict[str, str]],
     existing_rows: list[dict[str, str]],
-    *,
-    window_size_seconds: float,
 ) -> list[dict[str, str]]:
     """Overlay editable row-store state onto refreshed detection rows."""
-    existing_by_row_id = {
-        row.get("row_id", "").strip(): row
-        for row in existing_rows
-        if row.get("row_id", "").strip()
-    }
+    existing_by_key = {_row_key(row): row for row in existing_rows}
 
     merged_rows: list[dict[str, str]] = []
     for row in refreshed_rows:
-        existing = existing_by_row_id.get(row.get("row_id", "").strip())
+        existing = existing_by_key.get(_row_key(row))
         if existing is None:
             merged_rows.append(row)
             continue
@@ -1368,10 +1194,7 @@ def merge_detection_row_store_state(
         if existing.get("positive_extract_filename", "").strip():
             row["positive_extract_filename"] = existing["positive_extract_filename"]
 
-        apply_effective_positive_selection(
-            row,
-            window_size_seconds=window_size_seconds,
-        )
+        apply_effective_positive_selection(row)
         merged_rows.append(row)
 
     return merged_rows
@@ -1381,7 +1204,6 @@ def ensure_detection_row_store(
     *,
     row_store_path: Path,
     diagnostics_path: Path | None,
-    is_hydrophone: bool,
     window_size_seconds: float,
     refresh_existing: bool = False,
     detection_mode: str | None = None,
@@ -1390,12 +1212,11 @@ def ensure_detection_row_store(
     if row_store_path.is_file() and not refresh_existing:
         return read_detection_row_store(row_store_path)
 
-    # Determine the source rows.  When a TSV is provided (legacy fallback)
-    # prefer it as the source of truth for detection rows.  Otherwise use the
-    # existing row store.
     source_rows: list[dict[str, str]] = []
+    is_legacy_tsv = False
     if tsv_path is not None and tsv_path.is_file():
         _, source_rows = read_tsv_rows(tsv_path)
+        is_legacy_tsv = True
     elif row_store_path.is_file():
         _, source_rows = read_detection_row_store(row_store_path)
 
@@ -1403,10 +1224,13 @@ def ensure_detection_row_store(
         write_detection_row_store(row_store_path, [])
         return ROW_STORE_FIELDNAMES, []
 
+    # Migrate legacy TSV rows to UTC schema before building row store.
+    if is_legacy_tsv and source_rows and "start_utc" not in source_rows[0]:
+        source_rows = [_migrate_legacy_row(r) for r in source_rows]
+
     store_rows = build_detection_row_store_rows(
         source_rows,
         diagnostics_path=diagnostics_path,
-        is_hydrophone=is_hydrophone,
         window_size_seconds=window_size_seconds,
         detection_mode=detection_mode,
     )
@@ -1415,7 +1239,6 @@ def ensure_detection_row_store(
         store_rows = merge_detection_row_store_state(
             store_rows,
             existing_rows,
-            window_size_seconds=window_size_seconds,
         )
     write_detection_row_store(row_store_path, store_rows)
     return ROW_STORE_FIELDNAMES, store_rows

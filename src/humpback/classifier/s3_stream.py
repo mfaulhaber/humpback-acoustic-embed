@@ -944,20 +944,12 @@ def resolve_audio_slice(
     provider: ArchiveProvider,
     stream_start_ts: float,
     stream_end_ts: float,
-    filename: str,
-    row_start_sec: float,
+    start_utc: float,
     duration_sec: float,
     target_sr: int = 32000,
-    legacy_anchor_start_ts: float | None = None,
     timeline: list[StreamSegment] | None = None,
-    processing_start_ts: float | None = None,
 ) -> np.ndarray:
-    """Resolve and decode an audio slice using stream-offset mapping.
-
-    Anchor order:
-    1. First available stream sample in job range (current behavior)
-    2. legacy_anchor_start_ts (old jobs where filenames were anchored to job start)
-    """
+    """Resolve and decode an audio slice at an absolute UTC timestamp."""
     if duration_sec <= 0:
         raise ValueError("duration_sec must be > 0")
 
@@ -966,93 +958,63 @@ def resolve_audio_slice(
     if not timeline:
         raise FileNotFoundError("No stream segments found in requested range")
 
-    if processing_start_ts is None:
-        processing_start_ts = max(stream_start_ts, timeline[0].start_ts)
-    else:
-        processing_start_ts = float(processing_start_ts)
-    chunk_start_ts = _parse_chunk_start_timestamp(filename)
-    abs_start_ts = chunk_start_ts + row_start_sec
-
-    anchors: list[float] = [processing_start_ts]
-    if legacy_anchor_start_ts is not None:
-        legacy_anchor = float(legacy_anchor_start_ts)
-        if all(abs(legacy_anchor - a) > 1e-6 for a in anchors):
-            anchors.append(legacy_anchor)
-
-    last_reason = "No matching stream offset"
     max_timeline_ts = min(stream_end_ts, timeline[-1].end_ts)
 
-    for anchor_ts in anchors:
-        stream_offset = abs_start_ts - anchor_ts
-        if stream_offset < 0:
-            last_reason = "Computed negative stream offset"
-            continue
+    target_start_ts = start_utc
+    target_end_ts = target_start_ts + duration_sec
+    fetch_end_ts = target_end_ts + (AUDIO_SLICE_GUARD_SAMPLES / target_sr)
 
-        target_start_ts = processing_start_ts + stream_offset
-        target_end_ts = target_start_ts + duration_sec
-        fetch_end_ts = target_end_ts + (AUDIO_SLICE_GUARD_SAMPLES / target_sr)
+    if target_start_ts >= max_timeline_ts:
+        raise FileNotFoundError(f"start_utc={start_utc} outside available stream range")
 
-        if target_start_ts >= max_timeline_ts:
-            last_reason = "Resolved start timestamp outside available stream range"
-            continue
+    candidates = [
+        seg
+        for seg in timeline
+        if seg.end_ts > target_start_ts and seg.start_ts < fetch_end_ts
+    ]
+    if not candidates:
+        raise FileNotFoundError(f"No segments found for start_utc={start_utc}")
 
-        candidates = [
-            seg
-            for seg in timeline
-            if seg.end_ts > target_start_ts and seg.start_ts < fetch_end_ts
-        ]
-        if not candidates:
-            last_reason = "No segments selected for requested timestamp window"
-            continue
-
-        # Prefer cached segments to avoid expensive remote fetches when
-        # multiple archive sub-sites overlap the same timestamp range.
-        _cache_check: Callable[[str], bool] | None = getattr(
-            provider, "is_segment_cached", None
-        )
-        if _cache_check is not None and len(candidates) > 1:
-            _cc = _cache_check  # bind for lambda closure
-            candidates.sort(key=lambda s: (not _cc(s.key), s.start_ts))
-
-        max_samples = expected_audio_samples(duration_sec, target_sr)
-        decoded_parts: list[np.ndarray] = []
-        decoded_samples = 0
-        for segment in candidates:
-            try:
-                for audio, _ts in _iter_segment_audio_chunks(
-                    provider=provider,
-                    segment=segment,
-                    target_sr=target_sr,
-                    clip_start_ts=target_start_ts,
-                    clip_end_ts=fetch_end_ts,
-                    chunk_seconds=duration_sec,
-                ):
-                    if len(audio) > 0:
-                        decoded_parts.append(audio)
-                        decoded_samples += len(audio)
-            except Exception:
-                continue
-            # Stop once we have enough samples for the requested duration;
-            # avoids fetching uncached remote files when overlapping archive
-            # sub-sites provide the same timestamp range.
-            if decoded_samples >= max_samples:
-                break
-
-        if not decoded_parts:
-            last_reason = "Failed to decode all candidate segments"
-            continue
-
-        segment = np.concatenate(decoded_parts)
-        if len(segment) > max_samples:
-            segment = segment[:max_samples]
-        if len(segment) > 0:
-            return segment
-
-        last_reason = "Resolved segment was empty"
-
-    raise FileNotFoundError(
-        f"Could not resolve audio slice for {filename}: {last_reason}"
+    # Prefer cached segments to avoid expensive remote fetches when
+    # multiple archive sub-sites overlap the same timestamp range.
+    _cache_check: Callable[[str], bool] | None = getattr(
+        provider, "is_segment_cached", None
     )
+    if _cache_check is not None and len(candidates) > 1:
+        _cc = _cache_check  # bind for lambda closure
+        candidates.sort(key=lambda s: (not _cc(s.key), s.start_ts))
+
+    max_samples = expected_audio_samples(duration_sec, target_sr)
+    decoded_parts: list[np.ndarray] = []
+    decoded_samples = 0
+    for segment in candidates:
+        try:
+            for audio, _ts in _iter_segment_audio_chunks(
+                provider=provider,
+                segment=segment,
+                target_sr=target_sr,
+                clip_start_ts=target_start_ts,
+                clip_end_ts=fetch_end_ts,
+                chunk_seconds=duration_sec,
+            ):
+                if len(audio) > 0:
+                    decoded_parts.append(audio)
+                    decoded_samples += len(audio)
+        except Exception:
+            continue
+        if decoded_samples >= max_samples:
+            break
+
+    if not decoded_parts:
+        raise FileNotFoundError(f"Failed to decode audio at start_utc={start_utc}")
+
+    result = np.concatenate(decoded_parts)
+    if len(result) > max_samples:
+        result = result[:max_samples]
+    if len(result) == 0:
+        raise FileNotFoundError(f"Decoded segment was empty at start_utc={start_utc}")
+
+    return result
 
 
 def iter_audio_chunks(

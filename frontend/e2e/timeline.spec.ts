@@ -91,10 +91,8 @@ async function setupHydrophoneMocks(page: Page) {
 
 const MOCK_DETECTIONS = [
   {
-    row_id: "row-1",
-    filename: "test.flac",
-    start_sec: 100,
-    end_sec: 105,
+    start_utc: 1751644900,
+    end_utc: 1751644905,
     avg_confidence: 0.82,
     peak_confidence: 0.95,
     n_windows: 1,
@@ -104,10 +102,8 @@ const MOCK_DETECTIONS = [
     background: 0,
   },
   {
-    row_id: "row-2",
-    filename: "test.flac",
-    start_sec: 200,
-    end_sec: 205,
+    start_utc: 1751645000,
+    end_utc: 1751645005,
     avg_confidence: 0.71,
     peak_confidence: 0.88,
     n_windows: 1,
@@ -117,10 +113,8 @@ const MOCK_DETECTIONS = [
     background: 0,
   },
   {
-    row_id: "row-3",
-    filename: "test.flac",
-    start_sec: 300,
-    end_sec: 305,
+    start_utc: 1751645100,
+    end_utc: 1751645105,
     avg_confidence: 0.65,
     peak_confidence: 0.72,
     n_windows: 1,

@@ -8,9 +8,8 @@ from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.classifier.detection_rows import (
-    hydrophone_job_relative_to_file_relative_offset,
-    normalize_detection_row,
     read_detection_row_store,
+    safe_float,
 )
 from humpback.models.labeling import LabelingAnnotation, VocalizationLabel
 from humpback.schemas.labeling import (
@@ -41,97 +40,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/labeling", tags=["labeling"])
 
 
-async def _resolve_detection_embedding_lookup(
-    *,
-    session,
-    settings,
-    job,
-    filename: str,
-    start_sec: float,
-    end_sec: float,
-    detection_filename: str | None,
-) -> tuple[str, float, float]:
-    if detection_filename:
-        from humpback.models.classifier import ClassifierModel
-        from humpback.storage import detection_row_store_path
-
-        row_store_path = detection_row_store_path(settings.storage_root, job.id)
-        if row_store_path.exists():
-            cm_result = await session.execute(
-                select(ClassifierModel.window_size_seconds).where(
-                    ClassifierModel.id == job.classifier_model_id
-                )
-            )
-            window_size_seconds = float(cm_result.scalar_one_or_none() or 5.0)
-            _fieldnames, rows = read_detection_row_store(row_store_path)
-            for row in rows:
-                normalized = normalize_detection_row(
-                    row,
-                    is_hydrophone=job.hydrophone_id is not None,
-                    window_size_seconds=window_size_seconds,
-                )
-                if detection_filename in (
-                    normalized["detection_filename"],
-                    normalized["extract_filename"],
-                ):
-                    return (
-                        str(normalized["filename"]),
-                        float(normalized["start_sec"]),
-                        float(normalized["end_sec"]),
-                    )
-
-    if job.hydrophone_id is not None:
-        start_sec = hydrophone_job_relative_to_file_relative_offset(
-            filename,
-            start_sec,
-            job.start_timestamp,
-        )
-        end_sec = hydrophone_job_relative_to_file_relative_offset(
-            filename,
-            end_sec,
-            job.start_timestamp,
-        )
-
-    return filename, start_sec, end_sec
-
-
 # ---- Vocalization Label CRUD ----
 
 
 @router.get(
-    "/vocalization-labels/{detection_job_id}/{row_id}",
+    "/vocalization-labels/{detection_job_id}",
     response_model=list[VocalizationLabelOut],
 )
 async def list_vocalization_labels(
     detection_job_id: str,
-    row_id: str,
     session: SessionDep,
+    start_utc: float = Query(...),
+    end_utc: float = Query(...),
 ):
     """List all vocalization labels for a detection row."""
     result = await session.execute(
         select(VocalizationLabel)
         .where(VocalizationLabel.detection_job_id == detection_job_id)
-        .where(VocalizationLabel.row_id == row_id)
+        .where(VocalizationLabel.start_utc == start_utc)
+        .where(VocalizationLabel.end_utc == end_utc)
         .order_by(VocalizationLabel.created_at)
     )
     return [VocalizationLabelOut.model_validate(r) for r in result.scalars().all()]
 
 
 @router.post(
-    "/vocalization-labels/{detection_job_id}/{row_id}",
+    "/vocalization-labels/{detection_job_id}",
     response_model=VocalizationLabelOut,
     status_code=201,
 )
 async def create_vocalization_label(
     detection_job_id: str,
-    row_id: str,
     body: VocalizationLabelCreate,
     session: SessionDep,
+    start_utc: float = Query(...),
+    end_utc: float = Query(...),
 ):
     """Add a vocalization type label to a detection row."""
     label = VocalizationLabel(
         detection_job_id=detection_job_id,
-        row_id=row_id,
+        start_utc=start_utc,
+        end_utc=end_utc,
         label=body.label,
         confidence=body.confidence,
         source=body.source,
@@ -204,6 +153,10 @@ async def get_label_vocabulary(session: SessionDep):
 # ---- Labeling Summary ----
 
 
+def _utc_key(start_utc: float, end_utc: float) -> str:
+    return f"{start_utc}:{end_utc}"
+
+
 @router.get("/summary/{detection_job_id}", response_model=LabelingSummary)
 async def get_labeling_summary(
     detection_job_id: str,
@@ -211,7 +164,6 @@ async def get_labeling_summary(
     settings: SettingsDep,
 ):
     """Return labeling progress summary for a detection job."""
-    from humpback.classifier.detection_rows import read_detection_row_store
     from humpback.storage import detection_row_store_path
 
     row_store = detection_row_store_path(settings.storage_root, detection_job_id)
@@ -223,32 +175,36 @@ async def get_labeling_summary(
 
     # Get all vocalization labels for this job
     result = await session.execute(
-        select(VocalizationLabel.row_id, VocalizationLabel.label).where(
-            VocalizationLabel.detection_job_id == detection_job_id
-        )
+        select(
+            VocalizationLabel.start_utc,
+            VocalizationLabel.end_utc,
+            VocalizationLabel.label,
+        ).where(VocalizationLabel.detection_job_id == detection_job_id)
     )
     label_rows = result.all()
 
-    labeled_row_ids = set()
+    labeled_keys: set[str] = set()
     label_counts: dict[str, int] = {}
-    for row_id, label in label_rows:
-        labeled_row_ids.add(row_id)
+    for s_utc, e_utc, label in label_rows:
+        labeled_keys.add(_utc_key(s_utc, e_utc))
         label_counts[label] = label_counts.get(label, 0) + 1
 
-    # Also count annotation labels (sub-window annotations carry vocalization types)
+    # Also count annotation labels
     ann_result = await session.execute(
-        select(LabelingAnnotation.row_id, LabelingAnnotation.label).where(
-            LabelingAnnotation.detection_job_id == detection_job_id
-        )
+        select(
+            LabelingAnnotation.start_utc,
+            LabelingAnnotation.end_utc,
+            LabelingAnnotation.label,
+        ).where(LabelingAnnotation.detection_job_id == detection_job_id)
     )
-    for row_id, label in ann_result.all():
-        labeled_row_ids.add(row_id)
+    for s_utc, e_utc, label in ann_result.all():
+        labeled_keys.add(_utc_key(s_utc, e_utc))
         label_counts[label] = label_counts.get(label, 0) + 1
 
     return LabelingSummary(
         total_rows=total_rows,
-        labeled_rows=len(labeled_row_ids),
-        unlabeled_rows=total_rows - len(labeled_row_ids),
+        labeled_rows=len(labeled_keys),
+        unlabeled_rows=total_rows - len(labeled_keys),
         label_distribution=label_counts,
     )
 
@@ -260,29 +216,31 @@ async def get_training_summary(session: SessionDep):
     result = await session.execute(
         select(
             VocalizationLabel.detection_job_id,
-            VocalizationLabel.row_id,
+            VocalizationLabel.start_utc,
+            VocalizationLabel.end_utc,
             VocalizationLabel.label,
         )
     )
     labeled_job_ids: set[str] = set()
     labeled_row_keys: set[str] = set()
     label_counts: dict[str, int] = {}
-    for job_id, row_id, label in result.all():
+    for job_id, s_utc, e_utc, label in result.all():
         labeled_job_ids.add(job_id)
-        labeled_row_keys.add(f"{job_id}:{row_id}")
+        labeled_row_keys.add(f"{job_id}:{_utc_key(s_utc, e_utc)}")
         label_counts[label] = label_counts.get(label, 0) + 1
 
     # Annotations
     ann_result = await session.execute(
         select(
             LabelingAnnotation.detection_job_id,
-            LabelingAnnotation.row_id,
+            LabelingAnnotation.start_utc,
+            LabelingAnnotation.end_utc,
             LabelingAnnotation.label,
         )
     )
-    for job_id, row_id, label in ann_result.all():
+    for job_id, s_utc, e_utc, label in ann_result.all():
         labeled_job_ids.add(job_id)
-        labeled_row_keys.add(f"{job_id}:{row_id}")
+        labeled_row_keys.add(f"{job_id}:{_utc_key(s_utc, e_utc)}")
         label_counts[label] = label_counts.get(label, 0) + 1
 
     return TrainingSummary(
@@ -296,19 +254,11 @@ async def get_training_summary(session: SessionDep):
 
 
 def _infer_label_from_folder(folder_path: str | None) -> str | None:
-    """Extract a vocalization type label from the audio file's folder path.
-
-    Assumes folder structure like: .../dataset_name/call_type/audio.flac
-    Returns the last non-empty path segment before the filename level,
-    which typically represents the call type or category.
-    """
     if not folder_path:
         return None
     parts = Path(folder_path).parts
     if not parts:
         return None
-    # The folder_path is the directory containing the audio file.
-    # The last segment is typically the call type.
     return parts[-1] if parts else None
 
 
@@ -323,6 +273,7 @@ async def get_detection_neighbors(
     settings: SettingsDep,
 ):
     """Find similar sounds from reference embedding sets for a detection row."""
+    from humpback.classifier.detection_rows import parse_recording_timestamp
     from humpback.classifier.detector import read_detection_embedding
     from humpback.models.classifier import ClassifierModel
     from humpback.schemas.search import VectorSearchRequest
@@ -338,25 +289,35 @@ async def get_detection_neighbors(
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
-    (
-        lookup_filename,
-        lookup_start_sec,
-        lookup_end_sec,
-    ) = await _resolve_detection_embedding_lookup(
-        session=session,
-        settings=settings,
-        job=job,
-        filename=body.filename,
-        start_sec=body.start_sec,
-        end_sec=body.end_sec,
-        detection_filename=body.detection_filename,
+    # Resolve UTC to file-relative coords for embedding lookup
+    import pyarrow.parquet as pq
+
+    emb_table = pq.read_table(
+        str(emb_path), columns=["filename", "start_sec", "end_sec"]
     )
+    lookup_filename = None
+    lookup_start = None
+    lookup_end = None
+    for i in range(emb_table.num_rows):
+        fname = emb_table.column("filename")[i].as_py()
+        s = float(emb_table.column("start_sec")[i].as_py())
+        e = float(emb_table.column("end_sec")[i].as_py())
+        ts = parse_recording_timestamp(fname)
+        base_epoch = ts.timestamp() if ts else 0.0
+        if (
+            abs(base_epoch + s - body.start_utc) < 0.01
+            and abs(base_epoch + e - body.end_utc) < 0.01
+        ):
+            lookup_filename = fname
+            lookup_start = s
+            lookup_end = e
+            break
+
+    if lookup_filename is None or lookup_start is None or lookup_end is None:
+        raise HTTPException(404, "Embedding not found for specified UTC range")
 
     embedding = read_detection_embedding(
-        emb_path,
-        lookup_filename,
-        lookup_start_sec,
-        lookup_end_sec,
+        emb_path, lookup_filename, lookup_start, lookup_end
     )
     if embedding is None:
         raise HTTPException(404, "Embedding not found for specified detection row")
@@ -423,7 +384,6 @@ async def create_vocalization_training_job(
             raise HTTPException(404, f"Detection job {job_id} not found")
 
     # Check that at least some labels exist across the source jobs
-    # (from vocalization labels and/or sub-window annotations)
     result = await session.execute(
         select(VocalizationLabel.label)
         .where(VocalizationLabel.detection_job_id.in_(body.source_detection_job_ids))
@@ -461,7 +421,7 @@ async def create_vocalization_training_job(
         name=body.name,
         job_purpose="vocalization",
         source_detection_job_ids=json.dumps(body.source_detection_job_ids),
-        positive_embedding_set_ids="[]",  # not used for vocalization training
+        positive_embedding_set_ids="[]",
         negative_embedding_set_ids="[]",
         model_version=cm.model_version,
         window_size_seconds=cm.window_size_seconds,
@@ -567,6 +527,7 @@ async def predict_vocalization_labels(
     import numpy as np
     import pyarrow.parquet as pq
 
+    from humpback.classifier.detection_rows import parse_recording_timestamp
     from humpback.models.classifier import ClassifierModel
     from humpback.services.classifier_service import get_detection_job
     from humpback.storage import detection_embeddings_path
@@ -605,23 +566,14 @@ async def predict_vocalization_labels(
     probas = await asyncio.to_thread(pipeline.predict_proba, vectors)
     predictions = await asyncio.to_thread(pipeline.predict, vectors)
 
-    # Build response
-    from humpback.classifier.detection_rows import read_detection_row_store
-    from humpback.storage import detection_row_store_path
-
-    row_store = detection_row_store_path(settings.storage_root, detection_job_id)
-    # Build row_id lookup from row store
-    row_id_map: dict[str, str] = {}
-    if row_store.exists():
-        _fnames, rows = read_detection_row_store(row_store)
-        for row in rows:
-            key = f"{row.get('filename', '')}:{row.get('start_sec', '')}:{row.get('end_sec', '')}"
-            row_id_map[key] = row.get("row_id", "")
-
+    # Build response: derive UTC from embedding parquet filename + offsets
     results: list[PredictionRow] = []
     for i in range(len(vectors)):
-        key = f"{filenames[i]}:{start_secs[i]}:{end_secs[i]}"
-        row_id = row_id_map.get(key, f"emb-{i}")
+        fname = filenames[i]
+        ts = parse_recording_timestamp(fname)
+        base_epoch = ts.timestamp() if ts else 0.0
+        row_start_utc = base_epoch + float(start_secs[i])
+        row_end_utc = base_epoch + float(end_secs[i])
 
         pred_idx = int(predictions[i])
         predicted_label = (
@@ -634,7 +586,8 @@ async def predict_vocalization_labels(
 
         results.append(
             PredictionRow(
-                row_id=row_id,
+                start_utc=row_start_utc,
+                end_utc=row_end_utc,
                 predicted_label=predicted_label,
                 confidence=round(confidence, 4),
                 probabilities=prob_dict,
@@ -650,34 +603,37 @@ async def predict_vocalization_labels(
 
 
 @router.get(
-    "/annotations/{detection_job_id}/{row_id}",
+    "/annotations/{detection_job_id}",
     response_model=list[AnnotationOut],
 )
 async def list_annotations(
     detection_job_id: str,
-    row_id: str,
     session: SessionDep,
+    start_utc: float = Query(...),
+    end_utc: float = Query(...),
 ):
     """List all sub-window annotations for a detection row."""
     result = await session.execute(
         select(LabelingAnnotation)
         .where(LabelingAnnotation.detection_job_id == detection_job_id)
-        .where(LabelingAnnotation.row_id == row_id)
+        .where(LabelingAnnotation.start_utc == start_utc)
+        .where(LabelingAnnotation.end_utc == end_utc)
         .order_by(LabelingAnnotation.start_offset_sec)
     )
     return [AnnotationOut.model_validate(a) for a in result.scalars().all()]
 
 
 @router.post(
-    "/annotations/{detection_job_id}/{row_id}",
+    "/annotations/{detection_job_id}",
     response_model=AnnotationOut,
     status_code=201,
 )
 async def create_annotation(
     detection_job_id: str,
-    row_id: str,
     body: AnnotationCreate,
     session: SessionDep,
+    start_utc: float = Query(...),
+    end_utc: float = Query(...),
 ):
     """Create a sub-window annotation on a detection row."""
     if body.end_offset_sec <= body.start_offset_sec:
@@ -685,7 +641,8 @@ async def create_annotation(
 
     annotation = LabelingAnnotation(
         detection_job_id=detection_job_id,
-        row_id=row_id,
+        start_utc=start_utc,
+        end_utc=end_utc,
         start_offset_sec=body.start_offset_sec,
         end_offset_sec=body.end_offset_sec,
         label=body.label,
@@ -838,7 +795,7 @@ async def get_uncertainty_queue(
     import numpy as np
     import pyarrow.parquet as pq
 
-    from humpback.classifier.detection_rows import read_detection_row_store
+    from humpback.classifier.detection_rows import parse_recording_timestamp
     from humpback.models.classifier import ClassifierModel
     from humpback.services.classifier_service import get_detection_job
     from humpback.storage import detection_embeddings_path, detection_row_store_path
@@ -866,13 +823,16 @@ async def get_uncertainty_queue(
     embeddings_col = table.column("embedding")
     vectors = np.array([row.as_py() for row in embeddings_col], dtype=np.float32)
 
-    # Load row store for row_ids and confidence
+    # Load row store for confidence values
     row_store = detection_row_store_path(settings.storage_root, detection_job_id)
     row_meta: dict[str, dict[str, str]] = {}
     if row_store.exists():
         _fnames, rows = read_detection_row_store(row_store)
         for row in rows:
-            key = f"{row.get('filename', '')}:{row.get('start_sec', '')}:{row.get('end_sec', '')}"
+            key = _utc_key(
+                safe_float(row.get("start_utc"), 0.0),
+                safe_float(row.get("end_utc"), 0.0),
+            )
             row_meta[key] = row
 
     # Predict
@@ -885,9 +845,13 @@ async def get_uncertainty_queue(
 
     results: list[UncertaintyQueueRow] = []
     for i in range(len(vectors)):
-        key = f"{filenames[i]}:{start_secs[i]}:{end_secs[i]}"
-        meta = row_meta.get(key, {})
-        row_id = meta.get("row_id", f"emb-{i}")
+        fname = filenames[i]
+        ts = parse_recording_timestamp(fname)
+        base_epoch = ts.timestamp() if ts else 0.0
+        row_start_utc = base_epoch + float(start_secs[i])
+        row_end_utc = base_epoch + float(end_secs[i])
+
+        meta = row_meta.get(_utc_key(row_start_utc, row_end_utc), {})
 
         pred_idx = int(predictions[i])
         predicted_label = (
@@ -900,10 +864,8 @@ async def get_uncertainty_queue(
 
         results.append(
             UncertaintyQueueRow(
-                row_id=row_id,
-                filename=filenames[i],
-                start_sec=float(start_secs[i]),
-                end_sec=float(end_secs[i]),
+                start_utc=row_start_utc,
+                end_utc=row_end_utc,
                 avg_confidence=float(meta.get("avg_confidence", 0)),
                 peak_confidence=float(meta.get("peak_confidence", 0)),
                 predicted_label=predicted_label,
