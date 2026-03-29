@@ -4,7 +4,10 @@ import { EmbeddingStatusPanel } from "./EmbeddingStatusPanel";
 import { InferencePanel } from "./InferencePanel";
 import { LabelingWorkspace } from "./LabelingWorkspace";
 import { RetrainFooter } from "./RetrainFooter";
-import { useEmbeddingStatus } from "@/hooks/queries/useVocalization";
+import {
+  useEmbeddingStatus,
+  useFolderEmbeddingSet,
+} from "@/hooks/queries/useVocalization";
 import type { LabelingSource } from "@/api/types";
 
 export function VocalizationLabelingTab() {
@@ -12,15 +15,24 @@ export function VocalizationLabelingTab() {
   const [inferenceJobId, setInferenceJobId] = useState<string | null>(null);
   const [labelCount, setLabelCount] = useState(0);
 
-  const isReadonly = source?.type === "embedding_set";
+  // Local and embedding_set sources are readonly (no detection_job_id for labels)
+  const isReadonly =
+    source?.type === "embedding_set" || source?.type === "local";
 
   // Embedding status for detection_job source
   const detectionJobId =
     source?.type === "detection_job" ? source.jobId : null;
   const { data: embeddingStatus } = useEmbeddingStatus(detectionJobId);
+
+  // Folder embedding status for local source
+  const localFolderPath =
+    source?.type === "local" ? source.folderPath : null;
+  const { data: folderStatus } = useFolderEmbeddingSet(localFolderPath);
+
   const embeddingsReady =
     source?.type === "embedding_set" ||
-    embeddingStatus?.has_embeddings === true;
+    embeddingStatus?.has_embeddings === true ||
+    folderStatus?.status === "ready";
 
   const handleSourceChange = useCallback(
     (newSource: LabelingSource | null) => {
@@ -36,12 +48,8 @@ export function VocalizationLabelingTab() {
   }, []);
 
   const handleLabelCountChange = useCallback((count: number) => {
-    setLabelCount(count);
+    setLabelCount((prev) => prev + count);
   }, []);
-
-  // Show embedding status for detection_job and local sources (not embedding_set)
-  const showEmbeddingStatus =
-    source !== null && source.type !== "embedding_set";
 
   return (
     <div className="space-y-4 max-w-5xl pb-16">
@@ -49,14 +57,23 @@ export function VocalizationLabelingTab() {
 
       <SourceSelector source={source} onSourceChange={handleSourceChange} />
 
-      {showEmbeddingStatus && detectionJobId && (
+      {/* Embedding status for detection jobs */}
+      {source?.type === "detection_job" && detectionJobId && (
         <EmbeddingStatusPanel detectionJobId={detectionJobId} />
+      )}
+
+      {/* Folder processing status for local sources */}
+      {source?.type === "local" && folderStatus && folderStatus.status !== "ready" && (
+        <div className="rounded-md border px-4 py-3 text-sm text-muted-foreground">
+          Processing folder... {folderStatus.processed_files} / {folderStatus.total_files} files
+        </div>
       )}
 
       {source && (
         <InferencePanel
           source={source}
           embeddingsReady={embeddingsReady}
+          localEmbeddingSetId={folderStatus?.embedding_set_ids?.[0] ?? null}
           onInferenceReady={handleInferenceReady}
         />
       )}
@@ -73,6 +90,7 @@ export function VocalizationLabelingTab() {
       {inferenceJobId && source && !isReadonly && (
         <RetrainFooter
           source={source}
+          inferenceJobId={inferenceJobId}
           labelCount={labelCount}
         />
       )}

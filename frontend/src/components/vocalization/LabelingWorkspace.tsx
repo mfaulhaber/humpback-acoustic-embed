@@ -38,11 +38,11 @@ import {
 } from "@/hooks/queries/useVocalization";
 import {
   useVocalizationLabels,
-  useAddVocalizationLabel,
-  useDeleteVocalizationLabel,
   useLabelVocabulary,
 } from "@/hooks/queries/useLabeling";
 import {
+  createVocalizationLabel,
+  deleteVocalizationLabel,
   detectionSpectrogramUrl,
   detectionAudioSliceUrl,
 } from "@/api/client";
@@ -229,9 +229,7 @@ export function LabelingWorkspace({
     [],
   );
 
-  // Save / Cancel
-  const addLabelMut = useAddVocalizationLabel();
-  const deleteLabelMut = useDeleteVocalizationLabel();
+  // Save / Cancel — use raw API calls to avoid per-mutation query invalidation
   const qc = useQueryClient();
 
   const detectionJobId =
@@ -243,7 +241,7 @@ export function LabelingWorkspace({
     let netNew = 0;
 
     try {
-      // Process all adds
+      // Process all adds via raw API (no per-call invalidation)
       const addPromises: Promise<unknown>[] = [];
       for (const [key, labels] of pendingAdds) {
         const [startStr, endStr] = key.split("_");
@@ -252,10 +250,7 @@ export function LabelingWorkspace({
         for (const label of labels) {
           netNew++;
           addPromises.push(
-            addLabelMut.mutateAsync({
-              detectionJobId,
-              startUtc,
-              endUtc,
+            createVocalizationLabel(detectionJobId, startUtc, endUtc, {
               label,
               source: "manual",
             }),
@@ -263,21 +258,11 @@ export function LabelingWorkspace({
         }
       }
 
-      // Process all removals
+      // Process all removals via raw API
       const removePromises: Promise<unknown>[] = [];
-      for (const [key, labelIds] of pendingRemovals) {
-        const [startStr, endStr] = key.split("_");
-        const startUtc = parseFloat(startStr);
-        const endUtc = parseFloat(endStr);
+      for (const [, labelIds] of pendingRemovals) {
         for (const labelId of labelIds) {
-          removePromises.push(
-            deleteLabelMut.mutateAsync({
-              labelId,
-              detectionJobId,
-              startUtc,
-              endUtc,
-            }),
-          );
+          removePromises.push(deleteVocalizationLabel(labelId));
         }
       }
 
@@ -287,7 +272,7 @@ export function LabelingWorkspace({
       setPendingAdds(new Map());
       setPendingRemovals(new Map());
 
-      // Invalidate label queries
+      // Single batch invalidation
       qc.invalidateQueries({ queryKey: ["labeling"] });
 
       // Update parent label count
@@ -299,8 +284,6 @@ export function LabelingWorkspace({
     detectionJobId,
     pendingAdds,
     pendingRemovals,
-    addLabelMut,
-    deleteLabelMut,
     qc,
     onLabelCountChange,
   ]);

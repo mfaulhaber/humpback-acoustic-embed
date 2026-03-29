@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, RefreshCw, CheckCircle } from "lucide-react";
 import {
   useVocClassifierModels,
+  useVocClassifierInferenceJob,
   useVocModelTrainingSource,
   useCreateVocClassifierTrainingJob,
   useVocClassifierTrainingJob,
@@ -13,14 +14,22 @@ import type { LabelingSource } from "@/api/types";
 
 interface Props {
   source: LabelingSource;
+  inferenceJobId: string;
   labelCount: number;
 }
 
-export function RetrainFooter({ source, labelCount }: Props) {
+export function RetrainFooter({ source, inferenceJobId, labelCount }: Props) {
   const { data: models = [] } = useVocClassifierModels();
+  const { data: inferenceJob } = useVocClassifierInferenceJob(inferenceJobId);
+
+  // Use the model from the current inference job, falling back to active model
+  const inferenceModelId = inferenceJob?.vocalization_model_id ?? null;
   const activeModel = models.find((m) => m.is_active);
+  const retrainModel =
+    models.find((m) => m.id === inferenceModelId) ?? activeModel ?? null;
+
   const { data: trainingSource } = useVocModelTrainingSource(
-    activeModel?.id ?? null,
+    retrainModel?.id ?? null,
   );
 
   const createTraining = useCreateVocClassifierTrainingJob();
@@ -33,7 +42,7 @@ export function RetrainFooter({ source, labelCount }: Props) {
   const isComplete = trainingJob?.status === "complete";
 
   function handleRetrain() {
-    if (!activeModel) return;
+    if (!retrainModel) return;
 
     // Build source config: extend existing with this detection job
     const existingConfig = trainingSource?.source_config ?? {
@@ -63,7 +72,6 @@ export function RetrainFooter({ source, labelCount }: Props) {
     );
   }
 
-  if (!activeModel) return null;
   if (labelCount === 0 && !trainingJobId) return null;
 
   return (
@@ -111,7 +119,7 @@ export function RetrainFooter({ source, labelCount }: Props) {
             size="sm"
             onClick={handleRetrain}
             disabled={
-              createTraining.isPending || labelCount === 0 || !activeModel
+              createTraining.isPending || labelCount === 0 || !retrainModel
             }
           >
             {createTraining.isPending ? (

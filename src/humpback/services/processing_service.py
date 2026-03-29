@@ -146,10 +146,11 @@ async def find_audio_files_for_folder(
     files = list(result.scalars().all())
     if files:
         return files
-    # Fallback: match by folder_path prefix (for imports that used base_name)
+    # Fallback: match by folder_path = base_name or base_name/subdir
     result = await session.execute(
         select(AudioFile).where(
-            AudioFile.folder_path.like(f"{base_name}%"),
+            (AudioFile.folder_path == base_name)
+            | AudioFile.folder_path.like(f"{base_name}/%"),
         )
     )
     return list(result.scalars().all())
@@ -158,7 +159,7 @@ async def find_audio_files_for_folder(
 async def find_embedding_set_for_audio(
     session: AsyncSession, audio_file_id: str
 ) -> Optional[EmbeddingSet]:
-    """Find first completed embedding set for an audio file."""
+    """Find first embedding set for an audio file (any signature)."""
     result = await session.execute(
         select(EmbeddingSet).where(
             EmbeddingSet.audio_file_id == audio_file_id,
