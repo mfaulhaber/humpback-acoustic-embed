@@ -596,7 +596,7 @@ Non-obvious constraints that are not immediately derivable from code:
 
 - Audio upload, folder import, metadata editing
 - Processing pipeline: TFLite + TF2 SavedModel, overlap-back windowing, incremental Parquet
-- Embedding similarity search (cosine/euclidean, cross-set, detection-sourced)
+- Embedding similarity search (cosine/euclidean, cross-set, detection-sourced, score calibration with percentile ranks and distribution histogram, pluggable projector for future classifier-projected search)
 - Clustering: HDBSCAN/K-Means/Agglomerative, UMAP/PCA, parameter sweeps, metric learning
 - Binary classifier training (LogisticRegression/MLP) + local/hydrophone detection
 - Hydrophone streaming: Orcasound HLS + NOAA archives, pause/resume/cancel, subprocess isolation

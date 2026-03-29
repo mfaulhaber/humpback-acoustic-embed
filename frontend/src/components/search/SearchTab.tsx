@@ -29,7 +29,7 @@ import {
   detectionSpectrogramUrl,
   searchSimilarByVector,
 } from "@/api/client";
-import type { EmbeddingSet, SimilaritySearchResponse } from "@/api/types";
+import type { EmbeddingSet, SimilaritySearchResponse, ScoreDistribution } from "@/api/types";
 import { SpectrogramPopup } from "@/components/classifier/SpectrogramPopup";
 import {
   ROOT_SENTINEL,
@@ -73,6 +73,7 @@ export function SearchTab() {
   const [windowIndex, setWindowIndex] = useState(0);
   const [topK, setTopK] = useState(20);
   const [metric, setMetric] = useState<"cosine" | "euclidean">("cosine");
+  const [searchMode, setSearchMode] = useState<"raw" | "projected">("raw");
   const [searchTrigger, setSearchTrigger] = useState<{
     embedding_set_id: string;
     row_index: number;
@@ -366,11 +367,16 @@ export function SearchTab() {
     [],
   );
 
-  const scoreColor = (score: number) => {
-    const pct = score * 100;
-    if (pct >= 80) return "text-green-700 font-semibold";
-    if (pct >= 60) return "text-yellow-700";
+  const percentileColor = (rank: number) => {
+    if (rank >= 0.95) return "text-green-700 font-semibold";
+    if (rank >= 0.75) return "text-yellow-700";
     return "text-muted-foreground";
+  };
+
+  const formatPercentile = (rank: number) => {
+    const top = Math.max(0.1, (1 - rank) * 100);
+    if (top < 1) return `Top ${top.toFixed(1)}%`;
+    return `Top ${Math.round(top)}%`;
   };
 
   // Handle query ES selection in standalone mode
@@ -488,6 +494,8 @@ export function SearchTab() {
               onTopKChange={setTopK}
               metric={metric}
               onMetricChange={setMetric}
+              searchMode={searchMode}
+              onSearchModeChange={setSearchMode}
               onSearch={handleStandaloneSearch}
               isSearching={isSearching}
               onPlay={handlePlay}
@@ -515,6 +523,14 @@ export function SearchTab() {
         <div className="text-sm text-muted-foreground px-1">
           Found {results.length} results from {totalCandidates.toLocaleString()} candidates ({activeResults.metric}, model: {resultModelVersion})
         </div>
+      )}
+
+      {/* Score distribution histogram */}
+      {activeResults?.score_distribution && activeResults.score_distribution.histogram.length > 0 && (
+        <ScoreHistogram
+          distribution={activeResults.score_distribution}
+          hitScores={results.map((r) => r.score)}
+        />
       )}
 
       {/* Error */}
@@ -570,8 +586,13 @@ export function SearchTab() {
                       <td className="px-3 py-1.5 text-muted-foreground">
                         {idx + 1}
                       </td>
-                      <td className={`px-3 py-1.5 ${scoreColor(hit.score)}`}>
-                        {(hit.score * 100).toFixed(1)}%
+                      <td className="px-3 py-1.5">
+                        <div className={percentileColor(hit.percentile_rank)}>
+                          {formatPercentile(hit.percentile_rank)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {(hit.score * 100).toFixed(1)}%
+                        </div>
                       </td>
                       <td className="px-3 py-1.5">
                         <img
@@ -629,6 +650,69 @@ export function SearchTab() {
         />
       )}
     </div>
+  );
+}
+
+// ---- Score Distribution Histogram ----
+
+function ScoreHistogram({
+  distribution,
+  hitScores,
+}: {
+  distribution: ScoreDistribution;
+  hitScores: number[];
+}) {
+  const { histogram, mean, std, p50 } = distribution;
+  const maxCount = Math.max(...histogram.map((b) => b.count), 1);
+
+  // Which bins contain hit scores
+  const hitBins = new Set<number>();
+  for (const score of hitScores) {
+    for (let i = 0; i < histogram.length; i++) {
+      const b = histogram[i];
+      if (score >= b.bin_start && (score < b.bin_end || i === histogram.length - 1)) {
+        hitBins.add(i);
+        break;
+      }
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="pt-4 pb-3 px-4">
+        <div className="text-xs text-muted-foreground mb-2 flex items-center justify-between">
+          <span>Score Distribution</span>
+          <span>
+            mean: {(mean * 100).toFixed(1)}% | median: {(p50 * 100).toFixed(1)}% | std: {(std * 100).toFixed(1)}%
+          </span>
+        </div>
+        <div className="flex items-end gap-px h-16">
+          {histogram.map((bin, i) => {
+            const height = (bin.count / maxCount) * 100;
+            const isHitBin = hitBins.has(i);
+            return (
+              <div
+                key={i}
+                className="flex-1 flex flex-col items-center"
+                title={`${(bin.bin_start * 100).toFixed(1)}%–${(bin.bin_end * 100).toFixed(1)}%: ${bin.count} vectors`}
+              >
+                {isHitBin && (
+                  <div className="w-0 h-0 border-l-[3px] border-r-[3px] border-t-[4px] border-l-transparent border-r-transparent border-t-green-600 mb-0.5" />
+                )}
+                <div
+                  className={`w-full rounded-t-sm ${isHitBin ? "bg-green-600" : "bg-muted-foreground/30"}`}
+                  style={{ height: `${Math.max(height, 1)}%` }}
+                />
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+          <span>{(histogram[0]?.bin_start * 100).toFixed(0)}%</span>
+          <span>{(histogram[histogram.length - 1]?.bin_end * 100).toFixed(0)}%</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -727,6 +811,8 @@ function StandaloneQueryCard({
   onTopKChange,
   metric,
   onMetricChange,
+  searchMode,
+  onSearchModeChange,
   onSearch,
   isSearching,
   onPlay,
@@ -759,6 +845,8 @@ function StandaloneQueryCard({
   onTopKChange: (n: number) => void;
   metric: "cosine" | "euclidean";
   onMetricChange: (m: "cosine" | "euclidean") => void;
+  searchMode: "raw" | "projected";
+  onSearchModeChange: (m: "raw" | "projected") => void;
   onSearch: () => void;
   isSearching: boolean;
   onPlay: (key: string, url: string) => void;
@@ -918,6 +1006,20 @@ function StandaloneQueryCard({
             <SelectContent>
               <SelectItem value="cosine">Cosine</SelectItem>
               <SelectItem value="euclidean">Euclidean</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs text-muted-foreground">Mode:</label>
+          <Select value={searchMode} onValueChange={(v) => onSearchModeChange(v as "raw" | "projected")}>
+            <SelectTrigger className="h-7 w-36 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="raw">Raw Embedding</SelectItem>
+              <SelectItem value="projected" disabled>
+                Classifier Projected
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
