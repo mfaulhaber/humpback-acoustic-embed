@@ -129,6 +129,63 @@ async def bulk_delete_processing_jobs(session: AsyncSession, job_ids: list[str])
     return count
 
 
+async def find_audio_files_for_folder(
+    session: AsyncSession, folder_path: str
+) -> list[AudioFile]:
+    """Find audio files imported from a specific source folder."""
+    from pathlib import Path
+
+    source = Path(folder_path).resolve()
+    base_name = source.name
+    # Match folder_path that starts with the folder base name
+    result = await session.execute(
+        select(AudioFile).where(
+            AudioFile.source_folder == str(source),
+        )
+    )
+    files = list(result.scalars().all())
+    if files:
+        return files
+    # Fallback: match by folder_path = base_name or base_name/subdir
+    result = await session.execute(
+        select(AudioFile).where(
+            (AudioFile.folder_path == base_name)
+            | AudioFile.folder_path.like(f"{base_name}/%"),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def find_embedding_set_for_audio(
+    session: AsyncSession, audio_file_id: str
+) -> Optional[EmbeddingSet]:
+    """Find first embedding set for an audio file (any signature)."""
+    result = await session.execute(
+        select(EmbeddingSet).where(
+            EmbeddingSet.audio_file_id == audio_file_id,
+        )
+    )
+    return result.scalars().first()
+
+
+async def ensure_processing_job(
+    session: AsyncSession, audio_file_id: str
+) -> Optional[ProcessingJob]:
+    """Create a processing job for audio file if none exists (queued or running)."""
+    existing = await session.execute(
+        select(ProcessingJob).where(
+            ProcessingJob.audio_file_id == audio_file_id,
+            ProcessingJob.status.in_(["queued", "running"]),
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return None  # Already has an active job
+    job, _skipped = await create_processing_job(
+        session, audio_file_id, None, 5.0, 32000
+    )
+    return job
+
+
 async def list_embedding_sets(session: AsyncSession) -> list[EmbeddingSet]:
     result = await session.execute(
         select(EmbeddingSet).order_by(EmbeddingSet.created_at.desc())

@@ -17,6 +17,19 @@ class BulkDeleteRequest(BaseModel):
     ids: List[str]
 
 
+class FolderEmbeddingSetRequest(BaseModel):
+    folder_path: str
+
+
+class FolderEmbeddingSetResponse(BaseModel):
+    folder_path: str
+    embedding_set_ids: list[str]
+    total_files: int
+    processed_files: int
+    pending_files: int
+    status: str  # "ready", "processing", "queued"
+
+
 router = APIRouter(prefix="/processing", tags=["processing"])
 
 
@@ -109,3 +122,58 @@ async def get_embedding_set(es_id: str, session: SessionDep) -> EmbeddingSetOut:
     if es is None:
         raise HTTPException(404, "Embedding set not found")
     return EmbeddingSetOut.model_validate(es)
+
+
+@router.post("/folder-embedding-set")
+async def folder_embedding_set(
+    body: FolderEmbeddingSetRequest, session: SessionDep
+) -> FolderEmbeddingSetResponse:
+    """Import folder and find or create embedding sets for its audio files.
+
+    Returns current status: 'ready' if all files have embedding sets,
+    'processing'/'queued' if work is still in progress.
+    """
+    # Import audio files from folder (idempotent)
+    from humpback.services import audio_service
+
+    try:
+        await audio_service.import_folder(session, body.folder_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Find audio files belonging to this folder
+    audio_files = await processing_service.find_audio_files_for_folder(
+        session, body.folder_path
+    )
+    if not audio_files:
+        raise HTTPException(404, "No audio files found in folder")
+
+    total_files = len(audio_files)
+    embedding_set_ids: list[str] = []
+    pending = 0
+
+    for af in audio_files:
+        es = await processing_service.find_embedding_set_for_audio(session, af.id)
+        if es is not None:
+            embedding_set_ids.append(es.id)
+        else:
+            pending += 1
+            # Queue processing job if none exists yet
+            await processing_service.ensure_processing_job(session, af.id)
+
+    processed_files = len(embedding_set_ids)
+    if pending == 0:
+        status = "ready"
+    elif processed_files > 0:
+        status = "processing"
+    else:
+        status = "queued"
+
+    return FolderEmbeddingSetResponse(
+        folder_path=body.folder_path,
+        embedding_set_ids=embedding_set_ids,
+        total_files=total_files,
+        processed_files=processed_files,
+        pending_files=pending,
+        status=status,
+    )

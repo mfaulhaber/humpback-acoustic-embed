@@ -69,6 +69,7 @@ import type {
   EmbeddingStatus,
   DetectionEmbeddingJob,
   VocalizationTrainingSource,
+  FolderEmbeddingSetResponse,
 } from "./types";
 
 class ApiError extends Error {
@@ -174,6 +175,11 @@ export const bulkDeleteProcessingJobs = (ids: string[]) =>
   post<{ status: string; count: number }>("/processing/jobs/bulk-delete", { ids });
 
 export const fetchEmbeddingSets = () => api<EmbeddingSet[]>("/processing/embedding-sets");
+
+export const fetchFolderEmbeddingSet = (folderPath: string) =>
+  post<FolderEmbeddingSetResponse>("/processing/folder-embedding-set", {
+    folder_path: folderPath,
+  });
 
 // ---- Clustering ----
 

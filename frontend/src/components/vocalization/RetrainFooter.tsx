@@ -4,22 +4,32 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, RefreshCw, CheckCircle } from "lucide-react";
 import {
   useVocClassifierModels,
+  useVocClassifierInferenceJob,
   useVocModelTrainingSource,
   useCreateVocClassifierTrainingJob,
   useVocClassifierTrainingJob,
   useActivateVocClassifierModel,
 } from "@/hooks/queries/useVocalization";
+import type { LabelingSource } from "@/api/types";
 
 interface Props {
-  detectionJobId: string;
+  source: LabelingSource;
+  inferenceJobId: string;
   labelCount: number;
 }
 
-export function RetrainFooter({ detectionJobId, labelCount }: Props) {
+export function RetrainFooter({ source, inferenceJobId, labelCount }: Props) {
   const { data: models = [] } = useVocClassifierModels();
+  const { data: inferenceJob } = useVocClassifierInferenceJob(inferenceJobId);
+
+  // Use the model from the current inference job, falling back to active model
+  const inferenceModelId = inferenceJob?.vocalization_model_id ?? null;
   const activeModel = models.find((m) => m.is_active);
+  const retrainModel =
+    models.find((m) => m.id === inferenceModelId) ?? activeModel ?? null;
+
   const { data: trainingSource } = useVocModelTrainingSource(
-    activeModel?.id ?? null,
+    retrainModel?.id ?? null,
   );
 
   const createTraining = useCreateVocClassifierTrainingJob();
@@ -32,7 +42,7 @@ export function RetrainFooter({ detectionJobId, labelCount }: Props) {
   const isComplete = trainingJob?.status === "complete";
 
   function handleRetrain() {
-    if (!activeModel) return;
+    if (!retrainModel) return;
 
     // Build source config: extend existing with this detection job
     const existingConfig = trainingSource?.source_config ?? {
@@ -43,8 +53,8 @@ export function RetrainFooter({ detectionJobId, labelCount }: Props) {
     const detJobIds: string[] = [
       ...(existingConfig.detection_job_ids ?? []),
     ];
-    if (!detJobIds.includes(detectionJobId)) {
-      detJobIds.push(detectionJobId);
+    if (source.type === "detection_job" && !detJobIds.includes(source.jobId)) {
+      detJobIds.push(source.jobId);
     }
 
     createTraining.mutate(
@@ -53,7 +63,8 @@ export function RetrainFooter({ detectionJobId, labelCount }: Props) {
           embedding_set_ids: existingConfig.embedding_set_ids ?? [],
           detection_job_ids: detJobIds,
         },
-        parameters: (trainingSource?.parameters as Record<string, unknown>) ?? undefined,
+        parameters:
+          (trainingSource?.parameters as Record<string, unknown>) ?? undefined,
       },
       {
         onSuccess: (job) => setTrainingJobId(job.id),
@@ -61,7 +72,6 @@ export function RetrainFooter({ detectionJobId, labelCount }: Props) {
     );
   }
 
-  if (!activeModel) return null;
   if (labelCount === 0 && !trainingJobId) return null;
 
   return (
@@ -109,7 +119,7 @@ export function RetrainFooter({ detectionJobId, labelCount }: Props) {
             size="sm"
             onClick={handleRetrain}
             disabled={
-              createTraining.isPending || labelCount === 0 || !activeModel
+              createTraining.isPending || labelCount === 0 || !retrainModel
             }
           >
             {createTraining.isPending ? (

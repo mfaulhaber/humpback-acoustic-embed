@@ -66,3 +66,28 @@ async def test_list_embedding_sets_empty(client):
     resp = await client.get("/processing/embedding-sets")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+async def test_folder_embedding_set_invalid_path(client):
+    resp = await client.post(
+        "/processing/folder-embedding-set",
+        json={"folder_path": "/nonexistent/path"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_folder_embedding_set_with_audio(client, tmp_path, wav_bytes):
+    # Create a folder with audio
+    audio_dir = tmp_path / "test_audio"
+    audio_dir.mkdir()
+    (audio_dir / "sample.wav").write_bytes(wav_bytes)
+
+    resp = await client.post(
+        "/processing/folder-embedding-set",
+        json={"folder_path": str(audio_dir)},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["folder_path"] == str(audio_dir)
+    assert data["total_files"] >= 1
+    assert data["status"] in ("ready", "processing", "queued")

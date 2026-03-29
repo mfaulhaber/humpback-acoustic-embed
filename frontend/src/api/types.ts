@@ -898,6 +898,24 @@ export interface VocalizationTrainingSource {
   parameters: Record<string, unknown> | null;
 }
 
+// ---- Folder Embedding Set ----
+
+export interface FolderEmbeddingSetResponse {
+  folder_path: string;
+  embedding_set_ids: string[];
+  total_files: number;
+  processed_files: number;
+  pending_files: number;
+  status: "ready" | "processing" | "queued";
+}
+
+// ---- Labeling Source ----
+
+export type LabelingSource =
+  | { type: "detection_job"; jobId: string }
+  | { type: "embedding_set"; embeddingSetId: string }
+  | { type: "local"; folderPath: string };
+
 // ---- Health ----
 
 export interface HealthStatus {

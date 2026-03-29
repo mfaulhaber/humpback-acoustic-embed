@@ -15,12 +15,21 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ChevronLeft,
   ChevronRight,
   Play,
   Pause,
   Plus,
   X,
+  Save,
+  Undo2,
+  Eye,
 } from "lucide-react";
 import {
   useVocClassifierInferenceResults,
@@ -29,27 +38,22 @@ import {
 } from "@/hooks/queries/useVocalization";
 import {
   useVocalizationLabels,
-  useAddVocalizationLabel,
-  useDeleteVocalizationLabel,
   useLabelVocabulary,
 } from "@/hooks/queries/useLabeling";
 import {
+  createVocalizationLabel,
+  deleteVocalizationLabel,
   detectionSpectrogramUrl,
   detectionAudioSliceUrl,
 } from "@/api/client";
+import { useQueryClient } from "@tanstack/react-query";
 import type {
   VocClassifierPredictionRow,
   VocalizationLabel,
+  LabelingSource,
 } from "@/api/types";
 
 const PAGE_SIZE = 50;
-
-const LABEL_BADGES: Record<string, string> = {
-  humpback: "bg-blue-100 text-blue-800",
-  orca: "bg-purple-100 text-purple-800",
-  ship: "bg-orange-100 text-orange-800",
-  background: "bg-gray-100 text-gray-800",
-};
 
 const TYPE_COLORS = [
   "bg-emerald-100 text-emerald-800 border-emerald-200",
@@ -64,15 +68,22 @@ const TYPE_COLORS = [
 
 type SortMode = "uncertainty" | "score_desc" | "chronological";
 
+/** Row key for pending label maps */
+function rowKey(startUtc: number | null, endUtc: number | null): string {
+  return `${startUtc ?? 0}_${endUtc ?? 0}`;
+}
+
 interface Props {
   inferenceJobId: string;
-  detectionJobId: string;
+  source: LabelingSource;
+  readonly: boolean;
   onLabelCountChange: (count: number) => void;
 }
 
 export function LabelingWorkspace({
   inferenceJobId,
-  detectionJobId,
+  source,
+  readonly,
   onLabelCountChange,
 }: Props) {
   const { data: job } = useVocClassifierInferenceJob(inferenceJobId);
@@ -80,11 +91,34 @@ export function LabelingWorkspace({
     job?.vocalization_model_id ?? null,
   );
   const [page, setPage] = useState(0);
-  const [sortMode, setSortMode] = useState<SortMode>("uncertainty");
-  const [labelCount, setLabelCount] = useState(0);
+  const [sortMode, setSortMode] = useState<SortMode>("score_desc");
+  const [saving, setSaving] = useState(false);
+
+  // Pending label state (local accumulation)
+  const [pendingAdds, setPendingAdds] = useState<Map<string, Set<string>>>(
+    () => new Map(),
+  );
+  const [pendingRemovals, setPendingRemovals] = useState<
+    Map<string, Set<string>>
+  >(() => new Map());
 
   const vocabulary = model?.vocabulary_snapshot ?? [];
   const thresholds = model?.per_class_thresholds ?? {};
+
+  // Derive dirty state
+  const isDirty = useMemo(() => {
+    for (const s of pendingAdds.values()) if (s.size > 0) return true;
+    for (const s of pendingRemovals.values()) if (s.size > 0) return true;
+    return false;
+  }, [pendingAdds, pendingRemovals]);
+
+  // Count total pending changes
+  const pendingChangeCount = useMemo(() => {
+    let count = 0;
+    for (const s of pendingAdds.values()) count += s.size;
+    for (const s of pendingRemovals.values()) count += s.size;
+    return count;
+  }, [pendingAdds, pendingRemovals]);
 
   // Build type→color map
   const typeColorMap = useMemo(() => {
@@ -129,7 +163,8 @@ export function LabelingWorkspace({
         break;
       case "chronological":
         rows.sort(
-          (a, b) => (a.start_utc ?? a.start_sec) - (b.start_utc ?? b.start_sec),
+          (a, b) =>
+            (a.start_utc ?? a.start_sec) - (b.start_utc ?? b.start_sec),
         );
         break;
     }
@@ -139,16 +174,124 @@ export function LabelingWorkspace({
   const pageRows = sortedRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
 
-  const handleLabelChange = useCallback(
-    (delta: number) => {
-      setLabelCount((c) => {
-        const next = c + delta;
-        onLabelCountChange(next);
+  // Pending label helpers
+  const addPending = useCallback(
+    (key: string, label: string) => {
+      setPendingAdds((prev) => {
+        const next = new Map(prev);
+        const s = new Set(next.get(key) ?? []);
+        s.add(label);
+        next.set(key, s);
         return next;
       });
     },
-    [onLabelCountChange],
+    [],
   );
+
+  const removePendingAdd = useCallback(
+    (key: string, label: string) => {
+      setPendingAdds((prev) => {
+        const next = new Map(prev);
+        const s = new Set(next.get(key) ?? []);
+        s.delete(label);
+        if (s.size === 0) next.delete(key);
+        else next.set(key, s);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const addPendingRemoval = useCallback(
+    (key: string, labelId: string) => {
+      setPendingRemovals((prev) => {
+        const next = new Map(prev);
+        const s = new Set(next.get(key) ?? []);
+        s.add(labelId);
+        next.set(key, s);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const removePendingRemoval = useCallback(
+    (key: string, labelId: string) => {
+      setPendingRemovals((prev) => {
+        const next = new Map(prev);
+        const s = new Set(next.get(key) ?? []);
+        s.delete(labelId);
+        if (s.size === 0) next.delete(key);
+        else next.set(key, s);
+        return next;
+      });
+    },
+    [],
+  );
+
+  // Save / Cancel — use raw API calls to avoid per-mutation query invalidation
+  const qc = useQueryClient();
+
+  const detectionJobId =
+    source.type === "detection_job" ? source.jobId : null;
+
+  const handleSave = useCallback(async () => {
+    if (!detectionJobId) return;
+    setSaving(true);
+    let netNew = 0;
+
+    try {
+      // Process all adds via raw API (no per-call invalidation)
+      const addPromises: Promise<unknown>[] = [];
+      for (const [key, labels] of pendingAdds) {
+        const [startStr, endStr] = key.split("_");
+        const startUtc = parseFloat(startStr);
+        const endUtc = parseFloat(endStr);
+        for (const label of labels) {
+          netNew++;
+          addPromises.push(
+            createVocalizationLabel(detectionJobId, startUtc, endUtc, {
+              label,
+              source: "manual",
+            }),
+          );
+        }
+      }
+
+      // Process all removals via raw API
+      const removePromises: Promise<unknown>[] = [];
+      for (const [, labelIds] of pendingRemovals) {
+        for (const labelId of labelIds) {
+          removePromises.push(deleteVocalizationLabel(labelId));
+        }
+      }
+
+      await Promise.all([...addPromises, ...removePromises]);
+
+      // Clear pending state
+      setPendingAdds(new Map());
+      setPendingRemovals(new Map());
+
+      // Single batch invalidation
+      qc.invalidateQueries({ queryKey: ["labeling"] });
+
+      // Update parent label count
+      onLabelCountChange(netNew);
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    detectionJobId,
+    pendingAdds,
+    pendingRemovals,
+    qc,
+    onLabelCountChange,
+  ]);
+
+  const handleCancel = useCallback(() => {
+    setPendingAdds(new Map());
+    setPendingRemovals(new Map());
+  }, []);
 
   useEffect(() => {
     setPage(0);
@@ -167,9 +310,17 @@ export function LabelingWorkspace({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
-        <CardTitle className="text-base">
-          Labeling ({sortedRows.length} rows)
-        </CardTitle>
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-base">
+            Labeling ({sortedRows.length} rows)
+          </CardTitle>
+          {readonly && (
+            <Badge variant="secondary" className="text-xs">
+              <Eye className="h-3 w-3 mr-1" />
+              View only
+            </Badge>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted-foreground">Sort:</label>
           <Select
@@ -180,14 +331,41 @@ export function LabelingWorkspace({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="uncertainty">Uncertainty</SelectItem>
               <SelectItem value="score_desc">Score (high first)</SelectItem>
+              <SelectItem value="uncertainty">Uncertainty</SelectItem>
               <SelectItem value="chronological">Chronological</SelectItem>
             </SelectContent>
           </Select>
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
+        {/* Save / Cancel bar */}
+        {!readonly && isDirty && (
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-3 rounded-md border bg-muted/80 backdrop-blur px-3 py-2">
+            <span className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {pendingChangeCount}
+              </span>{" "}
+              unsaved change{pendingChangeCount !== 1 ? "s" : ""}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCancel}
+                disabled={saving}
+              >
+                <Undo2 className="h-3.5 w-3.5 mr-1" />
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleSave} disabled={saving}>
+                <Save className="h-3.5 w-3.5 mr-1" />
+                {saving ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="border rounded-md divide-y">
           {pageRows.map((row, i) => (
             <LabelingRow
@@ -197,7 +375,29 @@ export function LabelingWorkspace({
               vocabulary={vocabulary}
               typeColorMap={typeColorMap}
               thresholds={thresholds}
-              onLabelChange={handleLabelChange}
+              readonly={readonly}
+              pendingAdds={pendingAdds.get(rowKey(row.start_utc, row.end_utc))}
+              pendingRemovals={pendingRemovals.get(
+                rowKey(row.start_utc, row.end_utc),
+              )}
+              onAddPending={(label) =>
+                addPending(rowKey(row.start_utc, row.end_utc), label)
+              }
+              onRemovePendingAdd={(label) =>
+                removePendingAdd(rowKey(row.start_utc, row.end_utc), label)
+              }
+              onAddPendingRemoval={(labelId) =>
+                addPendingRemoval(
+                  rowKey(row.start_utc, row.end_utc),
+                  labelId,
+                )
+              }
+              onRemovePendingRemoval={(labelId) =>
+                removePendingRemoval(
+                  rowKey(row.start_utc, row.end_utc),
+                  labelId,
+                )
+              }
             />
           ))}
         </div>
@@ -231,23 +431,40 @@ export function LabelingWorkspace({
   );
 }
 
+/* ────────────────────────────────────────────────────────── */
+/*  LabelingRow                                               */
+/* ────────────────────────────────────────────────────────── */
+
 function LabelingRow({
   row,
   detectionJobId,
   vocabulary,
   typeColorMap,
   thresholds,
-  onLabelChange,
+  readonly,
+  pendingAdds,
+  pendingRemovals,
+  onAddPending,
+  onRemovePendingAdd,
+  onAddPendingRemoval,
+  onRemovePendingRemoval,
 }: {
   row: VocClassifierPredictionRow;
-  detectionJobId: string;
+  detectionJobId: string | null;
   vocabulary: string[];
   typeColorMap: Map<string, string>;
   thresholds: Record<string, number>;
-  onLabelChange: (delta: number) => void;
+  readonly: boolean;
+  pendingAdds: Set<string> | undefined;
+  pendingRemovals: Set<string> | undefined;
+  onAddPending: (label: string) => void;
+  onRemovePendingAdd: (label: string) => void;
+  onAddPendingRemoval: (labelId: string) => void;
+  onRemovePendingRemoval: (labelId: string) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [spectrogramOpen, setSpectrogramOpen] = useState(false);
 
   const hasUtc = row.start_utc != null && row.end_utc != null;
   const duration = row.end_sec - row.start_sec;
@@ -259,8 +476,6 @@ function LabelingRow({
     row.end_utc,
   );
 
-  const addLabel = useAddVocalizationLabel();
-  const deleteLabel = useDeleteVocalizationLabel();
   const { data: labelVocab = [] } = useLabelVocabulary();
 
   // Merge vocabulary sources
@@ -270,6 +485,8 @@ function LabelingRow({
   }, [vocabulary, labelVocab]);
 
   const existingTypeNames = new Set(existingLabels.map((l) => l.label));
+  const pendingAddSet = pendingAdds ?? new Set<string>();
+  const pendingRemovalSet = pendingRemovals ?? new Set<string>();
 
   // Inference-predicted tags above threshold (suggestions)
   const predictedTags = useMemo(() => {
@@ -280,179 +497,255 @@ function LabelingRow({
 
   const predictedTypeNames = new Set(predictedTags.map(([t]) => t));
 
-  // Available types to add (not already assigned or predicted)
+  // Available types to add (not already assigned or pending-add)
   const availableTypes = allTypes.filter(
-    (t) => !existingTypeNames.has(t),
+    (t) =>
+      !existingTypeNames.has(t) &&
+      !pendingAddSet.has(t),
   );
 
   // Max score for display
   const maxScore = Math.max(...Object.values(row.scores), 0);
 
-  // Binary label (read-only) — check for detection row labels
-  // The inference results don't carry binary labels, so we show "—" as default
-  // A full implementation would fetch from the detection row store
-  const binaryLabel = null as string | null;
-
-  const spectrogramSrc = hasUtc
+  const spectrogramSrc = hasUtc && detectionJobId
     ? detectionSpectrogramUrl(detectionJobId, row.start_utc!, duration)
     : null;
-  const audioSrc = hasUtc
+  const audioSrc = hasUtc && detectionJobId
     ? detectionAudioSliceUrl(detectionJobId, row.start_utc!, duration)
     : null;
 
-  function handleAdd(type: string) {
-    if (!row.start_utc || !row.end_utc) return;
-    addLabel.mutate({
-      detectionJobId,
-      startUtc: row.start_utc,
-      endUtc: row.end_utc,
-      label: type,
-      source: "manual",
-    });
-    onLabelChange(1);
+  function handleTogglePredicted(type: string) {
+    if (readonly) return;
+    if (pendingAddSet.has(type)) {
+      onRemovePendingAdd(type);
+    } else if (!existingTypeNames.has(type)) {
+      onAddPending(type);
+    }
   }
 
-  function handleRemove(label: VocalizationLabel) {
-    deleteLabel.mutate({
-      labelId: label.id,
-      detectionJobId,
-      startUtc: label.start_utc,
-      endUtc: label.end_utc,
-    });
-    onLabelChange(-1);
+  function handleToggleSavedRemoval(label: VocalizationLabel) {
+    if (readonly) return;
+    if (pendingRemovalSet.has(label.id)) {
+      onRemovePendingRemoval(label.id);
+    } else {
+      onAddPendingRemoval(label.id);
+    }
   }
 
   function formatUtcShort(epoch: number): string {
-    return new Date(epoch * 1000)
-      .toISOString()
-      .replace("T", " ")
-      .slice(0, 19)
-      + " UTC";
+    return (
+      new Date(epoch * 1000)
+        .toISOString()
+        .replace("T", " ")
+        .slice(0, 19) + " UTC"
+    );
   }
 
   return (
-    <div className="flex items-start gap-3 px-3 py-2.5">
-      {/* Spectrogram */}
-      {spectrogramSrc ? (
-        <img
-          src={spectrogramSrc}
-          alt="spectrogram"
-          className="w-28 h-16 object-cover rounded border shrink-0"
-          loading="lazy"
-        />
-      ) : (
-        <div className="w-28 h-16 bg-muted rounded border flex items-center justify-center text-xs text-muted-foreground shrink-0">
-          no preview
-        </div>
-      )}
-
-      {/* Info + labels */}
-      <div className="flex-1 min-w-0 space-y-1.5">
-        <div className="flex items-center gap-2 text-sm">
-          {audioSrc && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              onClick={() => {
-                if (!audioRef.current) return;
-                if (playing) audioRef.current.pause();
-                else audioRef.current.play();
-                setPlaying(!playing);
-              }}
-            >
-              {playing ? (
-                <Pause className="h-3 w-3" />
-              ) : (
-                <Play className="h-3 w-3" />
-              )}
-            </Button>
-          )}
-          <span className="text-xs text-muted-foreground">
-            Score: {(maxScore * 100).toFixed(0)}%
-          </span>
-          {audioSrc && (
-            <audio
-              ref={audioRef}
-              src={audioSrc}
-              onEnded={() => setPlaying(false)}
-              preload="none"
-            />
-          )}
-        </div>
-
-        {/* Binary label + vocalization labels */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-muted-foreground">Binary:</span>
-          {binaryLabel ? (
-            <Badge
-              variant="outline"
-              className={`text-xs ${LABEL_BADGES[binaryLabel] ?? ""}`}
-            >
-              {binaryLabel}
-            </Badge>
-          ) : (
-            <span className="text-xs text-muted-foreground">—</span>
-          )}
-
-          <span className="text-xs text-muted-foreground ml-2">Voc:</span>
-          {predictedTags.map(([type, score]) => (
-            <Badge
-              key={`pred-${type}`}
-              variant="outline"
-              className={`text-xs ${typeColorMap.get(type) ?? ""} ${
-                existingTypeNames.has(type) ? "ring-1 ring-offset-1" : "opacity-70"
-              } cursor-pointer`}
-              title={`Predicted: ${(score * 100).toFixed(0)}% — click to add as label`}
-              onClick={() => {
-                if (!existingTypeNames.has(type)) handleAdd(type);
-              }}
-            >
-              {type} {(score * 100).toFixed(0)}%
-            </Badge>
-          ))}
-          {existingLabels
-            .filter((lbl) => !predictedTypeNames.has(lbl.label))
-            .map((lbl) => (
-            <Badge
-              key={lbl.id}
-              variant="outline"
-              className={`text-xs ${typeColorMap.get(lbl.label) ?? ""} cursor-pointer`}
-              onClick={() => handleRemove(lbl)}
-            >
-              {lbl.label}
-              <X className="h-2.5 w-2.5 ml-0.5" />
-            </Badge>
-          ))}
-          {availableTypes.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-5 px-1.5">
-                  <Plus className="h-3 w-3" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-40 p-1" align="start">
-                {availableTypes.map((t) => (
-                  <button
-                    key={t}
-                    className="w-full text-left text-xs px-2 py-1 hover:bg-muted rounded"
-                    onClick={() => handleAdd(t)}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </PopoverContent>
-            </Popover>
-          )}
-        </div>
-
-        {/* Time range */}
-        {hasUtc && (
-          <div className="text-xs text-muted-foreground">
-            {formatUtcShort(row.start_utc!)} — {formatUtcShort(row.end_utc!)}
+    <>
+      <div className="flex items-start gap-3 px-3 py-3">
+        {/* Spectrogram — larger size, clickable */}
+        {spectrogramSrc ? (
+          <img
+            src={spectrogramSrc}
+            alt="spectrogram"
+            className="w-[120px] h-[80px] object-cover rounded border shrink-0 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow"
+            loading="lazy"
+            onClick={() => setSpectrogramOpen(true)}
+          />
+        ) : (
+          <div className="w-[120px] h-[80px] bg-muted rounded border flex items-center justify-center text-xs text-muted-foreground shrink-0">
+            no preview
           </div>
         )}
+
+        {/* Info + labels */}
+        <div className="flex-1 min-w-0 space-y-2">
+          <div className="flex items-center gap-2 text-sm">
+            {audioSrc && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0"
+                onClick={() => {
+                  if (!audioRef.current) return;
+                  if (playing) audioRef.current.pause();
+                  else audioRef.current.play();
+                  setPlaying(!playing);
+                }}
+              >
+                {playing ? (
+                  <Pause className="h-3 w-3" />
+                ) : (
+                  <Play className="h-3 w-3" />
+                )}
+              </Button>
+            )}
+            <span className="text-xs text-muted-foreground">
+              Score: {(maxScore * 100).toFixed(0)}%
+            </span>
+            {audioSrc && (
+              <audio
+                ref={audioRef}
+                src={audioSrc}
+                onEnded={() => setPlaying(false)}
+                preload="none"
+              />
+            )}
+          </div>
+
+          {/* Vocalization labels — three visual states */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground">Voc:</span>
+
+            {/* 1. Inference-suggested tags */}
+            {predictedTags.map(([type, score]) => {
+              const isSaved = existingTypeNames.has(type);
+              const isPendingAdd = pendingAddSet.has(type);
+              const savedLabel = existingLabels.find(
+                (l) => l.label === type,
+              );
+              const isPendingRemoval =
+                savedLabel && pendingRemovalSet.has(savedLabel.id);
+
+              return (
+                <Badge
+                  key={`pred-${type}`}
+                  variant="outline"
+                  className={`text-xs ${typeColorMap.get(type) ?? ""} ${
+                    isPendingAdd
+                      ? "ring-2 ring-primary/60 opacity-100"
+                      : isSaved && !isPendingRemoval
+                        ? "opacity-100"
+                        : isPendingRemoval
+                          ? "opacity-30 line-through"
+                          : "opacity-50"
+                  } ${readonly ? "" : "cursor-pointer"}`}
+                  title={
+                    readonly
+                      ? `Predicted: ${(score * 100).toFixed(0)}%`
+                      : isPendingAdd
+                        ? "Pending add — click to undo"
+                        : isSaved
+                          ? `Saved label — ${(score * 100).toFixed(0)}%`
+                          : "Click to add as label"
+                  }
+                  onClick={() => {
+                    if (readonly) return;
+                    if (isSaved && savedLabel) {
+                      handleToggleSavedRemoval(savedLabel);
+                    } else {
+                      handleTogglePredicted(type);
+                    }
+                  }}
+                >
+                  {isPendingAdd && (
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary mr-1" />
+                  )}
+                  {type} {(score * 100).toFixed(0)}%
+                </Badge>
+              );
+            })}
+
+            {/* 2. Saved labels not in predictions */}
+            {existingLabels
+              .filter((lbl) => !predictedTypeNames.has(lbl.label))
+              .map((lbl) => {
+                const isPendingRemoval = pendingRemovalSet.has(lbl.id);
+                return (
+                  <Badge
+                    key={lbl.id}
+                    variant="outline"
+                    className={`text-xs ${typeColorMap.get(lbl.label) ?? ""} ${
+                      isPendingRemoval ? "opacity-30 line-through" : ""
+                    } ${readonly ? "" : "cursor-pointer"}`}
+                    onClick={() => {
+                      if (!readonly) handleToggleSavedRemoval(lbl);
+                    }}
+                  >
+                    {lbl.label}
+                    {!readonly && !isPendingRemoval && (
+                      <X className="h-2.5 w-2.5 ml-0.5" />
+                    )}
+                  </Badge>
+                );
+              })}
+
+            {/* 3. Pending adds not in predictions */}
+            {[...pendingAddSet]
+              .filter((t) => !predictedTypeNames.has(t))
+              .map((t) => (
+                <Badge
+                  key={`pending-${t}`}
+                  variant="outline"
+                  className={`text-xs ${typeColorMap.get(t) ?? ""} ring-2 ring-primary/60 cursor-pointer`}
+                  onClick={() => onRemovePendingAdd(t)}
+                  title="Pending add — click to undo"
+                >
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary mr-1" />
+                  {t}
+                </Badge>
+              ))}
+
+            {/* Add label popover */}
+            {!readonly && availableTypes.length > 0 && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-5 px-1.5">
+                    <Plus className="h-3 w-3" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-40 p-1" align="start">
+                  {availableTypes.map((t) => (
+                    <button
+                      key={t}
+                      className="w-full text-left text-xs px-2 py-1 hover:bg-muted rounded"
+                      onClick={() => onAddPending(t)}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
+
+          {/* Time range */}
+          {hasUtc && (
+            <div className="text-xs text-muted-foreground">
+              {formatUtcShort(row.start_utc!)} —{" "}
+              {formatUtcShort(row.end_utc!)}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* Spectrogram popup dialog */}
+      <Dialog open={spectrogramOpen} onOpenChange={setSpectrogramOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Spectrogram Detail</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {spectrogramSrc && (
+              <img
+                src={spectrogramSrc}
+                alt="spectrogram detail"
+                className="w-full rounded border"
+              />
+            )}
+            {hasUtc && (
+              <div className="text-sm text-muted-foreground">
+                {formatUtcShort(row.start_utc!)} —{" "}
+                {formatUtcShort(row.end_utc!)}
+              </div>
+            )}
+            {audioSrc && (
+              <audio controls src={audioSrc} className="w-full" preload="none" />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
