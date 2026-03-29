@@ -20,6 +20,7 @@ from humpback.schemas.vocalization import (
     VocalizationPredictionRow,
     VocalizationTrainingJobCreate,
     VocalizationTrainingJobOut,
+    VocalizationTrainingSourceOut,
     VocalizationTypeCreate,
     VocalizationTypeImportRequest,
     VocalizationTypeImportResponse,
@@ -168,6 +169,35 @@ async def activate_vocalization_model(model_id: str, session: SessionDep):
     if model is None:
         raise HTTPException(404, "Vocalization model not found")
     return _model_to_out(model)
+
+
+@router.get(
+    "/models/{model_id}/training-source",
+    response_model=VocalizationTrainingSourceOut,
+)
+async def get_model_training_source(model_id: str, session: SessionDep):
+    """Return the source_config and parameters from the training job that
+    produced this model."""
+    model = await get_model(session, model_id)
+    if model is None:
+        raise HTTPException(404, "Vocalization model not found")
+
+    # Find the training job that produced this model
+    result = await session.execute(
+        select(VocalizationTrainingJob).where(
+            VocalizationTrainingJob.vocalization_model_id == model_id
+        )
+    )
+    training_job = result.scalar_one_or_none()
+    if training_job is None:
+        return VocalizationTrainingSourceOut()
+
+    return VocalizationTrainingSourceOut(
+        source_config=json.loads(training_job.source_config),
+        parameters=json.loads(training_job.parameters)
+        if training_job.parameters
+        else None,
+    )
 
 
 # ---- Training Jobs ----

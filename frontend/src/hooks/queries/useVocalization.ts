@@ -15,6 +15,10 @@ import {
   fetchVocClassifierInferenceJobs,
   fetchVocClassifierInferenceJob,
   fetchVocClassifierInferenceResults,
+  fetchEmbeddingStatus,
+  generateEmbeddings,
+  fetchEmbeddingGenerationStatus,
+  fetchVocModelTrainingSource,
 } from "@/api/client";
 import type {
   VocalizationTypeCreate,
@@ -182,5 +186,49 @@ export function useVocClassifierInferenceResults(
     queryKey: ["vocalization", "inference-results", jobId, params],
     queryFn: () => fetchVocClassifierInferenceResults(jobId!, params),
     enabled: jobId !== null,
+  });
+}
+
+// ---- Detection Embeddings ----
+
+export function useEmbeddingStatus(detectionJobId: string | null) {
+  return useQuery({
+    queryKey: ["embedding-status", detectionJobId],
+    queryFn: () => fetchEmbeddingStatus(detectionJobId!),
+    enabled: detectionJobId !== null,
+  });
+}
+
+export function useGenerateEmbeddings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => generateEmbeddings(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["embedding-status", jobId] });
+      qc.invalidateQueries({ queryKey: ["embedding-generation", jobId] });
+    },
+  });
+}
+
+export function useEmbeddingGenerationStatus(detectionJobId: string | null) {
+  return useQuery({
+    queryKey: ["embedding-generation", detectionJobId],
+    queryFn: () => fetchEmbeddingGenerationStatus(detectionJobId!),
+    enabled: detectionJobId !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (!status || status === "complete" || status === "failed") return false;
+      return 2000;
+    },
+  });
+}
+
+// ---- Training Source ----
+
+export function useVocModelTrainingSource(modelId: string | null) {
+  return useQuery({
+    queryKey: ["vocalization", "training-source", modelId],
+    queryFn: () => fetchVocModelTrainingSource(modelId!),
+    enabled: modelId !== null,
   });
 }

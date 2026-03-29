@@ -38,10 +38,12 @@ from humpback.schemas.classifier import (
     ClassifierModelOut,
     ClassifierTrainingJobCreate,
     ClassifierTrainingJobOut,
+    DetectionEmbeddingJobOut,
     DetectionJobCreate,
     DetectionJobOut,
     DiagnosticsResponse,
     DiagnosticsSummaryResponse,
+    EmbeddingStatusResponse,
     HydrophoneDetectionJobCreate,
     HydrophoneInfo,
     LabelEditRequest,
@@ -53,6 +55,7 @@ from humpback.schemas.classifier import (
     TrainingSourceInfo,
     WindowDiagnosticRecord,
 )
+from humpback.models.detection_embedding_job import DetectionEmbeddingJob  # noqa: F401
 from humpback.services import classifier_service
 from humpback.storage import (  # noqa: E402
     detection_diagnostics_path,
@@ -1547,3 +1550,91 @@ async def get_detection_embedding(
         "model_version": model_version,
         "vector_dim": len(embedding),
     }
+
+
+# ---- Detection Embedding Status / Generation ----
+
+
+@router.get(
+    "/detection-jobs/{job_id}/embedding-status",
+    response_model=EmbeddingStatusResponse,
+)
+async def get_embedding_status(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    """Check whether detection embeddings exist for a job."""
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+
+    emb_path = detection_embeddings_path(settings.storage_root, job.id)
+    if not emb_path.exists():
+        return EmbeddingStatusResponse(has_embeddings=False)
+
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(str(emb_path))
+    return EmbeddingStatusResponse(has_embeddings=True, count=table.num_rows)
+
+
+@router.post(
+    "/detection-jobs/{job_id}/generate-embeddings",
+    status_code=202,
+    response_model=DetectionEmbeddingJobOut,
+)
+async def generate_embeddings(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    """Queue post-hoc embedding generation for a detection job."""
+    from sqlalchemy import select as sa_select
+
+    job = await classifier_service.get_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Detection job is not complete")
+
+    # Check if embeddings already exist
+    emb_path = detection_embeddings_path(settings.storage_root, job.id)
+    if emb_path.exists():
+        raise HTTPException(409, "Embeddings already exist for this detection job")
+
+    # Check if generation already in progress
+    existing = await session.execute(
+        sa_select(DetectionEmbeddingJob).where(
+            DetectionEmbeddingJob.detection_job_id == job_id,
+            DetectionEmbeddingJob.status.in_(["queued", "running"]),
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(409, "Embedding generation already in progress")
+
+    emb_job = DetectionEmbeddingJob(detection_job_id=job_id)
+    session.add(emb_job)
+    await session.commit()
+    await session.refresh(emb_job)
+    return emb_job
+
+
+@router.get(
+    "/detection-jobs/{job_id}/embedding-generation-status",
+    response_model=DetectionEmbeddingJobOut | None,
+)
+async def get_embedding_generation_status(
+    job_id: str,
+    session: SessionDep,
+):
+    """Get the most recent embedding generation job for a detection job."""
+    from sqlalchemy import select as sa_select
+
+    result = await session.execute(
+        sa_select(DetectionEmbeddingJob)
+        .where(DetectionEmbeddingJob.detection_job_id == job_id)
+        .order_by(DetectionEmbeddingJob.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()

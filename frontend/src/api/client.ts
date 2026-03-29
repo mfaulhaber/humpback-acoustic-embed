@@ -66,6 +66,9 @@ import type {
   VocClassifierInferenceJobCreate,
   VocClassifierInferenceJob,
   VocClassifierPredictionRow,
+  EmbeddingStatus,
+  DetectionEmbeddingJob,
+  VocalizationTrainingSource,
 } from "./types";
 
 class ApiError extends Error {
@@ -641,6 +644,24 @@ export function vocClassifierInferenceExportUrl(
   const suffix = qs.toString() ? `?${qs}` : "";
   return `/vocalization/inference-jobs/${jobId}/export${suffix}`;
 }
+
+// ---- Detection Embeddings ----
+
+export const fetchEmbeddingStatus = (jobId: string) =>
+  api<EmbeddingStatus>(`/classifier/detection-jobs/${jobId}/embedding-status`);
+
+export const generateEmbeddings = (jobId: string) =>
+  post<DetectionEmbeddingJob>(`/classifier/detection-jobs/${jobId}/generate-embeddings`, {});
+
+export const fetchEmbeddingGenerationStatus = (jobId: string) =>
+  api<DetectionEmbeddingJob | null>(
+    `/classifier/detection-jobs/${jobId}/embedding-generation-status`,
+  );
+
+// ---- Vocalization Training Source ----
+
+export const fetchVocModelTrainingSource = (modelId: string) =>
+  api<VocalizationTrainingSource>(`/vocalization/models/${modelId}/training-source`);
 
 // ---- Health ----
 

@@ -875,6 +875,29 @@ export interface VocClassifierPredictionRow {
   tags: string[];
 }
 
+// ---- Detection Embeddings ----
+
+export interface EmbeddingStatus {
+  has_embeddings: boolean;
+  count: number | null;
+}
+
+export interface DetectionEmbeddingJob {
+  id: string;
+  status: string;
+  detection_job_id: string;
+  progress_current: number | null;
+  progress_total: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VocalizationTrainingSource {
+  source_config: VocalizationTrainingSourceConfig | null;
+  parameters: Record<string, unknown> | null;
+}
+
 // ---- Health ----
 
 export interface HealthStatus {

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.classifier import ClassifierTrainingJob, DetectionJob
 from humpback.models.clustering import ClusteringJob
+from humpback.models.detection_embedding_job import DetectionEmbeddingJob  # noqa: E402
 from humpback.models.processing import JobStatus, ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
 from humpback.models.search import SearchJob
@@ -214,8 +215,32 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count9:
         logger.warning(f"Recovered {count9} stale vocalization inference job(s)")
 
+    result10 = await session.execute(
+        update(DetectionEmbeddingJob)
+        .where(
+            DetectionEmbeddingJob.status == "running",
+            DetectionEmbeddingJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count10 = _rowcount(result10)
+    if count10:
+        logger.warning(f"Recovered {count10} stale detection embedding job(s)")
+
     total = (
-        count + count2 + count3 + count4 + count5 + count6 + count7 + count8 + count9
+        count
+        + count2
+        + count3
+        + count4
+        + count5
+        + count6
+        + count7
+        + count8
+        + count9
+        + count10
     )
     if total:
         await session.commit()
@@ -616,3 +641,47 @@ async def claim_vocalization_inference_job(session: AsyncSession):
         if job is not None:
             return job
     return None
+
+
+# ---- Detection Embedding Jobs ----
+
+
+async def claim_detection_embedding_job(
+    session: AsyncSession,
+) -> DetectionEmbeddingJob | None:
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            DetectionEmbeddingJob,
+            status_attr=DetectionEmbeddingJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=DetectionEmbeddingJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def complete_detection_embedding_job(session: AsyncSession, job_id: str) -> None:
+    await session.execute(
+        update(DetectionEmbeddingJob)
+        .where(DetectionEmbeddingJob.id == job_id)
+        .values(status="complete", updated_at=datetime.now(timezone.utc))
+    )
+    await session.commit()
+
+
+async def fail_detection_embedding_job(
+    session: AsyncSession, job_id: str, error: str
+) -> None:
+    await session.execute(
+        update(DetectionEmbeddingJob)
+        .where(DetectionEmbeddingJob.id == job_id)
+        .values(
+            status="failed",
+            error_message=error,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
