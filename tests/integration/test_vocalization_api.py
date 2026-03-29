@@ -266,3 +266,70 @@ async def test_inference_results_not_complete(client, app_settings):
 
     resp2 = await client.get(f"/vocalization/inference-jobs/{job_id}/results")
     assert resp2.status_code == 400
+
+
+# ---- Training Source ----
+
+
+@pytest.mark.asyncio
+async def test_model_training_source(client, app_settings):
+    """GET training-source returns source_config from the producing training job."""
+    from humpback.models.vocalization import VocalizationTrainingJob
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        m = VocalizationClassifierModel(
+            name="sourced-model",
+            model_dir_path="/fake/dir",
+            vocabulary_snapshot=json.dumps(["whup"]),
+            per_class_thresholds=json.dumps({"whup": 0.5}),
+        )
+        session.add(m)
+        await session.flush()
+
+        tj = VocalizationTrainingJob(
+            source_config=json.dumps(
+                {
+                    "embedding_set_ids": ["es-1"],
+                    "detection_job_ids": ["dj-1"],
+                }
+            ),
+            parameters=json.dumps({"C": 2.0}),
+            status="complete",
+            vocalization_model_id=m.id,
+        )
+        session.add(tj)
+        await session.commit()
+        model_id = m.id
+
+    resp = await client.get(f"/vocalization/models/{model_id}/training-source")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_config"]["detection_job_ids"] == ["dj-1"]
+    assert data["parameters"]["C"] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_model_training_source_no_training_job(client, app_settings):
+    """GET training-source returns nulls when no training job is linked."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        m = VocalizationClassifierModel(
+            name="orphan-model",
+            model_dir_path="/fake/dir",
+            vocabulary_snapshot=json.dumps(["whup"]),
+            per_class_thresholds=json.dumps({"whup": 0.5}),
+        )
+        session.add(m)
+        await session.commit()
+        model_id = m.id
+
+    resp = await client.get(f"/vocalization/models/{model_id}/training-source")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_config"] is None
+    assert data["parameters"] is None

@@ -104,6 +104,11 @@ class VocalizationInferenceJobOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VocalizationTrainingSourceOut(BaseModel):
+    source_config: dict[str, Any] | None = None
+    parameters: dict[str, Any] | None = None
+
+
 class VocalizationPredictionRow(BaseModel):
     filename: str
     start_sec: float

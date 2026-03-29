@@ -174,6 +174,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then detection embedding jobs
+        dejob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_detection_embedding_job
+
+            dejob = await claim_detection_embedding_job(session)
+        if dejob:
+            logger.info(f"Detection embedding job {dejob.id}")
+            from humpback.workers.detection_embedding_worker import (
+                run_detection_embedding_job,
+            )
+
+            async with session_factory() as session:
+                await run_detection_embedding_job(session, dejob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # Then label processing jobs
         lpjob = None
         async with session_factory() as session:

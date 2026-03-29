@@ -128,7 +128,7 @@ frontend/
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, DetectionTab, BulkDeleteDialog)
-    │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, VocalizationInferenceForm, VocalizationResultsBrowser)
+    │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, DetectionJobPicker, EmbeddingStatusPanel, InferencePanel, LabelingWorkspace, RetrainFooter, VocalizationInferenceForm, VocalizationResultsBrowser)
     │   ├── timeline/            (TimelineViewer, SpectrogramViewport, TileCanvas, LabelEditor, LabelToolbar, etc.)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
     │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
@@ -444,6 +444,7 @@ Condensed model reference. For full field lists, see `src/humpback/database.py`.
 - **VocalizationClassifierModel** (`vocalization_models`) — multi-label vocalization model artifact (name, model_dir_path, vocabulary_snapshot JSON, per_class_thresholds JSON, per_class_metrics JSON, is_active)
 - **VocalizationTrainingJob** (`vocalization_training_jobs`) — multi-label training run (source_config JSON with embedding_set_ids + detection_job_ids, parameters JSON, vocalization_model_id set on completion)
 - **VocalizationInferenceJob** (`vocalization_inference_jobs`) — scoring run (vocalization_model_id FK, source_type, source_id, output_path to predictions parquet)
+- **DetectionEmbeddingJob** (`detection_embedding_jobs`) — post-hoc detection embedding generation (detection_job_id, progress_current/total, status)
 
 ### 8.4 Signal Processing Parameters
 
@@ -589,7 +590,7 @@ Hydrophone extraction output:
 
 Non-obvious constraints that are not immediately derivable from code:
 
-- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> label processing -> retrain -> vocalization training -> vocalization inference
+- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> detection embedding generation -> label processing -> retrain -> vocalization training -> vocalization inference
 - **Job claim semantics**: Workers claim queued jobs via atomic compare-and-set (`WHERE id=:candidate AND status='queued'`). SQLite has no true row-level locks; correctness relies on atomic status updates, not `SELECT ... FOR UPDATE`.
 - **Job status transitions**: `queued -> running -> complete`, `queued -> running -> failed`, `queued -> canceled`
 - **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
@@ -612,6 +613,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - Label processing: score-based + sample-builder workflows
 - Vocalization labeling: per-window type labels on detection rows
 - Multi-label vocalization classifier: managed vocabulary, binary relevance training (per-type sklearn pipeline), per-type threshold optimization, multi-source inference (detection job / embedding set / rescore), paginated results with client-side threshold filtering, TSV export
+- Vocalization labeling workspace: progressive pipeline (source → embeddings → inference → labeling), uncertainty-sorted manual labeling with inference assistance, inline embedding provisioning, one-click retrain loop
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Vocalization, Search, Label Processing, Admin
@@ -619,8 +621,8 @@ Non-obvious constraints that are not immediately derivable from code:
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `030_vocalization_tables.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs
+- **Latest migration**: `031_detection_embedding_jobs.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs
 
 ### 9.3 Sensitive Components
 

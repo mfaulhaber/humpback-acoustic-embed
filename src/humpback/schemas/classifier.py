@@ -234,6 +234,27 @@ class TrainingDataSummaryResponse(BaseModel):
 # ---- Retrain Workflows ----
 
 
+# ---- Detection Embeddings ----
+
+
+class EmbeddingStatusResponse(BaseModel):
+    has_embeddings: bool
+    count: int | None = None
+
+
+class DetectionEmbeddingJobOut(BaseModel):
+    id: str
+    status: str
+    detection_job_id: str
+    progress_current: int | None = None
+    progress_total: int | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class RetrainFolderInfo(BaseModel):
     model_id: str
     model_name: str
