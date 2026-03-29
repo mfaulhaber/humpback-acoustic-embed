@@ -3,6 +3,8 @@
 import asyncio
 import heapq
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,6 +16,8 @@ from humpback.models.audio import AudioFile
 from humpback.models.processing import EmbeddingSet
 from humpback.processing.embeddings import read_embeddings
 from humpback.schemas.search import (
+    ScoreDistribution as ScoreDistributionSchema,
+    ScoreHistogramBin as ScoreHistogramBinSchema,
     SimilaritySearchHit,
     SimilaritySearchRequest,
     SimilaritySearchResponse,
@@ -21,6 +25,79 @@ from humpback.schemas.search import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _to_schema_distribution(dist: "ScoreDistribution") -> ScoreDistributionSchema:
+    """Convert internal ScoreDistribution dataclass to Pydantic schema."""
+    return ScoreDistributionSchema(
+        mean=dist.mean,
+        std=dist.std,
+        min=dist.min,
+        max=dist.max,
+        p25=dist.p25,
+        p50=dist.p50,
+        p75=dist.p75,
+        histogram=[
+            ScoreHistogramBinSchema(
+                bin_start=b.bin_start, bin_end=b.bin_end, count=b.count
+            )
+            for b in dist.histogram
+        ],
+    )
+
+
+@dataclass
+class HistogramBin:
+    bin_start: float
+    bin_end: float
+    count: int
+
+
+@dataclass
+class ScoreDistribution:
+    mean: float = 0.0
+    std: float = 0.0
+    min: float = 0.0
+    max: float = 0.0
+    p25: float = 0.0
+    p50: float = 0.0
+    p75: float = 0.0
+    histogram: list[HistogramBin] = field(default_factory=list)
+
+
+def _compute_score_distribution(
+    all_scores: np.ndarray,
+) -> ScoreDistribution:
+    """Compute distribution stats from a flat array of all candidate scores."""
+    if len(all_scores) == 0:
+        return ScoreDistribution()
+    p25, p50, p75 = np.percentile(all_scores, [25, 50, 75]).tolist()
+    counts, bin_edges = np.histogram(all_scores, bins=20)
+    histogram = [
+        HistogramBin(
+            bin_start=float(bin_edges[i]),
+            bin_end=float(bin_edges[i + 1]),
+            count=int(counts[i]),
+        )
+        for i in range(len(counts))
+    ]
+    return ScoreDistribution(
+        mean=float(np.mean(all_scores)),
+        std=float(np.std(all_scores)),
+        min=float(np.min(all_scores)),
+        max=float(np.max(all_scores)),
+        p25=p25,
+        p50=p50,
+        p75=p75,
+        histogram=histogram,
+    )
+
+
+def _compute_percentile_rank(score: float, all_scores: np.ndarray) -> float:
+    """Fraction of candidates scoring strictly below this score."""
+    if len(all_scores) == 0:
+        return 0.0
+    return float((all_scores < score).sum() / len(all_scores))
 
 
 @lru_cache(maxsize=128)
@@ -49,14 +126,20 @@ def _brute_force_search(
     candidate_sets: list[tuple[str, str]],  # (es_id, parquet_path)
     top_k: int,
     metric: str,
-) -> tuple[list[tuple[float, str, int]], int]:
-    """Search all candidate parquet files, return top-K hits and total count.
+    projector: Callable[[np.ndarray], np.ndarray] | None = None,
+) -> tuple[list[tuple[float, str, int, float]], int, ScoreDistribution]:
+    """Search all candidate parquet files, return top-K hits with stats.
 
-    Returns (hits, total_candidates) where hits are (score, es_id, row_index).
+    Returns (hits, total_candidates, score_distribution) where hits are
+    (score, es_id, row_index, percentile_rank).
     """
     score_fn = _cosine_scores if metric == "cosine" else _euclidean_scores
     heap: list[tuple[float, str, int]] = []
+    all_score_chunks: list[np.ndarray] = []
     total = 0
+
+    if projector is not None:
+        query = projector(query.reshape(1, -1))[0]
 
     for es_id, parquet_path in candidate_sets:
         try:
@@ -68,7 +151,11 @@ def _brute_force_search(
         if embeddings.shape[0] == 0:
             continue
 
+        if projector is not None:
+            embeddings = projector(embeddings)
+
         scores = score_fn(query, embeddings)
+        all_score_chunks.append(scores)
         total += len(scores)
 
         for i, score in enumerate(scores):
@@ -78,9 +165,17 @@ def _brute_force_search(
             elif score > heap[0][0]:
                 heapq.heapreplace(heap, entry)
 
-    # Return sorted descending by score
-    hits = sorted(heap, key=lambda x: x[0], reverse=True)
-    return hits, total
+    # Compute distribution from all scores
+    all_scores = np.concatenate(all_score_chunks) if all_score_chunks else np.array([])
+    distribution = _compute_score_distribution(all_scores)
+
+    # Return sorted descending by score, with percentile rank
+    raw_hits = sorted(heap, key=lambda x: x[0], reverse=True)
+    hits = [
+        (score, es_id, row_idx, _compute_percentile_rank(score, all_scores))
+        for score, es_id, row_idx in raw_hits
+    ]
+    return hits, total, distribution
 
 
 async def similarity_search(
@@ -88,6 +183,9 @@ async def similarity_search(
     request: SimilaritySearchRequest,
 ) -> SimilaritySearchResponse:
     """Execute embedding similarity search."""
+    if request.search_mode == "projected":
+        raise ValueError("Projected search mode not yet implemented")
+
     # 1. Load query embedding set
     result = await session.execute(
         select(EmbeddingSet).where(EmbeddingSet.id == request.embedding_set_id)
@@ -121,7 +219,7 @@ async def similarity_search(
     candidate_sets = [(es.id, es.parquet_path) for es in es_rows]
 
     # 4. Brute-force search in thread pool
-    hits, total_candidates = await asyncio.to_thread(
+    hits, total_candidates, distribution = await asyncio.to_thread(
         _brute_force_search,
         query_vector,
         candidate_sets,
@@ -149,7 +247,7 @@ async def similarity_search(
             audio_map[af.id] = af
 
     results: list[SimilaritySearchHit] = []
-    for score, es_id, row_idx in hits:
+    for score, es_id, row_idx, pct_rank in hits:
         es = es_map.get(es_id)
         if es is None:
             continue
@@ -163,6 +261,7 @@ async def similarity_search(
                 audio_filename=af.filename if af else "",
                 audio_folder_path=af.folder_path if af else None,
                 window_offset_seconds=row_idx * query_es.window_size_seconds,
+                percentile_rank=pct_rank,
             )
         )
 
@@ -173,6 +272,7 @@ async def similarity_search(
         metric=request.metric,
         total_candidates=total_candidates,
         results=results,
+        score_distribution=_to_schema_distribution(distribution),
     )
 
 
@@ -181,6 +281,9 @@ async def similarity_search_by_vector(
     request: VectorSearchRequest,
 ) -> SimilaritySearchResponse:
     """Execute embedding similarity search using a raw vector."""
+    if request.search_mode == "projected":
+        raise ValueError("Projected search mode not yet implemented")
+
     query_vector = np.asarray(request.vector, dtype=np.float32)
 
     # Find candidate embedding sets matching model_version
@@ -207,7 +310,7 @@ async def similarity_search_by_vector(
     candidate_sets = [(es.id, es.parquet_path) for es in es_rows]
 
     # Brute-force search in thread pool
-    hits, total_candidates = await asyncio.to_thread(
+    hits, total_candidates, distribution = await asyncio.to_thread(
         _brute_force_search,
         query_vector,
         candidate_sets,
@@ -235,7 +338,7 @@ async def similarity_search_by_vector(
             audio_map[af.id] = af
 
     results: list[SimilaritySearchHit] = []
-    for score, es_id, row_idx in hits:
+    for score, es_id, row_idx, pct_rank in hits:
         es = es_map.get(es_id)
         if es is None:
             continue
@@ -249,6 +352,7 @@ async def similarity_search_by_vector(
                 audio_filename=af.filename if af else "",
                 audio_folder_path=af.folder_path if af else None,
                 window_offset_seconds=row_idx * es.window_size_seconds,
+                percentile_rank=pct_rank,
             )
         )
 
@@ -259,4 +363,5 @@ async def similarity_search_by_vector(
         metric=request.metric,
         total_candidates=total_candidates,
         results=results,
+        score_distribution=_to_schema_distribution(distribution),
     )

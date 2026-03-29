@@ -632,8 +632,26 @@ export interface TableInfo {
 
 // ---- Search ----
 
+export interface ScoreHistogramBin {
+  bin_start: number;
+  bin_end: number;
+  count: number;
+}
+
+export interface ScoreDistribution {
+  mean: number;
+  std: number;
+  min: number;
+  max: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  histogram: ScoreHistogramBin[];
+}
+
 export interface SimilaritySearchHit {
   score: number;
+  percentile_rank: number;
   embedding_set_id: string;
   row_index: number;
   audio_file_id: string;
@@ -649,6 +667,7 @@ export interface SimilaritySearchResponse {
   metric: string;
   total_candidates: number;
   results: SimilaritySearchHit[];
+  score_distribution: ScoreDistribution;
 }
 
 export interface DetectionEmbeddingResponse {
@@ -664,6 +683,8 @@ export interface AudioSearchRequest {
   top_k?: number;
   metric?: string;
   embedding_set_ids?: string[];
+  search_mode?: "raw" | "projected";
+  classifier_model_id?: string | null;
 }
 
 export interface SearchJobResponse {

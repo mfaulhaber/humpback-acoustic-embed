@@ -118,7 +118,7 @@ class TestBruteForceSearch:
         )
         pq_path = _write_parquet(tmp_path / "set_a.parquet", vectors)
 
-        hits, total = _brute_force_search(
+        hits, total, _dist = _brute_force_search(
             query,
             [("set_a", str(pq_path))],
             top_k=3,
@@ -141,7 +141,7 @@ class TestBruteForceSearch:
         pb = _write_parquet(tmp_path / "b.parquet", set_b)
         pc = _write_parquet(tmp_path / "c.parquet", set_c)
 
-        hits, total = _brute_force_search(
+        hits, total, _dist = _brute_force_search(
             query,
             [("a", str(pa)), ("b", str(pb)), ("c", str(pc))],
             top_k=2,
@@ -158,7 +158,7 @@ class TestBruteForceSearch:
         vectors = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
         pq_path = _write_parquet(tmp_path / "small.parquet", vectors)
 
-        hits, total = _brute_force_search(
+        hits, total, _dist = _brute_force_search(
             query,
             [("s", str(pq_path))],
             top_k=100,
@@ -169,7 +169,7 @@ class TestBruteForceSearch:
 
     def test_missing_parquet_skipped(self, tmp_path: Path):
         query = np.array([1.0, 0.0], dtype=np.float32)
-        hits, total = _brute_force_search(
+        hits, total, _dist = _brute_force_search(
             query,
             [("missing", str(tmp_path / "nonexistent.parquet"))],
             top_k=10,
@@ -183,7 +183,7 @@ class TestBruteForceSearch:
         vectors = np.array([[1.0, 0.0], [3.0, 4.0]], dtype=np.float32)
         pq_path = _write_parquet(tmp_path / "euc.parquet", vectors)
 
-        hits, total = _brute_force_search(
+        hits, total, _dist = _brute_force_search(
             query,
             [("s", str(pq_path))],
             top_k=2,
@@ -201,7 +201,7 @@ class TestBruteForceSearch:
         writer.close()
 
         query = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        hits, total = _brute_force_search(
+        hits, total, _dist = _brute_force_search(
             query,
             [("e", str(tmp_path / "empty.parquet"))],
             top_k=10,

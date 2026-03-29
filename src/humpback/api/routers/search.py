@@ -66,6 +66,11 @@ async def create_audio_search(
             detail=f"Detection job {request.detection_job_id} not found",
         )
 
+    if request.search_mode == "projected":
+        raise HTTPException(
+            status_code=400, detail="Projected search mode not yet implemented"
+        )
+
     job = SearchJob(
         detection_job_id=request.detection_job_id,
         start_utc=request.start_utc,
