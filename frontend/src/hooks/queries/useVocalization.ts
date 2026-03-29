@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { FolderEmbeddingSetResponse } from "@/api/types";
 import {
   fetchVocalizationTypes,
   createVocalizationType,
@@ -19,6 +20,7 @@ import {
   generateEmbeddings,
   fetchEmbeddingGenerationStatus,
   fetchVocModelTrainingSource,
+  fetchFolderEmbeddingSet,
 } from "@/api/client";
 import type {
   VocalizationTypeCreate,
@@ -219,6 +221,21 @@ export function useEmbeddingGenerationStatus(detectionJobId: string | null) {
       const status = query.state.data?.status;
       if (!status || status === "complete" || status === "failed") return false;
       return 2000;
+    },
+  });
+}
+
+// ---- Folder Embedding Set ----
+
+export function useFolderEmbeddingSet(folderPath: string | null) {
+  return useQuery({
+    queryKey: ["folder-embedding-set", folderPath],
+    queryFn: () => fetchFolderEmbeddingSet(folderPath!),
+    enabled: folderPath !== null && folderPath.length > 0,
+    refetchInterval: (query) => {
+      const status = (query.state.data as FolderEmbeddingSetResponse | undefined)?.status;
+      if (status === "ready") return false;
+      return 3000;
     },
   });
 }

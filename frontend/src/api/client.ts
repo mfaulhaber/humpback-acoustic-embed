@@ -175,6 +175,11 @@ export const bulkDeleteProcessingJobs = (ids: string[]) =>
 
 export const fetchEmbeddingSets = () => api<EmbeddingSet[]>("/processing/embedding-sets");
 
+export const fetchFolderEmbeddingSet = (folderPath: string) =>
+  post<import("./types").FolderEmbeddingSetResponse>("/processing/folder-embedding-set", {
+    folder_path: folderPath,
+  });
+
 // ---- Clustering ----
 
 export const fetchClusteringJobs = () => api<ClusteringJob[]>("/clustering/jobs");

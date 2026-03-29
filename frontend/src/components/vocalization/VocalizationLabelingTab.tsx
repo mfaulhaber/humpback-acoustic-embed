@@ -1,25 +1,35 @@
 import { useState, useCallback } from "react";
-import { DetectionJobPicker } from "./DetectionJobPicker";
+import { SourceSelector } from "./SourceSelector";
 import { EmbeddingStatusPanel } from "./EmbeddingStatusPanel";
 import { InferencePanel } from "./InferencePanel";
 import { LabelingWorkspace } from "./LabelingWorkspace";
 import { RetrainFooter } from "./RetrainFooter";
 import { useEmbeddingStatus } from "@/hooks/queries/useVocalization";
+import type { LabelingSource } from "@/api/types";
 
 export function VocalizationLabelingTab() {
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [source, setSource] = useState<LabelingSource | null>(null);
   const [inferenceJobId, setInferenceJobId] = useState<string | null>(null);
   const [labelCount, setLabelCount] = useState(0);
 
-  // Embedding status is query-driven, not callback-driven
-  const { data: embeddingStatus } = useEmbeddingStatus(selectedJobId);
-  const embeddingsReady = embeddingStatus?.has_embeddings === true;
+  const isReadonly = source?.type === "embedding_set";
 
-  const handleSelectJob = useCallback((jobId: string | null) => {
-    setSelectedJobId(jobId);
-    setInferenceJobId(null);
-    setLabelCount(0);
-  }, []);
+  // Embedding status for detection_job source
+  const detectionJobId =
+    source?.type === "detection_job" ? source.jobId : null;
+  const { data: embeddingStatus } = useEmbeddingStatus(detectionJobId);
+  const embeddingsReady =
+    source?.type === "embedding_set" ||
+    embeddingStatus?.has_embeddings === true;
+
+  const handleSourceChange = useCallback(
+    (newSource: LabelingSource | null) => {
+      setSource(newSource);
+      setInferenceJobId(null);
+      setLabelCount(0);
+    },
+    [],
+  );
 
   const handleInferenceReady = useCallback((jobId: string) => {
     setInferenceJobId(jobId);
@@ -29,40 +39,40 @@ export function VocalizationLabelingTab() {
     setLabelCount(count);
   }, []);
 
+  // Show embedding status for detection_job and local sources (not embedding_set)
+  const showEmbeddingStatus =
+    source !== null && source.type !== "embedding_set";
+
   return (
     <div className="space-y-4 max-w-5xl pb-16">
       <h2 className="text-lg font-semibold">Vocalization Labeling</h2>
 
-      <DetectionJobPicker
-        selectedJobId={selectedJobId}
-        onSelect={handleSelectJob}
-      />
+      <SourceSelector source={source} onSourceChange={handleSourceChange} />
 
-      {selectedJobId && (
-        <EmbeddingStatusPanel
-          detectionJobId={selectedJobId}
-        />
+      {showEmbeddingStatus && detectionJobId && (
+        <EmbeddingStatusPanel detectionJobId={detectionJobId} />
       )}
 
-      {selectedJobId && (
+      {source && (
         <InferencePanel
-          detectionJobId={selectedJobId}
+          source={source}
           embeddingsReady={embeddingsReady}
           onInferenceReady={handleInferenceReady}
         />
       )}
 
-      {inferenceJobId && selectedJobId && (
+      {inferenceJobId && source && (
         <LabelingWorkspace
           inferenceJobId={inferenceJobId}
-          detectionJobId={selectedJobId}
+          source={source}
+          readonly={isReadonly}
           onLabelCountChange={handleLabelCountChange}
         />
       )}
 
-      {inferenceJobId && selectedJobId && (
+      {inferenceJobId && source && !isReadonly && (
         <RetrainFooter
-          detectionJobId={selectedJobId}
+          source={source}
           labelCount={labelCount}
         />
       )}

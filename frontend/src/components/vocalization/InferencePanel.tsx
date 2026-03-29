@@ -16,15 +16,34 @@ import {
   useVocClassifierInferenceJob,
 } from "@/hooks/queries/useVocalization";
 import { shortId } from "@/utils/format";
+import type { LabelingSource } from "@/api/types";
 
 interface Props {
-  detectionJobId: string | null;
+  source: LabelingSource;
   embeddingsReady: boolean;
   onInferenceReady: (inferenceJobId: string) => void;
 }
 
+/** Derive the inference source_type and source_id from the LabelingSource. */
+function inferenceSourceParams(source: LabelingSource): {
+  source_type: "detection_job" | "embedding_set";
+  source_id: string;
+} {
+  switch (source.type) {
+    case "detection_job":
+      return { source_type: "detection_job", source_id: source.jobId };
+    case "embedding_set":
+      return { source_type: "embedding_set", source_id: source.embeddingSetId };
+    case "local":
+      // Local sources are processed into a detection-job-like embedding set
+      // The folderPath is used as the source_id for now; the backend
+      // should resolve it to the appropriate embedding set
+      return { source_type: "embedding_set", source_id: source.folderPath };
+  }
+}
+
 export function InferencePanel({
-  detectionJobId,
+  source,
   embeddingsReady,
   onInferenceReady,
 }: Props) {
@@ -38,11 +57,13 @@ export function InferencePanel({
   const activeModel = models.find((m) => m.is_active);
   const effectiveModelId = modelId || activeModel?.id || "";
 
-  // Auto-detect existing inference job for this detection job
+  const { source_type, source_id } = inferenceSourceParams(source);
+
+  // Auto-detect existing inference job for this source
   const existingJob = allInferenceJobs.find(
     (j) =>
-      j.source_type === "detection_job" &&
-      j.source_id === detectionJobId &&
+      j.source_type === source_type &&
+      j.source_id === source_id &&
       j.status === "complete",
   );
 
@@ -62,12 +83,11 @@ export function InferencePanel({
     }
   }, [polledJob?.status, polledJob?.id, onInferenceReady]);
 
-  // Reset when detection job changes
+  // Reset when source changes
   useEffect(() => {
     setActiveJobId(null);
-  }, [detectionJobId]);
+  }, [source_id]);
 
-  if (!detectionJobId) return null;
   if (!embeddingsReady) {
     return (
       <Card>
@@ -84,7 +104,8 @@ export function InferencePanel({
     polledJob?.status === "queued" || polledJob?.status === "running";
 
   // Inference already complete (existing or just finished)
-  const completedJob = existingJob ?? (polledJob?.status === "complete" ? polledJob : null);
+  const completedJob =
+    existingJob ?? (polledJob?.status === "complete" ? polledJob : null);
   if (completedJob && !isRunning) {
     const modelName = models.find(
       (m) => m.id === completedJob.vocalization_model_id,
@@ -109,12 +130,12 @@ export function InferencePanel({
                 variant="ghost"
                 className="h-6 px-2 ml-2"
                 onClick={() => {
-                  if (!effectiveModelId || !detectionJobId) return;
+                  if (!effectiveModelId) return;
                   createMut.mutate(
                     {
                       vocalization_model_id: effectiveModelId,
-                      source_type: "detection_job",
-                      source_id: detectionJobId,
+                      source_type,
+                      source_id,
                     },
                     { onSuccess: (job) => setActiveJobId(job.id) },
                   );
@@ -175,12 +196,12 @@ export function InferencePanel({
         <Button
           size="sm"
           onClick={() => {
-            if (!effectiveModelId || !detectionJobId) return;
+            if (!effectiveModelId) return;
             createMut.mutate(
               {
                 vocalization_model_id: effectiveModelId,
-                source_type: "detection_job",
-                source_id: detectionJobId,
+                source_type,
+                source_id,
               },
               { onSuccess: (job) => setActiveJobId(job.id) },
             );

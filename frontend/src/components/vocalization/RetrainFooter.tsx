@@ -9,13 +9,14 @@ import {
   useVocClassifierTrainingJob,
   useActivateVocClassifierModel,
 } from "@/hooks/queries/useVocalization";
+import type { LabelingSource } from "@/api/types";
 
 interface Props {
-  detectionJobId: string;
+  source: LabelingSource;
   labelCount: number;
 }
 
-export function RetrainFooter({ detectionJobId, labelCount }: Props) {
+export function RetrainFooter({ source, labelCount }: Props) {
   const { data: models = [] } = useVocClassifierModels();
   const activeModel = models.find((m) => m.is_active);
   const { data: trainingSource } = useVocModelTrainingSource(
@@ -43,8 +44,8 @@ export function RetrainFooter({ detectionJobId, labelCount }: Props) {
     const detJobIds: string[] = [
       ...(existingConfig.detection_job_ids ?? []),
     ];
-    if (!detJobIds.includes(detectionJobId)) {
-      detJobIds.push(detectionJobId);
+    if (source.type === "detection_job" && !detJobIds.includes(source.jobId)) {
+      detJobIds.push(source.jobId);
     }
 
     createTraining.mutate(
@@ -53,7 +54,8 @@ export function RetrainFooter({ detectionJobId, labelCount }: Props) {
           embedding_set_ids: existingConfig.embedding_set_ids ?? [],
           detection_job_ids: detJobIds,
         },
-        parameters: (trainingSource?.parameters as Record<string, unknown>) ?? undefined,
+        parameters:
+          (trainingSource?.parameters as Record<string, unknown>) ?? undefined,
       },
       {
         onSuccess: (job) => setTrainingJobId(job.id),
