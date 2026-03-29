@@ -179,7 +179,44 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count7:
         logger.warning(f"Recovered {count7} stale label processing job(s)")
 
-    total = count + count2 + count3 + count4 + count5 + count6 + count7
+    from humpback.models.vocalization import (
+        VocalizationInferenceJob,
+        VocalizationTrainingJob,
+    )
+
+    result8 = await session.execute(
+        update(VocalizationTrainingJob)
+        .where(
+            VocalizationTrainingJob.status == "running",
+            VocalizationTrainingJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count8 = _rowcount(result8)
+    if count8:
+        logger.warning(f"Recovered {count8} stale vocalization training job(s)")
+
+    result9 = await session.execute(
+        update(VocalizationInferenceJob)
+        .where(
+            VocalizationInferenceJob.status == "running",
+            VocalizationInferenceJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count9 = _rowcount(result9)
+    if count9:
+        logger.warning(f"Recovered {count9} stale vocalization inference job(s)")
+
+    total = (
+        count + count2 + count3 + count4 + count5 + count6 + count7 + count8 + count9
+    )
     if total:
         await session.commit()
     return total
@@ -542,3 +579,40 @@ async def fail_label_processing_job(
         )
     )
     await session.commit()
+
+
+# ---- Vocalization Jobs ----
+
+
+async def claim_vocalization_training_job(session: AsyncSession):
+    from humpback.models.vocalization import VocalizationTrainingJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            VocalizationTrainingJob,
+            status_attr=VocalizationTrainingJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=VocalizationTrainingJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_vocalization_inference_job(session: AsyncSession):
+    from humpback.models.vocalization import VocalizationInferenceJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            VocalizationInferenceJob,
+            status_attr=VocalizationInferenceJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=VocalizationInferenceJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None

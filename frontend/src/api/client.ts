@@ -53,16 +53,19 @@ import type {
   DetectionNeighborsResponse,
   LabelingSummary,
   TrainingSummary,
-  VocalizationTrainingJobCreate,
-  VocalizationTrainingJobOut,
-  VocalizationModelOut,
-  PredictionRow,
-  LabelingAnnotation,
-  ActiveLearningCycleResponse,
-  UncertaintyQueueRow,
-  ConvergenceMetrics,
   TimelineConfidenceResponse,
   LabelEditItem,
+  VocalizationType,
+  VocalizationTypeCreate,
+  VocalizationTypeUpdate,
+  VocalizationTypeImportRequest,
+  VocalizationTypeImportResponse,
+  VocClassifierTrainingJobCreate,
+  VocClassifierTrainingJob,
+  VocClassifierModel,
+  VocClassifierInferenceJobCreate,
+  VocClassifierInferenceJob,
+  VocClassifierPredictionRow,
 } from "./types";
 
 class ApiError extends Error {
@@ -497,91 +500,6 @@ export const fetchDetectionNeighbors = (
     params,
   );
 
-// ---- Annotations ----
-
-export const fetchAnnotations = (
-  detectionJobId: string,
-  startUtc: number,
-  endUtc: number,
-) =>
-  api<LabelingAnnotation[]>(
-    `/labeling/annotations/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
-  );
-
-export const createAnnotation = (
-  detectionJobId: string,
-  startUtc: number,
-  endUtc: number,
-  body: {
-    start_offset_sec: number;
-    end_offset_sec: number;
-    label: string;
-    notes?: string;
-  },
-) =>
-  post<LabelingAnnotation>(
-    `/labeling/annotations/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
-    body,
-  );
-
-export const updateAnnotation = (
-  annotationId: string,
-  body: {
-    start_offset_sec?: number;
-    end_offset_sec?: number;
-    label?: string;
-    notes?: string;
-  },
-) => put<LabelingAnnotation>(`/labeling/annotations/${annotationId}`, body);
-
-export const deleteAnnotation = async (annotationId: string) => {
-  const res = await fetch(`/labeling/annotations/${annotationId}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text);
-  }
-};
-
-// ---- Vocalization Classifier ----
-
-export const createVocalizationTrainingJob = (body: VocalizationTrainingJobCreate) =>
-  post<VocalizationTrainingJobOut>("/labeling/training-jobs", body);
-
-export const fetchVocalizationTrainingJob = (jobId: string) =>
-  api<VocalizationTrainingJobOut>(`/labeling/training-jobs/${jobId}`);
-
-export const fetchVocalizationModels = () =>
-  api<VocalizationModelOut[]>("/labeling/vocalization-models");
-
-export const predictVocalizationLabels = (
-  detectionJobId: string,
-  vocalizationModelId: string,
-) =>
-  post<PredictionRow[]>(`/labeling/predict/${detectionJobId}`, {
-    vocalization_model_id: vocalizationModelId,
-  });
-
-// ---- Active Learning ----
-
-export const startActiveLearningCycle = (body: {
-  vocalization_model_id: string;
-  detection_job_ids: string[];
-  name: string;
-}) => post<ActiveLearningCycleResponse>("/labeling/active-learning-cycle", body);
-
-export const fetchUncertaintyQueue = (
-  detectionJobId: string,
-  vocalizationModelId: string,
-) =>
-  api<UncertaintyQueueRow[]>(
-    `/labeling/uncertainty-queue/${detectionJobId}?vocalization_model_id=${vocalizationModelId}`,
-  );
-
-export const fetchConvergenceMetrics = (vocalizationModelId: string) =>
-  api<ConvergenceMetrics>(`/labeling/convergence/${vocalizationModelId}`);
-
 // ---- Timeline viewer API ----
 
 export function timelineTileUrl(
@@ -645,6 +563,83 @@ export async function fetchPrepareStatus(
   );
   if (!resp.ok) throw new Error(`prepare-status ${resp.status}`);
   return resp.json();
+}
+
+// ---- Multi-Label Vocalization Classifier ----
+
+// Vocabulary
+export const fetchVocalizationTypes = () =>
+  api<VocalizationType[]>("/vocalization/types");
+
+export const createVocalizationType = (body: VocalizationTypeCreate) =>
+  post<VocalizationType>("/vocalization/types", body);
+
+export const updateVocalizationType = (typeId: string, body: VocalizationTypeUpdate) =>
+  put<VocalizationType>(`/vocalization/types/${typeId}`, body);
+
+export const deleteVocalizationType = async (typeId: string) => {
+  const res = await fetch(`/vocalization/types/${typeId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(res.status, text);
+  }
+};
+
+export const importVocalizationTypes = (body: VocalizationTypeImportRequest) =>
+  post<VocalizationTypeImportResponse>("/vocalization/types/import", body);
+
+// Models
+export const fetchVocClassifierModels = () =>
+  api<VocClassifierModel[]>("/vocalization/models");
+
+export const fetchVocClassifierModel = (modelId: string) =>
+  api<VocClassifierModel>(`/vocalization/models/${modelId}`);
+
+export const activateVocClassifierModel = (modelId: string) =>
+  put<VocClassifierModel>(`/vocalization/models/${modelId}/activate`, {});
+
+// Training Jobs
+export const createVocClassifierTrainingJob = (body: VocClassifierTrainingJobCreate) =>
+  post<VocClassifierTrainingJob>("/vocalization/training-jobs", body);
+
+export const fetchVocClassifierTrainingJobs = () =>
+  api<VocClassifierTrainingJob[]>("/vocalization/training-jobs");
+
+export const fetchVocClassifierTrainingJob = (jobId: string) =>
+  api<VocClassifierTrainingJob>(`/vocalization/training-jobs/${jobId}`);
+
+// Inference Jobs
+export const createVocClassifierInferenceJob = (body: VocClassifierInferenceJobCreate) =>
+  post<VocClassifierInferenceJob>("/vocalization/inference-jobs", body);
+
+export const fetchVocClassifierInferenceJobs = () =>
+  api<VocClassifierInferenceJob[]>("/vocalization/inference-jobs");
+
+export const fetchVocClassifierInferenceJob = (jobId: string) =>
+  api<VocClassifierInferenceJob>(`/vocalization/inference-jobs/${jobId}`);
+
+export const fetchVocClassifierInferenceResults = (
+  jobId: string,
+  params?: { offset?: number; limit?: number; thresholds?: Record<string, number> },
+) => {
+  const qs = new URLSearchParams();
+  if (params?.offset !== undefined) qs.set("offset", String(params.offset));
+  if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params?.thresholds) qs.set("thresholds", JSON.stringify(params.thresholds));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return api<VocClassifierPredictionRow[]>(
+    `/vocalization/inference-jobs/${jobId}/results${suffix}`,
+  );
+};
+
+export function vocClassifierInferenceExportUrl(
+  jobId: string,
+  thresholds?: Record<string, number>,
+): string {
+  const qs = new URLSearchParams();
+  if (thresholds) qs.set("thresholds", JSON.stringify(thresholds));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return `/vocalization/inference-jobs/${jobId}/export${suffix}`;
 }
 
 // ---- Health ----

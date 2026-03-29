@@ -783,82 +783,96 @@ export interface TrainingSummary {
   label_distribution: Record<string, number>;
 }
 
-// ---- Annotations ----
+// ---- Multi-Label Vocalization Classifier ----
 
-export interface LabelingAnnotation {
+export interface VocalizationType {
   id: string;
-  detection_job_id: string;
-  start_utc: number;
-  end_utc: number;
-  start_offset_sec: number;
-  end_offset_sec: number;
-  label: string;
-  notes: string | null;
+  name: string;
+  description: string | null;
   created_at: string;
   updated_at: string;
 }
 
-// ---- Vocalization Classifier ----
-
-export interface VocalizationTrainingJobCreate {
+export interface VocalizationTypeCreate {
   name: string;
-  source_detection_job_ids: string[];
-  parameters?: Record<string, unknown>;
+  description?: string | null;
 }
 
-export interface VocalizationTrainingJobOut {
+export interface VocalizationTypeUpdate {
+  name?: string | null;
+  description?: string | null;
+}
+
+export interface VocalizationTypeImportRequest {
+  embedding_set_ids: string[];
+}
+
+export interface VocalizationTypeImportResponse {
+  added: string[];
+  skipped: string[];
+}
+
+export interface VocalizationTrainingSourceConfig {
+  embedding_set_ids: string[];
+  detection_job_ids: string[];
+}
+
+export interface VocClassifierTrainingJobCreate {
+  source_config: VocalizationTrainingSourceConfig;
+  parameters?: Record<string, unknown> | null;
+}
+
+export interface VocClassifierTrainingJob {
   id: string;
   status: string;
-  name: string;
-  job_purpose: string;
-  source_detection_job_ids: string[];
-  classifier_model_id: string | null;
+  source_config: Record<string, unknown>;
+  parameters: Record<string, unknown> | null;
+  vocalization_model_id: string | null;
+  result_summary: Record<string, unknown> | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface VocalizationModelOut {
+export interface VocClassifierModel {
   id: string;
   name: string;
-  model_version: string;
-  vector_dim: number;
-  classifier_purpose: string;
+  model_dir_path: string;
+  vocabulary_snapshot: string[];
+  per_class_thresholds: Record<string, number>;
+  per_class_metrics: Record<string, unknown> | null;
   training_summary: Record<string, unknown> | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface VocClassifierInferenceJobCreate {
+  vocalization_model_id: string;
+  source_type: "detection_job" | "embedding_set" | "rescore";
+  source_id: string;
+}
+
+export interface VocClassifierInferenceJob {
+  id: string;
+  status: string;
+  vocalization_model_id: string;
+  source_type: string;
+  source_id: string;
+  output_path: string | null;
+  result_summary: Record<string, unknown> | null;
+  error_message: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface PredictionRow {
-  start_utc: number;
-  end_utc: number;
-  predicted_label: string;
-  confidence: number;
-  probabilities: Record<string, number>;
-}
-
-// ---- Active Learning ----
-
-export interface ActiveLearningCycleResponse {
-  training_job_id: string;
-  status: string;
-}
-
-export interface UncertaintyQueueRow {
-  start_utc: number;
-  end_utc: number;
-  avg_confidence: number;
-  peak_confidence: number;
-  predicted_label: string | null;
-  prediction_confidence: number | null;
-  probabilities: Record<string, number> | null;
-}
-
-export interface ConvergenceMetrics {
-  cycles_completed: number;
-  label_distribution: Record<string, number>;
-  accuracy_trend: number[];
-  uncertainty_histogram: Array<Record<string, unknown>>;
+export interface VocClassifierPredictionRow {
+  filename: string;
+  start_sec: number;
+  end_sec: number;
+  start_utc: number | null;
+  end_utc: number | null;
+  scores: Record<string, number>;
+  tags: string[];
 }
 
 // ---- Health ----

@@ -24,23 +24,3 @@ class VocalizationLabel(UUIDMixin, TimestampMixin, Base):
     confidence: Mapped[Optional[float]] = mapped_column(default=None)
     source: Mapped[str] = mapped_column(default="manual")
     notes: Mapped[Optional[str]] = mapped_column(Text, default=None)
-
-
-class LabelingAnnotation(UUIDMixin, TimestampMixin, Base):
-    __tablename__ = "labeling_annotations"
-    __table_args__ = (
-        Index(
-            "ix_labeling_annotations_job_utc",
-            "detection_job_id",
-            "start_utc",
-            "end_utc",
-        ),
-    )
-
-    detection_job_id: Mapped[str]
-    start_utc: Mapped[float]
-    end_utc: Mapped[float]
-    start_offset_sec: Mapped[float]
-    end_offset_sec: Mapped[float]
-    label: Mapped[str]
-    notes: Mapped[Optional[str]] = mapped_column(Text, default=None)

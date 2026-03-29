@@ -204,6 +204,44 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then vocalization training jobs
+        vtjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_vocalization_training_job
+
+            vtjob = await claim_vocalization_training_job(session)
+        if vtjob:
+            logger.info(f"Vocalization training job {vtjob.id}")
+            from humpback.workers.vocalization_worker import (
+                run_vocalization_training_job,
+            )
+
+            async with session_factory() as session:
+                await run_vocalization_training_job(session, vtjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then vocalization inference jobs
+        vijob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_vocalization_inference_job
+
+            vijob = await claim_vocalization_inference_job(session)
+        if vijob:
+            logger.info(f"Vocalization inference job {vijob.id}")
+            from humpback.workers.vocalization_worker import (
+                run_vocalization_inference_job,
+            )
+
+            async with session_factory() as session:
+                await run_vocalization_inference_job(session, vijob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

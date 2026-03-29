@@ -11,6 +11,8 @@ import { LabelingTab } from "@/components/classifier/LabelingTab";
 import { SearchTab } from "@/components/search/SearchTab";
 import { LabelProcessingTab } from "@/components/label-processing/LabelProcessingTab";
 import { TimelineViewer } from "@/components/timeline/TimelineViewer";
+import { VocalizationTrainingTab } from "@/components/vocalization/VocalizationTrainingTab";
+import { VocalizationLabelingTab } from "@/components/vocalization/VocalizationLabelingTab";
 
 export default function App() {
   return (
@@ -27,6 +29,9 @@ export default function App() {
         <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
         <Route path="/app/classifier/labeling" element={<LabelingTab />} />
         <Route path="/app/classifier/timeline/:jobId" element={<TimelineViewer />} />
+        <Route path="/app/vocalization" element={<Navigate to="/app/vocalization/training" replace />} />
+        <Route path="/app/vocalization/training" element={<VocalizationTrainingTab />} />
+        <Route path="/app/vocalization/labeling" element={<VocalizationLabelingTab />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />

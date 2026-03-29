@@ -95,7 +95,7 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 | Icons | lucide-react |
 | API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
 
-**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/labeling`); the timeline viewer is at `/app/classifier/timeline/:jobId`; other sections are single-route pages.
+**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/labeling`); Vocalization has sub-routes (`/app/vocalization/training`, `/app/vocalization/labeling`); the timeline viewer is at `/app/classifier/timeline/:jobId`; other sections are single-route pages.
 
 #### Frontend Package Management
 *   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
@@ -128,6 +128,7 @@ frontend/
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, DetectionTab, BulkDeleteDialog)
+    │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, VocalizationInferenceForm, VocalizationResultsBrowser)
     │   ├── timeline/            (TimelineViewer, SpectrogramViewport, TileCanvas, LabelEditor, LabelToolbar, etc.)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
     │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
@@ -437,9 +438,12 @@ Condensed model reference. For full field lists, see `src/humpback/database.py`.
 - **ClassifierTrainingJob** (`classifier_training_jobs`) — training run (positive/negative_embedding_set_ids JSON, classifier_model_id set on completion)
 - **DetectionJob** (`detection_jobs`) — local or hydrophone detection scan (classifier_model_id FK, audio_folder, confidence/hop/threshold params, detection_mode, output_tsv_path, result_summary JSON, extract_* columns)
 - **LabelProcessingJob** (`label_processing_jobs`) — score-based audio sample extraction (classifier_model_id, annotation_folder, audio_folder, output_root, parameters JSON, result_summary JSON)
-- **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, row_id, label, source)
-- **LabelingAnnotation** (`labeling_annotations`) — sub-window annotation boundary (detection_job_id, row_id, start_sec, end_sec, label)
+- **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, start_utc, end_utc, label, source)
 - **RetrainWorkflow** (`retrain_workflows`) — orchestrated reimport+reprocess+retrain (status, step, provenance)
+- **VocalizationType** (`vocalization_types`) — managed vocabulary entry for vocalization type classification (name, description, unique name constraint)
+- **VocalizationClassifierModel** (`vocalization_models`) — multi-label vocalization model artifact (name, model_dir_path, vocabulary_snapshot JSON, per_class_thresholds JSON, per_class_metrics JSON, is_active)
+- **VocalizationTrainingJob** (`vocalization_training_jobs`) — multi-label training run (source_config JSON with embedding_set_ids + detection_job_ids, parameters JSON, vocalization_model_id set on completion)
+- **VocalizationInferenceJob** (`vocalization_inference_jobs`) — scoring run (vocalization_model_id FK, source_type, source_id, output_path to predictions parquet)
 
 ### 8.4 Signal Processing Parameters
 
@@ -544,6 +548,11 @@ flowchart TD
 /classifiers/
   {classifier_model_id}/model.joblib              (StandardScaler + LogisticRegression pipeline)
   {classifier_model_id}/training_summary.json
+/vocalization_models/
+  {vocalization_model_id}/{type_name}.joblib       (per-type sklearn pipeline)
+  {vocalization_model_id}/metadata.json            (vocabulary, thresholds, metrics)
+/vocalization_inference/
+  {inference_job_id}/predictions.parquet           (window identity + per-type score columns)
 /detections/
   {detection_job_id}/detection_rows.parquet       (canonical editable row store)
   {detection_job_id}/detections.tsv               (generated on-the-fly for download; not persisted)
@@ -580,7 +589,7 @@ Hydrophone extraction output:
 
 Non-obvious constraints that are not immediately derivable from code:
 
-- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> label processing -> retrain
+- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> label processing -> retrain -> vocalization training -> vocalization inference
 - **Job claim semantics**: Workers claim queued jobs via atomic compare-and-set (`WHERE id=:candidate AND status='queued'`). SQLite has no true row-level locks; correctness relies on atomic status updates, not `SELECT ... FOR UPDATE`.
 - **Job status transitions**: `queued -> running -> complete`, `queued -> running -> failed`, `queued -> canceled`
 - **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
@@ -601,16 +610,17 @@ Non-obvious constraints that are not immediately derivable from code:
 - Binary classifier training (LogisticRegression/MLP) + local/hydrophone detection
 - Hydrophone streaming: Orcasound HLS + NOAA archives, pause/resume/cancel, subprocess isolation
 - Label processing: score-based + sample-builder workflows
-- Vocalization labeling: type classification, active learning, sub-window annotations
+- Vocalization labeling: per-window type labels on detection rows
+- Multi-label vocalization classifier: managed vocabulary, binary relevance training (per-type sklearn pipeline), per-type threshold optimization, multi-source inference (detection job / embedding set / rescore), paginated results with client-side threshold filtering, TSV export
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
-- Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Search, Label Processing, Admin
+- Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Vocalization, Search, Label Processing, Admin
 
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `027_drop_output_tsv_path.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, labeling_annotations
+- **Latest migration**: `030_vocalization_tables.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs
 
 ### 9.3 Sensitive Components
 

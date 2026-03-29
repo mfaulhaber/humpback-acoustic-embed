@@ -1211,3 +1211,46 @@ docs/plans/. Rewrite AGENTS.md for Codex-compatible workflow.
 - Codex follows same phase sequence with its own tooling
 - Session-* skills deleted; all workflow orchestration via superpowers
 - Backlog items preserved in docs/plans/backlog.md
+
+---
+
+## ADR-042: Multi-label vocalization type classifier via binary relevance
+
+**Date**: 2026-03-29
+**Status**: Accepted
+
+**Context**: The existing vocalization labeling system used single-label
+classification on the binary classifier infrastructure. Windows can contain
+multiple overlapping vocalization types (e.g., a whup during a moan), making
+single-label assignment a poor fit. The annotation sub-window system added
+complexity without adoption.
+
+**Decision**: Replace the single-label vocalization classifier with a standalone
+multi-label system using binary relevance (one independent sklearn pipeline per
+vocalization type). Key design choices:
+
+1. **Managed vocabulary** — `vocalization_types` table with unique names,
+   importable from embedding set folder structure.
+2. **Binary relevance** — N independent classifiers, one per type. A window
+   labeled with types A and B is positive for both A and B pipelines, negative
+   for neither. Types below `min_examples_per_type` are filtered out.
+3. **Per-type threshold optimization** — each type gets an F1-maximized
+   threshold from cross-validation, stored in the model and overridable at
+   inference time.
+4. **Dedicated tables** — `vocalization_types`, `vocalization_models`,
+   `vocalization_training_jobs`, `vocalization_inference_jobs` — fully
+   independent from the binary classifier tables.
+5. **Three inference source types** — `detection_job` (with UTC), `embedding_set`
+   (from curated sets), `rescore` (re-run previous results with a new model).
+6. **Remove legacy systems** — dropped sub-window annotation system
+   (`labeling_annotations` table) and the old single-label vocalization
+   training endpoints from `/labeling/`.
+
+**Consequences**:
+- Windows can carry multiple type labels simultaneously
+- Per-type thresholds allow precision/recall tuning per vocalization category
+- Vocabulary is managed independently from training data
+- Inference results are persistent parquet files, not ephemeral
+- Old `/labeling/training-jobs`, `/labeling/vocalization-models`, `/labeling/predict`,
+  and active learning endpoints removed; replaced by `/vocalization/` router
+- `label_trainer.py` deleted; replaced by `vocalization_trainer.py`

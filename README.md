@@ -23,6 +23,7 @@ Highlights:
 - Multi-model support for TFLite spectrogram models and TF2 waveform models
 - Clustering, evaluation, and optional metric-learning refinement workflows
 - Binary classifier training plus hydrophone/archive detection
+- Multi-label vocalization type classifier with managed vocabulary, per-type thresholds, and inference scoring
 - Interactive web UI and REST API for review, labeling, and extraction
 - Local-first artifact storage using SQL and Parquet-backed outputs
 - Zoomable timeline viewer for hydrophone detection jobs (Pattern Radio-inspired, 6 zoom levels, Ocean Depth colormap, startup-scoped tile warming, synchronized audio playback)
