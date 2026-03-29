@@ -43,14 +43,13 @@ export function useSearchByVector(
 
 export function useDetectionEmbedding(
   jobId: string | null,
-  filename: string | null,
-  startSec: number | null,
-  endSec: number | null,
+  startUtc: number | null,
+  endUtc: number | null,
 ) {
   return useQuery({
-    queryKey: ["detectionEmbedding", jobId, filename, startSec, endSec],
-    queryFn: () => fetchDetectionEmbedding(jobId!, filename!, startSec!, endSec!),
-    enabled: jobId !== null && filename !== null && startSec !== null && endSec !== null,
+    queryKey: ["detectionEmbedding", jobId, startUtc, endUtc],
+    queryFn: () => fetchDetectionEmbedding(jobId!, startUtc!, endUtc!),
+    enabled: jobId !== null && startUtc !== null && endUtc !== null,
     retry: false,
   });
 }

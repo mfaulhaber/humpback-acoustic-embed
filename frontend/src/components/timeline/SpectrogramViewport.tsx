@@ -252,11 +252,9 @@ export function SpectrogramViewport({
       // Convert pixel position to timestamp
       const clickTimestamp = centerTimestamp + (clickX - canvasWidth / 2) / pxPerSec;
 
-      // Find detection whose [jobStart + start_sec, jobStart + end_sec] contains this timestamp
+      // Find detection whose [start_utc, end_utc] contains this timestamp
       const hit = detections.find((d) => {
-        const start = jobStart + d.start_sec;
-        const end = jobStart + d.end_sec;
-        return clickTimestamp >= start && clickTimestamp <= end;
+        return clickTimestamp >= d.start_utc && clickTimestamp <= d.end_utc;
       });
 
       if (hit) {

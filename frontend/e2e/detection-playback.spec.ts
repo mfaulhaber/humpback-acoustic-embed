@@ -34,14 +34,13 @@ test.describe("Detection audio playback", () => {
     expect(rows.length).toBeGreaterThan(0);
 
     const row = rows[0];
-    const spanDuration = row.end_sec - row.start_sec;
+    const spanDuration = row.end_utc - row.start_utc;
     const duration = Math.max(spanDuration, 5);
 
     // Request audio slice
     const sliceRes = await request.get(
       `http://localhost:8000/classifier/detection-jobs/${completedJob.id}/audio-slice` +
-        `?filename=${encodeURIComponent(row.filename)}` +
-        `&start_sec=${row.start_sec}&duration_sec=${duration}`,
+        `?start_utc=${row.start_utc}&duration_sec=${duration}`,
     );
     expect(sliceRes.ok()).toBeTruthy();
 
@@ -57,7 +56,7 @@ test.describe("Detection audio playback", () => {
     const audioDuration = numSamples / sampleRate;
 
     console.log(
-      `Row: file=${row.filename}, start=${row.start_sec}, end=${row.end_sec}`,
+      `Row: start_utc=${row.start_utc}, end_utc=${row.end_utc}`,
     );
     console.log(
       `WAV: sr=${sampleRate}, samples=${numSamples}, duration=${audioDuration.toFixed(2)}s`,

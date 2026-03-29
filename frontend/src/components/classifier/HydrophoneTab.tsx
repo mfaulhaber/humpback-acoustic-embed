@@ -57,12 +57,11 @@ import { showMsg } from "@/components/shared/MessageToast";
 import { DateRangePickerUtc } from "@/components/shared/DateRangePickerUtc";
 import type { DetectionJob, DetectionRow, DetectionLabelRow, FlashAlert } from "@/api/types";
 
-type SortKey = "filename" | "duration_sec" | "avg_confidence";
+type SortKey = "time" | "duration_sec" | "avg_confidence";
 type SortDir = "asc" | "desc";
 type LabelField = "humpback" | "orca" | "ship" | "background";
-type ClipSource = "detection_filename" | "raw";
 type PlayClip = {
-  startSec: number;
+  startUtc: number;
   durationSec: number;
 };
 type SpectrogramMarkerBounds = {
@@ -80,18 +79,14 @@ type SpectrogramPopupState = {
   editable: boolean;
 };
 type HydratedDetectionRow = DetectionRow & {
-  _detectionFilename: string | null;
-  _clipSource: ClipSource;
-  _clipStartSec: number;
-  _clipEndSec: number;
   _clipDurationSec: number;
   _clipRange: string;
   _rawRange: string | null;
   _playKey: string;
 };
 
-function rowKey(row: { filename: string; start_sec: number; end_sec: number }): string {
-  return `${row.filename}:${row.start_sec}:${row.end_sec}`;
+function rowUtcKey(row: DetectionRow): string {
+  return `${row.start_utc}:${row.end_utc}`;
 }
 
 function isLegacyMergedMode(
@@ -111,8 +106,8 @@ const statusColor: Record<string, string> = {
   canceled: "bg-gray-100 text-gray-800",
 };
 
-function formatCompactUtc(ms: number): string {
-  const d = new Date(ms);
+function formatCompactUtcFromEpoch(epochSec: number): string {
+  const d = new Date(epochSec * 1000);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
 }
@@ -124,116 +119,46 @@ function formatUtcDateTime(timestampSeconds: number): string {
   return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())} ${p(date.getUTCHours())}:${p(date.getUTCMinutes())} UTC`;
 }
 
-function stripKnownAudioExtension(value: string): string {
-  return value.replace(/\.(wav|flac|mp3|aif|aiff)$/i, "");
-}
-
-function computeUtcRange(filename: string, startSec: number, endSec: number): string {
-  const basename = stripKnownAudioExtension(filename);
-  const match = basename.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-  if (!match) return filename;
-  const chunkMs = Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6]);
-  return `${formatCompactUtc(chunkMs + startSec * 1000)}_${formatCompactUtc(chunkMs + endSec * 1000)}`;
-}
-
-function parseCompactUtcMs(value: string): number | null {
-  const match = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-  if (!match) return null;
-  return Date.UTC(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5]),
-    Number(match[6]),
-  );
-}
-
-function parseDetectionFilenameRange(
-  detectionFilename: string,
-): { startMs: number; endMs: number } | null {
-  const base = stripKnownAudioExtension(detectionFilename);
-  const parts = base.split("_");
-  if (parts.length !== 2) return null;
-  const startMs = parseCompactUtcMs(parts[0]);
-  const endMs = parseCompactUtcMs(parts[1]);
-  if (startMs === null || endMs === null || endMs <= startMs) return null;
-  return { startMs, endMs };
-}
-
 function buildPlaybackKey(
   jobId: string,
-  filename: string,
-  startSec: number,
+  startUtc: number,
   durationSec: number,
 ): string {
-  return `${jobId}:${filename}:${startSec.toFixed(3)}:${durationSec.toFixed(3)}`;
+  return `${jobId}:${startUtc.toFixed(3)}:${durationSec.toFixed(3)}`;
 }
 
 function resolveClipTiming(
   row: DetectionRow,
 ): Omit<HydratedDetectionRow, keyof DetectionRow | "_playKey"> {
-  const rawStartSec = row.start_sec;
-  const rawEndSec = row.end_sec;
-  const rawDurationSec = Math.max(0, rawEndSec - rawStartSec);
-  const derivedDetectionFilename = `${computeUtcRange(row.filename, rawStartSec, rawEndSec)}.wav`;
-  const directDetectionFilename =
-    typeof row.detection_filename === "string" && row.detection_filename.trim()
-      ? row.detection_filename.trim()
-      : null;
-  const detectionFilename = directDetectionFilename ?? derivedDetectionFilename;
-  const auditStartSec =
-    typeof row.raw_start_sec === "number" ? row.raw_start_sec : rawStartSec;
-  const auditEndSec = typeof row.raw_end_sec === "number" ? row.raw_end_sec : rawEndSec;
+  const durationSec = Math.max(0, row.end_utc - row.start_utc);
+  const clipRange = `${formatCompactUtcFromEpoch(row.start_utc)}_${formatCompactUtcFromEpoch(row.end_utc)}`;
+
+  const rawStartUtc = typeof row.raw_start_utc === "number" ? row.raw_start_utc : row.start_utc;
+  const rawEndUtc = typeof row.raw_end_utc === "number" ? row.raw_end_utc : row.end_utc;
   const rawRange =
-    auditStartSec !== rawStartSec || auditEndSec !== rawEndSec
-      ? computeUtcRange(row.filename, auditStartSec, auditEndSec)
+    rawStartUtc !== row.start_utc || rawEndUtc !== row.end_utc
+      ? `${formatCompactUtcFromEpoch(rawStartUtc)}_${formatCompactUtcFromEpoch(rawEndUtc)}`
       : null;
 
-  const baseTs = parseCompactUtcMs(stripKnownAudioExtension(row.filename));
-  if (baseTs !== null && detectionFilename) {
-    const detected = parseDetectionFilenameRange(detectionFilename);
-    if (detected) {
-      const clipStartSec = (detected.startMs - baseTs) / 1000;
-      const clipEndSec = (detected.endMs - baseTs) / 1000;
-      if (clipEndSec > clipStartSec) {
-        return {
-          _detectionFilename: detectionFilename,
-          _clipSource: "detection_filename",
-          _clipStartSec: clipStartSec,
-          _clipEndSec: clipEndSec,
-          _clipDurationSec: clipEndSec - clipStartSec,
-          _clipRange: `${formatCompactUtc(detected.startMs)}_${formatCompactUtc(detected.endMs)}`,
-          _rawRange: rawRange,
-        };
-      }
-    }
-  }
-
-  const rawClipRange = computeUtcRange(row.filename, rawStartSec, rawEndSec);
   return {
-    _detectionFilename: detectionFilename,
-    _clipSource: "raw",
-    _clipStartSec: rawStartSec,
-    _clipEndSec: rawEndSec,
-    _clipDurationSec: rawDurationSec,
-    _clipRange: rawClipRange,
-    _rawRange: null,
+    _clipDurationSec: durationSec,
+    _clipRange: clipRange,
+    _rawRange: rawRange,
   };
 }
 
-function resolveMarkerBoundsFromAbsoluteRange(
+function resolveMarkerBoundsFromAbsoluteUtc(
   row: HydratedDetectionRow,
-  startSec: number | null | undefined,
-  endSec: number | null | undefined,
+  startUtc: number | null | undefined,
+  endUtc: number | null | undefined,
 ): SpectrogramMarkerBounds | null {
-  if (typeof startSec !== "number" || typeof endSec !== "number" || endSec <= startSec) {
+  if (typeof startUtc !== "number" || typeof endUtc !== "number" || endUtc <= startUtc) {
     return null;
   }
 
   const epsilon = 1e-6;
-  const relativeStartSec = startSec - row._clipStartSec;
-  const relativeEndSec = endSec - row._clipStartSec;
+  const relativeStartSec = startUtc - row.start_utc;
+  const relativeEndSec = endUtc - row.start_utc;
 
   if (
     relativeStartSec < -epsilon ||
@@ -253,39 +178,23 @@ function resolvePositiveSelectionMarkerBounds(
   row: HydratedDetectionRow,
   options?: { includeAutoSelection?: boolean },
 ): SpectrogramMarkerBounds | null {
-  const explicitSelection = resolveMarkerBoundsFromAbsoluteRange(
+  const explicitSelection = resolveMarkerBoundsFromAbsoluteUtc(
     row,
-    row.positive_selection_start_sec,
-    row.positive_selection_end_sec,
+    row.positive_selection_start_utc,
+    row.positive_selection_end_utc,
   );
   if (explicitSelection) {
     return explicitSelection;
   }
 
   if (options?.includeAutoSelection) {
-    const autoSelection = resolveMarkerBoundsFromAbsoluteRange(
+    const autoSelection = resolveMarkerBoundsFromAbsoluteUtc(
       row,
-      row.auto_positive_selection_start_sec,
-      row.auto_positive_selection_end_sec,
+      row.auto_positive_selection_start_utc,
+      row.auto_positive_selection_end_utc,
     );
     if (autoSelection) {
       return autoSelection;
-    }
-  }
-
-  const baseTs = parseCompactUtcMs(stripKnownAudioExtension(row.filename));
-  const positiveExtractRange =
-    typeof row.positive_extract_filename === "string" && row.positive_extract_filename.trim()
-      ? parseDetectionFilenameRange(row.positive_extract_filename.trim())
-      : null;
-  if (baseTs !== null && positiveExtractRange) {
-    const fallbackSelection = resolveMarkerBoundsFromAbsoluteRange(
-      row,
-      (positiveExtractRange.startMs - baseTs) / 1000,
-      (positiveExtractRange.endMs - baseTs) / 1000,
-    );
-    if (fallbackSelection) {
-      return fallbackSelection;
     }
   }
 
@@ -302,10 +211,10 @@ function resolvePositiveSelectionMarkerBounds(
 function resolveManualSelectionMarkerBounds(
   row: HydratedDetectionRow,
 ): SpectrogramMarkerBounds | null {
-  return resolveMarkerBoundsFromAbsoluteRange(
+  return resolveMarkerBoundsFromAbsoluteUtc(
     row,
-    row.manual_positive_selection_start_sec,
-    row.manual_positive_selection_end_sec,
+    row.manual_positive_selection_start_utc,
+    row.manual_positive_selection_end_utc,
   );
 }
 
@@ -606,16 +515,16 @@ export function HydrophoneTab() {
 
   const handlePlay = useCallback(
     (jobId: string, row: DetectionRow, clip?: PlayClip) => {
-      const startSec = clip?.startSec ?? row.start_sec;
-      const requestedDurationSec = clip?.durationSec ?? row.end_sec - row.start_sec;
+      const startUtc = clip?.startUtc ?? row.start_utc;
+      const requestedDurationSec = clip?.durationSec ?? row.end_utc - row.start_utc;
       const durationSec = Math.max(0.1, requestedDurationSec);
-      const key = buildPlaybackKey(jobId, row.filename, startSec, durationSec);
+      const key = buildPlaybackKey(jobId, startUtc, durationSec);
       if (playingKey === key) {
         audioRef.current?.pause();
         setPlayingKey(null);
         return;
       }
-      const url = detectionAudioSliceUrl(jobId, row.filename, startSec, durationSec);
+      const url = detectionAudioSliceUrl(jobId, startUtc, durationSec);
       if (audioRef.current) {
         const audio = audioRef.current;
         audio.src = url;
@@ -651,11 +560,10 @@ export function HydrophoneTab() {
       if (!jobEdits || jobEdits.size === 0) continue;
       const rows: DetectionLabelRow[] = [];
       for (const [rk, edits] of jobEdits) {
-        const [filename, startStr, endStr] = rk.split(":");
+        const [startStr, endStr] = rk.split(":");
         rows.push({
-          filename,
-          start_sec: parseFloat(startStr),
-          end_sec: parseFloat(endStr),
+          start_utc: parseFloat(startStr),
+          end_utc: parseFloat(endStr),
           humpback: edits.humpback ?? null,
           orca: edits.orca ?? null,
           ship: edits.ship ?? null,
@@ -1736,7 +1644,7 @@ function HydrophoneContentTable({
   );
   const isLegacyMerged = isLegacyMergedMode(detectionMode);
   const saveRowStateMutation = useSaveDetectionRowState();
-  const [sortKey, setSortKey] = useState<SortKey>(isRunning ? "filename" : "avg_confidence");
+  const [sortKey, setSortKey] = useState<SortKey>(isRunning ? "time" : "avg_confidence");
   const [sortDir, setSortDir] = useState<SortDir>(isRunning ? "asc" : "desc");
   const prevRunning = useRef(isRunning);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
@@ -1752,8 +1660,7 @@ function HydrophoneContentTable({
           ...resolved,
           _playKey: buildPlaybackKey(
             jobId,
-            row.filename,
-            resolved._clipStartSec,
+            row.start_utc,
             Math.max(0.1, resolved._clipDurationSec),
           ),
         };
@@ -1764,7 +1671,7 @@ function HydrophoneContentTable({
   // Switch to confidence desc when job completes
   useEffect(() => {
     if (prevRunning.current && !isRunning) {
-      setSortKey("avg_confidence");
+      setSortKey("avg_confidence" as SortKey);
       setSortDir("desc");
     }
     prevRunning.current = isRunning;
@@ -1786,20 +1693,20 @@ function HydrophoneContentTable({
           ? a._clipDurationSec - b._clipDurationSec
           : b._clipDurationSec - a._clipDurationSec;
       }
-      const av = sortKey === "avg_confidence" ? a.avg_confidence : a.filename;
-      const bv = sortKey === "avg_confidence" ? b.avg_confidence : b.filename;
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortDir === "asc" ? av - bv : bv - av;
+      if (sortKey === "time") {
+        return sortDir === "asc"
+          ? a.start_utc - b.start_utc
+          : b.start_utc - a.start_utc;
       }
-      const sa = String(av);
-      const sb = String(bv);
-      return sortDir === "asc" ? sa.localeCompare(sb) : sb.localeCompare(sa);
+      const av = a.avg_confidence ?? 0;
+      const bv = b.avg_confidence ?? 0;
+      return sortDir === "asc" ? av - bv : bv - av;
     });
   }, [hydratedRows, sortKey, sortDir]);
 
   const getEffectiveLabel = useCallback(
     (row: DetectionRow, field: LabelField): number | null => {
-      const rk = rowKey(row);
+      const rk = rowUtcKey(row);
       const edit = labelEdits?.get(rk);
       if (edit && field in edit) {
         return edit[field] ?? null;
@@ -1823,8 +1730,7 @@ function HydrophoneContentTable({
       setSpectrogramPopup({
         imageUrl: detectionSpectrogramUrl(
           jobId,
-          row.filename,
-          row._clipStartSec,
+          row.start_utc,
           Math.max(0.1, row._clipDurationSec),
         ),
         position,
@@ -1832,8 +1738,6 @@ function HydrophoneContentTable({
         row,
         initialMarkerBounds,
         draftManualBounds: resolveManualSelectionMarkerBounds(row),
-        // Hydrophone jobs no longer allow spectrogram-bound editing:
-        // legacy merged jobs are read-only, and windowed jobs never needed it.
         editable: false,
       });
     },
@@ -1868,35 +1772,32 @@ function HydrophoneContentTable({
   }, []);
 
   const handleApplySpectrogramEdit = useCallback(async () => {
-    if (!spectrogramPopup?.editable || !spectrogramPopup.row.row_id) {
+    if (!spectrogramPopup?.editable) {
       return;
     }
 
     const { row, draftManualBounds } = spectrogramPopup;
-    const rowId = row.row_id;
-    if (!rowId) {
-      return;
-    }
     try {
       await saveRowStateMutation.mutateAsync({
         jobId,
         body: {
-          row_id: rowId,
+          start_utc: row.start_utc,
+          end_utc: row.end_utc,
           humpback: getEffectiveLabel(row, "humpback"),
           orca: getEffectiveLabel(row, "orca"),
           ship: getEffectiveLabel(row, "ship"),
           background: getEffectiveLabel(row, "background"),
-          manual_positive_selection_start_sec:
+          manual_positive_selection_start_utc:
             draftManualBounds !== null
-              ? row._clipStartSec + draftManualBounds.startSec
+              ? row.start_utc + draftManualBounds.startSec
               : null,
-          manual_positive_selection_end_sec:
+          manual_positive_selection_end_utc:
             draftManualBounds !== null
-              ? row._clipStartSec + draftManualBounds.endSec
+              ? row.start_utc + draftManualBounds.endSec
               : null,
         },
       });
-      onClearRowEdit(jobId, rowKey(row));
+      onClearRowEdit(jobId, rowUtcKey(row));
       setSpectrogramPopup(null);
     } catch (error) {
       showMsg(
@@ -1955,7 +1856,7 @@ function HydrophoneContentTable({
       }
       const current = getEffectiveLabel(row, field);
       const next = current === 1 ? 0 : 1;
-      onLabelChange(jobId, rowKey(row), field, next);
+      onLabelChange(jobId, rowUtcKey(row), field, next);
     },
     [isLegacyMerged, jobId, getEffectiveLabel, onLabelChange],
   );
@@ -1988,7 +1889,7 @@ function HydrophoneContentTable({
         e.preventDefault();
         const focused = sorted[focusedIndex];
         onPlay(jobId, focused, {
-          startSec: focused._clipStartSec,
+          startUtc: focused.start_utc,
           durationSec: focused._clipDurationSec,
         });
         return;
@@ -2048,7 +1949,7 @@ function HydrophoneContentTable({
         <thead>
           <tr className="border-b">
             <th className="w-8 px-3 py-1.5" />
-            <SortHeader label="Detection Range" field="filename" />
+            <SortHeader label="Detection Range" field="time" />
             <SortHeader label="Duration (s)" field="duration_sec" />
             <SortHeader label="Confidence" field="avg_confidence" />
             <th className="px-3 py-1.5 text-center font-medium">Humpback</th>
@@ -2089,7 +1990,7 @@ function HydrophoneContentTable({
                         });
                       }
                       onPlay(jobId, row, {
-                        startSec: row._clipStartSec,
+                        startUtc: row.start_utc,
                         durationSec: row._clipDurationSec,
                       });
                     }}
@@ -2104,9 +2005,8 @@ function HydrophoneContentTable({
                         state: {
                           source: "detection",
                           detectionJobId: jobId,
-                          filename: row.filename,
-                          startSec: row.start_sec,
-                          endSec: row.end_sec,
+                          startUtc: row.start_utc,
+                          endUtc: row.end_utc,
                           clipDuration: row._clipDurationSec,
                         },
                       });
@@ -2121,8 +2021,8 @@ function HydrophoneContentTable({
                   className="px-3 py-1.5 max-w-80"
                   title={
                     row._rawRange
-                      ? `${row._detectionFilename ?? row._clipRange}\nRaw: ${row._rawRange}`
-                      : row._detectionFilename ?? row._clipRange
+                      ? `${row._clipRange}\nRaw: ${row._rawRange}`
+                      : row._clipRange
                   }
                 >
                   <div className="font-mono clip-range">{row._clipRange}</div>

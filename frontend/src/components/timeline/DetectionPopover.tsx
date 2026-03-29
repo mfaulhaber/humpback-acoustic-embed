@@ -57,8 +57,8 @@ export function DetectionPopover({
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
-  const startEpoch = jobStart + row.start_sec;
-  const endEpoch = jobStart + row.end_sec;
+  const startEpoch = row.start_utc;
+  const endEpoch = row.end_utc;
   const labels = activeLabels(row);
 
   return (

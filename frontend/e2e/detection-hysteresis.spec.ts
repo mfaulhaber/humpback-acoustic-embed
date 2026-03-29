@@ -124,9 +124,8 @@ test.describe("Detection job creation API with hysteresis params", () => {
       {
         data: [
           {
-            filename: firstRow.filename,
-            start_sec: firstRow.start_sec,
-            end_sec: firstRow.end_sec,
+            start_utc: firstRow.start_utc,
+            end_utc: firstRow.end_utc,
             humpback: 1,
             ship: null,
             background: null,
@@ -143,9 +142,8 @@ test.describe("Detection job creation API with hysteresis params", () => {
     const afterRows = await afterRes.json();
     const updatedRow = afterRows.find(
       (r: any) =>
-        r.filename === firstRow.filename &&
-        r.start_sec === firstRow.start_sec &&
-        r.end_sec === firstRow.end_sec,
+        r.start_utc === firstRow.start_utc &&
+        r.end_utc === firstRow.end_utc,
     );
     expect(updatedRow).toBeTruthy();
     expect(updatedRow.n_windows).toBe(originalNWindows);
@@ -156,9 +154,8 @@ test.describe("Detection job creation API with hysteresis params", () => {
       {
         data: [
           {
-            filename: firstRow.filename,
-            start_sec: firstRow.start_sec,
-            end_sec: firstRow.end_sec,
+            start_utc: firstRow.start_utc,
+            end_utc: firstRow.end_utc,
             humpback: null,
             ship: null,
             background: null,

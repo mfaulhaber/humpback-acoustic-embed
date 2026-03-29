@@ -26,6 +26,10 @@ function snapToGrid(sec: number): number {
   return Math.round(sec / SNAP_GRID) * SNAP_GRID;
 }
 
+function utcKey(row: DetectionRow): string {
+  return `${row.start_utc}:${row.end_utc}`;
+}
+
 function getRowLabel(row: DetectionRow): LabelType | null {
   if (row.humpback === 1) return "humpback";
   if (row.orca === 1) return "orca";
@@ -39,9 +43,10 @@ function isLabeled(row: DetectionRow): boolean {
 }
 
 interface DragState {
-  rowId: string;
-  originalStartSec: number;
-  dragStartSec: number;
+  startUtc: number;
+  endUtc: number;
+  originalStartUtc: number;
+  dragStartUtc: number;
   duration: number;
 }
 
@@ -58,60 +63,61 @@ export function LabelEditor({
   width,
   height,
 }: LabelEditorProps) {
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [ghostSec, setGhostSec] = useState<number | null>(null);
-  const [dragOffset, setDragOffset] = useState<number | null>(null); // visual offset during drag (start_sec)
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [ghostUtc, setGhostUtc] = useState<number | null>(null);
+  const [dragOffset, setDragOffset] = useState<number | null>(null); // visual offset during drag (absolute UTC)
 
   const dragRef = useRef<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const pxPerSec = width / VIEWPORT_SPAN[zoomLevel];
+  const jobEnd = jobStart + jobDuration;
 
   // Sorted labeled rows for overlap checks
   const labeledOthers = useMemo(() => {
     return mergedRows
       .filter((r) => isLabeled(r))
-      .sort((a, b) => a.start_sec - b.start_sec);
+      .sort((a, b) => a.start_utc - b.start_utc);
   }, [mergedRows]);
 
-  // --- Coordinate transforms ---
-  const secToX = useCallback(
-    (sec: number): number => {
-      return (jobStart + sec - centerTimestamp) * pxPerSec + width / 2;
+  // --- Coordinate transforms (absolute UTC ↔ pixels) ---
+  const utcToX = useCallback(
+    (utcSec: number): number => {
+      return (utcSec - centerTimestamp) * pxPerSec + width / 2;
     },
-    [jobStart, centerTimestamp, pxPerSec, width],
+    [centerTimestamp, pxPerSec, width],
   );
 
-  const pxToSec = useCallback(
+  const pxToUtc = useCallback(
     (px: number): number => {
-      return (px - width / 2) / pxPerSec + centerTimestamp - jobStart;
+      return (px - width / 2) / pxPerSec + centerTimestamp;
     },
-    [width, pxPerSec, centerTimestamp, jobStart],
+    [width, pxPerSec, centerTimestamp],
   );
 
-  const getMouseSec = useCallback(
+  const getMouseUtc = useCallback(
     (e: React.MouseEvent): number => {
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return 0;
-      return pxToSec(e.clientX - rect.left);
+      return pxToUtc(e.clientX - rect.left);
     },
-    [pxToSec],
+    [pxToUtc],
   );
 
   // --- Overlap clamping for drag ---
   const clampDrag = useCallback(
-    (candidateStart: number, duration: number, dragRowId: string): number => {
+    (candidateStart: number, duration: number, dragStartUtc: number, dragEndUtc: number): number => {
       const others = labeledOthers.filter(
-        (r) => r.row_id !== dragRowId,
+        (r) => !(r.start_utc === dragStartUtc && r.end_utc === dragEndUtc),
       );
       let cs = candidateStart;
-      // Clamp to job bounds
-      cs = Math.max(0, Math.min(jobDuration - duration, cs));
+      // Clamp to job bounds (absolute UTC)
+      cs = Math.max(jobStart, Math.min(jobEnd - duration, cs));
       // Clamp against neighbors
       for (const other of others) {
-        if (cs < other.end_sec && cs + duration > other.start_sec) {
-          const leftGap = other.start_sec - duration;
-          const rightGap = other.end_sec;
+        if (cs < other.end_utc && cs + duration > other.start_utc) {
+          const leftGap = other.start_utc - duration;
+          const rightGap = other.end_utc;
           if (Math.abs(cs - leftGap) < Math.abs(cs - rightGap)) {
             cs = leftGap;
           } else {
@@ -120,57 +126,57 @@ export function LabelEditor({
         }
       }
       // Final bounds clamp after neighbor adjustments
-      cs = Math.max(0, Math.min(jobDuration - duration, cs));
+      cs = Math.max(jobStart, Math.min(jobEnd - duration, cs));
       return cs;
     },
-    [labeledOthers, jobDuration],
+    [labeledOthers, jobStart, jobEnd],
   );
 
   // --- Ghost (add mode) overlap checks ---
-  const ghostStart = ghostSec !== null ? snapToGrid(ghostSec - WINDOW_DURATION / 2) : null;
+  const ghostStart = ghostUtc !== null ? snapToGrid(ghostUtc - WINDOW_DURATION / 2) : null;
   const ghostEnd = ghostStart !== null ? ghostStart + WINDOW_DURATION : null;
 
   const ghostOverlapsLabeled = useMemo(() => {
     if (ghostStart === null || ghostEnd === null) return false;
     return labeledOthers.some(
-      (r) => ghostStart < r.end_sec && ghostEnd > r.start_sec,
+      (r) => ghostStart < r.end_utc && ghostEnd > r.start_utc,
     );
   }, [ghostStart, ghostEnd, labeledOthers]);
 
-  // Set of row_ids of unlabeled rows overlapped by ghost
+  // Set of UTC keys of unlabeled rows overlapped by ghost
   const ghostOverlappedUnlabeled = useMemo(() => {
     if (ghostStart === null || ghostEnd === null) return new Set<string>();
-    const ids = new Set<string>();
+    const keys = new Set<string>();
     for (const r of mergedRows) {
-      if (!isLabeled(r) && r.row_id && ghostStart < r.end_sec && ghostEnd > r.start_sec) {
-        ids.add(r.row_id);
+      if (!isLabeled(r) && ghostStart < r.end_utc && ghostEnd > r.start_utc) {
+        keys.add(utcKey(r));
       }
     }
-    return ids;
+    return keys;
   }, [ghostStart, ghostEnd, mergedRows]);
 
   // --- Event handlers ---
 
   const handleContainerMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      const sec = getMouseSec(e);
+      const utc = getMouseUtc(e);
 
       // Drag handling
       if (dragRef.current) {
         const drag = dragRef.current;
-        const delta = sec - drag.dragStartSec;
-        const candidate = snapToGrid(drag.originalStartSec + delta);
-        const clamped = clampDrag(candidate, drag.duration, drag.rowId);
+        const delta = utc - drag.dragStartUtc;
+        const candidate = snapToGrid(drag.originalStartUtc + delta);
+        const clamped = clampDrag(candidate, drag.duration, drag.startUtc, drag.endUtc);
         setDragOffset(clamped);
         return;
       }
 
       // Ghost tracking in add mode
       if (mode === "add") {
-        setGhostSec(sec);
+        setGhostUtc(utc);
       }
     },
-    [getMouseSec, mode, clampDrag],
+    [getMouseUtc, mode, clampDrag],
   );
 
   const handleContainerMouseUp = useCallback(() => {
@@ -179,9 +185,10 @@ export function LabelEditor({
       const duration = drag.duration;
       dispatch({
         type: "move",
-        row_id: drag.rowId,
-        new_start_sec: dragOffset,
-        new_end_sec: dragOffset + duration,
+        start_utc: drag.startUtc,
+        end_utc: drag.endUtc,
+        new_start_utc: dragOffset,
+        new_end_utc: dragOffset + duration,
       });
     }
     dragRef.current = null;
@@ -189,15 +196,16 @@ export function LabelEditor({
   }, [dragOffset, dispatch]);
 
   const handleContainerMouseLeave = useCallback(() => {
-    setGhostSec(null);
+    setGhostUtc(null);
     // If dragging, commit on leave
     if (dragRef.current && dragOffset !== null) {
       const drag = dragRef.current;
       dispatch({
         type: "move",
-        row_id: drag.rowId,
-        new_start_sec: dragOffset,
-        new_end_sec: dragOffset + drag.duration,
+        start_utc: drag.startUtc,
+        end_utc: drag.endUtc,
+        new_start_utc: dragOffset,
+        new_end_utc: dragOffset + drag.duration,
       });
     }
     dragRef.current = null;
@@ -208,7 +216,7 @@ export function LabelEditor({
     (e: React.MouseEvent) => {
       // Add mode click
       if (mode === "add" && ghostStart !== null && ghostEnd !== null && !ghostOverlapsLabeled) {
-        dispatch({ type: "add", start_sec: ghostStart, end_sec: ghostEnd, label: selectedLabel });
+        dispatch({ type: "add", start_utc: ghostStart, end_utc: ghostEnd, label: selectedLabel });
         return;
       }
       // Select mode: click on empty space → deselect
@@ -223,29 +231,26 @@ export function LabelEditor({
     (row: DetectionRow, e: React.MouseEvent) => {
       if (mode !== "select") return;
       e.stopPropagation();
-      const rowId = row.row_id;
-      if (!rowId) return;
 
       // Select on click
-      dispatch({ type: "select", id: rowId });
+      dispatch({ type: "select", id: utcKey(row) });
 
-      // Start drag only if already selected (or just-selected)
-      const sec = getMouseSec(e);
-      const duration = row.end_sec - row.start_sec;
+      // Start drag
+      const utc = getMouseUtc(e);
+      const duration = row.end_utc - row.start_utc;
       dragRef.current = {
-        rowId,
-        originalStartSec: row.start_sec,
-        dragStartSec: sec,
+        startUtc: row.start_utc,
+        endUtc: row.end_utc,
+        originalStartUtc: row.start_utc,
+        dragStartUtc: utc,
         duration,
       };
-      setDragOffset(row.start_sec);
+      setDragOffset(row.start_utc);
     },
-    [mode, dispatch, getMouseSec],
+    [mode, dispatch, getMouseUtc],
   );
 
   // --- Global drag listeners for select mode ---
-  // In select mode the container has pointerEvents: "none" so viewport pan
-  // works, but we still need to track mousemove/mouseup during bar drags.
   useEffect(() => {
     if (mode !== "select") return;
 
@@ -253,11 +258,11 @@ export function LabelEditor({
       if (!dragRef.current || !containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       const px = e.clientX - rect.left;
-      const sec = (px - width / 2) / pxPerSec + centerTimestamp - jobStart;
+      const utc = (px - width / 2) / pxPerSec + centerTimestamp;
       const drag = dragRef.current;
-      const delta = sec - drag.dragStartSec;
-      const candidate = snapToGrid(drag.originalStartSec + delta);
-      const clamped = clampDrag(candidate, drag.duration, drag.rowId);
+      const delta = utc - drag.dragStartUtc;
+      const candidate = snapToGrid(drag.originalStartUtc + delta);
+      const clamped = clampDrag(candidate, drag.duration, drag.startUtc, drag.endUtc);
       setDragOffset(clamped);
     };
 
@@ -266,9 +271,10 @@ export function LabelEditor({
         const drag = dragRef.current;
         dispatch({
           type: "move",
-          row_id: drag.rowId,
-          new_start_sec: dragOffset,
-          new_end_sec: dragOffset + drag.duration,
+          start_utc: drag.startUtc,
+          end_utc: drag.endUtc,
+          new_start_utc: dragOffset,
+          new_end_utc: dragOffset + drag.duration,
         });
       }
       dragRef.current = null;
@@ -281,7 +287,7 @@ export function LabelEditor({
       window.removeEventListener("mousemove", handleGlobalMove);
       window.removeEventListener("mouseup", handleGlobalUp);
     };
-  }, [mode, width, pxPerSec, centerTimestamp, jobStart, clampDrag, dragOffset, dispatch]);
+  }, [mode, width, pxPerSec, centerTimestamp, clampDrag, dragOffset, dispatch]);
 
   if (width <= 0 || height <= 0) return null;
 
@@ -294,37 +300,38 @@ export function LabelEditor({
     isSelected: boolean;
     isManual: boolean;
     dimmed: boolean;
+    key: string;
   }[] = [];
 
   for (const row of mergedRows) {
     const label = getRowLabel(row);
-    const rowId = row.row_id ?? "";
+    const key = utcKey(row);
 
     // During drag, use drag offset for the dragged row
-    let startSec = row.start_sec;
-    let endSec = row.end_sec;
-    if (dragRef.current && dragOffset !== null && dragRef.current.rowId === rowId) {
-      startSec = dragOffset;
-      endSec = dragOffset + dragRef.current.duration;
+    let startUtc = row.start_utc;
+    let endUtc = row.end_utc;
+    if (dragRef.current && dragOffset !== null && dragRef.current.startUtc === row.start_utc && dragRef.current.endUtc === row.end_utc) {
+      startUtc = dragOffset;
+      endUtc = dragOffset + dragRef.current.duration;
     }
 
-    const x = secToX(startSec);
-    const w = Math.max(2, (endSec - startSec) * pxPerSec);
+    const x = utcToX(startUtc);
+    const w = Math.max(2, (endUtc - startUtc) * pxPerSec);
 
     // Skip if entirely out of view
     if (x + w < 0 || x > width) continue;
 
-    const isSelected = rowId === selectedId;
+    const isSelected = key === selectedId;
     const isManual = row.avg_confidence === null;
-    const dimmed = !label && ghostOverlappedUnlabeled.has(rowId);
+    const dimmed = !label && ghostOverlappedUnlabeled.has(key);
 
-    bars.push({ row, x, w, label, isSelected, isManual, dimmed });
+    bars.push({ row, x, w, label, isSelected, isManual, dimmed, key });
   }
 
   // Ghost bar rendering data
   let ghostBar: { x: number; w: number; color: string } | null = null;
   if (mode === "add" && ghostStart !== null && ghostEnd !== null) {
-    const gx = secToX(ghostStart);
+    const gx = utcToX(ghostStart);
     const gw = Math.max(2, (ghostEnd - ghostStart) * pxPerSec);
     const color = ghostOverlapsLabeled
       ? "rgba(239, 68, 68, 0.4)"
@@ -334,10 +341,6 @@ export function LabelEditor({
 
   const isDragging = dragRef.current !== null;
 
-  // In select mode: container is transparent to pointer events so viewport
-  // pan still works.  Only individual label bars capture clicks/drags.
-  // In add mode: container captures events for ghost tracking and placement,
-  // but only when NOT panning (no drag in progress on the viewport).
   const containerInteractive = mode === "add";
 
   return (
@@ -361,10 +364,12 @@ export function LabelEditor({
       onClick={containerInteractive ? handleContainerClick : undefined}
     >
       {/* Render all bars */}
-      {bars.map(({ row, x, w, label, isSelected, isManual, dimmed }) => {
-        const rowId = row.row_id ?? "";
-        const isHovered = hoveredId === rowId;
-        const isBeingDragged = dragRef.current?.rowId === rowId && dragOffset !== null;
+      {bars.map(({ row, x, w, label, isSelected, isManual, dimmed, key }) => {
+        const isHovered = hoveredKey === key;
+        const isBeingDragged = dragRef.current !== null &&
+          dragRef.current.startUtc === row.start_utc &&
+          dragRef.current.endUtc === row.end_utc &&
+          dragOffset !== null;
 
         let bg: string;
         let opacity = 1;
@@ -381,7 +386,7 @@ export function LabelEditor({
 
         return (
           <div
-            key={rowId || `${row.start_sec}-${row.end_sec}`}
+            key={key}
             style={{
               position: "absolute",
               top: 0,
@@ -408,8 +413,8 @@ export function LabelEditor({
               boxSizing: "border-box",
               transition: isBeingDragged ? "none" : "opacity 0.15s",
             }}
-            onMouseEnter={() => setHoveredId(rowId || null)}
-            onMouseLeave={() => setHoveredId(null)}
+            onMouseEnter={() => setHoveredKey(key)}
+            onMouseLeave={() => setHoveredKey(null)}
             onMouseDown={(e) => {
               if (label && mode === "select") {
                 handleBarMouseDown(row, e);

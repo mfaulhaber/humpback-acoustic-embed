@@ -8,11 +8,10 @@ export type { LabelType };
 export interface LabelEdit {
   action: "add" | "move" | "delete" | "change_type";
   id?: string;
-  row_id?: string;
-  start_sec?: number;
-  end_sec?: number;
-  new_start_sec?: number;
-  new_end_sec?: number;
+  start_utc?: number;
+  end_utc?: number;
+  new_start_utc?: number;
+  new_end_utc?: number;
   label?: LabelType;
 }
 
@@ -22,17 +21,26 @@ interface State {
 }
 
 export type Action =
-  | { type: "add"; start_sec: number; end_sec: number; label: LabelType }
-  | { type: "move"; row_id: string; new_start_sec: number; new_end_sec: number }
-  | { type: "delete"; row_id: string }
-  | { type: "change_type"; row_id: string; label: LabelType }
+  | { type: "add"; start_utc: number; end_utc: number; label: LabelType }
+  | { type: "move"; start_utc: number; end_utc: number; new_start_utc: number; new_end_utc: number }
+  | { type: "delete"; start_utc: number; end_utc: number }
+  | { type: "delete_by_id"; id: string }
+  | { type: "change_type"; start_utc: number; end_utc: number; label: LabelType }
   | { type: "select"; id: string | null }
   | { type: "clear" };
+
+function utcKey(startUtc: number, endUtc: number): string {
+  return `${startUtc}:${endUtc}`;
+}
 
 const initialState: State = {
   edits: [],
   selectedId: null,
 };
+
+function editMatchesUtc(e: LabelEdit, startUtc: number, endUtc: number): boolean {
+  return e.start_utc === startUtc && e.end_utc === endUtc;
+}
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -41,8 +49,8 @@ function reducer(state: State, action: Action): State {
       const newEdit: LabelEdit = {
         action: "add",
         id: newId,
-        start_sec: action.start_sec,
-        end_sec: action.end_sec,
+        start_utc: action.start_utc,
+        end_utc: action.end_utc,
         label: action.label,
       };
       return {
@@ -52,11 +60,11 @@ function reducer(state: State, action: Action): State {
     }
 
     case "move": {
-      // Collapse with an existing move or add edit for the same row/id
+      // Collapse with an existing move or add edit for the same UTC pair
       const existingIdx = state.edits.findIndex(
         (e) =>
           (e.action === "move" || e.action === "add") &&
-          (e.row_id === action.row_id || e.id === action.row_id)
+          editMatchesUtc(e, action.start_utc, action.end_utc)
       );
 
       if (existingIdx !== -1) {
@@ -65,13 +73,13 @@ function reducer(state: State, action: Action): State {
           existing.action === "add"
             ? {
                 ...existing,
-                start_sec: action.new_start_sec,
-                end_sec: action.new_end_sec,
+                start_utc: action.new_start_utc,
+                end_utc: action.new_end_utc,
               }
             : {
                 ...existing,
-                new_start_sec: action.new_start_sec,
-                new_end_sec: action.new_end_sec,
+                new_start_utc: action.new_start_utc,
+                new_end_utc: action.new_end_utc,
               };
         const edits = [...state.edits];
         edits[existingIdx] = updated;
@@ -81,48 +89,68 @@ function reducer(state: State, action: Action): State {
       // No existing move/add — create a new move edit
       const newEdit: LabelEdit = {
         action: "move",
-        row_id: action.row_id,
-        new_start_sec: action.new_start_sec,
-        new_end_sec: action.new_end_sec,
+        start_utc: action.start_utc,
+        end_utc: action.end_utc,
+        new_start_utc: action.new_start_utc,
+        new_end_utc: action.new_end_utc,
       };
       return { ...state, edits: [...state.edits, newEdit] };
     }
 
     case "delete": {
+      const key = utcKey(action.start_utc, action.end_utc);
       // If deleting an "add" edit, just remove it from the list
       const addIdx = state.edits.findIndex(
-        (e) => e.action === "add" && e.id === action.row_id
+        (e) => e.action === "add" && e.start_utc === action.start_utc && e.end_utc === action.end_utc
+      );
+      if (addIdx !== -1) {
+        const editId = state.edits[addIdx].id;
+        const edits = state.edits.filter((_, i) => i !== addIdx);
+        return {
+          edits,
+          selectedId:
+            state.selectedId === editId ? null : state.selectedId,
+        };
+      }
+
+      // Otherwise remove all prior edits for this UTC pair and add a delete edit
+      const edits = state.edits.filter(
+        (e) => !editMatchesUtc(e, action.start_utc, action.end_utc)
+      );
+      const deleteEdit: LabelEdit = {
+        action: "delete",
+        start_utc: action.start_utc,
+        end_utc: action.end_utc,
+      };
+      return {
+        edits: [...edits, deleteEdit],
+        selectedId:
+          state.selectedId === key ? null : state.selectedId,
+      };
+    }
+
+    case "delete_by_id": {
+      // Delete an "add" edit by its generated id
+      const addIdx = state.edits.findIndex(
+        (e) => e.action === "add" && e.id === action.id
       );
       if (addIdx !== -1) {
         const edits = state.edits.filter((_, i) => i !== addIdx);
         return {
           edits,
           selectedId:
-            state.selectedId === action.row_id ? null : state.selectedId,
+            state.selectedId === action.id ? null : state.selectedId,
         };
       }
-
-      // Otherwise remove all prior edits for this row and add a delete edit
-      const edits = state.edits.filter(
-        (e) => e.row_id !== action.row_id && e.id !== action.row_id
-      );
-      const deleteEdit: LabelEdit = {
-        action: "delete",
-        row_id: action.row_id,
-      };
-      return {
-        edits: [...edits, deleteEdit],
-        selectedId:
-          state.selectedId === action.row_id ? null : state.selectedId,
-      };
+      return state;
     }
 
     case "change_type": {
-      // Collapse with existing add or change_type for the same row/id
+      // Collapse with existing add or change_type for the same UTC pair
       const existingIdx = state.edits.findIndex(
         (e) =>
           (e.action === "add" || e.action === "change_type") &&
-          (e.row_id === action.row_id || e.id === action.row_id)
+          editMatchesUtc(e, action.start_utc, action.end_utc)
       );
 
       if (existingIdx !== -1) {
@@ -138,7 +166,8 @@ function reducer(state: State, action: Action): State {
       // No existing — create a new change_type edit
       const newEdit: LabelEdit = {
         action: "change_type",
-        row_id: action.row_id,
+        start_utc: action.start_utc,
+        end_utc: action.end_utc,
         label: action.label,
       };
       return { ...state, edits: [...state.edits, newEdit] };
@@ -179,19 +208,19 @@ export function useLabelEdits(originalRows: DetectionRow[]) {
 
     // Apply moves
     for (const edit of state.edits) {
-      if (edit.action === "move" && edit.row_id != null) {
-        const row = rows.find((r) => r.row_id === edit.row_id);
-        if (row && edit.new_start_sec != null && edit.new_end_sec != null) {
-          row.start_sec = edit.new_start_sec;
-          row.end_sec = edit.new_end_sec;
+      if (edit.action === "move" && edit.start_utc != null && edit.end_utc != null) {
+        const row = rows.find((r) => r.start_utc === edit.start_utc && r.end_utc === edit.end_utc);
+        if (row && edit.new_start_utc != null && edit.new_end_utc != null) {
+          row.start_utc = edit.new_start_utc;
+          row.end_utc = edit.new_end_utc;
         }
       }
     }
 
     // Apply type changes — set label fields, clear others (single-label enforcement)
     for (const edit of state.edits) {
-      if (edit.action === "change_type" && edit.row_id != null && edit.label) {
-        const row = rows.find((r) => r.row_id === edit.row_id);
+      if (edit.action === "change_type" && edit.start_utc != null && edit.end_utc != null && edit.label) {
+        const row = rows.find((r) => r.start_utc === edit.start_utc && r.end_utc === edit.end_utc);
         if (row) {
           row.humpback = edit.label === "humpback" ? 1 : null;
           row.orca = edit.label === "orca" ? 1 : null;
@@ -202,21 +231,19 @@ export function useLabelEdits(originalRows: DetectionRow[]) {
     }
 
     // Filter out deleted rows
-    const deletedRowIds = new Set(
+    const deletedKeys = new Set(
       state.edits
-        .filter((e) => e.action === "delete" && e.row_id != null)
-        .map((e) => e.row_id as string)
+        .filter((e) => e.action === "delete" && e.start_utc != null && e.end_utc != null)
+        .map((e) => utcKey(e.start_utc!, e.end_utc!))
     );
     const filteredRows = rows.filter(
-      (r) => r.row_id == null || !deletedRowIds.has(r.row_id)
+      (r) => !deletedKeys.has(utcKey(r.start_utc, r.end_utc))
     );
 
     // Build new rows from "add" edits
     const newRows: DetectionRow[] = addEdits.map((edit) => ({
-      row_id: edit.id ?? null,
-      filename: "",
-      start_sec: edit.start_sec ?? 0,
-      end_sec: edit.end_sec ?? 0,
+      start_utc: edit.start_utc ?? 0,
+      end_utc: edit.end_utc ?? 0,
       avg_confidence: null,
       peak_confidence: null,
       n_windows: null,
@@ -248,7 +275,7 @@ export function useLabelEdits(originalRows: DetectionRow[]) {
       if (!isUnlabeled(r)) return true;
       // Remove unlabeled original rows overlapping with a new labeled row
       return !labeledNewRows.some((nr) =>
-        overlaps(r.start_sec, r.end_sec, nr.start_sec, nr.end_sec)
+        overlaps(r.start_utc, r.end_utc, nr.start_utc, nr.end_utc)
       );
     });
 

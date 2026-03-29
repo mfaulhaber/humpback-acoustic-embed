@@ -77,8 +77,8 @@ export function DetectionOverlay({
         x,
         y,
         label,
-        startTime: formatTime(jobStart + row.start_sec),
-        endTime: formatTime(jobStart + row.end_sec),
+        startTime: formatTime(row.start_utc),
+        endTime: formatTime(row.end_utc),
         avgConfidence: row.avg_confidence ?? 0,
         peakConfidence: row.peak_confidence ?? 0,
       });
@@ -122,11 +122,8 @@ export function DetectionOverlay({
   for (let i = 0; i < detections.length; i++) {
     const row = detections[i];
 
-    const startEpoch = jobStart + row.start_sec;
-    const endEpoch = jobStart + row.end_sec;
-
-    const x = (startEpoch - centerTimestamp) * pxPerSec + width / 2;
-    const w = Math.max(2, (endEpoch - startEpoch) * pxPerSec);
+    const x = (row.start_utc - centerTimestamp) * pxPerSec + width / 2;
+    const w = Math.max(2, (row.end_utc - row.start_utc) * pxPerSec);
 
     // Skip if entirely out of view
     if (x + w < 0 || x > width) continue;
@@ -167,7 +164,7 @@ export function DetectionOverlay({
     >
       {bars.map(({ row, label, x, w, idx, color, hoverColor }) => (
         <div
-          key={row.row_id ?? idx}
+          key={`${row.start_utc}:${row.end_utc}`}
           style={{
             position: "absolute",
             top: 0,

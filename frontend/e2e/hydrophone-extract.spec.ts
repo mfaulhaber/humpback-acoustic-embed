@@ -100,23 +100,14 @@ test.describe("Hydrophone extract activation", () => {
       if (!audio?.src) return null;
       const url = new URL(audio.src);
       return {
-        filename: url.searchParams.get("filename"),
-        startSec: Number.parseFloat(url.searchParams.get("start_sec") || "NaN"),
+        startUtc: Number.parseFloat(url.searchParams.get("start_utc") || "NaN"),
         durationSec: Number.parseFloat(url.searchParams.get("duration_sec") || "NaN"),
       };
     });
     expect(audioInfo).toBeTruthy();
-    const filename = audioInfo?.filename;
-    expect(filename).toBeTruthy();
-    const fileStartMs = parseCompactUtcMs((filename ?? "").replace(".wav", ""));
-    expect(fileStartMs).not.toBeNull();
-    if (fileStartMs === null) {
-      test.skip(true, "Playback filename is not compact UTC format");
-      return;
-    }
-    const expectedStartSec = (clipRange.startMs - fileStartMs) / 1000;
+    const expectedStartUtc = clipRange.startMs / 1000;
     const expectedDurationSec = (clipRange.endMs - clipRange.startMs) / 1000;
-    expect(audioInfo?.startSec).toBeCloseTo(expectedStartSec, 3);
+    expect(audioInfo?.startUtc).toBeCloseTo(expectedStartUtc, 3);
     expect(audioInfo?.durationSec).toBeCloseTo(expectedDurationSec, 3);
 
     const humpbackCheckbox = firstDataRow.locator(

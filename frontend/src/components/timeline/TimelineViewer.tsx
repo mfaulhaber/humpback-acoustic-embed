@@ -236,23 +236,18 @@ export function TimelineViewer() {
   }, [labelMode, isDirty, labelDispatch]);
 
   // Skip to next/prev detection
-  // Note: detection row start_sec/end_sec are canonical snapped bounds (timeline-
-  // absolute for hydrophone jobs since the detection worker writes them that way).
-  // If start_sec is file-relative for your data, you'll need to add job.start_timestamp.
-  // Check your detection content endpoint output to confirm.
+  // Detection row start_utc/end_utc are absolute UTC epoch seconds.
   const skipForward = useCallback(() => {
-    if (!detections || !job) return;
-    const jobStart = job.start_timestamp ?? 0;
-    const next = detections.find((d) => (jobStart + d.start_sec) > centerTimestamp);
-    if (next) setCenterTimestamp(jobStart + next.start_sec);
-  }, [detections, centerTimestamp, job]);
+    if (!detections) return;
+    const next = detections.find((d) => d.start_utc > centerTimestamp);
+    if (next) setCenterTimestamp(next.start_utc);
+  }, [detections, centerTimestamp]);
 
   const skipBack = useCallback(() => {
-    if (!detections || !job) return;
-    const jobStart = job.start_timestamp ?? 0;
-    const prev = [...detections].reverse().find((d) => (jobStart + d.end_sec) < centerTimestamp);
-    if (prev) setCenterTimestamp(jobStart + prev.start_sec);
-  }, [detections, centerTimestamp, job]);
+    if (!detections) return;
+    const prev = [...detections].reverse().find((d) => d.end_utc < centerTimestamp);
+    if (prev) setCenterTimestamp(prev.start_utc);
+  }, [detections, centerTimestamp]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -371,15 +366,23 @@ export function TimelineViewer() {
             onModeChange={setLabelSubMode}
             selectedLabel={selectedLabel}
             onLabelChange={setSelectedLabel}
-            onDelete={() => selectedId && labelDispatch({ type: "delete", row_id: selectedId })}
+            onDelete={() => {
+              if (!selectedId) return;
+              // selectedId is a UTC key "start_utc:end_utc"
+              const parts = selectedId.split(":");
+              if (parts.length === 2) {
+                labelDispatch({ type: "delete", start_utc: parseFloat(parts[0]), end_utc: parseFloat(parts[1]) });
+              } else {
+                labelDispatch({ type: "delete_by_id", id: selectedId });
+              }
+            }}
             onSave={() => {
               const items = labelState.edits.map((e) => ({
                 action: e.action,
-                row_id: e.row_id,
-                start_sec: e.start_sec,
-                end_sec: e.end_sec,
-                new_start_sec: e.new_start_sec,
-                new_end_sec: e.new_end_sec,
+                start_utc: e.start_utc,
+                end_utc: e.end_utc,
+                new_start_utc: e.new_start_utc,
+                new_end_utc: e.new_end_utc,
                 label: e.label,
               }));
               saveMutation.mutate(items, {

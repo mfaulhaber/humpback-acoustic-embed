@@ -66,9 +66,8 @@ test.describe("Detection labels API", () => {
       {
         data: [
           {
-            filename: firstRow.filename,
-            start_sec: firstRow.start_sec,
-            end_sec: firstRow.end_sec,
+            start_utc: firstRow.start_utc,
+            end_utc: firstRow.end_utc,
             humpback: 1,
             orca: 0,
             ship: 0,
@@ -90,9 +89,8 @@ test.describe("Detection labels API", () => {
     const verifyRows = await verifyRes.json();
     const updatedRow = verifyRows.find(
       (r: any) =>
-        r.filename === firstRow.filename &&
-        r.start_sec === firstRow.start_sec &&
-        r.end_sec === firstRow.end_sec,
+        r.start_utc === firstRow.start_utc &&
+        r.end_utc === firstRow.end_utc,
     );
     expect(updatedRow).toBeTruthy();
     expect(updatedRow.humpback).toBe(1);
@@ -106,9 +104,8 @@ test.describe("Detection labels API", () => {
       {
         data: [
           {
-            filename: firstRow.filename,
-            start_sec: firstRow.start_sec,
-            end_sec: firstRow.end_sec,
+            start_utc: firstRow.start_utc,
+            end_utc: firstRow.end_utc,
             humpback: null,
             orca: null,
             ship: null,
@@ -126,9 +123,8 @@ test.describe("Detection labels API", () => {
     const resetRows = await resetVerifyRes.json();
     const resetRow = resetRows.find(
       (r: any) =>
-        r.filename === firstRow.filename &&
-        r.start_sec === firstRow.start_sec &&
-        r.end_sec === firstRow.end_sec,
+        r.start_utc === firstRow.start_utc &&
+        r.end_utc === firstRow.end_utc,
     );
     expect(resetRow.humpback).toBeNull();
     expect(resetRow.orca).toBeNull();

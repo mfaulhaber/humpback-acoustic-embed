@@ -32,12 +32,13 @@ export function useLabelingSummary(jobId: string | null) {
 
 export function useVocalizationLabels(
   detectionJobId: string | null,
-  rowId: string | null,
+  startUtc: number | null,
+  endUtc: number | null,
 ) {
   return useQuery({
-    queryKey: ["labeling", "vocalization-labels", detectionJobId, rowId],
-    queryFn: () => fetchVocalizationLabels(detectionJobId!, rowId!),
-    enabled: detectionJobId !== null && rowId !== null,
+    queryKey: ["labeling", "vocalization-labels", detectionJobId, startUtc, endUtc],
+    queryFn: () => fetchVocalizationLabels(detectionJobId!, startUtc!, endUtc!),
+    enabled: detectionJobId !== null && startUtc !== null && endUtc !== null,
   });
 }
 
@@ -46,12 +47,13 @@ export function useAddVocalizationLabel() {
   return useMutation({
     mutationFn: (params: {
       detectionJobId: string;
-      rowId: string;
+      startUtc: number;
+      endUtc: number;
       label: string;
       confidence?: number;
       source?: string;
     }) =>
-      createVocalizationLabel(params.detectionJobId, params.rowId, {
+      createVocalizationLabel(params.detectionJobId, params.startUtc, params.endUtc, {
         label: params.label,
         confidence: params.confidence,
         source: params.source ?? "manual",
@@ -62,7 +64,8 @@ export function useAddVocalizationLabel() {
           "labeling",
           "vocalization-labels",
           vars.detectionJobId,
-          vars.rowId,
+          vars.startUtc,
+          vars.endUtc,
         ],
       });
       qc.invalidateQueries({
@@ -80,7 +83,8 @@ export function useDeleteVocalizationLabel() {
     mutationFn: (params: {
       labelId: string;
       detectionJobId: string;
-      rowId: string;
+      startUtc: number;
+      endUtc: number;
     }) => deleteVocalizationLabel(params.labelId),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({
@@ -88,7 +92,8 @@ export function useDeleteVocalizationLabel() {
           "labeling",
           "vocalization-labels",
           vars.detectionJobId,
-          vars.rowId,
+          vars.startUtc,
+          vars.endUtc,
         ],
       });
       qc.invalidateQueries({
@@ -108,10 +113,8 @@ export function useLabelVocabulary() {
 
 export function useDetectionNeighbors(
   detectionJobId: string | null,
-  filename: string | null,
-  startSec: number | null,
-  endSec: number | null,
-  detectionFilename: string | null,
+  startUtc: number | null,
+  endUtc: number | null,
   embeddingSetIds?: string[],
 ) {
   return useQuery({
@@ -119,25 +122,20 @@ export function useDetectionNeighbors(
       "labeling",
       "neighbors",
       detectionJobId,
-      filename,
-      startSec,
-      endSec,
-      detectionFilename,
+      startUtc,
+      endUtc,
       embeddingSetIds,
     ],
     queryFn: () =>
       fetchDetectionNeighbors(detectionJobId!, {
-        filename: filename!,
-        start_sec: startSec!,
-        end_sec: endSec!,
-        detection_filename: detectionFilename ?? undefined,
+        start_utc: startUtc!,
+        end_utc: endUtc!,
         embedding_set_ids: embeddingSetIds,
       }),
     enabled:
       detectionJobId !== null &&
-      filename !== null &&
-      startSec !== null &&
-      endSec !== null,
+      startUtc !== null &&
+      endUtc !== null,
     staleTime: Infinity,
   });
 }
@@ -208,12 +206,13 @@ export function usePredictVocalizationLabels(
 
 export function useAnnotations(
   detectionJobId: string | null,
-  rowId: string | null,
+  startUtc: number | null,
+  endUtc: number | null,
 ) {
   return useQuery({
-    queryKey: ["labeling", "annotations", detectionJobId, rowId],
-    queryFn: () => fetchAnnotations(detectionJobId!, rowId!),
-    enabled: detectionJobId !== null && rowId !== null,
+    queryKey: ["labeling", "annotations", detectionJobId, startUtc, endUtc],
+    queryFn: () => fetchAnnotations(detectionJobId!, startUtc!, endUtc!),
+    enabled: detectionJobId !== null && startUtc !== null && endUtc !== null,
   });
 }
 
@@ -222,13 +221,14 @@ export function useCreateAnnotation() {
   return useMutation({
     mutationFn: (params: {
       detectionJobId: string;
-      rowId: string;
+      startUtc: number;
+      endUtc: number;
       start_offset_sec: number;
       end_offset_sec: number;
       label: string;
       notes?: string;
     }) =>
-      createAnnotation(params.detectionJobId, params.rowId, {
+      createAnnotation(params.detectionJobId, params.startUtc, params.endUtc, {
         start_offset_sec: params.start_offset_sec,
         end_offset_sec: params.end_offset_sec,
         label: params.label,
@@ -240,7 +240,8 @@ export function useCreateAnnotation() {
           "labeling",
           "annotations",
           vars.detectionJobId,
-          vars.rowId,
+          vars.startUtc,
+          vars.endUtc,
         ],
       });
       qc.invalidateQueries({
@@ -257,7 +258,8 @@ export function useUpdateAnnotation() {
     mutationFn: (params: {
       annotationId: string;
       detectionJobId: string;
-      rowId: string;
+      startUtc: number;
+      endUtc: number;
       start_offset_sec?: number;
       end_offset_sec?: number;
       label?: string;
@@ -273,7 +275,8 @@ export function useUpdateAnnotation() {
           "labeling",
           "annotations",
           vars.detectionJobId,
-          vars.rowId,
+          vars.startUtc,
+          vars.endUtc,
         ],
       });
     },
@@ -286,7 +289,8 @@ export function useDeleteAnnotation() {
     mutationFn: (params: {
       annotationId: string;
       detectionJobId: string;
-      rowId: string;
+      startUtc: number;
+      endUtc: number;
     }) => deleteAnnotation(params.annotationId),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({
@@ -294,7 +298,8 @@ export function useDeleteAnnotation() {
           "labeling",
           "annotations",
           vars.detectionJobId,
-          vars.rowId,
+          vars.startUtc,
+          vars.endUtc,
         ],
       });
     },
