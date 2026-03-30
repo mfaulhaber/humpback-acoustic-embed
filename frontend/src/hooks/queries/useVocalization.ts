@@ -182,7 +182,12 @@ export function useCreateVocClassifierInferenceJob() {
 
 export function useVocClassifierInferenceResults(
   jobId: string | null,
-  params?: { offset?: number; limit?: number; thresholds?: Record<string, number> },
+  params?: {
+    offset?: number;
+    limit?: number;
+    thresholds?: Record<string, number>;
+    sort?: string;
+  },
 ) {
   return useQuery({
     queryKey: ["vocalization", "inference-results", jobId, params],

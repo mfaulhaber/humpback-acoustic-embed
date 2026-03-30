@@ -551,6 +551,7 @@ def run_detection(
                                 "start_sec": ev_start,
                                 "end_sec": ev_end,
                                 "embedding": all_emb[best_idx].tolist(),
+                                "confidence": best_conf,
                             }
                         )
 
@@ -760,6 +761,7 @@ def write_detection_embeddings(records: list[dict], path: Path) -> None:
             ("start_sec", pa.float32()),
             ("end_sec", pa.float32()),
             ("embedding", pa.list_(pa.float32(), vector_dim)),
+            ("confidence", pa.float32()),
         ]
     )
     table = pa.table(
@@ -768,6 +770,7 @@ def write_detection_embeddings(records: list[dict], path: Path) -> None:
             "start_sec": [r["start_sec"] for r in records],
             "end_sec": [r["end_sec"] for r in records],
             "embedding": [r["embedding"] for r in records],
+            "confidence": [r.get("confidence") for r in records],
         },
         schema=schema,
     )

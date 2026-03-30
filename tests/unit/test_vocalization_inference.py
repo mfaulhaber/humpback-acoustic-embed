@@ -192,3 +192,91 @@ class TestReadPredictions:
     def test_read_nonexistent(self, tmp_path):
         rows = read_predictions(tmp_path / "nope.parquet", ["whup"], {"whup": 0.5})
         assert rows == []
+
+
+class TestConfidenceThreading:
+    """Tests for detection confidence flowing through the inference pipeline."""
+
+    def test_run_inference_with_confidences(self, tmp_path):
+        """run_inference writes confidence column when provided."""
+        model_dir, X = _train_and_save(tmp_path)
+        output_path = tmp_path / "output" / "predictions.parquet"
+
+        n = len(X)
+        filenames = [f"file_{i}.wav" for i in range(n)]
+        start_secs = [float(i * 5) for i in range(n)]
+        end_secs = [float(i * 5 + 5) for i in range(n)]
+        confidences = [0.9 - i * 0.01 for i in range(n)]
+
+        run_inference(
+            model_dir,
+            X,
+            filenames,
+            start_secs,
+            end_secs,
+            output_path,
+            confidences=confidences,
+        )
+
+        table = pq.read_table(str(output_path))
+        assert "confidence" in table.column_names
+        stored = table.column("confidence").to_pylist()
+        assert len(stored) == n
+        assert stored[0] == pytest.approx(0.9, abs=1e-4)
+
+    def test_run_inference_without_confidences(self, tmp_path):
+        """run_inference omits confidence column when not provided."""
+        model_dir, X = _train_and_save(tmp_path)
+        output_path = tmp_path / "output" / "predictions.parquet"
+
+        filenames = [f"file_{i}.wav" for i in range(len(X))]
+        start_secs = [float(i * 5) for i in range(len(X))]
+        end_secs = [float(i * 5 + 5) for i in range(len(X))]
+
+        run_inference(model_dir, X, filenames, start_secs, end_secs, output_path)
+
+        table = pq.read_table(str(output_path))
+        assert "confidence" not in table.column_names
+
+    def test_read_predictions_with_confidence(self, tmp_path):
+        """read_predictions includes confidence when present in parquet."""
+        model_dir, X = _train_and_save(tmp_path)
+        output_path = tmp_path / "output" / "predictions.parquet"
+
+        n = len(X)
+        filenames = [f"file_{i}.wav" for i in range(n)]
+        start_secs = [float(i * 5) for i in range(n)]
+        end_secs = [float(i * 5 + 5) for i in range(n)]
+        confidences = [0.8, 0.6] + [0.5] * (n - 2)
+
+        run_inference(
+            model_dir,
+            X,
+            filenames,
+            start_secs,
+            end_secs,
+            output_path,
+            confidences=confidences,
+        )
+
+        _, vocabulary, thresholds = load_vocalization_model(model_dir)
+        rows = read_predictions(output_path, vocabulary, thresholds)
+
+        assert rows[0]["confidence"] == pytest.approx(0.8, abs=1e-4)
+        assert rows[1]["confidence"] == pytest.approx(0.6, abs=1e-4)
+
+    def test_read_predictions_without_confidence(self, tmp_path):
+        """read_predictions omits confidence when not in parquet."""
+        model_dir, X = _train_and_save(tmp_path)
+        output_path = tmp_path / "output" / "predictions.parquet"
+
+        filenames = [f"file_{i}.wav" for i in range(len(X))]
+        start_secs = [float(i * 5) for i in range(len(X))]
+        end_secs = [float(i * 5 + 5) for i in range(len(X))]
+
+        run_inference(model_dir, X, filenames, start_secs, end_secs, output_path)
+
+        _, vocabulary, thresholds = load_vocalization_model(model_dir)
+        rows = read_predictions(output_path, vocabulary, thresholds)
+
+        assert "confidence" not in rows[0]

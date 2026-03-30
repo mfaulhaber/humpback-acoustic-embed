@@ -333,3 +333,136 @@ async def test_model_training_source_no_training_job(client, app_settings):
     data = resp.json()
     assert data["source_config"] is None
     assert data["parameters"] is None
+
+
+# ---- Confidence Sort ----
+
+
+@pytest.mark.asyncio
+async def test_inference_results_confidence_sort(client, app_settings):
+    """Results with sort=confidence_desc return rows ordered by confidence."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from humpback.models.vocalization import VocalizationInferenceJob
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        m = VocalizationClassifierModel(
+            name="conf-sort-model",
+            model_dir_path="/fake/dir",
+            vocabulary_snapshot=json.dumps(["whup"]),
+            per_class_thresholds=json.dumps({"whup": 0.5}),
+        )
+        session.add(m)
+        await session.commit()
+        model_id = m.id
+
+    # Write a predictions parquet with known confidence values
+    output_dir = app_settings.storage_root / "vocalization_inference" / "conf-job"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "predictions.parquet"
+
+    table = pa.table(
+        {
+            "filename": ["a.wav", "b.wav", "c.wav"],
+            "start_sec": [0.0, 5.0, 10.0],
+            "end_sec": [5.0, 10.0, 15.0],
+            "confidence": [0.3, 0.9, 0.6],
+            "whup": [0.8, 0.2, 0.5],
+        }
+    )
+    pq.write_table(table, str(output_path))
+
+    # Create a completed inference job pointing to that parquet
+    async with sf() as session:
+        job = VocalizationInferenceJob(
+            id="conf-job",
+            vocalization_model_id=model_id,
+            source_type="embedding_set",
+            source_id="es-fake",
+            status="complete",
+            output_path=str(output_path),
+        )
+        session.add(job)
+        await session.commit()
+
+    # Without sort — parquet insertion order
+    resp = await client.get("/vocalization/inference-jobs/conf-job/results")
+    assert resp.status_code == 200
+    rows = resp.json()
+    confs_unsorted = [r["confidence"] for r in rows]
+    assert confs_unsorted == [0.3, 0.9, 0.6]  # insertion order
+
+    # With sort=confidence_desc
+    resp2 = await client.get(
+        "/vocalization/inference-jobs/conf-job/results?sort=confidence_desc"
+    )
+    assert resp2.status_code == 200
+    rows2 = resp2.json()
+    confs_sorted = [r["confidence"] for r in rows2]
+    assert confs_sorted == [0.9, 0.6, 0.3]
+
+
+@pytest.mark.asyncio
+async def test_inference_results_confidence_null(client, app_settings):
+    """Results without confidence column return null and sort degrades gracefully."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from humpback.models.vocalization import VocalizationInferenceJob
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        m = VocalizationClassifierModel(
+            name="no-conf-model",
+            model_dir_path="/fake/dir",
+            vocabulary_snapshot=json.dumps(["whup"]),
+            per_class_thresholds=json.dumps({"whup": 0.5}),
+        )
+        session.add(m)
+        await session.commit()
+        model_id = m.id
+
+    # Write predictions WITHOUT confidence column
+    output_dir = app_settings.storage_root / "vocalization_inference" / "noconf-job"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "predictions.parquet"
+
+    table = pa.table(
+        {
+            "filename": ["a.wav", "b.wav"],
+            "start_sec": [0.0, 5.0],
+            "end_sec": [5.0, 10.0],
+            "whup": [0.8, 0.2],
+        }
+    )
+    pq.write_table(table, str(output_path))
+
+    async with sf() as session:
+        job = VocalizationInferenceJob(
+            id="noconf-job",
+            vocalization_model_id=model_id,
+            source_type="embedding_set",
+            source_id="es-fake",
+            status="complete",
+            output_path=str(output_path),
+        )
+        session.add(job)
+        await session.commit()
+
+    # confidence should be null
+    resp = await client.get("/vocalization/inference-jobs/noconf-job/results")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert all(r["confidence"] is None for r in rows)
+
+    # sort=confidence_desc should not error
+    resp2 = await client.get(
+        "/vocalization/inference-jobs/noconf-job/results?sort=confidence_desc"
+    )
+    assert resp2.status_code == 200

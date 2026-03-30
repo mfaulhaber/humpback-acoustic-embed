@@ -291,6 +291,7 @@ async def get_vocalization_inference_results(
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     thresholds: str | None = Query(None),
+    sort: str | None = Query(None),
 ):
     """Paginated results with optional threshold overrides.
 
@@ -326,6 +327,10 @@ async def get_vocalization_inference_results(
         Path(job.output_path), vocabulary, stored_thresholds, threshold_overrides
     )
 
+    # Server-side sort
+    if sort == "confidence_desc":
+        rows.sort(key=lambda r: r.get("confidence") or -1.0, reverse=True)
+
     # Paginate
     page = rows[offset : offset + limit]
     return [
@@ -335,6 +340,7 @@ async def get_vocalization_inference_results(
             end_sec=r["end_sec"],
             start_utc=r.get("start_utc"),
             end_utc=r.get("end_utc"),
+            confidence=r.get("confidence"),
             scores=r["scores"],
             tags=r["tags"],
         )

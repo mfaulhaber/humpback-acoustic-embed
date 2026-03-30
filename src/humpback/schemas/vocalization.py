@@ -115,5 +115,6 @@ class VocalizationPredictionRow(BaseModel):
     end_sec: float
     start_utc: float | None = None
     end_utc: float | None = None
+    confidence: float | None = None
     scores: dict[str, float]
     tags: list[str]

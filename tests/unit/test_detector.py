@@ -399,6 +399,55 @@ class TestDetectionEmbeddingStorage:
         write_detection_embeddings([], emb_path)
         assert not emb_path.exists()
 
+    def test_write_with_confidence(self, tmp_path):
+        """write_detection_embeddings stores confidence column in parquet."""
+        import pyarrow.parquet as pq
+
+        records = [
+            {
+                "filename": "a.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "embedding": [1.0, 2.0],
+                "confidence": 0.95,
+            },
+            {
+                "filename": "b.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "embedding": [3.0, 4.0],
+                "confidence": 0.42,
+            },
+        ]
+        emb_path = tmp_path / "detection_embeddings.parquet"
+        write_detection_embeddings(records, emb_path)
+
+        table = pq.read_table(str(emb_path))
+        assert "confidence" in table.schema.names
+        confs = table.column("confidence").to_pylist()
+        assert confs[0] == pytest.approx(0.95, abs=1e-4)
+        assert confs[1] == pytest.approx(0.42, abs=1e-4)
+
+    def test_write_without_confidence_key(self, tmp_path):
+        """Records without confidence key write None for the column."""
+        import pyarrow.parquet as pq
+
+        records = [
+            {
+                "filename": "a.wav",
+                "start_sec": 0.0,
+                "end_sec": 5.0,
+                "embedding": [1.0, 2.0],
+            },
+        ]
+        emb_path = tmp_path / "detection_embeddings.parquet"
+        write_detection_embeddings(records, emb_path)
+
+        table = pq.read_table(str(emb_path))
+        assert "confidence" in table.schema.names
+        confs = table.column("confidence").to_pylist()
+        assert confs[0] is None
+
 
 def test_run_detection_emit_embeddings(tmp_path):
     """emit_embeddings=True in run_detection() produces embedding records."""
