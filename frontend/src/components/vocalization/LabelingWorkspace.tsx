@@ -66,7 +66,7 @@ const TYPE_COLORS = [
   "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200",
 ];
 
-type SortMode = "uncertainty" | "score_desc" | "chronological";
+type SortMode = "uncertainty" | "score_desc" | "chronological" | "confidence_desc";
 
 /** Row key for pending label maps */
 function rowKey(startUtc: number | null, endUtc: number | null): string {
@@ -91,7 +91,9 @@ export function LabelingWorkspace({
     job?.vocalization_model_id ?? null,
   );
   const [page, setPage] = useState(0);
-  const [sortMode, setSortMode] = useState<SortMode>("score_desc");
+  const [sortMode, setSortMode] = useState<SortMode>(
+    source.type === "detection_job" ? "confidence_desc" : "score_desc",
+  );
   const [saving, setSaving] = useState(false);
 
   // Pending label state (local accumulation)
@@ -132,11 +134,17 @@ export function LabelingWorkspace({
   // Fetch results (API max is 1000 per page)
   const { data: allRows = [], isLoading } = useVocClassifierInferenceResults(
     job?.status === "complete" ? inferenceJobId : null,
-    { offset: 0, limit: 1000 },
+    {
+      offset: 0,
+      limit: 1000,
+      sort: sortMode === "confidence_desc" ? "confidence_desc" : undefined,
+    },
   );
 
-  // Sort rows
+  // Sort rows (confidence_desc is server-side sorted, skip client re-sort)
   const sortedRows = useMemo(() => {
+    if (sortMode === "confidence_desc") return allRows;
+
     const midpoint =
       vocabulary.length > 0
         ? vocabulary.reduce(
@@ -170,6 +178,8 @@ export function LabelingWorkspace({
     }
     return rows;
   }, [allRows, sortMode, vocabulary, thresholds]);
+
+  const hasConfidence = allRows.length > 0 && allRows[0].confidence != null;
 
   const pageRows = sortedRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
@@ -331,6 +341,11 @@ export function LabelingWorkspace({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              {hasConfidence && (
+                <SelectItem value="confidence_desc">
+                  Detection Confidence
+                </SelectItem>
+              )}
               <SelectItem value="score_desc">Score (high first)</SelectItem>
               <SelectItem value="uncertainty">Uncertainty</SelectItem>
               <SelectItem value="chronological">Chronological</SelectItem>

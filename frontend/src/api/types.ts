@@ -871,6 +871,7 @@ export interface VocClassifierPredictionRow {
   end_sec: number;
   start_utc: number | null;
   end_utc: number | null;
+  confidence: number | null;
   scores: Record<string, number>;
   tags: string[];
 }

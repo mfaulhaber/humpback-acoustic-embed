@@ -629,12 +629,18 @@ export const fetchVocClassifierInferenceJob = (jobId: string) =>
 
 export const fetchVocClassifierInferenceResults = (
   jobId: string,
-  params?: { offset?: number; limit?: number; thresholds?: Record<string, number> },
+  params?: {
+    offset?: number;
+    limit?: number;
+    thresholds?: Record<string, number>;
+    sort?: string;
+  },
 ) => {
   const qs = new URLSearchParams();
   if (params?.offset !== undefined) qs.set("offset", String(params.offset));
   if (params?.limit !== undefined) qs.set("limit", String(params.limit));
   if (params?.thresholds) qs.set("thresholds", JSON.stringify(params.thresholds));
+  if (params?.sort) qs.set("sort", params.sort);
   const suffix = qs.toString() ? `?${qs}` : "";
   return api<VocClassifierPredictionRow[]>(
     `/vocalization/inference-jobs/${jobId}/results${suffix}`,

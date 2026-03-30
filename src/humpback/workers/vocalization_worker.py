@@ -255,6 +255,7 @@ async def run_vocalization_inference_job(
             end_secs,
             start_utcs,
             end_utcs,
+            confidences,
         ) = await _load_source_embeddings(session, job, settings)
 
         # Run inference
@@ -271,6 +272,7 @@ async def run_vocalization_inference_job(
             output_path,
             start_utcs=start_utcs if start_utcs else None,
             end_utcs=end_utcs if end_utcs else None,
+            confidences=confidences,
         )
 
         await session.execute(
@@ -311,10 +313,12 @@ async def _load_source_embeddings(
     list[float],
     list[float],
     list[float],
+    list[float] | None,
 ]:
     """Load embeddings from the job's source.
 
-    Returns (embeddings, filenames, start_secs, end_secs, start_utcs, end_utcs).
+    Returns (embeddings, filenames, start_secs, end_secs, start_utcs, end_utcs,
+    confidences).  confidences is None when unavailable (embedding sets, old jobs).
     """
     if job.source_type == "detection_job":
         from humpback.classifier.detection_rows import parse_recording_timestamp
@@ -333,6 +337,11 @@ async def _load_source_embeddings(
             dtype=np.float32,
         )
 
+        confidences: list[float] | None = None
+        if "confidence" in table.schema.names:
+            raw = table.column("confidence").to_pylist()
+            confidences = [float(c) if c is not None else 0.0 for c in raw]
+
         start_utcs: list[float] = []
         end_utcs: list[float] = []
         for i, fname in enumerate(filenames):
@@ -341,7 +350,15 @@ async def _load_source_embeddings(
             start_utcs.append(base + start_secs[i])
             end_utcs.append(base + end_secs[i])
 
-        return embeddings, filenames, start_secs, end_secs, start_utcs, end_utcs
+        return (
+            embeddings,
+            filenames,
+            start_secs,
+            end_secs,
+            start_utcs,
+            end_utcs,
+            confidences,
+        )
 
     elif job.source_type == "embedding_set":
         es_result = await session.execute(
@@ -363,7 +380,7 @@ async def _load_source_embeddings(
             [row.as_py() for row in table.column("embedding")],
             dtype=np.float32,
         )
-        return embeddings, filenames, start_secs, end_secs, [], []
+        return embeddings, filenames, start_secs, end_secs, [], [], None
 
     elif job.source_type == "rescore":
         # Re-score from a previous inference job's output

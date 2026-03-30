@@ -69,6 +69,7 @@ def run_inference(
     output_path: Path,
     start_utcs: list[float] | None = None,
     end_utcs: list[float] | None = None,
+    confidences: list[float] | None = None,
 ) -> dict[str, Any]:
     """Run vocalization inference and write predictions parquet.
 
@@ -93,6 +94,8 @@ def run_inference(
         columns["start_utc"] = start_utcs
     if end_utcs is not None:
         columns["end_utc"] = end_utcs
+    if confidences is not None:
+        columns["confidence"] = confidences
 
     # Add per-type score columns
     for type_name in vocabulary:
@@ -167,6 +170,9 @@ def read_predictions(
             row["start_utc"] = float(table.column("start_utc")[i].as_py())
         if "end_utc" in table.column_names:
             row["end_utc"] = float(table.column("end_utc")[i].as_py())
+        if "confidence" in table.column_names:
+            val = table.column("confidence")[i].as_py()
+            row["confidence"] = float(val) if val is not None else None
 
         scores: dict[str, float] = {}
         tags: list[str] = []
