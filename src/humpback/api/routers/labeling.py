@@ -64,6 +64,29 @@ async def create_vocalization_label(
     end_utc: float = Query(...),
 ):
     """Add a vocalization type label to a detection row."""
+    from sqlalchemy import and_, delete
+
+    # Mutual exclusivity: "(Negative)" and type labels cannot coexist
+    same_window = and_(
+        VocalizationLabel.detection_job_id == detection_job_id,
+        VocalizationLabel.start_utc == start_utc,
+        VocalizationLabel.end_utc == end_utc,
+    )
+    if body.label == "(Negative)":
+        # Remove any existing type labels on this window
+        await session.execute(
+            delete(VocalizationLabel).where(
+                same_window, VocalizationLabel.label != "(Negative)"
+            )
+        )
+    else:
+        # Remove any existing "(Negative)" label on this window
+        await session.execute(
+            delete(VocalizationLabel).where(
+                same_window, VocalizationLabel.label == "(Negative)"
+            )
+        )
+
     label = VocalizationLabel(
         detection_job_id=detection_job_id,
         start_utc=start_utc,

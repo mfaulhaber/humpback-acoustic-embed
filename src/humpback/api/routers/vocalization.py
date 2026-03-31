@@ -103,6 +103,10 @@ async def list_vocalization_types(session: SessionDep):
 
 @router.post("/types", response_model=VocalizationTypeOut, status_code=201)
 async def create_vocalization_type(body: VocalizationTypeCreate, session: SessionDep):
+    if body.name.strip().lower() == "(negative)":
+        raise HTTPException(
+            400, '"(Negative)" is reserved and cannot be used as a type name'
+        )
     try:
         vt = await create_type(session, body.name, body.description)
     except Exception as e:
@@ -116,6 +120,10 @@ async def create_vocalization_type(body: VocalizationTypeCreate, session: Sessio
 async def update_vocalization_type(
     type_id: str, body: VocalizationTypeUpdate, session: SessionDep
 ):
+    if body.name is not None and body.name.strip().lower() == "(negative)":
+        raise HTTPException(
+            400, '"(Negative)" is reserved and cannot be used as a type name'
+        )
     vt = await update_type(session, type_id, body.name, body.description)
     if vt is None:
         raise HTTPException(404, "Vocalization type not found")

@@ -243,6 +243,8 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Prefetch semantics**: `time_covered_sec` tracks summed processed audio duration rather than wall-clock range coverage
 - **Parquet row-store**: detection jobs write directly to Parquet row store during detection; TSV is generated on-the-fly for download only; legacy jobs with only TSV are lazily upgraded on first access
 - **Timeline label editing**: enforces single-label-per-row (mutual exclusivity of humpback/orca/ship/background); batch edits via `PATCH /classifier/detection-jobs/{id}/labels` with overlap validation
+- **Vocalization training negatives**: training data assembly from detection jobs only includes explicitly labeled windows; unlabeled windows are excluded. `"(Negative)"` labels are converted to empty set (negative for all types). `"(Negative)"` is mutually exclusive with type labels on the same window.
+- **Vocalization type name guard**: `"(Negative)"` is a reserved label string and cannot be used as a vocalization type name
 
 ---
 
