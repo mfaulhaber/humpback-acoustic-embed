@@ -24,6 +24,7 @@ class VocalizationClassifierModel(UUIDMixin, TimestampMixin, Base):
     per_class_metrics: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
     training_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
     is_active: Mapped[bool] = mapped_column(default=False)
+    training_dataset_id: Mapped[Optional[str]] = mapped_column(default=None)
 
 
 class VocalizationTrainingJob(UUIDMixin, TimestampMixin, Base):
@@ -33,6 +34,7 @@ class VocalizationTrainingJob(UUIDMixin, TimestampMixin, Base):
     source_config: Mapped[str] = mapped_column(Text)  # JSON
     parameters: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
     vocalization_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    training_dataset_id: Mapped[Optional[str]] = mapped_column(default=None)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
 

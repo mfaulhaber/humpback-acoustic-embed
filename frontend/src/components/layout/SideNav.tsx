@@ -43,6 +43,7 @@ const navItems: NavItem[] = [
     children: [
       { label: "Training", to: "/app/vocalization/training" },
       { label: "Labeling", to: "/app/vocalization/labeling" },
+      { label: "Training Data", to: "/app/vocalization/training-data" },
     ],
   },
   { label: "Search", icon: Search, to: "/app/search" },

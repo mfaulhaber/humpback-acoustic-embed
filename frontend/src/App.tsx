@@ -13,6 +13,7 @@ import { LabelProcessingTab } from "@/components/label-processing/LabelProcessin
 import { TimelineViewer } from "@/components/timeline/TimelineViewer";
 import { VocalizationTrainingTab } from "@/components/vocalization/VocalizationTrainingTab";
 import { VocalizationLabelingTab } from "@/components/vocalization/VocalizationLabelingTab";
+import { TrainingDataView } from "@/components/vocalization/TrainingDataView";
 
 export default function App() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/app/vocalization" element={<Navigate to="/app/vocalization/training" replace />} />
         <Route path="/app/vocalization/training" element={<VocalizationTrainingTab />} />
         <Route path="/app/vocalization/labeling" element={<VocalizationLabelingTab />} />
+        <Route path="/app/vocalization/training-data" element={<TrainingDataView />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />

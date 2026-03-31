@@ -818,7 +818,8 @@ export interface VocalizationTrainingSourceConfig {
 }
 
 export interface VocClassifierTrainingJobCreate {
-  source_config: VocalizationTrainingSourceConfig;
+  source_config?: VocalizationTrainingSourceConfig | null;
+  training_dataset_id?: string | null;
   parameters?: Record<string, unknown> | null;
 }
 
@@ -843,6 +844,7 @@ export interface VocClassifierModel {
   per_class_metrics: Record<string, unknown> | null;
   training_summary: Record<string, unknown> | null;
   is_active: boolean;
+  training_dataset_id: string | null;
   created_at: string;
 }
 
@@ -916,6 +918,49 @@ export type LabelingSource =
   | { type: "detection_job"; jobId: string }
   | { type: "embedding_set"; embeddingSetId: string }
   | { type: "local"; folderPath: string };
+
+// ---- Training Datasets ----
+
+export interface TrainingDataset {
+  id: string;
+  name: string;
+  source_config: Record<string, unknown>;
+  total_rows: number;
+  vocabulary: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrainingDatasetRow {
+  row_index: number;
+  filename: string;
+  start_sec: number;
+  end_sec: number;
+  source_type: string;
+  source_id: string;
+  confidence: number | null;
+  labels: string[];
+}
+
+export interface TrainingDatasetRowsResponse {
+  total: number;
+  rows: TrainingDatasetRow[];
+}
+
+export interface TrainingDatasetLabel {
+  id: string;
+  training_dataset_id: string;
+  row_index: number;
+  label: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrainingDatasetExtendRequest {
+  embedding_set_ids?: string[];
+  detection_job_ids?: string[];
+}
 
 // ---- Health ----
 

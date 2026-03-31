@@ -9,6 +9,7 @@ import {
   useCreateVocClassifierTrainingJob,
   useVocClassifierTrainingJob,
   useActivateVocClassifierModel,
+  useExtendTrainingDataset,
 } from "@/hooks/queries/useVocalization";
 import type { LabelingSource } from "@/api/types";
 
@@ -33,43 +34,70 @@ export function RetrainFooter({ source, inferenceJobId, labelCount }: Props) {
   );
 
   const createTraining = useCreateVocClassifierTrainingJob();
+  const extendDataset = useExtendTrainingDataset();
   const activateMut = useActivateVocClassifierModel();
   const [trainingJobId, setTrainingJobId] = useState<string | null>(null);
+  const [extending, setExtending] = useState(false);
   const { data: trainingJob } = useVocClassifierTrainingJob(trainingJobId);
 
   const isTraining =
     trainingJob?.status === "queued" || trainingJob?.status === "running";
   const isComplete = trainingJob?.status === "complete";
 
-  function handleRetrain() {
+  async function handleRetrain() {
     if (!retrainModel) return;
 
-    // Build source config: extend existing with this detection job
-    const existingConfig = trainingSource?.source_config ?? {
-      embedding_set_ids: [] as string[],
-      detection_job_ids: [] as string[],
-    };
+    const datasetId = retrainModel.training_dataset_id;
 
-    const detJobIds: string[] = [
-      ...(existingConfig.detection_job_ids ?? []),
-    ];
-    if (source.type === "detection_job" && !detJobIds.includes(source.jobId)) {
-      detJobIds.push(source.jobId);
-    }
+    if (datasetId) {
+      // New flow: extend dataset with current detection job, then retrain
+      setExtending(true);
+      try {
+        if (source.type === "detection_job") {
+          await extendDataset.mutateAsync({
+            datasetId,
+            body: { detection_job_ids: [source.jobId] },
+          });
+        }
+        createTraining.mutate(
+          { training_dataset_id: datasetId },
+          { onSuccess: (job) => setTrainingJobId(job.id) },
+        );
+      } finally {
+        setExtending(false);
+      }
+    } else {
+      // Legacy flow: build source_config from scratch
+      const existingConfig = trainingSource?.source_config ?? {
+        embedding_set_ids: [] as string[],
+        detection_job_ids: [] as string[],
+      };
 
-    createTraining.mutate(
-      {
-        source_config: {
-          embedding_set_ids: existingConfig.embedding_set_ids ?? [],
-          detection_job_ids: detJobIds,
+      const detJobIds: string[] = [
+        ...(existingConfig.detection_job_ids ?? []),
+      ];
+      if (
+        source.type === "detection_job" &&
+        !detJobIds.includes(source.jobId)
+      ) {
+        detJobIds.push(source.jobId);
+      }
+
+      createTraining.mutate(
+        {
+          source_config: {
+            embedding_set_ids: existingConfig.embedding_set_ids ?? [],
+            detection_job_ids: detJobIds,
+          },
+          parameters:
+            (trainingSource?.parameters as Record<string, unknown>) ??
+            undefined,
         },
-        parameters:
-          (trainingSource?.parameters as Record<string, unknown>) ?? undefined,
-      },
-      {
-        onSuccess: (job) => setTrainingJobId(job.id),
-      },
-    );
+        {
+          onSuccess: (job) => setTrainingJobId(job.id),
+        },
+      );
+    }
   }
 
   if (labelCount === 0 && !trainingJobId) return null;
@@ -119,15 +147,18 @@ export function RetrainFooter({ source, inferenceJobId, labelCount }: Props) {
             size="sm"
             onClick={handleRetrain}
             disabled={
-              createTraining.isPending || labelCount === 0 || !retrainModel
+              extending ||
+              createTraining.isPending ||
+              labelCount === 0 ||
+              !retrainModel
             }
           >
-            {createTraining.isPending ? (
+            {extending || createTraining.isPending ? (
               <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
             ) : (
               <RefreshCw className="h-3.5 w-3.5 mr-1" />
             )}
-            Retrain Model
+            {extending ? "Extending dataset..." : "Retrain Model"}
           </Button>
         )}
       </div>
