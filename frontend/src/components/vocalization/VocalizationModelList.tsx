@@ -71,7 +71,7 @@ function ModelRow({
   const [open, setOpen] = useState(false);
   const metrics = model.per_class_metrics as Record<
     string,
-    { ap?: number; f1?: number; precision?: number; recall?: number; n_samples?: number }
+    { ap?: number; f1?: number; precision?: number; recall?: number; n_positive?: number; n_negative?: number }
   > | null;
 
   const meanF1 = computeMeanF1(metrics);
@@ -156,6 +156,7 @@ function ModelRow({
                       <th className="text-right py-1 px-2">Precision</th>
                       <th className="text-right py-1 px-2">Recall</th>
                       <th className="text-right py-1 px-2">Samples</th>
+                      <th className="text-right py-1 px-2">Negatives</th>
                       <th className="text-right py-1 pl-2">Threshold</th>
                     </tr>
                   </thead>
@@ -167,7 +168,8 @@ function ModelRow({
                         <td className="text-right py-1 px-2">{pct(m.f1)}</td>
                         <td className="text-right py-1 px-2">{pct(m.precision)}</td>
                         <td className="text-right py-1 px-2">{pct(m.recall)}</td>
-                        <td className="text-right py-1 px-2">{m.n_samples ?? "—"}</td>
+                        <td className="text-right py-1 px-2">{m.n_positive ?? "—"}</td>
+                        <td className="text-right py-1 px-2">{m.n_negative ?? "—"}</td>
                         <td className="text-right py-1 pl-2">
                           {model.per_class_thresholds[type]?.toFixed(3) ?? "—"}
                         </td>

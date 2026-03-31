@@ -54,6 +54,8 @@ import type {
 } from "@/api/types";
 
 const PAGE_SIZE = 50;
+const NEGATIVE_LABEL = "(Negative)";
+const NEGATIVE_COLOR = "bg-red-100 text-red-800 border-red-200";
 
 const TYPE_COLORS = [
   "bg-emerald-100 text-emerald-800 border-emerald-200",
@@ -128,6 +130,7 @@ export function LabelingWorkspace({
     vocabulary.forEach((t, i) => {
       m.set(t, TYPE_COLORS[i % TYPE_COLORS.length]);
     });
+    m.set(NEGATIVE_LABEL, NEGATIVE_COLOR);
     return m;
   }, [vocabulary]);
 
@@ -493,15 +496,25 @@ function LabelingRow({
 
   const { data: labelVocab = [] } = useLabelVocabulary();
 
-  // Merge vocabulary sources
+  // Merge vocabulary sources (exclude reserved labels)
   const allTypes = useMemo(() => {
     const set = new Set([...vocabulary, ...labelVocab]);
+    set.delete(NEGATIVE_LABEL);
     return Array.from(set).sort();
   }, [vocabulary, labelVocab]);
 
   const existingTypeNames = new Set(existingLabels.map((l) => l.label));
   const pendingAddSet = pendingAdds ?? new Set<string>();
   const pendingRemovalSet = pendingRemovals ?? new Set<string>();
+
+  const hasNegative =
+    existingTypeNames.has(NEGATIVE_LABEL) || pendingAddSet.has(NEGATIVE_LABEL);
+  const showNegativeOption =
+    !hasNegative ||
+    (existingTypeNames.has(NEGATIVE_LABEL) &&
+      existingLabels.some(
+        (l) => l.label === NEGATIVE_LABEL && pendingRemovalSet.has(l.id),
+      ));
 
   // Inference-predicted tags above threshold (suggestions)
   const predictedTags = useMemo(() => {
@@ -519,6 +532,36 @@ function LabelingRow({
       !pendingAddSet.has(t),
   );
 
+  /** Add a label with mutual exclusivity enforcement */
+  function handleAddWithExclusivity(label: string) {
+    if (readonly) return;
+    if (label === NEGATIVE_LABEL) {
+      // Clear all pending type adds
+      for (const t of pendingAddSet) {
+        if (t !== NEGATIVE_LABEL) onRemovePendingAdd(t);
+      }
+      // Mark existing type labels for removal
+      for (const lbl of existingLabels) {
+        if (lbl.label !== NEGATIVE_LABEL && !pendingRemovalSet.has(lbl.id)) {
+          onAddPendingRemoval(lbl.id);
+        }
+      }
+      onAddPending(NEGATIVE_LABEL);
+    } else {
+      // Clear pending "(Negative)" add
+      if (pendingAddSet.has(NEGATIVE_LABEL)) {
+        onRemovePendingAdd(NEGATIVE_LABEL);
+      }
+      // Mark existing "(Negative)" for removal
+      for (const lbl of existingLabels) {
+        if (lbl.label === NEGATIVE_LABEL && !pendingRemovalSet.has(lbl.id)) {
+          onAddPendingRemoval(lbl.id);
+        }
+      }
+      onAddPending(label);
+    }
+  }
+
   // Max score for display
   const maxScore = Math.max(...Object.values(row.scores), 0);
 
@@ -534,7 +577,7 @@ function LabelingRow({
     if (pendingAddSet.has(type)) {
       onRemovePendingAdd(type);
     } else if (!existingTypeNames.has(type)) {
-      onAddPending(type);
+      handleAddWithExclusivity(type);
     }
   }
 
@@ -703,7 +746,7 @@ function LabelingRow({
               ))}
 
             {/* Add label popover */}
-            {!readonly && availableTypes.length > 0 && (
+            {!readonly && (availableTypes.length > 0 || showNegativeOption) && (
               <Popover>
                 <PopoverTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-5 px-1.5">
@@ -715,11 +758,24 @@ function LabelingRow({
                     <button
                       key={t}
                       className="w-full text-left text-xs px-2 py-1 hover:bg-muted rounded"
-                      onClick={() => onAddPending(t)}
+                      onClick={() => handleAddWithExclusivity(t)}
                     >
                       {t}
                     </button>
                   ))}
+                  {showNegativeOption && (
+                    <>
+                      {availableTypes.length > 0 && (
+                        <div className="border-t my-1" />
+                      )}
+                      <button
+                        className="w-full text-left text-xs px-2 py-1 hover:bg-red-50 rounded text-red-700"
+                        onClick={() => handleAddWithExclusivity(NEGATIVE_LABEL)}
+                      >
+                        {NEGATIVE_LABEL}
+                      </button>
+                    </>
+                  )}
                 </PopoverContent>
               </Popover>
             )}

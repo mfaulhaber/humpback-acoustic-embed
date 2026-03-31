@@ -139,14 +139,23 @@ async def run_vocalization_training_job(
                 row_end = base_epoch + float(end_secs[i])
                 utc_key = (row_start, row_end)
 
+                # Only include explicitly labeled windows
+                if utc_key not in labels_by_utc:
+                    continue
+
                 dedup_key = f"{fname}:{start_secs[i]}:{end_secs[i]}"
                 if dedup_key in seen_keys:
                     continue
                 seen_keys.add(dedup_key)
 
+                label_set = labels_by_utc[utc_key]
+                # "(Negative)" means confirmed negative for all types
+                if "(Negative)" in label_set:
+                    label_set = set()
+
                 vec = np.array(embeddings_col[i].as_py(), dtype=np.float32)
                 all_embeddings.append(vec)
-                all_label_sets.append(labels_by_utc.get(utc_key, set()))
+                all_label_sets.append(label_set)
 
         if not all_embeddings:
             raise ValueError("No embeddings collected from source config")

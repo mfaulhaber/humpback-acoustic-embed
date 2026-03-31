@@ -52,6 +52,27 @@ async def test_vocabulary_duplicate(client):
 
 
 @pytest.mark.asyncio
+async def test_vocabulary_reject_negative_name(client):
+    """Creating or renaming a type to (Negative) is rejected."""
+    resp = await client.post("/vocalization/types", json={"name": "(Negative)"})
+    assert resp.status_code == 400
+
+    # Case-insensitive
+    resp2 = await client.post("/vocalization/types", json={"name": "(negative)"})
+    assert resp2.status_code == 400
+
+    # Create a valid type, then try to rename
+    resp3 = await client.post("/vocalization/types", json={"name": "TestType"})
+    assert resp3.status_code == 201
+    type_id = resp3.json()["id"]
+
+    resp4 = await client.put(
+        f"/vocalization/types/{type_id}", json={"name": "(Negative)"}
+    )
+    assert resp4.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_vocabulary_delete_nonexistent(client):
     resp = await client.delete("/vocalization/types/nonexistent")
     assert resp.status_code == 404

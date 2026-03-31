@@ -512,6 +512,251 @@ async def test_detection_neighbors_hydrophone_utc(client, app_settings, tmp_path
     assert data["total_candidates"] > 0
 
 
+# ---- Negative Label Mutual Exclusivity ----
+
+
+@pytest.mark.asyncio
+async def test_negative_label_removes_type_labels(client):
+    """Adding (Negative) removes existing type labels on the same window."""
+    s_utc = BASE_EPOCH + 600.0
+    e_utc = BASE_EPOCH + 605.0
+    qs = _utc_qs(s_utc, e_utc)
+    job_id = "neg-test-job"
+
+    # Create type labels
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{qs}",
+        json={"label": "whup"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{qs}",
+        json={"label": "moan"},
+    )
+
+    # Verify both exist
+    resp = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    assert len(resp.json()) == 2
+
+    # Add (Negative) — should remove both type labels
+    resp2 = await client.post(
+        f"/labeling/vocalization-labels/{job_id}{qs}",
+        json={"label": "(Negative)"},
+    )
+    assert resp2.status_code == 201
+
+    # Only (Negative) should remain
+    resp3 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    labels = resp3.json()
+    assert len(labels) == 1
+    assert labels[0]["label"] == "(Negative)"
+
+
+@pytest.mark.asyncio
+async def test_type_label_removes_negative(client):
+    """Adding a type label removes existing (Negative) on the same window."""
+    s_utc = BASE_EPOCH + 700.0
+    e_utc = BASE_EPOCH + 705.0
+    qs = _utc_qs(s_utc, e_utc)
+    job_id = "neg-test-job2"
+
+    # Create (Negative) label
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{qs}",
+        json={"label": "(Negative)"},
+    )
+
+    resp = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["label"] == "(Negative)"
+
+    # Add type label — should remove (Negative)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{qs}",
+        json={"label": "whup"},
+    )
+
+    resp2 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    labels = resp2.json()
+    assert len(labels) == 1
+    assert labels[0]["label"] == "whup"
+
+
+@pytest.mark.asyncio
+async def test_negative_does_not_affect_other_windows(client):
+    """Mutual exclusivity only applies to the same window."""
+    job_id = "neg-test-job3"
+    qs1 = _utc_qs(BASE_EPOCH + 800.0, BASE_EPOCH + 805.0)
+    qs2 = _utc_qs(BASE_EPOCH + 810.0, BASE_EPOCH + 815.0)
+
+    # Label window 1 with type, window 2 with (Negative)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{qs1}",
+        json={"label": "whup"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{qs2}",
+        json={"label": "(Negative)"},
+    )
+
+    # Both windows should retain their labels
+    resp1 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs1}")
+    assert len(resp1.json()) == 1
+    assert resp1.json()[0]["label"] == "whup"
+
+    resp2 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs2}")
+    assert len(resp2.json()) == 1
+    assert resp2.json()[0]["label"] == "(Negative)"
+
+
+# ---- Training Data Assembly ----
+
+
+@pytest.mark.asyncio
+async def test_training_assembly_skips_unlabeled_windows(
+    client, app_settings, tmp_path
+):
+    """Verify that training only includes labeled windows, not unlabeled ones."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Row 1: label with "whup"
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+    # Row 2: leave unlabeled (should be excluded from training)
+
+    # Simulate training data assembly (same logic as vocalization_worker.py)
+    from sqlalchemy import select
+
+    from humpback.classifier.detection_rows import parse_recording_timestamp
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.labeling import VocalizationLabel
+    from humpback.storage import detection_embeddings_path
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        result = await session.execute(
+            select(VocalizationLabel).where(
+                VocalizationLabel.detection_job_id == job_id
+            )
+        )
+        voc_labels = result.scalars().all()
+
+        labels_by_utc: dict[tuple[float, float], set[str]] = {}
+        for vl in voc_labels:
+            key = (vl.start_utc, vl.end_utc)
+            if key not in labels_by_utc:
+                labels_by_utc[key] = set()
+            labels_by_utc[key].add(vl.label)
+
+        emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+        table = pq.read_table(str(emb_path))
+        filenames = table.column("filename").to_pylist()
+        start_secs = table.column("start_sec").to_pylist()
+        end_secs = table.column("end_sec").to_pylist()
+
+        included_label_sets: list[set[str]] = []
+        for i in range(table.num_rows):
+            fname = filenames[i]
+            ts = parse_recording_timestamp(fname)
+            base_epoch = ts.timestamp() if ts else 0.0
+            utc_key = (
+                base_epoch + float(start_secs[i]),
+                base_epoch + float(end_secs[i]),
+            )
+
+            if utc_key not in labels_by_utc:
+                continue
+
+            label_set = labels_by_utc[utc_key]
+            if "(Negative)" in label_set:
+                label_set = set()
+            included_label_sets.append(label_set)
+
+    # Only 1 of 2 rows should be included (the labeled one)
+    assert len(included_label_sets) == 1
+    assert included_label_sets[0] == {"whup"}
+
+
+@pytest.mark.asyncio
+async def test_training_assembly_negative_becomes_empty_set(
+    client, app_settings, tmp_path
+):
+    """Verify that (Negative) labels become empty set in training assembly."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Row 1: label with "whup"
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+    # Row 2: label with "(Negative)"
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
+        json={"label": "(Negative)"},
+    )
+
+    from sqlalchemy import select
+
+    from humpback.classifier.detection_rows import parse_recording_timestamp
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.labeling import VocalizationLabel
+    from humpback.storage import detection_embeddings_path
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        result = await session.execute(
+            select(VocalizationLabel).where(
+                VocalizationLabel.detection_job_id == job_id
+            )
+        )
+        voc_labels = result.scalars().all()
+
+        labels_by_utc: dict[tuple[float, float], set[str]] = {}
+        for vl in voc_labels:
+            key = (vl.start_utc, vl.end_utc)
+            if key not in labels_by_utc:
+                labels_by_utc[key] = set()
+            labels_by_utc[key].add(vl.label)
+
+        emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+        table = pq.read_table(str(emb_path))
+        filenames = table.column("filename").to_pylist()
+        start_secs = table.column("start_sec").to_pylist()
+        end_secs = table.column("end_sec").to_pylist()
+
+        included_label_sets: list[set[str]] = []
+        for i in range(table.num_rows):
+            fname = filenames[i]
+            ts = parse_recording_timestamp(fname)
+            base_epoch = ts.timestamp() if ts else 0.0
+            utc_key = (
+                base_epoch + float(start_secs[i]),
+                base_epoch + float(end_secs[i]),
+            )
+
+            if utc_key not in labels_by_utc:
+                continue
+
+            label_set = labels_by_utc[utc_key]
+            if "(Negative)" in label_set:
+                label_set = set()
+            included_label_sets.append(label_set)
+
+    # Both rows should be included
+    assert len(included_label_sets) == 2
+    # One should be {"whup"}, one should be empty set (from Negative)
+    assert {"whup"} in included_label_sets
+    assert set() in included_label_sets
+
+
 # ---- Legacy Endpoint Removal ----
 
 
