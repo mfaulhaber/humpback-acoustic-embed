@@ -68,6 +68,14 @@ def detection_embeddings_path(storage_root: Path, detection_job_id: str) -> Path
     )
 
 
+def training_dataset_dir(storage_root: Path, dataset_id: str) -> Path:
+    return storage_root / "training_datasets" / dataset_id
+
+
+def training_dataset_parquet_path(storage_root: Path, dataset_id: str) -> Path:
+    return training_dataset_dir(storage_root, dataset_id) / "embeddings.parquet"
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path

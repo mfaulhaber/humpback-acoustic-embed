@@ -70,6 +70,10 @@ import type {
   DetectionEmbeddingJob,
   VocalizationTrainingSource,
   FolderEmbeddingSetResponse,
+  TrainingDataset,
+  TrainingDatasetRowsResponse,
+  TrainingDatasetLabel,
+  TrainingDatasetExtendRequest,
 } from "./types";
 
 class ApiError extends Error {
@@ -674,6 +678,76 @@ export const fetchEmbeddingGenerationStatus = (jobId: string) =>
 
 export const fetchVocModelTrainingSource = (modelId: string) =>
   api<VocalizationTrainingSource>(`/vocalization/models/${modelId}/training-source`);
+
+// ---- Training Datasets ----
+
+export const fetchTrainingDatasets = () =>
+  api<TrainingDataset[]>("/vocalization/training-datasets");
+
+export const fetchTrainingDataset = (datasetId: string) =>
+  api<TrainingDataset>(`/vocalization/training-datasets/${datasetId}`);
+
+export const fetchTrainingDatasetRows = (
+  datasetId: string,
+  params?: {
+    type?: string;
+    group?: string;
+    offset?: number;
+    limit?: number;
+  },
+) => {
+  const qs = new URLSearchParams();
+  if (params?.type) qs.set("type", params.type);
+  if (params?.group) qs.set("group", params.group);
+  if (params?.offset !== undefined) qs.set("offset", String(params.offset));
+  if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return api<TrainingDatasetRowsResponse>(
+    `/vocalization/training-datasets/${datasetId}/rows${suffix}`,
+  );
+};
+
+export function trainingDatasetSpectrogramUrl(
+  datasetId: string,
+  rowIndex: number,
+): string {
+  return `/vocalization/training-datasets/${datasetId}/spectrogram?row_index=${rowIndex}`;
+}
+
+export function trainingDatasetAudioSliceUrl(
+  datasetId: string,
+  rowIndex: number,
+): string {
+  return `/vocalization/training-datasets/${datasetId}/audio-slice?row_index=${rowIndex}`;
+}
+
+export const extendTrainingDataset = (
+  datasetId: string,
+  body: TrainingDatasetExtendRequest,
+) => post<TrainingDataset>(`/vocalization/training-datasets/${datasetId}/extend`, body);
+
+export const createTrainingDatasetLabel = (
+  datasetId: string,
+  body: { row_index: number; label: string },
+) =>
+  post<TrainingDatasetLabel>(
+    `/vocalization/training-datasets/${datasetId}/labels`,
+    body,
+  );
+
+export const deleteTrainingDatasetLabel = async (
+  datasetId: string,
+  labelId: string,
+) => {
+  const res = await fetch(
+    `/vocalization/training-datasets/${datasetId}/labels/${labelId}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(res.status, text);
+  }
+};
 
 // ---- Health ----
 

@@ -1,19 +1,27 @@
 """API router for vocalization type classification."""
 
+from __future__ import annotations
+
 import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.models.training_dataset import TrainingDataset, TrainingDatasetLabel
 from humpback.models.vocalization import (
     VocalizationClassifierModel,
     VocalizationInferenceJob,
     VocalizationTrainingJob,
 )
 from humpback.schemas.vocalization import (
+    TrainingDatasetExtendRequest,
+    TrainingDatasetLabelCreate,
+    TrainingDatasetLabelOut,
+    TrainingDatasetOut,
+    TrainingDatasetRowOut,
     VocalizationInferenceJobCreate,
     VocalizationInferenceJobOut,
     VocalizationModelOut,
@@ -59,6 +67,7 @@ def _model_to_out(m: VocalizationClassifierModel) -> VocalizationModelOut:
         else None,
         training_summary=json.loads(m.training_summary) if m.training_summary else None,
         is_active=m.is_active,
+        training_dataset_id=m.training_dataset_id,
         created_at=m.created_at,
     )
 
@@ -217,8 +226,21 @@ async def get_model_training_source(model_id: str, session: SessionDep):
 async def create_vocalization_training_job(
     body: VocalizationTrainingJobCreate, session: SessionDep
 ):
+    if body.source_config and body.training_dataset_id:
+        raise HTTPException(
+            400, "Provide source_config or training_dataset_id, not both"
+        )
+    if not body.source_config and not body.training_dataset_id:
+        raise HTTPException(400, "Provide source_config or training_dataset_id")
+
+    source_config_json = (
+        json.dumps(body.source_config.model_dump())
+        if body.source_config
+        else json.dumps({})
+    )
     job = VocalizationTrainingJob(
-        source_config=json.dumps(body.source_config.model_dump()),
+        source_config=source_config_json,
+        training_dataset_id=body.training_dataset_id,
         parameters=json.dumps(body.parameters) if body.parameters else None,
     )
     session.add(job)
@@ -422,3 +444,408 @@ async def export_vocalization_inference(
             "Content-Disposition": f'attachment; filename="vocalization_{job_id}.tsv"'
         },
     )
+
+
+# ---- Training Datasets ----
+
+
+def _dataset_to_out(d: TrainingDataset) -> TrainingDatasetOut:
+    return TrainingDatasetOut(
+        id=d.id,
+        name=d.name,
+        source_config=json.loads(d.source_config),
+        total_rows=d.total_rows,
+        vocabulary=json.loads(d.vocabulary),
+        created_at=d.created_at,
+        updated_at=d.updated_at,
+    )
+
+
+async def _get_dataset_or_404(session: SessionDep, dataset_id: str) -> TrainingDataset:
+    result = await session.execute(
+        select(TrainingDataset).where(TrainingDataset.id == dataset_id)
+    )
+    ds = result.scalar_one_or_none()
+    if ds is None:
+        raise HTTPException(404, "Training dataset not found")
+    return ds
+
+
+@router.get("/training-datasets")
+async def list_training_datasets(session: SessionDep):
+    result = await session.execute(
+        select(TrainingDataset).order_by(TrainingDataset.created_at.desc())
+    )
+    return [_dataset_to_out(d) for d in result.scalars().all()]
+
+
+@router.get("/training-datasets/{dataset_id}")
+async def get_training_dataset(dataset_id: str, session: SessionDep):
+    ds = await _get_dataset_or_404(session, dataset_id)
+    return _dataset_to_out(ds)
+
+
+@router.get("/training-datasets/{dataset_id}/rows")
+async def get_training_dataset_rows(
+    dataset_id: str,
+    session: SessionDep,
+    type: str | None = Query(None),
+    group: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Paginated rows with labels, filterable by type and positive/negative group."""
+
+    import pyarrow.parquet as pq
+
+    ds = await _get_dataset_or_404(session, dataset_id)
+
+    # Load labels grouped by row_index
+    label_result = await session.execute(
+        select(TrainingDatasetLabel).where(
+            TrainingDatasetLabel.training_dataset_id == dataset_id
+        )
+    )
+    all_labels = label_result.scalars().all()
+    labels_by_row: dict[int, list[str]] = {}
+    label_objs_by_row: dict[int, list] = {}
+    for lbl in all_labels:
+        labels_by_row.setdefault(lbl.row_index, []).append(lbl.label)
+        label_objs_by_row.setdefault(lbl.row_index, []).append(lbl)
+
+    # Read parquet metadata columns (not embeddings)
+    table = pq.read_table(
+        ds.parquet_path,
+        columns=[
+            "row_index",
+            "filename",
+            "start_sec",
+            "end_sec",
+            "source_type",
+            "source_id",
+            "confidence",
+        ],
+    )
+
+    # Build row dicts
+    rows = []
+    for i in range(table.num_rows):
+        row_idx = int(table.column("row_index")[i].as_py())
+        row_labels = labels_by_row.get(row_idx, [])
+
+        # Filter by type and group
+        if type is not None and group is not None:
+            has_type = type in row_labels
+            if group == "positive" and not has_type:
+                continue
+            if group == "negative" and has_type:
+                continue
+
+        conf_val = table.column("confidence")[i].as_py()
+        rows.append(
+            TrainingDatasetRowOut(
+                row_index=row_idx,
+                filename=table.column("filename")[i].as_py(),
+                start_sec=float(table.column("start_sec")[i].as_py()),
+                end_sec=float(table.column("end_sec")[i].as_py()),
+                source_type=table.column("source_type")[i].as_py(),
+                source_id=table.column("source_id")[i].as_py(),
+                confidence=float(conf_val) if conf_val is not None else None,
+                labels=row_labels,
+            )
+        )
+
+    # Paginate
+    total = len(rows)
+    page = rows[offset : offset + limit]
+    return {"total": total, "rows": page}
+
+
+@router.get("/training-datasets/{dataset_id}/spectrogram")
+async def get_training_dataset_spectrogram(
+    dataset_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    row_index: int = Query(..., ge=0),
+):
+    """Spectrogram PNG for a training dataset row, delegated to source audio."""
+    import asyncio
+
+    from humpback.processing.spectrogram import generate_spectrogram_png
+
+    ds = await _get_dataset_or_404(session, dataset_id)
+    audio, sr = await _resolve_training_row_audio(ds, row_index, session, settings)
+
+    png_bytes = await asyncio.to_thread(
+        generate_spectrogram_png,
+        audio,
+        sr,
+        hop_length=settings.spectrogram_hop_length,
+        dynamic_range_db=settings.spectrogram_dynamic_range_db,
+        width_px=settings.spectrogram_width_px,
+        height_px=settings.spectrogram_height_px,
+    )
+    return Response(content=png_bytes, media_type="image/png")
+
+
+@router.get("/training-datasets/{dataset_id}/audio-slice")
+async def get_training_dataset_audio_slice(
+    dataset_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    row_index: int = Query(..., ge=0),
+    normalize: bool = Query(True),
+):
+    """Audio WAV for a training dataset row, delegated to source audio."""
+    ds = await _get_dataset_or_404(session, dataset_id)
+    audio, sr = await _resolve_training_row_audio(ds, row_index, session, settings)
+
+    # Reuse the WAV encoder from classifier router
+    import io
+    import struct
+
+    import numpy as np
+
+    if normalize:
+        peak = np.max(np.abs(audio))
+        if peak > 0:
+            audio = audio / peak
+
+    pcm = (audio * 32767).clip(-32768, 32767).astype(np.int16)
+    buf = io.BytesIO()
+    data_size = len(pcm) * 2
+    buf.write(b"RIFF")
+    buf.write(struct.pack("<I", 36 + data_size))
+    buf.write(b"WAVE")
+    buf.write(b"fmt ")
+    buf.write(struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
+    buf.write(b"data")
+    buf.write(struct.pack("<I", data_size))
+    buf.write(pcm.tobytes())
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="audio/wav",
+        headers={"Content-Length": str(buf.tell())},
+    )
+
+
+async def _resolve_training_row_audio(ds, row_index, session, settings):
+    """Read source audio for a training dataset row."""
+    import asyncio
+    from pathlib import Path
+
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    from humpback.classifier.detection_rows import parse_recording_timestamp
+    from humpback.processing.audio_io import decode_audio
+
+    table = pq.read_table(
+        ds.parquet_path,
+        columns=[
+            "row_index",
+            "source_type",
+            "source_id",
+            "filename",
+            "start_sec",
+            "end_sec",
+        ],
+    )
+    if row_index >= table.num_rows:
+        raise HTTPException(404, f"Row {row_index} not found")
+
+    source_type = table.column("source_type")[row_index].as_py()
+    source_id = table.column("source_id")[row_index].as_py()
+    filename = table.column("filename")[row_index].as_py()
+    start_sec = float(table.column("start_sec")[row_index].as_py())
+    end_sec = float(table.column("end_sec")[row_index].as_py())
+    duration_sec = end_sec - start_sec
+
+    if source_type == "detection_job":
+        # Delegate to detection job audio resolution
+        from humpback.services import classifier_service
+
+        job = await classifier_service.get_detection_job(session, source_id)
+        if job is None:
+            raise HTTPException(404, f"Detection job {source_id} not found")
+
+        ts = parse_recording_timestamp(filename)
+        start_utc = (ts.timestamp() if ts else 0.0) + start_sec
+
+        if job.hydrophone_id:
+            from humpback.classifier.s3_stream import resolve_audio_slice
+            from humpback.config import get_archive_source
+
+            cache_path = job.local_cache_path or settings.s3_cache_path
+            src = get_archive_source(job.hydrophone_id)
+            if (
+                src is not None
+                and src.get("provider_kind") == "noaa_gcs"
+                and settings.noaa_cache_path is not None
+            ):
+                from humpback.api.routers.classifier import (
+                    _noaa_provider_registry,
+                )
+
+                local_provider = _noaa_provider_registry.get_or_create(
+                    job.hydrophone_id,
+                    cache_path,
+                    settings.noaa_cache_path,
+                )
+            else:
+                from humpback.api.routers.classifier import (
+                    build_archive_playback_provider,
+                )
+
+                local_provider = build_archive_playback_provider(
+                    job.hydrophone_id,
+                    cache_path=cache_path,
+                    noaa_cache_path=settings.noaa_cache_path,
+                )
+            target_sr = 32000
+            if job.start_timestamp is None or job.end_timestamp is None:
+                raise HTTPException(400, "Hydrophone job missing timestamps")
+            segment = await asyncio.to_thread(
+                resolve_audio_slice,
+                local_provider,
+                job.start_timestamp,
+                job.end_timestamp,
+                start_utc,
+                duration_sec,
+                target_sr,
+            )
+            return np.asarray(segment), target_sr
+
+        # Local audio
+        from humpback.classifier.extractor import (
+            _build_local_audio_index,
+            _resolve_local_audio_for_row,
+        )
+
+        if not job.audio_folder:
+            raise HTTPException(400, "Detection job has no audio folder")
+        audio_folder = Path(job.audio_folder)
+        audio_index = _build_local_audio_index(audio_folder)
+        resolved = _resolve_local_audio_for_row(start_utc, audio_index)
+        if resolved is None:
+            raise HTTPException(404, f"No audio for start_utc={start_utc}")
+        file_path, _base_epoch, offset_sec = resolved
+
+        raw_audio, sr = await asyncio.to_thread(decode_audio, file_path)
+        start_sample = int(offset_sec * sr)
+        end_sample = int((offset_sec + duration_sec) * sr)
+        return np.asarray(raw_audio[start_sample:end_sample]), sr
+
+    elif source_type == "embedding_set":
+        from humpback.models.audio import AudioFile
+        from humpback.models.processing import EmbeddingSet
+        from humpback.storage import resolve_audio_path
+
+        es_result = await session.execute(
+            select(EmbeddingSet).where(EmbeddingSet.id == source_id)
+        )
+        es = es_result.scalar_one_or_none()
+        if es is None:
+            raise HTTPException(404, f"Embedding set {source_id} not found")
+
+        af_result = await session.execute(
+            select(AudioFile).where(AudioFile.id == es.audio_file_id)
+        )
+        af = af_result.scalar_one_or_none()
+        if af is None:
+            raise HTTPException(404, "Audio file not found")
+
+        audio_path = resolve_audio_path(af, settings.storage_root)
+        raw_audio, sr = await asyncio.to_thread(decode_audio, audio_path)
+        start_sample = int(start_sec * sr)
+        end_sample = int(end_sec * sr)
+        return np.asarray(raw_audio[start_sample:end_sample]), sr
+
+    else:
+        raise HTTPException(400, f"Unknown source type: {source_type}")
+
+
+@router.post("/training-datasets/{dataset_id}/extend")
+async def extend_training_dataset_endpoint(
+    dataset_id: str,
+    body: "TrainingDatasetExtendRequest",
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    from humpback.services.training_dataset import extend_training_dataset
+
+    ds = await _get_dataset_or_404(session, dataset_id)
+    updated = await extend_training_dataset(
+        session,
+        ds,
+        {
+            "embedding_set_ids": body.embedding_set_ids,
+            "detection_job_ids": body.detection_job_ids,
+        },
+        settings.storage_root,
+    )
+    await session.commit()
+    return _dataset_to_out(updated)
+
+
+@router.post("/training-datasets/{dataset_id}/labels", status_code=201)
+async def create_training_dataset_label(
+    dataset_id: str,
+    body: "TrainingDatasetLabelCreate",
+    session: SessionDep,
+):
+
+    await _get_dataset_or_404(session, dataset_id)
+
+    # Enforce "(Negative)" mutual exclusivity
+    existing_result = await session.execute(
+        select(TrainingDatasetLabel).where(
+            TrainingDatasetLabel.training_dataset_id == dataset_id,
+            TrainingDatasetLabel.row_index == body.row_index,
+        )
+    )
+    existing = existing_result.scalars().all()
+
+    if body.label == "(Negative)":
+        # Remove all type labels for this row
+        for lbl in existing:
+            if lbl.label != "(Negative)":
+                await session.delete(lbl)
+    else:
+        # Remove any "(Negative)" label for this row
+        for lbl in existing:
+            if lbl.label == "(Negative)":
+                await session.delete(lbl)
+
+    label = TrainingDatasetLabel(
+        training_dataset_id=dataset_id,
+        row_index=body.row_index,
+        label=body.label,
+        source="manual",
+    )
+    session.add(label)
+    await session.commit()
+    await session.refresh(label)
+    return TrainingDatasetLabelOut.model_validate(label)
+
+
+@router.delete("/training-datasets/{dataset_id}/labels/{label_id}", status_code=204)
+async def delete_training_dataset_label(
+    dataset_id: str,
+    label_id: str,
+    session: SessionDep,
+):
+
+    result = await session.execute(
+        select(TrainingDatasetLabel).where(
+            TrainingDatasetLabel.id == label_id,
+            TrainingDatasetLabel.training_dataset_id == dataset_id,
+        )
+    )
+    label = result.scalar_one_or_none()
+    if label is None:
+        raise HTTPException(404, "Label not found")
+
+    await session.delete(label)
+    await session.commit()

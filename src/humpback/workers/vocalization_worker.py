@@ -12,9 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
-from humpback.models.audio import AudioFile
-from humpback.models.labeling import VocalizationLabel
-from humpback.models.processing import EmbeddingSet
+from humpback.models.training_dataset import TrainingDataset, TrainingDatasetLabel
 from humpback.models.vocalization import (
     VocalizationClassifierModel,
     VocalizationInferenceJob,
@@ -35,132 +33,40 @@ async def run_vocalization_training_job(
             save_model_artifacts,
             train_multilabel_classifiers,
         )
+        from humpback.services.training_dataset import (
+            create_training_dataset_snapshot,
+        )
 
-        source_config = json.loads(job.source_config)
         parameters = json.loads(job.parameters) if job.parameters else {}
-        embedding_set_ids: list[str] = source_config.get("embedding_set_ids", [])
-        detection_job_ids: list[str] = source_config.get("detection_job_ids", [])
 
-        # Collect embeddings and multi-hot labels
-        all_embeddings: list[np.ndarray] = []
-        all_label_sets: list[set[str]] = []
-        seen_keys: set[str] = set()
-
-        # Source 1: Embedding sets with call-type folder structure
-        for es_id in embedding_set_ids:
-            es_result = await session.execute(
-                select(EmbeddingSet).where(EmbeddingSet.id == es_id)
-            )
-            es = es_result.scalar_one_or_none()
-            if es is None:
-                logger.warning("Embedding set %s not found, skipping", es_id)
-                continue
-
-            af_result = await session.execute(
-                select(AudioFile).where(AudioFile.id == es.audio_file_id)
-            )
-            af = af_result.scalar_one_or_none()
-            if af is None:
-                continue
-
-            # Infer type from folder path leaf
-            type_name = None
-            if af.folder_path:
-                parts = Path(af.folder_path).parts
-                if parts:
-                    type_name = parts[-1].strip().title()
-
-            if not type_name:
-                logger.warning(
-                    "No folder-based type for embedding set %s, skipping", es_id
-                )
-                continue
-
-            parquet_path = Path(es.parquet_path)
-            if not parquet_path.exists():
-                logger.warning("Parquet %s not found, skipping", parquet_path)
-                continue
-
-            table = pq.read_table(str(parquet_path))
-            embeddings_col = table.column("embedding")
-
-            for i in range(table.num_rows):
-                # Dedup by (embedding_set_id, row_index)
-                key = f"{es_id}:{i}"
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                vec = np.array(embeddings_col[i].as_py(), dtype=np.float32)
-                all_embeddings.append(vec)
-                all_label_sets.append({type_name})
-
-        # Source 2: Detection job vocalization labels
-        for det_job_id in detection_job_ids:
-            from humpback.storage import detection_embeddings_path
-
-            emb_path = detection_embeddings_path(settings.storage_root, det_job_id)
-            if not emb_path.exists():
-                logger.warning(
-                    "No embeddings for detection job %s, skipping", det_job_id
-                )
-                continue
-
-            # Get vocalization labels for this detection job
-            result = await session.execute(
-                select(VocalizationLabel).where(
-                    VocalizationLabel.detection_job_id == det_job_id
+        # Mode A: source_config → create new training dataset
+        # Mode B: training_dataset_id → reuse existing dataset
+        if job.training_dataset_id:
+            ds_result = await session.execute(
+                select(TrainingDataset).where(
+                    TrainingDataset.id == job.training_dataset_id
                 )
             )
-            voc_labels = result.scalars().all()
-
-            # Build multi-hot label index by (start_utc, end_utc)
-            labels_by_utc: dict[tuple[float, float], set[str]] = {}
-            for vl in voc_labels:
-                key = (vl.start_utc, vl.end_utc)
-                if key not in labels_by_utc:
-                    labels_by_utc[key] = set()
-                labels_by_utc[key].add(vl.label)
-
-            table = pq.read_table(str(emb_path))
-            filenames = table.column("filename").to_pylist()
-            start_secs = table.column("start_sec").to_pylist()
-            end_secs = table.column("end_sec").to_pylist()
-            embeddings_col = table.column("embedding")
-
-            from humpback.classifier.detection_rows import (
-                parse_recording_timestamp,
+            dataset = ds_result.scalar_one_or_none()
+            if dataset is None:
+                raise ValueError(
+                    f"Training dataset {job.training_dataset_id} not found"
+                )
+        else:
+            source_config = json.loads(job.source_config)
+            dataset = await create_training_dataset_snapshot(
+                session, source_config, settings.storage_root
             )
+            # Persist the dataset link on the job
+            job.training_dataset_id = dataset.id
+            await session.flush()
 
-            for i in range(table.num_rows):
-                fname = filenames[i]
-                ts = parse_recording_timestamp(fname)
-                base_epoch = ts.timestamp() if ts else 0.0
-                row_start = base_epoch + float(start_secs[i])
-                row_end = base_epoch + float(end_secs[i])
-                utc_key = (row_start, row_end)
+        # Read embeddings from the training dataset parquet
+        X, all_label_sets = await _load_training_dataset(session, dataset)
 
-                # Only include explicitly labeled windows
-                if utc_key not in labels_by_utc:
-                    continue
+        if len(X) == 0:
+            raise ValueError("No embeddings in training dataset")
 
-                dedup_key = f"{fname}:{start_secs[i]}:{end_secs[i]}"
-                if dedup_key in seen_keys:
-                    continue
-                seen_keys.add(dedup_key)
-
-                label_set = labels_by_utc[utc_key]
-                # "(Negative)" means confirmed negative for all types
-                if "(Negative)" in label_set:
-                    label_set = set()
-
-                vec = np.array(embeddings_col[i].as_py(), dtype=np.float32)
-                all_embeddings.append(vec)
-                all_label_sets.append(label_set)
-
-        if not all_embeddings:
-            raise ValueError("No embeddings collected from source config")
-
-        X = np.vstack(all_embeddings)
         logger.info("Collected %d embeddings for vocalization training", len(X))
 
         pipelines, thresholds, per_class_metrics = await asyncio.to_thread(
@@ -187,6 +93,7 @@ async def run_vocalization_training_job(
             vocabulary_snapshot=json.dumps(vocabulary),
             per_class_thresholds=json.dumps(thresholds),
             per_class_metrics=json.dumps(per_class_metrics),
+            training_dataset_id=dataset.id,
             training_summary=json.dumps(
                 {
                     "n_embeddings": len(X),
@@ -214,6 +121,7 @@ async def run_vocalization_training_job(
             .values(
                 status="complete",
                 vocalization_model_id=model.id,
+                training_dataset_id=dataset.id,
                 result_summary=json.dumps(result_summary),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -233,6 +141,51 @@ async def run_vocalization_training_job(
             )
         )
         await session.commit()
+
+
+async def _load_training_dataset(
+    session: AsyncSession,
+    dataset: TrainingDataset,
+) -> tuple[np.ndarray, list[set[str]]]:
+    """Load embeddings and multi-hot label sets from a training dataset.
+
+    Returns (X, all_label_sets) where X is (N, D) and all_label_sets[i] is
+    the set of type labels for row i. "(Negative)" labels produce an empty set.
+    """
+    table = pq.read_table(dataset.parquet_path)
+    n_rows = table.num_rows
+    if n_rows == 0:
+        return np.empty((0, 0), dtype=np.float32), []
+
+    embeddings_col = table.column("embedding")
+    X = np.array(
+        [row.as_py() for row in embeddings_col],
+        dtype=np.float32,
+    )
+
+    # Build label index from training_dataset_labels grouped by row_index
+    result = await session.execute(
+        select(TrainingDatasetLabel).where(
+            TrainingDatasetLabel.training_dataset_id == dataset.id
+        )
+    )
+    all_labels = result.scalars().all()
+
+    labels_by_row: dict[int, set[str]] = {}
+    for lbl in all_labels:
+        if lbl.row_index not in labels_by_row:
+            labels_by_row[lbl.row_index] = set()
+        labels_by_row[lbl.row_index].add(lbl.label)
+
+    all_label_sets: list[set[str]] = []
+    for i in range(n_rows):
+        label_set = labels_by_row.get(i, set())
+        # "(Negative)" means confirmed negative for all types
+        if "(Negative)" in label_set:
+            label_set = set()
+        all_label_sets.append(label_set)
+
+    return X, all_label_sets
 
 
 async def run_vocalization_inference_job(
@@ -370,6 +323,8 @@ async def _load_source_embeddings(
         )
 
     elif job.source_type == "embedding_set":
+        from humpback.models.processing import EmbeddingSet
+
         es_result = await session.execute(
             select(EmbeddingSet).where(EmbeddingSet.id == job.source_id)
         )

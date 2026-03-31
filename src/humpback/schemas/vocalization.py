@@ -45,7 +45,8 @@ class VocalizationTrainingSourceConfig(BaseModel):
 
 
 class VocalizationTrainingJobCreate(BaseModel):
-    source_config: VocalizationTrainingSourceConfig
+    source_config: Optional[VocalizationTrainingSourceConfig] = None
+    training_dataset_id: Optional[str] = None
     parameters: Optional[dict[str, Any]] = None
 
 
@@ -75,6 +76,7 @@ class VocalizationModelOut(BaseModel):
     per_class_metrics: Optional[dict[str, Any]] = None
     training_summary: Optional[dict[str, Any]] = None
     is_active: bool
+    training_dataset_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -118,3 +120,51 @@ class VocalizationPredictionRow(BaseModel):
     confidence: float | None = None
     scores: dict[str, float]
     tags: list[str]
+
+
+# ---- Training Datasets ----
+
+
+class TrainingDatasetOut(BaseModel):
+    id: str
+    name: str
+    source_config: dict[str, Any]
+    total_rows: int
+    vocabulary: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TrainingDatasetRowOut(BaseModel):
+    row_index: int
+    filename: str
+    start_sec: float
+    end_sec: float
+    source_type: str
+    source_id: str
+    confidence: float | None = None
+    labels: list[str]
+
+
+class TrainingDatasetLabelCreate(BaseModel):
+    row_index: int
+    label: str
+
+
+class TrainingDatasetLabelOut(BaseModel):
+    id: str
+    training_dataset_id: str
+    row_index: int
+    label: str
+    source: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TrainingDatasetExtendRequest(BaseModel):
+    embedding_set_ids: list[str] = Field(default_factory=list)
+    detection_job_ids: list[str] = Field(default_factory=list)

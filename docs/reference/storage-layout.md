@@ -32,6 +32,8 @@
   {detection_job_id}/detections.tsv               (generated on-the-fly for download; not persisted)
   {detection_job_id}/window_diagnostics.parquet   (local: single file; hydrophone: shard directory)
   {detection_job_id}/run_summary.json
+/training_datasets/
+  {dataset_id}/embeddings.parquet                 (unified training embeddings: row_index, embedding, source_type, source_id, filename, start_sec, end_sec, confidence)
 /timeline_cache/
   {job_id}/{zoom_level}/tile_{NNNN}.png   (per-job LRU-evicted spectrogram tiles)
 ```

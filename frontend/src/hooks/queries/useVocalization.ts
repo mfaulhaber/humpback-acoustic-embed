@@ -1,5 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FolderEmbeddingSetResponse } from "@/api/types";
+import type {
+  FolderEmbeddingSetResponse,
+  TrainingDatasetExtendRequest,
+} from "@/api/types";
 import {
   fetchVocalizationTypes,
   createVocalizationType,
@@ -21,6 +24,11 @@ import {
   fetchEmbeddingGenerationStatus,
   fetchVocModelTrainingSource,
   fetchFolderEmbeddingSet,
+  fetchTrainingDataset,
+  fetchTrainingDatasetRows,
+  extendTrainingDataset,
+  createTrainingDatasetLabel,
+  deleteTrainingDatasetLabel,
 } from "@/api/client";
 import type {
   VocalizationTypeCreate,
@@ -252,5 +260,70 @@ export function useVocModelTrainingSource(modelId: string | null) {
     queryKey: ["vocalization", "training-source", modelId],
     queryFn: () => fetchVocModelTrainingSource(modelId!),
     enabled: modelId !== null,
+  });
+}
+
+// ---- Training Datasets ----
+
+export function useTrainingDataset(datasetId: string | null) {
+  return useQuery({
+    queryKey: ["vocalization", "training-dataset", datasetId],
+    queryFn: () => fetchTrainingDataset(datasetId!),
+    enabled: datasetId !== null,
+  });
+}
+
+export function useTrainingDatasetRows(
+  datasetId: string | null,
+  params?: { type?: string; group?: string; offset?: number; limit?: number },
+) {
+  return useQuery({
+    queryKey: ["vocalization", "training-dataset-rows", datasetId, params],
+    queryFn: () => fetchTrainingDatasetRows(datasetId!, params),
+    enabled: datasetId !== null,
+  });
+}
+
+export function useExtendTrainingDataset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { datasetId: string; body: TrainingDatasetExtendRequest }) =>
+      extendTrainingDataset(params.datasetId, params.body),
+    onSuccess: (_data, params) => {
+      qc.invalidateQueries({
+        queryKey: ["vocalization", "training-dataset", params.datasetId],
+      });
+      qc.invalidateQueries({
+        queryKey: ["vocalization", "training-dataset-rows", params.datasetId],
+      });
+    },
+  });
+}
+
+export function useCreateTrainingDatasetLabel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      datasetId: string;
+      body: { row_index: number; label: string };
+    }) => createTrainingDatasetLabel(params.datasetId, params.body),
+    onSuccess: (_data, params) => {
+      qc.invalidateQueries({
+        queryKey: ["vocalization", "training-dataset-rows", params.datasetId],
+      });
+    },
+  });
+}
+
+export function useDeleteTrainingDatasetLabel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { datasetId: string; labelId: string }) =>
+      deleteTrainingDatasetLabel(params.datasetId, params.labelId),
+    onSuccess: (_data, params) => {
+      qc.invalidateQueries({
+        queryKey: ["vocalization", "training-dataset-rows", params.datasetId],
+      });
+    },
   });
 }
