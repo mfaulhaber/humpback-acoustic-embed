@@ -1,0 +1,26 @@
+# Data Model Summary
+
+> Read this when working on database models, migrations, or API schemas.
+
+Condensed model reference. For full field lists, see `src/humpback/database.py`.
+
+- **ModelConfig** (`model_configs`) — ML model registry entry (name, path, vector_dim, model_type, input_format, is_default). `TFLiteModelConfig` is a backward-compatible alias.
+- **AudioFile** (`audio_files`) — uploaded/imported audio (filename, folder_path, source_folder, checksum_sha256, duration_seconds, sample_rate_original)
+- **AudioMetadata** (`audio_metadata`) — optional editable metadata per audio file (tag_data, visual_observations, group_composition, prey_density_proxy — all JSON)
+- **ProcessingJob** (`processing_jobs`) — encoding job (audio_file_id FK, encoding_signature, model_version, window_size_seconds, target_sample_rate, feature_config JSON, status, warning_message)
+- **EmbeddingSet** (`embedding_sets`) — one per audio+encoding_signature (parquet_path, model_version, vector_dim). Embeddings stored in Parquet, not SQL.
+- **SearchJob** (`search_jobs`) — ephemeral similarity search, deleted after results returned (detection_job_id, top_k, metric, embedding_set_ids, embedding_vector)
+- **ClusteringJob** (`clustering_jobs`) — clustering run (embedding_set_ids JSON, parameters JSON, metrics_json, refined_from_job_id)
+- **Cluster** (`clusters`) — one per cluster label per job (clustering_job_id FK, cluster_label, size, metadata_summary JSON)
+- **ClusterAssignment** (`cluster_assignments`) — links cluster to embedding row index (cluster_id FK, embedding_row_id)
+- **ClassifierModel** (`classifier_models`) — binary classifier artifact (name, model_path .joblib, model_version, vector_dim, training_summary JSON)
+- **ClassifierTrainingJob** (`classifier_training_jobs`) — training run (positive/negative_embedding_set_ids JSON, classifier_model_id set on completion)
+- **DetectionJob** (`detection_jobs`) — local or hydrophone detection scan (classifier_model_id FK, audio_folder, confidence/hop/threshold params, detection_mode, output_tsv_path, result_summary JSON, extract_* columns)
+- **LabelProcessingJob** (`label_processing_jobs`) — score-based audio sample extraction (classifier_model_id, annotation_folder, audio_folder, output_root, parameters JSON, result_summary JSON)
+- **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, start_utc, end_utc, label, source)
+- **RetrainWorkflow** (`retrain_workflows`) — orchestrated reimport+reprocess+retrain (status, step, provenance)
+- **VocalizationType** (`vocalization_types`) — managed vocabulary entry for vocalization type classification (name, description, unique name constraint)
+- **VocalizationClassifierModel** (`vocalization_models`) — multi-label vocalization model artifact (name, model_dir_path, vocabulary_snapshot JSON, per_class_thresholds JSON, per_class_metrics JSON, is_active)
+- **VocalizationTrainingJob** (`vocalization_training_jobs`) — multi-label training run (source_config JSON with embedding_set_ids + detection_job_ids, parameters JSON, vocalization_model_id set on completion)
+- **VocalizationInferenceJob** (`vocalization_inference_jobs`) — scoring run (vocalization_model_id FK, source_type, source_id, output_path to predictions parquet)
+- **DetectionEmbeddingJob** (`detection_embedding_jobs`) — post-hoc detection embedding generation (detection_job_id, progress_current/total, status)
