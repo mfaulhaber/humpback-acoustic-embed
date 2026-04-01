@@ -286,14 +286,14 @@ export function TimelineViewer() {
 
   if (!jobId || !job) {
     return (
-      <div className="flex items-center justify-center -mx-4 -mt-4 -mb-4" style={{ height: "calc(100vh - 3rem)", background: COLORS.bg, color: COLORS.text }}>
+      <div className="fixed left-60 flex items-center justify-center" style={{ top: "3rem", right: 0, bottom: 0, background: COLORS.bg, color: COLORS.text, zIndex: 40 }}>
         Loading...
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col -mx-4 -mt-4 -mb-4 font-mono text-xs overflow-hidden" style={{ height: "calc(100vh - 3rem)", background: COLORS.bg, color: COLORS.text, position: "relative" }}>
+    <div className="fixed left-60 flex flex-col font-mono text-xs overflow-hidden" style={{ top: "3rem", right: 0, bottom: 0, background: COLORS.bg, color: COLORS.text, zIndex: 40 }}>
       {!cacheComplete && prepareStatus && (
         <div style={{
           position: "absolute", top: 4, right: 16,
