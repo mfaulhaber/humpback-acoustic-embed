@@ -50,6 +50,7 @@ import type {
   LabelProcessingJobCreate,
   LabelProcessingPreview,
   VocalizationLabel,
+  TimelineVocalizationLabel,
   DetectionNeighborsResponse,
   LabelingSummary,
   TrainingSummary,
@@ -466,7 +467,7 @@ export const fetchVocalizationLabels = (
   );
 
 export const fetchAllVocalizationLabels = (detectionJobId: string) =>
-  api<VocalizationLabel[]>(
+  api<TimelineVocalizationLabel[]>(
     `/labeling/vocalization-labels/${detectionJobId}/all`,
   );
 

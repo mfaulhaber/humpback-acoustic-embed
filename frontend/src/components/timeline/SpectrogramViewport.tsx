@@ -1,6 +1,6 @@
 // frontend/src/components/timeline/SpectrogramViewport.tsx
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import type { DetectionRow, VocalizationLabel, ZoomLevel } from "@/api/types";
+import type { DetectionRow, TimelineVocalizationLabel, ZoomLevel } from "@/api/types";
 import { TileCanvas } from "./TileCanvas";
 import { DetectionOverlay } from "./DetectionOverlay";
 import { VocalizationOverlay } from "./VocalizationOverlay";
@@ -36,7 +36,7 @@ export interface SpectrogramViewportProps {
   /** Which overlay to show: detection labels or vocalization types. */
   overlayMode?: "detection" | "vocalization";
   /** Vocalization labels for the overlay. */
-  vocalizationLabels?: VocalizationLabel[];
+  vocalizationLabels?: TimelineVocalizationLabel[];
 }
 
 // ---------------------------------------------------------------------------
@@ -460,7 +460,7 @@ export function SpectrogramViewport({
             />
           </div>
 
-          {/* Confidence strip below canvas */}
+          {/* Confidence strip below canvas (hidden in vocalization mode) */}
           <div
             style={{
               height: CONFIDENCE_STRIP_HEIGHT,
@@ -469,7 +469,7 @@ export function SpectrogramViewport({
               overflow: "hidden",
             }}
           >
-            {confidenceStrip && (
+            {confidenceStrip && overlayMode !== "vocalization" && (
               <svg
                 width={canvasWidth}
                 height={CONFIDENCE_STRIP_HEIGHT}

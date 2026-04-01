@@ -1029,13 +1029,19 @@ async def test_list_all_vocalization_labels(client, app_settings, tmp_path):
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 3
-    # Sorted by start_utc then created_at
-    assert data[0]["label"] == "whup"
+    # Sorted by start_utc, then source, then label
+    # Both "inference" < "manual" alphabetically
+    assert data[0]["label"] == "moan"
+    assert data[0]["source"] == "inference"
     assert data[0]["start_utc"] == BASE_EPOCH
-    assert data[1]["label"] == "moan"
+    assert data[1]["label"] == "whup"
+    assert data[1]["source"] == "manual"
     assert data[1]["start_utc"] == BASE_EPOCH
     assert data[2]["label"] == "whup"
+    assert data[2]["source"] == "inference"
     assert data[2]["start_utc"] == BASE_EPOCH + 5.0
+    # No id/created_at/updated_at in timeline response
+    assert "id" not in data[0]
 
 
 @pytest.mark.asyncio

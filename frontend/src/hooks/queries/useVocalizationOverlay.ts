@@ -5,6 +5,7 @@ import {
 } from "@/api/client";
 
 export function useVocalizationOverlay(jobId: string) {
+  // The /all endpoint merges manual labels + thresholded inference predictions
   const labelsQuery = useQuery({
     queryKey: ["vocalizationLabelsAll", jobId],
     queryFn: () => fetchAllVocalizationLabels(jobId),

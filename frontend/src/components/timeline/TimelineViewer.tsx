@@ -49,8 +49,7 @@ export function TimelineViewer() {
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>("1h");
   const [isPlaying, setIsPlaying] = useState(false);
   const [freqRange, setFreqRange] = useState<[number, number]>([0, 3000]);
-  const [showLabels, setShowLabels] = useState(false);
-  const [overlayMode, setOverlayMode] = useState<"detection" | "vocalization">("detection");
+  const [overlayMode, setOverlayMode] = useState<"off" | "detection" | "vocalization">("off");
   const [speed, setSpeed] = useState(1);
 
   // Label mode state
@@ -240,10 +239,15 @@ export function TimelineViewer() {
     if (idx > 0) setZoomLevel(ZOOM_LEVELS[idx - 1]);
   }, [zoomLevel]);
 
-  // Toggle overlay mode callback
-  const toggleOverlayMode = useCallback(() => {
+  // Toggle detection labels overlay
+  const toggleDetectionOverlay = useCallback(() => {
+    setOverlayMode((prev) => (prev === "detection" ? "off" : "detection"));
+  }, []);
+
+  // Toggle vocalization overlay
+  const toggleVocalizationOverlay = useCallback(() => {
     if (overlayMode === "vocalization") {
-      setOverlayMode("detection");
+      setOverlayMode("off");
     } else {
       // Exit label mode if active before switching to vocalization
       if (labelMode) {
@@ -365,12 +369,12 @@ export function TimelineViewer() {
           freqRange={freqRange}
           isPlaying={isPlaying}
           scores={confidence?.scores ?? []}
-          showLabels={showLabels}
+          showLabels={overlayMode !== "off"}
           detections={detections ?? []}
           onCenterChange={setCenterTimestamp}
           onPan={handlePan}
           labelMode={labelMode}
-          overlayMode={overlayMode}
+          overlayMode={overlayMode === "vocalization" ? "vocalization" : "detection"}
           vocalizationLabels={vocalizationLabels}
           renderLabelEditor={(w, h) => (
             <LabelEditor
@@ -468,10 +472,9 @@ export function TimelineViewer() {
           onLabelMode={toggleLabelMode}
           labelModeEnabled={labelModeEnabled}
           labelModeActive={labelMode}
-          showLabels={showLabels}
-          onToggleLabels={() => setShowLabels((s) => !s)}
           overlayMode={overlayMode}
-          onToggleOverlayMode={toggleOverlayMode}
+          onToggleDetection={toggleDetectionOverlay}
+          onToggleVocalization={toggleVocalizationOverlay}
           hasVocalizationData={hasVocalizationData}
           freqRange={freqRange}
         />

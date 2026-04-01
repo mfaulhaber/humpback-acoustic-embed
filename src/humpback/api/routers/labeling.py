@@ -18,6 +18,7 @@ from humpback.schemas.labeling import (
     OrphanedLabelDetail,
     RefreshApplyResponse,
     RefreshPreviewResponse,
+    TimelineVocalizationLabel,
     TrainingSummary,
     NeighborHit,
     VocalizationLabelCreate,
@@ -56,20 +57,94 @@ async def list_vocalization_labels(
 
 @router.get(
     "/vocalization-labels/{detection_job_id}/all",
-    response_model=list[VocalizationLabelOut],
+    response_model=list[TimelineVocalizationLabel],
 )
 async def list_all_vocalization_labels(
     detection_job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
 ):
-    """List all vocalization labels for a detection job (no time-range filter)."""
+    """All vocalization labels for timeline overlay — manual + inference predictions."""
+    import json
+    from pathlib import Path
+
+    from humpback.classifier.vocalization_inference import read_predictions
+    from humpback.models.vocalization import (
+        VocalizationClassifierModel,
+        VocalizationInferenceJob,
+    )
+
     await _get_detection_job_or_404(session, detection_job_id)
+
+    # 1. Manual labels from the DB
     result = await session.execute(
         select(VocalizationLabel)
         .where(VocalizationLabel.detection_job_id == detection_job_id)
         .order_by(VocalizationLabel.start_utc, VocalizationLabel.created_at)
     )
-    return [VocalizationLabelOut.model_validate(r) for r in result.scalars().all()]
+    out: list[TimelineVocalizationLabel] = [
+        TimelineVocalizationLabel(
+            start_utc=r.start_utc,
+            end_utc=r.end_utc,
+            label=r.label,
+            confidence=r.confidence,
+            source=r.source,
+        )
+        for r in result.scalars().all()
+    ]
+
+    # 2. Inference predictions — find completed inference jobs for this detection job
+    inf_result = await session.execute(
+        select(VocalizationInferenceJob)
+        .where(VocalizationInferenceJob.source_type == "detection_job")
+        .where(VocalizationInferenceJob.source_id == detection_job_id)
+        .where(VocalizationInferenceJob.status == "complete")
+        .order_by(VocalizationInferenceJob.created_at.desc())
+    )
+    inf_jobs = inf_result.scalars().all()
+
+    # Build a set of manual label keys to avoid duplicating
+    manual_keys: set[tuple[float, float, str]] = set()
+    for lbl in out:
+        manual_keys.add((lbl.start_utc, lbl.end_utc, lbl.label))
+
+    # Use the most recent completed inference job
+    if inf_jobs:
+        inf_job = inf_jobs[0]
+        if inf_job.output_path and Path(inf_job.output_path).exists():
+            model_result = await session.execute(
+                select(VocalizationClassifierModel).where(
+                    VocalizationClassifierModel.id == inf_job.vocalization_model_id
+                )
+            )
+            model = model_result.scalar_one_or_none()
+            if model:
+                vocabulary: list[str] = json.loads(model.vocabulary_snapshot)
+                thresholds: dict[str, float] = json.loads(model.per_class_thresholds)
+                predictions = read_predictions(
+                    Path(inf_job.output_path), vocabulary, thresholds
+                )
+                for pred in predictions:
+                    s_utc = pred.get("start_utc")
+                    e_utc = pred.get("end_utc")
+                    if s_utc is None or e_utc is None:
+                        continue
+                    for tag in pred["tags"]:
+                        if (s_utc, e_utc, tag) in manual_keys:
+                            continue
+                        score = pred["scores"].get(tag)
+                        out.append(
+                            TimelineVocalizationLabel(
+                                start_utc=s_utc,
+                                end_utc=e_utc,
+                                label=tag,
+                                confidence=score,
+                                source="inference",
+                            )
+                        )
+
+    out.sort(key=lambda x: (x.start_utc, x.source, x.label))
+    return out
 
 
 @router.post(

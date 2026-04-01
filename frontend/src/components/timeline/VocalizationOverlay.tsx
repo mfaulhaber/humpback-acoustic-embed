@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useRef, useLayoutEffect, useMemo } from "react";
-import type { VocalizationLabel, ZoomLevel } from "@/api/types";
+import type { TimelineVocalizationLabel, ZoomLevel } from "@/api/types";
 import { VIEWPORT_SPAN, VOCALIZATION_BAR, VOCALIZATION_BADGE_PALETTE } from "./constants";
 
 export interface VocalizationOverlayProps {
-  labels: VocalizationLabel[];
+  labels: TimelineVocalizationLabel[];
   centerTimestamp: number;
   zoomLevel: ZoomLevel;
   width: number;
@@ -14,10 +14,10 @@ export interface VocalizationOverlayProps {
 interface WindowGroup {
   start_utc: number;
   end_utc: number;
-  labels: VocalizationLabel[];
+  labels: TimelineVocalizationLabel[];
 }
 
-function groupByWindow(labels: VocalizationLabel[]): WindowGroup[] {
+function groupByWindow(labels: TimelineVocalizationLabel[]): WindowGroup[] {
   const map = new Map<string, WindowGroup>();
   for (const lbl of labels) {
     const key = `${lbl.start_utc}:${lbl.end_utc}`;
@@ -36,7 +36,7 @@ function formatTime(epoch: number): string {
   return d.toISOString().slice(11, 19) + " UTC";
 }
 
-function buildBadgeColorMap(labels: VocalizationLabel[]): Map<string, string> {
+function buildBadgeColorMap(labels: TimelineVocalizationLabel[]): Map<string, string> {
   const types = new Set<string>();
   for (const lbl of labels) types.add(lbl.label);
   const sorted = Array.from(types).sort();
@@ -168,12 +168,12 @@ export function VocalizationOverlay({
           >
             {/* Badges — only render when bar is wide enough */}
             {w >= 18 &&
-              group.labels.map((lbl) => {
+              group.labels.map((lbl, idx) => {
                 const color = badgeColorMap.get(lbl.label) ?? "#ccc";
                 const isManual = lbl.source === "manual";
                 return (
                   <span
-                    key={lbl.id}
+                    key={`${lbl.label}:${lbl.source}:${idx}`}
                     style={{
                       display: "inline-block",
                       height: BADGE_HEIGHT,
@@ -226,7 +226,7 @@ export function VocalizationOverlay({
           {tooltip.group.labels.map((lbl) => {
             const color = badgeColorMap.get(lbl.label) ?? "#ccc";
             return (
-              <div key={lbl.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div key={`${lbl.label}:${lbl.source}`} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span
                   style={{
                     display: "inline-block",

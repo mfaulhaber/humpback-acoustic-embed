@@ -15,10 +15,9 @@ interface PlaybackControlsProps {
   onLabelMode?: () => void;
   labelModeEnabled: boolean;
   labelModeActive: boolean;
-  showLabels: boolean;
-  onToggleLabels: () => void;
-  overlayMode: "detection" | "vocalization";
-  onToggleOverlayMode: () => void;
+  overlayMode: "off" | "detection" | "vocalization";
+  onToggleDetection: () => void;
+  onToggleVocalization: () => void;
   hasVocalizationData: boolean;
   freqRange: [number, number];
 }
@@ -38,10 +37,9 @@ export function PlaybackControls({
   onLabelMode,
   labelModeEnabled,
   labelModeActive,
-  showLabels,
-  onToggleLabels,
   overlayMode,
-  onToggleOverlayMode,
+  onToggleDetection,
+  onToggleVocalization,
   hasVocalizationData,
   freqRange,
 }: PlaybackControlsProps) {
@@ -114,17 +112,17 @@ export function PlaybackControls({
       {/* Right group: Labels/Vocalizations/Freq pushed to far right */}
       <div className="flex items-center gap-2 ml-auto">
         <button
-          onClick={onToggleLabels}
+          onClick={onToggleDetection}
           className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
           style={{
-            background: showLabels ? COLORS.accentDim : COLORS.border,
+            background: overlayMode === "detection" ? COLORS.accentDim : COLORS.border,
             color: COLORS.accent,
           }}
         >
-          <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
+          <Tag size={10} /> Labels
         </button>
         <button
-          onClick={hasVocalizationData ? onToggleOverlayMode : undefined}
+          onClick={hasVocalizationData ? onToggleVocalization : undefined}
           disabled={!hasVocalizationData}
           className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
           style={{
@@ -132,7 +130,7 @@ export function PlaybackControls({
             color: hasVocalizationData ? (overlayMode === "vocalization" ? "#c4a8f0" : COLORS.accent) : COLORS.textMuted,
             opacity: hasVocalizationData ? 1 : 0.4,
           }}
-          title={hasVocalizationData ? (overlayMode === "vocalization" ? "Switch to detection labels" : "Show vocalization types") : "No vocalization inference for this job"}
+          title={hasVocalizationData ? (overlayMode === "vocalization" ? "Hide vocalization types" : "Show vocalization types") : "No vocalization inference for this job"}
         >
           <AudioLines size={10} /> Vocalizations
         </button>
