@@ -999,3 +999,58 @@ async def test_bulk_delete_partial_block(client, app_settings, tmp_path):
     assert data["count"] == 1  # only job_2 deleted
     assert len(data["blocked"]) == 1
     assert data["blocked"][0]["job_id"] == job_id_1
+
+
+# ---- Bulk list (all labels) endpoint ----
+
+
+@pytest.mark.asyncio
+async def test_list_all_vocalization_labels(client, app_settings, tmp_path):
+    """GET /all returns all vocalization labels for a detection job."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Create labels on two different windows
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup", "source": "manual"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "moan", "source": "inference", "confidence": 0.85},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
+        json={"label": "whup", "source": "inference", "confidence": 0.72},
+    )
+
+    resp = await client.get(f"/labeling/vocalization-labels/{job_id}/all")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 3
+    # Sorted by start_utc then created_at
+    assert data[0]["label"] == "whup"
+    assert data[0]["start_utc"] == BASE_EPOCH
+    assert data[1]["label"] == "moan"
+    assert data[1]["start_utc"] == BASE_EPOCH
+    assert data[2]["label"] == "whup"
+    assert data[2]["start_utc"] == BASE_EPOCH + 5.0
+
+
+@pytest.mark.asyncio
+async def test_list_all_vocalization_labels_empty(client, app_settings, tmp_path):
+    """GET /all returns empty list when no labels exist."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    resp = await client.get(f"/labeling/vocalization-labels/{job_id}/all")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_all_vocalization_labels_not_found(client):
+    """GET /all returns 404 for nonexistent detection job."""
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = await client.get(f"/labeling/vocalization-labels/{fake_id}/all")
+    assert resp.status_code == 404

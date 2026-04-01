@@ -54,6 +54,24 @@ async def list_vocalization_labels(
     return [VocalizationLabelOut.model_validate(r) for r in result.scalars().all()]
 
 
+@router.get(
+    "/vocalization-labels/{detection_job_id}/all",
+    response_model=list[VocalizationLabelOut],
+)
+async def list_all_vocalization_labels(
+    detection_job_id: str,
+    session: SessionDep,
+):
+    """List all vocalization labels for a detection job (no time-range filter)."""
+    await _get_detection_job_or_404(session, detection_job_id)
+    result = await session.execute(
+        select(VocalizationLabel)
+        .where(VocalizationLabel.detection_job_id == detection_job_id)
+        .order_by(VocalizationLabel.start_utc, VocalizationLabel.created_at)
+    )
+    return [VocalizationLabelOut.model_validate(r) for r in result.scalars().all()]
+
+
 @router.post(
     "/vocalization-labels/{detection_job_id}",
     response_model=VocalizationLabelOut,

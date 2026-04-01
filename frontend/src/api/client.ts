@@ -465,6 +465,11 @@ export const fetchVocalizationLabels = (
     `/labeling/vocalization-labels/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
   );
 
+export const fetchAllVocalizationLabels = (detectionJobId: string) =>
+  api<VocalizationLabel[]>(
+    `/labeling/vocalization-labels/${detectionJobId}/all`,
+  );
+
 export const createVocalizationLabel = (
   detectionJobId: string,
   startUtc: number,
