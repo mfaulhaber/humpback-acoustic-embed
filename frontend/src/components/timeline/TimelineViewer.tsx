@@ -345,35 +345,6 @@ export function TimelineViewer() {
             />
           )}
         />
-        {/* Labels/Freq overlay — bottom-right of viewport */}
-        <div
-          className="absolute flex items-center gap-2 z-[8]"
-          style={{ bottom: 24, right: 8 }}
-        >
-          <button
-            onClick={() => setShowLabels((s) => !s)}
-            className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
-            style={{
-              background: showLabels
-                ? "rgba(64, 224, 192, 0.25)"
-                : "rgba(30, 40, 50, 0.75)",
-              color: COLORS.accent,
-              backdropFilter: "blur(4px)",
-            }}
-          >
-            <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
-          </button>
-          <span
-            className="px-2 py-1 rounded text-[10px]"
-            style={{
-              background: "rgba(30, 40, 50, 0.75)",
-              color: COLORS.accent,
-              backdropFilter: "blur(4px)",
-            }}
-          >
-            Freq: {freqRange[0] / 1000}–{freqRange[1] / 1000} kHz
-          </span>
-        </div>
       </div>
 
       {/* Double-buffered hidden audio elements for gapless playback */}
@@ -440,7 +411,27 @@ export function TimelineViewer() {
           />
         )}
 
-        <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
+        <div className="flex items-center justify-between px-3 py-1">
+          <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLabels((s) => !s)}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
+              style={{
+                background: showLabels ? COLORS.accentDim : COLORS.border,
+                color: COLORS.accent,
+              }}
+            >
+              <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
+            </button>
+            <span
+              className="px-2 py-1 rounded text-[10px]"
+              style={{ background: COLORS.border, color: COLORS.accent }}
+            >
+              Freq: {freqRange[0] / 1000}–{freqRange[1] / 1000} kHz
+            </span>
+          </div>
+        </div>
         <PlaybackControls
           centerTimestamp={centerTimestamp}
           isPlaying={isPlaying}
