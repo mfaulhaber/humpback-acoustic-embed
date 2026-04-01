@@ -245,6 +245,8 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Timeline label editing**: enforces single-label-per-row (mutual exclusivity of humpback/orca/ship/background); batch edits via `PATCH /classifier/detection-jobs/{id}/labels` with overlap validation
 - **Vocalization training negatives**: training data assembly from detection jobs only includes explicitly labeled windows; unlabeled windows are excluded. `"(Negative)"` labels are converted to empty set (negative for all types). `"(Negative)"` is mutually exclusive with type labels on the same window.
 - **Vocalization type name guard**: `"(Negative)"` is a reserved label string and cannot be used as a vocalization type name
+- **Detection job deletion guard**: detection jobs with vocalization labels or training dataset references cannot be deleted; returns HTTP 409 with dependency details
+- **Detection–vocalization consistency**: timeline label edits increment `row_store_version` on `DetectionJob`; vocalization labels record `row_store_version_at_import`; reconciliation via `POST /labeling/vocalization-labels/{id}/refresh` (preview) and `/refresh/apply` (delete orphans)
 
 ---
 
@@ -259,7 +261,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - Binary classifier training (LogisticRegression/MLP) + local/hydrophone detection
 - Hydrophone streaming: Orcasound HLS + NOAA archives, pause/resume/cancel, subprocess isolation
 - Label processing: score-based + sample-builder workflows
-- Vocalization labeling: per-window type labels on detection rows
+- Vocalization labeling: per-window type labels on detection rows, version-tracked consistency with detection row store, orphan reconciliation
 - Multi-label vocalization classifier: managed vocabulary, binary relevance training (per-type sklearn pipeline), per-type threshold optimization, multi-source inference (detection job / embedding set / rescore), paginated results with client-side threshold filtering, TSV export
 - Vocalization labeling workspace: source abstraction (detection jobs / embedding sets / local folders), progressive pipeline (source → embeddings → inference → labeling), local-state label accumulation with batch Save/Cancel, three visual label states (suggested/saved/pending), score-sorted results by default, click-to-expand spectrogram popup, one-click retrain loop
 - Training dataset review: unified editable snapshot of training data (from embedding sets and detection jobs), type-filtered positive/negative browsing with large inline spectrograms, batch label editing with save/cancel, dataset extend for incremental source addition, retrain from edited labels
@@ -270,7 +272,7 @@ Non-obvious constraints that are not immediately derivable from code:
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `032_training_datasets.py`
+- **Latest migration**: `033_detection_vocalization_consistency.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels
 
 ### 9.3 Sensitive Components

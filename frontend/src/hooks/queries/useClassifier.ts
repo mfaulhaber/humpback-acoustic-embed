@@ -24,6 +24,7 @@ import {
   createRetrainWorkflow,
   fetchRetrainWorkflows,
 } from "@/api/client";
+import { toast } from "@/components/ui/use-toast";
 import type {
   ClassifierTrainingJobCreate,
   DetectionLabelRow,
@@ -99,9 +100,31 @@ export function useBulkDeleteClassifierModels() {
 export function useBulkDeleteDetectionJobs() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ids: string[]) => bulkDeleteDetectionJobs(ids),
-    onSuccess: () => {
+    mutationFn: (ids: string[]) =>
+      bulkDeleteDetectionJobs(ids) as Promise<{
+        status: string;
+        count: number;
+        blocked?: { job_id: string; detail: string }[];
+      }>,
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["detectionJobs"] });
+      if (data.blocked && data.blocked.length > 0) {
+        const msgs = data.blocked.map((b) => b.detail);
+        toast({
+          title: "Some detection jobs could not be deleted",
+          description: msgs.join("\n"),
+          variant: "destructive",
+          duration: 8000,
+        });
+      }
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Cannot delete detection job",
+        description: err.message,
+        variant: "destructive",
+        duration: 8000,
+      });
     },
   });
 }

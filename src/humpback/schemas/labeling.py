@@ -25,6 +25,7 @@ class VocalizationLabelOut(BaseModel):
     confidence: float | None = None
     source: str
     notes: str | None = None
+    row_store_version_at_import: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -60,6 +61,26 @@ class TrainingSummary(BaseModel):
     labeled_job_ids: list[str]
     labeled_rows: int
     label_distribution: dict[str, int]
+
+
+class OrphanedLabelDetail(BaseModel):
+    id: str
+    start_utc: float
+    end_utc: float
+    label: str
+
+
+class RefreshPreviewResponse(BaseModel):
+    matched_count: int
+    orphaned_count: int
+    orphaned_labels: list[OrphanedLabelDetail]
+    current_version: int
+
+
+class RefreshApplyResponse(BaseModel):
+    deleted_count: int
+    surviving_count: int
+    current_version: int
 
 
 class DetectionNeighborsRequest(BaseModel):

@@ -797,9 +797,12 @@ async def bulk_delete_training_jobs(
 async def delete_detection_job(
     job_id: str, session: SessionDep, settings: SettingsDep
 ) -> dict:
-    deleted = await classifier_service.delete_detection_job(
-        session, job_id, settings.storage_root
-    )
+    try:
+        deleted = await classifier_service.delete_detection_job(
+            session, job_id, settings.storage_root
+        )
+    except classifier_service.DetectionJobDependencyError as exc:
+        raise HTTPException(409, exc.message) from exc
     if not deleted:
         raise HTTPException(404, "Detection job not found")
     return {"status": "deleted"}
@@ -809,10 +812,13 @@ async def delete_detection_job(
 async def bulk_delete_detection_jobs(
     body: BulkDeleteRequest, session: SessionDep, settings: SettingsDep
 ) -> dict:
-    count = await classifier_service.bulk_delete_detection_jobs(
+    count, blocked = await classifier_service.bulk_delete_detection_jobs(
         session, body.ids, settings.storage_root
     )
-    return {"status": "deleted", "count": count}
+    result: dict = {"status": "deleted", "count": count}
+    if blocked:
+        result["blocked"] = blocked
+    return result
 
 
 # ---- Bulk Delete Classifier Models ----
@@ -1139,6 +1145,7 @@ async def batch_edit_labels(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
     )
     job.has_positive_labels = has_positive
+    job.row_store_version = (job.row_store_version or 1) + 1
     await session.commit()
 
     return [normalize_detection_row(row) for row in updated_rows]

@@ -412,6 +412,7 @@ export interface DetectionJob {
   alerts: FlashAlert[] | null;
   local_cache_path: string | null;
   has_positive_labels: boolean | null;
+  row_store_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -750,8 +751,29 @@ export interface VocalizationLabel {
   confidence: number | null;
   source: string;
   notes: string | null;
+  row_store_version_at_import: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OrphanedLabelDetail {
+  id: string;
+  start_utc: number;
+  end_utc: number;
+  label: string;
+}
+
+export interface RefreshPreviewResponse {
+  matched_count: number;
+  orphaned_count: number;
+  orphaned_labels: OrphanedLabelDetail[];
+  current_version: number;
+}
+
+export interface RefreshApplyResponse {
+  deleted_count: number;
+  surviving_count: number;
+  current_version: number;
 }
 
 export interface NeighborHit {
