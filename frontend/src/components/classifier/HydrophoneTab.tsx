@@ -1869,6 +1869,12 @@ function HydrophoneContentTable({
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
 
+      // Any key closes the spectrogram popup
+      const hadPopup = !!spectrogramPopup;
+      if (hadPopup) {
+        setSpectrogramPopup(null);
+      }
+
       if (e.key === "ArrowDown" || e.key === "j") {
         e.preventDefault();
         setFocusedIndex((prev) => {
@@ -1885,6 +1891,7 @@ function HydrophoneContentTable({
         });
         return;
       }
+
       if (e.key === " " && focusedIndex !== null && focusedIndex < sorted.length) {
         e.preventDefault();
         const focused = sorted[focusedIndex];
@@ -1892,6 +1899,12 @@ function HydrophoneContentTable({
           startUtc: focused.start_utc,
           durationSec: focused._clipDurationSec,
         });
+        // Open spectrogram popup on the left side of the viewport (only on play, not stop)
+        if (!hadPopup) {
+          const cx = window.innerWidth * 0.15;
+          const cy = window.innerHeight / 2;
+          openSpectrogramPopup(focused, { x: cx, y: cy });
+        }
         return;
       }
       const field = keyMap[e.key.toLowerCase()];
@@ -1902,7 +1915,7 @@ function HydrophoneContentTable({
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [sorted, focusedIndex, handleCheckboxClick, onPlay, jobId]);
+  }, [sorted, focusedIndex, handleCheckboxClick, onPlay, jobId, spectrogramPopup, openSpectrogramPopup]);
 
   useEffect(() => {
     if (focusedIndex === null || !tableRef.current) return;
