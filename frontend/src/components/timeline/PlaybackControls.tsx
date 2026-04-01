@@ -14,6 +14,7 @@ interface PlaybackControlsProps {
   onZoomOut: () => void;
   onLabelMode?: () => void;
   labelModeEnabled: boolean;
+  labelModeActive: boolean;
   showLabels: boolean;
   onToggleLabels: () => void;
   freqRange: [number, number];
@@ -33,6 +34,7 @@ export function PlaybackControls({
   onZoomOut,
   onLabelMode,
   labelModeEnabled,
+  labelModeActive,
   showLabels,
   onToggleLabels,
   freqRange,
@@ -88,14 +90,14 @@ export function PlaybackControls({
       <button
         className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium ml-4"
         style={{
-          background: "transparent",
-          color: labelModeEnabled ? COLORS.accent : COLORS.textMuted,
-          opacity: labelModeEnabled ? 1 : 0.3,
-          border: `1px solid ${labelModeEnabled ? COLORS.accent : COLORS.border}`,
+          background: labelModeActive ? COLORS.accentDim : "transparent",
+          color: (labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.textMuted,
+          opacity: (labelModeEnabled || labelModeActive) ? 1 : 0.3,
+          border: `1px solid ${(labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.border}`,
         }}
         onClick={onLabelMode}
-        disabled={!labelModeEnabled}
-        title={labelModeEnabled ? "Enter label mode" : "Zoom to 5m or closer to edit labels"}
+        disabled={!labelModeEnabled && !labelModeActive}
+        title={labelModeActive ? "Exit label mode" : labelModeEnabled ? "Enter label mode" : "Zoom to 5m or closer to edit labels"}
       >
         <Tag size={12} /> Label
       </button>

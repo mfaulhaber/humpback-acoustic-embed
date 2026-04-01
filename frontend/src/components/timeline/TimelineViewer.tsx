@@ -219,11 +219,17 @@ export function TimelineViewer() {
     if (idx > 0) setZoomLevel(ZOOM_LEVELS[idx - 1]);
   }, [zoomLevel]);
 
-  // Enter label mode callback
-  const enterLabelMode = useCallback(() => {
-    setIsPlaying(false);
-    setLabelMode(true);
-  }, []);
+  // Toggle label mode callback
+  const toggleLabelMode = useCallback(() => {
+    if (labelMode) {
+      if (isDirty && !confirm("Discard unsaved label changes?")) return;
+      setLabelMode(false);
+      labelDispatch({ type: "clear" });
+    } else {
+      setIsPlaying(false);
+      setLabelMode(true);
+    }
+  }, [labelMode, isDirty, labelDispatch]);
 
   // Play/pause — exits label mode if active
   const togglePlay = useCallback(() => {
@@ -421,8 +427,9 @@ export function TimelineViewer() {
           onSpeedChange={setSpeed}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
-          onLabelMode={enterLabelMode}
+          onLabelMode={toggleLabelMode}
           labelModeEnabled={labelModeEnabled}
+          labelModeActive={labelMode}
           showLabels={showLabels}
           onToggleLabels={() => setShowLabels((s) => !s)}
           freqRange={freqRange}
