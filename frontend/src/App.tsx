@@ -17,29 +17,34 @@ import { TrainingDataView } from "@/components/vocalization/TrainingDataView";
 
 export default function App() {
   return (
-    <AppShell>
-      <Routes>
-        <Route path="/" element={<Navigate to="/app/audio" replace />} />
-        <Route path="/app/audio/:audioId" element={<AudioTab />} />
-        <Route path="/app/audio" element={<AudioTab />} />
-        <Route path="/app/processing" element={<ProcessingTab />} />
-        <Route path="/app/clustering/:jobId" element={<ClusteringTab />} />
-        <Route path="/app/clustering" element={<ClusteringTab />} />
-        <Route path="/app/classifier" element={<Navigate to="/app/classifier/training" replace />} />
-        <Route path="/app/classifier/training" element={<TrainingTab />} />
-        <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
-        <Route path="/app/classifier/labeling" element={<LabelingTab />} />
-        <Route path="/app/classifier/timeline/:jobId" element={<TimelineViewer />} />
-        <Route path="/app/vocalization" element={<Navigate to="/app/vocalization/training" replace />} />
-        <Route path="/app/vocalization/training" element={<VocalizationTrainingTab />} />
-        <Route path="/app/vocalization/labeling" element={<VocalizationLabelingTab />} />
-        <Route path="/app/vocalization/training-data" element={<TrainingDataView />} />
-        <Route path="/app/search" element={<SearchTab />} />
-        <Route path="/app/label-processing" element={<LabelProcessingTab />} />
-        <Route path="/app/admin" element={<AdminTab />} />
-        <Route path="*" element={<Navigate to="/app/audio" replace />} />
-      </Routes>
-      <Toaster />
-    </AppShell>
+    <Routes>
+      {/* Timeline viewer renders full-screen, outside the AppShell layout */}
+      <Route path="/app/classifier/timeline/:jobId" element={<><TimelineViewer /><Toaster /></>} />
+      <Route path="*" element={
+        <AppShell>
+          <Routes>
+            <Route path="/" element={<Navigate to="/app/audio" replace />} />
+            <Route path="/app/audio/:audioId" element={<AudioTab />} />
+            <Route path="/app/audio" element={<AudioTab />} />
+            <Route path="/app/processing" element={<ProcessingTab />} />
+            <Route path="/app/clustering/:jobId" element={<ClusteringTab />} />
+            <Route path="/app/clustering" element={<ClusteringTab />} />
+            <Route path="/app/classifier" element={<Navigate to="/app/classifier/training" replace />} />
+            <Route path="/app/classifier/training" element={<TrainingTab />} />
+            <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
+            <Route path="/app/classifier/labeling" element={<LabelingTab />} />
+            <Route path="/app/vocalization" element={<Navigate to="/app/vocalization/training" replace />} />
+            <Route path="/app/vocalization/training" element={<VocalizationTrainingTab />} />
+            <Route path="/app/vocalization/labeling" element={<VocalizationLabelingTab />} />
+            <Route path="/app/vocalization/training-data" element={<TrainingDataView />} />
+            <Route path="/app/search" element={<SearchTab />} />
+            <Route path="/app/label-processing" element={<LabelProcessingTab />} />
+            <Route path="/app/admin" element={<AdminTab />} />
+            <Route path="*" element={<Navigate to="/app/audio" replace />} />
+          </Routes>
+          <Toaster />
+        </AppShell>
+      } />
+    </Routes>
   );
 }
