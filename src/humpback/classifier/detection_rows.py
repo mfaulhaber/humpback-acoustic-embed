@@ -460,7 +460,8 @@ def apply_label_edits(
                 target[lf] = ""
             if label:
                 target[label] = "1"
-            touched_keys.add(key)
+            # Don't add to touched_keys — change_type doesn't move rows,
+            # so existing overlap between detection windows is acceptable.
 
         else:
             raise ValueError(f"Unknown edit action: {action!r}")
