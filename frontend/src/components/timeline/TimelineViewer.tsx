@@ -54,7 +54,7 @@ export function TimelineViewer() {
   // Label mode state
   const [labelMode, setLabelMode] = useState(false);
   const [labelSubMode, setLabelSubMode] = useState<"select" | "add">("select");
-  const [selectedLabel, setSelectedLabel] = useState<LabelType>("humpback");
+  const [selectedLabel, setSelectedLabel] = useState<LabelType | null>(null);
   const [extractOpen, setExtractOpen] = useState(false);
 
   // Double-buffered audio elements for gapless playback
@@ -202,6 +202,24 @@ export function TimelineViewer() {
     useLabelEdits(detections ?? []);
   const saveMutation = useSaveLabels(jobId ?? "");
   const extractMutation = useExtractLabeledSamples();
+
+  // Sync selectedLabel to the detection's current label when selection changes
+  useEffect(() => {
+    if (labelSubMode !== "select" || !selectedId) return;
+    const parts = selectedId.split(":");
+    if (parts.length !== 2) return;
+    const row = mergedRows.find(
+      (r) => r.start_utc === parseFloat(parts[0]) && r.end_utc === parseFloat(parts[1]),
+    );
+    if (!row) return;
+    const label: LabelType | null =
+      row.humpback === 1 ? "humpback" :
+      row.orca === 1 ? "orca" :
+      row.ship === 1 ? "ship" :
+      row.background === 1 ? "background" :
+      null;
+    setSelectedLabel(label);
+  }, [selectedId, labelSubMode, mergedRows]);
 
   // Label mode is enabled only when paused and zoomed to 5m or 1m
   const labelModeEnabled = !isPlaying && (zoomLevel === "1m" || zoomLevel === "5m");
