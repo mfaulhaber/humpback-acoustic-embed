@@ -382,9 +382,20 @@ def normalize_detection_row(
     }
 
 
+def _normalize_utc_key(value: str) -> str:
+    """Normalize a UTC timestamp string to canonical float repr for key matching."""
+    try:
+        return str(float(value))
+    except (ValueError, TypeError):
+        return value
+
+
 def _row_key(row: dict[str, str]) -> tuple[str, str]:
     """Return the (start_utc, end_utc) composite key for a detection row."""
-    return (row.get("start_utc", ""), row.get("end_utc", ""))
+    return (
+        _normalize_utc_key(row.get("start_utc", "")),
+        _normalize_utc_key(row.get("end_utc", "")),
+    )
 
 
 def _is_row_labeled(row: dict[str, str]) -> bool:
@@ -434,7 +445,10 @@ def apply_label_edits(
             touched_keys.add(_row_key(new_row))
 
         elif action == "move":
-            key = (str(edit.get("start_utc", "")), str(edit.get("end_utc", "")))
+            key = (
+                _normalize_utc_key(str(edit.get("start_utc", ""))),
+                _normalize_utc_key(str(edit.get("end_utc", ""))),
+            )
             target = row_index.get(key)
             if target is None:
                 raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
@@ -445,13 +459,19 @@ def apply_label_edits(
             touched_keys.add(_row_key(target))
 
         elif action == "delete":
-            key = (str(edit.get("start_utc", "")), str(edit.get("end_utc", "")))
+            key = (
+                _normalize_utc_key(str(edit.get("start_utc", ""))),
+                _normalize_utc_key(str(edit.get("end_utc", ""))),
+            )
             if key not in row_index:
                 raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
             delete_keys.add(key)
 
         elif action == "change_type":
-            key = (str(edit.get("start_utc", "")), str(edit.get("end_utc", "")))
+            key = (
+                _normalize_utc_key(str(edit.get("start_utc", ""))),
+                _normalize_utc_key(str(edit.get("end_utc", ""))),
+            )
             target = row_index.get(key)
             if target is None:
                 raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
