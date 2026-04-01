@@ -357,9 +357,28 @@ async def get_vocalization_inference_results(
         Path(job.output_path), vocabulary, stored_thresholds, threshold_overrides
     )
 
-    # Server-side sort
+    # Server-side sort (must happen before pagination so limit applies to sorted order)
     if sort == "confidence_desc":
         rows.sort(key=lambda r: r.get("confidence") or -1.0, reverse=True)
+    elif sort == "score_desc":
+        rows.sort(
+            key=lambda r: max(r["scores"].values()) if r["scores"] else 0.0,
+            reverse=True,
+        )
+    elif sort == "uncertainty":
+        avg_threshold = (
+            sum(stored_thresholds.values()) / len(stored_thresholds)
+            if stored_thresholds
+            else 0.5
+        )
+        if threshold_overrides:
+            merged = {**stored_thresholds, **threshold_overrides}
+            avg_threshold = sum(merged.values()) / len(merged) if merged else 0.5
+        rows.sort(
+            key=lambda r: abs(
+                (max(r["scores"].values()) if r["scores"] else 0.0) - avg_threshold
+            )
+        )
 
     # Paginate
     page = rows[offset : offset + limit]
