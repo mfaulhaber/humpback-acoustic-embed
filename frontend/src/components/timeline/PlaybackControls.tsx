@@ -43,80 +43,87 @@ export function PlaybackControls({
 
   return (
     <div
-      className="flex items-center justify-center gap-6 py-2.5 px-4"
-      style={{ borderTop: `1px solid ${COLORS.border}` }}
+      className="flex items-center py-2.5 px-4"
+      style={{ borderTop: `1px solid ${COLORS.border}`, position: "relative" }}
     >
-      <span className="text-[10px] font-mono" style={{ color: COLORS.textMuted }}>
-        {timeStr}
-      </span>
-      <div className="flex items-center gap-4">
-        <button onClick={onSkipBack} style={{ color: COLORS.textBright }}>
-          <SkipBack size={16} />
-        </button>
+      {/* Center group: playback controls anchored to center of row */}
+      <div className="absolute inset-0 flex items-center justify-center gap-6 pointer-events-none">
+        <span className="text-[10px] font-mono pointer-events-auto" style={{ color: COLORS.textMuted }}>
+          {timeStr}
+        </span>
+        <div className="flex items-center gap-4 pointer-events-auto">
+          <button onClick={onSkipBack} style={{ color: COLORS.textBright }}>
+            <SkipBack size={16} />
+          </button>
+          <button
+            onClick={onPlayPause}
+            className="w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ border: `1.5px solid ${COLORS.accent}` }}
+          >
+            {isPlaying ? (
+              <Pause size={16} style={{ color: COLORS.accent }} />
+            ) : (
+              <Play size={16} style={{ color: COLORS.accent, paddingLeft: 2 }} />
+            )}
+          </button>
+          <button onClick={onSkipForward} style={{ color: COLORS.textBright }}>
+            <SkipForward size={16} />
+          </button>
+        </div>
         <button
-          onClick={onPlayPause}
-          className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{ border: `1.5px solid ${COLORS.accent}` }}
+          onClick={() => {
+            const idx = SPEEDS.indexOf(speed);
+            onSpeedChange(SPEEDS[(idx + 1) % SPEEDS.length]);
+          }}
+          className="text-[10px] font-mono pointer-events-auto"
+          style={{ color: COLORS.textMuted }}
         >
-          {isPlaying ? (
-            <Pause size={16} style={{ color: COLORS.accent }} />
-          ) : (
-            <Play size={16} style={{ color: COLORS.accent, paddingLeft: 2 }} />
-          )}
+          {speed}x
         </button>
-        <button onClick={onSkipForward} style={{ color: COLORS.textBright }}>
-          <SkipForward size={16} />
-        </button>
-      </div>
-      <button
-        onClick={() => {
-          const idx = SPEEDS.indexOf(speed);
-          onSpeedChange(SPEEDS[(idx + 1) % SPEEDS.length]);
-        }}
-        className="text-[10px] font-mono"
-        style={{ color: COLORS.textMuted }}
-      >
-        {speed}x
-      </button>
-      <div className="flex items-center gap-2 ml-10">
-        <button onClick={onZoomOut} style={{ color: COLORS.textBright }}>
-          <Minus size={14} />
-        </button>
-        <span className="text-[10px]" style={{ color: COLORS.accent }}>Zoom</span>
-        <button onClick={onZoomIn} style={{ color: COLORS.textBright }}>
-          <Plus size={14} />
+        <div className="flex items-center gap-2 ml-10 pointer-events-auto">
+          <button onClick={onZoomOut} style={{ color: COLORS.textBright }}>
+            <Minus size={14} />
+          </button>
+          <span className="text-[10px]" style={{ color: COLORS.accent }}>Zoom</span>
+          <button onClick={onZoomIn} style={{ color: COLORS.textBright }}>
+            <Plus size={14} />
+          </button>
+        </div>
+        <button
+          className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium ml-4 pointer-events-auto"
+          style={{
+            background: labelModeActive ? COLORS.accentDim : "transparent",
+            color: (labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.textMuted,
+            opacity: (labelModeEnabled || labelModeActive) ? 1 : 0.3,
+            border: `1px solid ${(labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.border}`,
+          }}
+          onClick={onLabelMode}
+          disabled={!labelModeEnabled && !labelModeActive}
+          title={labelModeActive ? "Exit label mode" : labelModeEnabled ? "Enter label mode" : "Zoom to 5m or closer to edit labels"}
+        >
+          <Tag size={12} /> Label
         </button>
       </div>
-      <button
-        className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium ml-4"
-        style={{
-          background: labelModeActive ? COLORS.accentDim : "transparent",
-          color: (labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.textMuted,
-          opacity: (labelModeEnabled || labelModeActive) ? 1 : 0.3,
-          border: `1px solid ${(labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.border}`,
-        }}
-        onClick={onLabelMode}
-        disabled={!labelModeEnabled && !labelModeActive}
-        title={labelModeActive ? "Exit label mode" : labelModeEnabled ? "Enter label mode" : "Zoom to 5m or closer to edit labels"}
-      >
-        <Tag size={12} /> Label
-      </button>
-      <button
-        onClick={onToggleLabels}
-        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] ml-4"
-        style={{
-          background: showLabels ? COLORS.accentDim : COLORS.border,
-          color: COLORS.accent,
-        }}
-      >
-        <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
-      </button>
-      <span
-        className="px-2 py-1 rounded text-[10px]"
-        style={{ background: COLORS.border, color: COLORS.accent }}
-      >
-        Freq: {freqRange[0] / 1000}–{freqRange[1] / 1000} kHz
-      </span>
+
+      {/* Right group: Labels/Freq pushed to far right */}
+      <div className="flex items-center gap-2 ml-auto">
+        <button
+          onClick={onToggleLabels}
+          className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
+          style={{
+            background: showLabels ? COLORS.accentDim : COLORS.border,
+            color: COLORS.accent,
+          }}
+        >
+          <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
+        </button>
+        <span
+          className="px-2 py-1 rounded text-[10px]"
+          style={{ background: COLORS.border, color: COLORS.accent }}
+        >
+          Freq: {freqRange[0] / 1000}–{freqRange[1] / 1000} kHz
+        </span>
+      </div>
     </div>
   );
 }
