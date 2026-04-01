@@ -1,5 +1,5 @@
 // frontend/src/components/timeline/DetectionOverlay.tsx
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useLayoutEffect } from "react";
 import type { DetectionRow, ZoomLevel } from "@/api/types";
 import { VIEWPORT_SPAN, LABEL_COLORS, type LabelType } from "./constants";
 
@@ -43,9 +43,11 @@ function formatTime(epoch: number): string {
   return d.toISOString().slice(11, 19) + " UTC";
 }
 
+const TOOLTIP_OFFSET = 12;
+
 interface TooltipState {
-  x: number;
-  y: number;
+  mouseX: number;
+  mouseY: number;
   label: string;
   startTime: string;
   endTime: string;
@@ -65,17 +67,43 @@ export function DetectionOverlay({
 }: DetectionOverlayProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
+  // Clamp tooltip position after render so we can measure its dimensions
+  useLayoutEffect(() => {
+    if (!tooltip || !tooltipRef.current) return;
+    const el = tooltipRef.current;
+    const tw = el.offsetWidth;
+    const th = el.offsetHeight;
+
+    let left = tooltip.mouseX + TOOLTIP_OFFSET;
+    let top = tooltip.mouseY + TOOLTIP_OFFSET;
+
+    // Flip left if overflowing right
+    if (left + tw > width) {
+      left = tooltip.mouseX - TOOLTIP_OFFSET - tw;
+    }
+    // Flip above if overflowing bottom
+    if (top + th > height) {
+      top = tooltip.mouseY - TOOLTIP_OFFSET - th;
+    }
+    // Final clamp to container
+    left = Math.max(0, Math.min(left, width - tw));
+    top = Math.max(0, Math.min(top, height - th));
+
+    setTooltipPos({ left, top });
+  }, [tooltip, width, height]);
 
   const handleMouseEnter = useCallback(
     (row: DetectionRow, label: string, idx: number, e: React.MouseEvent) => {
       const rect = e.currentTarget.parentElement?.getBoundingClientRect();
-      const barRect = e.currentTarget.getBoundingClientRect();
-      const x = barRect.left - (rect?.left ?? 0) + barRect.width / 2;
-      const y = barRect.top - (rect?.top ?? 0);
+      const mouseX = e.clientX - (rect?.left ?? 0);
+      const mouseY = e.clientY - (rect?.top ?? 0);
       setHoveredIdx(idx);
       setTooltip({
-        x,
-        y,
+        mouseX,
+        mouseY,
         label,
         startTime: formatTime(row.start_utc),
         endTime: formatTime(row.end_utc),
@@ -83,7 +111,7 @@ export function DetectionOverlay({
         peakConfidence: row.peak_confidence ?? 0,
       });
     },
-    [jobStart],
+    [],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -184,11 +212,11 @@ export function DetectionOverlay({
       {/* Tooltip */}
       {tooltip && (
         <div
+          ref={tooltipRef}
           style={{
             position: "absolute",
-            left: tooltip.x,
-            top: Math.max(0, tooltip.y - 4),
-            transform: "translate(-50%, -100%)",
+            left: tooltipPos.left,
+            top: tooltipPos.top,
             background: "rgba(6, 13, 20, 0.95)",
             border: "1px solid rgba(64, 224, 192, 0.3)",
             borderRadius: 6,

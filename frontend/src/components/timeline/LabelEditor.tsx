@@ -235,17 +235,19 @@ export function LabelEditor({
       // Select on click
       dispatch({ type: "select", id: utcKey(row) });
 
-      // Start drag
-      const utc = getMouseUtc(e);
-      const duration = row.end_utc - row.start_utc;
-      dragRef.current = {
-        startUtc: row.start_utc,
-        endUtc: row.end_utc,
-        originalStartUtc: row.start_utc,
-        dragStartUtc: utc,
-        duration,
-      };
-      setDragOffset(row.start_utc);
+      // Start drag only for labeled rows (unlabeled rows are selectable but not draggable)
+      if (isLabeled(row)) {
+        const utc = getMouseUtc(e);
+        const duration = row.end_utc - row.start_utc;
+        dragRef.current = {
+          startUtc: row.start_utc,
+          endUtc: row.end_utc,
+          originalStartUtc: row.start_utc,
+          dragStartUtc: utc,
+          duration,
+        };
+        setDragOffset(row.start_utc);
+      }
     },
     [mode, dispatch, getMouseUtc],
   );
@@ -408,7 +410,7 @@ export function LabelEditor({
                     ? isBeingDragged
                       ? "grabbing"
                       : "grab"
-                    : "default",
+                    : "pointer",
               pointerEvents: "auto",
               boxSizing: "border-box",
               transition: isBeingDragged ? "none" : "opacity 0.15s",
@@ -416,14 +418,13 @@ export function LabelEditor({
             onMouseEnter={() => setHoveredKey(key)}
             onMouseLeave={() => setHoveredKey(null)}
             onMouseDown={(e) => {
-              if (label && mode === "select") {
+              if (mode === "select") {
                 handleBarMouseDown(row, e);
               }
             }}
             onClick={(e) => {
-              if (mode === "select" && label) {
+              if (mode === "select") {
                 e.stopPropagation();
-                // Selection handled in mousedown
               }
             }}
           />

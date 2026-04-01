@@ -13,6 +13,7 @@ import { SpectrogramViewport } from "./SpectrogramViewport";
 import { LabelToolbar } from "./LabelToolbar";
 import { LabelEditor } from "./LabelEditor";
 import { ExtractDialog } from "../classifier/ExtractDialog";
+import { Tag } from "lucide-react";
 import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC, AUDIO_FORMAT } from "./constants";
 import type { LabelType } from "./constants";
 
@@ -310,10 +311,6 @@ export function TimelineViewer() {
         hydrophone={job.hydrophone_name ?? job.hydrophone_id ?? ""}
         startTimestamp={job.start_timestamp ?? 0}
         endTimestamp={job.end_timestamp ?? 0}
-        showLabels={showLabels}
-        onToggleLabels={() => setShowLabels((s) => !s)}
-        freqRange={freqRange}
-        onFreqRangeChange={setFreqRange}
       />
 
       {/* Main spectrogram viewport */}
@@ -348,6 +345,35 @@ export function TimelineViewer() {
             />
           )}
         />
+        {/* Labels/Freq overlay — bottom-right of viewport */}
+        <div
+          className="absolute flex items-center gap-2 z-[8]"
+          style={{ bottom: 24, right: 8 }}
+        >
+          <button
+            onClick={() => setShowLabels((s) => !s)}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
+            style={{
+              background: showLabels
+                ? "rgba(64, 224, 192, 0.25)"
+                : "rgba(30, 40, 50, 0.75)",
+              color: COLORS.accent,
+              backdropFilter: "blur(4px)",
+            }}
+          >
+            <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
+          </button>
+          <span
+            className="px-2 py-1 rounded text-[10px]"
+            style={{
+              background: "rgba(30, 40, 50, 0.75)",
+              color: COLORS.accent,
+              backdropFilter: "blur(4px)",
+            }}
+          >
+            Freq: {freqRange[0] / 1000}–{freqRange[1] / 1000} kHz
+          </span>
+        </div>
       </div>
 
       {/* Double-buffered hidden audio elements for gapless playback */}
@@ -365,7 +391,20 @@ export function TimelineViewer() {
             mode={labelSubMode}
             onModeChange={setLabelSubMode}
             selectedLabel={selectedLabel}
-            onLabelChange={setSelectedLabel}
+            onLabelChange={(label) => {
+              setSelectedLabel(label);
+              if (labelSubMode === "select" && selectedId) {
+                const parts = selectedId.split(":");
+                if (parts.length === 2) {
+                  labelDispatch({
+                    type: "change_type",
+                    start_utc: parseFloat(parts[0]),
+                    end_utc: parseFloat(parts[1]),
+                    label,
+                  });
+                }
+              }
+            }}
             onDelete={() => {
               if (!selectedId) return;
               // selectedId is a UTC key "start_utc:end_utc"
