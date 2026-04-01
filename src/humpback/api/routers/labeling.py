@@ -15,6 +15,9 @@ from humpback.schemas.labeling import (
     DetectionNeighborsRequest,
     DetectionNeighborsResponse,
     LabelingSummary,
+    OrphanedLabelDetail,
+    RefreshApplyResponse,
+    RefreshPreviewResponse,
     TrainingSummary,
     NeighborHit,
     VocalizationLabelCreate,
@@ -66,6 +69,16 @@ async def create_vocalization_label(
     """Add a vocalization type label to a detection row."""
     from sqlalchemy import and_, delete
 
+    from humpback.models.classifier import DetectionJob
+
+    # Look up the detection job's current row_store_version.
+    dj_result = await session.execute(
+        select(DetectionJob.row_store_version).where(
+            DetectionJob.id == detection_job_id
+        )
+    )
+    dj_version = dj_result.scalar_one_or_none()
+
     # Mutual exclusivity: "(Negative)" and type labels cannot coexist
     same_window = and_(
         VocalizationLabel.detection_job_id == detection_job_id,
@@ -95,6 +108,7 @@ async def create_vocalization_label(
         confidence=body.confidence,
         source=body.source,
         notes=body.notes,
+        row_store_version_at_import=dj_version,
     )
     session.add(label)
     await session.commit()
@@ -146,6 +160,152 @@ async def delete_vocalization_label(
 
     await session.delete(label)
     await session.commit()
+
+
+# ---- Refresh / Reconciliation ----
+
+
+def _normalize_utc_key(v: float) -> float:
+    """Round UTC to 6 decimal places for stable comparison."""
+    return round(v, 6)
+
+
+async def _get_detection_job_or_404(session, detection_job_id: str):
+    from humpback.models.classifier import DetectionJob
+
+    result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id == detection_job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(404, "Detection job not found")
+    return job
+
+
+@router.post(
+    "/vocalization-labels/{detection_job_id}/refresh",
+    response_model=RefreshPreviewResponse,
+)
+async def refresh_preview(
+    detection_job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    """Preview reconciliation between row store and vocalization labels."""
+    from humpback.storage import detection_row_store_path
+
+    job = await _get_detection_job_or_404(session, detection_job_id)
+
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
+    if not rs_path.exists():
+        raise HTTPException(400, "Detection row store not available")
+
+    _fieldnames, rows = read_detection_row_store(rs_path)
+    row_keys: set[tuple[float, float]] = set()
+    for r in rows:
+        s = _normalize_utc_key(float(r.get("start_utc", "0")))
+        e = _normalize_utc_key(float(r.get("end_utc", "0")))
+        row_keys.add((s, e))
+
+    result = await session.execute(
+        select(VocalizationLabel).where(
+            VocalizationLabel.detection_job_id == detection_job_id
+        )
+    )
+    all_labels = result.scalars().all()
+
+    matched_count = 0
+    orphaned: list[OrphanedLabelDetail] = []
+    for lbl in all_labels:
+        key = (_normalize_utc_key(lbl.start_utc), _normalize_utc_key(lbl.end_utc))
+        if key in row_keys:
+            matched_count += 1
+        else:
+            orphaned.append(
+                OrphanedLabelDetail(
+                    id=lbl.id,
+                    start_utc=lbl.start_utc,
+                    end_utc=lbl.end_utc,
+                    label=lbl.label,
+                )
+            )
+
+    return RefreshPreviewResponse(
+        matched_count=matched_count,
+        orphaned_count=len(orphaned),
+        orphaned_labels=orphaned,
+        current_version=job.row_store_version or 1,
+    )
+
+
+@router.post(
+    "/vocalization-labels/{detection_job_id}/refresh/apply",
+    response_model=RefreshApplyResponse,
+)
+async def refresh_apply(
+    detection_job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    """Delete orphaned vocalization labels and update version on survivors."""
+    from sqlalchemy import delete as sa_delete
+
+    from humpback.storage import detection_row_store_path
+
+    job = await _get_detection_job_or_404(session, detection_job_id)
+
+    rs_path = detection_row_store_path(settings.storage_root, job.id)
+    if not rs_path.exists():
+        raise HTTPException(400, "Detection row store not available")
+
+    _fieldnames, rows = read_detection_row_store(rs_path)
+    row_keys: set[tuple[float, float]] = set()
+    for r in rows:
+        s = _normalize_utc_key(float(r.get("start_utc", "0")))
+        e = _normalize_utc_key(float(r.get("end_utc", "0")))
+        row_keys.add((s, e))
+
+    result = await session.execute(
+        select(VocalizationLabel).where(
+            VocalizationLabel.detection_job_id == detection_job_id
+        )
+    )
+    all_labels = result.scalars().all()
+
+    orphaned_ids: list[str] = []
+    surviving_ids: list[str] = []
+    for lbl in all_labels:
+        key = (_normalize_utc_key(lbl.start_utc), _normalize_utc_key(lbl.end_utc))
+        if key in row_keys:
+            surviving_ids.append(lbl.id)
+        else:
+            orphaned_ids.append(lbl.id)
+
+    current_version = job.row_store_version or 1
+
+    # Delete orphaned labels
+    if orphaned_ids:
+        await session.execute(
+            sa_delete(VocalizationLabel).where(VocalizationLabel.id.in_(orphaned_ids))
+        )
+
+    # Update version on surviving labels
+    if surviving_ids:
+        from sqlalchemy import update
+
+        await session.execute(
+            update(VocalizationLabel)
+            .where(VocalizationLabel.id.in_(surviving_ids))
+            .values(row_store_version_at_import=current_version)
+        )
+
+    await session.commit()
+
+    return RefreshApplyResponse(
+        deleted_count=len(orphaned_ids),
+        surviving_count=len(surviving_ids),
+        current_version=current_version,
+    )
 
 
 # ---- Label Vocabulary ----

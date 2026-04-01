@@ -74,6 +74,8 @@ import type {
   TrainingDatasetRowsResponse,
   TrainingDatasetLabel,
   TrainingDatasetExtendRequest,
+  RefreshPreviewResponse,
+  RefreshApplyResponse,
 } from "./types";
 
 class ApiError extends Error {
@@ -497,6 +499,18 @@ export const fetchLabelingSummary = (detectionJobId: string) =>
 
 export const fetchTrainingSummary = () =>
   api<TrainingSummary>("/labeling/training-summary");
+
+export const fetchRefreshPreview = (detectionJobId: string) =>
+  post<RefreshPreviewResponse>(
+    `/labeling/vocalization-labels/${detectionJobId}/refresh`,
+    {},
+  );
+
+export const applyRefresh = (detectionJobId: string) =>
+  post<RefreshApplyResponse>(
+    `/labeling/vocalization-labels/${detectionJobId}/refresh/apply`,
+    {},
+  );
 
 export const fetchDetectionNeighbors = (
   detectionJobId: string,

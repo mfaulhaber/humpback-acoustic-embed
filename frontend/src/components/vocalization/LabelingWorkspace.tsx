@@ -45,12 +45,17 @@ import {
   deleteVocalizationLabel,
   detectionSpectrogramUrl,
   detectionAudioSliceUrl,
+  fetchRefreshPreview,
+  applyRefresh,
+  fetchDetectionJob,
 } from "@/api/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import type {
   VocClassifierPredictionRow,
   VocalizationLabel,
   LabelingSource,
+  RefreshPreviewResponse,
 } from "@/api/types";
 
 const PAGE_SIZE = 50;
@@ -97,6 +102,53 @@ export function LabelingWorkspace({
     source.type === "detection_job" ? "confidence_desc" : "score_desc",
   );
   const [saving, setSaving] = useState(false);
+  const qc = useQueryClient();
+
+  // Staleness / refresh state
+  const [stalePreview, setStalePreview] = useState<RefreshPreviewResponse | null>(null);
+  const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const detectionJobId =
+    source.type === "detection_job" ? source.jobId : null;
+
+  // Check staleness on mount for detection job sources
+  useEffect(() => {
+    if (!detectionJobId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const djob = await fetchDetectionJob(detectionJobId);
+        if (cancelled) return;
+        // Only check if job has labels at all
+        const preview = await fetchRefreshPreview(detectionJobId);
+        if (cancelled) return;
+        if (preview.orphaned_count > 0) {
+          setStalePreview(preview);
+        } else {
+          // Check version mismatch — if labels exist but have NULL or old version
+          // the preview endpoint won't show orphans, but we still want to surface
+          // the option to sync versions
+          setStalePreview(null);
+        }
+      } catch {
+        // Silently ignore — job may not have labels yet
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [detectionJobId]);
+
+  const handleRefreshApply = useCallback(async () => {
+    if (!detectionJobId) return;
+    setRefreshing(true);
+    try {
+      await applyRefresh(detectionJobId);
+      setStalePreview(null);
+      setRefreshDialogOpen(false);
+      qc.invalidateQueries({ queryKey: ["labeling"] });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [detectionJobId, qc]);
 
   // Pending label state (local accumulation)
   const [pendingAdds, setPendingAdds] = useState<Map<string, Set<string>>>(
@@ -220,11 +272,6 @@ export function LabelingWorkspace({
   );
 
   // Save / Cancel — use raw API calls to avoid per-mutation query invalidation
-  const qc = useQueryClient();
-
-  const detectionJobId =
-    source.type === "detection_job" ? source.jobId : null;
-
   const handleSave = useCallback(async () => {
     if (!detectionJobId) return;
     setSaving(true);
@@ -308,6 +355,16 @@ export function LabelingWorkspace({
             <Badge variant="secondary" className="text-xs">
               <Eye className="h-3 w-3 mr-1" />
               View only
+            </Badge>
+          )}
+          {stalePreview && (
+            <Badge
+              variant="outline"
+              className="text-xs bg-amber-50 text-amber-800 border-amber-200 cursor-pointer"
+              onClick={() => setRefreshDialogOpen(true)}
+            >
+              <AlertTriangle className="h-3 w-3 mr-1" />
+              {stalePreview.orphaned_count} orphaned label{stalePreview.orphaned_count !== 1 ? "s" : ""} — click to review
             </Badge>
           )}
         </div>
@@ -422,6 +479,91 @@ export function LabelingWorkspace({
           </Button>
         </div>
       </CardContent>
+
+      {/* Refresh reconciliation dialog */}
+      <Dialog open={refreshDialogOpen} onOpenChange={setRefreshDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Reconcile Vocalization Labels
+            </DialogTitle>
+          </DialogHeader>
+          {stalePreview && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Detection labels have changed since these vocalization labels
+                were created. Some labeled windows no longer exist in the
+                detection row store.
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded border p-2 text-center">
+                  <div className="font-medium text-green-700">
+                    {stalePreview.matched_count}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    labels still valid
+                  </div>
+                </div>
+                <div className="rounded border p-2 text-center">
+                  <div className="font-medium text-amber-700">
+                    {stalePreview.orphaned_count}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    orphaned labels
+                  </div>
+                </div>
+              </div>
+              {stalePreview.orphaned_labels.length > 0 && (
+                <div className="max-h-40 overflow-y-auto rounded border divide-y text-xs">
+                  {stalePreview.orphaned_labels.map((ol) => (
+                    <div
+                      key={ol.id}
+                      className="flex justify-between px-2 py-1.5"
+                    >
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          ol.label === NEGATIVE_LABEL
+                            ? NEGATIVE_COLOR
+                            : TYPE_COLORS[0]
+                        }`}
+                      >
+                        {ol.label}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {new Date(ol.start_utc * 1000)
+                          .toISOString()
+                          .slice(11, 19)}{" "}
+                        UTC
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setRefreshDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={handleRefreshApply}
+                  disabled={refreshing}
+                >
+                  {refreshing
+                    ? "Applying..."
+                    : `Discard ${stalePreview.orphaned_count} orphaned label${stalePreview.orphaned_count !== 1 ? "s" : ""} & sync`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

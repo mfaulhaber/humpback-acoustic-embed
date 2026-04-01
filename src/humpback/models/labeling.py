@@ -24,3 +24,4 @@ class VocalizationLabel(UUIDMixin, TimestampMixin, Base):
     confidence: Mapped[Optional[float]] = mapped_column(default=None)
     source: Mapped[str] = mapped_column(default="manual")
     notes: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    row_store_version_at_import: Mapped[Optional[int]] = mapped_column(default=None)

@@ -415,16 +415,68 @@ async def bulk_delete_training_jobs(
     return count
 
 
+class DetectionJobDependencyError(Exception):
+    """Raised when a detection job cannot be deleted due to downstream deps."""
+
+    def __init__(self, job_id: str, message: str) -> None:
+        self.job_id = job_id
+        self.message = message
+        super().__init__(message)
+
+
+async def _check_detection_job_dependencies(
+    session: AsyncSession, job_id: str
+) -> str | None:
+    """Return a dependency message if the job cannot be deleted, else None."""
+    from sqlalchemy import func
+
+    from humpback.models.labeling import VocalizationLabel
+    from humpback.models.training_dataset import TrainingDataset
+
+    # Check vocalization labels
+    vl_result = await session.execute(
+        select(func.count()).where(VocalizationLabel.detection_job_id == job_id)
+    )
+    vl_count = vl_result.scalar() or 0
+
+    # Check training datasets referencing this job in source_config JSON
+    td_result = await session.execute(select(TrainingDataset))
+    td_count = 0
+    for td in td_result.scalars().all():
+        if job_id in (td.source_config or ""):
+            td_count += 1
+
+    parts: list[str] = []
+    if vl_count:
+        parts.append(f"{vl_count} vocalization label{'s' if vl_count != 1 else ''}")
+    if td_count:
+        parts.append(f"{td_count} training dataset{'s' if td_count != 1 else ''}")
+
+    if parts:
+        return (
+            f"Cannot delete detection job: used by {' and '.join(parts)}. "
+            "Remove these associations first."
+        )
+    return None
+
+
 async def delete_detection_job(
     session: AsyncSession, job_id: str, storage_root: Path
 ) -> bool:
-    """Delete a detection job and its output files."""
+    """Delete a detection job and its output files.
+
+    Raises DetectionJobDependencyError if the job has downstream dependencies.
+    """
     result = await session.execute(
         select(DetectionJob).where(DetectionJob.id == job_id)
     )
     job = result.scalar_one_or_none()
     if job is None:
         return False
+
+    dep_msg = await _check_detection_job_dependencies(session, job_id)
+    if dep_msg:
+        raise DetectionJobDependencyError(job_id, dep_msg)
 
     # Delete detection output directory
     from humpback.storage import detection_dir
@@ -440,13 +492,21 @@ async def delete_detection_job(
 
 async def bulk_delete_detection_jobs(
     session: AsyncSession, job_ids: list[str], storage_root: Path
-) -> int:
-    """Delete multiple detection jobs. Returns count of deleted jobs."""
+) -> tuple[int, list[dict[str, str]]]:
+    """Delete multiple detection jobs.
+
+    Returns (deleted_count, blocked_list) where blocked_list contains
+    dicts with 'job_id' and 'detail' for jobs that could not be deleted.
+    """
     count = 0
+    blocked: list[dict[str, str]] = []
     for job_id in job_ids:
-        if await delete_detection_job(session, job_id, storage_root):
-            count += 1
-    return count
+        try:
+            if await delete_detection_job(session, job_id, storage_root):
+                count += 1
+        except DetectionJobDependencyError as exc:
+            blocked.append({"job_id": exc.job_id, "detail": exc.message})
+    return count, blocked
 
 
 async def bulk_delete_classifier_models(

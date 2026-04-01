@@ -779,3 +779,223 @@ async def test_legacy_training_endpoints_removed(client):
 
     resp2 = await client.get("/labeling/vocalization-models")
     assert resp2.status_code in (404, 405)
+
+
+# ---- Refresh / Reconciliation ----
+
+
+@pytest.mark.asyncio
+async def test_refresh_preview_all_matched(client, app_settings, tmp_path):
+    """Preview with no changes shows all labels matched."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+
+    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["matched_count"] == 1
+    assert data["orphaned_count"] == 0
+    assert data["orphaned_labels"] == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_preview_detects_orphans(client, app_settings, tmp_path):
+    """Preview detects orphaned labels after row deletion."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Label both rows
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
+        json={"label": "moan"},
+    )
+
+    # Delete row2 from the row store by rewriting with only row1
+    row_store = detection_row_store_path(app_settings.storage_root, job_id)
+    rows = [
+        {
+            "start_utc": str(BASE_EPOCH),
+            "end_utc": str(BASE_EPOCH + 5.0),
+            "raw_start_utc": str(BASE_EPOCH),
+            "raw_end_utc": str(BASE_EPOCH + 5.0),
+            "merged_event_count": "1",
+            "avg_confidence": "0.85",
+            "peak_confidence": "0.92",
+            "n_windows": "1",
+            "hydrophone_name": "",
+            "humpback": "",
+            "orca": "",
+            "ship": "",
+            "background": "",
+        }
+    ]
+    write_detection_row_store(row_store, rows)
+
+    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["matched_count"] == 1
+    assert data["orphaned_count"] == 1
+    assert len(data["orphaned_labels"]) == 1
+    assert data["orphaned_labels"][0]["label"] == "moan"
+
+
+@pytest.mark.asyncio
+async def test_refresh_apply_deletes_orphans(client, app_settings, tmp_path):
+    """Apply deletes orphaned labels and updates version on survivors."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
+        json={"label": "moan"},
+    )
+
+    # Delete row2 from row store
+    row_store = detection_row_store_path(app_settings.storage_root, job_id)
+    rows = [
+        {
+            "start_utc": str(BASE_EPOCH),
+            "end_utc": str(BASE_EPOCH + 5.0),
+            "raw_start_utc": str(BASE_EPOCH),
+            "raw_end_utc": str(BASE_EPOCH + 5.0),
+            "merged_event_count": "1",
+            "avg_confidence": "0.85",
+            "peak_confidence": "0.92",
+            "n_windows": "1",
+            "hydrophone_name": "",
+            "humpback": "",
+            "orca": "",
+            "ship": "",
+            "background": "",
+        }
+    ]
+    write_detection_row_store(row_store, rows)
+
+    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh/apply")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["deleted_count"] == 1
+    assert data["surviving_count"] == 1
+
+    # Verify orphaned label is gone
+    resp2 = await client.get(f"/labeling/vocalization-labels/{job_id}{row2_qs}")
+    assert resp2.json() == []
+
+    # Surviving label still exists
+    resp3 = await client.get(f"/labeling/vocalization-labels/{job_id}{row1_qs}")
+    assert len(resp3.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_apply_idempotent(client, app_settings, tmp_path):
+    """Calling apply when already in sync is a no-op."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+
+    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh/apply")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["deleted_count"] == 0
+    assert data["surviving_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_preview_nonexistent_job(client):
+    """Preview for non-existent job returns 404."""
+    resp = await client.post("/labeling/vocalization-labels/nonexistent/refresh")
+    assert resp.status_code == 404
+
+
+# ---- Version Tracking ----
+
+
+@pytest.mark.asyncio
+async def test_label_records_row_store_version(client, app_settings, tmp_path):
+    """Newly created labels record the detection job's row_store_version."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    resp = await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["row_store_version_at_import"] == 1
+
+
+# ---- Deletion Guards ----
+
+
+@pytest.mark.asyncio
+async def test_delete_detection_job_blocked_by_labels(client, app_settings, tmp_path):
+    """Cannot delete a detection job that has vocalization labels."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+
+    resp = await client.delete(f"/classifier/detection-jobs/{job_id}")
+    assert resp.status_code == 409
+    assert "vocalization label" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_detection_job_succeeds_without_deps(
+    client, app_settings, tmp_path
+):
+    """Deletion succeeds when no vocalization labels or training datasets."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    resp = await client.delete(f"/classifier/detection-jobs/{job_id}")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_partial_block(client, app_settings, tmp_path):
+    """Bulk delete: deletable jobs succeed, blocked ones return details."""
+    job_id_1, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Seed a second detection job (re-use helper but with fresh IDs)
+    job_id_2, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Add label to job_1 only
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id_1}{row1_qs}",
+        json={"label": "whup"},
+    )
+
+    resp = await client.post(
+        "/classifier/detection-jobs/bulk-delete",
+        json={"ids": [job_id_1, job_id_2]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1  # only job_2 deleted
+    assert len(data["blocked"]) == 1
+    assert data["blocked"][0]["job_id"] == job_id_1
