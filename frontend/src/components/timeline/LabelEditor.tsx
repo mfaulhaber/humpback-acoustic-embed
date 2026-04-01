@@ -2,13 +2,13 @@
 import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import type { DetectionRow } from "@/api/types";
 import type { ZoomLevel } from "@/api/types";
-import { VIEWPORT_SPAN, LABEL_COLORS, type LabelType } from "./constants";
+import { VIEWPORT_SPAN, LABEL_COLORS, COLORS, type LabelType } from "./constants";
 import type { Action } from "@/hooks/queries/useLabelEdits";
 
 export interface LabelEditorProps {
   mergedRows: DetectionRow[];
   mode: "select" | "add";
-  selectedLabel: LabelType;
+  selectedLabel: LabelType | null;
   selectedId: string | null;
   dispatch: React.Dispatch<Action>;
   jobStart: number;
@@ -215,7 +215,7 @@ export function LabelEditor({
   const handleContainerClick = useCallback(
     (e: React.MouseEvent) => {
       // Add mode click
-      if (mode === "add" && ghostStart !== null && ghostEnd !== null && !ghostOverlapsLabeled) {
+      if (mode === "add" && ghostStart !== null && ghostEnd !== null && !ghostOverlapsLabeled && selectedLabel) {
         dispatch({ type: "add", start_utc: ghostStart, end_utc: ghostEnd, label: selectedLabel });
         return;
       }
@@ -235,17 +235,19 @@ export function LabelEditor({
       // Select on click
       dispatch({ type: "select", id: utcKey(row) });
 
-      // Start drag
-      const utc = getMouseUtc(e);
-      const duration = row.end_utc - row.start_utc;
-      dragRef.current = {
-        startUtc: row.start_utc,
-        endUtc: row.end_utc,
-        originalStartUtc: row.start_utc,
-        dragStartUtc: utc,
-        duration,
-      };
-      setDragOffset(row.start_utc);
+      // Start drag only for labeled rows (unlabeled rows are selectable but not draggable)
+      if (isLabeled(row)) {
+        const utc = getMouseUtc(e);
+        const duration = row.end_utc - row.start_utc;
+        dragRef.current = {
+          startUtc: row.start_utc,
+          endUtc: row.end_utc,
+          originalStartUtc: row.start_utc,
+          dragStartUtc: utc,
+          duration,
+        };
+        setDragOffset(row.start_utc);
+      }
     },
     [mode, dispatch, getMouseUtc],
   );
@@ -330,7 +332,7 @@ export function LabelEditor({
 
   // Ghost bar rendering data
   let ghostBar: { x: number; w: number; color: string } | null = null;
-  if (mode === "add" && ghostStart !== null && ghostEnd !== null) {
+  if (mode === "add" && ghostStart !== null && ghostEnd !== null && selectedLabel) {
     const gx = utcToX(ghostStart);
     const gw = Math.max(2, (ghostEnd - ghostStart) * pxPerSec);
     const color = ghostOverlapsLabeled
@@ -408,7 +410,7 @@ export function LabelEditor({
                     ? isBeingDragged
                       ? "grabbing"
                       : "grab"
-                    : "default",
+                    : "pointer",
               pointerEvents: "auto",
               boxSizing: "border-box",
               transition: isBeingDragged ? "none" : "opacity 0.15s",
@@ -416,14 +418,13 @@ export function LabelEditor({
             onMouseEnter={() => setHoveredKey(key)}
             onMouseLeave={() => setHoveredKey(null)}
             onMouseDown={(e) => {
-              if (label && mode === "select") {
+              if (mode === "select") {
                 handleBarMouseDown(row, e);
               }
             }}
             onClick={(e) => {
-              if (mode === "select" && label) {
+              if (mode === "select") {
                 e.stopPropagation();
-                // Selection handled in mousedown
               }
             }}
           />
@@ -444,7 +445,7 @@ export function LabelEditor({
             boxSizing: "border-box",
             border: ghostOverlapsLabeled
               ? "2px dashed rgba(239, 68, 68, 0.7)"
-              : `2px dashed ${LABEL_COLORS[selectedLabel].border}`,
+              : `2px dashed ${selectedLabel ? LABEL_COLORS[selectedLabel].border : COLORS.border}`,
           }}
         />
       )}

@@ -54,7 +54,7 @@ export function TimelineViewer() {
   // Label mode state
   const [labelMode, setLabelMode] = useState(false);
   const [labelSubMode, setLabelSubMode] = useState<"select" | "add">("select");
-  const [selectedLabel, setSelectedLabel] = useState<LabelType>("humpback");
+  const [selectedLabel, setSelectedLabel] = useState<LabelType | null>(null);
   const [extractOpen, setExtractOpen] = useState(false);
 
   // Double-buffered audio elements for gapless playback
@@ -203,6 +203,24 @@ export function TimelineViewer() {
   const saveMutation = useSaveLabels(jobId ?? "");
   const extractMutation = useExtractLabeledSamples();
 
+  // Sync selectedLabel to the detection's current label when selection changes
+  useEffect(() => {
+    if (labelSubMode !== "select" || !selectedId) return;
+    const parts = selectedId.split(":");
+    if (parts.length !== 2) return;
+    const row = mergedRows.find(
+      (r) => r.start_utc === parseFloat(parts[0]) && r.end_utc === parseFloat(parts[1]),
+    );
+    if (!row) return;
+    const label: LabelType | null =
+      row.humpback === 1 ? "humpback" :
+      row.orca === 1 ? "orca" :
+      row.ship === 1 ? "ship" :
+      row.background === 1 ? "background" :
+      null;
+    setSelectedLabel(label);
+  }, [selectedId, labelSubMode, mergedRows]);
+
   // Label mode is enabled only when paused and zoomed to 5m or 1m
   const labelModeEnabled = !isPlaying && (zoomLevel === "1m" || zoomLevel === "5m");
 
@@ -219,11 +237,17 @@ export function TimelineViewer() {
     if (idx > 0) setZoomLevel(ZOOM_LEVELS[idx - 1]);
   }, [zoomLevel]);
 
-  // Enter label mode callback
-  const enterLabelMode = useCallback(() => {
-    setIsPlaying(false);
-    setLabelMode(true);
-  }, []);
+  // Toggle label mode callback
+  const toggleLabelMode = useCallback(() => {
+    if (labelMode) {
+      if (isDirty && !confirm("Discard unsaved label changes?")) return;
+      setLabelMode(false);
+      labelDispatch({ type: "clear" });
+    } else {
+      setIsPlaying(false);
+      setLabelMode(true);
+    }
+  }, [labelMode, isDirty, labelDispatch]);
 
   // Play/pause — exits label mode if active
   const togglePlay = useCallback(() => {
@@ -285,14 +309,14 @@ export function TimelineViewer() {
 
   if (!jobId || !job) {
     return (
-      <div className="flex items-center justify-center h-screen" style={{ background: COLORS.bg, color: COLORS.text }}>
+      <div className="fixed left-60 flex items-center justify-center" style={{ top: "3rem", right: 0, bottom: 0, background: COLORS.bg, color: COLORS.text, zIndex: 40 }}>
         Loading...
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen font-mono text-xs overflow-hidden" style={{ background: COLORS.bg, color: COLORS.text, position: "relative" }}>
+    <div className="fixed left-60 flex flex-col font-mono text-xs overflow-hidden" style={{ top: "3rem", right: 0, bottom: 0, background: COLORS.bg, color: COLORS.text, zIndex: 40 }}>
       {!cacheComplete && prepareStatus && (
         <div style={{
           position: "absolute", top: 4, right: 16,
@@ -310,10 +334,6 @@ export function TimelineViewer() {
         hydrophone={job.hydrophone_name ?? job.hydrophone_id ?? ""}
         startTimestamp={job.start_timestamp ?? 0}
         endTimestamp={job.end_timestamp ?? 0}
-        showLabels={showLabels}
-        onToggleLabels={() => setShowLabels((s) => !s)}
-        freqRange={freqRange}
-        onFreqRangeChange={setFreqRange}
       />
 
       {/* Main spectrogram viewport */}
@@ -365,7 +385,20 @@ export function TimelineViewer() {
             mode={labelSubMode}
             onModeChange={setLabelSubMode}
             selectedLabel={selectedLabel}
-            onLabelChange={setSelectedLabel}
+            onLabelChange={(label) => {
+              setSelectedLabel(label);
+              if (labelSubMode === "select" && selectedId) {
+                const parts = selectedId.split(":");
+                if (parts.length === 2) {
+                  labelDispatch({
+                    type: "change_type",
+                    start_utc: parseFloat(parts[0]),
+                    end_utc: parseFloat(parts[1]),
+                    label,
+                  });
+                }
+              }
+            }}
             onDelete={() => {
               if (!selectedId) return;
               // selectedId is a UTC key "start_utc:end_utc"
@@ -412,8 +445,12 @@ export function TimelineViewer() {
           onSpeedChange={setSpeed}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
-          onLabelMode={enterLabelMode}
+          onLabelMode={toggleLabelMode}
           labelModeEnabled={labelModeEnabled}
+          labelModeActive={labelMode}
+          showLabels={showLabels}
+          onToggleLabels={() => setShowLabels((s) => !s)}
+          freqRange={freqRange}
         />
       </div>
 

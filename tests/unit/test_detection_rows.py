@@ -153,6 +153,24 @@ def test_apply_label_edits_change_type() -> None:
     assert result[0]["orca"] == "1"
 
 
+def test_apply_label_edits_change_type_mismatched_precision() -> None:
+    """change_type matches rows even when UTC strings have different decimal precision."""
+    rows: list[dict[str, str]] = [
+        {f: "" for f in ROW_STORE_FIELDNAMES}
+        | {"start_utc": "1635756126.000000", "end_utc": "1635756131.000000"}
+    ]
+    edits = [
+        {
+            "action": "change_type",
+            "start_utc": 1635756126.0,
+            "end_utc": 1635756131.0,
+            "label": "humpback",
+        }
+    ]
+    result = apply_label_edits(rows, edits, job_duration=999999.0)
+    assert result[0]["humpback"] == "1"
+
+
 def test_legacy_parquet_migration_hydrophone(tmp_path) -> None:
     """Old-schema Parquet with detection_filename is lazily migrated to UTC."""
     import pyarrow as pa

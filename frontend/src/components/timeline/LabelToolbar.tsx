@@ -6,7 +6,7 @@ import type { LabelType } from "./constants";
 export interface LabelToolbarProps {
   mode: "select" | "add";
   onModeChange: (mode: "select" | "add") => void;
-  selectedLabel: LabelType;
+  selectedLabel: LabelType | null;
   onLabelChange: (label: LabelType) => void;
   onDelete: () => void;
   onSave: () => void;
@@ -81,6 +81,23 @@ export function LabelToolbar({
 
       {/* Label radio group */}
       <div className="flex items-center gap-3">
+        <span
+          className="flex items-center gap-1"
+          style={{ fontSize: 10, color: selectedLabel === null ? COLORS.textBright : COLORS.textMuted, opacity: selectedLabel === null ? 1 : 0.5 }}
+        >
+          <span
+            style={{
+              display: "inline-block",
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              border: `1.5px solid ${COLORS.textMuted}`,
+              background: selectedLabel === null ? COLORS.textMuted : "transparent",
+              flexShrink: 0,
+            }}
+          />
+          unlabeled
+        </span>
         {LABEL_OPTIONS.map((label) => {
           const isSelected = selectedLabel === label;
           const accentColor = LABEL_COLORS[label].border;
