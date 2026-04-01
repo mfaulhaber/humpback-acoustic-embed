@@ -1,5 +1,5 @@
 // frontend/src/components/timeline/PlaybackControls.tsx
-import { Play, Pause, SkipBack, SkipForward, Plus, Minus, Tag } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Plus, Minus, Tag, AudioLines } from "lucide-react";
 import { COLORS } from "./constants";
 
 interface PlaybackControlsProps {
@@ -15,8 +15,10 @@ interface PlaybackControlsProps {
   onLabelMode?: () => void;
   labelModeEnabled: boolean;
   labelModeActive: boolean;
-  showLabels: boolean;
-  onToggleLabels: () => void;
+  overlayMode: "off" | "detection" | "vocalization";
+  onToggleDetection: () => void;
+  onToggleVocalization: () => void;
+  hasVocalizationData: boolean;
   freqRange: [number, number];
 }
 
@@ -35,8 +37,10 @@ export function PlaybackControls({
   onLabelMode,
   labelModeEnabled,
   labelModeActive,
-  showLabels,
-  onToggleLabels,
+  overlayMode,
+  onToggleDetection,
+  onToggleVocalization,
+  hasVocalizationData,
   freqRange,
 }: PlaybackControlsProps) {
   const timeStr = new Date(centerTimestamp * 1000).toISOString().slice(11, 19) + " UTC";
@@ -105,17 +109,30 @@ export function PlaybackControls({
         </button>
       </div>
 
-      {/* Right group: Labels/Freq pushed to far right */}
+      {/* Right group: Labels/Vocalizations/Freq pushed to far right */}
       <div className="flex items-center gap-2 ml-auto">
         <button
-          onClick={onToggleLabels}
+          onClick={onToggleDetection}
           className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
           style={{
-            background: showLabels ? COLORS.accentDim : COLORS.border,
+            background: overlayMode === "detection" ? COLORS.accentDim : COLORS.border,
             color: COLORS.accent,
           }}
         >
-          <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
+          <Tag size={10} /> Labels
+        </button>
+        <button
+          onClick={hasVocalizationData ? onToggleVocalization : undefined}
+          disabled={!hasVocalizationData}
+          className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
+          style={{
+            background: overlayMode === "vocalization" ? "rgba(168, 130, 220, 0.3)" : COLORS.border,
+            color: hasVocalizationData ? (overlayMode === "vocalization" ? "#c4a8f0" : COLORS.accent) : COLORS.textMuted,
+            opacity: hasVocalizationData ? 1 : 0.4,
+          }}
+          title={hasVocalizationData ? (overlayMode === "vocalization" ? "Hide vocalization types" : "Show vocalization types") : "No vocalization inference for this job"}
+        >
+          <AudioLines size={10} /> Vocalizations
         </button>
         <span
           className="px-2 py-1 rounded text-[10px]"

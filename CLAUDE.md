@@ -266,7 +266,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - Vocalization labeling workspace: source abstraction (detection jobs / embedding sets / local folders), progressive pipeline (source → embeddings → inference → labeling), local-state label accumulation with batch Save/Cancel, three visual label states (suggested/saved/pending), score-sorted results by default, click-to-expand spectrogram popup, one-click retrain loop
 - Training dataset review: unified editable snapshot of training data (from embedding sets and detection jobs), type-filtered positive/negative browsing with large inline spectrograms, batch label editing with save/cancel, dataset extend for incremental source addition, retrain from edited labels
 - Retrain workflow: reimport -> reprocess -> retrain
-- Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, audio-authoritative playhead sync, gapless double-buffered MP3 playback
+- Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), audio-authoritative playhead sync, gapless double-buffered MP3 playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier, Vocalization, Search, Label Processing, Admin
 
 ### 9.2 Database Schema

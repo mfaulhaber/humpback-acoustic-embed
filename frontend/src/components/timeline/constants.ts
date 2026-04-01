@@ -66,6 +66,22 @@ export const CONFIDENCE_GRADIENT = [
   [1.0, "#f0f060"],
 ] as const;
 
+export const VOCALIZATION_BAR = {
+  fill: "rgba(168, 130, 220, 0.40)",
+  hover: "rgba(168, 130, 220, 0.60)",
+} as const;
+
+export const VOCALIZATION_BADGE_PALETTE = [
+  "#e879f9", // fuchsia
+  "#38bdf8", // sky
+  "#fb923c", // orange
+  "#4ade80", // green
+  "#f87171", // red
+  "#facc15", // yellow
+  "#a78bfa", // violet
+  "#2dd4bf", // teal
+] as const;
+
 export const CROSSFADE_DURATION_MS = 300;
 export const AUDIO_PREFETCH_SEC = 300;
 export const AUDIO_FORMAT = "mp3";

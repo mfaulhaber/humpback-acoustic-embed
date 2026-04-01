@@ -1,8 +1,9 @@
 // frontend/src/components/timeline/SpectrogramViewport.tsx
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import type { DetectionRow, ZoomLevel } from "@/api/types";
+import type { DetectionRow, TimelineVocalizationLabel, ZoomLevel } from "@/api/types";
 import { TileCanvas } from "./TileCanvas";
 import { DetectionOverlay } from "./DetectionOverlay";
+import { VocalizationOverlay } from "./VocalizationOverlay";
 import { DetectionPopover } from "./DetectionPopover";
 import {
   FREQ_AXIS_WIDTH_PX,
@@ -32,6 +33,10 @@ export interface SpectrogramViewportProps {
   labelMode?: boolean;
   /** Render function for the label editor; receives canvas width and height. */
   renderLabelEditor?: (width: number, height: number) => React.ReactNode;
+  /** Which overlay to show: detection labels or vocalization types. */
+  overlayMode?: "detection" | "vocalization";
+  /** Vocalization labels for the overlay. */
+  vocalizationLabels?: TimelineVocalizationLabel[];
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +164,8 @@ export function SpectrogramViewport({
   onPan,
   labelMode,
   renderLabelEditor,
+  overlayMode = "detection",
+  vocalizationLabels,
 }: SpectrogramViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -388,8 +395,8 @@ export function SpectrogramViewport({
             />
           )}
 
-          {/* Detection label overlay (view mode) or label editor (edit mode) */}
-          {!labelMode && (
+          {/* Detection/vocalization label overlay (view mode) or label editor (edit mode) */}
+          {!labelMode && overlayMode === "detection" && (
             <DetectionOverlay
               detections={detections}
               jobStart={jobStart}
@@ -402,6 +409,16 @@ export function SpectrogramViewport({
                 setSelectedRow(row);
                 setPopoverPos({ x, y });
               }}
+            />
+          )}
+          {!labelMode && overlayMode === "vocalization" && (
+            <VocalizationOverlay
+              labels={vocalizationLabels ?? []}
+              centerTimestamp={centerTimestamp}
+              zoomLevel={zoomLevel}
+              width={canvasWidth}
+              height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
+              visible={showLabels}
             />
           )}
           {labelMode && renderLabelEditor?.(canvasWidth, canvasHeight + CONFIDENCE_STRIP_HEIGHT)}
@@ -443,7 +460,7 @@ export function SpectrogramViewport({
             />
           </div>
 
-          {/* Confidence strip below canvas */}
+          {/* Confidence strip below canvas (hidden in vocalization mode) */}
           <div
             style={{
               height: CONFIDENCE_STRIP_HEIGHT,
@@ -452,7 +469,7 @@ export function SpectrogramViewport({
               overflow: "hidden",
             }}
           >
-            {confidenceStrip && (
+            {confidenceStrip && overlayMode !== "vocalization" && (
               <svg
                 width={canvasWidth}
                 height={CONFIDENCE_STRIP_HEIGHT}

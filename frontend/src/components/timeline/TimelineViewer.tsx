@@ -4,6 +4,7 @@ import { useLocation, useParams } from "react-router-dom";
 import type { ZoomLevel } from "@/api/types";
 import { useTimelineConfidence, useTimelineDetections, usePrepareStatus, useSaveLabels } from "@/hooks/queries/useTimeline";
 import { useHydrophoneDetectionJobs, useExtractLabeledSamples } from "@/hooks/queries/useClassifier";
+import { useVocalizationOverlay } from "@/hooks/queries/useVocalizationOverlay";
 import { useLabelEdits } from "@/hooks/queries/useLabelEdits";
 import { timelineAudioUrl } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
@@ -48,7 +49,7 @@ export function TimelineViewer() {
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>("1h");
   const [isPlaying, setIsPlaying] = useState(false);
   const [freqRange, setFreqRange] = useState<[number, number]>([0, 3000]);
-  const [showLabels, setShowLabels] = useState(false);
+  const [overlayMode, setOverlayMode] = useState<"off" | "detection" | "vocalization">("off");
   const [speed, setSpeed] = useState(1);
 
   // Label mode state
@@ -196,6 +197,7 @@ export function TimelineViewer() {
   // Data queries
   const { data: confidence } = useTimelineConfidence(jobId ?? "");
   const { data: detections } = useTimelineDetections(jobId ?? "");
+  const { labels: vocalizationLabels, hasVocalizationData } = useVocalizationOverlay(jobId ?? "");
 
   // Label editing hooks
   const { state: labelState, dispatch: labelDispatch, mergedRows, isDirty, selectedId } =
@@ -236,6 +238,26 @@ export function TimelineViewer() {
     const idx = ZOOM_LEVELS.indexOf(zoomLevel);
     if (idx > 0) setZoomLevel(ZOOM_LEVELS[idx - 1]);
   }, [zoomLevel]);
+
+  // Toggle detection labels overlay
+  const toggleDetectionOverlay = useCallback(() => {
+    setOverlayMode((prev) => (prev === "detection" ? "off" : "detection"));
+  }, []);
+
+  // Toggle vocalization overlay
+  const toggleVocalizationOverlay = useCallback(() => {
+    if (overlayMode === "vocalization") {
+      setOverlayMode("off");
+    } else {
+      // Exit label mode if active before switching to vocalization
+      if (labelMode) {
+        if (isDirty && !confirm("Discard unsaved label changes?")) return;
+        setLabelMode(false);
+        labelDispatch({ type: "clear" });
+      }
+      setOverlayMode("vocalization");
+    }
+  }, [overlayMode, labelMode, isDirty, labelDispatch]);
 
   // Toggle label mode callback
   const toggleLabelMode = useCallback(() => {
@@ -347,11 +369,13 @@ export function TimelineViewer() {
           freqRange={freqRange}
           isPlaying={isPlaying}
           scores={confidence?.scores ?? []}
-          showLabels={showLabels}
+          showLabels={overlayMode !== "off"}
           detections={detections ?? []}
           onCenterChange={setCenterTimestamp}
           onPan={handlePan}
           labelMode={labelMode}
+          overlayMode={overlayMode === "vocalization" ? "vocalization" : "detection"}
+          vocalizationLabels={vocalizationLabels}
           renderLabelEditor={(w, h) => (
             <LabelEditor
               mergedRows={mergedRows}
@@ -448,8 +472,10 @@ export function TimelineViewer() {
           onLabelMode={toggleLabelMode}
           labelModeEnabled={labelModeEnabled}
           labelModeActive={labelMode}
-          showLabels={showLabels}
-          onToggleLabels={() => setShowLabels((s) => !s)}
+          overlayMode={overlayMode}
+          onToggleDetection={toggleDetectionOverlay}
+          onToggleVocalization={toggleVocalizationOverlay}
+          hasVocalizationData={hasVocalizationData}
           freqRange={freqRange}
         />
       </div>

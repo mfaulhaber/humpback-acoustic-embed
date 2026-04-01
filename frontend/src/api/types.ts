@@ -756,6 +756,14 @@ export interface VocalizationLabel {
   updated_at: string;
 }
 
+export interface TimelineVocalizationLabel {
+  start_utc: number;
+  end_utc: number;
+  label: string;
+  confidence: number | null;
+  source: string;
+}
+
 export interface OrphanedLabelDetail {
   id: string;
   start_utc: number;

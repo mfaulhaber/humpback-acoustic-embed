@@ -32,6 +32,16 @@ class VocalizationLabelOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TimelineVocalizationLabel(BaseModel):
+    """Unified label for timeline overlay — manual DB labels + inference predictions."""
+
+    start_utc: float
+    end_utc: float
+    label: str
+    confidence: float | None = None
+    source: str  # "manual" or "inference"
+
+
 class NeighborHit(BaseModel):
     score: float
     embedding_set_id: str
