@@ -13,7 +13,6 @@ import { SpectrogramViewport } from "./SpectrogramViewport";
 import { LabelToolbar } from "./LabelToolbar";
 import { LabelEditor } from "./LabelEditor";
 import { ExtractDialog } from "../classifier/ExtractDialog";
-import { Tag } from "lucide-react";
 import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC, AUDIO_FORMAT } from "./constants";
 import type { LabelType } from "./constants";
 
@@ -411,27 +410,7 @@ export function TimelineViewer() {
           />
         )}
 
-        <div className="flex items-center justify-between px-3 py-1">
-          <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowLabels((s) => !s)}
-              className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
-              style={{
-                background: showLabels ? COLORS.accentDim : COLORS.border,
-                color: COLORS.accent,
-              }}
-            >
-              <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
-            </button>
-            <span
-              className="px-2 py-1 rounded text-[10px]"
-              style={{ background: COLORS.border, color: COLORS.accent }}
-            >
-              Freq: {freqRange[0] / 1000}–{freqRange[1] / 1000} kHz
-            </span>
-          </div>
-        </div>
+        <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
         <PlaybackControls
           centerTimestamp={centerTimestamp}
           isPlaying={isPlaying}
@@ -444,6 +423,9 @@ export function TimelineViewer() {
           onZoomOut={zoomOut}
           onLabelMode={enterLabelMode}
           labelModeEnabled={labelModeEnabled}
+          showLabels={showLabels}
+          onToggleLabels={() => setShowLabels((s) => !s)}
+          freqRange={freqRange}
         />
       </div>
 

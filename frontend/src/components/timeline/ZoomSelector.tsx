@@ -9,7 +9,7 @@ interface ZoomSelectorProps {
 
 export function ZoomSelector({ activeLevel, onChange }: ZoomSelectorProps) {
   return (
-    <div className="flex gap-1">
+    <div className="flex justify-center gap-1 py-1">
       {ZOOM_LEVELS.map((level) => (
         <button
           key={level}

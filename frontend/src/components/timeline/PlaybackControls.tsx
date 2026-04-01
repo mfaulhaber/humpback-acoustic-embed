@@ -14,6 +14,9 @@ interface PlaybackControlsProps {
   onZoomOut: () => void;
   onLabelMode?: () => void;
   labelModeEnabled: boolean;
+  showLabels: boolean;
+  onToggleLabels: () => void;
+  freqRange: [number, number];
 }
 
 const SPEEDS = [0.5, 1, 2];
@@ -30,6 +33,9 @@ export function PlaybackControls({
   onZoomOut,
   onLabelMode,
   labelModeEnabled,
+  showLabels,
+  onToggleLabels,
+  freqRange,
 }: PlaybackControlsProps) {
   const timeStr = new Date(centerTimestamp * 1000).toISOString().slice(11, 19) + " UTC";
 
@@ -93,6 +99,22 @@ export function PlaybackControls({
       >
         <Tag size={12} /> Label
       </button>
+      <button
+        onClick={onToggleLabels}
+        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] ml-4"
+        style={{
+          background: showLabels ? COLORS.accentDim : COLORS.border,
+          color: COLORS.accent,
+        }}
+      >
+        <Tag size={10} /> Labels: {showLabels ? "ON" : "OFF"}
+      </button>
+      <span
+        className="px-2 py-1 rounded text-[10px]"
+        style={{ background: COLORS.border, color: COLORS.accent }}
+      >
+        Freq: {freqRange[0] / 1000}–{freqRange[1] / 1000} kHz
+      </span>
     </div>
   );
 }
