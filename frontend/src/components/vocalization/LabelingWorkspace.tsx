@@ -134,53 +134,30 @@ export function LabelingWorkspace({
     return m;
   }, [vocabulary]);
 
+  // Map sort mode to API parameter (all sorting is server-side to avoid
+  // truncation bugs when result count exceeds the fetch limit)
+  const apiSort = sortMode === "chronological" ? undefined : sortMode;
+
   // Fetch results (API max is 1000 per page)
   const { data: allRows = [], isLoading } = useVocClassifierInferenceResults(
     job?.status === "complete" ? inferenceJobId : null,
     {
       offset: 0,
       limit: 1000,
-      sort: sortMode === "confidence_desc" ? "confidence_desc" : undefined,
+      sort: apiSort,
     },
   );
 
-  // Sort rows (confidence_desc is server-side sorted, skip client re-sort)
+  // Sort rows — only chronological is client-side (natural file order is
+  // already roughly chronological, so truncation is acceptable)
   const sortedRows = useMemo(() => {
-    if (sortMode === "confidence_desc") return allRows;
-
-    const midpoint =
-      vocabulary.length > 0
-        ? vocabulary.reduce(
-            (sum, t) => sum + (thresholds[t] ?? 0.5),
-            0,
-          ) / vocabulary.length
-        : 0.5;
-
+    if (sortMode !== "chronological") return allRows;
     const rows = [...allRows];
-    switch (sortMode) {
-      case "uncertainty":
-        rows.sort((a, b) => {
-          const aMax = Math.max(...Object.values(a.scores), 0);
-          const bMax = Math.max(...Object.values(b.scores), 0);
-          return Math.abs(aMax - midpoint) - Math.abs(bMax - midpoint);
-        });
-        break;
-      case "score_desc":
-        rows.sort((a, b) => {
-          const aMax = Math.max(...Object.values(a.scores), 0);
-          const bMax = Math.max(...Object.values(b.scores), 0);
-          return bMax - aMax;
-        });
-        break;
-      case "chronological":
-        rows.sort(
-          (a, b) =>
-            (a.start_utc ?? a.start_sec) - (b.start_utc ?? b.start_sec),
-        );
-        break;
-    }
+    rows.sort(
+      (a, b) => (a.start_utc ?? a.start_sec) - (b.start_utc ?? b.start_sec),
+    );
     return rows;
-  }, [allRows, sortMode, vocabulary, thresholds]);
+  }, [allRows, sortMode]);
 
   const hasConfidence = allRows.length > 0 && allRows[0].confidence != null;
 
