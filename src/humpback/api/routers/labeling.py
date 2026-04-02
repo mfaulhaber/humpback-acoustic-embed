@@ -258,9 +258,18 @@ async def delete_vocalization_label(
 # ---- Refresh / Reconciliation ----
 
 
-def _normalize_utc_key(v: float) -> float:
-    """Round UTC to 6 decimal places for stable comparison."""
-    return round(v, 6)
+_LABEL_MATCH_TOLERANCE_SEC = 0.5  # same tolerance as embedding sync
+
+
+def _matches_any_row(
+    start: float, end: float, row_pairs: list[tuple[float, float]]
+) -> bool:
+    """Check if (start, end) matches any row store entry within tolerance."""
+    tol = _LABEL_MATCH_TOLERANCE_SEC
+    for rs, re_ in row_pairs:
+        if abs(start - rs) <= tol and abs(end - re_) <= tol:
+            return True
+    return False
 
 
 async def _get_detection_job_or_404(session, detection_job_id: str):
@@ -294,11 +303,9 @@ async def refresh_preview(
         raise HTTPException(400, "Detection row store not available")
 
     _fieldnames, rows = read_detection_row_store(rs_path)
-    row_keys: set[tuple[float, float]] = set()
-    for r in rows:
-        s = _normalize_utc_key(float(r.get("start_utc", "0")))
-        e = _normalize_utc_key(float(r.get("end_utc", "0")))
-        row_keys.add((s, e))
+    row_pairs: list[tuple[float, float]] = [
+        (float(r.get("start_utc", "0")), float(r.get("end_utc", "0"))) for r in rows
+    ]
 
     result = await session.execute(
         select(VocalizationLabel).where(
@@ -310,8 +317,7 @@ async def refresh_preview(
     matched_count = 0
     orphaned: list[OrphanedLabelDetail] = []
     for lbl in all_labels:
-        key = (_normalize_utc_key(lbl.start_utc), _normalize_utc_key(lbl.end_utc))
-        if key in row_keys:
+        if _matches_any_row(lbl.start_utc, lbl.end_utc, row_pairs):
             matched_count += 1
         else:
             orphaned.append(
@@ -352,11 +358,9 @@ async def refresh_apply(
         raise HTTPException(400, "Detection row store not available")
 
     _fieldnames, rows = read_detection_row_store(rs_path)
-    row_keys: set[tuple[float, float]] = set()
-    for r in rows:
-        s = _normalize_utc_key(float(r.get("start_utc", "0")))
-        e = _normalize_utc_key(float(r.get("end_utc", "0")))
-        row_keys.add((s, e))
+    row_pairs: list[tuple[float, float]] = [
+        (float(r.get("start_utc", "0")), float(r.get("end_utc", "0"))) for r in rows
+    ]
 
     result = await session.execute(
         select(VocalizationLabel).where(
@@ -368,8 +372,7 @@ async def refresh_apply(
     orphaned_ids: list[str] = []
     surviving_ids: list[str] = []
     for lbl in all_labels:
-        key = (_normalize_utc_key(lbl.start_utc), _normalize_utc_key(lbl.end_utc))
-        if key in row_keys:
+        if _matches_any_row(lbl.start_utc, lbl.end_utc, row_pairs):
             surviving_ids.append(lbl.id)
         else:
             orphaned_ids.append(lbl.id)
