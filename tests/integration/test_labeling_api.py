@@ -23,9 +23,17 @@ from humpback.storage import (
 # Consistent base epoch: 2024-06-15T08:00:00Z
 BASE_EPOCH = 1718438400.0
 
+# Stable row IDs for seeded detection rows
+ROW_ID_1 = "row-aaa-111"
+ROW_ID_2 = "row-bbb-222"
+HYDRO_ROW_ID = "row-hydro-111"
+
 
 async def _seed_detection_job(app_settings, tmp_path):
-    """Create a completed detection job with row store and embeddings."""
+    """Create a completed detection job with row store and embeddings.
+
+    Returns (job_id, model_id).
+    """
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
@@ -57,11 +65,12 @@ async def _seed_detection_job(app_settings, tmp_path):
         session.add(dj)
         await session.commit()
 
-    # Write detection row store (UTC identity schema)
+    # Write detection row store with stable row_ids
     row_store = detection_row_store_path(storage_root, job_id)
     row_store.parent.mkdir(parents=True, exist_ok=True)
     rows = [
         {
+            "row_id": ROW_ID_1,
             "start_utc": str(BASE_EPOCH),
             "end_utc": str(BASE_EPOCH + 5.0),
             "raw_start_utc": str(BASE_EPOCH),
@@ -77,6 +86,7 @@ async def _seed_detection_job(app_settings, tmp_path):
             "background": "",
         },
         {
+            "row_id": ROW_ID_2,
             "start_utc": str(BASE_EPOCH + 5.0),
             "end_utc": str(BASE_EPOCH + 10.0),
             "raw_start_utc": str(BASE_EPOCH + 5.0),
@@ -94,29 +104,24 @@ async def _seed_detection_job(app_settings, tmp_path):
     ]
     write_detection_row_store(row_store, rows)
 
-    # Write detection embeddings (still uses filename/start_sec/end_sec schema)
+    # Write detection embeddings with row_id schema
     emb_path = detection_embeddings_path(storage_root, job_id)
     emb_path.parent.mkdir(parents=True, exist_ok=True)
-    # The embedding file uses a filename with an embedded UTC timestamp so that
-    # parse_recording_timestamp can derive BASE_EPOCH from it.
-    emb_filename = "20240615T080000Z.wav"
     schema = pa.schema(
         [
-            ("filename", pa.string()),
-            ("start_sec", pa.float32()),
-            ("end_sec", pa.float32()),
+            ("row_id", pa.string()),
             ("embedding", pa.list_(pa.float32(), 4)),
+            ("confidence", pa.float32()),
         ]
     )
     table = pa.table(
         {
-            "filename": [emb_filename, emb_filename],
-            "start_sec": [0.0, 5.0],
-            "end_sec": [5.0, 10.0],
+            "row_id": [ROW_ID_1, ROW_ID_2],
             "embedding": [
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],
             ],
+            "confidence": [0.85, 0.70],
         },
         schema=schema,
     )
@@ -134,7 +139,6 @@ async def _seed_hydrophone_detection_job(app_settings):
 
     model_id = str(uuid.uuid4())
     job_id = str(uuid.uuid4())
-    # Hydrophone job: row UTC = 1751439678.0 (2025-07-02T00:01:18Z)
     hydro_start_utc = 1751439678.0
     hydro_end_utc = hydro_start_utc + 5.0
     job_start_ts = 1751439600.0
@@ -167,6 +171,7 @@ async def _seed_hydrophone_detection_job(app_settings):
     row_store.parent.mkdir(parents=True, exist_ok=True)
     rows = [
         {
+            "row_id": HYDRO_ROW_ID,
             "start_utc": str(hydro_start_utc),
             "end_utc": str(hydro_end_utc),
             "raw_start_utc": str(hydro_start_utc),
@@ -184,31 +189,27 @@ async def _seed_hydrophone_detection_job(app_settings):
     ]
     write_detection_row_store(row_store, rows)
 
-    # Embedding file uses timestamp-based filename for UTC resolution.
-    # parse_recording_timestamp("20250702T070118Z.wav") => 1751439678.0
-    emb_filename = "20250702T070118Z.wav"
+    # Embedding file with row_id schema
     emb_path = detection_embeddings_path(storage_root, job_id)
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     schema = pa.schema(
         [
-            ("filename", pa.string()),
-            ("start_sec", pa.float32()),
-            ("end_sec", pa.float32()),
+            ("row_id", pa.string()),
             ("embedding", pa.list_(pa.float32(), 4)),
+            ("confidence", pa.float32()),
         ]
     )
     table = pa.table(
         {
-            "filename": [emb_filename],
-            "start_sec": [0.0],
-            "end_sec": [5.0],
+            "row_id": [HYDRO_ROW_ID],
             "embedding": [[1.0, 0.0, 0.0, 0.0]],
+            "confidence": [0.85],
         },
         schema=schema,
     )
     pq.write_table(table, emb_path)
 
-    return job_id, model_id, hydro_start_utc, hydro_end_utc
+    return job_id, model_id
 
 
 async def _seed_reference_embeddings(app_settings, tmp_path):
@@ -245,24 +246,17 @@ async def _seed_reference_embeddings(app_settings, tmp_path):
         return es.id
 
 
-# Helper to build query string for UTC-keyed label/annotation endpoints
-def _utc_qs(start_utc: float, end_utc: float) -> str:
-    return f"?start_utc={start_utc}&end_utc={end_utc}"
-
-
 # ---- CRUD tests ----
 
 
 @pytest.mark.asyncio
 async def test_create_and_list_vocalization_labels(client):
     """Test creating and listing vocalization labels."""
-    s_utc = BASE_EPOCH
-    e_utc = BASE_EPOCH + 5.0
-    qs = _utc_qs(s_utc, e_utc)
+    row_id = "test-row-crud-1"
 
-    # Create a label (no detection job needed for basic CRUD)
+    # Create a label
     resp = await client.post(
-        f"/labeling/vocalization-labels/fake-job{qs}",
+        f"/labeling/vocalization-labels/fake-job?row_id={row_id}",
         json={"label": "whup", "source": "manual"},
     )
     assert resp.status_code == 201
@@ -270,27 +264,27 @@ async def test_create_and_list_vocalization_labels(client):
     assert data["label"] == "whup"
     assert data["source"] == "manual"
     assert data["detection_job_id"] == "fake-job"
-    assert data["start_utc"] == s_utc
-    assert data["end_utc"] == e_utc
+    assert data["row_id"] == row_id
     label_id = data["id"]
 
     # Create another label
     resp2 = await client.post(
-        f"/labeling/vocalization-labels/fake-job{qs}",
+        f"/labeling/vocalization-labels/fake-job?row_id={row_id}",
         json={"label": "moan", "confidence": 0.85, "source": "search"},
     )
     assert resp2.status_code == 201
 
     # List labels for the row
-    resp3 = await client.get(f"/labeling/vocalization-labels/fake-job{qs}")
+    resp3 = await client.get(f"/labeling/vocalization-labels/fake-job?row_id={row_id}")
     assert resp3.status_code == 200
     labels = resp3.json()
     assert len(labels) == 2
     assert {lbl["label"] for lbl in labels} == {"whup", "moan"}
 
-    # List labels for different UTC range — empty
-    other_qs = _utc_qs(BASE_EPOCH + 100.0, BASE_EPOCH + 105.0)
-    resp4 = await client.get(f"/labeling/vocalization-labels/fake-job{other_qs}")
+    # List labels for different row_id — empty
+    resp4 = await client.get(
+        "/labeling/vocalization-labels/fake-job?row_id=nonexistent-row"
+    )
     assert resp4.status_code == 200
     assert resp4.json() == []
 
@@ -300,12 +294,10 @@ async def test_create_and_list_vocalization_labels(client):
 @pytest.mark.asyncio
 async def test_update_vocalization_label(client):
     """Test updating a vocalization label."""
-    s_utc = BASE_EPOCH + 200.0
-    e_utc = BASE_EPOCH + 205.0
-    qs = _utc_qs(s_utc, e_utc)
+    row_id = "test-row-update-1"
 
     resp = await client.post(
-        f"/labeling/vocalization-labels/job1{qs}",
+        f"/labeling/vocalization-labels/job1?row_id={row_id}",
         json={"label": "whup"},
     )
     label_id = resp.json()["id"]
@@ -323,12 +315,10 @@ async def test_update_vocalization_label(client):
 @pytest.mark.asyncio
 async def test_delete_vocalization_label(client):
     """Test deleting a vocalization label."""
-    s_utc = BASE_EPOCH + 300.0
-    e_utc = BASE_EPOCH + 305.0
-    qs = _utc_qs(s_utc, e_utc)
+    row_id = "test-row-delete-1"
 
     resp = await client.post(
-        f"/labeling/vocalization-labels/job1{qs}",
+        f"/labeling/vocalization-labels/job1?row_id={row_id}",
         json={"label": "shriek"},
     )
     label_id = resp.json()["id"]
@@ -337,7 +327,7 @@ async def test_delete_vocalization_label(client):
     assert resp2.status_code == 204
 
     # Should be gone
-    resp3 = await client.get(f"/labeling/vocalization-labels/job1{qs}")
+    resp3 = await client.get(f"/labeling/vocalization-labels/job1?row_id={row_id}")
     labels = resp3.json()
     assert not any(lbl["id"] == label_id for lbl in labels)
 
@@ -355,20 +345,16 @@ async def test_delete_nonexistent_label(client):
 @pytest.mark.asyncio
 async def test_label_vocabulary(client):
     """Test that vocabulary returns distinct labels."""
-    qs1 = _utc_qs(BASE_EPOCH + 400.0, BASE_EPOCH + 405.0)
-    qs2 = _utc_qs(BASE_EPOCH + 410.0, BASE_EPOCH + 415.0)
-    qs3 = _utc_qs(BASE_EPOCH + 420.0, BASE_EPOCH + 425.0)
-
     await client.post(
-        f"/labeling/vocalization-labels/j1{qs1}",
+        "/labeling/vocalization-labels/j1?row_id=vocab-row-1",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/j1{qs2}",
+        "/labeling/vocalization-labels/j1?row_id=vocab-row-2",
         json={"label": "moan"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/j2{qs3}",
+        "/labeling/vocalization-labels/j2?row_id=vocab-row-3",
         json={"label": "whup"},
     )
 
@@ -397,20 +383,17 @@ async def test_labeling_summary(client, app_settings, tmp_path):
     assert data["unlabeled_rows"] == 2
     assert data["label_distribution"] == {}
 
-    # Add labels using UTC identity of the seeded rows
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
-
+    # Add labels using row_ids of the seeded rows
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
         json={"label": "moan"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_2}",
         json={"label": "whup"},
     )
 
@@ -442,8 +425,7 @@ async def test_detection_neighbors(client, app_settings, tmp_path):
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
         json={
-            "start_utc": BASE_EPOCH,
-            "end_utc": BASE_EPOCH + 5.0,
+            "row_id": ROW_ID_1,
             "top_k": 5,
             "embedding_set_ids": [ref_es_id],
         },
@@ -465,10 +447,7 @@ async def test_detection_neighbors_missing_embedding(client, app_settings, tmp_p
 
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
-        json={
-            "start_utc": 9999999999.0,
-            "end_utc": 9999999999.0 + 5.0,
-        },
+        json={"row_id": "nonexistent-row-id"},
     )
     assert resp.status_code == 404
 
@@ -478,30 +457,21 @@ async def test_detection_neighbors_nonexistent_job(client):
     """Requesting neighbors for non-existent job returns 404."""
     resp = await client.post(
         "/labeling/detection-neighbors/nonexistent",
-        json={
-            "start_utc": BASE_EPOCH,
-            "end_utc": BASE_EPOCH + 5.0,
-        },
+        json={"row_id": "some-row"},
     )
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_detection_neighbors_hydrophone_utc(client, app_settings, tmp_path):
-    """Hydrophone neighbor lookup works with UTC identity params."""
-    (
-        job_id,
-        _model_id,
-        hydro_start_utc,
-        hydro_end_utc,
-    ) = await _seed_hydrophone_detection_job(app_settings)
+async def test_detection_neighbors_hydrophone(client, app_settings, tmp_path):
+    """Hydrophone neighbor lookup works with row_id."""
+    job_id, _model_id = await _seed_hydrophone_detection_job(app_settings)
     ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
 
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
         json={
-            "start_utc": hydro_start_utc,
-            "end_utc": hydro_end_utc,
+            "row_id": HYDRO_ROW_ID,
             "top_k": 5,
             "embedding_set_ids": [ref_es_id],
         },
@@ -518,34 +488,32 @@ async def test_detection_neighbors_hydrophone_utc(client, app_settings, tmp_path
 @pytest.mark.asyncio
 async def test_negative_label_removes_type_labels(client):
     """Adding (Negative) removes existing type labels on the same window."""
-    s_utc = BASE_EPOCH + 600.0
-    e_utc = BASE_EPOCH + 605.0
-    qs = _utc_qs(s_utc, e_utc)
+    row_id = "neg-test-row-1"
     job_id = "neg-test-job"
 
     # Create type labels
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id}",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id}",
         json={"label": "moan"},
     )
 
     # Verify both exist
-    resp = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    resp = await client.get(f"/labeling/vocalization-labels/{job_id}?row_id={row_id}")
     assert len(resp.json()) == 2
 
     # Add (Negative) — should remove both type labels
     resp2 = await client.post(
-        f"/labeling/vocalization-labels/{job_id}{qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id}",
         json={"label": "(Negative)"},
     )
     assert resp2.status_code == 201
 
     # Only (Negative) should remain
-    resp3 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    resp3 = await client.get(f"/labeling/vocalization-labels/{job_id}?row_id={row_id}")
     labels = resp3.json()
     assert len(labels) == 1
     assert labels[0]["label"] == "(Negative)"
@@ -554,28 +522,26 @@ async def test_negative_label_removes_type_labels(client):
 @pytest.mark.asyncio
 async def test_type_label_removes_negative(client):
     """Adding a type label removes existing (Negative) on the same window."""
-    s_utc = BASE_EPOCH + 700.0
-    e_utc = BASE_EPOCH + 705.0
-    qs = _utc_qs(s_utc, e_utc)
+    row_id = "neg-test-row-2"
     job_id = "neg-test-job2"
 
     # Create (Negative) label
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id}",
         json={"label": "(Negative)"},
     )
 
-    resp = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    resp = await client.get(f"/labeling/vocalization-labels/{job_id}?row_id={row_id}")
     assert len(resp.json()) == 1
     assert resp.json()[0]["label"] == "(Negative)"
 
     # Add type label — should remove (Negative)
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id}",
         json={"label": "whup"},
     )
 
-    resp2 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs}")
+    resp2 = await client.get(f"/labeling/vocalization-labels/{job_id}?row_id={row_id}")
     labels = resp2.json()
     assert len(labels) == 1
     assert labels[0]["label"] == "whup"
@@ -583,27 +549,31 @@ async def test_type_label_removes_negative(client):
 
 @pytest.mark.asyncio
 async def test_negative_does_not_affect_other_windows(client):
-    """Mutual exclusivity only applies to the same window."""
+    """Mutual exclusivity only applies to the same row_id."""
     job_id = "neg-test-job3"
-    qs1 = _utc_qs(BASE_EPOCH + 800.0, BASE_EPOCH + 805.0)
-    qs2 = _utc_qs(BASE_EPOCH + 810.0, BASE_EPOCH + 815.0)
+    row_id_1 = "neg-test-row-3a"
+    row_id_2 = "neg-test-row-3b"
 
     # Label window 1 with type, window 2 with (Negative)
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{qs1}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id_1}",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{qs2}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id_2}",
         json={"label": "(Negative)"},
     )
 
     # Both windows should retain their labels
-    resp1 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs1}")
+    resp1 = await client.get(
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id_1}"
+    )
     assert len(resp1.json()) == 1
     assert resp1.json()[0]["label"] == "whup"
 
-    resp2 = await client.get(f"/labeling/vocalization-labels/{job_id}{qs2}")
+    resp2 = await client.get(
+        f"/labeling/vocalization-labels/{job_id}?row_id={row_id_2}"
+    )
     assert len(resp2.json()) == 1
     assert resp2.json()[0]["label"] == "(Negative)"
 
@@ -619,9 +589,8 @@ async def test_training_assembly_skips_unlabeled_windows(
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # Row 1: label with "whup"
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
         json={"label": "whup"},
     )
     # Row 2: leave unlabeled (should be excluded from training)
@@ -629,7 +598,6 @@ async def test_training_assembly_skips_unlabeled_windows(
     # Simulate training data assembly (same logic as vocalization_worker.py)
     from sqlalchemy import select
 
-    from humpback.classifier.detection_rows import parse_recording_timestamp
     from humpback.database import create_engine, create_session_factory
     from humpback.models.labeling import VocalizationLabel
     from humpback.storage import detection_embeddings_path
@@ -645,33 +613,21 @@ async def test_training_assembly_skips_unlabeled_windows(
         )
         voc_labels = result.scalars().all()
 
-        labels_by_utc: dict[tuple[float, float], set[str]] = {}
+        labels_by_row_id: dict[str, set[str]] = {}
         for vl in voc_labels:
-            key = (vl.start_utc, vl.end_utc)
-            if key not in labels_by_utc:
-                labels_by_utc[key] = set()
-            labels_by_utc[key].add(vl.label)
+            if vl.row_id not in labels_by_row_id:
+                labels_by_row_id[vl.row_id] = set()
+            labels_by_row_id[vl.row_id].add(vl.label)
 
         emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
         table = pq.read_table(str(emb_path))
-        filenames = table.column("filename").to_pylist()
-        start_secs = table.column("start_sec").to_pylist()
-        end_secs = table.column("end_sec").to_pylist()
+        row_ids = table.column("row_id").to_pylist()
 
         included_label_sets: list[set[str]] = []
-        for i in range(table.num_rows):
-            fname = filenames[i]
-            ts = parse_recording_timestamp(fname)
-            base_epoch = ts.timestamp() if ts else 0.0
-            utc_key = (
-                base_epoch + float(start_secs[i]),
-                base_epoch + float(end_secs[i]),
-            )
-
-            if utc_key not in labels_by_utc:
+        for rid in row_ids:
+            if rid not in labels_by_row_id:
                 continue
-
-            label_set = labels_by_utc[utc_key]
+            label_set = labels_by_row_id[rid]
             if "(Negative)" in label_set:
                 label_set = set()
             included_label_sets.append(label_set)
@@ -689,21 +645,18 @@ async def test_training_assembly_negative_becomes_empty_set(
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
     # Row 1: label with "whup"
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
         json={"label": "whup"},
     )
     # Row 2: label with "(Negative)"
-    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_2}",
         json={"label": "(Negative)"},
     )
 
     from sqlalchemy import select
 
-    from humpback.classifier.detection_rows import parse_recording_timestamp
     from humpback.database import create_engine, create_session_factory
     from humpback.models.labeling import VocalizationLabel
     from humpback.storage import detection_embeddings_path
@@ -719,33 +672,21 @@ async def test_training_assembly_negative_becomes_empty_set(
         )
         voc_labels = result.scalars().all()
 
-        labels_by_utc: dict[tuple[float, float], set[str]] = {}
+        labels_by_row_id: dict[str, set[str]] = {}
         for vl in voc_labels:
-            key = (vl.start_utc, vl.end_utc)
-            if key not in labels_by_utc:
-                labels_by_utc[key] = set()
-            labels_by_utc[key].add(vl.label)
+            if vl.row_id not in labels_by_row_id:
+                labels_by_row_id[vl.row_id] = set()
+            labels_by_row_id[vl.row_id].add(vl.label)
 
         emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
         table = pq.read_table(str(emb_path))
-        filenames = table.column("filename").to_pylist()
-        start_secs = table.column("start_sec").to_pylist()
-        end_secs = table.column("end_sec").to_pylist()
+        row_ids = table.column("row_id").to_pylist()
 
         included_label_sets: list[set[str]] = []
-        for i in range(table.num_rows):
-            fname = filenames[i]
-            ts = parse_recording_timestamp(fname)
-            base_epoch = ts.timestamp() if ts else 0.0
-            utc_key = (
-                base_epoch + float(start_secs[i]),
-                base_epoch + float(end_secs[i]),
-            )
-
-            if utc_key not in labels_by_utc:
+        for rid in row_ids:
+            if rid not in labels_by_row_id:
                 continue
-
-            label_set = labels_by_utc[utc_key]
+            label_set = labels_by_row_id[rid]
             if "(Negative)" in label_set:
                 label_set = set()
             included_label_sets.append(label_set)
@@ -763,8 +704,7 @@ async def test_training_assembly_negative_becomes_empty_set(
 @pytest.mark.asyncio
 async def test_annotation_endpoints_removed(client):
     """Annotation endpoints no longer exist after sub-window annotation removal."""
-    qs = _utc_qs(BASE_EPOCH + 500.0, BASE_EPOCH + 505.0)
-    resp = await client.get(f"/labeling/annotations/job-1{qs}")
+    resp = await client.get("/labeling/annotations/job-1?row_id=some-row")
     assert resp.status_code in (404, 405)
 
 
@@ -781,386 +721,62 @@ async def test_legacy_training_endpoints_removed(client):
     assert resp2.status_code in (404, 405)
 
 
-# ---- Refresh / Reconciliation ----
-
-
 @pytest.mark.asyncio
-async def test_refresh_preview_all_matched(client, app_settings, tmp_path):
-    """Preview with no changes shows all labels matched."""
+async def test_refresh_endpoints_removed(client, app_settings, tmp_path):
+    """Refresh/reconciliation endpoints no longer exist."""
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup"},
-    )
 
     resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["matched_count"] == 1
-    assert data["orphaned_count"] == 0
-    assert data["orphaned_labels"] == []
+    assert resp.status_code in (404, 405)
+
+    resp2 = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh/apply")
+    assert resp2.status_code in (404, 405)
+
+
+# ---- Cascade Delete ----
 
 
 @pytest.mark.asyncio
-async def test_refresh_preview_detects_orphans(client, app_settings, tmp_path):
-    """Preview detects orphaned labels after row deletion."""
+async def test_cascade_delete_labels_on_row_delete(client, app_settings, tmp_path):
+    """Deleting a detection row via batch edit cascade-deletes vocalization labels."""
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
 
-    # Label both rows
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
+    # Create vocalization labels on both rows
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
         json={"label": "whup"},
     )
     await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_2}",
         json={"label": "moan"},
     )
 
-    # Delete row2 from the row store by rewriting with only row1
-    row_store = detection_row_store_path(app_settings.storage_root, job_id)
-    rows = [
-        {
-            "start_utc": str(BASE_EPOCH),
-            "end_utc": str(BASE_EPOCH + 5.0),
-            "raw_start_utc": str(BASE_EPOCH),
-            "raw_end_utc": str(BASE_EPOCH + 5.0),
-            "merged_event_count": "1",
-            "avg_confidence": "0.85",
-            "peak_confidence": "0.92",
-            "n_windows": "1",
-            "hydrophone_name": "",
-            "humpback": "",
-            "orca": "",
-            "ship": "",
-            "background": "",
-        }
-    ]
-    write_detection_row_store(row_store, rows)
-
-    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["matched_count"] == 1
-    assert data["orphaned_count"] == 1
-    assert len(data["orphaned_labels"]) == 1
-    assert data["orphaned_labels"][0]["label"] == "moan"
-
-
-@pytest.mark.asyncio
-async def test_refresh_apply_deletes_orphans(client, app_settings, tmp_path):
-    """Apply deletes orphaned labels and updates version on survivors."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup"},
+    # Verify both exist
+    resp1 = await client.get(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}"
     )
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
-        json={"label": "moan"},
+    assert len(resp1.json()) == 1
+    resp2 = await client.get(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_2}"
     )
+    assert len(resp2.json()) == 1
 
-    # Delete row2 from row store
-    row_store = detection_row_store_path(app_settings.storage_root, job_id)
-    rows = [
-        {
-            "start_utc": str(BASE_EPOCH),
-            "end_utc": str(BASE_EPOCH + 5.0),
-            "raw_start_utc": str(BASE_EPOCH),
-            "raw_end_utc": str(BASE_EPOCH + 5.0),
-            "merged_event_count": "1",
-            "avg_confidence": "0.85",
-            "peak_confidence": "0.92",
-            "n_windows": "1",
-            "hydrophone_name": "",
-            "humpback": "",
-            "orca": "",
-            "ship": "",
-            "background": "",
-        }
-    ]
-    write_detection_row_store(row_store, rows)
-
-    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh/apply")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["deleted_count"] == 1
-    assert data["surviving_count"] == 1
-
-    # Verify orphaned label is gone
-    resp2 = await client.get(f"/labeling/vocalization-labels/{job_id}{row2_qs}")
-    assert resp2.json() == []
-
-    # Surviving label still exists
-    resp3 = await client.get(f"/labeling/vocalization-labels/{job_id}{row1_qs}")
-    assert len(resp3.json()) == 1
-
-
-@pytest.mark.asyncio
-async def test_refresh_apply_idempotent(client, app_settings, tmp_path):
-    """Calling apply when already in sync is a no-op."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup"},
+    # Delete ROW_ID_2 via batch edit
+    resp3 = await client.patch(
+        f"/classifier/detection-jobs/{job_id}/labels",
+        json={"edits": [{"action": "delete", "row_id": ROW_ID_2}]},
     )
+    assert resp3.status_code == 200
 
-    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh/apply")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["deleted_count"] == 0
-    assert data["surviving_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_refresh_preview_tolerates_small_timestamp_shift(
-    client, app_settings, tmp_path
-):
-    """Labels within 0.5s of a row store entry are NOT orphaned.
-
-    Regression: timeline edits can shift row store timestamps by fractions
-    of a second while vocalization labels retain the pre-edit timestamps
-    from inference results.
-    """
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    # Create a label at the original row1 position (exact match)
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup"},
+    # ROW_ID_1 label should survive
+    resp4 = await client.get(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}"
     )
+    assert len(resp4.json()) == 1
+    assert resp4.json()[0]["label"] == "whup"
 
-    # Shift row1 in the row store by 0.5s (simulates a timeline edit)
-    row_store = detection_row_store_path(app_settings.storage_root, job_id)
-    shifted_rows = [
-        {
-            "start_utc": str(BASE_EPOCH + 0.5),
-            "end_utc": str(BASE_EPOCH + 5.5),
-            "raw_start_utc": str(BASE_EPOCH + 0.5),
-            "raw_end_utc": str(BASE_EPOCH + 5.5),
-            "merged_event_count": "1",
-            "avg_confidence": "0.85",
-            "peak_confidence": "0.92",
-            "n_windows": "1",
-            "hydrophone_name": "",
-            "humpback": "1",
-            "orca": "",
-            "ship": "",
-            "background": "",
-        },
-        {
-            "start_utc": str(BASE_EPOCH + 5.0),
-            "end_utc": str(BASE_EPOCH + 10.0),
-            "raw_start_utc": str(BASE_EPOCH + 5.0),
-            "raw_end_utc": str(BASE_EPOCH + 10.0),
-            "merged_event_count": "1",
-            "avg_confidence": "0.70",
-            "peak_confidence": "0.75",
-            "n_windows": "1",
-            "hydrophone_name": "",
-            "humpback": "",
-            "orca": "",
-            "ship": "",
-            "background": "",
-        },
-    ]
-    write_detection_row_store(row_store, shifted_rows)
-
-    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
-    assert resp.status_code == 200
-    data = resp.json()
-    # Label at BASE_EPOCH should match shifted row at BASE_EPOCH + 0.5
-    assert data["matched_count"] == 1
-    assert data["orphaned_count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_refresh_preview_orphans_beyond_tolerance(client, app_settings, tmp_path):
-    """Labels shifted more than 0.5s from any row store entry ARE orphaned."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    # Create a label at the original row1 position
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup"},
+    # ROW_ID_2 label should be gone
+    resp5 = await client.get(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_2}"
     )
-
-    # Shift row1 by 1.0s — beyond the 0.5s tolerance
-    row_store = detection_row_store_path(app_settings.storage_root, job_id)
-    shifted_rows = [
-        {
-            "start_utc": str(BASE_EPOCH + 1.0),
-            "end_utc": str(BASE_EPOCH + 6.0),
-            "raw_start_utc": str(BASE_EPOCH + 1.0),
-            "raw_end_utc": str(BASE_EPOCH + 6.0),
-            "merged_event_count": "1",
-            "avg_confidence": "0.85",
-            "peak_confidence": "0.92",
-            "n_windows": "1",
-            "hydrophone_name": "",
-            "humpback": "1",
-            "orca": "",
-            "ship": "",
-            "background": "",
-        },
-    ]
-    write_detection_row_store(row_store, shifted_rows)
-
-    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["matched_count"] == 0
-    assert data["orphaned_count"] == 1
-    assert data["orphaned_labels"][0]["label"] == "whup"
-
-
-@pytest.mark.asyncio
-async def test_refresh_preview_nonexistent_job(client):
-    """Preview for non-existent job returns 404."""
-    resp = await client.post("/labeling/vocalization-labels/nonexistent/refresh")
-    assert resp.status_code == 404
-
-
-# ---- Version Tracking ----
-
-
-@pytest.mark.asyncio
-async def test_label_records_row_store_version(client, app_settings, tmp_path):
-    """Newly created labels record the detection job's row_store_version."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    resp = await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup"},
-    )
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["row_store_version_at_import"] == 1
-
-
-# ---- Deletion Guards ----
-
-
-@pytest.mark.asyncio
-async def test_delete_detection_job_blocked_by_labels(client, app_settings, tmp_path):
-    """Cannot delete a detection job that has vocalization labels."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup"},
-    )
-
-    resp = await client.delete(f"/classifier/detection-jobs/{job_id}")
-    assert resp.status_code == 409
-    assert "vocalization label" in resp.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_delete_detection_job_succeeds_without_deps(
-    client, app_settings, tmp_path
-):
-    """Deletion succeeds when no vocalization labels or training datasets."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    resp = await client.delete(f"/classifier/detection-jobs/{job_id}")
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_bulk_delete_partial_block(client, app_settings, tmp_path):
-    """Bulk delete: deletable jobs succeed, blocked ones return details."""
-    job_id_1, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    # Seed a second detection job (re-use helper but with fresh IDs)
-    job_id_2, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    # Add label to job_1 only
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id_1}{row1_qs}",
-        json={"label": "whup"},
-    )
-
-    resp = await client.post(
-        "/classifier/detection-jobs/bulk-delete",
-        json={"ids": [job_id_1, job_id_2]},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["count"] == 1  # only job_2 deleted
-    assert len(data["blocked"]) == 1
-    assert data["blocked"][0]["job_id"] == job_id_1
-
-
-# ---- Bulk list (all labels) endpoint ----
-
-
-@pytest.mark.asyncio
-async def test_list_all_vocalization_labels(client, app_settings, tmp_path):
-    """GET /all returns all vocalization labels for a detection job."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    # Create labels on two different windows
-    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
-    row2_qs = _utc_qs(BASE_EPOCH + 5.0, BASE_EPOCH + 10.0)
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "whup", "source": "manual"},
-    )
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
-        json={"label": "moan", "source": "inference", "confidence": 0.85},
-    )
-    await client.post(
-        f"/labeling/vocalization-labels/{job_id}{row2_qs}",
-        json={"label": "whup", "source": "inference", "confidence": 0.72},
-    )
-
-    resp = await client.get(f"/labeling/vocalization-labels/{job_id}/all")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 3
-    # Sorted by start_utc, then source, then label
-    # Both "inference" < "manual" alphabetically
-    assert data[0]["label"] == "moan"
-    assert data[0]["source"] == "inference"
-    assert data[0]["start_utc"] == BASE_EPOCH
-    assert data[1]["label"] == "whup"
-    assert data[1]["source"] == "manual"
-    assert data[1]["start_utc"] == BASE_EPOCH
-    assert data[2]["label"] == "whup"
-    assert data[2]["source"] == "inference"
-    assert data[2]["start_utc"] == BASE_EPOCH + 5.0
-    # No id/created_at/updated_at in timeline response
-    assert "id" not in data[0]
-
-
-@pytest.mark.asyncio
-async def test_list_all_vocalization_labels_empty(client, app_settings, tmp_path):
-    """GET /all returns empty list when no labels exist."""
-    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-
-    resp = await client.get(f"/labeling/vocalization-labels/{job_id}/all")
-    assert resp.status_code == 200
-    assert resp.json() == []
-
-
-@pytest.mark.asyncio
-async def test_list_all_vocalization_labels_not_found(client):
-    """GET /all returns 404 for nonexistent detection job."""
-    fake_id = "00000000-0000-0000-0000-000000000000"
-    resp = await client.get(f"/labeling/vocalization-labels/{fake_id}/all")
-    assert resp.status_code == 404
+    assert len(resp5.json()) == 0

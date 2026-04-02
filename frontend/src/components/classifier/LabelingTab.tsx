@@ -259,9 +259,8 @@ export function LabelingTab() {
   }, [audioUrl, isPlaying]);
 
   // ---- Vocalization labels for current row ----
-  const currentStartUtc = currentRow?.start_utc ?? null;
-  const currentEndUtc = currentRow?.end_utc ?? null;
-  const vocLabelsQuery = useVocalizationLabels(selectedJobId, currentStartUtc, currentEndUtc);
+  const currentRowId = currentRow?.row_id ?? null;
+  const vocLabelsQuery = useVocalizationLabels(selectedJobId, currentRowId);
   const addLabel = useAddVocalizationLabel();
   const removeLabel = useDeleteVocalizationLabel();
   const vocabularyQuery = useLabelVocabulary();
@@ -269,29 +268,27 @@ export function LabelingTab() {
 
   const handleAddLabel = useCallback(
     (labelText: string) => {
-      if (!selectedJobId || currentStartUtc == null || currentEndUtc == null || !labelText.trim()) return;
+      if (!selectedJobId || !currentRowId || !labelText.trim()) return;
       addLabel.mutate({
         detectionJobId: selectedJobId,
-        startUtc: currentStartUtc,
-        endUtc: currentEndUtc,
+        rowId: currentRowId,
         label: labelText.trim(),
       });
       setLabelInput("");
     },
-    [selectedJobId, currentStartUtc, currentEndUtc, addLabel],
+    [selectedJobId, currentRowId, addLabel],
   );
 
   const handleRemoveLabel = useCallback(
     (labelId: string) => {
-      if (!selectedJobId || currentStartUtc == null || currentEndUtc == null) return;
+      if (!selectedJobId || !currentRowId) return;
       removeLabel.mutate({
         labelId,
         detectionJobId: selectedJobId,
-        startUtc: currentStartUtc,
-        endUtc: currentEndUtc,
+        rowId: currentRowId,
       });
     },
-    [selectedJobId, currentStartUtc, currentEndUtc, removeLabel],
+    [selectedJobId, currentRowId, removeLabel],
   );
 
   // ---- Neighbors (vector search) ----
@@ -305,8 +302,7 @@ export function LabelingTab() {
 
   const neighborsQuery = useDetectionNeighbors(
     selectedJobId,
-    currentStartUtc,
-    currentEndUtc,
+    currentRowId,
     selectedEsIds,
   );
 

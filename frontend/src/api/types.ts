@@ -412,7 +412,6 @@ export interface DetectionJob {
   alerts: FlashAlert[] | null;
   local_cache_path: string | null;
   has_positive_labels: boolean | null;
-  row_store_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -465,6 +464,7 @@ export interface DirectoryListing {
 // ---- Detection Content ----
 
 export interface DetectionRow {
+  row_id: string;
   start_utc: number;
   end_utc: number;
   avg_confidence: number | null;
@@ -745,13 +745,11 @@ export interface LabelProcessingPreview {
 export interface VocalizationLabel {
   id: string;
   detection_job_id: string;
-  start_utc: number;
-  end_utc: number;
+  row_id: string;
   label: string;
   confidence: number | null;
   source: string;
   notes: string | null;
-  row_store_version_at_import: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -762,26 +760,6 @@ export interface TimelineVocalizationLabel {
   label: string;
   confidence: number | null;
   source: string;
-}
-
-export interface OrphanedLabelDetail {
-  id: string;
-  start_utc: number;
-  end_utc: number;
-  label: string;
-}
-
-export interface RefreshPreviewResponse {
-  matched_count: number;
-  orphaned_count: number;
-  orphaned_labels: OrphanedLabelDetail[];
-  current_version: number;
-}
-
-export interface RefreshApplyResponse {
-  deleted_count: number;
-  surviving_count: number;
-  current_version: number;
 }
 
 export interface NeighborHit {
@@ -898,6 +876,7 @@ export interface VocClassifierInferenceJob {
 }
 
 export interface VocClassifierPredictionRow {
+  row_id: string | null;
   filename: string;
   start_sec: number;
   end_sec: number;
@@ -1028,10 +1007,9 @@ export type PrepareStatusResponse = Record<string, ZoomProgress>;
 
 export interface LabelEditItem {
   action: "add" | "move" | "delete" | "change_type";
+  row_id?: string;
   start_utc?: number;
   end_utc?: number;
-  new_start_utc?: number;
-  new_end_utc?: number;
   label?: "humpback" | "orca" | "ship" | "background";
 }
 

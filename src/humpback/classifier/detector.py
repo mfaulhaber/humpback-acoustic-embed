@@ -750,25 +750,24 @@ def read_window_diagnostics_table(
 
 
 def write_detection_embeddings(records: list[dict], path: Path) -> None:
-    """Write per-detection embedding records to a Parquet file."""
+    """Write per-detection embedding records to a Parquet file.
+
+    Schema: ``(row_id, embedding, confidence)``.
+    """
     if not records:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     vector_dim = len(records[0]["embedding"])
     schema = pa.schema(
         [
-            ("filename", pa.string()),
-            ("start_sec", pa.float32()),
-            ("end_sec", pa.float32()),
+            ("row_id", pa.string()),
             ("embedding", pa.list_(pa.float32(), vector_dim)),
             ("confidence", pa.float32()),
         ]
     )
     table = pa.table(
         {
-            "filename": [r["filename"] for r in records],
-            "start_sec": [r["start_sec"] for r in records],
-            "end_sec": [r["end_sec"] for r in records],
+            "row_id": [r["row_id"] for r in records],
             "embedding": [r["embedding"] for r in records],
             "confidence": [r.get("confidence") for r in records],
         },
@@ -779,24 +778,21 @@ def write_detection_embeddings(records: list[dict], path: Path) -> None:
 
 def read_detection_embedding(
     path: Path,
-    filename: str,
-    start_sec: float,
-    end_sec: float,
+    row_id: str,
 ) -> list[float] | None:
-    """Read a single detection embedding matching filename and time bounds.
+    """Read a single detection embedding by row_id.
 
     Returns the embedding vector as a list of floats, or None if not found.
     """
     if not path.exists():
         return None
-    table = pq.read_table(
-        str(path),
-        filters=[("filename", "=", filename)],
-    )
-    for i in range(table.num_rows):
-        row_start = float(table.column("start_sec")[i].as_py())
-        row_end = float(table.column("end_sec")[i].as_py())
-        if abs(row_start - start_sec) < 0.01 and abs(row_end - end_sec) < 0.01:
+    table = pq.read_table(str(path))
+    col_names = set(table.column_names)
+    if "row_id" not in col_names:
+        return None  # Legacy schema, no row_id
+    row_ids = table.column("row_id").to_pylist()
+    for i, rid in enumerate(row_ids):
+        if rid == row_id:
             return table.column("embedding")[i].as_py()
     return None
 
@@ -804,8 +800,6 @@ def read_detection_embedding(
 # ---------------------------------------------------------------------------
 # Embedding sync: diff row store vs embeddings parquet
 # ---------------------------------------------------------------------------
-
-_SYNC_TOLERANCE_SEC = 0.5
 
 
 class EmbeddingDiffResult:
@@ -824,30 +818,6 @@ class EmbeddingDiffResult:
         self.matched_count = matched_count
 
 
-def _embedding_utc_pairs(
-    emb_path: Path,
-) -> list[tuple[float, float]]:
-    """Return (start_utc, end_utc) for every row in an embeddings parquet.
-
-    Each embedding stores (filename, start_sec, end_sec) relative to the
-    file's base epoch.  This converts them to absolute UTC.
-    """
-    table = pq.read_table(str(emb_path), columns=["filename", "start_sec", "end_sec"])
-    filenames = table.column("filename").to_pylist()
-    start_secs = table.column("start_sec").to_pylist()
-    end_secs = table.column("end_sec").to_pylist()
-
-    # Cache base epoch per unique filename to avoid repeated parsing.
-    epoch_cache: dict[str, float] = {}
-    pairs: list[tuple[float, float]] = []
-    for fname, ss, es in zip(filenames, start_secs, end_secs):
-        if fname not in epoch_cache:
-            epoch_cache[fname] = _file_base_epoch(Path(fname))
-        base = epoch_cache[fname]
-        pairs.append((base + float(ss), base + float(es)))
-    return pairs
-
-
 def diff_row_store_vs_embeddings(
     row_store_path: Path,
     embeddings_path: Path,
@@ -860,43 +830,36 @@ def diff_row_store_vs_embeddings(
       matching row-store entry (should be removed).
     * ``matched_count`` – number of row-store rows with a matching embedding.
 
-    Matching uses a tolerance of ``_SYNC_TOLERANCE_SEC`` seconds on both
-    ``start_utc`` and ``end_utc``.
+    Matching is by ``row_id`` — exact set comparison with no tolerance.
     """
     from humpback.classifier.detection_rows import read_detection_row_store
 
     _, rows = read_detection_row_store(row_store_path)
-    emb_pairs = _embedding_utc_pairs(embeddings_path)
 
-    # Build list of (start_utc, end_utc) from row store.
-    row_pairs: list[tuple[float, float]] = []
-    for r in rows:
-        s = r.get("start_utc", "")
-        e = r.get("end_utc", "")
-        if s and e:
-            row_pairs.append((float(s), float(e)))
+    # Read embedding row_ids.
+    table = pq.read_table(str(embeddings_path))
+    col_names = set(table.column_names)
+    if "row_id" not in col_names:
+        # Legacy embedding schema — treat all rows as missing.
+        return EmbeddingDiffResult(
+            missing=rows,
+            orphaned_indices=list(range(table.num_rows)),
+            matched_count=0,
+        )
 
-    # For each row-store entry, find a matching embedding.
-    tol = _SYNC_TOLERANCE_SEC
-    emb_matched: set[int] = set()
-    missing: list[dict[str, str]] = []
-    matched_count = 0
+    emb_row_ids = table.column("row_id").to_pylist()
 
-    for row_idx, (rs, re_) in enumerate(row_pairs):
-        found = False
-        for emb_idx, (es, ee) in enumerate(emb_pairs):
-            if emb_idx in emb_matched:
-                continue
-            if abs(rs - es) <= tol and abs(re_ - ee) <= tol:
-                emb_matched.add(emb_idx)
-                matched_count += 1
-                found = True
-                break
-        if not found:
-            missing.append(rows[row_idx])
+    # Build set of row_ids from row store.
+    rs_row_ids = {r.get("row_id", "") for r in rows}
+    emb_row_id_set = set(emb_row_ids)
 
-    # Orphaned = embedding indices not matched to any row.
-    orphaned_indices = [i for i in range(len(emb_pairs)) if i not in emb_matched]
+    # Missing: row store rows not in embeddings.
+    missing = [r for r in rows if r.get("row_id", "") not in emb_row_id_set]
+
+    # Orphaned: embedding indices not in row store.
+    orphaned_indices = [i for i, rid in enumerate(emb_row_ids) if rid not in rs_row_ids]
+
+    matched_count = len(rows) - len(missing)
 
     return EmbeddingDiffResult(
         missing=missing,

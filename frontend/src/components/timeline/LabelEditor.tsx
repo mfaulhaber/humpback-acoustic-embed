@@ -26,8 +26,8 @@ function snapToGrid(sec: number): number {
   return Math.round(sec / SNAP_GRID) * SNAP_GRID;
 }
 
-function utcKey(row: DetectionRow): string {
-  return `${row.start_utc}:${row.end_utc}`;
+function rowIdKey(row: DetectionRow): string {
+  return row.row_id;
 }
 
 function getRowLabel(row: DetectionRow): LabelType | null {
@@ -43,6 +43,7 @@ function isLabeled(row: DetectionRow): boolean {
 }
 
 interface DragState {
+  rowId: string;
   startUtc: number;
   endUtc: number;
   originalStartUtc: number;
@@ -149,7 +150,7 @@ export function LabelEditor({
     const keys = new Set<string>();
     for (const r of mergedRows) {
       if (!isLabeled(r) && ghostStart < r.end_utc && ghostEnd > r.start_utc) {
-        keys.add(utcKey(r));
+        keys.add(rowIdKey(r));
       }
     }
     return keys;
@@ -185,10 +186,9 @@ export function LabelEditor({
       const duration = drag.duration;
       dispatch({
         type: "move",
-        start_utc: drag.startUtc,
-        end_utc: drag.endUtc,
-        new_start_utc: dragOffset,
-        new_end_utc: dragOffset + duration,
+        row_id: drag.rowId,
+        start_utc: dragOffset,
+        end_utc: dragOffset + duration,
       });
     }
     dragRef.current = null;
@@ -202,10 +202,9 @@ export function LabelEditor({
       const drag = dragRef.current;
       dispatch({
         type: "move",
-        start_utc: drag.startUtc,
-        end_utc: drag.endUtc,
-        new_start_utc: dragOffset,
-        new_end_utc: dragOffset + drag.duration,
+        row_id: drag.rowId,
+        start_utc: dragOffset,
+        end_utc: dragOffset + drag.duration,
       });
     }
     dragRef.current = null;
@@ -233,13 +232,14 @@ export function LabelEditor({
       e.stopPropagation();
 
       // Select on click
-      dispatch({ type: "select", id: utcKey(row) });
+      dispatch({ type: "select", id: row.row_id });
 
       // Start drag only for labeled rows (unlabeled rows are selectable but not draggable)
       if (isLabeled(row)) {
         const utc = getMouseUtc(e);
         const duration = row.end_utc - row.start_utc;
         dragRef.current = {
+          rowId: row.row_id,
           startUtc: row.start_utc,
           endUtc: row.end_utc,
           originalStartUtc: row.start_utc,
@@ -273,10 +273,9 @@ export function LabelEditor({
         const drag = dragRef.current;
         dispatch({
           type: "move",
-          start_utc: drag.startUtc,
-          end_utc: drag.endUtc,
-          new_start_utc: dragOffset,
-          new_end_utc: dragOffset + drag.duration,
+          row_id: drag.rowId,
+          start_utc: dragOffset,
+          end_utc: dragOffset + drag.duration,
         });
       }
       dragRef.current = null;
@@ -307,12 +306,12 @@ export function LabelEditor({
 
   for (const row of mergedRows) {
     const label = getRowLabel(row);
-    const key = utcKey(row);
+    const key = rowIdKey(row);
 
     // During drag, use drag offset for the dragged row
     let startUtc = row.start_utc;
     let endUtc = row.end_utc;
-    if (dragRef.current && dragOffset !== null && dragRef.current.startUtc === row.start_utc && dragRef.current.endUtc === row.end_utc) {
+    if (dragRef.current && dragOffset !== null && dragRef.current.rowId === row.row_id) {
       startUtc = dragOffset;
       endUtc = dragOffset + dragRef.current.duration;
     }
@@ -369,8 +368,7 @@ export function LabelEditor({
       {bars.map(({ row, x, w, label, isSelected, isManual, dimmed, key }) => {
         const isHovered = hoveredKey === key;
         const isBeingDragged = dragRef.current !== null &&
-          dragRef.current.startUtc === row.start_utc &&
-          dragRef.current.endUtc === row.end_utc &&
+          dragRef.current.rowId === row.row_id &&
           dragOffset !== null;
 
         let bg: string;

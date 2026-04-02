@@ -1690,7 +1690,7 @@ async def test_detection_embedding_404_for_nonexistent_job(client):
     """GET /classifier/detection-jobs/{id}/embedding returns 404 for missing job."""
     resp = await client.get(
         "/classifier/detection-jobs/nonexistent/embedding",
-        params={"start_utc": BASE_EPOCH, "end_utc": BASE_EPOCH + 5.0},
+        params={"row_id": "some-row"},
     )
     assert resp.status_code == 404
 
@@ -1734,7 +1734,7 @@ async def test_detection_embedding_404_for_job_without_embeddings(client, app_se
 
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/embedding",
-        params={"start_utc": BASE_EPOCH, "end_utc": BASE_EPOCH + 5.0},
+        params={"row_id": "some-row"},
     )
     assert resp.status_code == 404
     assert "no stored embeddings" in resp.json()["detail"].lower()
@@ -1767,7 +1767,7 @@ async def test_detection_embedding_404_for_job_without_output(client, app_settin
 
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/embedding",
-        params={"start_utc": BASE_EPOCH, "end_utc": BASE_EPOCH + 5.0},
+        params={"row_id": "some-row"},
     )
     assert resp.status_code == 404
     assert "no stored embeddings" in resp.json()["detail"].lower()
@@ -1793,13 +1793,12 @@ async def test_detection_embedding_returns_vector(client, app_settings):
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
 
-    # Write detection embeddings (internal parquet still uses filename/start_sec/end_sec)
+    test_row_id = "emb-test-row-1"
     embedding_records = [
         {
-            "filename": "song.wav",
-            "start_sec": 0.0,
-            "end_sec": 5.0,
+            "row_id": test_row_id,
             "embedding": [0.1, 0.2, 0.3, 0.4],
+            "confidence": 0.85,
         }
     ]
     emb_path = ddir / "detection_embeddings.parquet"
@@ -1828,11 +1827,9 @@ async def test_detection_embedding_returns_vector(client, app_settings):
         )
         await session.commit()
 
-    # "song.wav" has no parseable timestamp so base_epoch=0.0;
-    # start_utc=0.0 maps to filename-relative start_sec=0.0
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/embedding",
-        params={"start_utc": 0.0, "end_utc": 5.0},
+        params={"row_id": test_row_id},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -1846,10 +1843,8 @@ async def test_detection_embedding_returns_vector(client, app_settings):
     await engine.dispose()
 
 
-async def test_detection_embedding_hydrophone_job_relative_offsets(
-    client, app_settings
-):
-    """Hydrophone embedding lookup accepts the job-relative offsets returned by GET /content."""
+async def test_detection_embedding_hydrophone_job_row_id(client, app_settings):
+    """Hydrophone embedding lookup works with row_id."""
     from pathlib import Path
 
     from sqlalchemy import insert
@@ -1863,11 +1858,8 @@ async def test_detection_embedding_hydrophone_job_relative_offsets(
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    filename = "20250702T080118Z.wav"
-    # Embedding parquet stores file-relative coords; _resolve_embedding_coords
-    # maps the absolute UTC request to filename + start_sec/end_sec internally.
-    chunk_epoch = _20250702T080118Z
     job_start_ts = 1751439600.0
+    hydro_row_id = "hydro-emb-row-1"
 
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
@@ -1876,10 +1868,9 @@ async def test_detection_embedding_hydrophone_job_relative_offsets(
     write_detection_embeddings(
         [
             {
-                "filename": filename,
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "row_id": hydro_row_id,
                 "embedding": [0.1, 0.2, 0.3, 0.4],
+                "confidence": 0.85,
             }
         ],
         emb_path,
@@ -1910,13 +1901,9 @@ async def test_detection_embedding_hydrophone_job_relative_offsets(
         )
         await session.commit()
 
-    # Request with absolute UTC; internally resolved to file-relative for lookup
     resp = await client.get(
         f"/classifier/detection-jobs/{job_id}/embedding",
-        params={
-            "start_utc": chunk_epoch,
-            "end_utc": chunk_epoch + 5.0,
-        },
+        params={"row_id": hydro_row_id},
     )
     assert resp.status_code == 200
     data = resp.json()

@@ -333,64 +333,54 @@ class TestDetectionEmbeddingStorage:
         """write_detection_embeddings + read_detection_embedding round-trip."""
         records = [
             {
-                "filename": "song.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "row_id": "row-1",
                 "embedding": [1.0, 2.0, 3.0, 4.0],
+                "confidence": 0.85,
             },
             {
-                "filename": "song.wav",
-                "start_sec": 5.0,
-                "end_sec": 10.0,
+                "row_id": "row-2",
                 "embedding": [5.0, 6.0, 7.0, 8.0],
+                "confidence": 0.70,
             },
             {
-                "filename": "other.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "row_id": "row-3",
                 "embedding": [9.0, 10.0, 11.0, 12.0],
+                "confidence": 0.60,
             },
         ]
         emb_path = tmp_path / "detection_embeddings.parquet"
         write_detection_embeddings(records, emb_path)
 
-        # Read back each record
-        vec1 = read_detection_embedding(emb_path, "song.wav", 0.0, 5.0)
+        # Read back each record by row_id
+        vec1 = read_detection_embedding(emb_path, "row-1")
         assert vec1 is not None
         assert vec1 == pytest.approx([1.0, 2.0, 3.0, 4.0])
 
-        vec2 = read_detection_embedding(emb_path, "song.wav", 5.0, 10.0)
+        vec2 = read_detection_embedding(emb_path, "row-2")
         assert vec2 is not None
         assert vec2 == pytest.approx([5.0, 6.0, 7.0, 8.0])
 
-        vec3 = read_detection_embedding(emb_path, "other.wav", 0.0, 5.0)
+        vec3 = read_detection_embedding(emb_path, "row-3")
         assert vec3 is not None
         assert vec3 == pytest.approx([9.0, 10.0, 11.0, 12.0])
 
-    def test_read_returns_none_for_non_matching_bounds(self, tmp_path):
-        """read_detection_embedding returns None when time bounds don't match."""
+    def test_read_returns_none_for_non_matching_row_id(self, tmp_path):
+        """read_detection_embedding returns None when row_id doesn't match."""
         records = [
             {
-                "filename": "song.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "row_id": "row-1",
                 "embedding": [1.0, 2.0, 3.0],
             },
         ]
         emb_path = tmp_path / "detection_embeddings.parquet"
         write_detection_embeddings(records, emb_path)
 
-        # Wrong start_sec
-        assert read_detection_embedding(emb_path, "song.wav", 1.0, 5.0) is None
-        # Wrong end_sec
-        assert read_detection_embedding(emb_path, "song.wav", 0.0, 6.0) is None
-        # Wrong filename
-        assert read_detection_embedding(emb_path, "other.wav", 0.0, 5.0) is None
+        assert read_detection_embedding(emb_path, "nonexistent") is None
 
     def test_read_returns_none_for_nonexistent_file(self, tmp_path):
         """read_detection_embedding returns None when parquet file doesn't exist."""
         missing = tmp_path / "does_not_exist.parquet"
-        result = read_detection_embedding(missing, "song.wav", 0.0, 5.0)
+        result = read_detection_embedding(missing, "some-row")
         assert result is None
 
     def test_write_empty_records_is_noop(self, tmp_path):
@@ -405,16 +395,12 @@ class TestDetectionEmbeddingStorage:
 
         records = [
             {
-                "filename": "a.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "row_id": "r1",
                 "embedding": [1.0, 2.0],
                 "confidence": 0.95,
             },
             {
-                "filename": "b.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "row_id": "r2",
                 "embedding": [3.0, 4.0],
                 "confidence": 0.42,
             },
@@ -434,9 +420,7 @@ class TestDetectionEmbeddingStorage:
 
         records = [
             {
-                "filename": "a.wav",
-                "start_sec": 0.0,
-                "end_sec": 5.0,
+                "row_id": "r1",
                 "embedding": [1.0, 2.0],
             },
         ]
@@ -539,13 +523,15 @@ def test_emit_embeddings_roundtrip_via_parquet(tmp_path):
     if not embedding_records:
         pytest.skip("No detections produced (classifier did not fire)")
 
+    # Assign row_ids (as the worker would do before writing)
+    for i, rec in enumerate(embedding_records):
+        rec["row_id"] = f"test-row-{i}"
+
     emb_path = tmp_path / "detection_embeddings.parquet"
     write_detection_embeddings(embedding_records, emb_path)
 
-    # Read back each embedding
+    # Read back each embedding by row_id
     for rec in embedding_records:
-        vec = read_detection_embedding(
-            emb_path, rec["filename"], rec["start_sec"], rec["end_sec"]
-        )
+        vec = read_detection_embedding(emb_path, rec["row_id"])
         assert vec is not None
         assert vec == pytest.approx(rec["embedding"], abs=1e-5)

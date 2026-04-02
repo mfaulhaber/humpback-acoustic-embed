@@ -1129,6 +1129,11 @@ async def batch_edit_labels(
 
     edit_dicts = [e.model_dump() for e in body.edits]
 
+    # Collect row_ids that will be deleted for cascade cleanup.
+    deleted_row_ids: list[str] = [
+        str(e.row_id) for e in body.edits if e.action == "delete" and e.row_id
+    ]
+
     try:
         updated_rows = apply_label_edits(
             existing_rows, edit_dicts, job_duration=job_duration
@@ -1142,11 +1147,23 @@ async def batch_edit_labels(
 
     write_detection_row_store(rs_path, updated_rows)
 
+    # Cascade-delete vocalization labels for removed detection rows.
+    if deleted_row_ids:
+        from sqlalchemy import delete as sa_delete
+
+        from humpback.models.labeling import VocalizationLabel
+
+        await session.execute(
+            sa_delete(VocalizationLabel).where(
+                VocalizationLabel.detection_job_id == job_id,
+                VocalizationLabel.row_id.in_(deleted_row_ids),
+            )
+        )
+
     has_positive = any(
         row.get("humpback") == "1" or row.get("orca") == "1" for row in updated_rows
     )
     job.has_positive_labels = has_positive
-    job.row_store_version = (job.row_store_version or 1) + 1
     await session.commit()
 
     return [normalize_detection_row(row) for row in updated_rows]
@@ -1393,61 +1410,6 @@ async def get_detection_audio_slice(
     return _encode_wav_response(segment, sr, normalize)
 
 
-def _resolve_embedding_coords(
-    settings, job, start_utc: float, end_utc: float
-) -> tuple[str, float, float]:
-    """Map (start_utc, end_utc) to (filename, start_sec, end_sec) for embedding lookup.
-
-    The detection embedding parquet still uses file-relative coordinates.
-    We scan the window diagnostics to find the matching file-relative window.
-    """
-    diag_path = detection_diagnostics_path(settings.storage_root, job.id)
-    if diag_path.exists():
-        import pyarrow.parquet as pq
-
-        from humpback.classifier.detection_rows import parse_recording_timestamp
-
-        table = read_window_diagnostics_table(diag_path)
-        filenames_col = table.column("filename").to_pylist()
-        offsets_col = table.column("offset_sec").to_pylist()
-        has_end = "end_sec" in table.column_names
-        end_col = table.column("end_sec").to_pylist() if has_end else None
-
-        for i in range(table.num_rows):
-            fname = filenames_col[i]
-            offset = float(offsets_col[i])
-            ts = parse_recording_timestamp(fname)
-            base_epoch = ts.timestamp() if ts else 0.0
-            window_start_utc = base_epoch + offset
-            if abs(window_start_utc - start_utc) < 0.01:
-                end_val = float(end_col[i]) if end_col else offset + 5.0
-                return fname, offset, end_val
-
-    # Fallback: scan the embedding parquet directly
-    emb_path = detection_embeddings_path(settings.storage_root, job.id)
-    if emb_path.exists():
-        import pyarrow.parquet as pq
-
-        from humpback.classifier.detection_rows import parse_recording_timestamp
-
-        emb_table = pq.read_table(
-            str(emb_path), columns=["filename", "start_sec", "end_sec"]
-        )
-        for i in range(emb_table.num_rows):
-            fname = emb_table.column("filename")[i].as_py()
-            s = float(emb_table.column("start_sec")[i].as_py())
-            e = float(emb_table.column("end_sec")[i].as_py())
-            ts = parse_recording_timestamp(fname)
-            base_epoch = ts.timestamp() if ts else 0.0
-            if (
-                abs(base_epoch + s - start_utc) < 0.01
-                and abs(base_epoch + e - end_utc) < 0.01
-            ):
-                return fname, s, e
-
-    raise HTTPException(404, "Cannot resolve embedding coordinates for UTC range")
-
-
 # ---- Spectrogram ----
 
 
@@ -1518,8 +1480,7 @@ async def get_detection_embedding(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
-    start_utc: float = Query(...),
-    end_utc: float = Query(...),
+    row_id: str = Query(...),
 ):
     """Return the stored embedding vector for a detection row."""
     from humpback.classifier.detector import read_detection_embedding
@@ -1532,13 +1493,7 @@ async def get_detection_embedding(
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
-    # Embedding parquet still uses filename/start_sec/end_sec.
-    # Resolve via window diagnostics or row-relative lookup.
-    emb_filename, emb_start, emb_end = _resolve_embedding_coords(
-        settings, job, start_utc, end_utc
-    )
-
-    embedding = read_detection_embedding(emb_path, emb_filename, emb_start, emb_end)
+    embedding = read_detection_embedding(emb_path, row_id)
     if embedding is None:
         raise HTTPException(404, "Embedding not found for specified detection row")
 

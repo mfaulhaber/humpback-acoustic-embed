@@ -71,4 +71,3 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     local_cache_path: Mapped[Optional[str]] = mapped_column(default=None)
     has_positive_labels: Mapped[Optional[bool]] = mapped_column(default=None)
     timeline_tiles_ready: Mapped[bool] = mapped_column(default=False)
-    row_store_version: Mapped[int] = mapped_column(default=1)

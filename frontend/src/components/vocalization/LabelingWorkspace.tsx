@@ -45,17 +45,12 @@ import {
   deleteVocalizationLabel,
   detectionSpectrogramUrl,
   detectionAudioSliceUrl,
-  fetchRefreshPreview,
-  applyRefresh,
-  fetchDetectionJob,
 } from "@/api/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, RefreshCw } from "lucide-react";
 import type {
   VocClassifierPredictionRow,
   VocalizationLabel,
   LabelingSource,
-  RefreshPreviewResponse,
 } from "@/api/types";
 
 const PAGE_SIZE = 50;
@@ -76,8 +71,8 @@ const TYPE_COLORS = [
 type SortMode = "uncertainty" | "score_desc" | "chronological" | "confidence_desc";
 
 /** Row key for pending label maps */
-function rowKey(startUtc: number | null, endUtc: number | null): string {
-  return `${startUtc ?? 0}_${endUtc ?? 0}`;
+function rowKey(row: VocClassifierPredictionRow): string {
+  return row.row_id ?? `${row.start_utc ?? 0}_${row.end_utc ?? 0}`;
 }
 
 interface Props {
@@ -104,51 +99,8 @@ export function LabelingWorkspace({
   const [saving, setSaving] = useState(false);
   const qc = useQueryClient();
 
-  // Staleness / refresh state
-  const [stalePreview, setStalePreview] = useState<RefreshPreviewResponse | null>(null);
-  const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const detectionJobId =
     source.type === "detection_job" ? source.jobId : null;
-
-  // Check staleness on mount for detection job sources
-  useEffect(() => {
-    if (!detectionJobId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const djob = await fetchDetectionJob(detectionJobId);
-        if (cancelled) return;
-        // Only check if job has labels at all
-        const preview = await fetchRefreshPreview(detectionJobId);
-        if (cancelled) return;
-        if (preview.orphaned_count > 0) {
-          setStalePreview(preview);
-        } else {
-          // Check version mismatch — if labels exist but have NULL or old version
-          // the preview endpoint won't show orphans, but we still want to surface
-          // the option to sync versions
-          setStalePreview(null);
-        }
-      } catch {
-        // Silently ignore — job may not have labels yet
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [detectionJobId]);
-
-  const handleRefreshApply = useCallback(async () => {
-    if (!detectionJobId) return;
-    setRefreshing(true);
-    try {
-      await applyRefresh(detectionJobId);
-      setStalePreview(null);
-      setRefreshDialogOpen(false);
-      qc.invalidateQueries({ queryKey: ["labeling"] });
-    } finally {
-      setRefreshing(false);
-    }
-  }, [detectionJobId, qc]);
 
   // Pending label state (local accumulation)
   const [pendingAdds, setPendingAdds] = useState<Map<string, Set<string>>>(
@@ -272,14 +224,11 @@ export function LabelingWorkspace({
     try {
       // Process all adds via raw API (no per-call invalidation)
       const addPromises: Promise<unknown>[] = [];
-      for (const [key, labels] of pendingAdds) {
-        const [startStr, endStr] = key.split("_");
-        const startUtc = parseFloat(startStr);
-        const endUtc = parseFloat(endStr);
+      for (const [rk, labels] of pendingAdds) {
         for (const label of labels) {
           netNew++;
           addPromises.push(
-            createVocalizationLabel(detectionJobId, startUtc, endUtc, {
+            createVocalizationLabel(detectionJobId, rk, {
               label,
               source: "manual",
             }),
@@ -349,16 +298,6 @@ export function LabelingWorkspace({
               View only
             </Badge>
           )}
-          {stalePreview && (
-            <Badge
-              variant="outline"
-              className="text-xs bg-amber-50 text-amber-800 border-amber-200 cursor-pointer"
-              onClick={() => setRefreshDialogOpen(true)}
-            >
-              <AlertTriangle className="h-3 w-3 mr-1" />
-              {stalePreview.orphaned_count} orphaned label{stalePreview.orphaned_count !== 1 ? "s" : ""} — click to review
-            </Badge>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted-foreground">Sort:</label>
@@ -411,39 +350,30 @@ export function LabelingWorkspace({
         )}
 
         <div className="border rounded-md divide-y">
-          {pageRows.map((row, i) => (
-            <LabelingRow
-              key={`${row.start_utc ?? row.start_sec}-${i}`}
-              row={row}
-              detectionJobId={detectionJobId}
-              vocabulary={vocabulary}
-              typeColorMap={typeColorMap}
-              thresholds={thresholds}
-              readonly={readonly}
-              pendingAdds={pendingAdds.get(rowKey(row.start_utc, row.end_utc))}
-              pendingRemovals={pendingRemovals.get(
-                rowKey(row.start_utc, row.end_utc),
-              )}
-              onAddPending={(label) =>
-                addPending(rowKey(row.start_utc, row.end_utc), label)
-              }
-              onRemovePendingAdd={(label) =>
-                removePendingAdd(rowKey(row.start_utc, row.end_utc), label)
-              }
-              onAddPendingRemoval={(labelId) =>
-                addPendingRemoval(
-                  rowKey(row.start_utc, row.end_utc),
-                  labelId,
-                )
-              }
-              onRemovePendingRemoval={(labelId) =>
-                removePendingRemoval(
-                  rowKey(row.start_utc, row.end_utc),
-                  labelId,
-                )
-              }
-            />
-          ))}
+          {pageRows.map((row, i) => {
+            const rk = rowKey(row);
+            return (
+              <LabelingRow
+                key={`${row.row_id ?? row.start_sec}-${i}`}
+                row={row}
+                detectionJobId={detectionJobId}
+                vocabulary={vocabulary}
+                typeColorMap={typeColorMap}
+                thresholds={thresholds}
+                readonly={readonly}
+                pendingAdds={pendingAdds.get(rk)}
+                pendingRemovals={pendingRemovals.get(rk)}
+                onAddPending={(label) => addPending(rk, label)}
+                onRemovePendingAdd={(label) => removePendingAdd(rk, label)}
+                onAddPendingRemoval={(labelId) =>
+                  addPendingRemoval(rk, labelId)
+                }
+                onRemovePendingRemoval={(labelId) =>
+                  removePendingRemoval(rk, labelId)
+                }
+              />
+            );
+          })}
         </div>
 
         {/* Pagination */}
@@ -472,90 +402,6 @@ export function LabelingWorkspace({
         </div>
       </CardContent>
 
-      {/* Refresh reconciliation dialog */}
-      <Dialog open={refreshDialogOpen} onOpenChange={setRefreshDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-sm flex items-center gap-2">
-              <RefreshCw className="h-4 w-4" />
-              Reconcile Vocalization Labels
-            </DialogTitle>
-          </DialogHeader>
-          {stalePreview && (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Detection labels have changed since these vocalization labels
-                were created. Some labeled windows no longer exist in the
-                detection row store.
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded border p-2 text-center">
-                  <div className="font-medium text-green-700">
-                    {stalePreview.matched_count}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    labels still valid
-                  </div>
-                </div>
-                <div className="rounded border p-2 text-center">
-                  <div className="font-medium text-amber-700">
-                    {stalePreview.orphaned_count}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    orphaned labels
-                  </div>
-                </div>
-              </div>
-              {stalePreview.orphaned_labels.length > 0 && (
-                <div className="max-h-40 overflow-y-auto rounded border divide-y text-xs">
-                  {stalePreview.orphaned_labels.map((ol) => (
-                    <div
-                      key={ol.id}
-                      className="flex justify-between px-2 py-1.5"
-                    >
-                      <Badge
-                        variant="outline"
-                        className={`text-xs ${
-                          ol.label === NEGATIVE_LABEL
-                            ? NEGATIVE_COLOR
-                            : TYPE_COLORS[0]
-                        }`}
-                      >
-                        {ol.label}
-                      </Badge>
-                      <span className="text-muted-foreground">
-                        {new Date(ol.start_utc * 1000)
-                          .toISOString()
-                          .slice(11, 19)}{" "}
-                        UTC
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="flex justify-end gap-2 pt-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setRefreshDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={handleRefreshApply}
-                  disabled={refreshing}
-                >
-                  {refreshing
-                    ? "Applying..."
-                    : `Discard ${stalePreview.orphaned_count} orphaned label${stalePreview.orphaned_count !== 1 ? "s" : ""} & sync`}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 }
@@ -596,13 +442,17 @@ function LabelingRow({
   const [spectrogramOpen, setSpectrogramOpen] = useState(false);
 
   const hasUtc = row.start_utc != null && row.end_utc != null;
-  const duration = row.end_sec - row.start_sec;
+  const duration =
+    row.start_sec != null && row.end_sec != null
+      ? row.end_sec - row.start_sec
+      : hasUtc
+        ? row.end_utc! - row.start_utc!
+        : 0;
 
   // Fetch existing vocalization labels for this row
   const { data: existingLabels = [] } = useVocalizationLabels(
     detectionJobId,
-    row.start_utc,
-    row.end_utc,
+    row.row_id,
   );
 
   const { data: labelVocab = [] } = useLabelVocabulary();

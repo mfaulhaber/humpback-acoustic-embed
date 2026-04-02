@@ -28,6 +28,7 @@ from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     append_detection_row_store,
     ensure_detection_row_store,
+    ensure_row_ids,
     format_optional_float,
     format_optional_int,
     normalize_detection_row,
@@ -102,6 +103,7 @@ def _detection_dicts_to_store_rows(
             value = normalized[label]
             out_row[label] = "" if value is None else str(value)
         store_rows.append(out_row)
+    ensure_row_ids(store_rows)
     return store_rows
 
 
