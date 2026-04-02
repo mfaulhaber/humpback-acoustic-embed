@@ -56,6 +56,7 @@ export function useSaveLabels(jobId: string) {
     mutationFn: (edits: LabelEditItem[]) => patchDetectionLabels(jobId, edits),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["timelineDetections", jobId] });
+      qc.invalidateQueries({ queryKey: ["embedding-status", jobId] });
     },
   });
 }
