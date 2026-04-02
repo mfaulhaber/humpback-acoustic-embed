@@ -188,3 +188,130 @@ def test_search_dedup_skips_repeats(tmp_path: Path) -> None:
     # (not guaranteed with 10 trials on the full space, but the
     # mechanism is tested structurally)
     assert summary["total_trials"] + summary["skipped_duplicates"] == 10
+
+
+def _create_mixed_source_data(tmp_path: Path) -> dict:
+    """Create test data with both embedding set and detection Parquet sources."""
+    rng = np.random.RandomState(77)
+
+    # Embedding set Parquet (positives)
+    es_path = tmp_path / "es_positive.parquet"
+    pos_vecs = rng.randn(20, VECTOR_DIM).astype(np.float32) + 2.0
+    es_schema = pa.schema(
+        [
+            ("row_index", pa.int32()),
+            ("embedding", pa.list_(pa.float32(), VECTOR_DIM)),
+        ]
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "row_index": list(range(20)),
+                "embedding": [v.tolist() for v in pos_vecs],
+            },
+            schema=es_schema,
+        ),
+        str(es_path),
+    )
+
+    # Detection Parquet (negatives — hard negatives from detection)
+    det_path = tmp_path / "det_embeddings.parquet"
+    neg_vecs = rng.randn(20, VECTOR_DIM).astype(np.float32) - 2.0
+    det_schema = pa.schema(
+        [
+            ("filename", pa.string()),
+            ("start_sec", pa.float32()),
+            ("end_sec", pa.float32()),
+            ("embedding", pa.list_(pa.float32(), VECTOR_DIM)),
+            ("confidence", pa.float32()),
+        ]
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "filename": ["rec_a.flac"] * 10 + ["rec_b.flac"] * 10,
+                "start_sec": [float(i * 5) for i in range(20)],
+                "end_sec": [float(i * 5 + 5) for i in range(20)],
+                "embedding": [v.tolist() for v in neg_vecs],
+                "confidence": [0.9 + i * 0.005 for i in range(20)],
+            },
+            schema=det_schema,
+        ),
+        str(det_path),
+    )
+
+    examples = []
+    for i in range(20):
+        examples.append(
+            {
+                "id": f"pos_{i}",
+                "split": "train" if i < 14 else "val",
+                "label": 1,
+                "source_type": "embedding_set",
+                "parquet_path": str(es_path),
+                "row_index": i,
+                "audio_file_id": "audio_pos",
+                "negative_group": None,
+            }
+        )
+    for i in range(20):
+        band = "det_0.90_0.95" if i < 10 else "det_0.95_0.99"
+        examples.append(
+            {
+                "id": f"det_{i}",
+                "split": "train" if i < 14 else "val",
+                "label": 0,
+                "source_type": "detection_job",
+                "parquet_path": str(det_path),
+                "row_index": i,
+                "audio_file_id": "rec_a.flac" if i < 10 else "rec_b.flac",
+                "negative_group": band,
+            }
+        )
+
+    return {
+        "metadata": {
+            "created_at": "2026-04-01T00:00:00Z",
+            "source_job_ids": [],
+            "positive_embedding_set_ids": ["pos"],
+            "negative_embedding_set_ids": [],
+            "detection_job_ids": ["det1"],
+            "score_range": [0.5, 0.995],
+            "split_strategy": "by_audio_file",
+        },
+        "examples": examples,
+    }
+
+
+def test_mixed_source_search(tmp_path: Path) -> None:
+    """Search with both embedding set and detection sources works end-to-end."""
+    manifest = _create_mixed_source_data(tmp_path)
+    results_dir = tmp_path / "results"
+
+    summary = run_search(
+        manifest=manifest,
+        n_trials=3,
+        objective_name="default",
+        seed=42,
+        results_dir=results_dir,
+    )
+
+    assert summary["total_trials"] == 3
+
+    # Verify grouped metrics include detection score bands
+    history_path = results_dir / "search_history.json"
+    with open(history_path) as f:
+        history = json.load(f)
+    assert len(history) == 3
+
+    # At least one run should have grouped FP rates if negative_group is set
+    has_grouped = any(
+        "high_conf_fp_rate_by_group" in entry["metrics"] for entry in history
+    )
+    # Grouped metrics appear when there are negatives with groups in val split
+    # This depends on the random config (threshold, etc.), so we just check structure
+    if has_grouped:
+        for entry in history:
+            if "high_conf_fp_rate_by_group" in entry["metrics"]:
+                groups = entry["metrics"]["high_conf_fp_rate_by_group"]
+                assert isinstance(groups, dict)

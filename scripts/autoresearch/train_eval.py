@@ -21,12 +21,19 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import Normalizer, StandardScaler
 from sklearn.svm import LinearSVC
 
+import pyarrow.parquet as pq
+
 from humpback.processing.embeddings import read_embeddings
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
+
+# Cache entry: (row_indices, embeddings, filenames_or_None)
+# filenames is populated only for detection-format Parquet files.
+ParquetCacheEntry = tuple[np.ndarray, np.ndarray, list[str] | None]
 
 
 def load_manifest(manifest_path: str | Path) -> dict[str, Any]:
@@ -37,24 +44,44 @@ def load_manifest(manifest_path: str | Path) -> dict[str, Any]:
 
 def _load_parquet_cache(
     manifest: dict[str, Any],
-) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-    """Load each unique Parquet file once. Returns {parquet_path: (row_indices, embeddings)}."""
+) -> dict[str, ParquetCacheEntry]:
+    """Load each unique Parquet file once, auto-detecting schema format.
+
+    Embedding set format: has ``row_index`` column → load via read_embeddings.
+    Detection format: has ``filename`` column → use positional indices.
+    """
     paths = {ex["parquet_path"] for ex in manifest["examples"]}
-    cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    cache: dict[str, ParquetCacheEntry] = {}
     for p in sorted(paths):
-        row_indices, embeddings = read_embeddings(Path(p))
-        cache[p] = (row_indices, embeddings)
+        schema = pq.read_schema(p)
+        col_names = set(schema.names)
+        if "row_index" in col_names:
+            # Embedding set format
+            row_indices, embeddings = read_embeddings(Path(p))
+            cache[p] = (row_indices, embeddings, None)
+        elif "filename" in col_names:
+            # Detection embeddings format
+            table = pq.read_table(p)
+            embeddings = np.array(
+                [v.as_py() for v in table["embedding"]], dtype=np.float32
+            )
+            row_indices = np.arange(len(embeddings), dtype=np.int32)
+            filenames = table["filename"].to_pylist()
+            cache[p] = (row_indices, embeddings, filenames)
+        else:
+            msg = f"Unknown Parquet format in {p}: columns {col_names}"
+            raise ValueError(msg)
     return cache
 
 
 def _build_embedding_lookup(
     manifest: dict[str, Any],
-    parquet_cache: dict[str, tuple[np.ndarray, np.ndarray]],
+    parquet_cache: dict[str, ParquetCacheEntry],
 ) -> dict[str, np.ndarray]:
     """Build {example_id: embedding_vector} from manifest + cached Parquet data."""
     lookup: dict[str, np.ndarray] = {}
     for ex in manifest["examples"]:
-        row_indices, embeddings = parquet_cache[ex["parquet_path"]]
+        row_indices, embeddings, _ = parquet_cache[ex["parquet_path"]]
         idx = int(np.searchsorted(row_indices, ex["row_index"]))
         if idx < len(row_indices) and row_indices[idx] == ex["row_index"]:
             lookup[ex["id"]] = embeddings[idx]
@@ -67,20 +94,36 @@ def _build_embedding_lookup(
 
 
 def _build_parquet_row_map(
-    manifest: dict[str, Any],
-    parquet_cache: dict[str, tuple[np.ndarray, np.ndarray]],
+    parquet_cache: dict[str, ParquetCacheEntry],
 ) -> dict[str, dict[int, np.ndarray]]:
     """Build {parquet_path: {row_index: vector}} for neighbor lookups."""
     row_map: dict[str, dict[int, np.ndarray]] = {}
-    for path, (row_indices, embeddings) in parquet_cache.items():
+    for path, (row_indices, embeddings, _) in parquet_cache.items():
         row_map[path] = {int(ri): embeddings[i] for i, ri in enumerate(row_indices)}
     return row_map
+
+
+def _build_parquet_filename_map(
+    parquet_cache: dict[str, ParquetCacheEntry],
+) -> dict[str, dict[int, str]]:
+    """Build {parquet_path: {row_index: filename}} for detection files.
+
+    Only populated for detection-format Parquet files (those with filename column).
+    Used to skip cross-file neighbors during context pooling.
+    """
+    fname_map: dict[str, dict[int, str]] = {}
+    for path, (row_indices, _, filenames) in parquet_cache.items():
+        if filenames is not None:
+            fname_map[path] = {
+                int(ri): filenames[i] for i, ri in enumerate(row_indices)
+            }
+    return fname_map
 
 
 def apply_context_pooling(
     manifest: dict[str, Any],
     embedding_lookup: dict[str, np.ndarray],
-    parquet_cache: dict[str, tuple[np.ndarray, np.ndarray]],
+    parquet_cache: dict[str, ParquetCacheEntry],
     mode: str,
 ) -> dict[str, np.ndarray]:
     """Apply context pooling across adjacent windows.
@@ -90,12 +133,14 @@ def apply_context_pooling(
         mean3: mean of [left, center, right] neighbors
         max3: element-wise max of [left, center, right] neighbors
 
-    Missing neighbors fall back to center-only.
+    Missing neighbors fall back to center-only. For detection-format files,
+    neighbors from a different audio filename are also skipped.
     """
     if mode == "center":
         return embedding_lookup
 
-    row_map = _build_parquet_row_map(manifest, parquet_cache)
+    row_map = _build_parquet_row_map(parquet_cache)
+    fname_map = _build_parquet_filename_map(parquet_cache)
     pooled: dict[str, np.ndarray] = {}
 
     for ex in manifest["examples"]:
@@ -108,13 +153,19 @@ def apply_context_pooling(
         ri = ex["row_index"]
         neighbors = [center]
 
+        # For detection files, check that neighbor is from the same audio file
+        fnames = fname_map.get(path)
+        current_fname = fnames.get(ri) if fnames else None
+
         left = row_map.get(path, {}).get(ri - 1)
         if left is not None:
-            neighbors.append(left)
+            if fnames is None or fnames.get(ri - 1) == current_fname:
+                neighbors.append(left)
 
         right = row_map.get(path, {}).get(ri + 1)
         if right is not None:
-            neighbors.append(right)
+            if fnames is None or fnames.get(ri + 1) == current_fname:
+                neighbors.append(right)
 
         stack = np.array(neighbors)
         if mode == "mean3":
@@ -328,7 +379,7 @@ def find_top_false_positives(
 def train_eval(
     manifest: dict[str, Any],
     config: dict[str, Any],
-    parquet_cache: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
+    parquet_cache: dict[str, ParquetCacheEntry] | None = None,
     precomputed_embeddings: dict[str, np.ndarray] | None = None,
 ) -> dict[str, Any]:
     """Run a single train/eval cycle and return metrics.

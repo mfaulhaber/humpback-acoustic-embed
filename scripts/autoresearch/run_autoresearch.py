@@ -16,9 +16,18 @@ from typing import Any
 import numpy as np
 
 
-from scripts.autoresearch.objectives import get_objective
-from scripts.autoresearch.search_space import config_hash, sample_config
-from scripts.autoresearch.train_eval import (
+import sys
+from pathlib import Path as _Path
+
+# Ensure repo root is on sys.path so cross-script imports work
+# when invoked directly (e.g. uv run scripts/autoresearch/run_autoresearch.py)
+_repo_root = str(_Path(__file__).resolve().parents[2])
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
+from scripts.autoresearch.objectives import get_objective  # noqa: E402
+from scripts.autoresearch.search_space import config_hash, sample_config  # noqa: E402
+from scripts.autoresearch.train_eval import (  # noqa: E402
     _build_embedding_lookup,
     _load_parquet_cache,
     apply_context_pooling,
