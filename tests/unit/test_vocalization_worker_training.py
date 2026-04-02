@@ -67,19 +67,15 @@ def _make_embedding_set_parquet(path: Path, embeddings: list[list[float]]) -> No
 def _make_detection_embeddings(
     storage_root: Path,
     det_job_id: str,
-    filenames: list[str],
-    start_secs: list[float],
-    end_secs: list[float],
+    row_ids: list[str],
     embeddings: list[list[float]],
 ) -> None:
     det_dir = storage_root / "detections" / det_job_id
     det_dir.mkdir(parents=True, exist_ok=True)
-    n = len(filenames)
+    n = len(row_ids)
     table = pa.table(
         {
-            "filename": pa.array(filenames, type=pa.string()),
-            "start_sec": pa.array(start_secs, type=pa.float32()),
-            "end_sec": pa.array(end_secs, type=pa.float32()),
+            "row_id": pa.array(row_ids, type=pa.string()),
             "embedding": pa.array(embeddings, type=pa.list_(pa.float32())),
             "confidence": pa.array([0.9] * n, type=pa.float32()),
         }
@@ -100,15 +96,12 @@ async def test_training_with_source_config_creates_dataset(session_factory, tmp_
     _make_embedding_set_parquet(es_path, _make_separable_embeddings(15, center_a, 1))
 
     # Create detection job with labeled "Moan" windows
-    fname = "recording_20250101T120000Z.wav"
-    base_epoch = 1735732800.0
     n_det = 15
+    det_row_ids = [f"dj1-row-{i}" for i in range(n_det)]
     _make_detection_embeddings(
         settings.storage_root,
         "dj1",
-        [fname] * n_det,
-        [float(i * 5) for i in range(n_det)],
-        [float(i * 5 + 5) for i in range(n_det)],
+        det_row_ids,
         _make_separable_embeddings(n_det, center_b, 2),
     )
 
@@ -137,8 +130,7 @@ async def test_training_with_source_config_creates_dataset(session_factory, tmp_
             session.add(
                 VocalizationLabel(
                     detection_job_id="dj1",
-                    start_utc=base_epoch + i * 5,
-                    end_utc=base_epoch + i * 5 + 5,
+                    row_id=det_row_ids[i],
                     label="Moan",
                 )
             )

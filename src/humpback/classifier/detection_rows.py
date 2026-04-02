@@ -10,6 +10,7 @@ import math
 import os
 import re
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,7 @@ MANUAL_POSITIVE_SELECTION_FIELDNAMES = [
 LABEL_FIELDNAMES = ["humpback", "orca", "ship", "background"]
 
 ROW_STORE_FIELDNAMES = [
+    "row_id",
     "start_utc",
     "end_utc",
     "avg_confidence",
@@ -390,12 +392,9 @@ def _normalize_utc_key(value: str) -> str:
         return value
 
 
-def _row_key(row: dict[str, str]) -> tuple[str, str]:
-    """Return the (start_utc, end_utc) composite key for a detection row."""
-    return (
-        _normalize_utc_key(row.get("start_utc", "")),
-        _normalize_utc_key(row.get("end_utc", "")),
-    )
+def _row_key(row: dict[str, str]) -> str:
+    """Return the row_id key for a detection row."""
+    return row.get("row_id", "")
 
 
 def _is_row_labeled(row: dict[str, str]) -> bool:
@@ -415,18 +414,19 @@ def apply_label_edits(
 ) -> list[dict[str, str]]:
     """Apply a batch of label edits (add/move/delete/change_type) to detection rows.
 
-    Rows are identified by ``(start_utc, end_utc)`` composite key.
+    Rows are identified by ``row_id``.
     Returns an updated copy of the row list.  Raises ``ValueError`` on invalid
     operations (overlapping labeled rows, out-of-bounds moves, missing keys).
     """
     result: list[dict[str, str]] = [dict(r) for r in rows]
+    ensure_row_ids(result)
 
-    # Build lookup by (start_utc, end_utc) composite key.
-    row_index: dict[tuple[str, str], dict[str, str]] = {_row_key(r): r for r in result}
+    # Build lookup by row_id.
+    row_index: dict[str, dict[str, str]] = {_row_key(r): r for r in result}
 
     new_rows: list[dict[str, str]] = []
-    delete_keys: set[tuple[str, str]] = set()
-    touched_keys: set[tuple[str, str]] = set()
+    delete_keys: set[str] = set()
+    touched_keys: set[str] = set()
 
     for edit in edits:
         action = edit.get("action")
@@ -437,6 +437,7 @@ def apply_label_edits(
             label = edit.get("label")
 
             new_row = {f: "" for f in ROW_STORE_FIELDNAMES}
+            new_row["row_id"] = str(uuid.uuid4())
             new_row["start_utc"] = str(start)
             new_row["end_utc"] = str(end)
             if label:
@@ -445,36 +446,27 @@ def apply_label_edits(
             touched_keys.add(_row_key(new_row))
 
         elif action == "move":
-            key = (
-                _normalize_utc_key(str(edit.get("start_utc", ""))),
-                _normalize_utc_key(str(edit.get("end_utc", ""))),
-            )
+            key = str(edit.get("row_id", ""))
             target = row_index.get(key)
             if target is None:
-                raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
-            new_start = float(edit["new_start_utc"])
-            new_end = float(edit["new_end_utc"])
+                raise ValueError(f"Row with row_id {key!r} not found")
+            new_start = float(edit["start_utc"])
+            new_end = float(edit["end_utc"])
             target["start_utc"] = str(new_start)
             target["end_utc"] = str(new_end)
-            touched_keys.add(_row_key(target))
+            touched_keys.add(key)
 
         elif action == "delete":
-            key = (
-                _normalize_utc_key(str(edit.get("start_utc", ""))),
-                _normalize_utc_key(str(edit.get("end_utc", ""))),
-            )
+            key = str(edit.get("row_id", ""))
             if key not in row_index:
-                raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
+                raise ValueError(f"Row with row_id {key!r} not found")
             delete_keys.add(key)
 
         elif action == "change_type":
-            key = (
-                _normalize_utc_key(str(edit.get("start_utc", ""))),
-                _normalize_utc_key(str(edit.get("end_utc", ""))),
-            )
+            key = str(edit.get("row_id", ""))
             target = row_index.get(key)
             if target is None:
-                raise ValueError(f"Row with key ({key[0]}, {key[1]}) not found")
+                raise ValueError(f"Row with row_id {key!r} not found")
             label = edit.get("label", "")
             for lf in LABEL_FIELDNAMES:
                 target[lf] = ""
@@ -802,18 +794,21 @@ def read_detection_row_store(path: Path) -> tuple[list[str], list[dict[str, str]
     col_names = set(table.column_names)
 
     if "start_utc" in col_names:
-        # New schema — read with enforced schema.
-        table = pq.read_table(str(path), schema=ROW_STORE_SCHEMA)
-        fieldnames = list(table.column_names)
+        # New-ish schema — may or may not have row_id yet.
+        # Read without schema enforcement, then fill missing columns.
+        raw_columns = table.to_pydict()
         rows: list[dict[str, str]] = []
-        columns = table.to_pydict()
         for idx in range(table.num_rows):
             row: dict[str, str] = {}
-            for field in fieldnames:
-                value = columns[field][idx]
-                row[field] = value if value is not None else ""
+            for field in ROW_STORE_FIELDNAMES:
+                if field in raw_columns:
+                    value = raw_columns[field][idx]
+                    row[field] = value if value is not None else ""
+                else:
+                    row[field] = ""
             rows.append(row)
-        return fieldnames, rows
+        ensure_row_ids(rows)
+        return list(ROW_STORE_FIELDNAMES), rows
 
     # Old schema — migrate.
     logger.info("Migrating legacy detection row store: %s", path)
@@ -833,11 +828,20 @@ def read_detection_row_store(path: Path) -> tuple[list[str], list[dict[str, str]
     return ROW_STORE_FIELDNAMES, migrated
 
 
+def ensure_row_ids(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Assign a UUID4 row_id to any row that lacks one."""
+    for row in rows:
+        if not row.get("row_id"):
+            row["row_id"] = str(uuid.uuid4())
+    return rows
+
+
 def write_detection_row_store(
     path: Path,
     rows: list[dict[str, str]],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_row_ids(rows)
     normalized_rows = []
     for row in rows:
         normalized_rows.append(

@@ -200,7 +200,12 @@ function PredictionRowItem({
     .sort(([, a], [, b]) => b - a);
 
   const hasUtc = row.start_utc != null && row.end_utc != null;
-  const duration = row.end_sec - row.start_sec;
+  const duration =
+    row.start_sec != null && row.end_sec != null
+      ? row.end_sec - row.start_sec
+      : hasUtc
+        ? row.end_utc! - row.start_utc!
+        : 0;
 
   // Spectrogram + audio only available for detection job sources with UTC
   const canShowMedia = detectionJobId && hasUtc;

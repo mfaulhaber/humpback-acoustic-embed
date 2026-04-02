@@ -20,13 +20,12 @@ export function useLabelingSummary(jobId: string | null) {
 
 export function useVocalizationLabels(
   detectionJobId: string | null,
-  startUtc: number | null,
-  endUtc: number | null,
+  rowId: string | null,
 ) {
   return useQuery({
-    queryKey: ["labeling", "vocalization-labels", detectionJobId, startUtc, endUtc],
-    queryFn: () => fetchVocalizationLabels(detectionJobId!, startUtc!, endUtc!),
-    enabled: detectionJobId !== null && startUtc !== null && endUtc !== null,
+    queryKey: ["labeling", "vocalization-labels", detectionJobId, rowId],
+    queryFn: () => fetchVocalizationLabels(detectionJobId!, rowId!),
+    enabled: detectionJobId !== null && rowId !== null,
   });
 }
 
@@ -35,13 +34,12 @@ export function useAddVocalizationLabel() {
   return useMutation({
     mutationFn: (params: {
       detectionJobId: string;
-      startUtc: number;
-      endUtc: number;
+      rowId: string;
       label: string;
       confidence?: number;
       source?: string;
     }) =>
-      createVocalizationLabel(params.detectionJobId, params.startUtc, params.endUtc, {
+      createVocalizationLabel(params.detectionJobId, params.rowId, {
         label: params.label,
         confidence: params.confidence,
         source: params.source ?? "manual",
@@ -52,8 +50,7 @@ export function useAddVocalizationLabel() {
           "labeling",
           "vocalization-labels",
           vars.detectionJobId,
-          vars.startUtc,
-          vars.endUtc,
+          vars.rowId,
         ],
       });
       qc.invalidateQueries({
@@ -71,8 +68,7 @@ export function useDeleteVocalizationLabel() {
     mutationFn: (params: {
       labelId: string;
       detectionJobId: string;
-      startUtc: number;
-      endUtc: number;
+      rowId: string;
     }) => deleteVocalizationLabel(params.labelId),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({
@@ -80,8 +76,7 @@ export function useDeleteVocalizationLabel() {
           "labeling",
           "vocalization-labels",
           vars.detectionJobId,
-          vars.startUtc,
-          vars.endUtc,
+          vars.rowId,
         ],
       });
       qc.invalidateQueries({
@@ -101,8 +96,7 @@ export function useLabelVocabulary() {
 
 export function useDetectionNeighbors(
   detectionJobId: string | null,
-  startUtc: number | null,
-  endUtc: number | null,
+  rowId: string | null,
   embeddingSetIds?: string[],
 ) {
   return useQuery({
@@ -110,20 +104,15 @@ export function useDetectionNeighbors(
       "labeling",
       "neighbors",
       detectionJobId,
-      startUtc,
-      endUtc,
+      rowId,
       embeddingSetIds,
     ],
     queryFn: () =>
       fetchDetectionNeighbors(detectionJobId!, {
-        start_utc: startUtc!,
-        end_utc: endUtc!,
+        row_id: rowId!,
         embedding_set_ids: embeddingSetIds,
       }),
-    enabled:
-      detectionJobId !== null &&
-      startUtc !== null &&
-      endUtc !== null,
+    enabled: detectionJobId !== null && rowId !== null,
     staleTime: Infinity,
   });
 }

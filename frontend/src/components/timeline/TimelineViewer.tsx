@@ -218,11 +218,7 @@ export function TimelineViewer() {
   // Sync selectedLabel to the detection's current label when selection changes
   useEffect(() => {
     if (labelSubMode !== "select" || !selectedId) return;
-    const parts = selectedId.split(":");
-    if (parts.length !== 2) return;
-    const row = mergedRows.find(
-      (r) => r.start_utc === parseFloat(parts[0]) && r.end_utc === parseFloat(parts[1]),
-    );
+    const row = mergedRows.find((r) => r.row_id === selectedId);
     if (!row) return;
     const label: LabelType | null =
       row.humpback === 1 ? "humpback" :
@@ -426,34 +422,24 @@ export function TimelineViewer() {
             onLabelChange={(label) => {
               setSelectedLabel(label);
               if (labelSubMode === "select" && selectedId) {
-                const parts = selectedId.split(":");
-                if (parts.length === 2) {
-                  labelDispatch({
-                    type: "change_type",
-                    start_utc: parseFloat(parts[0]),
-                    end_utc: parseFloat(parts[1]),
-                    label,
-                  });
-                }
+                labelDispatch({
+                  type: "change_type",
+                  row_id: selectedId,
+                  label,
+                });
               }
             }}
             onDelete={() => {
               if (!selectedId) return;
-              // selectedId is a UTC key "start_utc:end_utc"
-              const parts = selectedId.split(":");
-              if (parts.length === 2) {
-                labelDispatch({ type: "delete", start_utc: parseFloat(parts[0]), end_utc: parseFloat(parts[1]) });
-              } else {
-                labelDispatch({ type: "delete_by_id", id: selectedId });
-              }
+              // selectedId is either a row_id or a generated UUID for new rows
+              labelDispatch({ type: "delete", row_id: selectedId });
             }}
             onSave={() => {
               const items = labelState.edits.map((e) => ({
                 action: e.action,
+                row_id: e.row_id,
                 start_utc: e.start_utc,
                 end_utc: e.end_utc,
-                new_start_utc: e.new_start_utc,
-                new_end_utc: e.new_end_utc,
                 label: e.label,
               }));
               saveMutation.mutate(items, {

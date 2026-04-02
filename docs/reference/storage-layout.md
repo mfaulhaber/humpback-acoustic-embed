@@ -26,9 +26,10 @@
   {vocalization_model_id}/{type_name}.joblib       (per-type sklearn pipeline)
   {vocalization_model_id}/metadata.json            (vocabulary, thresholds, metrics)
 /vocalization_inference/
-  {inference_job_id}/predictions.parquet           (window identity + per-type score columns)
+  {inference_job_id}/predictions.parquet           (row_id + per-type score columns; legacy: filename/start_sec/end_sec or start_utc/end_utc)
 /detections/
-  {detection_job_id}/detection_rows.parquet       (canonical editable row store)
+  {detection_job_id}/detection_rows.parquet       (canonical editable row store; rows keyed by stable row_id UUID)
+  {detection_job_id}/detection_embeddings.parquet (row_id, embedding, confidence)
   {detection_job_id}/detections.tsv               (generated on-the-fly for download; not persisted)
   {detection_job_id}/window_diagnostics.parquet   (local: single file; hydrophone: shard directory)
   {detection_job_id}/run_summary.json

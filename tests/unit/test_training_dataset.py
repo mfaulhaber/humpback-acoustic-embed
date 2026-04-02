@@ -51,20 +51,16 @@ def _make_embedding_set_parquet(path: Path, n_rows: int, dim: int = 8) -> None:
 def _make_detection_embeddings_parquet(
     storage_root: Path,
     det_job_id: str,
-    filenames: list[str],
-    start_secs: list[float],
-    end_secs: list[float],
+    row_ids: list[str],
     dim: int = 8,
 ) -> None:
     """Write a detection_embeddings.parquet for a detection job."""
-    n = len(filenames)
+    n = len(row_ids)
     det_dir = storage_root / "detections" / det_job_id
     det_dir.mkdir(parents=True, exist_ok=True)
     table = pa.table(
         {
-            "filename": pa.array(filenames, type=pa.string()),
-            "start_sec": pa.array(start_secs, type=pa.float32()),
-            "end_sec": pa.array(end_secs, type=pa.float32()),
+            "row_id": pa.array(row_ids, type=pa.string()),
             "embedding": pa.array(
                 [
                     np.random.default_rng(i).random(dim).astype(np.float32).tolist()
@@ -143,34 +139,28 @@ async def test_snapshot_from_embedding_set(session_factory, tmp_path):
 
 @pytest.mark.asyncio
 async def test_snapshot_from_detection_job(session_factory, tmp_path):
-    """Detection job source matches labels by UTC key and excludes unlabeled rows."""
+    """Detection job source matches labels by row_id and excludes unlabeled rows."""
     storage_root = tmp_path / "storage"
-    # Filename with parseable timestamp: 2025-01-01 12:00:00 UTC = 1735732800.0
-    fname = "recording_20250101T120000Z.wav"
+    row_ids = ["dj1-row-1", "dj1-row-2", "dj1-row-3"]
     _make_detection_embeddings_parquet(
         storage_root,
         "dj1",
-        filenames=[fname, fname, fname],
-        start_secs=[0.0, 5.0, 10.0],
-        end_secs=[5.0, 10.0, 15.0],
+        row_ids=row_ids,
     )
 
     async with session_factory() as session:
         # Label only the first two rows; third is unlabeled
-        base_epoch = 1735732800.0
         session.add(
             VocalizationLabel(
                 detection_job_id="dj1",
-                start_utc=base_epoch + 0.0,
-                end_utc=base_epoch + 5.0,
+                row_id="dj1-row-1",
                 label="Moan",
             )
         )
         session.add(
             VocalizationLabel(
                 detection_job_id="dj1",
-                start_utc=base_epoch + 5.0,
-                end_utc=base_epoch + 10.0,
+                row_id="dj1-row-2",
                 label="(Negative)",
             )
         )

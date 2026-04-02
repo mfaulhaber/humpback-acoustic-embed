@@ -5,24 +5,29 @@ import wave
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     write_detection_row_store,
 )
 from humpback.classifier.detector import (
-    _SYNC_TOLERANCE_SEC,
     diff_row_store_vs_embeddings,
     resolve_audio_for_window,
     resolve_audio_for_window_hydrophone,
     write_detection_embeddings,
 )
 
+_ROW_COUNTER = 0
 
-def _make_row(start_utc: float, end_utc: float, label: str = "") -> dict[str, str]:
+
+def _make_row(
+    start_utc: float, end_utc: float, label: str = "", row_id: str = ""
+) -> dict[str, str]:
     """Build a minimal row-store row dict."""
+    global _ROW_COUNTER  # noqa: PLW0603
+    _ROW_COUNTER += 1
     row = {f: "" for f in ROW_STORE_FIELDNAMES}
+    row["row_id"] = row_id or f"row-{_ROW_COUNTER}"
     row["start_utc"] = str(start_utc)
     row["end_utc"] = str(end_utc)
     if label:
@@ -30,12 +35,10 @@ def _make_row(start_utc: float, end_utc: float, label: str = "") -> dict[str, st
     return row
 
 
-def _make_emb(filename: str, start_sec: float, end_sec: float) -> dict:
+def _make_emb(row_id: str) -> dict:
     """Build an embedding record with a dummy vector."""
     return {
-        "filename": filename,
-        "start_sec": start_sec,
-        "end_sec": end_sec,
+        "row_id": row_id,
         "embedding": np.zeros(8, dtype=np.float32).tolist(),
         "confidence": 0.9,
     }
@@ -44,7 +47,6 @@ def _make_emb(filename: str, start_sec: float, end_sec: float) -> dict:
 # The synthetic filenames use YYYYMMDDTHHMMSSZ format.
 # 2021-11-01T08:50:00Z → epoch 1635756600.0
 _BASE_EPOCH = 1635756600.0
-_SYNTH_FNAME = "20211101T085000Z.wav"
 
 
 class TestDiffRowStoreVsEmbeddings:
@@ -54,15 +56,12 @@ class TestDiffRowStoreVsEmbeddings:
         emb_path = tmp_path / "emb.parquet"
 
         rows = [
-            _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5),
-            _make_row(_BASE_EPOCH + 10, _BASE_EPOCH + 15),
+            _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, row_id="a"),
+            _make_row(_BASE_EPOCH + 10, _BASE_EPOCH + 15, row_id="b"),
         ]
         write_detection_row_store(rs_path, rows)
 
-        embs = [
-            _make_emb(_SYNTH_FNAME, 0.0, 5.0),
-            _make_emb(_SYNTH_FNAME, 10.0, 15.0),
-        ]
+        embs = [_make_emb("a"), _make_emb("b")]
         write_detection_embeddings(embs, emb_path)
 
         result = diff_row_store_vs_embeddings(rs_path, emb_path)
@@ -71,18 +70,17 @@ class TestDiffRowStoreVsEmbeddings:
         assert result.orphaned_indices == []
 
     def test_all_missing(self, tmp_path):
-        """Row store has entries but embeddings parquet is empty-ish (no matches)."""
+        """Row store has entries but embeddings have different row_ids."""
         rs_path = tmp_path / "row_store.parquet"
         emb_path = tmp_path / "emb.parquet"
 
         rows = [
-            _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5),
-            _make_row(_BASE_EPOCH + 60, _BASE_EPOCH + 65),
+            _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, row_id="a"),
+            _make_row(_BASE_EPOCH + 60, _BASE_EPOCH + 65, row_id="b"),
         ]
         write_detection_row_store(rs_path, rows)
 
-        # Embeddings at completely different times.
-        embs = [_make_emb(_SYNTH_FNAME, 200.0, 205.0)]
+        embs = [_make_emb("z")]
         write_detection_embeddings(embs, emb_path)
 
         result = diff_row_store_vs_embeddings(rs_path, emb_path)
@@ -97,10 +95,7 @@ class TestDiffRowStoreVsEmbeddings:
 
         write_detection_row_store(rs_path, [])
 
-        embs = [
-            _make_emb(_SYNTH_FNAME, 0.0, 5.0),
-            _make_emb(_SYNTH_FNAME, 10.0, 15.0),
-        ]
+        embs = [_make_emb("x"), _make_emb("y")]
         write_detection_embeddings(embs, emb_path)
 
         result = diff_row_store_vs_embeddings(rs_path, emb_path)
@@ -114,102 +109,40 @@ class TestDiffRowStoreVsEmbeddings:
         emb_path = tmp_path / "emb.parquet"
 
         rows = [
-            _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5),  # matched
-            _make_row(_BASE_EPOCH + 100, _BASE_EPOCH + 105),  # missing (no emb)
+            _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, row_id="a"),  # matched
+            _make_row(_BASE_EPOCH + 100, _BASE_EPOCH + 105, row_id="b"),  # missing
         ]
         write_detection_row_store(rs_path, rows)
 
         embs = [
-            _make_emb(_SYNTH_FNAME, 0.0, 5.0),  # matched
-            _make_emb(_SYNTH_FNAME, 50.0, 55.0),  # orphaned (no row)
+            _make_emb("a"),  # matched
+            _make_emb("z"),  # orphaned (no row)
         ]
         write_detection_embeddings(embs, emb_path)
 
         result = diff_row_store_vs_embeddings(rs_path, emb_path)
         assert result.matched_count == 1
         assert len(result.missing) == 1
-        assert float(result.missing[0]["start_utc"]) == pytest.approx(_BASE_EPOCH + 100)
+        assert result.missing[0]["row_id"] == "b"
         assert result.orphaned_indices == [1]
 
-    def test_tolerance_within(self, tmp_path):
-        """Timestamps within tolerance match."""
+    def test_exact_row_id_match_required(self, tmp_path):
+        """Matching is by exact row_id, not by timestamp proximity."""
         rs_path = tmp_path / "row_store.parquet"
         emb_path = tmp_path / "emb.parquet"
 
-        # Row store at exact second boundaries.
-        rows = [_make_row(_BASE_EPOCH + 10, _BASE_EPOCH + 15)]
+        rows = [_make_row(_BASE_EPOCH + 10, _BASE_EPOCH + 15, row_id="a")]
         write_detection_row_store(rs_path, rows)
 
-        # Embedding slightly off (within 0.5s tolerance).
-        offset = _SYNC_TOLERANCE_SEC - 0.1  # 0.4s
-        embs = [_make_emb(_SYNTH_FNAME, 10.0 + offset, 15.0 + offset)]
-        write_detection_embeddings(embs, emb_path)
-
-        result = diff_row_store_vs_embeddings(rs_path, emb_path)
-        assert result.matched_count == 1
-        assert result.missing == []
-        assert result.orphaned_indices == []
-
-    def test_tolerance_exact_boundary(self, tmp_path):
-        """Timestamps at exactly the tolerance boundary match (<=, not <)."""
-        rs_path = tmp_path / "row_store.parquet"
-        emb_path = tmp_path / "emb.parquet"
-
-        rows = [_make_row(_BASE_EPOCH + 10.5, _BASE_EPOCH + 15.5)]
-        write_detection_row_store(rs_path, rows)
-
-        # Embedding whose reconstructed UTC is exactly _SYNC_TOLERANCE_SEC away.
-        embs = [_make_emb(_SYNTH_FNAME, 10.0, 15.0)]
-        write_detection_embeddings(embs, emb_path)
-
-        result = diff_row_store_vs_embeddings(rs_path, emb_path)
-        assert result.matched_count == 1
-        assert result.missing == []
-        assert result.orphaned_indices == []
-
-    def test_tolerance_outside(self, tmp_path):
-        """Timestamps outside tolerance do not match."""
-        rs_path = tmp_path / "row_store.parquet"
-        emb_path = tmp_path / "emb.parquet"
-
-        rows = [_make_row(_BASE_EPOCH + 10, _BASE_EPOCH + 15)]
-        write_detection_row_store(rs_path, rows)
-
-        # Embedding outside tolerance.
-        offset = _SYNC_TOLERANCE_SEC + 0.1  # 0.6s
-        embs = [_make_emb(_SYNTH_FNAME, 10.0 + offset, 15.0 + offset)]
+        # Embedding with different row_id — should NOT match even if timestamps
+        # would have matched under old tolerance logic.
+        embs = [_make_emb("different-id")]
         write_detection_embeddings(embs, emb_path)
 
         result = diff_row_store_vs_embeddings(rs_path, emb_path)
         assert result.matched_count == 0
         assert len(result.missing) == 1
         assert result.orphaned_indices == [0]
-
-    def test_multiple_files(self, tmp_path):
-        """Embeddings from different files with different base epochs."""
-        rs_path = tmp_path / "row_store.parquet"
-        emb_path = tmp_path / "emb.parquet"
-
-        # Two synthetic files 1 hour apart.
-        fname_a = "20211101T085000Z.wav"  # epoch = _BASE_EPOCH
-        fname_b = "20211101T095000Z.wav"  # epoch = _BASE_EPOCH + 3600
-
-        rows = [
-            _make_row(_BASE_EPOCH + 10, _BASE_EPOCH + 15),
-            _make_row(_BASE_EPOCH + 3600 + 20, _BASE_EPOCH + 3600 + 25),
-        ]
-        write_detection_row_store(rs_path, rows)
-
-        embs = [
-            _make_emb(fname_a, 10.0, 15.0),
-            _make_emb(fname_b, 20.0, 25.0),
-        ]
-        write_detection_embeddings(embs, emb_path)
-
-        result = diff_row_store_vs_embeddings(rs_path, emb_path)
-        assert result.matched_count == 2
-        assert result.missing == []
-        assert result.orphaned_indices == []
 
 
 # ---------------------------------------------------------------------------

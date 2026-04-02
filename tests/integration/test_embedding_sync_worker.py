@@ -48,8 +48,16 @@ def _write_wav(path: Path, duration: float = 10.0, sample_rate: int = _SAMPLE_RA
         wf.writeframes(struct.pack(f"<{n_samples}h", *samples))
 
 
-def _make_row(start_utc: float, end_utc: float, label: str = "") -> dict[str, str]:
+_ROW_COUNTER = 0
+
+
+def _make_row(
+    start_utc: float, end_utc: float, label: str = "", row_id: str = ""
+) -> dict[str, str]:
+    global _ROW_COUNTER  # noqa: PLW0603
+    _ROW_COUNTER += 1
     row = {f: "" for f in ROW_STORE_FIELDNAMES}
+    row["row_id"] = row_id or f"itest-row-{_ROW_COUNTER}"
     row["start_utc"] = str(start_utc)
     row["end_utc"] = str(end_utc)
     if label:
@@ -57,11 +65,9 @@ def _make_row(start_utc: float, end_utc: float, label: str = "") -> dict[str, st
     return row
 
 
-def _make_emb(filename: str, start_sec: float, end_sec: float, dim: int = 8) -> dict:
+def _make_emb(row_id: str, dim: int = 8) -> dict:
     return {
-        "filename": filename,
-        "start_sec": start_sec,
-        "end_sec": end_sec,
+        "row_id": row_id,
         "embedding": np.random.randn(dim).astype(np.float32).tolist(),
         "confidence": 0.9,
     }
@@ -136,18 +142,17 @@ async def test_sync_adds_missing_and_removes_orphans(app_settings):
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
     emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
 
-    fname = "20211101T085000Z.wav"
     # Row store: row at 0-5 (matched) + row at 5-10 (missing — manually added)
     rows = [
-        _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, "humpback"),
-        _make_row(_BASE_EPOCH + 5, _BASE_EPOCH + 10, "humpback"),
+        _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, "humpback", row_id="matched-1"),
+        _make_row(_BASE_EPOCH + 5, _BASE_EPOCH + 10, "humpback", row_id="missing-1"),
     ]
     write_detection_row_store(rs_path, rows)
 
-    # Embeddings: emb at 0-5 (matched) + emb at 100-105 (orphaned — row deleted)
+    # Embeddings: matched-1 (matched) + orphaned-1 (orphaned — row deleted)
     embs = [
-        _make_emb(fname, 0.0, 5.0, dim=8),
-        _make_emb(fname, 100.0, 105.0, dim=8),
+        _make_emb("matched-1", dim=8),
+        _make_emb("orphaned-1", dim=8),
     ]
     write_detection_embeddings(embs, emb_path)
 
@@ -191,9 +196,11 @@ async def test_sync_adds_missing_and_removes_orphans(app_settings):
     table = pq.read_table(str(emb_path))
     assert table.num_rows == 2  # 1 kept + 1 added
 
-    # The orphaned row (100-105) should be gone
-    start_secs = table.column("start_sec").to_pylist()
-    assert 100.0 not in [float(s) for s in start_secs]
+    # The orphaned row should be gone, replaced by the missing one
+    row_ids = table.column("row_id").to_pylist()
+    assert "orphaned-1" not in row_ids
+    assert "matched-1" in row_ids
+    assert "missing-1" in row_ids
 
 
 @pytest.mark.asyncio
@@ -213,10 +220,9 @@ async def test_sync_already_in_sync(app_settings):
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
     emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
 
-    fname = "20211101T085000Z.wav"
-    rows = [_make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5)]
+    rows = [_make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, row_id="sync-1")]
     write_detection_row_store(rs_path, rows)
-    write_detection_embeddings([_make_emb(fname, 0.0, 5.0, dim=8)], emb_path)
+    write_detection_embeddings([_make_emb("sync-1", dim=8)], emb_path)
 
     async with sf() as session:
         sync_job = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
@@ -266,14 +272,13 @@ async def test_sync_skips_when_audio_unavailable(app_settings):
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
     emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
 
-    fname = "20211101T085000Z.wav"
     # Row at an impossible time (1 hour later — no audio file covers it)
     rows = [
-        _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5),
-        _make_row(_BASE_EPOCH + 3600, _BASE_EPOCH + 3605),  # no audio for this
+        _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, row_id="ok-1"),
+        _make_row(_BASE_EPOCH + 3600, _BASE_EPOCH + 3605, row_id="noaudio-1"),
     ]
     write_detection_row_store(rs_path, rows)
-    write_detection_embeddings([_make_emb(fname, 0.0, 5.0, dim=8)], emb_path)
+    write_detection_embeddings([_make_emb("ok-1", dim=8)], emb_path)
 
     async with sf() as session:
         sync_job = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
@@ -329,16 +334,15 @@ async def test_sync_fractional_second_timestamps(app_settings):
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
     emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
 
-    fname = "20211101T085000Z.wav"
     # Row store: one integer-second row (matched) + one .5-second row (missing)
     rows = [
-        _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5),
-        _make_row(_BASE_EPOCH + 5.5, _BASE_EPOCH + 10.5),
+        _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, row_id="frac-matched"),
+        _make_row(_BASE_EPOCH + 5.5, _BASE_EPOCH + 10.5, row_id="frac-missing"),
     ]
     write_detection_row_store(rs_path, rows)
 
     # Embeddings: only the integer-second row exists
-    embs = [_make_emb(fname, 0.0, 5.0, dim=8)]
+    embs = [_make_emb("frac-matched", dim=8)]
     write_detection_embeddings(embs, emb_path)
 
     # --- First sync: should add the .5-second row ---

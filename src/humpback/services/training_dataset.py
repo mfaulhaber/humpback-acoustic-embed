@@ -10,7 +10,6 @@ import pyarrow.parquet as pq
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.classifier.detection_rows import parse_recording_timestamp
 from humpback.models.audio import AudioFile
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.processing import EmbeddingSet
@@ -277,18 +276,15 @@ async def _collect_from_sources(
         )
         voc_labels = result.scalars().all()
 
-        # Build multi-hot label index by (start_utc, end_utc)
-        labels_by_utc: dict[tuple[float, float], set[str]] = {}
+        # Build multi-hot label index by row_id
+        labels_by_row_id: dict[str, set[str]] = {}
         for vl in voc_labels:
-            utc_key = (vl.start_utc, vl.end_utc)
-            if utc_key not in labels_by_utc:
-                labels_by_utc[utc_key] = set()
-            labels_by_utc[utc_key].add(vl.label)
+            if vl.row_id not in labels_by_row_id:
+                labels_by_row_id[vl.row_id] = set()
+            labels_by_row_id[vl.row_id].add(vl.label)
 
         table = pq.read_table(str(emb_path))
-        filenames = table.column("filename").to_pylist()
-        start_secs = table.column("start_sec").to_pylist()
-        end_secs = table.column("end_sec").to_pylist()
+        row_ids = table.column("row_id").to_pylist()
         embeddings_col = table.column("embedding")
         conf_col = (
             table.column("confidence").to_pylist()
@@ -297,23 +293,18 @@ async def _collect_from_sources(
         )
 
         for i in range(table.num_rows):
-            fname = filenames[i]
-            ts = parse_recording_timestamp(fname)
-            base_epoch = ts.timestamp() if ts else 0.0
-            row_start = base_epoch + float(start_secs[i])
-            row_end = base_epoch + float(end_secs[i])
-            utc_key = (row_start, row_end)
+            rid = row_ids[i]
 
             # Only include explicitly labeled windows
-            if utc_key not in labels_by_utc:
+            if rid not in labels_by_row_id:
                 continue
 
-            dedup_key = f"det:{fname}:{start_secs[i]}:{end_secs[i]}"
+            dedup_key = f"det:{det_job_id}:{rid}"
             if dedup_key in seen_keys:
                 continue
             seen_keys.add(dedup_key)
 
-            label_set = labels_by_utc[utc_key]
+            label_set = labels_by_row_id[rid]
             vec = np.array(embeddings_col[i].as_py(), dtype=np.float32).tolist()
             confidence = (
                 float(conf_col[i]) if conf_col and conf_col[i] is not None else None
@@ -325,9 +316,9 @@ async def _collect_from_sources(
                     "embedding": vec,
                     "source_type": "detection_job",
                     "source_id": det_job_id,
-                    "filename": fname,
-                    "start_sec": float(start_secs[i]),
-                    "end_sec": float(end_secs[i]),
+                    "filename": "",
+                    "start_sec": 0.0,
+                    "end_sec": 0.0,
                     "confidence": confidence,
                 }
             )

@@ -212,11 +212,12 @@ async def run_vocalization_inference_job(
         # Load embeddings based on source type
         (
             embeddings,
+            row_ids,
             filenames,
             start_secs,
             end_secs,
-            start_utcs,
-            end_utcs,
+            _start_utcs,
+            _end_utcs,
             confidences,
         ) = await _load_source_embeddings(session, job, settings)
 
@@ -228,12 +229,11 @@ async def run_vocalization_inference_job(
             run_inference,
             model_dir,
             embeddings,
-            filenames,
-            start_secs,
-            end_secs,
             output_path,
-            start_utcs=start_utcs if start_utcs else None,
-            end_utcs=end_utcs if end_utcs else None,
+            row_ids=row_ids if row_ids else None,
+            filenames=filenames if filenames else None,
+            start_secs=start_secs if start_secs else None,
+            end_secs=end_secs if end_secs else None,
             confidences=confidences,
         )
 
@@ -271,6 +271,7 @@ async def _load_source_embeddings(
 ) -> tuple[
     np.ndarray,
     list[str],
+    list[str],
     list[float],
     list[float],
     list[float],
@@ -279,11 +280,11 @@ async def _load_source_embeddings(
 ]:
     """Load embeddings from the job's source.
 
-    Returns (embeddings, filenames, start_secs, end_secs, start_utcs, end_utcs,
-    confidences).  confidences is None when unavailable (embedding sets, old jobs).
+    Returns (embeddings, row_ids, filenames, start_secs, end_secs, start_utcs,
+    end_utcs, confidences).  row_ids populated for detection_job sources with
+    new schema; filenames/start_secs/end_secs populated for embedding_set sources.
     """
     if job.source_type == "detection_job":
-        from humpback.classifier.detection_rows import parse_recording_timestamp
         from humpback.storage import detection_embeddings_path
 
         emb_path = detection_embeddings_path(settings.storage_root, job.source_id)
@@ -291,19 +292,37 @@ async def _load_source_embeddings(
             raise FileNotFoundError(f"No embeddings for detection job {job.source_id}")
 
         table = pq.read_table(str(emb_path))
-        filenames = table.column("filename").to_pylist()
-        start_secs = [float(s) for s in table.column("start_sec").to_pylist()]
-        end_secs = [float(s) for s in table.column("end_sec").to_pylist()]
+        col_names = set(table.column_names)
         embeddings = np.array(
             [row.as_py() for row in table.column("embedding")],
             dtype=np.float32,
         )
 
         confidences: list[float] | None = None
-        if "confidence" in table.schema.names:
+        if "confidence" in col_names:
             raw = table.column("confidence").to_pylist()
             confidences = [float(c) if c is not None else 0.0 for c in raw]
 
+        # New schema: row_id-based embeddings.
+        if "row_id" in col_names:
+            row_ids = table.column("row_id").to_pylist()
+            return (
+                embeddings,
+                row_ids,
+                [],
+                [],
+                [],
+                [],
+                [],
+                confidences,
+            )
+
+        # Legacy schema: filename/start_sec/end_sec.
+        from humpback.classifier.detection_rows import parse_recording_timestamp
+
+        filenames = table.column("filename").to_pylist()
+        start_secs = [float(s) for s in table.column("start_sec").to_pylist()]
+        end_secs = [float(s) for s in table.column("end_sec").to_pylist()]
         start_utcs: list[float] = []
         end_utcs: list[float] = []
         for i, fname in enumerate(filenames):
@@ -314,6 +333,7 @@ async def _load_source_embeddings(
 
         return (
             embeddings,
+            [],
             filenames,
             start_secs,
             end_secs,
@@ -344,7 +364,7 @@ async def _load_source_embeddings(
             [row.as_py() for row in table.column("embedding")],
             dtype=np.float32,
         )
-        return embeddings, filenames, start_secs, end_secs, [], [], None
+        return embeddings, [], filenames, start_secs, end_secs, [], [], None
 
     elif job.source_type == "rescore":
         # Re-score from a previous inference job's output

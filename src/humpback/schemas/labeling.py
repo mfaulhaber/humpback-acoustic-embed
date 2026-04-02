@@ -19,13 +19,11 @@ class VocalizationLabelUpdate(BaseModel):
 class VocalizationLabelOut(BaseModel):
     id: str
     detection_job_id: str
-    start_utc: float
-    end_utc: float
+    row_id: str
     label: str
     confidence: float | None = None
     source: str
     notes: str | None = None
-    row_store_version_at_import: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -73,29 +71,8 @@ class TrainingSummary(BaseModel):
     label_distribution: dict[str, int]
 
 
-class OrphanedLabelDetail(BaseModel):
-    id: str
-    start_utc: float
-    end_utc: float
-    label: str
-
-
-class RefreshPreviewResponse(BaseModel):
-    matched_count: int
-    orphaned_count: int
-    orphaned_labels: list[OrphanedLabelDetail]
-    current_version: int
-
-
-class RefreshApplyResponse(BaseModel):
-    deleted_count: int
-    surviving_count: int
-    current_version: int
-
-
 class DetectionNeighborsRequest(BaseModel):
-    start_utc: float
-    end_utc: float
+    row_id: str
     top_k: int = Field(default=10, ge=1, le=100)
     metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
     embedding_set_ids: list[str] | None = None

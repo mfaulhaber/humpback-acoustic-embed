@@ -1,10 +1,13 @@
 """Unit tests for detection row-store synchronization helpers."""
 
+import uuid
+
 from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     append_detection_row_store,
     apply_label_edits,
     derive_detection_filename,
+    ensure_row_ids,
     normalize_detection_row,
     read_detection_row_store,
     write_detection_row_store,
@@ -83,10 +86,10 @@ def test_derive_detection_filename_invalid() -> None:
 
 
 def test_apply_label_edits_add() -> None:
-    """apply_label_edits add action creates a new row with UTC keys."""
+    """apply_label_edits add action creates a new row with a generated row_id."""
     rows: list[dict[str, str]] = [
         {f: "" for f in ROW_STORE_FIELDNAMES}
-        | {"start_utc": "1000.0", "end_utc": "1005.0"}
+        | {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0"}
     ]
     edits = [
         {"action": "add", "start_utc": 1010.0, "end_utc": 1015.0, "label": "humpback"}
@@ -97,54 +100,56 @@ def test_apply_label_edits_add() -> None:
     assert new_row["start_utc"] == "1010.0"
     assert new_row["end_utc"] == "1015.0"
     assert new_row["humpback"] == "1"
+    # Add action gets a new UUID row_id
+    assert new_row["row_id"] != ""
+    uuid.UUID(new_row["row_id"])
 
 
 def test_apply_label_edits_delete() -> None:
-    """apply_label_edits delete action removes row by UTC key."""
+    """apply_label_edits delete action removes row by row_id."""
     rows: list[dict[str, str]] = [
         {f: "" for f in ROW_STORE_FIELDNAMES}
-        | {"start_utc": "1000.0", "end_utc": "1005.0"},
+        | {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0"},
         {f: "" for f in ROW_STORE_FIELDNAMES}
-        | {"start_utc": "1010.0", "end_utc": "1015.0"},
+        | {"row_id": "r2", "start_utc": "1010.0", "end_utc": "1015.0"},
     ]
-    edits = [{"action": "delete", "start_utc": "1000.0", "end_utc": "1005.0"}]
+    edits = [{"action": "delete", "row_id": "r1"}]
     result = apply_label_edits(rows, edits, job_duration=2000.0)
     assert len(result) == 1
     assert result[0]["start_utc"] == "1010.0"
 
 
 def test_apply_label_edits_move() -> None:
-    """apply_label_edits move action updates start_utc/end_utc."""
+    """apply_label_edits move action updates start_utc/end_utc, preserves row_id."""
     rows: list[dict[str, str]] = [
         {f: "" for f in ROW_STORE_FIELDNAMES}
-        | {"start_utc": "1000.0", "end_utc": "1005.0", "humpback": "1"}
+        | {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0", "humpback": "1"}
     ]
     edits = [
         {
             "action": "move",
-            "start_utc": "1000.0",
-            "end_utc": "1005.0",
-            "new_start_utc": 1020.0,
-            "new_end_utc": 1025.0,
+            "row_id": "r1",
+            "start_utc": 1020.0,
+            "end_utc": 1025.0,
         }
     ]
     result = apply_label_edits(rows, edits, job_duration=2000.0)
     assert len(result) == 1
     assert result[0]["start_utc"] == "1020.0"
     assert result[0]["end_utc"] == "1025.0"
+    assert result[0]["row_id"] == "r1"
 
 
 def test_apply_label_edits_change_type() -> None:
     """apply_label_edits change_type clears old label, sets new one."""
     rows: list[dict[str, str]] = [
         {f: "" for f in ROW_STORE_FIELDNAMES}
-        | {"start_utc": "1000.0", "end_utc": "1005.0", "humpback": "1"}
+        | {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0", "humpback": "1"}
     ]
     edits = [
         {
             "action": "change_type",
-            "start_utc": "1000.0",
-            "end_utc": "1005.0",
+            "row_id": "r1",
             "label": "orca",
         }
     ]
@@ -153,22 +158,20 @@ def test_apply_label_edits_change_type() -> None:
     assert result[0]["orca"] == "1"
 
 
-def test_apply_label_edits_change_type_mismatched_precision() -> None:
-    """change_type matches rows even when UTC strings have different decimal precision."""
+def test_apply_label_edits_unknown_row_id() -> None:
+    """apply_label_edits raises ValueError for unknown row_id."""
+    import pytest
+
     rows: list[dict[str, str]] = [
         {f: "" for f in ROW_STORE_FIELDNAMES}
-        | {"start_utc": "1635756126.000000", "end_utc": "1635756131.000000"}
+        | {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0"}
     ]
-    edits = [
-        {
-            "action": "change_type",
-            "start_utc": 1635756126.0,
-            "end_utc": 1635756131.0,
-            "label": "humpback",
-        }
-    ]
-    result = apply_label_edits(rows, edits, job_duration=999999.0)
-    assert result[0]["humpback"] == "1"
+    with pytest.raises(ValueError, match="not found"):
+        apply_label_edits(
+            rows,
+            [{"action": "delete", "row_id": "nonexistent"}],
+            job_duration=2000.0,
+        )
 
 
 def test_legacy_parquet_migration_hydrophone(tmp_path) -> None:
@@ -222,7 +225,7 @@ def test_legacy_parquet_migration_hydrophone(tmp_path) -> None:
     # Reading should trigger lazy migration
     fieldnames, rows = read_detection_row_store(path)
     assert "start_utc" in fieldnames
-    assert "row_id" not in fieldnames
+    assert "row_id" in fieldnames
     assert "filename" not in fieldnames
     assert len(rows) == 1
     row = rows[0]
@@ -273,3 +276,93 @@ def test_legacy_parquet_migration_local(tmp_path) -> None:
     # filename "20240701T000000Z.wav" + start_sec 5.0 → start_utc = 1719792005.0
     assert abs(float(row["start_utc"]) - 1719792005.0) < 1.0
     assert abs(float(row["end_utc"]) - 1719792010.0) < 1.0
+
+
+def test_row_id_assigned_on_write(tmp_path) -> None:
+    """Rows without row_id get a UUID assigned during write."""
+    path = tmp_path / "rows.parquet"
+    row = {"start_utc": "1000.0", "end_utc": "1005.0"}
+    write_detection_row_store(path, [row])
+    _, rows = read_detection_row_store(path)
+    assert len(rows) == 1
+    rid = rows[0]["row_id"]
+    assert rid != ""
+    uuid.UUID(rid)  # validates format
+
+
+def test_row_id_preserved_on_roundtrip(tmp_path) -> None:
+    """An explicit row_id survives write/read round-trip."""
+    path = tmp_path / "rows.parquet"
+    fixed_id = str(uuid.uuid4())
+    row = {"row_id": fixed_id, "start_utc": "1000.0", "end_utc": "1005.0"}
+    write_detection_row_store(path, [row])
+    _, rows = read_detection_row_store(path)
+    assert rows[0]["row_id"] == fixed_id
+
+
+def test_row_ids_unique(tmp_path) -> None:
+    """Multiple rows without row_id each get a unique UUID."""
+    path = tmp_path / "rows.parquet"
+    rows_in = [
+        {"start_utc": "1000.0", "end_utc": "1005.0"},
+        {"start_utc": "1005.0", "end_utc": "1010.0"},
+        {"start_utc": "1010.0", "end_utc": "1015.0"},
+    ]
+    write_detection_row_store(path, rows_in)
+    _, rows_out = read_detection_row_store(path)
+    ids = [r["row_id"] for r in rows_out]
+    assert len(set(ids)) == 3
+
+
+def test_row_id_assigned_on_read_legacy(tmp_path) -> None:
+    """Reading a parquet without row_id column assigns UUIDs without rewriting."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    # Write a parquet with the old schema (no row_id column)
+    old_fields = [f for f in ROW_STORE_FIELDNAMES if f != "row_id"]
+    old_schema = pa.schema([(f, pa.string()) for f in old_fields])
+    old_row = {f: "" for f in old_fields}
+    old_row["start_utc"] = "2000.0"
+    old_row["end_utc"] = "2005.0"
+    table = pa.Table.from_pylist([old_row], schema=old_schema)
+    path = tmp_path / "rows.parquet"
+    pq.write_table(table, path)
+
+    fieldnames, rows = read_detection_row_store(path)
+    assert "row_id" in fieldnames
+    assert len(rows) == 1
+    rid = rows[0]["row_id"]
+    assert rid != ""
+    uuid.UUID(rid)
+
+
+def test_append_preserves_existing_row_ids(tmp_path) -> None:
+    """Appending new rows does not change row_ids of existing rows."""
+    path = tmp_path / "rows.parquet"
+    row1 = {"start_utc": "1000.0", "end_utc": "1005.0"}
+    write_detection_row_store(path, [row1])
+    _, rows_before = read_detection_row_store(path)
+    original_id = rows_before[0]["row_id"]
+
+    row2 = {"start_utc": "1005.0", "end_utc": "1010.0"}
+    append_detection_row_store(path, [row2])
+    _, rows_after = read_detection_row_store(path)
+    assert len(rows_after) == 2
+    assert rows_after[0]["row_id"] == original_id
+    assert rows_after[1]["row_id"] != ""
+    assert rows_after[1]["row_id"] != original_id
+
+
+def test_ensure_row_ids_idempotent() -> None:
+    """ensure_row_ids does not overwrite existing IDs."""
+    fixed_id = str(uuid.uuid4())
+    rows = [{"row_id": fixed_id, "start_utc": "1000.0"}]
+    ensure_row_ids(rows)
+    assert rows[0]["row_id"] == fixed_id
+
+
+def test_row_id_in_fieldnames() -> None:
+    """row_id is part of ROW_STORE_FIELDNAMES."""
+    assert "row_id" in ROW_STORE_FIELDNAMES
+    assert ROW_STORE_FIELDNAMES[0] == "row_id"

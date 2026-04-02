@@ -15,9 +15,9 @@ Condensed model reference. For full field lists, see `src/humpback/database.py`.
 - **ClusterAssignment** (`cluster_assignments`) — links cluster to embedding row index (cluster_id FK, embedding_row_id)
 - **ClassifierModel** (`classifier_models`) — binary classifier artifact (name, model_path .joblib, model_version, vector_dim, training_summary JSON)
 - **ClassifierTrainingJob** (`classifier_training_jobs`) — training run (positive/negative_embedding_set_ids JSON, classifier_model_id set on completion)
-- **DetectionJob** (`detection_jobs`) — local or hydrophone detection scan (classifier_model_id FK, audio_folder, confidence/hop/threshold params, detection_mode, output_tsv_path, result_summary JSON, extract_* columns, row_store_version INT)
+- **DetectionJob** (`detection_jobs`) — local or hydrophone detection scan (classifier_model_id FK, audio_folder, confidence/hop/threshold params, detection_mode, output_tsv_path, result_summary JSON, extract_* columns)
 - **LabelProcessingJob** (`label_processing_jobs`) — score-based audio sample extraction (classifier_model_id, annotation_folder, audio_folder, output_root, parameters JSON, result_summary JSON)
-- **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, start_utc, end_utc, label, source, row_store_version_at_import INT nullable)
+- **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, row_id, label, source). Linked to detection rows by stable UUID `row_id`.
 - **RetrainWorkflow** (`retrain_workflows`) — orchestrated reimport+reprocess+retrain (status, step, provenance)
 - **VocalizationType** (`vocalization_types`) — managed vocabulary entry for vocalization type classification (name, description, unique name constraint)
 - **VocalizationClassifierModel** (`vocalization_models`) — multi-label vocalization model artifact (name, model_dir_path, vocabulary_snapshot JSON, per_class_thresholds JSON, per_class_metrics JSON, is_active)

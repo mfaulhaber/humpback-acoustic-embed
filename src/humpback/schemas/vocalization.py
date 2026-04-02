@@ -112,9 +112,10 @@ class VocalizationTrainingSourceOut(BaseModel):
 
 
 class VocalizationPredictionRow(BaseModel):
-    filename: str
-    start_sec: float
-    end_sec: float
+    row_id: str | None = None
+    filename: str | None = None
+    start_sec: float | None = None
+    end_sec: float | None = None
     start_utc: float | None = None
     end_utc: float | None = None
     confidence: float | None = None

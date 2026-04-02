@@ -68,7 +68,7 @@ class TestScoreEmbeddings:
 
 
 class TestRunInference:
-    def test_basic_inference(self, tmp_path):
+    def test_basic_inference_with_filenames(self, tmp_path):
         model_dir, X = _train_and_save(tmp_path)
         output_path = tmp_path / "output" / "predictions.parquet"
 
@@ -77,7 +77,12 @@ class TestRunInference:
         end_secs = [float(i * 5 + 5) for i in range(len(X))]
 
         result = run_inference(
-            model_dir, X, filenames, start_secs, end_secs, output_path
+            model_dir,
+            X,
+            output_path,
+            filenames=filenames,
+            start_secs=start_secs,
+            end_secs=end_secs,
         )
 
         assert result["total_windows"] == len(X)
@@ -85,39 +90,25 @@ class TestRunInference:
         assert "moan" in result["per_type_counts"]
         assert result["vocabulary"] == ["moan", "whup"]
 
-        # Verify parquet was written
         table = pq.read_table(str(output_path))
         assert table.num_rows == len(X)
         assert "filename" in table.column_names
-        assert "start_sec" in table.column_names
         assert "whup" in table.column_names
-        assert "moan" in table.column_names
 
-    def test_inference_with_utc(self, tmp_path):
+    def test_basic_inference_with_row_ids(self, tmp_path):
         model_dir, X = _train_and_save(tmp_path)
         output_path = tmp_path / "output" / "predictions.parquet"
 
-        n = len(X)
-        filenames = [f"file_{i}.wav" for i in range(n)]
-        start_secs = [float(i * 5) for i in range(n)]
-        end_secs = [float(i * 5 + 5) for i in range(n)]
-        start_utcs = [1718438400.0 + i * 5 for i in range(n)]
-        end_utcs = [1718438400.0 + i * 5 + 5 for i in range(n)]
+        row_ids = [f"row-{i}" for i in range(len(X))]
 
-        run_inference(
-            model_dir,
-            X,
-            filenames,
-            start_secs,
-            end_secs,
-            output_path,
-            start_utcs=start_utcs,
-            end_utcs=end_utcs,
-        )
+        result = run_inference(model_dir, X, output_path, row_ids=row_ids)
 
+        assert result["total_windows"] == len(X)
         table = pq.read_table(str(output_path))
-        assert "start_utc" in table.column_names
-        assert "end_utc" in table.column_names
+        assert table.num_rows == len(X)
+        assert "row_id" in table.column_names
+        assert "filename" not in table.column_names
+        assert table.column("row_id").to_pylist() == row_ids
 
     def test_inference_empty(self, tmp_path):
         model_dir, _ = _train_and_save(tmp_path)
@@ -126,9 +117,6 @@ class TestRunInference:
         result = run_inference(
             model_dir,
             np.empty((0, 16), dtype=np.float32),
-            [],
-            [],
-            [],
             output_path,
         )
 
@@ -145,7 +133,14 @@ class TestReadPredictions:
         start_secs = [float(i * 5) for i in range(len(X))]
         end_secs = [float(i * 5 + 5) for i in range(len(X))]
 
-        run_inference(model_dir, X, filenames, start_secs, end_secs, output_path)
+        run_inference(
+            model_dir,
+            X,
+            output_path,
+            filenames=filenames,
+            start_secs=start_secs,
+            end_secs=end_secs,
+        )
 
         _, vocabulary, thresholds = load_vocalization_model(model_dir)
         rows = read_predictions(output_path, vocabulary, thresholds)
@@ -165,7 +160,14 @@ class TestReadPredictions:
         start_secs = [float(i * 5) for i in range(len(X))]
         end_secs = [float(i * 5 + 5) for i in range(len(X))]
 
-        run_inference(model_dir, X, filenames, start_secs, end_secs, output_path)
+        run_inference(
+            model_dir,
+            X,
+            output_path,
+            filenames=filenames,
+            start_secs=start_secs,
+            end_secs=end_secs,
+        )
 
         _, vocabulary, thresholds = load_vocalization_model(model_dir)
 
@@ -211,10 +213,10 @@ class TestConfidenceThreading:
         run_inference(
             model_dir,
             X,
-            filenames,
-            start_secs,
-            end_secs,
             output_path,
+            filenames=filenames,
+            start_secs=start_secs,
+            end_secs=end_secs,
             confidences=confidences,
         )
 
@@ -233,7 +235,14 @@ class TestConfidenceThreading:
         start_secs = [float(i * 5) for i in range(len(X))]
         end_secs = [float(i * 5 + 5) for i in range(len(X))]
 
-        run_inference(model_dir, X, filenames, start_secs, end_secs, output_path)
+        run_inference(
+            model_dir,
+            X,
+            output_path,
+            filenames=filenames,
+            start_secs=start_secs,
+            end_secs=end_secs,
+        )
 
         table = pq.read_table(str(output_path))
         assert "confidence" not in table.column_names
@@ -252,10 +261,10 @@ class TestConfidenceThreading:
         run_inference(
             model_dir,
             X,
-            filenames,
-            start_secs,
-            end_secs,
             output_path,
+            filenames=filenames,
+            start_secs=start_secs,
+            end_secs=end_secs,
             confidences=confidences,
         )
 
@@ -274,7 +283,14 @@ class TestConfidenceThreading:
         start_secs = [float(i * 5) for i in range(len(X))]
         end_secs = [float(i * 5 + 5) for i in range(len(X))]
 
-        run_inference(model_dir, X, filenames, start_secs, end_secs, output_path)
+        run_inference(
+            model_dir,
+            X,
+            output_path,
+            filenames=filenames,
+            start_secs=start_secs,
+            end_secs=end_secs,
+        )
 
         _, vocabulary, thresholds = load_vocalization_model(model_dir)
         rows = read_predictions(output_path, vocabulary, thresholds)

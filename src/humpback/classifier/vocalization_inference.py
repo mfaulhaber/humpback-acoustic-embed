@@ -63,37 +63,41 @@ def score_embeddings(
 def run_inference(
     model_dir: Path,
     embeddings: np.ndarray,
-    filenames: list[str],
-    start_secs: list[float],
-    end_secs: list[float],
     output_path: Path,
-    start_utcs: list[float] | None = None,
-    end_utcs: list[float] | None = None,
+    *,
+    row_ids: list[str] | None = None,
+    filenames: list[str] | None = None,
+    start_secs: list[float] | None = None,
+    end_secs: list[float] | None = None,
     confidences: list[float] | None = None,
 ) -> dict[str, Any]:
     """Run vocalization inference and write predictions parquet.
+
+    Predictions are keyed by ``row_id`` when available (detection job sources),
+    otherwise by ``filename``/``start_sec``/``end_sec`` (embedding set sources).
 
     Returns result_summary with per-type tag counts at stored thresholds.
     """
     pipelines, vocabulary, thresholds = load_vocalization_model(model_dir)
 
     if len(embeddings) == 0:
-        # Write empty parquet with correct schema
-        _write_empty_parquet(output_path, vocabulary)
+        _write_empty_parquet(
+            output_path, vocabulary, has_row_id=bool(row_ids is not None)
+        )
         return {"total_windows": 0, "per_type_counts": {}, "vocabulary": vocabulary}
 
     scores = score_embeddings(pipelines, vocabulary, embeddings)
 
     # Build parquet table
-    columns: dict[str, list[Any]] = {
-        "filename": filenames,
-        "start_sec": start_secs,
-        "end_sec": end_secs,
-    }
-    if start_utcs is not None:
-        columns["start_utc"] = start_utcs
-    if end_utcs is not None:
-        columns["end_utc"] = end_utcs
+    columns: dict[str, list[Any]] = {}
+    if row_ids is not None:
+        columns["row_id"] = row_ids
+    if filenames is not None:
+        columns["filename"] = filenames
+    if start_secs is not None:
+        columns["start_sec"] = start_secs
+    if end_secs is not None:
+        columns["end_sec"] = end_secs
     if confidences is not None:
         columns["confidence"] = confidences
 
@@ -127,13 +131,17 @@ def run_inference(
     return result_summary
 
 
-def _write_empty_parquet(output_path: Path, vocabulary: list[str]) -> None:
+def _write_empty_parquet(
+    output_path: Path, vocabulary: list[str], *, has_row_id: bool = False
+) -> None:
     """Write an empty parquet with the correct schema."""
-    columns: dict[str, list[Any]] = {
-        "filename": [],
-        "start_sec": [],
-        "end_sec": [],
-    }
+    columns: dict[str, list[Any]] = {}
+    if has_row_id:
+        columns["row_id"] = []
+    else:
+        columns["filename"] = []
+        columns["start_sec"] = []
+        columns["end_sec"] = []
     for type_name in vocabulary:
         columns[type_name] = []
     table = pa.table(columns)
@@ -159,18 +167,23 @@ def read_predictions(
     if threshold_overrides:
         effective_thresholds.update(threshold_overrides)
 
+    col_names = set(table.column_names)
     rows: list[dict[str, Any]] = []
     for i in range(table.num_rows):
-        row: dict[str, Any] = {
-            "filename": table.column("filename")[i].as_py(),
-            "start_sec": float(table.column("start_sec")[i].as_py()),
-            "end_sec": float(table.column("end_sec")[i].as_py()),
-        }
-        if "start_utc" in table.column_names:
+        row: dict[str, Any] = {}
+        if "row_id" in col_names:
+            row["row_id"] = table.column("row_id")[i].as_py()
+        if "filename" in col_names:
+            row["filename"] = table.column("filename")[i].as_py()
+        if "start_sec" in col_names:
+            row["start_sec"] = float(table.column("start_sec")[i].as_py())
+        if "end_sec" in col_names:
+            row["end_sec"] = float(table.column("end_sec")[i].as_py())
+        if "start_utc" in col_names:
             row["start_utc"] = float(table.column("start_utc")[i].as_py())
-        if "end_utc" in table.column_names:
+        if "end_utc" in col_names:
             row["end_utc"] = float(table.column("end_utc")[i].as_py())
-        if "confidence" in table.column_names:
+        if "confidence" in col_names:
             val = table.column("confidence")[i].as_py()
             row["confidence"] = float(val) if val is not None else None
 

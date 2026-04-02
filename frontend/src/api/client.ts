@@ -76,8 +76,6 @@ import type {
   TrainingDatasetRowsResponse,
   TrainingDatasetLabel,
   TrainingDatasetExtendRequest,
-  RefreshPreviewResponse,
-  RefreshApplyResponse,
 } from "./types";
 
 class ApiError extends Error {
@@ -397,11 +395,10 @@ export const searchSimilarByVector = (body: {
 
 export const fetchDetectionEmbedding = (
   jobId: string,
-  startUtc: number,
-  endUtc: number,
+  rowId: string,
 ) =>
   api<DetectionEmbeddingResponse>(
-    `/classifier/detection-jobs/${jobId}/embedding?start_utc=${startUtc}&end_utc=${endUtc}`,
+    `/classifier/detection-jobs/${jobId}/embedding?row_id=${encodeURIComponent(rowId)}`,
   );
 
 export const createAudioSearch = (body: AudioSearchRequest) =>
@@ -460,11 +457,10 @@ export { ApiError };
 
 export const fetchVocalizationLabels = (
   detectionJobId: string,
-  startUtc: number,
-  endUtc: number,
+  rowId: string,
 ) =>
   api<VocalizationLabel[]>(
-    `/labeling/vocalization-labels/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
+    `/labeling/vocalization-labels/${detectionJobId}?row_id=${encodeURIComponent(rowId)}`,
   );
 
 export const fetchAllVocalizationLabels = (detectionJobId: string) =>
@@ -474,12 +470,11 @@ export const fetchAllVocalizationLabels = (detectionJobId: string) =>
 
 export const createVocalizationLabel = (
   detectionJobId: string,
-  startUtc: number,
-  endUtc: number,
+  rowId: string,
   body: { label: string; confidence?: number; source?: string; notes?: string },
 ) =>
   post<VocalizationLabel>(
-    `/labeling/vocalization-labels/${detectionJobId}?start_utc=${startUtc}&end_utc=${endUtc}`,
+    `/labeling/vocalization-labels/${detectionJobId}?row_id=${encodeURIComponent(rowId)}`,
     body,
   );
 
@@ -507,23 +502,10 @@ export const fetchLabelingSummary = (detectionJobId: string) =>
 export const fetchTrainingSummary = () =>
   api<TrainingSummary>("/labeling/training-summary");
 
-export const fetchRefreshPreview = (detectionJobId: string) =>
-  post<RefreshPreviewResponse>(
-    `/labeling/vocalization-labels/${detectionJobId}/refresh`,
-    {},
-  );
-
-export const applyRefresh = (detectionJobId: string) =>
-  post<RefreshApplyResponse>(
-    `/labeling/vocalization-labels/${detectionJobId}/refresh/apply`,
-    {},
-  );
-
 export const fetchDetectionNeighbors = (
   detectionJobId: string,
   params: {
-    start_utc: number;
-    end_utc: number;
+    row_id: string;
     top_k?: number;
     metric?: string;
     embedding_set_ids?: string[];

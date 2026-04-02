@@ -357,6 +357,29 @@ async def get_vocalization_inference_results(
         Path(job.output_path), vocabulary, stored_thresholds, threshold_overrides
     )
 
+    # Resolve start_utc/end_utc from row store for row_id-keyed predictions
+    if rows and "row_id" in rows[0] and "start_utc" not in rows[0]:
+        if job.source_type == "detection_job":
+            from humpback.classifier.detection_rows import read_detection_row_store
+            from humpback.storage import detection_row_store_path
+
+            rs_path = detection_row_store_path(settings.storage_root, job.source_id)
+            if rs_path.exists():
+                _fields, rs_rows = read_detection_row_store(rs_path)
+                utc_by_rid: dict[str, tuple[float, float]] = {}
+                for rr in rs_rows:
+                    rid = rr.get("row_id", "")
+                    if rid:
+                        utc_by_rid[rid] = (
+                            float(rr.get("start_utc", "0")),
+                            float(rr.get("end_utc", "0")),
+                        )
+                for r in rows:
+                    rid = r.get("row_id")
+                    if rid and rid in utc_by_rid:
+                        r["start_utc"] = utc_by_rid[rid][0]
+                        r["end_utc"] = utc_by_rid[rid][1]
+
     # Server-side sort (must happen before pagination so limit applies to sorted order)
     if sort == "confidence_desc":
         rows.sort(key=lambda r: r.get("confidence") or -1.0, reverse=True)
@@ -386,9 +409,10 @@ async def get_vocalization_inference_results(
     page = rows[offset : offset + limit]
     return [
         VocalizationPredictionRow(
-            filename=r["filename"],
-            start_sec=r["start_sec"],
-            end_sec=r["end_sec"],
+            row_id=r.get("row_id"),
+            filename=r.get("filename"),
+            start_sec=r.get("start_sec"),
+            end_sec=r.get("end_sec"),
             start_utc=r.get("start_utc"),
             end_utc=r.get("end_utc"),
             confidence=r.get("confidence"),
@@ -440,17 +464,34 @@ async def export_vocalization_inference(
 
     # Build TSV
     buf = io.StringIO()
-    header_cols = ["filename", "start_sec", "end_sec"]
-    if rows and "start_utc" in rows[0]:
+    header_cols: list[str] = []
+    has_row_id = rows and "row_id" in rows[0]
+    has_filename = rows and "filename" in rows[0]
+    has_utc = rows and "start_utc" in rows[0]
+    if has_row_id:
+        header_cols.append("row_id")
+    if has_filename:
+        header_cols.extend(["filename", "start_sec", "end_sec"])
+    if has_utc:
         header_cols.extend(["start_utc", "end_utc"])
     header_cols.extend(vocabulary)
     header_cols.append("tags")
     buf.write("\t".join(header_cols) + "\n")
 
     for r in rows:
-        vals: list[str] = [r["filename"], str(r["start_sec"]), str(r["end_sec"])]
-        if "start_utc" in r:
-            vals.extend([str(r["start_utc"]), str(r["end_utc"])])
+        vals: list[str] = []
+        if has_row_id:
+            vals.append(r.get("row_id", ""))
+        if has_filename:
+            vals.extend(
+                [
+                    r.get("filename", ""),
+                    str(r.get("start_sec", "")),
+                    str(r.get("end_sec", "")),
+                ]
+            )
+        if has_utc:
+            vals.extend([str(r.get("start_utc", "")), str(r.get("end_utc", ""))])
         for t in vocabulary:
             vals.append(str(r["scores"].get(t, 0.0)))
         vals.append(",".join(r["tags"]))

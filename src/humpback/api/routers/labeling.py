@@ -15,9 +15,6 @@ from humpback.schemas.labeling import (
     DetectionNeighborsRequest,
     DetectionNeighborsResponse,
     LabelingSummary,
-    OrphanedLabelDetail,
-    RefreshApplyResponse,
-    RefreshPreviewResponse,
     TimelineVocalizationLabel,
     TrainingSummary,
     NeighborHit,
@@ -41,15 +38,13 @@ router = APIRouter(prefix="/labeling", tags=["labeling"])
 async def list_vocalization_labels(
     detection_job_id: str,
     session: SessionDep,
-    start_utc: float = Query(...),
-    end_utc: float = Query(...),
+    row_id: str = Query(...),
 ):
     """List all vocalization labels for a detection row."""
     result = await session.execute(
         select(VocalizationLabel)
         .where(VocalizationLabel.detection_job_id == detection_job_id)
-        .where(VocalizationLabel.start_utc == start_utc)
-        .where(VocalizationLabel.end_utc == end_utc)
+        .where(VocalizationLabel.row_id == row_id)
         .order_by(VocalizationLabel.created_at)
     )
     return [VocalizationLabelOut.model_validate(r) for r in result.scalars().all()]
@@ -73,25 +68,45 @@ async def list_all_vocalization_labels(
         VocalizationClassifierModel,
         VocalizationInferenceJob,
     )
+    from humpback.storage import detection_row_store_path
 
     await _get_detection_job_or_404(session, detection_job_id)
 
-    # 1. Manual labels from the DB
+    # Build row_id -> (start_utc, end_utc) lookup from row store
+    rs_path = detection_row_store_path(settings.storage_root, detection_job_id)
+    utc_by_row_id: dict[str, tuple[float, float]] = {}
+    if rs_path.exists():
+        _fields, rs_rows = read_detection_row_store(rs_path)
+        for r in rs_rows:
+            rid = r.get("row_id", "")
+            if rid:
+                utc_by_row_id[rid] = (
+                    float(r.get("start_utc", "0")),
+                    float(r.get("end_utc", "0")),
+                )
+
+    # 1. Manual labels from the DB — resolve UTC via row store
     result = await session.execute(
         select(VocalizationLabel)
         .where(VocalizationLabel.detection_job_id == detection_job_id)
-        .order_by(VocalizationLabel.start_utc, VocalizationLabel.created_at)
+        .order_by(VocalizationLabel.created_at)
     )
-    out: list[TimelineVocalizationLabel] = [
-        TimelineVocalizationLabel(
-            start_utc=r.start_utc,
-            end_utc=r.end_utc,
-            label=r.label,
-            confidence=r.confidence,
-            source=r.source,
+    out: list[TimelineVocalizationLabel] = []
+    manual_keys: set[tuple[str, str]] = set()  # (row_id, label)
+    for r in result.scalars().all():
+        utc = utc_by_row_id.get(r.row_id)
+        if utc is None:
+            continue  # Row no longer exists in row store
+        out.append(
+            TimelineVocalizationLabel(
+                start_utc=utc[0],
+                end_utc=utc[1],
+                label=r.label,
+                confidence=r.confidence,
+                source=r.source,
+            )
         )
-        for r in result.scalars().all()
-    ]
+        manual_keys.add((r.row_id, r.label))
 
     # 2. Inference predictions — find completed inference jobs for this detection job
     inf_result = await session.execute(
@@ -102,11 +117,6 @@ async def list_all_vocalization_labels(
         .order_by(VocalizationInferenceJob.created_at.desc())
     )
     inf_jobs = inf_result.scalars().all()
-
-    # Build a set of manual label keys to avoid duplicating
-    manual_keys: set[tuple[float, float, str]] = set()
-    for lbl in out:
-        manual_keys.add((lbl.start_utc, lbl.end_utc, lbl.label))
 
     # Use the most recent completed inference job
     if inf_jobs:
@@ -125,18 +135,20 @@ async def list_all_vocalization_labels(
                     Path(inf_job.output_path), vocabulary, thresholds
                 )
                 for pred in predictions:
-                    s_utc = pred.get("start_utc")
-                    e_utc = pred.get("end_utc")
-                    if s_utc is None or e_utc is None:
+                    rid = pred.get("row_id")
+                    if rid is None:
+                        continue
+                    utc = utc_by_row_id.get(rid)
+                    if utc is None:
                         continue
                     for tag in pred["tags"]:
-                        if (s_utc, e_utc, tag) in manual_keys:
+                        if (rid, tag) in manual_keys:
                             continue
                         score = pred["scores"].get(tag)
                         out.append(
                             TimelineVocalizationLabel(
-                                start_utc=s_utc,
-                                end_utc=e_utc,
+                                start_utc=utc[0],
+                                end_utc=utc[1],
                                 label=tag,
                                 confidence=score,
                                 source="inference",
@@ -156,27 +168,15 @@ async def create_vocalization_label(
     detection_job_id: str,
     body: VocalizationLabelCreate,
     session: SessionDep,
-    start_utc: float = Query(...),
-    end_utc: float = Query(...),
+    row_id: str = Query(...),
 ):
     """Add a vocalization type label to a detection row."""
     from sqlalchemy import and_, delete
 
-    from humpback.models.classifier import DetectionJob
-
-    # Look up the detection job's current row_store_version.
-    dj_result = await session.execute(
-        select(DetectionJob.row_store_version).where(
-            DetectionJob.id == detection_job_id
-        )
-    )
-    dj_version = dj_result.scalar_one_or_none()
-
     # Mutual exclusivity: "(Negative)" and type labels cannot coexist
     same_window = and_(
         VocalizationLabel.detection_job_id == detection_job_id,
-        VocalizationLabel.start_utc == start_utc,
-        VocalizationLabel.end_utc == end_utc,
+        VocalizationLabel.row_id == row_id,
     )
     if body.label == "(Negative)":
         # Remove any existing type labels on this window
@@ -195,13 +195,11 @@ async def create_vocalization_label(
 
     label = VocalizationLabel(
         detection_job_id=detection_job_id,
-        start_utc=start_utc,
-        end_utc=end_utc,
+        row_id=row_id,
         label=body.label,
         confidence=body.confidence,
         source=body.source,
         notes=body.notes,
-        row_store_version_at_import=dj_version,
     )
     session.add(label)
     await session.commit()
@@ -255,23 +253,6 @@ async def delete_vocalization_label(
     await session.commit()
 
 
-# ---- Refresh / Reconciliation ----
-
-
-_LABEL_MATCH_TOLERANCE_SEC = 0.5  # same tolerance as embedding sync
-
-
-def _matches_any_row(
-    start: float, end: float, row_pairs: list[tuple[float, float]]
-) -> bool:
-    """Check if (start, end) matches any row store entry within tolerance."""
-    tol = _LABEL_MATCH_TOLERANCE_SEC
-    for rs, re_ in row_pairs:
-        if abs(start - rs) <= tol and abs(end - re_) <= tol:
-            return True
-    return False
-
-
 async def _get_detection_job_or_404(session, detection_job_id: str):
     from humpback.models.classifier import DetectionJob
 
@@ -282,126 +263,6 @@ async def _get_detection_job_or_404(session, detection_job_id: str):
     if job is None:
         raise HTTPException(404, "Detection job not found")
     return job
-
-
-@router.post(
-    "/vocalization-labels/{detection_job_id}/refresh",
-    response_model=RefreshPreviewResponse,
-)
-async def refresh_preview(
-    detection_job_id: str,
-    session: SessionDep,
-    settings: SettingsDep,
-):
-    """Preview reconciliation between row store and vocalization labels."""
-    from humpback.storage import detection_row_store_path
-
-    job = await _get_detection_job_or_404(session, detection_job_id)
-
-    rs_path = detection_row_store_path(settings.storage_root, job.id)
-    if not rs_path.exists():
-        raise HTTPException(400, "Detection row store not available")
-
-    _fieldnames, rows = read_detection_row_store(rs_path)
-    row_pairs: list[tuple[float, float]] = [
-        (float(r.get("start_utc", "0")), float(r.get("end_utc", "0"))) for r in rows
-    ]
-
-    result = await session.execute(
-        select(VocalizationLabel).where(
-            VocalizationLabel.detection_job_id == detection_job_id
-        )
-    )
-    all_labels = result.scalars().all()
-
-    matched_count = 0
-    orphaned: list[OrphanedLabelDetail] = []
-    for lbl in all_labels:
-        if _matches_any_row(lbl.start_utc, lbl.end_utc, row_pairs):
-            matched_count += 1
-        else:
-            orphaned.append(
-                OrphanedLabelDetail(
-                    id=lbl.id,
-                    start_utc=lbl.start_utc,
-                    end_utc=lbl.end_utc,
-                    label=lbl.label,
-                )
-            )
-
-    return RefreshPreviewResponse(
-        matched_count=matched_count,
-        orphaned_count=len(orphaned),
-        orphaned_labels=orphaned,
-        current_version=job.row_store_version or 1,
-    )
-
-
-@router.post(
-    "/vocalization-labels/{detection_job_id}/refresh/apply",
-    response_model=RefreshApplyResponse,
-)
-async def refresh_apply(
-    detection_job_id: str,
-    session: SessionDep,
-    settings: SettingsDep,
-):
-    """Delete orphaned vocalization labels and update version on survivors."""
-    from sqlalchemy import delete as sa_delete
-
-    from humpback.storage import detection_row_store_path
-
-    job = await _get_detection_job_or_404(session, detection_job_id)
-
-    rs_path = detection_row_store_path(settings.storage_root, job.id)
-    if not rs_path.exists():
-        raise HTTPException(400, "Detection row store not available")
-
-    _fieldnames, rows = read_detection_row_store(rs_path)
-    row_pairs: list[tuple[float, float]] = [
-        (float(r.get("start_utc", "0")), float(r.get("end_utc", "0"))) for r in rows
-    ]
-
-    result = await session.execute(
-        select(VocalizationLabel).where(
-            VocalizationLabel.detection_job_id == detection_job_id
-        )
-    )
-    all_labels = result.scalars().all()
-
-    orphaned_ids: list[str] = []
-    surviving_ids: list[str] = []
-    for lbl in all_labels:
-        if _matches_any_row(lbl.start_utc, lbl.end_utc, row_pairs):
-            surviving_ids.append(lbl.id)
-        else:
-            orphaned_ids.append(lbl.id)
-
-    current_version = job.row_store_version or 1
-
-    # Delete orphaned labels
-    if orphaned_ids:
-        await session.execute(
-            sa_delete(VocalizationLabel).where(VocalizationLabel.id.in_(orphaned_ids))
-        )
-
-    # Update version on surviving labels
-    if surviving_ids:
-        from sqlalchemy import update
-
-        await session.execute(
-            update(VocalizationLabel)
-            .where(VocalizationLabel.id.in_(surviving_ids))
-            .values(row_store_version_at_import=current_version)
-        )
-
-    await session.commit()
-
-    return RefreshApplyResponse(
-        deleted_count=len(orphaned_ids),
-        surviving_count=len(surviving_ids),
-        current_version=current_version,
-    )
 
 
 # ---- Label Vocabulary ----
@@ -417,10 +278,6 @@ async def get_label_vocabulary(session: SessionDep):
 
 
 # ---- Labeling Summary ----
-
-
-def _utc_key(start_utc: float, end_utc: float) -> str:
-    return f"{start_utc}:{end_utc}"
 
 
 @router.get("/summary/{detection_job_id}", response_model=LabelingSummary)
@@ -442,23 +299,22 @@ async def get_labeling_summary(
     # Get all vocalization labels for this job
     result = await session.execute(
         select(
-            VocalizationLabel.start_utc,
-            VocalizationLabel.end_utc,
+            VocalizationLabel.row_id,
             VocalizationLabel.label,
         ).where(VocalizationLabel.detection_job_id == detection_job_id)
     )
     label_rows = result.all()
 
-    labeled_keys: set[str] = set()
+    labeled_row_ids: set[str] = set()
     label_counts: dict[str, int] = {}
-    for s_utc, e_utc, label in label_rows:
-        labeled_keys.add(_utc_key(s_utc, e_utc))
+    for row_id, label in label_rows:
+        labeled_row_ids.add(row_id)
         label_counts[label] = label_counts.get(label, 0) + 1
 
     return LabelingSummary(
         total_rows=total_rows,
-        labeled_rows=len(labeled_keys),
-        unlabeled_rows=total_rows - len(labeled_keys),
+        labeled_rows=len(labeled_row_ids),
+        unlabeled_rows=total_rows - len(labeled_row_ids),
         label_distribution=label_counts,
     )
 
@@ -470,17 +326,16 @@ async def get_training_summary(session: SessionDep):
     result = await session.execute(
         select(
             VocalizationLabel.detection_job_id,
-            VocalizationLabel.start_utc,
-            VocalizationLabel.end_utc,
+            VocalizationLabel.row_id,
             VocalizationLabel.label,
         )
     )
     labeled_job_ids: set[str] = set()
     labeled_row_keys: set[str] = set()
     label_counts: dict[str, int] = {}
-    for job_id, s_utc, e_utc, label in result.all():
+    for job_id, row_id, label in result.all():
         labeled_job_ids.add(job_id)
-        labeled_row_keys.add(f"{job_id}:{_utc_key(s_utc, e_utc)}")
+        labeled_row_keys.add(f"{job_id}:{row_id}")
         label_counts[label] = label_counts.get(label, 0) + 1
 
     return TrainingSummary(
@@ -513,7 +368,6 @@ async def get_detection_neighbors(
     settings: SettingsDep,
 ):
     """Find similar sounds from reference embedding sets for a detection row."""
-    from humpback.classifier.detection_rows import parse_recording_timestamp
     from humpback.classifier.detector import read_detection_embedding
     from humpback.models.classifier import ClassifierModel
     from humpback.schemas.search import VectorSearchRequest
@@ -529,36 +383,7 @@ async def get_detection_neighbors(
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
-    # Resolve UTC to file-relative coords for embedding lookup
-    import pyarrow.parquet as pq
-
-    emb_table = pq.read_table(
-        str(emb_path), columns=["filename", "start_sec", "end_sec"]
-    )
-    lookup_filename = None
-    lookup_start = None
-    lookup_end = None
-    for i in range(emb_table.num_rows):
-        fname = emb_table.column("filename")[i].as_py()
-        s = float(emb_table.column("start_sec")[i].as_py())
-        e = float(emb_table.column("end_sec")[i].as_py())
-        ts = parse_recording_timestamp(fname)
-        base_epoch = ts.timestamp() if ts else 0.0
-        if (
-            abs(base_epoch + s - body.start_utc) < 0.01
-            and abs(base_epoch + e - body.end_utc) < 0.01
-        ):
-            lookup_filename = fname
-            lookup_start = s
-            lookup_end = e
-            break
-
-    if lookup_filename is None or lookup_start is None or lookup_end is None:
-        raise HTTPException(404, "Embedding not found for specified UTC range")
-
-    embedding = read_detection_embedding(
-        emb_path, lookup_filename, lookup_start, lookup_end
-    )
+    embedding = read_detection_embedding(emb_path, body.row_id)
     if embedding is None:
         raise HTTPException(404, "Embedding not found for specified detection row")
 

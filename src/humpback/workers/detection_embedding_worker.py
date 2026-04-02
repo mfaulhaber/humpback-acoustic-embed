@@ -142,10 +142,49 @@ async def _run_full_mode(
         True,  # emit_embeddings
     )
 
-    # Write embeddings
+    # Cross-reference embeddings with row store to assign row_ids.
     ddir = ensure_dir(detection_dir(settings.storage_root, det_job.id))
     emb_path = ddir / "detection_embeddings.parquet"
     if detection_embeddings:
+        rs_path = detection_row_store_path(settings.storage_root, det_job.id)
+        if rs_path.exists():
+            from humpback.classifier.detection_rows import read_detection_row_store
+
+            _, rs_rows = read_detection_row_store(rs_path)
+            # Build UTC lookup from row store for matching.
+            rs_utc_index: list[tuple[float, float, str]] = []
+            for r in rs_rows:
+                s = r.get("start_utc", "")
+                e = r.get("end_utc", "")
+                rid = r.get("row_id", "")
+                if s and e and rid:
+                    rs_utc_index.append((float(s), float(e), rid))
+
+            # Convert each embedding to row_id format by matching UTC.
+            row_id_records = []
+            for emb_rec in detection_embeddings:
+                fname = emb_rec["filename"]
+                base = _file_base_epoch(Path(fname))
+                emb_start = base + float(emb_rec["start_sec"])
+                emb_end = base + float(emb_rec["end_sec"])
+                matched_rid = None
+                for rs_start, rs_end, rid in rs_utc_index:
+                    if (
+                        abs(emb_start - rs_start) <= 0.5
+                        and abs(emb_end - rs_end) <= 0.5
+                    ):
+                        matched_rid = rid
+                        break
+                if matched_rid:
+                    row_id_records.append(
+                        {
+                            "row_id": matched_rid,
+                            "embedding": emb_rec["embedding"],
+                            "confidence": emb_rec.get("confidence"),
+                        }
+                    )
+            detection_embeddings = row_id_records
+
         write_detection_embeddings(detection_embeddings, emb_path)
 
     count = len(detection_embeddings) if detection_embeddings else 0
@@ -328,55 +367,9 @@ async def _run_sync_mode(
             progress += 1
             continue
 
-        # Build filename and start_sec/end_sec for the embedding record.
-        # Use the same synthetic filename convention as hydrophone detection:
-        # find the best matching base epoch from existing embeddings or
-        # compute from the audio file.
-        if is_hydrophone:
-            from datetime import datetime, timezone
-
-            window_dt = datetime.fromtimestamp(start_utc, tz=timezone.utc)
-            synth_fname = window_dt.strftime("%Y%m%dT%H%M%SZ") + ".wav"
-            fname_epoch = _file_base_epoch(Path(synth_fname))
-            record_start_sec = start_utc - fname_epoch
-            record_end_sec = end_utc - fname_epoch
-        elif det_job.audio_folder and file_timeline:
-            # Find the covering file to get relative start_sec/end_sec.
-            synth_fname = ""
-            record_start_sec = 0.0
-            record_end_sec = end_utc - start_utc
-            for base_epoch, fpath, dur in file_timeline:
-                if (
-                    base_epoch <= start_utc + 0.01
-                    and base_epoch + dur >= end_utc - 0.01
-                ):
-                    synth_fname = str(fpath.relative_to(Path(det_job.audio_folder)))
-                    record_start_sec = start_utc - base_epoch
-                    record_end_sec = end_utc - base_epoch
-                    break
-            if not synth_fname:
-                # Fallback — use absolute times in a synthetic name.
-                from datetime import datetime, timezone
-
-                window_dt = datetime.fromtimestamp(start_utc, tz=timezone.utc)
-                synth_fname = window_dt.strftime("%Y%m%dT%H%M%SZ") + ".wav"
-                fname_epoch = _file_base_epoch(Path(synth_fname))
-                record_start_sec = start_utc - fname_epoch
-                record_end_sec = end_utc - fname_epoch
-        else:
-            from datetime import datetime, timezone
-
-            window_dt = datetime.fromtimestamp(start_utc, tz=timezone.utc)
-            synth_fname = window_dt.strftime("%Y%m%dT%H%M%SZ") + ".wav"
-            fname_epoch = _file_base_epoch(Path(synth_fname))
-            record_start_sec = start_utc - fname_epoch
-            record_end_sec = end_utc - fname_epoch
-
         new_records.append(
             {
-                "filename": synth_fname,
-                "start_sec": record_start_sec,
-                "end_sec": record_end_sec,
+                "row_id": row.get("row_id", ""),
                 "embedding": emb_vec,
                 "confidence": None,
             }
@@ -444,26 +437,27 @@ def _rewrite_embeddings(
             keep_mask[idx] = False
         table = table.filter(pa.array(keep_mask))
 
-    if new_records:
-        vector_dim = (
-            len(new_records[0]["embedding"])
-            if new_records
-            else table.column("embedding").type.list_size
+    # If the existing table uses the old schema (filename/start_sec/end_sec),
+    # drop those columns and keep only row_id/embedding/confidence.
+    col_names = set(table.column_names)
+    if "filename" in col_names and "row_id" not in col_names:
+        # Legacy schema — cannot merge with new records; drop entire old table.
+        table = pa.table(
+            {"row_id": [], "embedding": [], "confidence": []},
         )
+
+    if new_records:
+        vector_dim = len(new_records[0]["embedding"])
         new_schema = pa.schema(
             [
-                ("filename", pa.string()),
-                ("start_sec", pa.float32()),
-                ("end_sec", pa.float32()),
+                ("row_id", pa.string()),
                 ("embedding", pa.list_(pa.float32(), vector_dim)),
                 ("confidence", pa.float32()),
             ]
         )
         new_table = pa.table(
             {
-                "filename": [r["filename"] for r in new_records],
-                "start_sec": [r["start_sec"] for r in new_records],
-                "end_sec": [r["end_sec"] for r in new_records],
+                "row_id": [r["row_id"] for r in new_records],
                 "embedding": [r["embedding"] for r in new_records],
                 "confidence": [r.get("confidence") for r in new_records],
             },

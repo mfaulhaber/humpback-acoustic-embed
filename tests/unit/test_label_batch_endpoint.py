@@ -15,10 +15,19 @@ from humpback.classifier.detection_rows import (
 # ---------------------------------------------------------------------------
 
 
+_row_counter = 0
+
+
 def _make_row(
-    start_utc: float, end_utc: float, label: str | None = None
+    start_utc: float,
+    end_utc: float,
+    label: str | None = None,
+    row_id: str | None = None,
 ) -> dict[str, str]:
+    global _row_counter  # noqa: PLW0603
+    _row_counter += 1
     row = {f: "" for f in ROW_STORE_FIELDNAMES}
+    row["row_id"] = row_id or f"test-row-{_row_counter}"
     row["start_utc"] = str(float(start_utc))
     row["end_utc"] = str(float(end_utc))
     if label:
@@ -94,14 +103,13 @@ def test_apply_label_edits_add() -> None:
 
 def test_apply_label_edits_move() -> None:
     """Moving a row updates its start_utc and end_utc."""
-    rows = [_make_row(5, 10, "humpback")]
+    rows = [_make_row(5, 10, "humpback", row_id="m1")]
     edits = [
         {
             "action": "move",
-            "start_utc": 5.0,
-            "end_utc": 10.0,
-            "new_start_utc": 15.0,
-            "new_end_utc": 20.0,
+            "row_id": "m1",
+            "start_utc": 15.0,
+            "end_utc": 20.0,
         }
     ]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
@@ -112,8 +120,11 @@ def test_apply_label_edits_move() -> None:
 
 def test_apply_label_edits_delete() -> None:
     """Deleting a row removes it from the result."""
-    rows = [_make_row(0, 5, "humpback"), _make_row(10, 15, "orca")]
-    edits = [{"action": "delete", "start_utc": 0.0, "end_utc": 5.0}]
+    rows = [
+        _make_row(0, 5, "humpback", row_id="d1"),
+        _make_row(10, 15, "orca", row_id="d2"),
+    ]
+    edits = [{"action": "delete", "row_id": "d1"}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     assert len(result) == 1
     assert result[0]["start_utc"] == "10.0"
@@ -121,10 +132,8 @@ def test_apply_label_edits_delete() -> None:
 
 def test_apply_label_edits_change_type() -> None:
     """Changing type sets the target label and clears all others."""
-    rows = [_make_row(0, 5, "humpback")]
-    edits = [
-        {"action": "change_type", "start_utc": 0.0, "end_utc": 5.0, "label": "orca"}
-    ]
+    rows = [_make_row(0, 5, "humpback", row_id="ct1")]
+    edits = [{"action": "change_type", "row_id": "ct1", "label": "orca"}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     assert result[0]["orca"] == "1"
     assert result[0]["humpback"] == ""
@@ -145,14 +154,13 @@ def test_apply_label_edits_overlap_rejected() -> None:
 
 def test_apply_label_edits_move_succeeds() -> None:
     """Moving a row updates its UTC coordinates."""
-    rows = [_make_row(5, 10, "humpback")]
+    rows = [_make_row(5, 10, "humpback", row_id="ms1")]
     edits = [
         {
             "action": "move",
-            "start_utc": 5.0,
-            "end_utc": 10.0,
-            "new_start_utc": 55.0,
-            "new_end_utc": 60.0,
+            "row_id": "ms1",
+            "start_utc": 55.0,
+            "end_utc": 60.0,
         }
     ]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
@@ -173,13 +181,11 @@ def test_apply_label_edits_unlabeled_replacement() -> None:
 
 def test_apply_label_edits_single_label_enforcement() -> None:
     """change_type clears all label fields and sets only the target one."""
-    row = _make_row(0, 5)
+    row = _make_row(0, 5, row_id="sle1")
     row["humpback"] = "1"
     row["orca"] = "1"
     rows = [row]
-    edits = [
-        {"action": "change_type", "start_utc": 0.0, "end_utc": 5.0, "label": "ship"}
-    ]
+    edits = [{"action": "change_type", "row_id": "sle1", "label": "ship"}]
     result = apply_label_edits(rows, edits, job_duration=JOB_DURATION)
     assert result[0]["ship"] == "1"
     for lbl in LABEL_FIELDNAMES:
@@ -188,9 +194,9 @@ def test_apply_label_edits_single_label_enforcement() -> None:
 
 
 def test_apply_label_edits_missing_row_id() -> None:
-    """Referencing a non-existent (start_utc, end_utc) raises ValueError."""
+    """Referencing a non-existent row_id raises ValueError."""
     rows = [_make_row(0, 5, "humpback")]
-    edits = [{"action": "delete", "start_utc": 99.0, "end_utc": 104.0}]
+    edits = [{"action": "delete", "row_id": "nonexistent"}]
     with pytest.raises(ValueError, match="not found"):
         apply_label_edits(rows, edits, job_duration=JOB_DURATION)
 
