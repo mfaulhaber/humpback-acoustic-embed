@@ -921,6 +921,110 @@ async def test_refresh_apply_idempotent(client, app_settings, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_refresh_preview_tolerates_small_timestamp_shift(
+    client, app_settings, tmp_path
+):
+    """Labels within 0.5s of a row store entry are NOT orphaned.
+
+    Regression: timeline edits can shift row store timestamps by fractions
+    of a second while vocalization labels retain the pre-edit timestamps
+    from inference results.
+    """
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Create a label at the original row1 position (exact match)
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+
+    # Shift row1 in the row store by 0.5s (simulates a timeline edit)
+    row_store = detection_row_store_path(app_settings.storage_root, job_id)
+    shifted_rows = [
+        {
+            "start_utc": str(BASE_EPOCH + 0.5),
+            "end_utc": str(BASE_EPOCH + 5.5),
+            "raw_start_utc": str(BASE_EPOCH + 0.5),
+            "raw_end_utc": str(BASE_EPOCH + 5.5),
+            "merged_event_count": "1",
+            "avg_confidence": "0.85",
+            "peak_confidence": "0.92",
+            "n_windows": "1",
+            "hydrophone_name": "",
+            "humpback": "1",
+            "orca": "",
+            "ship": "",
+            "background": "",
+        },
+        {
+            "start_utc": str(BASE_EPOCH + 5.0),
+            "end_utc": str(BASE_EPOCH + 10.0),
+            "raw_start_utc": str(BASE_EPOCH + 5.0),
+            "raw_end_utc": str(BASE_EPOCH + 10.0),
+            "merged_event_count": "1",
+            "avg_confidence": "0.70",
+            "peak_confidence": "0.75",
+            "n_windows": "1",
+            "hydrophone_name": "",
+            "humpback": "",
+            "orca": "",
+            "ship": "",
+            "background": "",
+        },
+    ]
+    write_detection_row_store(row_store, shifted_rows)
+
+    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Label at BASE_EPOCH should match shifted row at BASE_EPOCH + 0.5
+    assert data["matched_count"] == 1
+    assert data["orphaned_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_refresh_preview_orphans_beyond_tolerance(client, app_settings, tmp_path):
+    """Labels shifted more than 0.5s from any row store entry ARE orphaned."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Create a label at the original row1 position
+    row1_qs = _utc_qs(BASE_EPOCH, BASE_EPOCH + 5.0)
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}{row1_qs}",
+        json={"label": "whup"},
+    )
+
+    # Shift row1 by 1.0s — beyond the 0.5s tolerance
+    row_store = detection_row_store_path(app_settings.storage_root, job_id)
+    shifted_rows = [
+        {
+            "start_utc": str(BASE_EPOCH + 1.0),
+            "end_utc": str(BASE_EPOCH + 6.0),
+            "raw_start_utc": str(BASE_EPOCH + 1.0),
+            "raw_end_utc": str(BASE_EPOCH + 6.0),
+            "merged_event_count": "1",
+            "avg_confidence": "0.85",
+            "peak_confidence": "0.92",
+            "n_windows": "1",
+            "hydrophone_name": "",
+            "humpback": "1",
+            "orca": "",
+            "ship": "",
+            "background": "",
+        },
+    ]
+    write_detection_row_store(row_store, shifted_rows)
+
+    resp = await client.post(f"/labeling/vocalization-labels/{job_id}/refresh")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["matched_count"] == 0
+    assert data["orphaned_count"] == 1
+    assert data["orphaned_labels"][0]["label"] == "whup"
+
+
+@pytest.mark.asyncio
 async def test_refresh_preview_nonexistent_job(client):
     """Preview for non-existent job returns 404."""
     resp = await client.post("/labeling/vocalization-labels/nonexistent/refresh")
