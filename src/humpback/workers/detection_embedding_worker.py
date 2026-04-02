@@ -267,6 +267,7 @@ async def _run_sync_mode(
     new_records: list[dict] = []
     skipped_reasons: list[str] = []
     progress = 0
+    audio_cache: dict[str, np.ndarray] = {}
 
     for row in diff.missing:
         start_utc = float(row["start_utc"])
@@ -289,6 +290,7 @@ async def _run_sync_mode(
                 Path(det_job.audio_folder),
                 cm.target_sample_rate,
                 _file_timeline=file_timeline,
+                _audio_cache=audio_cache,
             )
         else:
             audio = None

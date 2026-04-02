@@ -917,7 +917,10 @@ def _build_file_timeline(
     """Build a sorted list of (base_epoch, file_path, duration_sec) for an audio folder.
 
     Only includes files with a parseable timestamp in the filename.
+    Uses soundfile.info() for fast header-only duration reads.
     """
+    import soundfile as sf
+
     entries: list[tuple[float, Path, float]] = []
     audio_files = sorted(
         p for p in audio_folder.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS
@@ -927,10 +930,10 @@ def _build_file_timeline(
         if base == 0.0:
             continue
         try:
-            audio_data, sr = decode_audio(af)
-            duration = len(audio_data) / sr
+            info = sf.info(str(af))
+            duration = info.duration
         except Exception:
-            logger.debug("Cannot decode %s for timeline, skipping", af)
+            logger.debug("Cannot read info for %s, skipping", af)
             continue
         entries.append((base, af, duration))
     entries.sort(key=lambda e: e[0])
@@ -944,6 +947,7 @@ def resolve_audio_for_window(
     target_sample_rate: int,
     *,
     _file_timeline: list[tuple[float, Path, float]] | None = None,
+    _audio_cache: dict[str, np.ndarray] | None = None,
 ) -> tuple[np.ndarray | None, str | None]:
     """Load audio for a UTC window from a local audio folder.
 
@@ -953,6 +957,10 @@ def resolve_audio_for_window(
     The optional ``_file_timeline`` parameter accepts a pre-built file
     timeline (from ``_build_file_timeline``) to avoid re-scanning the
     folder for every window.
+
+    The optional ``_audio_cache`` dict caches decoded+resampled audio
+    keyed by file path, avoiding repeated decoding when multiple windows
+    come from the same file.
     """
     window_dur = end_utc - start_utc
     if window_dur <= 0:
@@ -975,12 +983,18 @@ def resolve_audio_for_window(
 
     base_epoch, fpath, _ = covering
     offset_sec = start_utc - base_epoch
+    cache_key = str(fpath)
 
-    try:
-        audio_data, sr = decode_audio(fpath)
-        audio_data = resample(audio_data, sr, target_sample_rate)
-    except Exception as exc:
-        return None, f"audio decode failed: {exc}"
+    if _audio_cache is not None and cache_key in _audio_cache:
+        audio_data = _audio_cache[cache_key]
+    else:
+        try:
+            audio_data, sr = decode_audio(fpath)
+            audio_data = resample(audio_data, sr, target_sample_rate)
+        except Exception as exc:
+            return None, f"audio decode failed: {exc}"
+        if _audio_cache is not None:
+            _audio_cache[cache_key] = audio_data
 
     start_sample = int(offset_sec * target_sample_rate)
     end_sample = int((offset_sec + window_dur) * target_sample_rate)
