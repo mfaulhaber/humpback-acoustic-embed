@@ -240,19 +240,38 @@ class TrainingDataSummaryResponse(BaseModel):
 class EmbeddingStatusResponse(BaseModel):
     has_embeddings: bool
     count: int | None = None
+    sync_needed: bool | None = None
 
 
 class DetectionEmbeddingJobOut(BaseModel):
     id: str
     status: str
     detection_job_id: str
+    mode: str | None = None
     progress_current: int | None = None
     progress_total: int | None = None
     error_message: str | None = None
+    result_summary: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class EmbeddingJobListItem(BaseModel):
+    id: str
+    status: str
+    detection_job_id: str
+    mode: str | None = None
+    progress_current: int | None = None
+    progress_total: int | None = None
+    error_message: str | None = None
+    result_summary: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    # Detection job context
+    hydrophone_name: str | None = None
+    audio_folder: str | None = None
 
 
 class RetrainFolderInfo(BaseModel):

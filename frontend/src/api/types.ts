@@ -913,17 +913,25 @@ export interface VocClassifierPredictionRow {
 export interface EmbeddingStatus {
   has_embeddings: boolean;
   count: number | null;
+  sync_needed: boolean | null;
 }
 
 export interface DetectionEmbeddingJob {
   id: string;
   status: string;
   detection_job_id: string;
+  mode: string | null;
   progress_current: number | null;
   progress_total: number | null;
   error_message: string | null;
+  result_summary: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface EmbeddingJobListItem extends DetectionEmbeddingJob {
+  hydrophone_name: string | null;
+  audio_folder: string | null;
 }
 
 export interface VocalizationTrainingSource {

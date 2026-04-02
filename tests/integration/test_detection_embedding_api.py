@@ -167,3 +167,141 @@ async def test_embedding_generation_status(client, app_settings):
     data = resp2.json()
     assert data["status"] == "queued"
     assert data["detection_job_id"] == job_id
+
+
+# ---- Sync mode tests ----
+
+
+@pytest.mark.asyncio
+async def test_sync_mode_requires_existing_embeddings(client, app_settings):
+    """POST generate-embeddings?mode=sync returns 400 when no embeddings exist."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings)
+
+    resp = await client.post(
+        f"/classifier/detection-jobs/{job_id}/generate-embeddings?mode=sync"
+    )
+    assert resp.status_code == 400
+    assert "full generation first" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_sync_mode_creates_job(client, app_settings):
+    """POST generate-embeddings?mode=sync creates a job with mode=sync."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings, with_embeddings=True)
+
+    resp = await client.post(
+        f"/classifier/detection-jobs/{job_id}/generate-embeddings?mode=sync"
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["mode"] == "sync"
+    assert data["detection_job_id"] == job_id
+
+
+@pytest.mark.asyncio
+async def test_full_mode_rejects_existing_embeddings(client, app_settings):
+    """POST generate-embeddings?mode=full returns 409 when embeddings exist."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings, with_embeddings=True)
+
+    resp = await client.post(
+        f"/classifier/detection-jobs/{job_id}/generate-embeddings?mode=full"
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_embedding_status_sync_needed(client, app_settings):
+    """Embedding status includes sync_needed field."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings, with_embeddings=True)
+
+    # No row store → sync_needed is None (can't compare)
+    resp = await client.get(f"/classifier/detection-jobs/{job_id}/embedding-status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["has_embeddings"] is True
+    assert data["sync_needed"] is None  # no row store
+
+    # Create a row store with a row that doesn't match any embedding
+    from humpback.classifier.detection_rows import (
+        ROW_STORE_FIELDNAMES,
+        write_detection_row_store,
+    )
+    from humpback.storage import detection_row_store_path
+
+    rs_path = detection_row_store_path(app_settings.storage_root, job_id)
+    row = {f: "" for f in ROW_STORE_FIELDNAMES}
+    row["start_utc"] = "9999999999.0"  # far future — won't match
+    row["end_utc"] = "9999999999.5"
+    write_detection_row_store(rs_path, [row])
+
+    resp2 = await client.get(f"/classifier/detection-jobs/{job_id}/embedding-status")
+    data2 = resp2.json()
+    assert data2["sync_needed"] is True
+
+
+# ---- Embedding jobs list endpoint ----
+
+
+@pytest.mark.asyncio
+async def test_list_embedding_jobs_empty(client):
+    """List returns empty when no embedding jobs exist."""
+    resp = await client.get("/classifier/embedding-jobs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_embedding_jobs_with_context(client, app_settings):
+    """List returns jobs with detection job context."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings)
+
+    # Queue an embedding generation job
+    resp = await client.post(f"/classifier/detection-jobs/{job_id}/generate-embeddings")
+    assert resp.status_code == 202
+
+    # List should return 1 job with context
+    resp2 = await client.get("/classifier/embedding-jobs")
+    assert resp2.status_code == 200
+    data = resp2.json()
+    assert len(data) == 1
+    assert data[0]["detection_job_id"] == job_id
+    assert data[0]["audio_folder"] == "test-audio"
+    assert data[0]["hydrophone_name"] is None
+    assert data[0]["mode"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_list_embedding_jobs_pagination(client, app_settings):
+    """List respects offset and limit."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings)
+
+    # Create 2 jobs (first full, then use sync after creating embeddings)
+    await client.post(f"/classifier/detection-jobs/{job_id}/generate-embeddings")
+
+    # Limit to 1
+    resp = await client.get("/classifier/embedding-jobs?limit=1")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+    # Offset past all results
+    resp2 = await client.get("/classifier/embedding-jobs?offset=100")
+    assert resp2.status_code == 200
+    assert len(resp2.json()) == 0

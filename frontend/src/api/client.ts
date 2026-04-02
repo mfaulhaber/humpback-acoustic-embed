@@ -69,6 +69,7 @@ import type {
   VocClassifierPredictionRow,
   EmbeddingStatus,
   DetectionEmbeddingJob,
+  EmbeddingJobListItem,
   VocalizationTrainingSource,
   FolderEmbeddingSetResponse,
   TrainingDataset,
@@ -686,13 +687,16 @@ export function vocClassifierInferenceExportUrl(
 export const fetchEmbeddingStatus = (jobId: string) =>
   api<EmbeddingStatus>(`/classifier/detection-jobs/${jobId}/embedding-status`);
 
-export const generateEmbeddings = (jobId: string) =>
-  post<DetectionEmbeddingJob>(`/classifier/detection-jobs/${jobId}/generate-embeddings`, {});
+export const generateEmbeddings = (jobId: string, mode: "full" | "sync" = "full") =>
+  post<DetectionEmbeddingJob>(`/classifier/detection-jobs/${jobId}/generate-embeddings?mode=${mode}`, {});
 
 export const fetchEmbeddingGenerationStatus = (jobId: string) =>
   api<DetectionEmbeddingJob | null>(
     `/classifier/detection-jobs/${jobId}/embedding-generation-status`,
   );
+
+export const fetchEmbeddingJobs = (offset = 0, limit = 50) =>
+  api<EmbeddingJobListItem[]>(`/classifier/embedding-jobs?offset=${offset}&limit=${limit}`);
 
 // ---- Vocalization Training Source ----
 

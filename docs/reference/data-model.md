@@ -23,6 +23,6 @@ Condensed model reference. For full field lists, see `src/humpback/database.py`.
 - **VocalizationClassifierModel** (`vocalization_models`) — multi-label vocalization model artifact (name, model_dir_path, vocabulary_snapshot JSON, per_class_thresholds JSON, per_class_metrics JSON, is_active)
 - **VocalizationTrainingJob** (`vocalization_training_jobs`) — multi-label training run (source_config JSON with embedding_set_ids + detection_job_ids, parameters JSON, vocalization_model_id set on completion)
 - **VocalizationInferenceJob** (`vocalization_inference_jobs`) — scoring run (vocalization_model_id FK, source_type, source_id, output_path to predictions parquet)
-- **DetectionEmbeddingJob** (`detection_embedding_jobs`) — post-hoc detection embedding generation (detection_job_id, progress_current/total, status)
+- **DetectionEmbeddingJob** (`detection_embedding_jobs`) — post-hoc detection embedding generation and sync (detection_job_id, mode [full/sync], progress_current/total, result_summary JSON, status)
 - **TrainingDataset** (`training_datasets`) — unified editable snapshot of training embeddings and labels (name, source_config JSON, parquet_path, total_rows, vocabulary JSON)
 - **TrainingDatasetLabel** (`training_dataset_labels`) — per-row label on a training dataset (training_dataset_id FK, row_index, label, source). Indexed on (training_dataset_id, row_index).

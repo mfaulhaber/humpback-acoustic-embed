@@ -22,6 +22,7 @@ import {
   fetchEmbeddingStatus,
   generateEmbeddings,
   fetchEmbeddingGenerationStatus,
+  fetchEmbeddingJobs,
   fetchVocModelTrainingSource,
   fetchFolderEmbeddingSet,
   fetchTrainingDataset,
@@ -217,7 +218,18 @@ export function useEmbeddingStatus(detectionJobId: string | null) {
 export function useGenerateEmbeddings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => generateEmbeddings(jobId),
+    mutationFn: (jobId: string) => generateEmbeddings(jobId, "full"),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["embedding-status", jobId] });
+      qc.invalidateQueries({ queryKey: ["embedding-generation", jobId] });
+    },
+  });
+}
+
+export function useSyncEmbeddings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => generateEmbeddings(jobId, "sync"),
     onSuccess: (_data, jobId) => {
       qc.invalidateQueries({ queryKey: ["embedding-status", jobId] });
       qc.invalidateQueries({ queryKey: ["embedding-generation", jobId] });
@@ -234,6 +246,19 @@ export function useEmbeddingGenerationStatus(detectionJobId: string | null) {
       const status = query.state.data?.status;
       if (!status || status === "complete" || status === "failed") return false;
       return 2000;
+    },
+  });
+}
+
+export function useEmbeddingJobs(offset = 0, limit = 50) {
+  return useQuery({
+    queryKey: ["embedding-jobs", offset, limit],
+    queryFn: () => fetchEmbeddingJobs(offset, limit),
+    refetchInterval: (query) => {
+      const jobs = query.state.data;
+      if (!jobs) return false;
+      const hasActive = jobs.some((j) => j.status === "queued" || j.status === "running");
+      return hasActive ? 3000 : false;
     },
   });
 }

@@ -15,7 +15,7 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 | Icons | lucide-react |
 | API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
 
-**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/labeling`); Vocalization has sub-routes (`/app/vocalization/training`, `/app/vocalization/labeling`, `/app/vocalization/training-data`); the timeline viewer is at `/app/classifier/timeline/:jobId`; other sections are single-route pages.
+**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/embeddings`, `/app/classifier/labeling`); Vocalization has sub-routes (`/app/vocalization/training`, `/app/vocalization/labeling`, `/app/vocalization/training-data`); the timeline viewer is at `/app/classifier/timeline/:jobId`; other sections are single-route pages.
 
 ## Frontend Package Management
 *   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
@@ -47,7 +47,7 @@ frontend/
     │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
-    │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, DetectionTab, BulkDeleteDialog)
+    │   ├── classifier/          (TrainingTab, HydrophoneTab, LabelingTab, EmbeddingsPage, DetectionTab, BulkDeleteDialog)
     │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, SourceSelector, EmbeddingStatusPanel, InferencePanel, LabelingWorkspace, RetrainFooter, VocalizationInferenceForm, VocalizationResultsBrowser, TrainingDataView)
     │   ├── timeline/            (TimelineViewer, SpectrogramViewport, TileCanvas, LabelEditor, LabelToolbar, VocalizationOverlay, etc.)
     │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
