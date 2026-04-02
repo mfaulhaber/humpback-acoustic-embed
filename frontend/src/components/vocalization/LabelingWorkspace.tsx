@@ -186,9 +186,9 @@ export function LabelingWorkspace({
     return m;
   }, [vocabulary]);
 
-  // Map sort mode to API parameter (all sorting is server-side to avoid
-  // truncation bugs when result count exceeds the fetch limit)
-  const apiSort = sortMode === "chronological" ? undefined : sortMode;
+  // All sorting is server-side to avoid truncation when result count
+  // exceeds the fetch limit.
+  const apiSort = sortMode;
 
   // Fetch results (API max is 1000 per page)
   const { data: allRows = [], isLoading } = useVocClassifierInferenceResults(
@@ -200,16 +200,8 @@ export function LabelingWorkspace({
     },
   );
 
-  // Sort rows — only chronological is client-side (natural file order is
-  // already roughly chronological, so truncation is acceptable)
-  const sortedRows = useMemo(() => {
-    if (sortMode !== "chronological") return allRows;
-    const rows = [...allRows];
-    rows.sort(
-      (a, b) => (a.start_utc ?? a.start_sec) - (b.start_utc ?? b.start_sec),
-    );
-    return rows;
-  }, [allRows, sortMode]);
+  // Server handles all sorting — no client-side re-sort needed.
+  const sortedRows = allRows;
 
   const hasConfidence = allRows.length > 0 && allRows[0].confidence != null;
 

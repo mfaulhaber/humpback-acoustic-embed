@@ -379,6 +379,8 @@ async def get_vocalization_inference_results(
                 (max(r["scores"].values()) if r["scores"] else 0.0) - avg_threshold
             )
         )
+    elif sort == "chronological":
+        rows.sort(key=lambda r: r.get("start_utc") or r.get("start_sec") or 0.0)
 
     # Paginate
     page = rows[offset : offset + limit]

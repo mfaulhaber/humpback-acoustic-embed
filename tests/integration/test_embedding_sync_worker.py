@@ -14,7 +14,10 @@ from humpback.classifier.detection_rows import (
     ROW_STORE_FIELDNAMES,
     write_detection_row_store,
 )
-from humpback.classifier.detector import write_detection_embeddings
+from humpback.classifier.detector import (
+    diff_row_store_vs_embeddings,
+    write_detection_embeddings,
+)
 from humpback.database import Base, create_engine, create_session_factory
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
@@ -301,3 +304,112 @@ async def test_sync_skips_when_audio_unavailable(app_settings):
         assert summary["skipped"] == 1
         assert len(summary["skipped_reasons"]) == 1
         assert summary["unchanged"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_fractional_second_timestamps(app_settings):
+    """Sync correctly handles row-store rows with .5 fractional-second timestamps.
+
+    Regression test: rows whose start_utc has sub-second precision caused an
+    infinite sync loop because the sync worker truncated the synthetic filename
+    to integer seconds and set start_sec=0.0, producing a 0.5s delta that failed
+    the strict < tolerance check.
+    """
+    engine = create_engine(app_settings.database_url)
+    await _init_db(engine)
+    sf = create_session_factory(engine)
+
+    audio_folder = app_settings.storage_root / "test-audio"
+    audio_folder.mkdir(parents=True, exist_ok=True)
+    _write_wav(audio_folder / "20211101T085000Z.wav", duration=15.0)
+
+    job_id, _ = await _setup_detection_job(sf, app_settings, audio_folder)
+
+    ensure_dir(detection_dir(app_settings.storage_root, job_id))
+    rs_path = detection_row_store_path(app_settings.storage_root, job_id)
+    emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+
+    fname = "20211101T085000Z.wav"
+    # Row store: one integer-second row (matched) + one .5-second row (missing)
+    rows = [
+        _make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5),
+        _make_row(_BASE_EPOCH + 5.5, _BASE_EPOCH + 10.5),
+    ]
+    write_detection_row_store(rs_path, rows)
+
+    # Embeddings: only the integer-second row exists
+    embs = [_make_emb(fname, 0.0, 5.0, dim=8)]
+    write_detection_embeddings(embs, emb_path)
+
+    # --- First sync: should add the .5-second row ---
+    async with sf() as session:
+        sync_job = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
+        session.add(sync_job)
+        await session.commit()
+        sync_job_id = sync_job.id
+
+    async with sf() as session:
+        from sqlalchemy import select
+
+        result = await session.execute(
+            select(DetectionEmbeddingJob).where(DetectionEmbeddingJob.id == sync_job_id)
+        )
+        sync_job = result.scalar_one()
+        await run_detection_embedding_job(session, sync_job, app_settings)
+
+    async with sf() as session:
+        from sqlalchemy import select
+
+        result = await session.execute(
+            select(DetectionEmbeddingJob).where(DetectionEmbeddingJob.id == sync_job_id)
+        )
+        completed = result.scalar_one()
+        assert completed.status == "complete"
+        assert completed.result_summary is not None
+        summary = json.loads(completed.result_summary)
+        assert summary["added"] == 1
+        assert summary["removed"] == 0
+        assert summary["unchanged"] == 1
+
+    # --- Verify the diff now shows in-sync ---
+    diff = diff_row_store_vs_embeddings(rs_path, emb_path)
+    assert diff.missing == [], (
+        f"Expected no missing rows after sync, got {len(diff.missing)}"
+    )
+    assert diff.orphaned_indices == [], (
+        f"Expected no orphans after sync, got {len(diff.orphaned_indices)}"
+    )
+
+    # --- Second sync: should be a no-op ---
+    async with sf() as session:
+        sync_job2 = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
+        session.add(sync_job2)
+        await session.commit()
+        sync_job2_id = sync_job2.id
+
+    async with sf() as session:
+        from sqlalchemy import select
+
+        result = await session.execute(
+            select(DetectionEmbeddingJob).where(
+                DetectionEmbeddingJob.id == sync_job2_id
+            )
+        )
+        sync_job2 = result.scalar_one()
+        await run_detection_embedding_job(session, sync_job2, app_settings)
+
+    async with sf() as session:
+        from sqlalchemy import select
+
+        result = await session.execute(
+            select(DetectionEmbeddingJob).where(
+                DetectionEmbeddingJob.id == sync_job2_id
+            )
+        )
+        completed2 = result.scalar_one()
+        assert completed2.status == "complete"
+        assert completed2.result_summary is not None
+        summary2 = json.loads(completed2.result_summary)
+        assert summary2["added"] == 0
+        assert summary2["removed"] == 0
+        assert summary2["unchanged"] == 2

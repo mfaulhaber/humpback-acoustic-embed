@@ -150,6 +150,23 @@ class TestDiffRowStoreVsEmbeddings:
         assert result.missing == []
         assert result.orphaned_indices == []
 
+    def test_tolerance_exact_boundary(self, tmp_path):
+        """Timestamps at exactly the tolerance boundary match (<=, not <)."""
+        rs_path = tmp_path / "row_store.parquet"
+        emb_path = tmp_path / "emb.parquet"
+
+        rows = [_make_row(_BASE_EPOCH + 10.5, _BASE_EPOCH + 15.5)]
+        write_detection_row_store(rs_path, rows)
+
+        # Embedding whose reconstructed UTC is exactly _SYNC_TOLERANCE_SEC away.
+        embs = [_make_emb(_SYNTH_FNAME, 10.0, 15.0)]
+        write_detection_embeddings(embs, emb_path)
+
+        result = diff_row_store_vs_embeddings(rs_path, emb_path)
+        assert result.matched_count == 1
+        assert result.missing == []
+        assert result.orphaned_indices == []
+
     def test_tolerance_outside(self, tmp_path):
         """Timestamps outside tolerance do not match."""
         rs_path = tmp_path / "row_store.parquet"
