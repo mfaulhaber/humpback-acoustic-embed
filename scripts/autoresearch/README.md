@@ -2,6 +2,30 @@
 
 Constrained hyperparameter search over binary classifier heads trained on frozen Perch embeddings. The primary optimization target is reducing **high-confidence false positives** (negatives scored >= 0.90) while preserving acceptable recall.
 
+## Process Overview
+
+The autoresearch workflow has three stages:
+
+**1. Build a data manifest** — Pull embeddings from the platform into a stable, inspectable JSON file with fixed train/val/test splits. Two data sources are available:
+- **Embedding sets** from classifier training jobs (curated positives and negatives)
+- **Detection jobs** with human labels (deployment-realistic positives, labeled negatives like ship/background, and unlabeled high-confidence windows as hard negatives)
+
+**2. Run the search** — The search loop randomly samples classifier configurations from a bounded hyperparameter space (normalization, PCA, classifier type, class weights, calibration, threshold, context pooling). Each trial trains a classifier, evaluates on the validation split, and scores the result using a custom objective that heavily penalizes high-confidence false positives. Results are persisted incrementally.
+
+**3. Analyze and iterate** — Review `best_run.json` for the winning config and `top_false_positives.json` for the most confusing negatives. Optionally run a second search phase that feeds those false positives back as hard negatives in training. Transfer the winning configuration manually to the platform's classifier training.
+
+```
+generate_manifest.py        run_autoresearch.py          Analyze results
+        |                          |                          |
+  DB + Parquet files    -->   data_manifest.json   -->   results/best_run.json
+  (embedding sets,            (fixed splits,              results/search_history.json
+   detection jobs)             all sources)               results/top_false_positives.json
+                                    |
+                                    v
+                          Optional: phase 2 search
+                          with --hard-negative-from
+```
+
 ## Quick Start
 
 ```bash
