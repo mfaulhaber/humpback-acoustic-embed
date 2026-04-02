@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.classifier.detector import (
     _build_file_timeline,
+    _file_base_epoch,
     diff_row_store_vs_embeddings,
     resolve_audio_for_window,
     resolve_audio_for_window_hydrophone,
@@ -336,8 +337,9 @@ async def _run_sync_mode(
 
             window_dt = datetime.fromtimestamp(start_utc, tz=timezone.utc)
             synth_fname = window_dt.strftime("%Y%m%dT%H%M%SZ") + ".wav"
-            record_start_sec = 0.0
-            record_end_sec = end_utc - start_utc
+            fname_epoch = _file_base_epoch(Path(synth_fname))
+            record_start_sec = start_utc - fname_epoch
+            record_end_sec = end_utc - fname_epoch
         elif det_job.audio_folder and file_timeline:
             # Find the covering file to get relative start_sec/end_sec.
             synth_fname = ""
@@ -358,15 +360,17 @@ async def _run_sync_mode(
 
                 window_dt = datetime.fromtimestamp(start_utc, tz=timezone.utc)
                 synth_fname = window_dt.strftime("%Y%m%dT%H%M%SZ") + ".wav"
-                record_start_sec = 0.0
-                record_end_sec = end_utc - start_utc
+                fname_epoch = _file_base_epoch(Path(synth_fname))
+                record_start_sec = start_utc - fname_epoch
+                record_end_sec = end_utc - fname_epoch
         else:
             from datetime import datetime, timezone
 
             window_dt = datetime.fromtimestamp(start_utc, tz=timezone.utc)
             synth_fname = window_dt.strftime("%Y%m%dT%H%M%SZ") + ".wav"
-            record_start_sec = 0.0
-            record_end_sec = end_utc - start_utc
+            fname_epoch = _file_base_epoch(Path(synth_fname))
+            record_start_sec = start_utc - fname_epoch
+            record_end_sec = end_utc - fname_epoch
 
         new_records.append(
             {

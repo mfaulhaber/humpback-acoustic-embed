@@ -887,7 +887,7 @@ def diff_row_store_vs_embeddings(
         for emb_idx, (es, ee) in enumerate(emb_pairs):
             if emb_idx in emb_matched:
                 continue
-            if abs(rs - es) < tol and abs(re_ - ee) < tol:
+            if abs(rs - es) <= tol and abs(re_ - ee) <= tol:
                 emb_matched.add(emb_idx)
                 matched_count += 1
                 found = True
