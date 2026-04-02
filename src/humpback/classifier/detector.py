@@ -799,3 +799,267 @@ def read_detection_embedding(
         if abs(row_start - start_sec) < 0.01 and abs(row_end - end_sec) < 0.01:
             return table.column("embedding")[i].as_py()
     return None
+
+
+# ---------------------------------------------------------------------------
+# Embedding sync: diff row store vs embeddings parquet
+# ---------------------------------------------------------------------------
+
+_SYNC_TOLERANCE_SEC = 0.5
+
+
+class EmbeddingDiffResult:
+    """Result of comparing a detection row store against its embeddings parquet."""
+
+    __slots__ = ("missing", "orphaned_indices", "matched_count")
+
+    def __init__(
+        self,
+        missing: list[dict[str, str]],
+        orphaned_indices: list[int],
+        matched_count: int,
+    ) -> None:
+        self.missing = missing
+        self.orphaned_indices = orphaned_indices
+        self.matched_count = matched_count
+
+
+def _embedding_utc_pairs(
+    emb_path: Path,
+) -> list[tuple[float, float]]:
+    """Return (start_utc, end_utc) for every row in an embeddings parquet.
+
+    Each embedding stores (filename, start_sec, end_sec) relative to the
+    file's base epoch.  This converts them to absolute UTC.
+    """
+    table = pq.read_table(str(emb_path), columns=["filename", "start_sec", "end_sec"])
+    filenames = table.column("filename").to_pylist()
+    start_secs = table.column("start_sec").to_pylist()
+    end_secs = table.column("end_sec").to_pylist()
+
+    # Cache base epoch per unique filename to avoid repeated parsing.
+    epoch_cache: dict[str, float] = {}
+    pairs: list[tuple[float, float]] = []
+    for fname, ss, es in zip(filenames, start_secs, end_secs):
+        if fname not in epoch_cache:
+            epoch_cache[fname] = _file_base_epoch(Path(fname))
+        base = epoch_cache[fname]
+        pairs.append((base + float(ss), base + float(es)))
+    return pairs
+
+
+def diff_row_store_vs_embeddings(
+    row_store_path: Path,
+    embeddings_path: Path,
+) -> EmbeddingDiffResult:
+    """Compare a detection row store against its embeddings parquet.
+
+    Returns an ``EmbeddingDiffResult`` with:
+    * ``missing`` – row-store rows that have no matching embedding.
+    * ``orphaned_indices`` – indices into the embeddings parquet with no
+      matching row-store entry (should be removed).
+    * ``matched_count`` – number of row-store rows with a matching embedding.
+
+    Matching uses a tolerance of ``_SYNC_TOLERANCE_SEC`` seconds on both
+    ``start_utc`` and ``end_utc``.
+    """
+    from humpback.classifier.detection_rows import read_detection_row_store
+
+    _, rows = read_detection_row_store(row_store_path)
+    emb_pairs = _embedding_utc_pairs(embeddings_path)
+
+    # Build list of (start_utc, end_utc) from row store.
+    row_pairs: list[tuple[float, float]] = []
+    for r in rows:
+        s = r.get("start_utc", "")
+        e = r.get("end_utc", "")
+        if s and e:
+            row_pairs.append((float(s), float(e)))
+
+    # For each row-store entry, find a matching embedding.
+    tol = _SYNC_TOLERANCE_SEC
+    emb_matched: set[int] = set()
+    missing: list[dict[str, str]] = []
+    matched_count = 0
+
+    for row_idx, (rs, re_) in enumerate(row_pairs):
+        found = False
+        for emb_idx, (es, ee) in enumerate(emb_pairs):
+            if emb_idx in emb_matched:
+                continue
+            if abs(rs - es) < tol and abs(re_ - ee) < tol:
+                emb_matched.add(emb_idx)
+                matched_count += 1
+                found = True
+                break
+        if not found:
+            missing.append(rows[row_idx])
+
+    # Orphaned = embedding indices not matched to any row.
+    orphaned_indices = [i for i in range(len(emb_pairs)) if i not in emb_matched]
+
+    return EmbeddingDiffResult(
+        missing=missing,
+        orphaned_indices=orphaned_indices,
+        matched_count=matched_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audio resolution for embedding sync
+# ---------------------------------------------------------------------------
+
+
+def _build_file_timeline(
+    audio_folder: Path,
+    target_sample_rate: int,
+) -> list[tuple[float, Path, float]]:
+    """Build a sorted list of (base_epoch, file_path, duration_sec) for an audio folder.
+
+    Only includes files with a parseable timestamp in the filename.
+    Uses soundfile.info() for fast header-only duration reads.
+    """
+    import soundfile as sf
+
+    entries: list[tuple[float, Path, float]] = []
+    audio_files = sorted(
+        p for p in audio_folder.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS
+    )
+    for af in audio_files:
+        base = _file_base_epoch(af)
+        if base == 0.0:
+            continue
+        try:
+            info = sf.info(str(af))
+            duration = info.duration
+        except Exception:
+            logger.debug("Cannot read info for %s, skipping", af)
+            continue
+        entries.append((base, af, duration))
+    entries.sort(key=lambda e: e[0])
+    return entries
+
+
+def resolve_audio_for_window(
+    start_utc: float,
+    end_utc: float,
+    audio_folder: Path,
+    target_sample_rate: int,
+    *,
+    _file_timeline: list[tuple[float, Path, float]] | None = None,
+    _audio_cache: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray | None, str | None]:
+    """Load audio for a UTC window from a local audio folder.
+
+    Returns ``(audio_array, None)`` on success, or ``(None, reason)``
+    when the audio cannot be resolved.
+
+    The optional ``_file_timeline`` parameter accepts a pre-built file
+    timeline (from ``_build_file_timeline``) to avoid re-scanning the
+    folder for every window.
+
+    The optional ``_audio_cache`` dict caches decoded+resampled audio
+    keyed by file path, avoiding repeated decoding when multiple windows
+    come from the same file.
+    """
+    window_dur = end_utc - start_utc
+    if window_dur <= 0:
+        return None, "invalid window (end <= start)"
+
+    timeline = _file_timeline or _build_file_timeline(audio_folder, target_sample_rate)
+    if not timeline:
+        return None, "no audio files with parseable timestamps"
+
+    # Find the file that covers start_utc.
+    covering: tuple[float, Path, float] | None = None
+    for base_epoch, fpath, dur in timeline:
+        file_end = base_epoch + dur
+        if base_epoch <= start_utc + 0.01 and file_end >= end_utc - 0.01:
+            covering = (base_epoch, fpath, dur)
+            break
+
+    if covering is None:
+        return None, f"no file covers UTC range [{start_utc}, {end_utc}]"
+
+    base_epoch, fpath, _ = covering
+    offset_sec = start_utc - base_epoch
+    cache_key = str(fpath)
+
+    if _audio_cache is not None and cache_key in _audio_cache:
+        audio_data = _audio_cache[cache_key]
+    else:
+        try:
+            audio_data, sr = decode_audio(fpath)
+            audio_data = resample(audio_data, sr, target_sample_rate)
+        except Exception as exc:
+            return None, f"audio decode failed: {exc}"
+        if _audio_cache is not None:
+            _audio_cache[cache_key] = audio_data
+
+    start_sample = int(offset_sec * target_sample_rate)
+    end_sample = int((offset_sec + window_dur) * target_sample_rate)
+
+    if start_sample < 0:
+        start_sample = 0
+    if end_sample > len(audio_data):
+        return None, (
+            f"window extends past file end "
+            f"(need sample {end_sample}, file has {len(audio_data)})"
+        )
+
+    window_audio = audio_data[start_sample:end_sample]
+    return window_audio, None
+
+
+def resolve_audio_for_window_hydrophone(
+    start_utc: float,
+    end_utc: float,
+    provider: Any,
+    target_sample_rate: int,
+) -> tuple[np.ndarray | None, str | None]:
+    """Load audio for a UTC window via a hydrophone ArchiveProvider.
+
+    Uses ``iter_audio_chunks`` with a tight time range so only the
+    needed segment(s) are fetched.  With warm caches this reads from
+    local disk.
+
+    Returns ``(audio_array, None)`` on success, or ``(None, reason)``
+    when the audio cannot be resolved.
+    """
+    from humpback.classifier.s3_stream import iter_audio_chunks
+
+    window_dur = end_utc - start_utc
+    if window_dur <= 0:
+        return None, "invalid window (end <= start)"
+
+    # Request a chunk covering the window with a small margin.
+    margin = 1.0
+    try:
+        chunks = list(
+            iter_audio_chunks(
+                provider,
+                start_utc - margin,
+                end_utc + margin,
+                chunk_seconds=window_dur + 2 * margin,
+                target_sr=target_sample_rate,
+            )
+        )
+    except Exception as exc:
+        return None, f"provider audio fetch failed: {exc}"
+
+    if not chunks:
+        return None, "provider returned no audio for time range"
+
+    # chunks: list of (audio_ndarray, chunk_start_utc_dt, segs_done, segs_total)
+    # Concatenate and extract the precise window.
+    for audio_data, chunk_start_dt, _, _ in chunks:
+        chunk_start = chunk_start_dt.timestamp()
+        chunk_end = chunk_start + len(audio_data) / target_sample_rate
+        if chunk_start <= start_utc + 0.01 and chunk_end >= end_utc - 0.01:
+            offset = start_utc - chunk_start
+            start_sample = int(offset * target_sample_rate)
+            end_sample = start_sample + int(window_dur * target_sample_rate)
+            if end_sample <= len(audio_data):
+                return audio_data[start_sample:end_sample], None
+
+    return None, "audio chunk does not fully cover the window"

@@ -6,6 +6,7 @@ import { useTimelineConfidence, useTimelineDetections, usePrepareStatus, useSave
 import { useHydrophoneDetectionJobs, useExtractLabeledSamples } from "@/hooks/queries/useClassifier";
 import { useVocalizationOverlay } from "@/hooks/queries/useVocalizationOverlay";
 import { useLabelEdits } from "@/hooks/queries/useLabelEdits";
+import { useEmbeddingStatus, useSyncEmbeddings, useEmbeddingGenerationStatus } from "@/hooks/queries/useVocalization";
 import { timelineAudioUrl } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
 import { ZoomSelector } from "./ZoomSelector";
@@ -56,6 +57,15 @@ export function TimelineViewer() {
   const [labelMode, setLabelMode] = useState(false);
   const [labelSubMode, setLabelSubMode] = useState<"select" | "add">("select");
   const [selectedLabel, setSelectedLabel] = useState<LabelType | null>(null);
+
+  // Embedding sync state
+  const { data: embeddingStatus } = useEmbeddingStatus(jobId ?? null);
+  const { data: embGenStatus } = useEmbeddingGenerationStatus(jobId ?? null);
+  const syncMut = useSyncEmbeddings();
+  const isSyncing = embGenStatus?.status === "queued" || embGenStatus?.status === "running";
+  const lastSyncSummary = embGenStatus?.mode === "sync" && embGenStatus?.status === "complete"
+    ? embGenStatus.result_summary
+    : null;
   const [extractOpen, setExtractOpen] = useState(false);
 
   // Double-buffered audio elements for gapless playback
@@ -356,6 +366,10 @@ export function TimelineViewer() {
         hydrophone={job.hydrophone_name ?? job.hydrophone_id ?? ""}
         startTimestamp={job.start_timestamp ?? 0}
         endTimestamp={job.end_timestamp ?? 0}
+        syncNeeded={embeddingStatus?.sync_needed ?? false}
+        isSyncing={isSyncing}
+        syncSummary={lastSyncSummary}
+        onSyncEmbeddings={() => { if (jobId) syncMut.mutate(jobId); }}
       />
 
       {/* Main spectrogram viewport */}

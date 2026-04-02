@@ -11,6 +11,8 @@ class DetectionEmbeddingJob(UUIDMixin, TimestampMixin, Base):
 
     status: Mapped[str] = mapped_column(default="queued")
     detection_job_id: Mapped[str]
+    mode: Mapped[Optional[str]] = mapped_column(default=None)
     progress_current: Mapped[Optional[int]] = mapped_column(default=None)
     progress_total: Mapped[Optional[int]] = mapped_column(default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    result_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
