@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.classifier.detector import (
     _build_file_timeline,
-    _file_base_epoch,
     diff_row_store_vs_embeddings,
+    match_embedding_records_to_row_store,
     resolve_audio_for_window,
     resolve_audio_for_window_hydrophone,
     run_detection,
@@ -151,39 +151,9 @@ async def _run_full_mode(
             from humpback.classifier.detection_rows import read_detection_row_store
 
             _, rs_rows = read_detection_row_store(rs_path)
-            # Build UTC lookup from row store for matching.
-            rs_utc_index: list[tuple[float, float, str]] = []
-            for r in rs_rows:
-                s = r.get("start_utc", "")
-                e = r.get("end_utc", "")
-                rid = r.get("row_id", "")
-                if s and e and rid:
-                    rs_utc_index.append((float(s), float(e), rid))
-
-            # Convert each embedding to row_id format by matching UTC.
-            row_id_records = []
-            for emb_rec in detection_embeddings:
-                fname = emb_rec["filename"]
-                base = _file_base_epoch(Path(fname))
-                emb_start = base + float(emb_rec["start_sec"])
-                emb_end = base + float(emb_rec["end_sec"])
-                matched_rid = None
-                for rs_start, rs_end, rid in rs_utc_index:
-                    if (
-                        abs(emb_start - rs_start) <= 0.5
-                        and abs(emb_end - rs_end) <= 0.5
-                    ):
-                        matched_rid = rid
-                        break
-                if matched_rid:
-                    row_id_records.append(
-                        {
-                            "row_id": matched_rid,
-                            "embedding": emb_rec["embedding"],
-                            "confidence": emb_rec.get("confidence"),
-                        }
-                    )
-            detection_embeddings = row_id_records
+            detection_embeddings = match_embedding_records_to_row_store(
+                detection_embeddings, rs_rows
+            )
 
         write_detection_embeddings(detection_embeddings, emb_path)
 

@@ -749,6 +749,51 @@ def read_window_diagnostics_table(
     return pq.read_table(str(path), **read_kwargs)
 
 
+def match_embedding_records_to_row_store(
+    records: list[dict],
+    row_store_rows: list[dict[str, str]],
+) -> list[dict]:
+    """Match accumulated embedding records to row-store rows and add ``row_id``.
+
+    Embedding records produced during detection have ``filename`` + ``start_sec``
+    / ``end_sec`` but no ``row_id``.  The row store (finalized after detection)
+    carries ``row_id`` + ``start_utc`` / ``end_utc``.  This function converts the
+    filename-relative offsets to UTC, matches against the row store within 0.5 s
+    tolerance, and returns records keyed by ``row_id``.
+    """
+    if not records or not row_store_rows:
+        return []
+
+    rs_utc_index: list[tuple[float, float, str]] = []
+    for r in row_store_rows:
+        s = r.get("start_utc", "")
+        e = r.get("end_utc", "")
+        rid = r.get("row_id", "")
+        if s and e and rid:
+            rs_utc_index.append((float(s), float(e), rid))
+
+    matched: list[dict] = []
+    for rec in records:
+        fname = rec.get("filename", "")
+        base = _file_base_epoch(Path(fname)) if fname else 0.0
+        emb_start = base + float(rec["start_sec"])
+        emb_end = base + float(rec["end_sec"])
+        matched_rid = None
+        for rs_start, rs_end, rid in rs_utc_index:
+            if abs(emb_start - rs_start) <= 0.5 and abs(emb_end - rs_end) <= 0.5:
+                matched_rid = rid
+                break
+        if matched_rid:
+            matched.append(
+                {
+                    "row_id": matched_rid,
+                    "embedding": rec["embedding"],
+                    "confidence": rec.get("confidence"),
+                }
+            )
+    return matched
+
+
 def write_detection_embeddings(records: list[dict], path: Path) -> None:
     """Write per-detection embedding records to a Parquet file.
 

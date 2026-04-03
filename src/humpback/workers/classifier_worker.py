@@ -865,14 +865,6 @@ async def run_detection_job(
         else:
             diag_path = None
 
-        # Write detection embeddings
-        if detection_embeddings:
-            from humpback.classifier.detector import write_detection_embeddings
-
-            emb_path = ddir / "detection_embeddings.parquet"
-            write_detection_embeddings(detection_embeddings, emb_path)
-            summary["has_detection_embeddings"] = True
-
         ensure_detection_row_store(
             row_store_path=rs_path,
             diagnostics_path=diag_path,
@@ -880,6 +872,21 @@ async def run_detection_job(
             refresh_existing=True,
             detection_mode=job.detection_mode,
         )
+
+        # Write detection embeddings (after row store so row_ids are available)
+        if detection_embeddings:
+            from humpback.classifier.detector import (
+                match_embedding_records_to_row_store,
+                write_detection_embeddings,
+            )
+
+            _, rs_rows = read_detection_row_store(rs_path)
+            detection_embeddings = match_embedding_records_to_row_store(
+                detection_embeddings, rs_rows
+            )
+            emb_path = ddir / "detection_embeddings.parquet"
+            write_detection_embeddings(detection_embeddings, emb_path)
+            summary["has_detection_embeddings"] = True
 
         summary_path = ddir / "run_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2))
@@ -1222,10 +1229,25 @@ async def run_hydrophone_detection_job(
         child_pid = int(summary["child_pid"]) if "child_pid" in summary else None
 
         if cancel_event.is_set():
-            # Write partial detection embeddings on cancel
+            # Finalize row store with diagnostics enrichment
+            ensure_detection_row_store(
+                row_store_path=rs_path,
+                diagnostics_path=diag_path if diag_path.exists() else None,
+                window_size_seconds=cm.window_size_seconds,
+                refresh_existing=True,
+                detection_mode=job.detection_mode,
+            )
+            # Write partial detection embeddings on cancel (after row store)
             if accumulated_embedding_records:
-                from humpback.classifier.detector import write_detection_embeddings
+                from humpback.classifier.detector import (
+                    match_embedding_records_to_row_store,
+                    write_detection_embeddings,
+                )
 
+                _, rs_rows = read_detection_row_store(rs_path)
+                accumulated_embedding_records = match_embedding_records_to_row_store(
+                    accumulated_embedding_records, rs_rows
+                )
                 emb_path = ddir / "detection_embeddings.parquet"
                 write_detection_embeddings(accumulated_embedding_records, emb_path)
                 summary["has_detection_embeddings"] = True
@@ -1236,14 +1258,6 @@ async def run_hydrophone_detection_job(
                 execution_mode=execution_mode,
                 peak_worker_rss_mb=peak_worker_rss_mb,
                 child_pid=child_pid,
-            )
-            # Finalize row store with diagnostics enrichment
-            ensure_detection_row_store(
-                row_store_path=rs_path,
-                diagnostics_path=diag_path if diag_path.exists() else None,
-                window_size_seconds=cm.window_size_seconds,
-                refresh_existing=True,
-                detection_mode=job.detection_mode,
             )
             await session.execute(
                 update(DetectionJob)
@@ -1269,10 +1283,17 @@ async def run_hydrophone_detection_job(
             detection_mode=job.detection_mode,
         )
 
-        # Write detection embeddings
+        # Write detection embeddings (after row store so row_ids are available)
         if accumulated_embedding_records:
-            from humpback.classifier.detector import write_detection_embeddings
+            from humpback.classifier.detector import (
+                match_embedding_records_to_row_store,
+                write_detection_embeddings,
+            )
 
+            _, rs_rows = read_detection_row_store(rs_path)
+            accumulated_embedding_records = match_embedding_records_to_row_store(
+                accumulated_embedding_records, rs_rows
+            )
             emb_path = ddir / "detection_embeddings.parquet"
             write_detection_embeddings(accumulated_embedding_records, emb_path)
             summary["has_detection_embeddings"] = True
