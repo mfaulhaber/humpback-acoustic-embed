@@ -451,3 +451,98 @@ def test_load_manifest_split_embeddings_supports_mixed_sources(
     assert summary["split"] == "train"
     assert summary["positive_count"] == 2
     assert summary["negative_count"] == 2
+
+
+def test_load_manifest_split_data_returns_full_context(tmp_path: Path) -> None:
+    """load_manifest_split_data returns manifest, cache, and examples for pooling."""
+    from humpback.classifier.trainer import load_manifest_split_data
+
+    es_path = tmp_path / "embedding_set.parquet"
+    det_path = tmp_path / "detections" / "job-1" / "detection_embeddings.parquet"
+    _write_embedding_set_parquet(
+        es_path,
+        rows=[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+    )
+    _write_detection_embeddings_parquet(
+        det_path,
+        row_ids=["neg-1", "neg-2", "neg-3"],
+        rows=[[-1.0, -2.0], [-3.0, -4.0], [-5.0, -6.0]],
+    )
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "metadata": {},
+                "examples": [
+                    {
+                        "id": "pos-0",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(es_path),
+                        "row_index": 0,
+                    },
+                    {
+                        "id": "pos-1",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(es_path),
+                        "row_index": 1,
+                    },
+                    {
+                        "id": "pos-2",
+                        "split": "val",
+                        "label": 1,
+                        "parquet_path": str(es_path),
+                        "row_index": 2,
+                    },
+                    {
+                        "id": "neg-1",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-1",
+                    },
+                    {
+                        "id": "neg-2",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-2",
+                    },
+                    {
+                        "id": "neg-3",
+                        "split": "val",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-3",
+                    },
+                ],
+            }
+        )
+    )
+
+    data = load_manifest_split_data(manifest_path, split="train")
+
+    # Check arrays
+    assert data.X.shape == (4, 2)
+    assert data.y.shape == (4,)
+    assert int(np.sum(data.y == 1)) == 2
+    assert int(np.sum(data.y == 0)) == 2
+
+    # Check examples metadata preserved
+    assert len(data.examples) == 4
+    assert all(ex["split"] == "train" for ex in data.examples)
+
+    # Check parquet cache has both sources
+    assert str(es_path) in data.parquet_cache
+    assert str(det_path) in data.parquet_cache
+
+    # Check manifest is the full manifest (all examples, not just train)
+    assert len(data.manifest["examples"]) == 6
+
+    # Check source summary
+    assert data.source_summary["split"] == "train"
+    assert data.source_summary["positive_count"] == 2
+    assert data.source_summary["negative_count"] == 2
+    assert data.source_summary["vector_dim"] == 2

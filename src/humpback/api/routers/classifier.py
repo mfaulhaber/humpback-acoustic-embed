@@ -154,7 +154,11 @@ def _autoresearch_candidate_to_summary(candidate) -> AutoresearchCandidateSummar
     )
 
 
-def _autoresearch_candidate_to_detail(candidate) -> AutoresearchCandidateDetailOut:
+def _autoresearch_candidate_to_detail(
+    candidate,
+    *,
+    replay_verification: dict | None = None,
+) -> AutoresearchCandidateDetailOut:
     summary = _autoresearch_candidate_to_summary(candidate)
     return AutoresearchCandidateDetailOut(
         **summary.model_dump(),
@@ -175,6 +179,7 @@ def _autoresearch_candidate_to_detail(candidate) -> AutoresearchCandidateDetailO
         )
         if candidate.prediction_disagreements_preview
         else None,
+        replay_verification=replay_verification,
     )
 
 
@@ -310,7 +315,19 @@ async def get_autoresearch_candidate(
     )
     if candidate is None:
         raise HTTPException(404, "Autoresearch candidate not found")
-    return _autoresearch_candidate_to_detail(candidate)
+
+    replay_verification = None
+    if candidate.new_model_id:
+        from humpback.models.classifier import ClassifierModel
+
+        model = await session.get(ClassifierModel, candidate.new_model_id)
+        if model and model.training_summary:
+            summary = json.loads(model.training_summary)
+            replay_verification = summary.get("replay_verification")
+
+    return _autoresearch_candidate_to_detail(
+        candidate, replay_verification=replay_verification
+    )
 
 
 @router.post("/autoresearch-candidates/{candidate_id}/training-jobs", status_code=201)

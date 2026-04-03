@@ -231,6 +231,7 @@ See [docs/reference/storage-layout.md](docs/reference/storage-layout.md) for ful
 - `timeline_prepare_workers` defaults to `2`; startup/full tile batches share one per-job `ref_db` and may render through a bounded worker pool.
 - `timeline_startup_radius_tiles` defaults to `2`; the Timeline button now triggers startup-scoped cache warming around the initial viewport rather than a full all-zoom warmup.
 - `timeline_startup_coarse_levels` defaults to `1`, `timeline_neighbor_prefetch_radius` defaults to `1`, `timeline_tile_memory_cache_items` defaults to `256`, `timeline_manifest_memory_cache_items` defaults to `8`, and `timeline_pcm_memory_cache_mb` defaults to `128` for bounded in-memory timeline reuse.
+- `replay_metric_tolerance` defaults to `0.01`. `HUMPBACK_REPLAY_METRIC_TOLERANCE` controls the absolute tolerance for rate metrics (precision, recall, fp_rate, high_conf_fp_rate) during replay verification of candidate-backed training. Count metrics (tp, fp, fn, tn) must match exactly.
 
 ### 8.7 Behavioral Constraints
 
@@ -247,6 +248,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Vocalization type name guard**: `"(Negative)"` is a reserved label string and cannot be used as a vocalization type name
 - **Detection job deletion guard**: detection jobs with vocalization labels or training dataset references cannot be deleted; returns HTTP 409 with dependency details
 - **Detection–vocalization consistency**: detection rows and vocalization labels are linked by stable `row_id` (UUID4). Deleting a detection row via batch edit cascade-deletes associated vocalization labels. No version tracking or reconciliation needed.
+- **Candidate-backed replay training**: `source_mode="autoresearch_candidate"` training jobs use exact replay via `promoted_config` and the shared `replay.py` module — they bypass `train_binary_classifier` and `map_autoresearch_config_to_training_parameters`. Replay verification compares produced metrics against imported candidate metrics and persists the result in `training_summary` and `source_comparison_context`.
 
 ### 8.8 Classifier API Surface
 
@@ -264,7 +266,7 @@ Classifier training currently has three distinct flows:
   - `GET /classifier/retrain-workflows`
   - `GET /classifier/retrain-workflows/{id}`
 
-Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model.
+Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model. After candidate-backed training completes, the training job's `source_comparison_context` and the model's `training_summary` include a `replay_verification` dict with status (`"verified"`/`"mismatch"`), per-split metric comparisons, and effective config. The candidate detail endpoint (`GET /classifier/autoresearch-candidates/{id}`) also exposes `replay_verification` when the linked model exists.
 
 ---
 
@@ -283,7 +285,7 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 - Multi-label vocalization classifier: managed vocabulary, binary relevance training (per-type sklearn pipeline), per-type threshold optimization, multi-source inference (detection job / embedding set / rescore), paginated results with client-side threshold filtering, TSV export
 - Vocalization labeling workspace: source abstraction (detection jobs / embedding sets / local folders), progressive pipeline (source → embeddings → inference → labeling), local-state label accumulation with batch Save/Cancel, three visual label states (suggested/saved/pending), score-sorted results by default, click-to-expand spectrogram popup, one-click retrain loop
 - Training dataset review: unified editable snapshot of training data (from embedding sets and detection jobs), type-filtered positive/negative browsing with large inline spectrograms, batch label editing with save/cancel, dataset extend for incremental source addition, retrain from edited labels
-- Autoresearch candidate promotion: import reviewed manifest-backed autoresearch bundles, inspect split deltas versus production, and create candidate-backed training jobs with persisted provenance
+- Autoresearch candidate promotion: import reviewed manifest-backed autoresearch bundles, inspect split deltas versus production, and create candidate-backed training jobs with persisted provenance. AR-v1 exact replay: candidates with PCA, probability calibration (platt/isotonic), and context pooling (mean3/max3) are promotable via shared replay module with replay verification against imported candidate metrics
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans)
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier (Training, Hydrophone, Embeddings), Vocalization, Search, Label Processing, Admin

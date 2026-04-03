@@ -504,3 +504,22 @@ vocalization type). Key design choices:
 - Old `/labeling/training-jobs`, `/labeling/vocalization-models`, `/labeling/predict`,
   and active learning endpoints removed; replaced by `/vocalization/` router
 - `label_trainer.py` deleted; replaced by `vocalization_trainer.py`
+
+---
+
+## ADR-043: Exact replay promotion for AR-v1 autoresearch candidates
+
+**Date**: 2026-04
+**Status**: Accepted
+
+**Context**: The candidate-backed promotion path blocked AR-v1 winners because the production trainer could not replay PCA (`pca_dim=128`), probability calibration (`prob_calibration="platt"`), or context pooling (`context_pooling="mean3"`). The existing promotion reduced autoresearch configs into a smaller parameter shape designed for manual embedding-set training, silently changing the candidate's learned behavior.
+
+**Decision**: Extend candidate-backed promotion with an exact-replay path. A shared replay module (`src/humpback/classifier/replay.py`) extracted from `scripts/autoresearch/train_eval.py` owns the full training pipeline (context pooling, feature normalization, PCA, classifier, calibration). Both autoresearch scripts and the production worker import from this shared module. Candidate-backed training uses `promoted_config` directly through the replay module, bypassing the legacy `train_binary_classifier` path. Replay verification compares produced metrics against imported candidate metrics with configurable tolerance.
+
+**Consequences**:
+- PCA, probability calibration (platt/isotonic), and non-center context pooling (mean3/max3) are now promotable
+- Autoresearch and production cannot drift — both call the same shared code
+- Replay verification proves parity with the reviewed candidate on val/test splits
+- Verification mismatch does not fail the job — the model is saved but flagged
+- Calibration is baked into the sklearn Pipeline; `predict_proba()` returns calibrated probabilities directly
+- `linear_svm`, `hard_negative_fraction > 0`, and MLP with class weights remain blocked

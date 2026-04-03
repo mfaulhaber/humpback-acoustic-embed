@@ -240,6 +240,160 @@ function summarizePreviewItem(item: unknown) {
   return fallback.join(" • ");
 }
 
+function ReplayVerificationPanel({
+  verification,
+}: {
+  verification: Record<string, unknown>;
+}) {
+  const status = verification.status as string | undefined;
+  const tolerance = asNumber(verification.tolerance);
+  const splits = asRecord(verification.splits);
+  const effectiveConfig = asRecord(verification.effective_config);
+
+  const isVerified = status === "verified";
+
+  return (
+    <div className="rounded-md border p-3">
+      <div className="flex items-center gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Replay Verification
+        </div>
+        <Badge
+          className={
+            isVerified
+              ? "bg-green-100 text-green-800"
+              : "bg-amber-100 text-amber-800"
+          }
+        >
+          {isVerified ? (
+            <>
+              <CheckCircle2 className="mr-1 h-3 w-3" />
+              Exact Replay Verified
+            </>
+          ) : (
+            <>
+              <AlertTriangle className="mr-1 h-3 w-3" />
+              Replay Mismatch
+            </>
+          )}
+        </Badge>
+      </div>
+
+      {effectiveConfig && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {effectiveConfig.context_pooling != null && (
+            <span>
+              Pooling: {String(effectiveConfig.context_pooling)}
+              {asNumber(effectiveConfig.context_pooling_applied_count) != null
+                ? ` (${String(effectiveConfig.context_pooling_applied_count)} pooled, ${String(effectiveConfig.context_pooling_fallback_count)} center-only)`
+                : ""}
+            </span>
+          )}
+          {effectiveConfig.feature_norm != null && (
+            <span>Norm: {String(effectiveConfig.feature_norm)}</span>
+          )}
+          {effectiveConfig.pca_dim != null && (
+            <span>
+              PCA: {String(effectiveConfig.pca_components_actual ?? effectiveConfig.pca_dim)}d
+            </span>
+          )}
+          {effectiveConfig.prob_calibration != null &&
+            effectiveConfig.prob_calibration !== "none" && (
+              <span>Calibration: {String(effectiveConfig.prob_calibration)}</span>
+            )}
+        </div>
+      )}
+
+      {splits && (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b text-left text-muted-foreground">
+                <th className="py-1.5 font-medium">Split</th>
+                <th className="py-1.5 font-medium">Metric</th>
+                <th className="py-1.5 font-medium">Expected</th>
+                <th className="py-1.5 font-medium">Actual</th>
+                <th className="py-1.5 font-medium">Delta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(splits).map(([splitName, splitData]) => {
+                const split = asRecord(splitData);
+                if (!split) return null;
+                const expected = asRecord(split.expected);
+                const actual = asRecord(split.actual);
+                const deltas = asRecord(split.deltas);
+                const splitPass = split.pass === true;
+                const metricsToShow = [
+                  "precision",
+                  "recall",
+                  "fp_rate",
+                  "high_conf_fp_rate",
+                  "tp",
+                  "fp",
+                  "fn",
+                  "tn",
+                ].filter(
+                  (m) => expected?.[m] != null || actual?.[m] != null,
+                );
+                return metricsToShow.map((metric, idx) => (
+                  <tr
+                    key={`${splitName}-${metric}`}
+                    className="border-b last:border-0"
+                  >
+                    {idx === 0 && (
+                      <td
+                        className="py-1.5 align-top font-medium"
+                        rowSpan={metricsToShow.length}
+                      >
+                        <div className="flex items-center gap-1">
+                          {splitName}
+                          {!splitPass && (
+                            <AlertTriangle className="h-3 w-3 text-amber-500" />
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    <td className="py-1.5">{metricLabel(metric)}</td>
+                    <td className="py-1.5 text-muted-foreground">
+                      {formatMetricValue(metric, expected?.[metric])}
+                    </td>
+                    <td className="py-1.5 text-muted-foreground">
+                      {formatMetricValue(metric, actual?.[metric])}
+                    </td>
+                    <td className="py-1.5">
+                      {(() => {
+                        const delta = asNumber(deltas?.[metric]);
+                        if (delta == null) return "—";
+                        const exceedsTolerance =
+                          tolerance != null && Math.abs(delta) > tolerance;
+                        return (
+                          <span
+                            className={cn(
+                              "font-medium",
+                              exceedsTolerance
+                                ? "text-red-700"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            {delta === 0
+                              ? "0"
+                              : formatDeltaValue(metric, delta)}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                  </tr>
+                ));
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DetailField({
   label,
   value,
@@ -565,6 +719,12 @@ function CandidateCard({
                   </div>
                 </div>
               </div>
+
+              {detail.replay_verification && (
+                <ReplayVerificationPanel
+                  verification={detail.replay_verification}
+                />
+              )}
 
               <div className="grid gap-4 lg:grid-cols-2">
                 <PreviewPanel

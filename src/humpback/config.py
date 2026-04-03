@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     timeline_manifest_memory_cache_items: int = 8
     timeline_pcm_memory_cache_mb: int = 128
 
+    # Replay verification settings
+    replay_metric_tolerance: float = 0.01
+
     @classmethod
     def from_repo_env(cls, **kwargs) -> "Settings":
         return cast(Any, cls)(_env_file=_repo_env_file(), **kwargs)

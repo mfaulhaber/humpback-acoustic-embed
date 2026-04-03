@@ -406,6 +406,7 @@ export interface AutoresearchCandidateDetail
   source_model_metadata: Record<string, unknown> | null;
   top_false_positives_preview: Record<string, unknown> | null;
   prediction_disagreements_preview: Record<string, unknown> | null;
+  replay_verification: Record<string, unknown> | null;
 }
 
 export interface AutoresearchCandidateTrainingJobCreate {

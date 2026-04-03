@@ -1059,3 +1059,221 @@ async def test_run_training_job_from_autoresearch_candidate_manifest(
     assert model.source_model_id == source_model.id
     provenance = json.loads(model.promotion_provenance or "{}")
     assert provenance["candidate_id"] == candidate.id
+
+    # Verify replay fields in training summary
+    summary = json.loads(model.training_summary or "{}")
+    assert "replay_effective_config" in summary
+    assert summary["replay_effective_config"]["feature_norm"] == "standard"
+    assert summary["replay_effective_config"]["context_pooling"] == "center"
+    assert summary["replay_effective_config"]["prob_calibration"] == "none"
+    assert "replay_pooling_report" in summary
+    assert "promoted_config" in summary
+
+    # Verify the model can predict
+    import joblib
+
+    loaded_pipeline = joblib.load(model.model_path)
+    import numpy as np
+
+    probs = loaded_pipeline.predict_proba(np.array([[1.0, 1.0]], dtype=np.float32))
+    assert probs.shape == (1, 2)
+
+
+async def test_run_training_job_candidate_replay_with_pca_and_calibration(
+    session,
+    settings,
+    tmp_path,
+) -> None:
+    """Candidate-backed training with PCA + platt calibration uses replay pipeline."""
+    import numpy as np
+
+    rng = np.random.RandomState(42)
+    dim = 16
+    n_pos = 30
+    n_neg = 30
+
+    # Write positive embedding-set parquet
+    pos_path = tmp_path / "embeddings" / "pos.parquet"
+    pos_embeddings = rng.randn(n_pos, dim).astype(np.float32)
+    pos_table = pa.table(
+        {
+            "row_index": pa.array(list(range(n_pos)), type=pa.int32()),
+            "embedding": pa.array(
+                [row.tolist() for row in pos_embeddings],
+                type=pa.list_(pa.float32(), dim),
+            ),
+        }
+    )
+    pos_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pos_table, str(pos_path))
+
+    # Write negative detection parquet (row_id format)
+    det_job_id = "det-job-pca"
+    det_path = (
+        settings.storage_root
+        / "detections"
+        / det_job_id
+        / "detection_embeddings.parquet"
+    )
+    neg_embeddings = rng.randn(n_neg, dim).astype(np.float32) - 2.0
+    neg_row_ids = [f"neg-{i}" for i in range(n_neg)]
+    _write_detection_embeddings_parquet(
+        det_path,
+        row_ids=neg_row_ids,
+        rows=[row.tolist() for row in neg_embeddings],
+    )
+
+    # Build manifest
+    examples = []
+    for i in range(n_pos):
+        examples.append(
+            {
+                "id": f"pos-{i}",
+                "split": "train",
+                "label": 1,
+                "parquet_path": str(pos_path),
+                "row_index": i,
+            }
+        )
+    for i in range(n_neg):
+        examples.append(
+            {
+                "id": f"neg-{i}",
+                "split": "train",
+                "label": 0,
+                "parquet_path": str(det_path),
+                "row_id": f"neg-{i}",
+            }
+        )
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"metadata": {}, "examples": examples}))
+
+    source_model = ClassifierModel(
+        id="source-model-pca",
+        name="source-model-pca",
+        model_path="/tmp/source.joblib",
+        model_version="perch_v1",
+        vector_dim=dim,
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+    )
+    session.add(source_model)
+
+    from humpback.models.audio import AudioFile
+    from humpback.models.processing import EmbeddingSet
+
+    af = AudioFile(
+        id="af-pos-pca",
+        filename="pos.wav",
+        folder_path="positive",
+        checksum_sha256="pos-checksum-pca",
+    )
+    session.add(af)
+    session.add(
+        EmbeddingSet(
+            id="es-pos-pca",
+            audio_file_id=af.id,
+            encoding_signature="sig-pca",
+            model_version="perch_v1",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            vector_dim=dim,
+            parquet_path=str(pos_path),
+        )
+    )
+    session.add(
+        DetectionJob(
+            id=det_job_id,
+            status="complete",
+            classifier_model_id=source_model.id,
+            audio_folder=str(tmp_path / "audio"),
+            confidence_threshold=0.5,
+            detection_mode="windowed",
+        )
+    )
+
+    candidate = AutoresearchCandidate(
+        id="cand-pca",
+        name="PCA Candidate",
+        status="training",
+        manifest_path=str(manifest_path),
+        best_run_path=str(tmp_path / "best_run.json"),
+        promoted_config=json.dumps(
+            {
+                "classifier": "logreg",
+                "feature_norm": "l2",
+                "pca_dim": 8,
+                "prob_calibration": "platt",
+                "context_pooling": "center",
+                "class_weight_pos": 2.0,
+                "class_weight_neg": 1.0,
+                "hard_negative_fraction": 0.0,
+                "threshold": 0.5,
+                "seed": 42,
+            }
+        ),
+        source_model_id=source_model.id,
+        source_model_name=source_model.name,
+        training_job_id="train-job-pca",
+        is_reproducible_exact=True,
+    )
+    session.add(candidate)
+    session.add(
+        ClassifierTrainingJob(
+            id="train-job-pca",
+            status="running",
+            name="pca-candidate-model",
+            positive_embedding_set_ids=json.dumps([]),
+            negative_embedding_set_ids=json.dumps([]),
+            model_version="perch_v1",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            parameters=json.dumps({}),
+            source_mode="autoresearch_candidate",
+            source_candidate_id=candidate.id,
+            source_model_id=source_model.id,
+            manifest_path=str(manifest_path),
+            training_split_name="train",
+            promoted_config=candidate.promoted_config,
+            source_comparison_context=json.dumps(
+                {
+                    "candidate_id": candidate.id,
+                    "candidate_name": candidate.name,
+                }
+            ),
+        )
+    )
+    await session.commit()
+
+    job = await session.get(ClassifierTrainingJob, "train-job-pca")
+    assert job is not None
+
+    await run_training_job(session, job, settings)
+
+    await session.refresh(candidate)
+    await session.refresh(job)
+
+    assert job.status == "complete"
+    assert job.classifier_model_id is not None
+    assert candidate.status == "complete"
+
+    model = await session.get(ClassifierModel, job.classifier_model_id)
+    assert model is not None
+
+    summary = json.loads(model.training_summary or "{}")
+    eff = summary["replay_effective_config"]
+    assert eff["feature_norm"] == "l2"
+    assert eff["pca_dim"] == 8
+    assert eff["pca_components_actual"] == 8
+    assert eff["prob_calibration"] == "platt"
+    assert eff["class_weight"] == {"0": 1.0, "1": 2.0}
+
+    # Verify the model can predict (calibrated pipeline)
+    import joblib
+
+    loaded_pipeline = joblib.load(model.model_path)
+    test_input = rng.randn(3, dim).astype(np.float32)
+    probs = loaded_pipeline.predict_proba(test_input)
+    assert probs.shape == (3, 2)
+    assert np.all(probs >= 0) and np.all(probs <= 1)

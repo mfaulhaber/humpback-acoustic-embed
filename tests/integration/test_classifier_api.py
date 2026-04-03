@@ -307,12 +307,12 @@ async def test_import_autoresearch_candidate_success(client, app_settings):
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "Explicit Negatives Phase 1"
-    assert data["status"] == "blocked"
+    assert data["status"] == "promotable"
     assert data["phase"] == "phase1"
     assert data["source_model_name"] == "LR-v12"
     assert data["comparison_target"] == "LR-v12"
-    assert data["is_reproducible_exact"] is False
-    assert any("Probability calibration" in warning for warning in data["warnings"])
+    assert data["is_reproducible_exact"] is True
+    assert len(data["warnings"]) == 0
     assert data["artifact_paths"]["manifest_path"].startswith(
         str(app_settings.storage_root)
     )
@@ -454,16 +454,42 @@ async def test_create_training_job_from_promotable_autoresearch_candidate(
     assert detail["training_job_id"] == data["id"]
 
 
-async def test_blocked_autoresearch_candidate_cannot_create_training_job(client):
+async def test_blocked_autoresearch_candidate_cannot_create_training_job(
+    client, app_settings
+):
+    """Candidates with unsupported configs (e.g. linear_svm) should remain blocked."""
     fixture_dir = _autoresearch_fixture_dir()
+
+    # Create a custom best_run with linear_svm (still blocked)
+    blocked_best_run = app_settings.storage_root / "blocked_best_run.json"
+    blocked_best_run.parent.mkdir(parents=True, exist_ok=True)
+    blocked_best_run.write_text(
+        json.dumps(
+            {
+                "config": {
+                    "classifier": "linear_svm",
+                    "feature_norm": "l2",
+                    "pca_dim": None,
+                    "class_weight_pos": 1.0,
+                    "class_weight_neg": 1.0,
+                    "hard_negative_fraction": 0.0,
+                    "prob_calibration": "none",
+                    "threshold": 0.5,
+                    "context_pooling": "center",
+                    "seed": 42,
+                },
+                "metrics": {"threshold": 0.5, "precision": 0.9, "recall": 0.9},
+                "config_hash": "blocked_svm",
+            }
+        )
+    )
 
     import_resp = await client.post(
         "/classifier/autoresearch-candidates/import",
         json={
-            "name": "Blocked Candidate",
+            "name": "Blocked SVM Candidate",
             "manifest_path": str(fixture_dir / "manifest.json"),
-            "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
-            "comparison_path": str(fixture_dir / "phase1" / "lr-v12-comparison.json"),
+            "best_run_path": str(blocked_best_run),
         },
     )
     assert import_resp.status_code == 201
