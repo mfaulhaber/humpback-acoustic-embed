@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from humpback.classifier.detector import (
+    match_embedding_records_to_row_store,
     read_detection_embedding,
     run_detection,
     write_detection_embeddings,
@@ -535,3 +536,86 @@ def test_emit_embeddings_roundtrip_via_parquet(tmp_path):
         vec = read_detection_embedding(emb_path, rec["row_id"])
         assert vec is not None
         assert vec == pytest.approx(rec["embedding"], abs=1e-5)
+
+
+def test_match_embedding_records_to_row_store():
+    """match_embedding_records_to_row_store assigns row_id from row store rows."""
+    # Simulate embedding records produced during detection (filename-relative offsets).
+    # Filename encodes a UTC base epoch of 2024-01-01T00:00:00Z = 1704067200.0
+    emb_records = [
+        {
+            "filename": "20240101T000000Z.wav",
+            "start_sec": 10.0,
+            "end_sec": 25.0,
+            "embedding": [1.0, 2.0, 3.0],
+            "confidence": 0.9,
+        },
+        {
+            "filename": "20240101T000000Z.wav",
+            "start_sec": 50.0,
+            "end_sec": 65.0,
+            "embedding": [4.0, 5.0, 6.0],
+            "confidence": 0.8,
+        },
+    ]
+
+    base_epoch = 1704067200.0
+    row_store_rows = [
+        {
+            "row_id": "rid-aaa",
+            "start_utc": str(base_epoch + 10.0),
+            "end_utc": str(base_epoch + 25.0),
+        },
+        {
+            "row_id": "rid-bbb",
+            "start_utc": str(base_epoch + 50.0),
+            "end_utc": str(base_epoch + 65.0),
+        },
+    ]
+
+    matched = match_embedding_records_to_row_store(emb_records, row_store_rows)
+    assert len(matched) == 2
+    assert matched[0]["row_id"] == "rid-aaa"
+    assert matched[0]["embedding"] == [1.0, 2.0, 3.0]
+    assert matched[0]["confidence"] == 0.9
+    assert matched[1]["row_id"] == "rid-bbb"
+    assert matched[1]["embedding"] == [4.0, 5.0, 6.0]
+
+
+def test_match_embedding_records_unmatched_dropped():
+    """Embedding records that don't match any row store row are dropped."""
+    emb_records = [
+        {
+            "filename": "20240101T000000Z.wav",
+            "start_sec": 10.0,
+            "end_sec": 25.0,
+            "embedding": [1.0],
+        },
+    ]
+    # Row store with no matching UTC window
+    row_store_rows = [
+        {
+            "row_id": "rid-xxx",
+            "start_utc": str(9999999.0),
+            "end_utc": str(9999999.0 + 15.0),
+        },
+    ]
+
+    matched = match_embedding_records_to_row_store(emb_records, row_store_rows)
+    assert len(matched) == 0
+
+
+def test_match_embedding_records_empty_inputs():
+    """Empty records or empty row store returns empty list."""
+    assert (
+        match_embedding_records_to_row_store(
+            [], [{"row_id": "a", "start_utc": "1", "end_utc": "2"}]
+        )
+        == []
+    )
+    assert (
+        match_embedding_records_to_row_store(
+            [{"filename": "f", "start_sec": 0, "end_sec": 1, "embedding": []}], []
+        )
+        == []
+    )
