@@ -3,6 +3,10 @@
 import csv
 import json
 import uuid
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 # Epoch anchors for test fixtures.
 # 2024-06-15T08:00:00Z — generic base for non-filename-anchored tests.
@@ -11,6 +15,230 @@ BASE_EPOCH = 1718438400.0
 _20250615T080000Z = 1749974400.0
 # 2025-07-02T08:01:18Z — matches "20250702T080118Z" in fixture filenames.
 _20250702T080118Z = 1751443278.0
+
+
+def _autoresearch_fixture_dir() -> Path:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "autoresearch"
+        / "output"
+        / "explicit-negatives"
+    )
+
+
+def _write_embedding_set_parquet(path: Path, rows: list[list[float]]) -> None:
+    table = pa.table(
+        {
+            "row_index": pa.array(list(range(len(rows))), type=pa.int32()),
+            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, str(path))
+
+
+def _write_detection_embeddings_parquet(
+    path: Path,
+    row_ids: list[str],
+    rows: list[list[float]],
+) -> None:
+    table = pa.table(
+        {
+            "row_id": pa.array(row_ids, type=pa.string()),
+            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, str(path))
+
+
+async def _import_promotable_candidate(client, app_settings) -> dict:
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.audio import AudioFile
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+    from humpback.models.processing import EmbeddingSet
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    source_model_id = str(uuid.uuid4())
+    detection_job_id = str(uuid.uuid4())
+    af_id = str(uuid.uuid4())
+
+    pos_path = app_settings.storage_root / "candidate-fixtures" / "pos.parquet"
+    det_path = (
+        app_settings.storage_root
+        / "detections"
+        / detection_job_id
+        / "detection_embeddings.parquet"
+    )
+    artifact_dir = app_settings.storage_root / "candidate-fixtures" / "artifacts"
+
+    _write_embedding_set_parquet(pos_path, [[2.0, 2.0], [2.5, 2.5]])
+    _write_detection_embeddings_parquet(
+        det_path,
+        row_ids=["neg-1", "neg-2"],
+        rows=[[-2.0, -2.0], [-2.5, -2.5]],
+    )
+
+    async with sf() as session:
+        session.add(
+            ClassifierModel(
+                id=source_model_id,
+                name="Local Source Model",
+                model_path="/tmp/source-model.joblib",
+                model_version="perch_v1",
+                vector_dim=2,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        session.add(
+            AudioFile(
+                id=af_id,
+                filename="pos.wav",
+                folder_path="positive",
+                checksum_sha256="candidate-pos",
+            )
+        )
+        session.add(
+            EmbeddingSet(
+                id=str(uuid.uuid4()),
+                audio_file_id=af_id,
+                encoding_signature="sig",
+                model_version="perch_v1",
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+                vector_dim=2,
+                parquet_path=str(pos_path),
+            )
+        )
+        session.add(
+            DetectionJob(
+                id=detection_job_id,
+                status="complete",
+                classifier_model_id=source_model_id,
+                audio_folder=str(app_settings.storage_root / "audio"),
+                confidence_threshold=0.5,
+                detection_mode="windowed",
+            )
+        )
+        await session.commit()
+
+    manifest_path = artifact_dir / "manifest.json"
+    best_run_path = artifact_dir / "best_run.json"
+    comparison_path = artifact_dir / "comparison.json"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "metadata": {},
+                "examples": [
+                    {
+                        "id": "pos-0",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(pos_path),
+                        "row_index": 0,
+                    },
+                    {
+                        "id": "pos-1",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(pos_path),
+                        "row_index": 1,
+                    },
+                    {
+                        "id": "neg-1",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-1",
+                    },
+                    {
+                        "id": "neg-2",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-2",
+                    },
+                ],
+            }
+        )
+    )
+    best_run_path.write_text(
+        json.dumps(
+            {
+                "config": {
+                    "classifier": "logreg",
+                    "feature_norm": "standard",
+                    "pca_dim": None,
+                    "class_weight_pos": 1.0,
+                    "class_weight_neg": 1.0,
+                    "hard_negative_fraction": 0.0,
+                    "prob_calibration": "none",
+                    "threshold": 0.5,
+                    "context_pooling": "center",
+                    "seed": 42,
+                },
+                "metrics": {
+                    "threshold": 0.5,
+                    "precision": 1.0,
+                    "recall": 1.0,
+                    "fp": 0,
+                    "fn": 0,
+                    "tp": 2,
+                    "tn": 2,
+                },
+                "config_hash": "promotable123",
+                "trial": 1,
+            }
+        )
+    )
+    comparison_path.write_text(
+        json.dumps(
+            {
+                "objective_name": "default",
+                "production": {
+                    "id": source_model_id,
+                    "name": "Local Source Model",
+                    "model_version": "perch_v1",
+                },
+                "splits": {
+                    "test": {
+                        "autoresearch": {
+                            "metrics": {"precision": 1.0, "recall": 1.0},
+                            "top_false_positives": [],
+                        },
+                        "production": {
+                            "metrics": {"precision": 0.5, "recall": 0.5},
+                            "top_false_positives": [],
+                        },
+                        "delta": {"precision": 0.5, "recall": 0.5},
+                        "prediction_disagreements": [],
+                    }
+                },
+            }
+        )
+    )
+
+    resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "name": "Promotable Candidate",
+            "manifest_path": str(manifest_path),
+            "best_run_path": str(best_run_path),
+            "comparison_path": str(comparison_path),
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "promotable"
+
+    await engine.dispose()
+    return data
 
 
 async def test_create_training_job_missing_embedding_sets(client):
@@ -59,6 +287,195 @@ async def test_list_models_empty(client):
 async def test_get_model_not_found(client):
     resp = await client.get("/classifier/models/nonexistent")
     assert resp.status_code == 404
+
+
+async def test_import_autoresearch_candidate_success(client, app_settings):
+    fixture_dir = _autoresearch_fixture_dir()
+
+    resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "name": "Explicit Negatives Phase 1",
+            "manifest_path": str(fixture_dir / "manifest.json"),
+            "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
+            "comparison_path": str(fixture_dir / "phase1" / "lr-v12-comparison.json"),
+            "top_false_positives_path": str(
+                fixture_dir / "phase1" / "top_false_positives.json"
+            ),
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "Explicit Negatives Phase 1"
+    assert data["status"] == "blocked"
+    assert data["phase"] == "phase1"
+    assert data["source_model_name"] == "LR-v12"
+    assert data["comparison_target"] == "LR-v12"
+    assert data["is_reproducible_exact"] is False
+    assert any("Probability calibration" in warning for warning in data["warnings"])
+    assert data["artifact_paths"]["manifest_path"].startswith(
+        str(app_settings.storage_root)
+    )
+    assert data["artifact_paths"]["best_run_path"].startswith(
+        str(app_settings.storage_root)
+    )
+    assert data["top_false_positives_preview"]["imported"]
+    assert data["prediction_disagreements_preview"]["test"]
+    assert data["split_metrics"]["test"]["autoresearch"]["precision"] == 0.987342
+    assert data["metric_deltas"]["test"]["fp"] == -92.0
+    assert data["source_counts"]["split_counts"]["train"] > 0
+
+    list_resp = await client.get("/classifier/autoresearch-candidates")
+    assert list_resp.status_code == 200
+    listed = list_resp.json()
+    assert len(listed) == 1
+    assert listed[0]["id"] == data["id"]
+    assert listed[0]["name"] == "Explicit Negatives Phase 1"
+
+    detail_resp = await client.get(f"/classifier/autoresearch-candidates/{data['id']}")
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["id"] == data["id"]
+    assert detail["source_model_metadata"]["name"] == "LR-v12"
+
+
+async def test_import_autoresearch_candidate_missing_manifest(client):
+    fixture_dir = _autoresearch_fixture_dir()
+
+    resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "manifest_path": str(fixture_dir / "missing-manifest.json"),
+            "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
+        },
+    )
+    assert resp.status_code == 400
+    assert "manifest.json not found" in resp.text
+
+
+async def test_import_autoresearch_candidate_rejects_malformed_best_run(
+    client, tmp_path
+):
+    fixture_dir = _autoresearch_fixture_dir()
+    malformed = tmp_path / "best_run.json"
+    malformed.write_text("{not valid json")
+
+    resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "manifest_path": str(fixture_dir / "manifest.json"),
+            "best_run_path": str(malformed),
+        },
+    )
+    assert resp.status_code == 400
+    assert "best_run.json is not valid JSON" in resp.text
+
+
+async def test_import_autoresearch_candidate_rejects_malformed_optional_comparison(
+    client, tmp_path
+):
+    fixture_dir = _autoresearch_fixture_dir()
+    malformed = tmp_path / "comparison.json"
+    malformed.write_text(json.dumps({"not": "a comparison"}))
+
+    resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "manifest_path": str(fixture_dir / "manifest.json"),
+            "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
+            "comparison_path": str(malformed),
+        },
+    )
+    assert resp.status_code == 400
+    assert "comparison JSON must contain 'splits'" in resp.text
+
+
+async def test_import_autoresearch_candidate_accepts_comparison_summary_fixture(
+    client,
+):
+    fixture_dir = _autoresearch_fixture_dir()
+
+    resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "name": "Summary Comparison Candidate",
+            "manifest_path": str(fixture_dir / "manifest.json"),
+            "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
+            "comparison_path": str(fixture_dir / "comparison_summary.json"),
+            "top_false_positives_path": str(
+                fixture_dir / "phase1" / "top_false_positives.json"
+            ),
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "Summary Comparison Candidate"
+    assert data["comparison_target"] == "comparison_summary"
+    assert data["split_metrics"] is None
+    assert data["metric_deltas"] is None
+    assert data["top_false_positives_preview"]["imported"]
+    assert any(
+        "split-level production deltas" in warning for warning in data["warnings"]
+    )
+
+
+async def test_get_autoresearch_candidate_not_found(client):
+    resp = await client.get("/classifier/autoresearch-candidates/nonexistent")
+    assert resp.status_code == 404
+
+
+async def test_create_training_job_from_promotable_autoresearch_candidate(
+    client, app_settings
+):
+    candidate = await _import_promotable_candidate(client, app_settings)
+
+    resp = await client.post(
+        f"/classifier/autoresearch-candidates/{candidate['id']}/training-jobs",
+        json={"new_model_name": "candidate-backed-model", "notes": "ship it"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "candidate-backed-model"
+    assert data["status"] == "queued"
+    assert data["source_mode"] == "autoresearch_candidate"
+    assert data["source_candidate_id"] == candidate["id"]
+    assert data["manifest_path"] == candidate["artifact_paths"]["manifest_path"]
+    assert data["training_split_name"] == "train"
+    assert data["promoted_config"]["classifier"] == "logreg"
+    assert data["source_comparison_context"]["candidate_id"] == candidate["id"]
+    assert data["source_comparison_context"]["notes"] == "ship it"
+
+    detail_resp = await client.get(
+        f"/classifier/autoresearch-candidates/{candidate['id']}"
+    )
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["status"] == "training"
+    assert detail["training_job_id"] == data["id"]
+
+
+async def test_blocked_autoresearch_candidate_cannot_create_training_job(client):
+    fixture_dir = _autoresearch_fixture_dir()
+
+    import_resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "name": "Blocked Candidate",
+            "manifest_path": str(fixture_dir / "manifest.json"),
+            "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
+            "comparison_path": str(fixture_dir / "phase1" / "lr-v12-comparison.json"),
+        },
+    )
+    assert import_resp.status_code == 201
+    candidate = import_resp.json()
+    assert candidate["status"] == "blocked"
+
+    promote_resp = await client.post(
+        f"/classifier/autoresearch-candidates/{candidate['id']}/training-jobs",
+        json={"new_model_name": "should-fail"},
+    )
+    assert promote_resp.status_code == 400
+    assert "not promotable" in promote_resp.text
 
 
 async def test_delete_model_not_found(client):

@@ -44,9 +44,13 @@ from humpback.classifier.providers import (
     build_archive_detection_provider,
     build_archive_playback_provider,
 )
-from humpback.classifier.trainer import train_binary_classifier
+from humpback.classifier.trainer import (
+    load_manifest_split_embeddings,
+    train_binary_classifier,
+)
 from humpback.config import Settings, get_archive_source
 from humpback.models.classifier import (
+    AutoresearchCandidate,
     ClassifierModel,
     ClassifierTrainingJob,
     DetectionJob,
@@ -63,10 +67,8 @@ from humpback.workers.model_cache import get_model_by_version
 from humpback.workers.queue import (
     complete_detection_job,
     complete_extraction_job,
-    complete_training_job,
     fail_detection_job,
     fail_extraction_job,
-    fail_training_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -502,39 +504,63 @@ async def run_training_job(
 ) -> None:
     """Execute a classifier training job end-to-end."""
     try:
-        # Load positive embeddings from parquet files
         import numpy as np
         from sqlalchemy import select
 
         from humpback.models.processing import EmbeddingSet
 
-        es_ids = json.loads(job.positive_embedding_set_ids)
-        result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.id.in_(es_ids))
-        )
-        embedding_sets = list(result.scalars().all())
-
-        positive_parts: list[np.ndarray] = []
-        for es in embedding_sets:
-            _, vectors = read_embeddings(Path(es.parquet_path))
-            positive_parts.append(vectors)
-        positive_embeddings = np.vstack(positive_parts)
-
-        # Load negative embeddings from parquet files
-        neg_ids = json.loads(job.negative_embedding_set_ids)
-        neg_result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.id.in_(neg_ids))
-        )
-        neg_embedding_sets = list(neg_result.scalars().all())
-
-        negative_parts: list[np.ndarray] = []
-        for es in neg_embedding_sets:
-            _, vectors = read_embeddings(Path(es.parquet_path))
-            negative_parts.append(vectors)
-        negative_embeddings = np.vstack(negative_parts)
-
         # Parse parameters
         parameters = json.loads(job.parameters) if job.parameters else None
+        promotion_provenance = (
+            json.loads(job.source_comparison_context)
+            if job.source_comparison_context
+            else None
+        )
+
+        if job.source_mode == "autoresearch_candidate":
+            if not job.manifest_path:
+                raise ValueError("Candidate-backed training job missing manifest_path")
+            (
+                positive_embeddings,
+                negative_embeddings,
+                source_summary,
+            ) = await asyncio.to_thread(
+                load_manifest_split_embeddings,
+                Path(job.manifest_path),
+                split=job.training_split_name or "train",
+            )
+            vector_dim = int(source_summary["vector_dim"])
+        else:
+            es_ids = json.loads(job.positive_embedding_set_ids)
+            result = await session.execute(
+                select(EmbeddingSet).where(EmbeddingSet.id.in_(es_ids))
+            )
+            embedding_sets = list(result.scalars().all())
+
+            positive_parts: list[np.ndarray] = []
+            for es in embedding_sets:
+                _, vectors = read_embeddings(Path(es.parquet_path))
+                positive_parts.append(vectors)
+            positive_embeddings = np.vstack(positive_parts)
+
+            neg_ids = json.loads(job.negative_embedding_set_ids)
+            neg_result = await session.execute(
+                select(EmbeddingSet).where(EmbeddingSet.id.in_(neg_ids))
+            )
+            neg_embedding_sets = list(neg_result.scalars().all())
+
+            negative_parts: list[np.ndarray] = []
+            for es in neg_embedding_sets:
+                _, vectors = read_embeddings(Path(es.parquet_path))
+                negative_parts.append(vectors)
+            negative_embeddings = np.vstack(negative_parts)
+
+            source_summary = {
+                "source_mode": "embedding_sets",
+                "positive_embedding_set_count": len(embedding_sets),
+                "negative_embedding_set_count": len(neg_embedding_sets),
+            }
+            vector_dim = int(embedding_sets[0].vector_dim)
 
         # Train classifier (CPU-bound)
         pipeline, summary = await asyncio.to_thread(
@@ -543,6 +569,10 @@ async def run_training_job(
             negative_embeddings,
             parameters,
         )
+        summary["training_source_mode"] = job.source_mode
+        summary["training_data_source"] = source_summary
+        if promotion_provenance:
+            summary["promotion_provenance"] = promotion_provenance
 
         # Save model atomically
         cdir = ensure_dir(classifier_dir(settings.storage_root, job.id))
@@ -560,23 +590,45 @@ async def run_training_job(
             name=job.name,
             model_path=str(final_path),
             model_version=job.model_version,
-            vector_dim=embedding_sets[0].vector_dim,
+            vector_dim=vector_dim,
             window_size_seconds=job.window_size_seconds,
             target_sample_rate=job.target_sample_rate,
             feature_config=job.feature_config,
             training_summary=json.dumps(summary),
             training_job_id=job.id,
+            training_source_mode=job.source_mode,
+            source_candidate_id=job.source_candidate_id,
+            source_model_id=job.source_model_id,
+            promotion_provenance=json.dumps(promotion_provenance)
+            if promotion_provenance
+            else None,
         )
         session.add(cm)
         await session.flush()
 
-        # Update job with model reference (use explicit SQL since job may be detached)
+        completion_time = datetime.now(timezone.utc)
         await session.execute(
             update(ClassifierTrainingJob)
             .where(ClassifierTrainingJob.id == job.id)
-            .values(classifier_model_id=cm.id)
+            .values(
+                classifier_model_id=cm.id,
+                status="complete",
+                updated_at=completion_time,
+            )
         )
-        await complete_training_job(session, job.id)
+        if job.source_candidate_id:
+            await session.execute(
+                update(AutoresearchCandidate)
+                .where(AutoresearchCandidate.id == job.source_candidate_id)
+                .values(
+                    status="complete",
+                    training_job_id=job.id,
+                    new_model_id=cm.id,
+                    error_message=None,
+                    updated_at=completion_time,
+                )
+            )
+        await session.commit()
 
     except Exception as e:
         logger.exception("Training job %s failed", job.id)
@@ -585,7 +637,27 @@ async def run_training_job(
         except Exception:
             pass
         try:
-            await fail_training_job(session, job.id, str(e))
+            failure_time = datetime.now(timezone.utc)
+            await session.execute(
+                update(ClassifierTrainingJob)
+                .where(ClassifierTrainingJob.id == job.id)
+                .values(
+                    status="failed",
+                    error_message=str(e),
+                    updated_at=failure_time,
+                )
+            )
+            if job.source_candidate_id:
+                await session.execute(
+                    update(AutoresearchCandidate)
+                    .where(AutoresearchCandidate.id == job.source_candidate_id)
+                    .values(
+                        status="failed",
+                        error_message=str(e),
+                        updated_at=failure_time,
+                    )
+                )
+            await session.commit()
         except Exception:
             logger.exception("Failed to mark training job as failed")
 

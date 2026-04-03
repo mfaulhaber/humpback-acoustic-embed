@@ -19,6 +19,10 @@ class ClassifierModel(UUIDMixin, TimestampMixin, Base):
     training_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     training_job_id: Mapped[Optional[str]] = mapped_column(default=None)
     classifier_purpose: Mapped[str] = mapped_column(default="detection")
+    training_source_mode: Mapped[str] = mapped_column(default="embedding_sets")
+    source_candidate_id: Mapped[Optional[str]] = mapped_column(default=None)
+    source_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    promotion_provenance: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
 
 class ClassifierTrainingJob(UUIDMixin, TimestampMixin, Base):
@@ -37,6 +41,48 @@ class ClassifierTrainingJob(UUIDMixin, TimestampMixin, Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     job_purpose: Mapped[str] = mapped_column(default="detection")
     source_detection_job_ids: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    source_mode: Mapped[str] = mapped_column(default="embedding_sets")
+    source_candidate_id: Mapped[Optional[str]] = mapped_column(default=None)
+    source_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    manifest_path: Mapped[Optional[str]] = mapped_column(default=None)
+    training_split_name: Mapped[Optional[str]] = mapped_column(default=None)
+    promoted_config: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    source_comparison_context: Mapped[Optional[str]] = mapped_column(Text, default=None)
+
+
+class AutoresearchCandidate(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "autoresearch_candidates"
+
+    name: Mapped[str]
+    status: Mapped[str] = mapped_column(default="imported")
+    manifest_path: Mapped[str]
+    best_run_path: Mapped[str]
+    comparison_path: Mapped[Optional[str]] = mapped_column(default=None)
+    top_false_positives_path: Mapped[Optional[str]] = mapped_column(default=None)
+    phase: Mapped[Optional[str]] = mapped_column(default=None)
+    objective_name: Mapped[Optional[str]] = mapped_column(default=None)
+    threshold: Mapped[Optional[float]] = mapped_column(default=None)
+    promoted_config: Mapped[str] = mapped_column(Text)
+    best_run_metrics: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    split_metrics: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    metric_deltas: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    replay_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    source_counts: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    warnings: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    source_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    source_model_name: Mapped[Optional[str]] = mapped_column(default=None)
+    source_model_metadata: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    comparison_target: Mapped[Optional[str]] = mapped_column(default=None)
+    top_false_positives_preview: Mapped[Optional[str]] = mapped_column(
+        Text, default=None
+    )
+    prediction_disagreements_preview: Mapped[Optional[str]] = mapped_column(
+        Text, default=None
+    )
+    is_reproducible_exact: Mapped[bool] = mapped_column(default=False)
+    training_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    new_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
 
 class DetectionJob(UUIDMixin, TimestampMixin, Base):

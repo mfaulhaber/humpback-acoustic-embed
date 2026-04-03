@@ -350,6 +350,69 @@ export interface ClassifierTrainingJobCreate {
   parameters?: Record<string, unknown> | null;
 }
 
+export type AutoresearchCandidateStatus =
+  | "imported"
+  | "promotable"
+  | "blocked"
+  | "training"
+  | "complete"
+  | "failed";
+
+export interface AutoresearchCandidateImport {
+  name?: string | null;
+  manifest_path: string;
+  best_run_path: string;
+  comparison_path?: string | null;
+  top_false_positives_path?: string | null;
+  source_model_id_override?: string | null;
+  source_model_name_override?: string | null;
+}
+
+export interface AutoresearchCandidateArtifactPaths {
+  manifest_path: string;
+  best_run_path: string;
+  comparison_path: string | null;
+  top_false_positives_path: string | null;
+}
+
+export interface AutoresearchCandidateSummary {
+  id: string;
+  name: string;
+  status: AutoresearchCandidateStatus;
+  phase: string | null;
+  objective_name: string | null;
+  threshold: number | null;
+  comparison_target: string | null;
+  source_model_id: string | null;
+  source_model_name: string | null;
+  is_reproducible_exact: boolean;
+  promoted_config: Record<string, unknown>;
+  best_run_metrics: Record<string, unknown> | null;
+  split_metrics: Record<string, unknown> | null;
+  metric_deltas: Record<string, unknown> | null;
+  replay_summary: Record<string, unknown> | null;
+  source_counts: Record<string, unknown> | null;
+  warnings: string[];
+  training_job_id: string | null;
+  new_model_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutoresearchCandidateDetail
+  extends AutoresearchCandidateSummary {
+  artifact_paths: AutoresearchCandidateArtifactPaths;
+  source_model_metadata: Record<string, unknown> | null;
+  top_false_positives_preview: Record<string, unknown> | null;
+  prediction_disagreements_preview: Record<string, unknown> | null;
+}
+
+export interface AutoresearchCandidateTrainingJobCreate {
+  new_model_name: string;
+  notes?: string | null;
+}
+
 export interface ClassifierTrainingJob {
   id: string;
   status: "queued" | "running" | "complete" | "failed" | "canceled";
@@ -363,6 +426,13 @@ export interface ClassifierTrainingJob {
   parameters: Record<string, unknown> | null;
   classifier_model_id: string | null;
   error_message: string | null;
+  source_mode: "embedding_sets" | "autoresearch_candidate";
+  source_candidate_id: string | null;
+  source_model_id: string | null;
+  manifest_path: string | null;
+  training_split_name: string | null;
+  promoted_config: Record<string, unknown> | null;
+  source_comparison_context: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -378,6 +448,10 @@ export interface ClassifierModelInfo {
   feature_config: Record<string, unknown> | null;
   training_summary: Record<string, unknown> | null;
   training_job_id: string | null;
+  training_source_mode: "embedding_sets" | "autoresearch_candidate";
+  source_candidate_id: string | null;
+  source_model_id: string | null;
+  promotion_provenance: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }

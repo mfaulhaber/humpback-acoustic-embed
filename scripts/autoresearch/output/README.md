@@ -14,9 +14,13 @@ This bundle comes from the 2026-04-03 production-backed explicit-negative experi
 It includes:
 
 - `manifest.json`
-- `comparison_summary.json`
+- `comparison_summary.json` (lightweight bundle summary; importable, but without split-level production deltas)
 - phase 1 search outputs, including `lr-v12-comparison.json`
 - phase 2 search outputs
+
+## LR-v12 Relationship
+
+`phase1/lr-v12-comparison.json` captures the production comparison that the promotion workflow is built around in this milestone. It compares the imported autoresearch candidate against the production classifier `LR-v12`, including split metrics, deltas, disagreement previews, and top false positives that the UI surfaces during review.
 
 ## Intended Use
 
@@ -28,4 +32,3 @@ It includes:
 
 - These files are development fixtures, not a canonical storage location for production experiment outputs.
 - Paths and model IDs inside the JSON reflect the original run provenance and are intentionally preserved for realism.
-

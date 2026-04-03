@@ -4,17 +4,53 @@ import asyncio
 import json
 import queue
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
-from humpback.models.classifier import ClassifierModel, DetectionJob
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from humpback.database import create_session_factory
+from humpback.models.classifier import (
+    AutoresearchCandidate,
+    ClassifierModel,
+    ClassifierTrainingJob,
+    DetectionJob,
+)
 from humpback.workers.classifier_worker import (
     _avg_audio_x_realtime,
     _hydrophone_detection_subprocess_main,
     _hydrophone_provider_mode,
     run_extraction_job,
     run_hydrophone_detection_job,
+    run_training_job,
 )
+
+
+def _write_embedding_set_parquet(path: Path, rows: list[list[float]]) -> None:
+    table = pa.table(
+        {
+            "row_index": pa.array(list(range(len(rows))), type=pa.int32()),
+            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, str(path))
+
+
+def _write_detection_embeddings_parquet(
+    path: Path,
+    row_ids: list[str],
+    rows: list[list[float]],
+) -> None:
+    table = pa.table(
+        {
+            "row_id": pa.array(row_ids, type=pa.string()),
+            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, str(path))
 
 
 async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_cache_path(
@@ -833,3 +869,193 @@ async def test_tf2_hydrophone_detection_uses_subprocess_path(
         assert job.timeline_tiles_ready is False
 
     assert subprocess_calls == [jobs[0].id, jobs[1].id]
+
+
+async def test_run_training_job_from_autoresearch_candidate_manifest(
+    session,
+    settings,
+    tmp_path,
+) -> None:
+    """Candidate-backed training jobs should train from manifest artifacts."""
+    pos_path = tmp_path / "embeddings" / "pos.parquet"
+    det_job_id = "det-job-1"
+    det_path = (
+        settings.storage_root
+        / "detections"
+        / det_job_id
+        / "detection_embeddings.parquet"
+    )
+    _write_embedding_set_parquet(
+        pos_path,
+        rows=[[2.0, 2.0], [2.5, 2.5]],
+    )
+    _write_detection_embeddings_parquet(
+        det_path,
+        row_ids=["neg-1", "neg-2"],
+        rows=[[-2.0, -2.0], [-2.5, -2.5]],
+    )
+
+    source_model = ClassifierModel(
+        id="source-model",
+        name="source-model",
+        model_path="/tmp/source.joblib",
+        model_version="perch_v1",
+        vector_dim=2,
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+    )
+    session.add(source_model)
+    await session.flush()
+
+    from humpback.models.audio import AudioFile
+    from humpback.models.processing import EmbeddingSet
+
+    af = AudioFile(
+        id="af-pos",
+        filename="pos.wav",
+        folder_path="positive",
+        checksum_sha256="pos-checksum",
+    )
+    session.add(af)
+    session.add(
+        EmbeddingSet(
+            id="es-pos",
+            audio_file_id=af.id,
+            encoding_signature="sig",
+            model_version="perch_v1",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            vector_dim=2,
+            parquet_path=str(pos_path),
+        )
+    )
+    session.add(
+        DetectionJob(
+            id=det_job_id,
+            status="complete",
+            classifier_model_id=source_model.id,
+            audio_folder=str(tmp_path / "audio"),
+            confidence_threshold=0.5,
+            detection_mode="windowed",
+        )
+    )
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "metadata": {},
+                "examples": [
+                    {
+                        "id": "pos-0",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(pos_path),
+                        "row_index": 0,
+                    },
+                    {
+                        "id": "pos-1",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(pos_path),
+                        "row_index": 1,
+                    },
+                    {
+                        "id": "neg-1",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-1",
+                    },
+                    {
+                        "id": "neg-2",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-2",
+                    },
+                ],
+            }
+        )
+    )
+
+    candidate = AutoresearchCandidate(
+        id="cand-1",
+        name="Candidate 1",
+        status="training",
+        manifest_path=str(manifest_path),
+        best_run_path=str(tmp_path / "best_run.json"),
+        promoted_config=json.dumps(
+            {
+                "classifier": "logreg",
+                "feature_norm": "standard",
+                "class_weight_pos": 1.0,
+                "class_weight_neg": 1.0,
+                "hard_negative_fraction": 0.0,
+                "prob_calibration": "none",
+                "threshold": 0.5,
+                "context_pooling": "center",
+                "seed": 42,
+            }
+        ),
+        source_model_id=source_model.id,
+        source_model_name=source_model.name,
+        training_job_id="train-job-1",
+        is_reproducible_exact=True,
+    )
+    session.add(candidate)
+    session.add(
+        ClassifierTrainingJob(
+            id="train-job-1",
+            status="running",
+            name="candidate-model",
+            positive_embedding_set_ids=json.dumps([]),
+            negative_embedding_set_ids=json.dumps([]),
+            model_version="perch_v1",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            parameters=json.dumps(
+                {
+                    "classifier_type": "logistic_regression",
+                    "feature_norm": "standard",
+                    "class_weight": {"0": 1.0, "1": 1.0},
+                }
+            ),
+            source_mode="autoresearch_candidate",
+            source_candidate_id=candidate.id,
+            source_model_id=source_model.id,
+            manifest_path=str(manifest_path),
+            training_split_name="train",
+            promoted_config=candidate.promoted_config,
+            source_comparison_context=json.dumps(
+                {
+                    "candidate_id": candidate.id,
+                    "candidate_name": candidate.name,
+                    "source_model_id": source_model.id,
+                    "source_model_name": source_model.name,
+                }
+            ),
+        )
+    )
+    await session.commit()
+
+    job = await session.get(ClassifierTrainingJob, "train-job-1")
+    assert job is not None
+
+    await run_training_job(session, job, settings)
+
+    await session.refresh(candidate)
+    await session.refresh(job)
+
+    assert job.status == "complete"
+    assert job.classifier_model_id is not None
+    assert candidate.status == "complete"
+    assert candidate.new_model_id == job.classifier_model_id
+
+    model = await session.get(ClassifierModel, job.classifier_model_id)
+    assert model is not None
+    assert model.training_source_mode == "autoresearch_candidate"
+    assert model.source_candidate_id == candidate.id
+    assert model.source_model_id == source_model.id
+    provenance = json.loads(model.promotion_provenance or "{}")
+    assert provenance["candidate_id"] == candidate.id

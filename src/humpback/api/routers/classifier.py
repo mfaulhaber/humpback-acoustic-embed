@@ -35,6 +35,11 @@ from humpback.classifier.detector import read_window_diagnostics_table
 from humpback.classifier.archive import ArchiveProvider
 from humpback.classifier.providers import build_archive_playback_provider
 from humpback.schemas.classifier import (
+    AutoresearchCandidateArtifactPaths,
+    AutoresearchCandidateDetailOut,
+    AutoresearchCandidateImport,
+    AutoresearchCandidateSummaryOut,
+    AutoresearchCandidateTrainingJobCreate,
     ClassifierModelOut,
     ClassifierTrainingJobCreate,
     ClassifierTrainingJobOut,
@@ -96,8 +101,80 @@ def _training_job_to_out(job) -> ClassifierTrainingJobOut:
         parameters=json.loads(job.parameters) if job.parameters else None,
         classifier_model_id=job.classifier_model_id,
         error_message=job.error_message,
+        source_mode=job.source_mode,
+        source_candidate_id=job.source_candidate_id,
+        source_model_id=job.source_model_id,
+        manifest_path=job.manifest_path,
+        training_split_name=job.training_split_name,
+        promoted_config=json.loads(job.promoted_config)
+        if job.promoted_config
+        else None,
+        source_comparison_context=json.loads(job.source_comparison_context)
+        if job.source_comparison_context
+        else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
+    )
+
+
+def _autoresearch_candidate_to_summary(candidate) -> AutoresearchCandidateSummaryOut:
+    return AutoresearchCandidateSummaryOut(
+        id=candidate.id,
+        name=candidate.name,
+        status=candidate.status,
+        phase=candidate.phase,
+        objective_name=candidate.objective_name,
+        threshold=candidate.threshold,
+        comparison_target=candidate.comparison_target,
+        source_model_id=candidate.source_model_id,
+        source_model_name=candidate.source_model_name,
+        is_reproducible_exact=candidate.is_reproducible_exact,
+        promoted_config=json.loads(candidate.promoted_config),
+        best_run_metrics=json.loads(candidate.best_run_metrics)
+        if candidate.best_run_metrics
+        else None,
+        split_metrics=json.loads(candidate.split_metrics)
+        if candidate.split_metrics
+        else None,
+        metric_deltas=json.loads(candidate.metric_deltas)
+        if candidate.metric_deltas
+        else None,
+        replay_summary=json.loads(candidate.replay_summary)
+        if candidate.replay_summary
+        else None,
+        source_counts=json.loads(candidate.source_counts)
+        if candidate.source_counts
+        else None,
+        warnings=json.loads(candidate.warnings) if candidate.warnings else [],
+        training_job_id=candidate.training_job_id,
+        new_model_id=candidate.new_model_id,
+        error_message=candidate.error_message,
+        created_at=candidate.created_at,
+        updated_at=candidate.updated_at,
+    )
+
+
+def _autoresearch_candidate_to_detail(candidate) -> AutoresearchCandidateDetailOut:
+    summary = _autoresearch_candidate_to_summary(candidate)
+    return AutoresearchCandidateDetailOut(
+        **summary.model_dump(),
+        artifact_paths=AutoresearchCandidateArtifactPaths(
+            manifest_path=candidate.manifest_path,
+            best_run_path=candidate.best_run_path,
+            comparison_path=candidate.comparison_path,
+            top_false_positives_path=candidate.top_false_positives_path,
+        ),
+        source_model_metadata=json.loads(candidate.source_model_metadata)
+        if candidate.source_model_metadata
+        else None,
+        top_false_positives_preview=json.loads(candidate.top_false_positives_preview)
+        if candidate.top_false_positives_preview
+        else None,
+        prediction_disagreements_preview=json.loads(
+            candidate.prediction_disagreements_preview
+        )
+        if candidate.prediction_disagreements_preview
+        else None,
     )
 
 
@@ -113,6 +190,12 @@ def _model_to_out(m) -> ClassifierModelOut:
         feature_config=json.loads(m.feature_config) if m.feature_config else None,
         training_summary=json.loads(m.training_summary) if m.training_summary else None,
         training_job_id=m.training_job_id,
+        training_source_mode=m.training_source_mode,
+        source_candidate_id=m.source_candidate_id,
+        source_model_id=m.source_model_id,
+        promotion_provenance=json.loads(m.promotion_provenance)
+        if m.promotion_provenance
+        else None,
         created_at=m.created_at,
         updated_at=m.updated_at,
     )
@@ -180,6 +263,68 @@ async def create_training_job(
             body.positive_embedding_set_ids,
             body.negative_embedding_set_ids,
             body.parameters,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _training_job_to_out(job)
+
+
+@router.post("/autoresearch-candidates/import", status_code=201)
+async def import_autoresearch_candidate(
+    body: AutoresearchCandidateImport,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> AutoresearchCandidateDetailOut:
+    try:
+        candidate = await classifier_service.import_autoresearch_candidate(
+            session,
+            settings.storage_root,
+            body.manifest_path,
+            body.best_run_path,
+            comparison_path=body.comparison_path,
+            top_false_positives_path=body.top_false_positives_path,
+            name=body.name,
+            source_model_id_override=body.source_model_id_override,
+            source_model_name_override=body.source_model_name_override,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _autoresearch_candidate_to_detail(candidate)
+
+
+@router.get("/autoresearch-candidates")
+async def list_autoresearch_candidates(
+    session: SessionDep,
+) -> list[AutoresearchCandidateSummaryOut]:
+    candidates = await classifier_service.list_autoresearch_candidates(session)
+    return [_autoresearch_candidate_to_summary(candidate) for candidate in candidates]
+
+
+@router.get("/autoresearch-candidates/{candidate_id}")
+async def get_autoresearch_candidate(
+    candidate_id: str,
+    session: SessionDep,
+) -> AutoresearchCandidateDetailOut:
+    candidate = await classifier_service.get_autoresearch_candidate(
+        session, candidate_id
+    )
+    if candidate is None:
+        raise HTTPException(404, "Autoresearch candidate not found")
+    return _autoresearch_candidate_to_detail(candidate)
+
+
+@router.post("/autoresearch-candidates/{candidate_id}/training-jobs", status_code=201)
+async def create_training_job_from_autoresearch_candidate(
+    candidate_id: str,
+    body: AutoresearchCandidateTrainingJobCreate,
+    session: SessionDep,
+) -> ClassifierTrainingJobOut:
+    try:
+        job = await classifier_service.create_training_job_from_autoresearch_candidate(
+            session,
+            candidate_id,
+            body.new_model_name,
+            notes=body.notes,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

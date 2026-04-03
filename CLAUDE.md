@@ -185,7 +185,7 @@ humpback-acoustic-embed/
 ├── pyproject.toml         (Python dependencies)
 ├── uv.lock                (lockfile)
 ├── alembic.ini            (migration config)
-├── alembic/versions/      (migration scripts, 001–035)
+├── alembic/versions/      (migration scripts, 001–037)
 ├── src/humpback/
 │   ├── api/               (FastAPI routes)
 │   ├── classifier/        (training, detection, embedding)
@@ -248,6 +248,24 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Detection job deletion guard**: detection jobs with vocalization labels or training dataset references cannot be deleted; returns HTTP 409 with dependency details
 - **Detection–vocalization consistency**: detection rows and vocalization labels are linked by stable `row_id` (UUID4). Deleting a detection row via batch edit cascade-deletes associated vocalization labels. No version tracking or reconciliation needed.
 
+### 8.8 Classifier API Surface
+
+Classifier training currently has three distinct flows:
+
+- **Embedding-set training**: `POST /classifier/training-jobs` creates the original positive/negative embedding-set-backed training jobs.
+- **Autoresearch candidate review and promotion**:
+  - `POST /classifier/autoresearch-candidates/import`
+  - `GET /classifier/autoresearch-candidates`
+  - `GET /classifier/autoresearch-candidates/{candidate_id}`
+  - `POST /classifier/autoresearch-candidates/{candidate_id}/training-jobs`
+- **Legacy retrain workflow**:
+  - `GET /classifier/models/{id}/retrain-info`
+  - `POST /classifier/retrain`
+  - `GET /classifier/retrain-workflows`
+  - `GET /classifier/retrain-workflows/{id}`
+
+Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model.
+
 ---
 
 ## 9. Current State
@@ -265,6 +283,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - Multi-label vocalization classifier: managed vocabulary, binary relevance training (per-type sklearn pipeline), per-type threshold optimization, multi-source inference (detection job / embedding set / rescore), paginated results with client-side threshold filtering, TSV export
 - Vocalization labeling workspace: source abstraction (detection jobs / embedding sets / local folders), progressive pipeline (source → embeddings → inference → labeling), local-state label accumulation with batch Save/Cancel, three visual label states (suggested/saved/pending), score-sorted results by default, click-to-expand spectrogram popup, one-click retrain loop
 - Training dataset review: unified editable snapshot of training data (from embedding sets and detection jobs), type-filtered positive/negative browsing with large inline spectrograms, batch label editing with save/cancel, dataset extend for incremental source addition, retrain from edited labels
+- Autoresearch candidate promotion: import reviewed manifest-backed autoresearch bundles, inspect split deltas versus production, and create candidate-backed training jobs with persisted provenance
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans)
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier (Training, Hydrophone, Embeddings), Vocalization, Search, Label Processing, Admin
@@ -272,8 +291,8 @@ Non-obvious constraints that are not immediately derivable from code:
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `035_stable_row_id.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels
+- **Latest migration**: `037_classifier_training_candidate_provenance.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels
 
 ### 9.3 Sensitive Components
 
