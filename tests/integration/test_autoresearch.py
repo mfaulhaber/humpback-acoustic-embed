@@ -191,7 +191,7 @@ def test_search_dedup_skips_repeats(tmp_path: Path) -> None:
 
 
 def _create_mixed_source_data(tmp_path: Path) -> dict:
-    """Create test data with both embedding set and detection Parquet sources."""
+    """Create test data with embedding sets plus row-id detection sources."""
     rng = np.random.RandomState(77)
 
     # Embedding set Parquet (positives)
@@ -214,14 +214,12 @@ def _create_mixed_source_data(tmp_path: Path) -> dict:
         str(es_path),
     )
 
-    # Detection Parquet (negatives — hard negatives from detection)
+    # Detection Parquet (canonical row-id negatives from detection)
     det_path = tmp_path / "det_embeddings.parquet"
     neg_vecs = rng.randn(20, VECTOR_DIM).astype(np.float32) - 2.0
     det_schema = pa.schema(
         [
-            ("filename", pa.string()),
-            ("start_sec", pa.float32()),
-            ("end_sec", pa.float32()),
+            ("row_id", pa.string()),
             ("embedding", pa.list_(pa.float32(), VECTOR_DIM)),
             ("confidence", pa.float32()),
         ]
@@ -229,9 +227,7 @@ def _create_mixed_source_data(tmp_path: Path) -> dict:
     pq.write_table(
         pa.table(
             {
-                "filename": ["rec_a.flac"] * 10 + ["rec_b.flac"] * 10,
-                "start_sec": [float(i * 5) for i in range(20)],
-                "end_sec": [float(i * 5 + 5) for i in range(20)],
+                "row_id": [f"rid-{i}" for i in range(20)],
                 "embedding": [v.tolist() for v in neg_vecs],
                 "confidence": [0.9 + i * 0.005 for i in range(20)],
             },
@@ -263,9 +259,10 @@ def _create_mixed_source_data(tmp_path: Path) -> dict:
                 "label": 0,
                 "source_type": "detection_job",
                 "parquet_path": str(det_path),
-                "row_index": i,
-                "audio_file_id": "rec_a.flac" if i < 10 else "rec_b.flac",
+                "row_id": f"rid-{i}",
+                "audio_file_id": f"det1:2026-04-03T{i // 4:02d}",
                 "negative_group": band,
+                "label_source": "score_band",
             }
         )
 

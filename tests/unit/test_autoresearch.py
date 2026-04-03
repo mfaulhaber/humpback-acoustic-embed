@@ -526,6 +526,32 @@ def _write_detection_parquet(
     pq.write_table(table, str(path))
 
 
+def _write_row_id_detection_parquet(
+    path: Path,
+    row_ids: list[str],
+    confidences: list[float | None],
+    dim: int = VECTOR_DIM,
+) -> None:
+    """Write a synthetic canonical row-id detection embeddings Parquet file."""
+    rng = np.random.RandomState(123)
+    schema = pa.schema(
+        [
+            ("row_id", pa.string()),
+            ("embedding", pa.list_(pa.float32(), dim)),
+            ("confidence", pa.float32()),
+        ]
+    )
+    table = pa.table(
+        {
+            "row_id": row_ids,
+            "embedding": [rng.randn(dim).astype(np.float32).tolist() for _ in row_ids],
+            "confidence": confidences,
+        },
+        schema=schema,
+    )
+    pq.write_table(table, str(path))
+
+
 def _write_detection_row_store(
     path: Path,
     labels: list[dict[str, str]],
@@ -539,6 +565,7 @@ def _write_detection_row_store(
     rows: list[dict[str, str]] = []
     for i, lab in enumerate(labels):
         row = {field: "" for field in ROW_STORE_FIELDNAMES}
+        row["row_id"] = lab.get("row_id", f"row-{i}")
         row["start_utc"] = str(i * 5.0)
         row["end_utc"] = str(i * 5.0 + 5.0)
         row["avg_confidence"] = lab.get("confidence", "0.5")
@@ -595,11 +622,13 @@ class TestDetectionParquetLoading:
             ],
         }
         cache = _load_parquet_cache(manifest)
-        row_indices, embeddings, filenames = cache[str(det_parquet)]
+        row_indices, embeddings, filenames, row_ids = cache[str(det_parquet)]
+        assert row_indices is not None
         assert list(row_indices) == [0, 1, 2]
         assert embeddings.shape[0] == 3
         assert filenames is not None
         assert filenames == ["a.flac", "a.flac", "b.flac"]
+        assert row_ids is None
 
     def test_auto_detect_embedding_set_format(self, tmp_path: Path) -> None:
         """Embedding set Parquet (row_index column) should be auto-detected."""
@@ -620,8 +649,39 @@ class TestDetectionParquetLoading:
             ],
         }
         cache = _load_parquet_cache(manifest)
-        _, _, filenames = cache[str(es_parquet)]
+        row_indices, _embeddings, filenames, row_ids = cache[str(es_parquet)]
+        assert row_indices is not None
         assert filenames is None
+        assert row_ids is None
+
+    def test_auto_detect_row_id_detection_format(self, tmp_path: Path) -> None:
+        """Canonical detection Parquet (row_id column) should be auto-detected."""
+        det_parquet = tmp_path / "det_row_id.parquet"
+        _write_row_id_detection_parquet(
+            det_parquet,
+            row_ids=["rid-1", "rid-2", "rid-3"],
+            confidences=[0.9, None, 0.8],
+        )
+        manifest = {
+            "metadata": {},
+            "examples": [
+                {
+                    "id": "d1",
+                    "split": "train",
+                    "label": 0,
+                    "parquet_path": str(det_parquet),
+                    "row_id": "rid-2",
+                    "audio_file_id": "detjob1:2026-04-03T00",
+                    "negative_group": None,
+                },
+            ],
+        }
+        cache = _load_parquet_cache(manifest)
+        row_indices, embeddings, filenames, row_ids = cache[str(det_parquet)]
+        assert row_indices is None
+        assert embeddings.shape[0] == 3
+        assert filenames is None
+        assert row_ids == ["rid-1", "rid-2", "rid-3"]
 
 
 class TestDetectionContextPooling:
@@ -684,34 +744,78 @@ class TestDetectionContextPooling:
         lookup = _build_embedding_lookup(manifest, cache)
         result = apply_context_pooling(manifest, lookup, cache, "mean3")
         # Should average all 3 rows (left, center, right — all same file)
-        _, embeddings, _ = cache[str(det_parquet)]
+        _, embeddings, _, _ = cache[str(det_parquet)]
         expected = np.mean(
             [embeddings[0], embeddings[1], embeddings[2]], axis=0
         ).astype(np.float32)
         np.testing.assert_allclose(result["d1"], expected, atol=1e-6)
 
+    def test_row_id_detections_fall_back_to_center(self, tmp_path: Path) -> None:
+        """Row-id detection examples should ignore context pooling neighbors."""
+        det_parquet = tmp_path / "det_row_id.parquet"
+        _write_row_id_detection_parquet(
+            det_parquet,
+            row_ids=["rid-1", "rid-2", "rid-3"],
+            confidences=[0.91, 0.92, 0.93],
+        )
+        manifest = {
+            "metadata": {},
+            "examples": [
+                {
+                    "id": "d1",
+                    "split": "train",
+                    "label": 0,
+                    "parquet_path": str(det_parquet),
+                    "row_id": "rid-2",
+                    "audio_file_id": "detjob1:2026-04-03T00",
+                    "negative_group": None,
+                },
+            ],
+        }
+        cache = _load_parquet_cache(manifest)
+        from scripts.autoresearch.train_eval import _build_embedding_lookup
+
+        lookup = _build_embedding_lookup(manifest, cache)
+        mean_result = apply_context_pooling(manifest, lookup, cache, "mean3")
+        max_result = apply_context_pooling(manifest, lookup, cache, "max3")
+
+        np.testing.assert_array_equal(mean_result["d1"], lookup["d1"])
+        np.testing.assert_array_equal(max_result["d1"], lookup["d1"])
+
 
 class TestCollectDetectionExamples:
-    def test_label_classification(self, tmp_path: Path) -> None:
-        """Verify labeled rows become correct positives/negatives."""
+    def test_row_id_label_classification_and_summary(self, tmp_path: Path) -> None:
+        """Row-id detection manifests should merge vocalization and row-store labels."""
         det_dir = tmp_path / "detections" / "job1"
         det_dir.mkdir(parents=True)
         emb_path = det_dir / "detection_embeddings.parquet"
         row_path = det_dir / "detection_rows.parquet"
 
-        _write_detection_parquet(
+        _write_row_id_detection_parquet(
             emb_path,
-            filenames=["a.flac"] * 5,
-            confidences=[0.99, 0.95, 0.92, 0.80, 0.60],
+            row_ids=[
+                "rid-pos-voc",
+                "rid-neg-voc",
+                "rid-pos-binary",
+                "rid-ship",
+                "rid-band",
+                "rid-null",
+            ],
+            confidences=[0.99, None, 0.92, 0.91, 0.94, None],
         )
         _write_detection_row_store(
             row_path,
             [
-                {"humpback": "1"},  # positive
-                {"ship": "1"},  # negative, group=ship
-                {"background": "1"},  # negative, group=background
-                {},  # unlabeled, conf 0.80 → det_0.50_0.90
-                {},  # unlabeled, conf 0.60 → det_0.50_0.90
+                {"row_id": "rid-pos-voc", "start_utc": "1712109600.0"},
+                {"row_id": "rid-neg-voc", "start_utc": "1712109660.0"},
+                {
+                    "row_id": "rid-pos-binary",
+                    "start_utc": "1712109720.0",
+                    "humpback": "1",
+                },
+                {"row_id": "rid-ship", "start_utc": "1712109780.0", "ship": "1"},
+                {"row_id": "rid-band", "start_utc": "1712109840.0"},
+                {"row_id": "rid-null", "start_utc": "1712109900.0"},
             ],
         )
 
@@ -733,42 +837,75 @@ class TestCollectDetectionExamples:
             from humpback.config import Settings
 
             settings = Settings()
-            examples = _collect_detection_examples(
+            examples, summaries = _collect_detection_examples(
                 [{"id": "job1-full-uuid-here"}],
                 settings,
                 score_range=(0.5, 0.995),
+                vocalization_labels_by_job={
+                    "job1-full-uuid-here": {
+                        "rid-pos-voc": {"whup"},
+                        "rid-neg-voc": {"(Negative)"},
+                    }
+                },
             )
 
         assert len(examples) == 5
-        # Row 0: humpback positive
-        assert examples[0]["label"] == 1
-        assert examples[0]["source_type"] == "detection_job"
-        # Row 1: ship negative
-        assert examples[1]["label"] == 0
-        assert examples[1]["negative_group"] == "ship"
-        # Row 2: background negative
-        assert examples[2]["label"] == 0
-        assert examples[2]["negative_group"] == "background"
-        # Row 3: unlabeled hard negative, conf 0.80
-        assert examples[3]["label"] == 0
-        assert examples[3]["negative_group"] == "det_0.50_0.90"
-        # Row 4: unlabeled hard negative, conf 0.60
-        assert examples[4]["label"] == 0
-        assert examples[4]["negative_group"] == "det_0.50_0.90"
+        examples_by_row_id = {ex["row_id"]: ex for ex in examples}
+        assert examples_by_row_id["rid-pos-voc"]["label"] == 1
+        assert (
+            examples_by_row_id["rid-pos-voc"]["label_source"] == "vocalization_positive"
+        )
+        assert examples_by_row_id["rid-neg-voc"]["label"] == 0
+        assert (
+            examples_by_row_id["rid-neg-voc"]["negative_group"]
+            == "vocalization_negative"
+        )
+        assert examples_by_row_id["rid-pos-binary"]["label_source"] == "binary_positive"
+        assert examples_by_row_id["rid-ship"]["negative_group"] == "ship"
+        assert examples_by_row_id["rid-band"]["negative_group"] == "det_0.90_0.95"
+        assert "rid-null" not in examples_by_row_id
 
-    def test_score_range_filtering(self, tmp_path: Path) -> None:
-        """Unlabeled windows outside score range should be excluded."""
+        from scripts.autoresearch.generate_manifest import _row_id_split_group
+
+        assert examples_by_row_id["rid-pos-voc"][
+            "audio_file_id"
+        ] == _row_id_split_group(
+            "job1-full-uuid-here",
+            1712109600.0,
+        )
+        assert examples_by_row_id["rid-neg-voc"]["detection_confidence"] is None
+
+        summary = summaries["job1-full-uuid-here"]
+        assert summary["included_positive"] == 2
+        assert summary["included_negative"] == 3
+        assert summary["included_positives_by_source"]["vocalization_positive"] == 1
+        assert summary["included_positives_by_source"]["binary_positive"] == 1
+        assert summary["included_negatives_by_source"]["vocalization_negative"] == 1
+        assert summary["included_negatives_by_source"]["ship"] == 1
+        assert summary["included_negatives_by_source"]["score_band"] == 1
+        assert summary["skipped_null_confidence_unlabeled"] == 1
+        assert summary["skipped_conflicts"] == 0
+
+    def test_row_id_conflicts_are_skipped(self, tmp_path: Path) -> None:
+        """Contradictory vocalization and row-store labels should be excluded."""
         det_dir = tmp_path / "detections" / "job2"
         det_dir.mkdir(parents=True)
         emb_path = det_dir / "detection_embeddings.parquet"
         row_path = det_dir / "detection_rows.parquet"
 
-        _write_detection_parquet(
+        _write_row_id_detection_parquet(
             emb_path,
-            filenames=["a.flac"] * 3,
-            confidences=[0.30, 0.70, 0.999],
+            row_ids=["rid-conflict-a", "rid-conflict-b", "rid-ok"],
+            confidences=[0.91, 0.92, 0.93],
         )
-        _write_detection_row_store(row_path, [{}, {}, {}])
+        _write_detection_row_store(
+            row_path,
+            [
+                {"row_id": "rid-conflict-a", "humpback": "1"},
+                {"row_id": "rid-conflict-b", "ship": "1"},
+                {"row_id": "rid-ok", "background": "1"},
+            ],
+        )
 
         from unittest.mock import patch
 
@@ -788,15 +925,128 @@ class TestCollectDetectionExamples:
             from humpback.config import Settings
 
             settings = Settings()
-            examples = _collect_detection_examples(
+            examples, summaries = _collect_detection_examples(
                 [{"id": "job2-full-uuid-here"}],
+                settings,
+                score_range=(0.5, 0.995),
+                vocalization_labels_by_job={
+                    "job2-full-uuid-here": {
+                        "rid-conflict-a": {"(Negative)"},
+                        "rid-conflict-b": {"whup"},
+                    }
+                },
+            )
+
+        assert len(examples) == 1
+        assert examples[0]["row_id"] == "rid-ok"
+        assert summaries["job2-full-uuid-here"]["skipped_conflicts"] == 2
+
+    def test_row_id_score_range_and_missing_embedding_handling(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Only in-range unlabeled rows should become score-band negatives."""
+        det_dir = tmp_path / "detections" / "job3"
+        det_dir.mkdir(parents=True)
+        emb_path = det_dir / "detection_embeddings.parquet"
+        row_path = det_dir / "detection_rows.parquet"
+
+        _write_row_id_detection_parquet(
+            emb_path,
+            row_ids=["rid-low", "rid-mid", "rid-high"],
+            confidences=[0.30, 0.70, 0.999],
+        )
+        _write_detection_row_store(
+            row_path,
+            [
+                {"row_id": "rid-low"},
+                {"row_id": "rid-mid"},
+                {"row_id": "rid-high"},
+                {"row_id": "rid-missing", "background": "1"},
+            ],
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch(
+                "humpback.storage.detection_embeddings_path",
+                return_value=emb_path,
+            ),
+            patch(
+                "humpback.storage.detection_row_store_path",
+                return_value=row_path,
+            ),
+        ):
+            from scripts.autoresearch.generate_manifest import (
+                _collect_detection_examples,
+            )
+            from humpback.config import Settings
+
+            settings = Settings()
+            examples, summaries = _collect_detection_examples(
+                [{"id": "job3-full-uuid-here"}],
                 settings,
                 score_range=(0.5, 0.995),
             )
 
-        # 0.30 is below score_range min, 0.999 is above max → excluded
         assert len(examples) == 1
+        assert examples[0]["row_id"] == "rid-mid"
         assert examples[0]["detection_confidence"] == 0.7
+        summary = summaries["job3-full-uuid-here"]
+        assert summary["skipped_out_of_range_unlabeled"] == 2
+        assert summary["skipped_missing_embeddings"] == 1
+
+    def test_legacy_detection_embeddings_still_work(self, tmp_path: Path) -> None:
+        """Legacy filename-based detection embeddings should still be supported."""
+        det_dir = tmp_path / "detections" / "job4"
+        det_dir.mkdir(parents=True)
+        emb_path = det_dir / "detection_embeddings.parquet"
+        row_path = det_dir / "detection_rows.parquet"
+
+        _write_detection_parquet(
+            emb_path,
+            filenames=["a.flac"] * 3,
+            confidences=[0.99, 0.91, 0.72],
+        )
+        _write_detection_row_store(
+            row_path,
+            [
+                {"row_id": "rid-pos", "humpback": "1"},
+                {"row_id": "rid-ship", "ship": "1"},
+                {"row_id": "rid-band"},
+            ],
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch(
+                "humpback.storage.detection_embeddings_path",
+                return_value=emb_path,
+            ),
+            patch(
+                "humpback.storage.detection_row_store_path",
+                return_value=row_path,
+            ),
+        ):
+            from scripts.autoresearch.generate_manifest import (
+                _collect_detection_examples,
+            )
+            from humpback.config import Settings
+
+            settings = Settings()
+            examples, summaries = _collect_detection_examples(
+                [{"id": "job4-full-uuid-here"}],
+                settings,
+                score_range=(0.5, 0.995),
+            )
+
+        assert [ex["row_index"] for ex in examples] == [0, 1, 2]
+        assert [ex["label"] for ex in examples] == [1, 0, 0]
+        assert examples[1]["negative_group"] == "ship"
+        assert examples[2]["negative_group"] == "det_0.50_0.90"
+        assert summaries["job4-full-uuid-here"]["included_negative"] == 2
 
 
 class TestMixedSourceTrainEval:
@@ -830,9 +1080,7 @@ class TestMixedSourceTrainEval:
         neg_vecs = rng.randn(20, dim).astype(np.float32) - 2.0
         det_schema = pa.schema(
             [
-                ("filename", pa.string()),
-                ("start_sec", pa.float32()),
-                ("end_sec", pa.float32()),
+                ("row_id", pa.string()),
                 ("embedding", pa.list_(pa.float32(), dim)),
                 ("confidence", pa.float32()),
             ]
@@ -840,9 +1088,7 @@ class TestMixedSourceTrainEval:
         pq.write_table(
             pa.table(
                 {
-                    "filename": ["a.flac"] * 20,
-                    "start_sec": [float(i * 5) for i in range(20)],
-                    "end_sec": [float(i * 5 + 5) for i in range(20)],
+                    "row_id": [f"rid-{i}" for i in range(20)],
                     "embedding": [v.tolist() for v in neg_vecs],
                     "confidence": [0.9] * 20,
                 },
@@ -873,9 +1119,10 @@ class TestMixedSourceTrainEval:
                     "label": 0,
                     "source_type": "detection_job",
                     "parquet_path": str(det_parquet),
-                    "row_index": i,
-                    "audio_file_id": "a.flac",
+                    "row_id": f"rid-{i}",
+                    "audio_file_id": f"detjob1:2026-04-03T{i // 4:02d}",
                     "negative_group": "det_0.90_0.95",
+                    "label_source": "score_band",
                 }
             )
 

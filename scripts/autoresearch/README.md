@@ -44,7 +44,7 @@ uv run scripts/autoresearch/run_autoresearch.py \
 
 ### `generate_manifest.py` — Build a Data Manifest
 
-Queries the humpback database for classifier training jobs (embedding sets) and/or detection jobs (labeled + unlabeled windows), then produces a stable `data_manifest.json` with train/val/test splits grouped by audio file.
+Queries the humpback database for classifier training jobs (embedding sets) and/or detection jobs (labeled + unlabeled windows), then produces a stable `data_manifest.json` with train/val/test splits grouped by source-specific split buckets.
 
 ```bash
 # From training jobs only (embedding sets)
@@ -76,10 +76,22 @@ uv run scripts/autoresearch/generate_manifest.py \
 
 At least one of `--job-ids` or `--detection-job-ids` is required.
 
-**Detection job data:** Detection jobs with human labels contribute three types of examples:
-- **Labeled positives** (humpback/orca=1) — deployment-realistic positive samples
-- **Labeled negatives** (ship/background=1) — semantically grouped negatives
-- **Unlabeled hard negatives** — windows the classifier flagged but nobody labeled as positive, filtered by `--score-range` and grouped by score band (`det_0.50_0.90`, `det_0.90_0.95`, `det_0.95_0.99`, `det_0.99_1.00`)
+**Detection job data:** Live production detection embeddings are the canonical row-id schema `(row_id, embedding, confidence)`. Legacy filename-based detection embeddings remain supported for older artifacts.
+
+Detection jobs with human labels contribute examples using this precedence:
+- **Manual vocalization positives** — any non-`"(Negative)"` label in `vocalization_labels` becomes a positive
+- **Manual vocalization negatives** — `"(Negative)"` becomes a negative with `negative_group = "vocalization_negative"`
+- **Row-store fallback positives** — `humpback=1` or `orca=1` when no contradictory vocalization label exists
+- **Row-store fallback negatives** — `ship=1` or `background=1` when no contradictory vocalization label exists
+- **Unlabeled hard negatives** — rows unlabeled by both systems, only when detection confidence is non-null and inside `--score-range`, grouped by score band (`det_0.50_0.90`, `det_0.90_0.95`, `det_0.95_0.99`, `det_0.99_1.00`)
+
+Rows with contradictory positive and negative supervision are skipped and counted in `metadata.detection_job_summaries` rather than silently coerced.
+
+For canonical row-id detection jobs, split grouping uses a synthetic hourly UTC bucket derived from row-store `start_utc`:
+
+`det{job_id[:8]}:{YYYY-MM-DDTHH}`
+
+This value is stored in `audio_file_id` for backward compatibility with the rest of the pipeline.
 
 The output manifest is a plain JSON file. After generation you can edit it directly to:
 - Add `negative_group` labels (e.g. `"vessel"`, `"rain"`, `"other_whale"`)
@@ -95,6 +107,8 @@ uv run scripts/autoresearch/train_eval.py \
   --manifest data_manifest.json \
   --config '{"classifier":"logreg","feature_norm":"l2","pca_dim":128,"threshold":0.93,"context_pooling":"mean3","class_weight_pos":2.0,"class_weight_neg":1.0,"prob_calibration":"none","hard_negative_fraction":0.0}'
 ```
+
+For canonical row-id detection examples, `context_pooling=mean3` and `context_pooling=max3` fall back to center-only because Parquet row order is not treated as a stable temporal-neighbor contract.
 
 ### `run_autoresearch.py` — Search Loop
 
@@ -181,3 +195,4 @@ uv run scripts/autoresearch/run_autoresearch.py \
 - Search is random sampling, not Bayesian optimization
 - Results are advisory — winning configs must be manually transferred to the platform's classifier training
 - No UI integration
+- `hard_negative_fraction` remains in the search space, but phase-2 replay still reuses every listed hard negative rather than subsampling them per trial

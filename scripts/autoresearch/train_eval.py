@@ -31,9 +31,26 @@ from humpback.processing.embeddings import read_embeddings
 # ---------------------------------------------------------------------------
 
 
-# Cache entry: (row_indices, embeddings, filenames_or_None)
-# filenames is populated only for detection-format Parquet files.
-ParquetCacheEntry = tuple[np.ndarray, np.ndarray, list[str] | None]
+# Cache entry: (row_indices_or_None, embeddings, filenames_or_None, row_ids_or_None)
+# filenames is populated only for legacy detection-format Parquet files.
+# row_ids is populated only for canonical row-id detection-format Parquet files.
+ParquetCacheEntry = tuple[
+    np.ndarray | None,
+    np.ndarray,
+    list[str] | None,
+    list[str] | None,
+]
+
+
+def _unpack_cache_entry(
+    entry: ParquetCacheEntry | tuple[np.ndarray, np.ndarray, list[str] | None],
+) -> tuple[np.ndarray | None, np.ndarray, list[str] | None, list[str] | None]:
+    """Support both the current cache format and older 3-tuple test fixtures."""
+    if len(entry) == 3:
+        row_indices, embeddings, filenames = entry
+        return row_indices, embeddings, filenames, None
+    row_indices, embeddings, filenames, row_ids = entry
+    return row_indices, embeddings, filenames, row_ids
 
 
 def load_manifest(manifest_path: str | Path) -> dict[str, Any]:
@@ -48,7 +65,8 @@ def _load_parquet_cache(
     """Load each unique Parquet file once, auto-detecting schema format.
 
     Embedding set format: has ``row_index`` column → load via read_embeddings.
-    Detection format: has ``filename`` column → use positional indices.
+    Canonical detection format: has ``row_id`` column.
+    Legacy detection format: has ``filename`` column → use positional indices.
     """
     paths = {ex["parquet_path"] for ex in manifest["examples"]}
     cache: dict[str, ParquetCacheEntry] = {}
@@ -58,16 +76,24 @@ def _load_parquet_cache(
         if "row_index" in col_names:
             # Embedding set format
             row_indices, embeddings = read_embeddings(Path(p))
-            cache[p] = (row_indices, embeddings, None)
+            cache[p] = (row_indices, embeddings, None, None)
+        elif "row_id" in col_names:
+            # Canonical row-id detection format
+            table = pq.read_table(p)
+            embeddings = np.array(
+                [v.as_py() for v in table["embedding"]], dtype=np.float32
+            )
+            row_ids = [str(rid or "").strip() for rid in table["row_id"].to_pylist()]
+            cache[p] = (None, embeddings, None, row_ids)
         elif "filename" in col_names:
-            # Detection embeddings format
+            # Legacy detection embeddings format
             table = pq.read_table(p)
             embeddings = np.array(
                 [v.as_py() for v in table["embedding"]], dtype=np.float32
             )
             row_indices = np.arange(len(embeddings), dtype=np.int32)
             filenames = table["filename"].to_pylist()
-            cache[p] = (row_indices, embeddings, filenames)
+            cache[p] = (row_indices, embeddings, filenames, None)
         else:
             msg = f"Unknown Parquet format in {p}: columns {col_names}"
             raise ValueError(msg)
@@ -79,11 +105,34 @@ def _build_embedding_lookup(
     parquet_cache: dict[str, ParquetCacheEntry],
 ) -> dict[str, np.ndarray]:
     """Build {example_id: embedding_vector} from manifest + cached Parquet data."""
+    row_index_lookups: dict[str, dict[int, int]] = {}
+    row_id_lookups: dict[str, dict[str, int]] = {}
+    for path, entry in parquet_cache.items():
+        row_indices, _embeddings, _filenames, row_ids = _unpack_cache_entry(entry)
+        if row_indices is not None:
+            row_index_lookups[path] = {
+                int(row_index): idx for idx, row_index in enumerate(row_indices)
+            }
+        if row_ids is not None:
+            row_id_lookups[path] = {
+                str(row_id): idx for idx, row_id in enumerate(row_ids) if row_id
+            }
+
     lookup: dict[str, np.ndarray] = {}
     for ex in manifest["examples"]:
-        row_indices, embeddings, _ = parquet_cache[ex["parquet_path"]]
-        idx = int(np.searchsorted(row_indices, ex["row_index"]))
-        if idx < len(row_indices) and row_indices[idx] == ex["row_index"]:
+        entry = parquet_cache[ex["parquet_path"]]
+        _row_indices, embeddings, _filenames, row_ids = _unpack_cache_entry(entry)
+
+        idx: int | None = None
+        row_id = str(ex.get("row_id") or "").strip()
+        if row_id and row_ids is not None:
+            idx = row_id_lookups.get(ex["parquet_path"], {}).get(row_id)
+        elif ex.get("row_index") is not None:
+            idx = row_index_lookups.get(ex["parquet_path"], {}).get(
+                int(ex["row_index"])
+            )
+
+        if idx is not None:
             lookup[ex["id"]] = embeddings[idx]
     return lookup
 
@@ -98,7 +147,10 @@ def _build_parquet_row_map(
 ) -> dict[str, dict[int, np.ndarray]]:
     """Build {parquet_path: {row_index: vector}} for neighbor lookups."""
     row_map: dict[str, dict[int, np.ndarray]] = {}
-    for path, (row_indices, embeddings, _) in parquet_cache.items():
+    for path, entry in parquet_cache.items():
+        row_indices, embeddings, _filenames, _row_ids = _unpack_cache_entry(entry)
+        if row_indices is None:
+            continue
         row_map[path] = {int(ri): embeddings[i] for i, ri in enumerate(row_indices)}
     return row_map
 
@@ -112,8 +164,9 @@ def _build_parquet_filename_map(
     Used to skip cross-file neighbors during context pooling.
     """
     fname_map: dict[str, dict[int, str]] = {}
-    for path, (row_indices, _, filenames) in parquet_cache.items():
-        if filenames is not None:
+    for path, entry in parquet_cache.items():
+        row_indices, _embeddings, filenames, _row_ids = _unpack_cache_entry(entry)
+        if filenames is not None and row_indices is not None:
             fname_map[path] = {
                 int(ri): filenames[i] for i, ri in enumerate(row_indices)
             }
@@ -133,8 +186,10 @@ def apply_context_pooling(
         mean3: mean of [left, center, right] neighbors
         max3: element-wise max of [left, center, right] neighbors
 
-    Missing neighbors fall back to center-only. For detection-format files,
-    neighbors from a different audio filename are also skipped.
+    Missing neighbors fall back to center-only. For legacy detection-format files,
+    neighbors from a different audio filename are also skipped. Row-id detection
+    examples also fall back to center-only because Parquet order is not a stable
+    temporal-neighbor contract after embedding sync updates.
     """
     if mode == "center":
         return embedding_lookup
@@ -150,6 +205,17 @@ def apply_context_pooling(
             continue
 
         path = ex["parquet_path"]
+        _row_indices, _embeddings, _filenames, row_ids = _unpack_cache_entry(
+            parquet_cache[path]
+        )
+        if row_ids is not None and ex.get("row_id") is not None:
+            pooled[eid] = center
+            continue
+
+        if ex.get("row_index") is None:
+            pooled[eid] = center
+            continue
+
         ri = ex["row_index"]
         neighbors = [center]
 
