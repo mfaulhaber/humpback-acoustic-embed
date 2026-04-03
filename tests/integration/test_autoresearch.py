@@ -10,12 +10,23 @@ import json
 import random
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sqlalchemy import create_engine, text
 
+from humpback.config import Settings
+from scripts.autoresearch.compare_classifiers import (
+    compare_classifiers,
+    resolve_production_classifier,
+)
 from scripts.autoresearch.run_autoresearch import run_search
+from scripts.autoresearch.train_eval import collect_split_arrays, prepare_embeddings
 
 
 VECTOR_DIM = 16
@@ -372,3 +383,114 @@ def test_mixed_source_search(tmp_path: Path) -> None:
             if "high_conf_fp_rate_by_group" in entry["metrics"]:
                 groups = entry["metrics"]["high_conf_fp_rate_by_group"]
                 assert isinstance(groups, dict)
+
+
+def test_compare_classifiers_against_production_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compare an autoresearch winner against a classifier loaded from the DB."""
+    manifest = _create_test_data(tmp_path)
+    results_dir = tmp_path / "results"
+
+    run_search(
+        manifest=manifest,
+        n_trials=3,
+        objective_name="default",
+        seed=42,
+        results_dir=results_dir,
+    )
+    with open(results_dir / "best_run.json") as f:
+        best_run = json.load(f)
+
+    pooled = prepare_embeddings(manifest, {"context_pooling": "center"})
+    _train_ids, y_train, X_train, _train_neg_groups = collect_split_arrays(
+        manifest,
+        pooled,
+        "train",
+    )
+    production_pipeline = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("classifier", LogisticRegression(C=0.1, max_iter=1000)),
+        ]
+    )
+    production_pipeline.fit(X_train, y_train)
+
+    model_path = tmp_path / "lr-v12.joblib"
+    joblib.dump(production_pipeline, model_path)
+
+    db_path = tmp_path / "compare.sqlite"
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE classifier_models (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        model_path TEXT NOT NULL,
+                        model_version TEXT NOT NULL,
+                        training_summary TEXT,
+                        training_job_id TEXT,
+                        created_at TEXT
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO classifier_models (
+                        id, name, model_path, model_version,
+                        training_summary, training_job_id, created_at
+                    ) VALUES (
+                        :id, :name, :model_path, :model_version,
+                        :training_summary, :training_job_id, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": "prod-lr-v12",
+                    "name": "LR-v12",
+                    "model_path": str(model_path),
+                    "model_version": "surfperch-tensorflow2",
+                    "training_summary": json.dumps({"cv_f1": 0.95}),
+                    "training_job_id": "job-prod-lr-v12",
+                    "created_at": "2026-04-03 12:00:00",
+                },
+            )
+    finally:
+        engine.dispose()
+
+    monkeypatch.setenv(
+        "HUMPBACK_DATABASE_URL",
+        f"sqlite+aiosqlite:///{db_path}",
+    )
+    settings = Settings()
+    production_classifier = resolve_production_classifier(
+        settings,
+        classifier_name="LR-v12",
+        classifier_id=None,
+    )
+
+    comparison = compare_classifiers(
+        manifest,
+        best_run,
+        production_classifier,
+        splits=["val", "test"],
+        top_n=5,
+    )
+
+    assert comparison["production"]["name"] == "LR-v12"
+    assert comparison["production"]["matched_by"] == "name"
+    assert comparison["splits"].keys() == {"val", "test"}
+    for split_name in ["val", "test"]:
+        split_result = comparison["splits"][split_name]
+        assert "autoresearch" in split_result
+        assert "production" in split_result
+        assert "delta" in split_result
+        assert "prediction_disagreements" in split_result
+        assert "objective" in split_result["autoresearch"]["metrics"]
+        assert "objective" in split_result["production"]["metrics"]

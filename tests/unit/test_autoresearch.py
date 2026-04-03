@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from scripts.autoresearch.compare_classifiers import build_trial_manifest_for_best_run
 from scripts.autoresearch.objectives import default_objective, get_objective
 from scripts.autoresearch.run_autoresearch import (
     _build_trial_manifest,
@@ -30,6 +31,8 @@ from scripts.autoresearch.train_eval import (
     build_classifier,
     build_feature_pipeline,
     compute_metrics,
+    evaluate_classifier_on_split,
+    fit_autoresearch_classifier,
     find_top_false_positives,
     train_eval,
 )
@@ -776,6 +779,59 @@ class TestTrainEval:
         ]:
             assert key in m, f"Missing metric: {key}"
         assert m["seed"] == 42
+
+    def test_fit_and_split_evaluation_match_train_eval(self, tmp_path: Path) -> None:
+        """Shared helper path should reproduce the train_eval validation result."""
+        parquet = tmp_path / "test.parquet"
+        _write_synthetic_parquet(parquet, 20)
+        manifest = _make_manifest(str(parquet), n_pos=10, n_neg=10)
+        config = {
+            "classifier": "logreg",
+            "feature_norm": "l2",
+            "pca_dim": None,
+            "threshold": 0.5,
+            "context_pooling": "center",
+            "class_weight_pos": 1.0,
+            "class_weight_neg": 1.0,
+            "prob_calibration": "none",
+            "hard_negative_fraction": 0.0,
+            "seed": 42,
+        }
+
+        expected = train_eval(manifest, config)
+        clf, transforms, pooled = fit_autoresearch_classifier(manifest, config)
+        split_result = evaluate_classifier_on_split(
+            manifest,
+            pooled,
+            clf,
+            transforms,
+            split="val",
+            threshold=0.5,
+        )
+
+        for key, value in split_result["metrics"].items():
+            assert expected["metrics"][key] == value
+        assert expected["metrics"]["seed"] == 42
+        assert expected["metrics"]["config"] == config
+        assert split_result["top_false_positives"] == expected["top_false_positives"]
+
+
+class TestCompareClassifiers:
+    def test_phase2_best_run_requires_hard_negative_source(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Phase-2 best runs should not be silently replayed from the base manifest."""
+        parquet = tmp_path / "test.parquet"
+        _write_synthetic_parquet(parquet, 6)
+        manifest = _make_manifest(str(parquet), n_pos=3, n_neg=3)
+        best_run = {
+            "config": {"hard_negative_fraction": 0.0, "seed": 42},
+            "metrics": {"available_hard_negatives": 5},
+        }
+
+        with pytest.raises(ValueError, match="provide --hard-negative-from"):
+            build_trial_manifest_for_best_run(manifest, best_run, None)
 
 
 # ---------------------------------------------------------------------------

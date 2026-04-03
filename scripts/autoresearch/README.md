@@ -141,6 +141,37 @@ uv run scripts/autoresearch/run_autoresearch.py \
 | `--results-dir` | `results` | Output directory |
 | `--hard-negative-from` | none | Path to `top_false_positives.json` for hard-negative mining |
 
+### `compare_classifiers.py` — Compare Against Production
+
+Retrains the winning autoresearch config on the manifest train split, loads a production classifier from `classifier_models`, and evaluates both on the same requested split(s).
+
+When you want to compare against live production models such as `LR-v12`, source the repo `.env` first so `HUMPBACK_DATABASE_URL` points at the production database and classifier artifact paths:
+
+```bash
+set -a && source .env
+uv run scripts/autoresearch/compare_classifiers.py \
+  --manifest data_manifest.json \
+  --best-run results/phase1/best_run.json \
+  --production-classifier-name LR-v12 \
+  --splits val,test \
+  --output results/phase1/lr_v12_comparison.json
+```
+
+For a phase-2 winner, also pass the false-positive source file that defined the replay pool so the script can rebuild the replay-adjusted manifest correctly:
+
+```bash
+set -a && source .env
+uv run scripts/autoresearch/compare_classifiers.py \
+  --manifest data_manifest.json \
+  --best-run results/phase2/best_run.json \
+  --hard-negative-from results/phase1/top_false_positives.json \
+  --production-classifier-name LR-v12 \
+  --splits val,test \
+  --output results/phase2/lr_v12_comparison.json
+```
+
+The output JSON includes split-level metrics for both models, metric deltas (`autoresearch - production`), top false positives for each model, and the largest prediction disagreements between them.
+
 ## Results
 
 After a search run, the results directory contains:
