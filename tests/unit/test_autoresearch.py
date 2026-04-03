@@ -1073,7 +1073,7 @@ class TestDetectionContextPooling:
 
 class TestCollectDetectionExamples:
     def test_row_id_label_classification_and_summary(self, tmp_path: Path) -> None:
-        """Row-id detection manifests should merge vocalization and row-store labels."""
+        """Default row-id manifests should only include explicit supervision."""
         det_dir = tmp_path / "detections" / "job1"
         det_dir.mkdir(parents=True)
         emb_path = det_dir / "detection_embeddings.parquet"
@@ -1137,7 +1137,7 @@ class TestCollectDetectionExamples:
                 },
             )
 
-        assert len(examples) == 5
+        assert len(examples) == 4
         examples_by_row_id = {ex["row_id"]: ex for ex in examples}
         assert examples_by_row_id["rid-pos-voc"]["label"] == 1
         assert (
@@ -1150,7 +1150,7 @@ class TestCollectDetectionExamples:
         )
         assert examples_by_row_id["rid-pos-binary"]["label_source"] == "binary_positive"
         assert examples_by_row_id["rid-ship"]["negative_group"] == "ship"
-        assert examples_by_row_id["rid-band"]["negative_group"] == "det_0.90_0.95"
+        assert "rid-band" not in examples_by_row_id
         assert "rid-null" not in examples_by_row_id
 
         from scripts.autoresearch.generate_manifest import _row_id_split_group
@@ -1165,13 +1165,14 @@ class TestCollectDetectionExamples:
 
         summary = summaries["job1-full-uuid-here"]
         assert summary["included_positive"] == 2
-        assert summary["included_negative"] == 3
+        assert summary["included_negative"] == 2
         assert summary["included_positives_by_source"]["vocalization_positive"] == 1
         assert summary["included_positives_by_source"]["binary_positive"] == 1
         assert summary["included_negatives_by_source"]["vocalization_negative"] == 1
         assert summary["included_negatives_by_source"]["ship"] == 1
-        assert summary["included_negatives_by_source"]["score_band"] == 1
-        assert summary["skipped_null_confidence_unlabeled"] == 1
+        assert summary["included_negatives_by_source"]["score_band"] == 0
+        assert summary["skipped_unlabeled_not_explicit_negative"] == 2
+        assert summary["skipped_null_confidence_unlabeled"] == 0
         assert summary["skipped_conflicts"] == 0
 
     def test_row_id_conflicts_are_skipped(self, tmp_path: Path) -> None:
@@ -1229,11 +1230,11 @@ class TestCollectDetectionExamples:
         assert examples[0]["row_id"] == "rid-ok"
         assert summaries["job2-full-uuid-here"]["skipped_conflicts"] == 2
 
-    def test_row_id_score_range_and_missing_embedding_handling(
+    def test_row_id_unlabeled_windows_are_excluded_by_default(
         self,
         tmp_path: Path,
     ) -> None:
-        """Only in-range unlabeled rows should become score-band negatives."""
+        """Unlabeled rows should not become negatives unless explicitly enabled."""
         det_dir = tmp_path / "detections" / "job3"
         det_dir.mkdir(parents=True)
         emb_path = det_dir / "detection_embeddings.parquet"
@@ -1278,12 +1279,68 @@ class TestCollectDetectionExamples:
                 score_range=(0.5, 0.995),
             )
 
+        assert len(examples) == 0
+        summary = summaries["job3-full-uuid-here"]
+        assert summary["skipped_unlabeled_not_explicit_negative"] == 3
+        assert summary["skipped_out_of_range_unlabeled"] == 0
+        assert summary["skipped_null_confidence_unlabeled"] == 0
+        assert summary["skipped_missing_embeddings"] == 1
+
+    def test_row_id_unlabeled_windows_can_be_opted_in_as_score_band_negatives(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Opt-in should restore score-band unlabeled negatives."""
+        det_dir = tmp_path / "detections" / "job3b"
+        det_dir.mkdir(parents=True)
+        emb_path = det_dir / "detection_embeddings.parquet"
+        row_path = det_dir / "detection_rows.parquet"
+
+        _write_row_id_detection_parquet(
+            emb_path,
+            row_ids=["rid-low", "rid-mid", "rid-high"],
+            confidences=[0.30, 0.70, 0.999],
+        )
+        _write_detection_row_store(
+            row_path,
+            [
+                {"row_id": "rid-low"},
+                {"row_id": "rid-mid"},
+                {"row_id": "rid-high"},
+            ],
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch(
+                "humpback.storage.detection_embeddings_path",
+                return_value=emb_path,
+            ),
+            patch(
+                "humpback.storage.detection_row_store_path",
+                return_value=row_path,
+            ),
+        ):
+            from scripts.autoresearch.generate_manifest import (
+                _collect_detection_examples,
+            )
+            from humpback.config import Settings
+
+            settings = Settings()
+            examples, summaries = _collect_detection_examples(
+                [{"id": "job3b-full-uuid-here"}],
+                settings,
+                score_range=(0.5, 0.995),
+                include_unlabeled_hard_negatives=True,
+            )
+
         assert len(examples) == 1
         assert examples[0]["row_id"] == "rid-mid"
-        assert examples[0]["detection_confidence"] == 0.7
-        summary = summaries["job3-full-uuid-here"]
+        assert examples[0]["negative_group"] == "det_0.50_0.90"
+        summary = summaries["job3b-full-uuid-here"]
+        assert summary["included_negatives_by_source"]["score_band"] == 1
         assert summary["skipped_out_of_range_unlabeled"] == 2
-        assert summary["skipped_missing_embeddings"] == 1
 
     def test_legacy_detection_embeddings_still_work(self, tmp_path: Path) -> None:
         """Legacy filename-based detection embeddings should still be supported."""
@@ -1330,11 +1387,14 @@ class TestCollectDetectionExamples:
                 score_range=(0.5, 0.995),
             )
 
-        assert [ex["row_index"] for ex in examples] == [0, 1, 2]
-        assert [ex["label"] for ex in examples] == [1, 0, 0]
+        assert [ex["row_index"] for ex in examples] == [0, 1]
+        assert [ex["label"] for ex in examples] == [1, 0]
         assert examples[1]["negative_group"] == "ship"
-        assert examples[2]["negative_group"] == "det_0.50_0.90"
-        assert summaries["job4-full-uuid-here"]["included_negative"] == 2
+        assert summaries["job4-full-uuid-here"]["included_negative"] == 1
+        assert (
+            summaries["job4-full-uuid-here"]["skipped_unlabeled_not_explicit_negative"]
+            == 1
+        )
 
 
 class TestMixedSourceTrainEval:

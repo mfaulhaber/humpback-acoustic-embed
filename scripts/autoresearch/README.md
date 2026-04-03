@@ -52,10 +52,17 @@ uv run scripts/autoresearch/generate_manifest.py \
   --job-ids <comma-separated training job IDs> \
   --output data_manifest.json
 
-# From detection jobs (labeled windows + hard negatives)
+# From detection jobs (explicitly labeled positives/negatives only)
 uv run scripts/autoresearch/generate_manifest.py \
   --detection-job-ids <comma-separated detection job IDs> \
   --score-range 0.5,0.995 \
+  --output data_manifest.json
+
+# Opt in to unlabeled score-band hard negatives
+uv run scripts/autoresearch/generate_manifest.py \
+  --detection-job-ids <comma-separated detection job IDs> \
+  --score-range 0.9,0.995 \
+  --include-unlabeled-hard-negatives \
   --output data_manifest.json
 
 # Both sources combined
@@ -69,9 +76,10 @@ uv run scripts/autoresearch/generate_manifest.py \
 |------|---------|-------------|
 | `--job-ids` | none | Classifier training job IDs (embedding set sources) |
 | `--detection-job-ids` | none | Detection job IDs (must have positive labels) |
-| `--score-range` | `0.5,0.995` | Min,max confidence for unlabeled hard negatives |
+| `--score-range` | `0.5,0.995` | Min,max confidence for unlabeled hard negatives when that opt-in path is enabled |
 | `--split-ratio` | `70,15,15` | Train/val/test ratio |
 | `--seed` | `42` | Random seed for split assignment |
+| `--include-unlabeled-hard-negatives` | off | Opt in to using unlabeled detections inside `--score-range` as hard negatives |
 | `--output` | required | Output path for the manifest JSON |
 
 At least one of `--job-ids` or `--detection-job-ids` is required.
@@ -83,7 +91,8 @@ Detection jobs with human labels contribute examples using this precedence:
 - **Manual vocalization negatives** — `"(Negative)"` becomes a negative with `negative_group = "vocalization_negative"`
 - **Row-store fallback positives** — `humpback=1` or `orca=1` when no contradictory vocalization label exists
 - **Row-store fallback negatives** — `ship=1` or `background=1` when no contradictory vocalization label exists
-- **Unlabeled hard negatives** — rows unlabeled by both systems, only when detection confidence is non-null and inside `--score-range`, grouped by score band (`det_0.50_0.90`, `det_0.90_0.95`, `det_0.95_0.99`, `det_0.99_1.00`)
+
+By default, unlabeled detections are excluded from the manifest. If you explicitly pass `--include-unlabeled-hard-negatives`, rows unlabeled by both systems and inside `--score-range` are admitted as score-band negatives (`det_0.50_0.90`, `det_0.90_0.95`, `det_0.95_0.99`, `det_0.99_1.00`).
 
 Rows with contradictory positive and negative supervision are skipped and counted in `metadata.detection_job_summaries` rather than silently coerced.
 

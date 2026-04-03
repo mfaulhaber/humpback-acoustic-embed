@@ -246,6 +246,7 @@ def _new_detection_job_summary() -> dict[str, Any]:
         },
         "included_score_band_negatives": 0,
         "skipped_conflicts": 0,
+        "skipped_unlabeled_not_explicit_negative": 0,
         "skipped_null_confidence_unlabeled": 0,
         "skipped_out_of_range_unlabeled": 0,
         "skipped_missing_embeddings": 0,
@@ -276,6 +277,7 @@ def _classify_detection_row(
     vocalization_labels: set[str],
     confidence: float | None,
     score_range: tuple[float, float],
+    include_unlabeled_hard_negatives: bool,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Classify one detection row into autoresearch supervision buckets."""
     has_vocalization_positive = any(
@@ -329,6 +331,9 @@ def _classify_detection_row(
             "label_source": "background",
         }, None
 
+    if not include_unlabeled_hard_negatives:
+        return None, "unlabeled_not_explicit_negative"
+
     if confidence is None:
         return None, "null_confidence_unlabeled"
 
@@ -352,6 +357,7 @@ def _collect_detection_examples(
     settings: Settings,
     score_range: tuple[float, float],
     vocalization_labels_by_job: dict[str, dict[str, set[str]]] | None = None,
+    include_unlabeled_hard_negatives: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Build manifest examples from detection job data."""
     from humpback.storage import detection_embeddings_path, detection_row_store_path
@@ -437,10 +443,13 @@ def _collect_detection_examples(
                     vocalization_labels=labels_by_row_id.get(rid, set()),
                     confidence=confidence,
                     score_range=score_range,
+                    include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
                 )
                 if classification is None:
                     if skip_reason == "conflict":
                         summary["skipped_conflicts"] += 1
+                    elif skip_reason == "unlabeled_not_explicit_negative":
+                        summary["skipped_unlabeled_not_explicit_negative"] += 1
                     elif skip_reason == "null_confidence_unlabeled":
                         summary["skipped_null_confidence_unlabeled"] += 1
                     else:
@@ -496,10 +505,13 @@ def _collect_detection_examples(
                 vocalization_labels=labels_by_row_id.get(rid, set()),
                 confidence=confidence,
                 score_range=score_range,
+                include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
             )
             if classification is None:
                 if skip_reason == "conflict":
                     summary["skipped_conflicts"] += 1
+                elif skip_reason == "unlabeled_not_explicit_negative":
+                    summary["skipped_unlabeled_not_explicit_negative"] += 1
                 elif skip_reason == "null_confidence_unlabeled":
                     summary["skipped_null_confidence_unlabeled"] += 1
                 else:
@@ -563,6 +575,7 @@ def generate_manifest(
     split_ratio: tuple[int, int, int] = (70, 15, 15),
     seed: int = 42,
     score_range: tuple[float, float] = (0.5, 0.995),
+    include_unlabeled_hard_negatives: bool = False,
     db_url: str | None = None,
 ) -> dict[str, Any]:
     """Generate a data manifest from training jobs and/or detection jobs."""
@@ -628,6 +641,7 @@ def generate_manifest(
             settings,
             score_range,
             vocalization_labels_by_job=vocalization_labels_by_job,
+            include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
         )
         examples.extend(det_examples)
 
@@ -646,6 +660,7 @@ def generate_manifest(
             "detection_job_ids": det_job_id_list,
             "detection_job_summaries": detection_job_summaries,
             "score_range": list(score_range),
+            "include_unlabeled_hard_negatives": include_unlabeled_hard_negatives,
             "split_strategy": "by_audio_file",
             "detection_split_strategy": (
                 "by_job_hour_utc" if det_job_id_list else None
@@ -676,7 +691,12 @@ def main() -> None:
     parser.add_argument(
         "--score-range",
         default="0.5,0.995",
-        help="Min,max confidence for unlabeled hard negatives (default: 0.5,0.995)",
+        help="Min,max confidence for unlabeled hard negatives when explicitly enabled (default: 0.5,0.995)",
+    )
+    parser.add_argument(
+        "--include-unlabeled-hard-negatives",
+        action="store_true",
+        help="Include unlabeled detections inside --score-range as hard negatives; default is explicit negatives only",
     )
     parser.add_argument(
         "--split-ratio",
@@ -718,6 +738,7 @@ def main() -> None:
         split_ratio=split_ratio,
         seed=args.seed,
         score_range=score_range,
+        include_unlabeled_hard_negatives=args.include_unlabeled_hard_negatives,
     )
 
     output_path = Path(args.output)
