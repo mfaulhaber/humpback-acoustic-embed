@@ -13,12 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pyarrow.parquet as pq
 from sqlalchemy import create_engine, text
 
 from humpback.config import Settings
 
+
+NEGATIVE_VOCALIZATION_LABEL = "(Negative)"
 
 # Score band boundaries for negative_group assignment on detection windows.
 SCORE_BANDS: list[tuple[float, float, str]] = [
@@ -128,6 +129,38 @@ def _query_detection_jobs(
     return results
 
 
+def _query_vocalization_labels(
+    db_url: str,
+    detection_job_ids: list[str],
+) -> dict[str, dict[str, set[str]]]:
+    """Query manual vocalization labels keyed by detection_job_id and row_id."""
+    engine = create_engine(db_url)
+    results: dict[str, dict[str, set[str]]] = {
+        job_id: {} for job_id in detection_job_ids
+    }
+
+    with engine.connect() as conn:
+        for job_id in detection_job_ids:
+            rows = conn.execute(
+                text(
+                    "SELECT row_id, label "
+                    "FROM vocalization_labels "
+                    "WHERE detection_job_id = :id"
+                ),
+                {"id": str(job_id)},
+            ).fetchall()
+            by_row_id: dict[str, set[str]] = {}
+            for row_id, label in rows:
+                rid = str(row_id or "").strip()
+                if not rid:
+                    continue
+                by_row_id.setdefault(rid, set()).add(str(label))
+            results[str(job_id)] = by_row_id
+
+    engine.dispose()
+    return results
+
+
 def _count_parquet_rows(parquet_path: str) -> int:
     """Count rows in a Parquet file without loading vectors."""
     metadata = pq.read_metadata(parquet_path)
@@ -142,20 +175,202 @@ def _score_to_band(score: float) -> str | None:
     return None
 
 
+def _parse_label_flag(value: Any) -> bool:
+    """Interpret row-store label columns stored as strings."""
+    return str(value or "").strip() == "1"
+
+
+def _parse_optional_float(value: Any) -> float | None:
+    """Parse a nullable float stored in Parquet/string form."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _row_has_binary_supervision(row: dict[str, Any]) -> bool:
+    """Whether a detection row has any binary positive/negative label."""
+    return bool(row["humpback"] or row["orca"] or row["ship"] or row["background"])
+
+
+def _row_id_split_group(job_id: str, start_utc: float) -> str:
+    """Derive the split-group key for row-id detection examples."""
+    hour_bucket = datetime.fromtimestamp(start_utc, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H"
+    )
+    return f"det{job_id[:8]}:{hour_bucket}"
+
+
+def _read_detection_row_store_rows(
+    row_store_path: Path,
+) -> list[dict[str, Any]]:
+    """Read the minimal row-store fields needed by autoresearch."""
+    table = pq.read_table(
+        str(row_store_path),
+        columns=["row_id", "start_utc", "humpback", "orca", "ship", "background"],
+    )
+    rows: list[dict[str, Any]] = []
+    for row in table.to_pylist():
+        rows.append(
+            {
+                "row_id": str(row.get("row_id") or "").strip(),
+                "start_utc": _parse_optional_float(row.get("start_utc")),
+                "humpback": _parse_label_flag(row.get("humpback")),
+                "orca": _parse_label_flag(row.get("orca")),
+                "ship": _parse_label_flag(row.get("ship")),
+                "background": _parse_label_flag(row.get("background")),
+            }
+        )
+    return rows
+
+
+def _new_detection_job_summary() -> dict[str, Any]:
+    """Create a JSON-serializable summary bucket for one detection job."""
+    return {
+        "included_positive": 0,
+        "included_negative": 0,
+        "included_positives_by_source": {
+            "vocalization_positive": 0,
+            "binary_positive": 0,
+        },
+        "included_negatives_by_source": {
+            "vocalization_negative": 0,
+            "ship": 0,
+            "background": 0,
+            "score_band": 0,
+        },
+        "included_score_band_negatives": 0,
+        "skipped_conflicts": 0,
+        "skipped_unlabeled_not_explicit_negative": 0,
+        "skipped_null_confidence_unlabeled": 0,
+        "skipped_out_of_range_unlabeled": 0,
+        "skipped_missing_embeddings": 0,
+        "skipped_missing_row_store": 0,
+        "skipped_missing_start_utc": 0,
+    }
+
+
+def _record_included_example(
+    summary: dict[str, Any],
+    label: int,
+    label_source: str,
+) -> None:
+    """Update per-job summary counts after including an example."""
+    if label == 1:
+        summary["included_positive"] += 1
+        summary["included_positives_by_source"][label_source] += 1
+        return
+
+    summary["included_negative"] += 1
+    summary["included_negatives_by_source"][label_source] += 1
+    if label_source == "score_band":
+        summary["included_score_band_negatives"] += 1
+
+
+def _classify_detection_row(
+    row: dict[str, Any],
+    vocalization_labels: set[str],
+    confidence: float | None,
+    score_range: tuple[float, float],
+    include_unlabeled_hard_negatives: bool,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Classify one detection row into autoresearch supervision buckets."""
+    has_vocalization_positive = any(
+        label != NEGATIVE_VOCALIZATION_LABEL for label in vocalization_labels
+    )
+    has_vocalization_negative = NEGATIVE_VOCALIZATION_LABEL in vocalization_labels
+    has_binary_positive = bool(row["humpback"] or row["orca"])
+    has_binary_negative = bool(row["ship"] or row["background"])
+
+    has_conflict = (
+        (has_vocalization_positive and has_vocalization_negative)
+        or (has_vocalization_positive and has_binary_negative)
+        or (has_vocalization_negative and has_binary_positive)
+        or (has_binary_positive and has_binary_negative)
+    )
+    if has_conflict:
+        return None, "conflict"
+
+    if has_vocalization_positive:
+        return {
+            "label": 1,
+            "negative_group": None,
+            "label_source": "vocalization_positive",
+        }, None
+
+    if has_vocalization_negative:
+        return {
+            "label": 0,
+            "negative_group": "vocalization_negative",
+            "label_source": "vocalization_negative",
+        }, None
+
+    if has_binary_positive:
+        return {
+            "label": 1,
+            "negative_group": None,
+            "label_source": "binary_positive",
+        }, None
+
+    if row["ship"]:
+        return {
+            "label": 0,
+            "negative_group": "ship",
+            "label_source": "ship",
+        }, None
+
+    if row["background"]:
+        return {
+            "label": 0,
+            "negative_group": "background",
+            "label_source": "background",
+        }, None
+
+    if not include_unlabeled_hard_negatives:
+        return None, "unlabeled_not_explicit_negative"
+
+    if confidence is None:
+        return None, "null_confidence_unlabeled"
+
+    score_min, score_max = score_range
+    if not (score_min <= confidence <= score_max):
+        return None, "out_of_range_unlabeled"
+
+    band = _score_to_band(confidence)
+    if band is None:
+        return None, "out_of_range_unlabeled"
+
+    return {
+        "label": 0,
+        "negative_group": band,
+        "label_source": "score_band",
+    }, None
+
+
 def _collect_detection_examples(
     detection_jobs: list[dict[str, Any]],
     settings: Settings,
     score_range: tuple[float, float],
-) -> list[dict[str, Any]]:
+    vocalization_labels_by_job: dict[str, dict[str, set[str]]] | None = None,
+    include_unlabeled_hard_negatives: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Build manifest examples from detection job data."""
     from humpback.storage import detection_embeddings_path, detection_row_store_path
 
     examples: list[dict[str, Any]] = []
-    score_min, score_max = score_range
+    summaries: dict[str, dict[str, Any]] = {}
+    vocalization_labels_by_job = vocalization_labels_by_job or {}
 
     for dj in detection_jobs:
         job_id = dj["id"]
         job_id_short = job_id[:8]
+        summary = _new_detection_job_summary()
+        summaries[job_id] = summary
 
         # Resolve paths
         emb_path = detection_embeddings_path(settings.storage_root, job_id)
@@ -168,88 +383,163 @@ def _collect_detection_examples(
             )
             raise FileNotFoundError(msg)
 
-        # Read detection embeddings (filename, start_sec, end_sec, embedding, confidence)
+        if not row_store_path.exists():
+            msg = f"Detection row store not found for job {job_id} at {row_store_path}"
+            raise FileNotFoundError(msg)
+
+        row_store_rows = _read_detection_row_store_rows(row_store_path)
+        row_store_by_id = {
+            row["row_id"]: row for row in row_store_rows if row["row_id"]
+        }
+        labels_by_row_id = vocalization_labels_by_job.get(job_id, {})
+
         emb_table = pq.read_table(str(emb_path))
-        filenames = emb_table["filename"].to_pylist()
-        confidences = emb_table["confidence"].to_numpy().astype(np.float64)
-        n_emb_rows = len(filenames)
+        col_names = set(emb_table.column_names)
+        raw_confidences = (
+            emb_table.column("confidence").to_pylist()
+            if "confidence" in col_names
+            else [None] * emb_table.num_rows
+        )
 
-        # Read detection row store for labels
-        label_map: dict[int, dict[str, str]] = {}
-        if row_store_path.exists():
-            row_table = pq.read_table(
-                str(row_store_path),
-                columns=["humpback", "orca", "ship", "background"],
+        if "row_id" in col_names:
+            row_ids = [
+                str(rid or "").strip() for rid in emb_table["row_id"].to_pylist()
+            ]
+            embedding_row_ids = {rid for rid in row_ids if rid}
+            supervised_row_ids = {
+                rid
+                for rid, labels in labels_by_row_id.items()
+                if rid
+                and (
+                    NEGATIVE_VOCALIZATION_LABEL in labels
+                    or any(label != NEGATIVE_VOCALIZATION_LABEL for label in labels)
+                )
+            }
+            supervised_row_ids.update(
+                rid
+                for rid, row in row_store_by_id.items()
+                if rid and _row_has_binary_supervision(row)
             )
-            for i in range(len(row_table)):
-                label_map[i] = {
-                    "humpback": str(row_table["humpback"][i].as_py() or ""),
-                    "orca": str(row_table["orca"][i].as_py() or ""),
-                    "ship": str(row_table["ship"][i].as_py() or ""),
-                    "background": str(row_table["background"][i].as_py() or ""),
+            summary["skipped_missing_embeddings"] = len(
+                supervised_row_ids - embedding_row_ids
+            )
+
+            for rid, raw_confidence in zip(row_ids, raw_confidences, strict=False):
+                row = row_store_by_id.get(rid)
+                if row is None:
+                    summary["skipped_missing_row_store"] += 1
+                    continue
+
+                start_utc = row["start_utc"]
+                if start_utc is None:
+                    summary["skipped_missing_start_utc"] += 1
+                    continue
+
+                confidence = (
+                    float(raw_confidence) if raw_confidence is not None else None
+                )
+                classification, skip_reason = _classify_detection_row(
+                    row=row,
+                    vocalization_labels=labels_by_row_id.get(rid, set()),
+                    confidence=confidence,
+                    score_range=score_range,
+                    include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
+                )
+                if classification is None:
+                    if skip_reason == "conflict":
+                        summary["skipped_conflicts"] += 1
+                    elif skip_reason == "unlabeled_not_explicit_negative":
+                        summary["skipped_unlabeled_not_explicit_negative"] += 1
+                    elif skip_reason == "null_confidence_unlabeled":
+                        summary["skipped_null_confidence_unlabeled"] += 1
+                    else:
+                        summary["skipped_out_of_range_unlabeled"] += 1
+                    continue
+
+                example = {
+                    "id": f"det{job_id_short}_{rid}",
+                    "split": "",
+                    "label": classification["label"],
+                    "source_type": "detection_job",
+                    "parquet_path": str(emb_path),
+                    "row_id": rid,
+                    "audio_file_id": _row_id_split_group(job_id, start_utc),
+                    "negative_group": classification["negative_group"],
+                    "label_source": classification["label_source"],
+                    "detection_confidence": (
+                        round(confidence, 6) if confidence is not None else None
+                    ),
+                    "start_utc": start_utc,
                 }
-
-        for ri in range(n_emb_rows):
-            filename = filenames[ri]
-            confidence = float(confidences[ri])
-            labels = label_map.get(ri, {})
-
-            is_humpback = labels.get("humpback") == "1"
-            is_orca = labels.get("orca") == "1"
-            is_ship = labels.get("ship") == "1"
-            is_background = labels.get("background") == "1"
-            has_any_label = is_humpback or is_orca or is_ship or is_background
-
-            if is_humpback or is_orca:
-                # Labeled positive
-                examples.append(
-                    {
-                        "id": f"det{job_id_short}_row{ri}",
-                        "split": "",  # assigned later
-                        "label": 1,
-                        "source_type": "detection_job",
-                        "parquet_path": str(emb_path),
-                        "row_index": ri,
-                        "audio_file_id": filename,
-                        "negative_group": None,
-                        "detection_confidence": round(confidence, 6),
-                    }
+                examples.append(example)
+                _record_included_example(
+                    summary, example["label"], classification["label_source"]
                 )
-            elif is_ship or is_background:
-                # Labeled negative with semantic group
-                neg_group = "ship" if is_ship else "background"
-                examples.append(
-                    {
-                        "id": f"det{job_id_short}_row{ri}",
-                        "split": "",
-                        "label": 0,
-                        "source_type": "detection_job",
-                        "parquet_path": str(emb_path),
-                        "row_index": ri,
-                        "audio_file_id": filename,
-                        "negative_group": neg_group,
-                        "detection_confidence": round(confidence, 6),
-                    }
-                )
-            elif not has_any_label:
-                # Unlabeled — hard negative candidate if within score range
-                if score_min <= confidence <= score_max:
-                    band = _score_to_band(confidence)
-                    examples.append(
-                        {
-                            "id": f"det{job_id_short}_row{ri}",
-                            "split": "",
-                            "label": 0,
-                            "source_type": "detection_job",
-                            "parquet_path": str(emb_path),
-                            "row_index": ri,
-                            "audio_file_id": filename,
-                            "negative_group": band,
-                            "detection_confidence": round(confidence, 6),
-                        }
-                    )
+            continue
 
-    return examples
+        if "filename" not in col_names:
+            msg = f"Unsupported detection embeddings format in {emb_path}: {col_names}"
+            raise ValueError(msg)
+
+        filenames = emb_table["filename"].to_pylist()
+        n_emb_rows = len(filenames)
+        for idx, row in enumerate(row_store_rows):
+            if idx < n_emb_rows:
+                continue
+            has_vocalization = bool(labels_by_row_id.get(row["row_id"], set()))
+            if has_vocalization or _row_has_binary_supervision(row):
+                summary["skipped_missing_embeddings"] += 1
+
+        for ri, filename in enumerate(filenames):
+            if ri >= len(row_store_rows):
+                summary["skipped_missing_row_store"] += 1
+                continue
+
+            row = row_store_rows[ri]
+            confidence = (
+                float(raw_confidences[ri]) if raw_confidences[ri] is not None else None
+            )
+            rid = row["row_id"]
+            classification, skip_reason = _classify_detection_row(
+                row=row,
+                vocalization_labels=labels_by_row_id.get(rid, set()),
+                confidence=confidence,
+                score_range=score_range,
+                include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
+            )
+            if classification is None:
+                if skip_reason == "conflict":
+                    summary["skipped_conflicts"] += 1
+                elif skip_reason == "unlabeled_not_explicit_negative":
+                    summary["skipped_unlabeled_not_explicit_negative"] += 1
+                elif skip_reason == "null_confidence_unlabeled":
+                    summary["skipped_null_confidence_unlabeled"] += 1
+                else:
+                    summary["skipped_out_of_range_unlabeled"] += 1
+                continue
+
+            example = {
+                "id": f"det{job_id_short}_row{ri}",
+                "split": "",
+                "label": classification["label"],
+                "source_type": "detection_job",
+                "parquet_path": str(emb_path),
+                "row_index": ri,
+                "audio_file_id": str(filename),
+                "negative_group": classification["negative_group"],
+                "label_source": classification["label_source"],
+                "detection_confidence": (
+                    round(confidence, 6) if confidence is not None else None
+                ),
+                "row_id": rid or None,
+                "start_utc": row["start_utc"],
+            }
+            examples.append(example)
+            _record_included_example(
+                summary, example["label"], classification["label_source"]
+            )
+
+    return examples, summaries
 
 
 def _assign_splits(
@@ -285,6 +575,7 @@ def generate_manifest(
     split_ratio: tuple[int, int, int] = (70, 15, 15),
     seed: int = 42,
     score_range: tuple[float, float] = (0.5, 0.995),
+    include_unlabeled_hard_negatives: bool = False,
     db_url: str | None = None,
 ) -> dict[str, Any]:
     """Generate a data manifest from training jobs and/or detection jobs."""
@@ -340,11 +631,17 @@ def generate_manifest(
 
     # Detection job sources
     det_job_id_list: list[str] = []
+    detection_job_summaries: dict[str, dict[str, Any]] = {}
     if detection_job_ids:
         detection_jobs = _query_detection_jobs(db_url, detection_job_ids)
         det_job_id_list = [dj["id"] for dj in detection_jobs]
-        det_examples = _collect_detection_examples(
-            detection_jobs, settings, score_range
+        vocalization_labels_by_job = _query_vocalization_labels(db_url, det_job_id_list)
+        det_examples, detection_job_summaries = _collect_detection_examples(
+            detection_jobs,
+            settings,
+            score_range,
+            vocalization_labels_by_job=vocalization_labels_by_job,
+            include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
         )
         examples.extend(det_examples)
 
@@ -361,8 +658,13 @@ def generate_manifest(
             "positive_embedding_set_ids": positive_ids,
             "negative_embedding_set_ids": negative_ids,
             "detection_job_ids": det_job_id_list,
+            "detection_job_summaries": detection_job_summaries,
             "score_range": list(score_range),
+            "include_unlabeled_hard_negatives": include_unlabeled_hard_negatives,
             "split_strategy": "by_audio_file",
+            "detection_split_strategy": (
+                "by_job_hour_utc" if det_job_id_list else None
+            ),
             "split_ratio": list(split_ratio),
             "seed": seed,
         },
@@ -389,7 +691,12 @@ def main() -> None:
     parser.add_argument(
         "--score-range",
         default="0.5,0.995",
-        help="Min,max confidence for unlabeled hard negatives (default: 0.5,0.995)",
+        help="Min,max confidence for unlabeled hard negatives when explicitly enabled (default: 0.5,0.995)",
+    )
+    parser.add_argument(
+        "--include-unlabeled-hard-negatives",
+        action="store_true",
+        help="Include unlabeled detections inside --score-range as hard negatives; default is explicit negatives only",
     )
     parser.add_argument(
         "--split-ratio",
@@ -431,6 +738,7 @@ def main() -> None:
         split_ratio=split_ratio,
         seed=args.seed,
         score_range=score_range,
+        include_unlabeled_hard_negatives=args.include_unlabeled_hard_negatives,
     )
 
     output_path = Path(args.output)

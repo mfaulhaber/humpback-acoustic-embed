@@ -7,6 +7,7 @@ tracks results, and persists the best run.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import random
 import time
@@ -69,6 +70,66 @@ def _write_json(path: Path, data: Any) -> None:
     tmp.rename(path)
 
 
+def _ordered_replay_candidate_ids(
+    manifest: dict[str, Any],
+    hard_negative_ids: set[str],
+    seed: int,
+) -> list[str]:
+    """Return a deterministic replay order for non-train hard negatives."""
+    candidate_ids = sorted(
+        {
+            ex["id"]
+            for ex in manifest["examples"]
+            if ex["id"] in hard_negative_ids and ex["split"] != "train"
+        }
+    )
+    rng = random.Random(seed)
+    rng.shuffle(candidate_ids)
+    return candidate_ids
+
+
+def _hard_negative_replay_count(total: int, fraction: float) -> int:
+    """Convert a replay fraction into a deterministic replay count."""
+    if total <= 0:
+        return 0
+
+    fraction = max(0.0, min(1.0, fraction))
+    if fraction == 0.0:
+        return 0
+
+    count = int(round(total * fraction))
+    return min(total, max(1, count))
+
+
+def _build_trial_manifest(
+    manifest: dict[str, Any],
+    replay_candidate_order: list[str],
+    hard_negative_fraction: float,
+) -> tuple[dict[str, Any], int]:
+    """Create a manifest view with a per-trial hard-negative replay subset.
+
+    Selected replay candidates move to ``train``. Unselected replay candidates
+    move to ``unused`` so all phase-2 trials score on the same eval set.
+    """
+    if not replay_candidate_order:
+        return manifest, 0
+
+    replay_count = _hard_negative_replay_count(
+        len(replay_candidate_order),
+        hard_negative_fraction,
+    )
+    selected_ids = set(replay_candidate_order[:replay_count])
+    candidate_ids = set(replay_candidate_order)
+
+    trial_manifest = copy.deepcopy(manifest)
+    for ex in trial_manifest["examples"]:
+        if ex["id"] not in candidate_ids or ex["split"] == "train":
+            continue
+        ex["split"] = "train" if ex["id"] in selected_ids else "unused"
+
+    return trial_manifest, replay_count
+
+
 def run_search(
     manifest: dict[str, Any],
     n_trials: int,
@@ -87,12 +148,13 @@ def run_search(
     if embedding_cache is None:
         embedding_cache = _cache_embeddings_by_pooling(manifest)
 
-    # Optionally mark hard negatives in the manifest for training enrichment
+    replay_candidate_order: list[str] = []
     if hard_negative_ids:
-        for ex in manifest["examples"]:
-            if ex["id"] in hard_negative_ids and ex["split"] != "train":
-                ex["_original_split"] = ex["split"]
-                ex["split"] = "train"
+        replay_candidate_order = _ordered_replay_candidate_ids(
+            manifest,
+            hard_negative_ids,
+            seed,
+        )
 
     history: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
@@ -107,24 +169,38 @@ def run_search(
     for trial in range(n_trials):
         config = sample_config(rng)
         config["seed"] = seed
+        effective_config = dict(config)
+        if not replay_candidate_order:
+            effective_config["hard_negative_fraction"] = 0.0
 
-        h = config_hash(config)
+        h = config_hash(effective_config)
         if h in seen_hashes:
             skipped += 1
             continue
         seen_hashes.add(h)
 
-        pooling_mode = config.get("context_pooling", "center")
+        pooling_mode = effective_config.get("context_pooling", "center")
         precomputed = embedding_cache.get(pooling_mode)
+        trial_manifest, replay_count = _build_trial_manifest(
+            manifest,
+            replay_candidate_order,
+            float(effective_config.get("hard_negative_fraction", 0.0)),
+        )
 
-        result = train_eval(manifest, config, precomputed_embeddings=precomputed)
+        result = train_eval(
+            trial_manifest,
+            effective_config,
+            precomputed_embeddings=precomputed,
+        )
         metrics = result["metrics"]
+        metrics["available_hard_negatives"] = len(replay_candidate_order)
+        metrics["replayed_hard_negatives"] = replay_count
         obj_value = objective_fn(metrics)
 
         entry = {
             "trial": trial,
             "config_hash": h,
-            "config": config,
+            "config": effective_config,
             "metrics": metrics,
             "objective": round(obj_value, 6),
             "timestamp": time.time(),
@@ -137,12 +213,6 @@ def run_search(
             best_result = entry
             _write_json(best_path, best_result)
             _write_json(fps_path, result["top_false_positives"])
-
-    # Restore original splits if hard negatives were injected
-    if hard_negative_ids:
-        for ex in manifest["examples"]:
-            if "_original_split" in ex:
-                ex["split"] = ex.pop("_original_split")
 
     summary = {
         "total_trials": len(history),

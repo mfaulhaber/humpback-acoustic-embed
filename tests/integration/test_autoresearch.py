@@ -7,13 +7,26 @@ runs a small search, and verifies all output artifacts.
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sqlalchemy import create_engine, text
 
+from humpback.config import Settings
+from scripts.autoresearch.compare_classifiers import (
+    compare_classifiers,
+    resolve_production_classifier,
+)
 from scripts.autoresearch.run_autoresearch import run_search
+from scripts.autoresearch.train_eval import collect_split_arrays, prepare_embeddings
 
 
 VECTOR_DIM = 16
@@ -190,8 +203,66 @@ def test_search_dedup_skips_repeats(tmp_path: Path) -> None:
     assert summary["total_trials"] + summary["skipped_duplicates"] == 10
 
 
+def test_search_without_replay_dedups_hard_negative_fraction_only_variants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without replay IDs, hard_negative_fraction should not create new trials."""
+    manifest = _create_test_data(tmp_path)
+    results_dir = tmp_path / "results-no-replay"
+    configs = iter(
+        [
+            {
+                "feature_norm": "none",
+                "pca_dim": None,
+                "classifier": "logreg",
+                "class_weight_pos": 1.0,
+                "class_weight_neg": 1.0,
+                "hard_negative_fraction": 0.0,
+                "prob_calibration": "none",
+                "threshold": 0.5,
+                "context_pooling": "center",
+            },
+            {
+                "feature_norm": "none",
+                "pca_dim": None,
+                "classifier": "logreg",
+                "class_weight_pos": 1.0,
+                "class_weight_neg": 1.0,
+                "hard_negative_fraction": 0.4,
+                "prob_calibration": "none",
+                "threshold": 0.5,
+                "context_pooling": "center",
+            },
+        ]
+    )
+
+    def fake_sample_config(_rng: random.Random) -> dict[str, object]:
+        return dict(next(configs))
+
+    monkeypatch.setattr(
+        "scripts.autoresearch.run_autoresearch.sample_config",
+        fake_sample_config,
+    )
+
+    summary = run_search(
+        manifest=manifest,
+        n_trials=2,
+        objective_name="default",
+        seed=42,
+        results_dir=results_dir,
+    )
+
+    assert summary["total_trials"] == 1
+    assert summary["skipped_duplicates"] == 1
+
+    with open(results_dir / "best_run.json") as f:
+        best_run = json.load(f)
+    assert best_run["config"]["hard_negative_fraction"] == 0.0
+
+
 def _create_mixed_source_data(tmp_path: Path) -> dict:
-    """Create test data with both embedding set and detection Parquet sources."""
+    """Create test data with embedding sets plus row-id detection sources."""
     rng = np.random.RandomState(77)
 
     # Embedding set Parquet (positives)
@@ -214,14 +285,12 @@ def _create_mixed_source_data(tmp_path: Path) -> dict:
         str(es_path),
     )
 
-    # Detection Parquet (negatives — hard negatives from detection)
+    # Detection Parquet (canonical row-id negatives from detection)
     det_path = tmp_path / "det_embeddings.parquet"
     neg_vecs = rng.randn(20, VECTOR_DIM).astype(np.float32) - 2.0
     det_schema = pa.schema(
         [
-            ("filename", pa.string()),
-            ("start_sec", pa.float32()),
-            ("end_sec", pa.float32()),
+            ("row_id", pa.string()),
             ("embedding", pa.list_(pa.float32(), VECTOR_DIM)),
             ("confidence", pa.float32()),
         ]
@@ -229,9 +298,7 @@ def _create_mixed_source_data(tmp_path: Path) -> dict:
     pq.write_table(
         pa.table(
             {
-                "filename": ["rec_a.flac"] * 10 + ["rec_b.flac"] * 10,
-                "start_sec": [float(i * 5) for i in range(20)],
-                "end_sec": [float(i * 5 + 5) for i in range(20)],
+                "row_id": [f"rid-{i}" for i in range(20)],
                 "embedding": [v.tolist() for v in neg_vecs],
                 "confidence": [0.9 + i * 0.005 for i in range(20)],
             },
@@ -263,9 +330,10 @@ def _create_mixed_source_data(tmp_path: Path) -> dict:
                 "label": 0,
                 "source_type": "detection_job",
                 "parquet_path": str(det_path),
-                "row_index": i,
-                "audio_file_id": "rec_a.flac" if i < 10 else "rec_b.flac",
+                "row_id": f"rid-{i}",
+                "audio_file_id": f"det1:2026-04-03T{i // 4:02d}",
                 "negative_group": band,
+                "label_source": "score_band",
             }
         )
 
@@ -315,3 +383,114 @@ def test_mixed_source_search(tmp_path: Path) -> None:
             if "high_conf_fp_rate_by_group" in entry["metrics"]:
                 groups = entry["metrics"]["high_conf_fp_rate_by_group"]
                 assert isinstance(groups, dict)
+
+
+def test_compare_classifiers_against_production_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compare an autoresearch winner against a classifier loaded from the DB."""
+    manifest = _create_test_data(tmp_path)
+    results_dir = tmp_path / "results"
+
+    run_search(
+        manifest=manifest,
+        n_trials=3,
+        objective_name="default",
+        seed=42,
+        results_dir=results_dir,
+    )
+    with open(results_dir / "best_run.json") as f:
+        best_run = json.load(f)
+
+    pooled = prepare_embeddings(manifest, {"context_pooling": "center"})
+    _train_ids, y_train, X_train, _train_neg_groups = collect_split_arrays(
+        manifest,
+        pooled,
+        "train",
+    )
+    production_pipeline = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("classifier", LogisticRegression(C=0.1, max_iter=1000)),
+        ]
+    )
+    production_pipeline.fit(X_train, y_train)
+
+    model_path = tmp_path / "lr-v12.joblib"
+    joblib.dump(production_pipeline, model_path)
+
+    db_path = tmp_path / "compare.sqlite"
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE classifier_models (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        model_path TEXT NOT NULL,
+                        model_version TEXT NOT NULL,
+                        training_summary TEXT,
+                        training_job_id TEXT,
+                        created_at TEXT
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO classifier_models (
+                        id, name, model_path, model_version,
+                        training_summary, training_job_id, created_at
+                    ) VALUES (
+                        :id, :name, :model_path, :model_version,
+                        :training_summary, :training_job_id, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": "prod-lr-v12",
+                    "name": "LR-v12",
+                    "model_path": str(model_path),
+                    "model_version": "surfperch-tensorflow2",
+                    "training_summary": json.dumps({"cv_f1": 0.95}),
+                    "training_job_id": "job-prod-lr-v12",
+                    "created_at": "2026-04-03 12:00:00",
+                },
+            )
+    finally:
+        engine.dispose()
+
+    monkeypatch.setenv(
+        "HUMPBACK_DATABASE_URL",
+        f"sqlite+aiosqlite:///{db_path}",
+    )
+    settings = Settings()
+    production_classifier = resolve_production_classifier(
+        settings,
+        classifier_name="LR-v12",
+        classifier_id=None,
+    )
+
+    comparison = compare_classifiers(
+        manifest,
+        best_run,
+        production_classifier,
+        splits=["val", "test"],
+        top_n=5,
+    )
+
+    assert comparison["production"]["name"] == "LR-v12"
+    assert comparison["production"]["matched_by"] == "name"
+    assert comparison["splits"].keys() == {"val", "test"}
+    for split_name in ["val", "test"]:
+        split_result = comparison["splits"][split_name]
+        assert "autoresearch" in split_result
+        assert "production" in split_result
+        assert "delta" in split_result
+        assert "prediction_disagreements" in split_result
+        assert "objective" in split_result["autoresearch"]["metrics"]
+        assert "objective" in split_result["production"]["metrics"]

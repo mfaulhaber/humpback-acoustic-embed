@@ -44,7 +44,7 @@ uv run scripts/autoresearch/run_autoresearch.py \
 
 ### `generate_manifest.py` — Build a Data Manifest
 
-Queries the humpback database for classifier training jobs (embedding sets) and/or detection jobs (labeled + unlabeled windows), then produces a stable `data_manifest.json` with train/val/test splits grouped by audio file.
+Queries the humpback database for classifier training jobs (embedding sets) and/or detection jobs (labeled + unlabeled windows), then produces a stable `data_manifest.json` with train/val/test splits grouped by source-specific split buckets.
 
 ```bash
 # From training jobs only (embedding sets)
@@ -52,10 +52,17 @@ uv run scripts/autoresearch/generate_manifest.py \
   --job-ids <comma-separated training job IDs> \
   --output data_manifest.json
 
-# From detection jobs (labeled windows + hard negatives)
+# From detection jobs (explicitly labeled positives/negatives only)
 uv run scripts/autoresearch/generate_manifest.py \
   --detection-job-ids <comma-separated detection job IDs> \
   --score-range 0.5,0.995 \
+  --output data_manifest.json
+
+# Opt in to unlabeled score-band hard negatives
+uv run scripts/autoresearch/generate_manifest.py \
+  --detection-job-ids <comma-separated detection job IDs> \
+  --score-range 0.9,0.995 \
+  --include-unlabeled-hard-negatives \
   --output data_manifest.json
 
 # Both sources combined
@@ -69,17 +76,31 @@ uv run scripts/autoresearch/generate_manifest.py \
 |------|---------|-------------|
 | `--job-ids` | none | Classifier training job IDs (embedding set sources) |
 | `--detection-job-ids` | none | Detection job IDs (must have positive labels) |
-| `--score-range` | `0.5,0.995` | Min,max confidence for unlabeled hard negatives |
+| `--score-range` | `0.5,0.995` | Min,max confidence for unlabeled hard negatives when that opt-in path is enabled |
 | `--split-ratio` | `70,15,15` | Train/val/test ratio |
 | `--seed` | `42` | Random seed for split assignment |
+| `--include-unlabeled-hard-negatives` | off | Opt in to using unlabeled detections inside `--score-range` as hard negatives |
 | `--output` | required | Output path for the manifest JSON |
 
 At least one of `--job-ids` or `--detection-job-ids` is required.
 
-**Detection job data:** Detection jobs with human labels contribute three types of examples:
-- **Labeled positives** (humpback/orca=1) — deployment-realistic positive samples
-- **Labeled negatives** (ship/background=1) — semantically grouped negatives
-- **Unlabeled hard negatives** — windows the classifier flagged but nobody labeled as positive, filtered by `--score-range` and grouped by score band (`det_0.50_0.90`, `det_0.90_0.95`, `det_0.95_0.99`, `det_0.99_1.00`)
+**Detection job data:** Live production detection embeddings are the canonical row-id schema `(row_id, embedding, confidence)`. Legacy filename-based detection embeddings remain supported for older artifacts.
+
+Detection jobs with human labels contribute examples using this precedence:
+- **Manual vocalization positives** — any non-`"(Negative)"` label in `vocalization_labels` becomes a positive
+- **Manual vocalization negatives** — `"(Negative)"` becomes a negative with `negative_group = "vocalization_negative"`
+- **Row-store fallback positives** — `humpback=1` or `orca=1` when no contradictory vocalization label exists
+- **Row-store fallback negatives** — `ship=1` or `background=1` when no contradictory vocalization label exists
+
+By default, unlabeled detections are excluded from the manifest. If you explicitly pass `--include-unlabeled-hard-negatives`, rows unlabeled by both systems and inside `--score-range` are admitted as score-band negatives (`det_0.50_0.90`, `det_0.90_0.95`, `det_0.95_0.99`, `det_0.99_1.00`).
+
+Rows with contradictory positive and negative supervision are skipped and counted in `metadata.detection_job_summaries` rather than silently coerced.
+
+For canonical row-id detection jobs, split grouping uses a synthetic hourly UTC bucket derived from row-store `start_utc`:
+
+`det{job_id[:8]}:{YYYY-MM-DDTHH}`
+
+This value is stored in `audio_file_id` for backward compatibility with the rest of the pipeline.
 
 The output manifest is a plain JSON file. After generation you can edit it directly to:
 - Add `negative_group` labels (e.g. `"vessel"`, `"rain"`, `"other_whale"`)
@@ -95,6 +116,8 @@ uv run scripts/autoresearch/train_eval.py \
   --manifest data_manifest.json \
   --config '{"classifier":"logreg","feature_norm":"l2","pca_dim":128,"threshold":0.93,"context_pooling":"mean3","class_weight_pos":2.0,"class_weight_neg":1.0,"prob_calibration":"none","hard_negative_fraction":0.0}'
 ```
+
+For canonical row-id detection examples, `context_pooling=mean3` and `context_pooling=max3` fall back to center-only because Parquet row order is not treated as a stable temporal-neighbor contract.
 
 ### `run_autoresearch.py` — Search Loop
 
@@ -117,6 +140,37 @@ uv run scripts/autoresearch/run_autoresearch.py \
 | `--seed` | `42` | Random seed |
 | `--results-dir` | `results` | Output directory |
 | `--hard-negative-from` | none | Path to `top_false_positives.json` for hard-negative mining |
+
+### `compare_classifiers.py` — Compare Against Production
+
+Retrains the winning autoresearch config on the manifest train split, loads a production classifier from `classifier_models`, and evaluates both on the same requested split(s).
+
+When you want to compare against live production models such as `LR-v12`, source the repo `.env` first so `HUMPBACK_DATABASE_URL` points at the production database and classifier artifact paths:
+
+```bash
+set -a && source .env
+uv run scripts/autoresearch/compare_classifiers.py \
+  --manifest data_manifest.json \
+  --best-run results/phase1/best_run.json \
+  --production-classifier-name LR-v12 \
+  --splits val,test \
+  --output results/phase1/lr_v12_comparison.json
+```
+
+For a phase-2 winner, also pass the false-positive source file that defined the replay pool so the script can rebuild the replay-adjusted manifest correctly:
+
+```bash
+set -a && source .env
+uv run scripts/autoresearch/compare_classifiers.py \
+  --manifest data_manifest.json \
+  --best-run results/phase2/best_run.json \
+  --hard-negative-from results/phase1/top_false_positives.json \
+  --production-classifier-name LR-v12 \
+  --splits val,test \
+  --output results/phase2/lr_v12_comparison.json
+```
+
+The output JSON includes split-level metrics for both models, metric deltas (`autoresearch - production`), top false positives for each model, and the largest prediction disagreements between them.
 
 ## Results
 
@@ -174,6 +228,10 @@ uv run scripts/autoresearch/run_autoresearch.py \
   --hard-negative-from results/phase1/top_false_positives.json \
   --results-dir results/phase2
 ```
+
+When `--hard-negative-from` is present, each trial deterministically replays only the configured `hard_negative_fraction` of that false-positive pool into `train`. Unsampled replay candidates are moved to `unused`, not left in `val`/`test`, so all phase-2 trials are scored on the same evaluation set.
+
+When `--hard-negative-from` is absent, `hard_negative_fraction` is normalized to `0.0` and does not create distinct trials.
 
 ## Limitations
 

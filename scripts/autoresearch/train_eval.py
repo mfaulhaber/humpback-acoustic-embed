@@ -31,9 +31,26 @@ from humpback.processing.embeddings import read_embeddings
 # ---------------------------------------------------------------------------
 
 
-# Cache entry: (row_indices, embeddings, filenames_or_None)
-# filenames is populated only for detection-format Parquet files.
-ParquetCacheEntry = tuple[np.ndarray, np.ndarray, list[str] | None]
+# Cache entry: (row_indices_or_None, embeddings, filenames_or_None, row_ids_or_None)
+# filenames is populated only for legacy detection-format Parquet files.
+# row_ids is populated only for canonical row-id detection-format Parquet files.
+ParquetCacheEntry = tuple[
+    np.ndarray | None,
+    np.ndarray,
+    list[str] | None,
+    list[str] | None,
+]
+
+
+def _unpack_cache_entry(
+    entry: ParquetCacheEntry | tuple[np.ndarray, np.ndarray, list[str] | None],
+) -> tuple[np.ndarray | None, np.ndarray, list[str] | None, list[str] | None]:
+    """Support both the current cache format and older 3-tuple test fixtures."""
+    if len(entry) == 3:
+        row_indices, embeddings, filenames = entry
+        return row_indices, embeddings, filenames, None
+    row_indices, embeddings, filenames, row_ids = entry
+    return row_indices, embeddings, filenames, row_ids
 
 
 def load_manifest(manifest_path: str | Path) -> dict[str, Any]:
@@ -48,7 +65,8 @@ def _load_parquet_cache(
     """Load each unique Parquet file once, auto-detecting schema format.
 
     Embedding set format: has ``row_index`` column → load via read_embeddings.
-    Detection format: has ``filename`` column → use positional indices.
+    Canonical detection format: has ``row_id`` column.
+    Legacy detection format: has ``filename`` column → use positional indices.
     """
     paths = {ex["parquet_path"] for ex in manifest["examples"]}
     cache: dict[str, ParquetCacheEntry] = {}
@@ -58,16 +76,24 @@ def _load_parquet_cache(
         if "row_index" in col_names:
             # Embedding set format
             row_indices, embeddings = read_embeddings(Path(p))
-            cache[p] = (row_indices, embeddings, None)
+            cache[p] = (row_indices, embeddings, None, None)
+        elif "row_id" in col_names:
+            # Canonical row-id detection format
+            table = pq.read_table(p)
+            embeddings = np.array(
+                [v.as_py() for v in table["embedding"]], dtype=np.float32
+            )
+            row_ids = [str(rid or "").strip() for rid in table["row_id"].to_pylist()]
+            cache[p] = (None, embeddings, None, row_ids)
         elif "filename" in col_names:
-            # Detection embeddings format
+            # Legacy detection embeddings format
             table = pq.read_table(p)
             embeddings = np.array(
                 [v.as_py() for v in table["embedding"]], dtype=np.float32
             )
             row_indices = np.arange(len(embeddings), dtype=np.int32)
             filenames = table["filename"].to_pylist()
-            cache[p] = (row_indices, embeddings, filenames)
+            cache[p] = (row_indices, embeddings, filenames, None)
         else:
             msg = f"Unknown Parquet format in {p}: columns {col_names}"
             raise ValueError(msg)
@@ -79,11 +105,34 @@ def _build_embedding_lookup(
     parquet_cache: dict[str, ParquetCacheEntry],
 ) -> dict[str, np.ndarray]:
     """Build {example_id: embedding_vector} from manifest + cached Parquet data."""
+    row_index_lookups: dict[str, dict[int, int]] = {}
+    row_id_lookups: dict[str, dict[str, int]] = {}
+    for path, entry in parquet_cache.items():
+        row_indices, _embeddings, _filenames, row_ids = _unpack_cache_entry(entry)
+        if row_indices is not None:
+            row_index_lookups[path] = {
+                int(row_index): idx for idx, row_index in enumerate(row_indices)
+            }
+        if row_ids is not None:
+            row_id_lookups[path] = {
+                str(row_id): idx for idx, row_id in enumerate(row_ids) if row_id
+            }
+
     lookup: dict[str, np.ndarray] = {}
     for ex in manifest["examples"]:
-        row_indices, embeddings, _ = parquet_cache[ex["parquet_path"]]
-        idx = int(np.searchsorted(row_indices, ex["row_index"]))
-        if idx < len(row_indices) and row_indices[idx] == ex["row_index"]:
+        entry = parquet_cache[ex["parquet_path"]]
+        _row_indices, embeddings, _filenames, row_ids = _unpack_cache_entry(entry)
+
+        idx: int | None = None
+        row_id = str(ex.get("row_id") or "").strip()
+        if row_id and row_ids is not None:
+            idx = row_id_lookups.get(ex["parquet_path"], {}).get(row_id)
+        elif ex.get("row_index") is not None:
+            idx = row_index_lookups.get(ex["parquet_path"], {}).get(
+                int(ex["row_index"])
+            )
+
+        if idx is not None:
             lookup[ex["id"]] = embeddings[idx]
     return lookup
 
@@ -98,7 +147,10 @@ def _build_parquet_row_map(
 ) -> dict[str, dict[int, np.ndarray]]:
     """Build {parquet_path: {row_index: vector}} for neighbor lookups."""
     row_map: dict[str, dict[int, np.ndarray]] = {}
-    for path, (row_indices, embeddings, _) in parquet_cache.items():
+    for path, entry in parquet_cache.items():
+        row_indices, embeddings, _filenames, _row_ids = _unpack_cache_entry(entry)
+        if row_indices is None:
+            continue
         row_map[path] = {int(ri): embeddings[i] for i, ri in enumerate(row_indices)}
     return row_map
 
@@ -112,8 +164,9 @@ def _build_parquet_filename_map(
     Used to skip cross-file neighbors during context pooling.
     """
     fname_map: dict[str, dict[int, str]] = {}
-    for path, (row_indices, _, filenames) in parquet_cache.items():
-        if filenames is not None:
+    for path, entry in parquet_cache.items():
+        row_indices, _embeddings, filenames, _row_ids = _unpack_cache_entry(entry)
+        if filenames is not None and row_indices is not None:
             fname_map[path] = {
                 int(ri): filenames[i] for i, ri in enumerate(row_indices)
             }
@@ -133,8 +186,10 @@ def apply_context_pooling(
         mean3: mean of [left, center, right] neighbors
         max3: element-wise max of [left, center, right] neighbors
 
-    Missing neighbors fall back to center-only. For detection-format files,
-    neighbors from a different audio filename are also skipped.
+    Missing neighbors fall back to center-only. For legacy detection-format files,
+    neighbors from a different audio filename are also skipped. Row-id detection
+    examples also fall back to center-only because Parquet order is not a stable
+    temporal-neighbor contract after embedding sync updates.
     """
     if mode == "center":
         return embedding_lookup
@@ -150,6 +205,17 @@ def apply_context_pooling(
             continue
 
         path = ex["parquet_path"]
+        _row_indices, _embeddings, _filenames, row_ids = _unpack_cache_entry(
+            parquet_cache[path]
+        )
+        if row_ids is not None and ex.get("row_id") is not None:
+            pooled[eid] = center
+            continue
+
+        if ex.get("row_index") is None:
+            pooled[eid] = center
+            continue
+
         ri = ex["row_index"]
         neighbors = [center]
 
@@ -219,6 +285,47 @@ def apply_transforms(transforms: list[Any], X: np.ndarray) -> np.ndarray:
     for t in transforms:
         X = t.transform(X)
     return X
+
+
+def _feature_dim_from_lookup(embedding_lookup: dict[str, np.ndarray]) -> int:
+    """Return the vector dimension for an embedding lookup."""
+    if not embedding_lookup:
+        return 0
+    first = next(iter(embedding_lookup.values()))
+    return int(first.shape[0]) if first.ndim > 0 else 0
+
+
+def collect_split_arrays(
+    manifest: dict[str, Any],
+    embedding_lookup: dict[str, np.ndarray],
+    split: str,
+) -> tuple[list[str], np.ndarray, np.ndarray, list[str | None]]:
+    """Collect IDs, features, labels, and negative groups for one split."""
+    example_ids: list[str] = []
+    labels: list[int] = []
+    vectors: list[np.ndarray] = []
+    negative_groups: list[str | None] = []
+
+    for ex in manifest["examples"]:
+        if ex.get("split") != split:
+            continue
+        eid = ex["id"]
+        vec = embedding_lookup.get(eid)
+        if vec is None:
+            continue
+        example_ids.append(eid)
+        labels.append(int(ex["label"]))
+        vectors.append(vec)
+        negative_groups.append(ex.get("negative_group"))
+
+    feature_dim = _feature_dim_from_lookup(embedding_lookup)
+    if vectors:
+        X = np.array(vectors, dtype=np.float32)
+    else:
+        X = np.empty((0, feature_dim), dtype=np.float32)
+    y = np.array(labels, dtype=np.int32)
+
+    return example_ids, y, X, negative_groups
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +478,98 @@ def find_top_false_positives(
     return results
 
 
+def score_classifier(clf: Any, X: np.ndarray) -> np.ndarray:
+    """Return positive-class scores for a fitted classifier."""
+    if X.shape[0] == 0:
+        return np.empty((0,), dtype=np.float32)
+    if hasattr(clf, "predict_proba"):
+        return clf.predict_proba(X)[:, 1]
+    return clf.decision_function(X)
+
+
+def prepare_embeddings(
+    manifest: dict[str, Any],
+    config: dict[str, Any],
+    parquet_cache: dict[str, ParquetCacheEntry] | None = None,
+    precomputed_embeddings: dict[str, np.ndarray] | None = None,
+) -> dict[str, np.ndarray]:
+    """Load and context-pool embeddings for a manifest/config pair."""
+    if precomputed_embeddings is not None:
+        return precomputed_embeddings
+
+    if parquet_cache is None:
+        parquet_cache = _load_parquet_cache(manifest)
+    embedding_lookup = _build_embedding_lookup(manifest, parquet_cache)
+    pooling_mode = config.get("context_pooling", "center")
+    return apply_context_pooling(
+        manifest, embedding_lookup, parquet_cache, pooling_mode
+    )
+
+
+def fit_autoresearch_classifier(
+    manifest: dict[str, Any],
+    config: dict[str, Any],
+    parquet_cache: dict[str, ParquetCacheEntry] | None = None,
+    precomputed_embeddings: dict[str, np.ndarray] | None = None,
+) -> tuple[Any, list[Any], dict[str, np.ndarray]]:
+    """Fit the autoresearch classifier on the manifest train split."""
+    pooled = prepare_embeddings(
+        manifest,
+        config,
+        parquet_cache=parquet_cache,
+        precomputed_embeddings=precomputed_embeddings,
+    )
+
+    _train_ids, y_train, X_train, _train_neg_groups = collect_split_arrays(
+        manifest,
+        pooled,
+        "train",
+    )
+    transforms, X_train = build_feature_pipeline(config, X_train)
+
+    clf = build_classifier(config)
+    clf.fit(X_train, y_train)
+    clf = apply_calibration(clf, X_train, y_train, config)
+
+    return clf, transforms, pooled
+
+
+def evaluate_classifier_on_split(
+    manifest: dict[str, Any],
+    embedding_lookup: dict[str, np.ndarray],
+    clf: Any,
+    transforms: list[Any],
+    split: str,
+    threshold: float,
+    top_n: int = 50,
+) -> dict[str, Any]:
+    """Evaluate a fitted classifier on one manifest split."""
+    example_ids, y_true, X, negative_groups = collect_split_arrays(
+        manifest,
+        embedding_lookup,
+        split,
+    )
+    X = apply_transforms(transforms, X)
+    y_scores = score_classifier(clf, X)
+    metrics = compute_metrics(y_true, y_scores, threshold, negative_groups)
+    top_fps = find_top_false_positives(
+        example_ids,
+        y_true,
+        y_scores,
+        negative_groups,
+        n=top_n,
+    )
+    return {
+        "split": split,
+        "example_ids": example_ids,
+        "labels": y_true,
+        "scores": y_scores,
+        "negative_groups": negative_groups,
+        "metrics": metrics,
+        "top_false_positives": top_fps,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main train/eval entrypoint
 # ---------------------------------------------------------------------------
@@ -387,66 +586,23 @@ def train_eval(
     If parquet_cache is provided, skips re-reading Parquet files.
     If precomputed_embeddings is provided (already context-pooled), uses those directly.
     """
-    # Load and pool embeddings
-    if precomputed_embeddings is not None:
-        pooled = precomputed_embeddings
-    else:
-        if parquet_cache is None:
-            parquet_cache = _load_parquet_cache(manifest)
-        embedding_lookup = _build_embedding_lookup(manifest, parquet_cache)
-        pooling_mode = config.get("context_pooling", "center")
-        pooled = apply_context_pooling(
-            manifest, embedding_lookup, parquet_cache, pooling_mode
-        )
-
-    # Split into train/val arrays
-    train_ids, train_labels, train_vecs = [], [], []
-    val_ids, val_labels, val_vecs = [], [], []
-    val_neg_groups: list[str | None] = []
-
-    for ex in manifest["examples"]:
-        eid = ex["id"]
-        if eid not in pooled:
-            continue
-        vec = pooled[eid]
-        if ex["split"] == "train":
-            train_ids.append(eid)
-            train_labels.append(ex["label"])
-            train_vecs.append(vec)
-        elif ex["split"] == "val":
-            val_ids.append(eid)
-            val_labels.append(ex["label"])
-            val_vecs.append(vec)
-            val_neg_groups.append(ex.get("negative_group"))
-
-    X_train = np.array(train_vecs, dtype=np.float32)
-    y_train = np.array(train_labels, dtype=np.int32)
-    X_val = np.array(val_vecs, dtype=np.float32)
-    y_val = np.array(val_labels, dtype=np.int32)
-
-    # Feature transforms (fit on train, apply to both)
-    transforms, X_train = build_feature_pipeline(config, X_train)
-    X_val = apply_transforms(transforms, X_val)
-
-    # Build and train classifier
-    clf = build_classifier(config)
-    clf.fit(X_train, y_train)
-
-    # Apply calibration if requested
-    clf = apply_calibration(clf, X_train, y_train, config)
-
-    # Get probability scores on validation set
-    if hasattr(clf, "predict_proba"):
-        val_scores = clf.predict_proba(X_val)[:, 1]
-    else:
-        val_scores = clf.decision_function(X_val)
-
-    # Compute metrics
+    clf, transforms, pooled = fit_autoresearch_classifier(
+        manifest,
+        config,
+        parquet_cache=parquet_cache,
+        precomputed_embeddings=precomputed_embeddings,
+    )
     threshold = config.get("threshold", 0.5)
-    metrics = compute_metrics(y_val, val_scores, threshold, val_neg_groups)
-
-    # Top false positives
-    top_fps = find_top_false_positives(val_ids, y_val, val_scores, val_neg_groups)
+    split_result = evaluate_classifier_on_split(
+        manifest,
+        pooled,
+        clf,
+        transforms,
+        split="val",
+        threshold=threshold,
+    )
+    metrics = split_result["metrics"]
+    top_fps = split_result["top_false_positives"]
 
     seed = config.get("seed", 42)
     metrics["seed"] = seed
