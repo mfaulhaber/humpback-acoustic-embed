@@ -1,5 +1,6 @@
 """Train a binary whale vocalization classifier on embeddings."""
 
+import dataclasses as _dataclasses
 import json
 import logging
 from pathlib import Path
@@ -291,6 +292,83 @@ def load_manifest_split_embeddings(
         ),
     }
     return positive_embeddings, negative_embeddings, source_summary
+
+
+@_dataclasses.dataclass
+class ManifestSplitData:
+    """All data needed for replay training from a manifest split."""
+
+    X: np.ndarray
+    y: np.ndarray
+    examples: list[dict[str, Any]]
+    parquet_cache: dict[str, Any]
+    manifest: dict[str, Any]
+    source_summary: dict[str, Any]
+
+
+def load_manifest_split_data(
+    manifest_path: Path | str,
+    *,
+    split: str = "train",
+) -> ManifestSplitData:
+    """Load manifest split with full metadata for context pooling.
+
+    Unlike ``load_manifest_split_embeddings`` which returns flat pos/neg arrays,
+    this returns the full manifest, parquet cache, and per-example metadata needed
+    for context pooling and replay verification.
+    """
+    from humpback.classifier.replay import (
+        build_embedding_lookup,
+        collect_split_arrays,
+        load_manifest as _load_manifest,
+        load_parquet_cache,
+    )
+
+    manifest = _load_manifest(manifest_path)
+    parquet_cache = load_parquet_cache(manifest)
+    embedding_lookup = build_embedding_lookup(manifest, parquet_cache)
+
+    split_examples = [ex for ex in manifest["examples"] if ex.get("split") == split]
+    if not split_examples:
+        raise ValueError(
+            f"Manifest has no examples for split {split!r}: {manifest_path}"
+        )
+
+    _example_ids, y, X, _negative_groups = collect_split_arrays(
+        manifest, embedding_lookup, split
+    )
+
+    positive_count = int(np.sum(y == 1))
+    negative_count = int(np.sum(y == 0))
+    if positive_count < 2:
+        raise ValueError(
+            f"Need at least 2 positive manifest examples for split {split!r}, "
+            f"got {positive_count}"
+        )
+    if negative_count < 2:
+        raise ValueError(
+            f"Need at least 2 negative manifest examples for split {split!r}, "
+            f"got {negative_count}"
+        )
+
+    vector_dim = int(X.shape[1]) if X.size else 0
+    source_summary = {
+        "manifest_path": str(Path(manifest_path)),
+        "split": split,
+        "example_count": len(split_examples),
+        "positive_count": positive_count,
+        "negative_count": negative_count,
+        "vector_dim": vector_dim,
+    }
+
+    return ManifestSplitData(
+        X=X,
+        y=y,
+        examples=split_examples,
+        parquet_cache=parquet_cache,
+        manifest=manifest,
+        source_summary=source_summary,
+    )
 
 
 def train_binary_classifier(

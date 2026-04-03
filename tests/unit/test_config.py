@@ -97,6 +97,21 @@ def test_from_repo_env_loads_repo_root_dotenv(tmp_path, monkeypatch):
     assert settings.storage_root == Path("/workspace/data")
 
 
+def test_replay_metric_tolerance_default():
+    settings = Settings()
+    assert settings.replay_metric_tolerance == 0.01
+
+
+def test_replay_metric_tolerance_env_override(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "HUMPBACK_REPLAY_METRIC_TOLERANCE=0.005\n",
+        encoding="utf-8",
+    )
+    settings = cast(Any, Settings)(_env_file=env_file)
+    assert settings.replay_metric_tolerance == 0.005
+
+
 def test_noaa_archive_metadata_loads_runtime_and_reference_records():
     record_ids = {record["id"] for record in NOAA_ARCHIVE_METADATA}
 

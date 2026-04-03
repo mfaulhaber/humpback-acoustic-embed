@@ -45,7 +45,6 @@ from humpback.classifier.providers import (
     build_archive_playback_provider,
 )
 from humpback.classifier.trainer import (
-    load_manifest_split_embeddings,
     train_binary_classifier,
 )
 from humpback.config import Settings, get_archive_source
@@ -520,16 +519,100 @@ async def run_training_job(
         if job.source_mode == "autoresearch_candidate":
             if not job.manifest_path:
                 raise ValueError("Candidate-backed training job missing manifest_path")
-            (
-                positive_embeddings,
-                negative_embeddings,
-                source_summary,
-            ) = await asyncio.to_thread(
-                load_manifest_split_embeddings,
+
+            from humpback.classifier.replay import (
+                apply_context_pooling,
+                build_embedding_lookup,
+                build_replay_pipeline,
+                verify_replay,  # noqa: F811
+            )
+            from humpback.classifier.trainer import load_manifest_split_data
+
+            promoted_config = (
+                json.loads(job.promoted_config) if job.promoted_config else {}
+            )
+
+            split_data = await asyncio.to_thread(
+                load_manifest_split_data,
                 Path(job.manifest_path),
                 split=job.training_split_name or "train",
             )
+            source_summary = split_data.source_summary
             vector_dim = int(source_summary["vector_dim"])
+
+            # Context pooling on raw embeddings (data-level, before pipeline)
+            embedding_lookup = build_embedding_lookup(
+                split_data.manifest, split_data.parquet_cache
+            )
+            pooling_mode = promoted_config.get("context_pooling", "center")
+            pooled_lookup, pooling_report = apply_context_pooling(
+                split_data.manifest,
+                embedding_lookup,
+                split_data.parquet_cache,
+                pooling_mode,
+            )
+
+            # Re-collect train split arrays from pooled embeddings
+            from humpback.classifier.replay import collect_split_arrays
+
+            _ids, y_train, X_train, _neg_groups = collect_split_arrays(
+                split_data.manifest,
+                pooled_lookup,
+                split_data.source_summary["split"],
+            )
+
+            # Build and fit replay pipeline
+            pipeline, effective_config = await asyncio.to_thread(
+                build_replay_pipeline,
+                promoted_config,
+                X_train,
+                y_train,
+            )
+
+            effective_config.context_pooling = pooling_mode
+            effective_config.context_pooling_applied_count = (
+                pooling_report.applied_count
+            )
+            effective_config.context_pooling_fallback_count = (
+                pooling_report.fallback_count
+            )
+
+            summary: dict[str, Any] = {
+                "training_source_mode": job.source_mode,
+                "training_data_source": source_summary,
+                "replay_effective_config": effective_config.to_dict(),
+                "replay_pooling_report": {
+                    "applied_count": pooling_report.applied_count,
+                    "fallback_count": pooling_report.fallback_count,
+                },
+                "promoted_config": promoted_config,
+            }
+            if promotion_provenance:
+                summary["promotion_provenance"] = promotion_provenance
+
+            # Replay verification — compare against imported candidate metrics
+            candidate_split_metrics = (
+                promotion_provenance.get("split_metrics", {})
+                if promotion_provenance
+                else {}
+            )
+            threshold = float(promoted_config.get("threshold", 0.5))
+            if candidate_split_metrics:
+                replay_verification = await asyncio.to_thread(
+                    verify_replay,
+                    pipeline,
+                    split_data.manifest,
+                    split_data.parquet_cache,
+                    promoted_config,
+                    candidate_split_metrics,
+                    threshold,
+                    settings.replay_metric_tolerance,
+                    effective_config,
+                )
+                summary["replay_verification"] = replay_verification
+                # Also store in source_comparison_context for API access
+                if promotion_provenance is not None:
+                    promotion_provenance["replay_verification"] = replay_verification
         else:
             es_ids = json.loads(job.positive_embedding_set_ids)
             result = await session.execute(
@@ -562,17 +645,18 @@ async def run_training_job(
             }
             vector_dim = int(embedding_sets[0].vector_dim)
 
-        # Train classifier (CPU-bound)
-        pipeline, summary = await asyncio.to_thread(
-            train_binary_classifier,
-            positive_embeddings,
-            negative_embeddings,
-            parameters,
-        )
-        summary["training_source_mode"] = job.source_mode
-        summary["training_data_source"] = source_summary
-        if promotion_provenance:
-            summary["promotion_provenance"] = promotion_provenance
+            # Train classifier (CPU-bound)
+            pipeline, train_summary = await asyncio.to_thread(
+                train_binary_classifier,
+                positive_embeddings,
+                negative_embeddings,
+                parameters,
+            )
+            summary = cast(dict[str, Any], train_summary)
+            summary["training_source_mode"] = job.source_mode
+            summary["training_data_source"] = source_summary
+            if promotion_provenance:
+                summary["promotion_provenance"] = promotion_provenance
 
         # Save model atomically
         cdir = ensure_dir(classifier_dir(settings.storage_root, job.id))
@@ -607,14 +691,19 @@ async def run_training_job(
         await session.flush()
 
         completion_time = datetime.now(timezone.utc)
+        job_update_values: dict[str, Any] = {
+            "classifier_model_id": cm.id,
+            "status": "complete",
+            "updated_at": completion_time,
+        }
+        if promotion_provenance is not None:
+            job_update_values["source_comparison_context"] = json.dumps(
+                promotion_provenance
+            )
         await session.execute(
             update(ClassifierTrainingJob)
             .where(ClassifierTrainingJob.id == job.id)
-            .values(
-                classifier_model_id=cm.id,
-                status="complete",
-                updated_at=completion_time,
-            )
+            .values(**job_update_values)
         )
         if job.source_candidate_id:
             await session.execute(

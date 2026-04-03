@@ -269,23 +269,6 @@ def _assess_reproducibility(config: dict[str, Any]) -> tuple[bool, list[str]]:
             f"feature_norm={feature_norm!r} is not supported by the production trainer"
         )
 
-    pca_dim = config.get("pca_dim")
-    if pca_dim is not None:
-        blockers.append("PCA-backed candidates are not yet supported for promotion")
-
-    prob_calibration = config.get("prob_calibration", "none")
-    if prob_calibration != "none":
-        blockers.append(
-            "Probability calibration is not yet supported by the production trainer"
-        )
-
-    context_pooling = config.get("context_pooling", "center")
-    if context_pooling != "center":
-        blockers.append(
-            "Only context_pooling='center' is promotable today; pooled neighbor "
-            "contexts are not yet reproduced by the production trainer"
-        )
-
     hard_negative_fraction = float(config.get("hard_negative_fraction", 0.0))
     if hard_negative_fraction != 0.0:
         blockers.append(

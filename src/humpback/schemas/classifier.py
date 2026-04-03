@@ -113,6 +113,7 @@ class AutoresearchCandidateDetailOut(AutoresearchCandidateSummaryOut):
     source_model_metadata: Optional[dict[str, Any]] = None
     top_false_positives_preview: Optional[dict[str, Any]] = None
     prediction_disagreements_preview: Optional[dict[str, Any]] = None
+    replay_verification: Optional[dict[str, Any]] = None
 
 
 class AutoresearchCandidateTrainingJobCreate(BaseModel):
