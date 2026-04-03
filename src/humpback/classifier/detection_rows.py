@@ -310,6 +310,7 @@ def normalize_detection_row(
     positive_extract_filename = row.get("positive_extract_filename", "").strip() or None
 
     return {
+        "row_id": row.get("row_id", ""),
         "start_utc": start_utc,
         "end_utc": end_utc,
         "avg_confidence": avg_confidence,

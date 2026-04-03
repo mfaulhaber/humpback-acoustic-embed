@@ -71,6 +71,24 @@ def test_normalize_detection_row_utc() -> None:
     assert result["n_windows"] == 3
 
 
+def test_normalize_detection_row_includes_row_id() -> None:
+    """normalize_detection_row preserves row_id for frontend selection."""
+    row = {
+        "row_id": "abc-123",
+        "start_utc": "100.0",
+        "end_utc": "105.0",
+    }
+    result = normalize_detection_row(row)
+    assert result["row_id"] == "abc-123"
+
+
+def test_normalize_detection_row_missing_row_id() -> None:
+    """normalize_detection_row returns empty string when row_id is absent."""
+    row = {"start_utc": "100.0", "end_utc": "105.0"}
+    result = normalize_detection_row(row)
+    assert result["row_id"] == ""
+
+
 def test_derive_detection_filename() -> None:
     """derive_detection_filename formats UTC epochs to compact filename."""
     # 2024-07-01 00:00:00 UTC = 1719792000.0
