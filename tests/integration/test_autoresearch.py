@@ -7,11 +7,13 @@ runs a small search, and verifies all output artifacts.
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from scripts.autoresearch.run_autoresearch import run_search
 
@@ -188,6 +190,64 @@ def test_search_dedup_skips_repeats(tmp_path: Path) -> None:
     # (not guaranteed with 10 trials on the full space, but the
     # mechanism is tested structurally)
     assert summary["total_trials"] + summary["skipped_duplicates"] == 10
+
+
+def test_search_without_replay_dedups_hard_negative_fraction_only_variants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without replay IDs, hard_negative_fraction should not create new trials."""
+    manifest = _create_test_data(tmp_path)
+    results_dir = tmp_path / "results-no-replay"
+    configs = iter(
+        [
+            {
+                "feature_norm": "none",
+                "pca_dim": None,
+                "classifier": "logreg",
+                "class_weight_pos": 1.0,
+                "class_weight_neg": 1.0,
+                "hard_negative_fraction": 0.0,
+                "prob_calibration": "none",
+                "threshold": 0.5,
+                "context_pooling": "center",
+            },
+            {
+                "feature_norm": "none",
+                "pca_dim": None,
+                "classifier": "logreg",
+                "class_weight_pos": 1.0,
+                "class_weight_neg": 1.0,
+                "hard_negative_fraction": 0.4,
+                "prob_calibration": "none",
+                "threshold": 0.5,
+                "context_pooling": "center",
+            },
+        ]
+    )
+
+    def fake_sample_config(_rng: random.Random) -> dict[str, object]:
+        return dict(next(configs))
+
+    monkeypatch.setattr(
+        "scripts.autoresearch.run_autoresearch.sample_config",
+        fake_sample_config,
+    )
+
+    summary = run_search(
+        manifest=manifest,
+        n_trials=2,
+        objective_name="default",
+        seed=42,
+        results_dir=results_dir,
+    )
+
+    assert summary["total_trials"] == 1
+    assert summary["skipped_duplicates"] == 1
+
+    with open(results_dir / "best_run.json") as f:
+        best_run = json.load(f)
+    assert best_run["config"]["hard_negative_fraction"] == 0.0
 
 
 def _create_mixed_source_data(tmp_path: Path) -> dict:

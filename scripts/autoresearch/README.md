@@ -189,10 +189,13 @@ uv run scripts/autoresearch/run_autoresearch.py \
   --results-dir results/phase2
 ```
 
+When `--hard-negative-from` is present, each trial deterministically replays only the configured `hard_negative_fraction` of that false-positive pool into `train`. Unsampled replay candidates are moved to `unused`, not left in `val`/`test`, so all phase-2 trials are scored on the same evaluation set.
+
+When `--hard-negative-from` is absent, `hard_negative_fraction` is normalized to `0.0` and does not create distinct trials.
+
 ## Limitations
 
 - Embeddings are frozen (no encoder finetuning)
 - Search is random sampling, not Bayesian optimization
 - Results are advisory — winning configs must be manually transferred to the platform's classifier training
 - No UI integration
-- `hard_negative_fraction` remains in the search space, but phase-2 replay still reuses every listed hard negative rather than subsampling them per trial

@@ -12,6 +12,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from scripts.autoresearch.objectives import default_objective, get_objective
+from scripts.autoresearch.run_autoresearch import (
+    _build_trial_manifest,
+    _hard_negative_replay_count,
+    _ordered_replay_candidate_ids,
+    run_search,
+)
 from scripts.autoresearch.search_space import (
     SEARCH_SPACE,
     config_hash,
@@ -167,6 +173,288 @@ class TestSearchSpace:
         c1 = {"a": 1, "b": "x"}
         c2 = {"a": 2, "b": "x"}
         assert config_hash(c1) != config_hash(c2)
+
+
+class TestHardNegativeReplay:
+    def test_hard_negative_replay_count(self) -> None:
+        assert _hard_negative_replay_count(0, 0.4) == 0
+        assert _hard_negative_replay_count(50, 0.0) == 0
+        assert _hard_negative_replay_count(50, 0.1) == 5
+        assert _hard_negative_replay_count(50, 0.4) == 20
+        assert _hard_negative_replay_count(3, 0.1) == 1
+
+    def test_ordered_replay_candidates_skip_train_examples(
+        self, tmp_path: Path
+    ) -> None:
+        parquet = tmp_path / "test.parquet"
+        _write_synthetic_parquet(parquet, 5)
+        manifest = {
+            "metadata": {},
+            "examples": [
+                {
+                    "id": "neg_train",
+                    "split": "train",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 0,
+                    "audio_file_id": "f0",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "neg_val_a",
+                    "split": "val",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 1,
+                    "audio_file_id": "f1",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "neg_test_b",
+                    "split": "test",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 2,
+                    "audio_file_id": "f2",
+                    "negative_group": "vessel",
+                },
+            ],
+        }
+        order = _ordered_replay_candidate_ids(
+            manifest,
+            {"neg_train", "neg_val_a", "neg_test_b"},
+            seed=42,
+        )
+        assert "neg_train" not in order
+        assert sorted(order) == ["neg_test_b", "neg_val_a"]
+
+    def test_build_trial_manifest_moves_unsampled_candidates_to_unused(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        parquet = tmp_path / "test.parquet"
+        _write_synthetic_parquet(parquet, 6)
+        manifest = {
+            "metadata": {"name": "test"},
+            "examples": [
+                {
+                    "id": "pos_train",
+                    "split": "train",
+                    "label": 1,
+                    "parquet_path": str(parquet),
+                    "row_index": 0,
+                    "audio_file_id": "f0",
+                    "negative_group": None,
+                },
+                {
+                    "id": "hn1",
+                    "split": "val",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 1,
+                    "audio_file_id": "f1",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "hn2",
+                    "split": "val",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 2,
+                    "audio_file_id": "f2",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "hn3",
+                    "split": "test",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 3,
+                    "audio_file_id": "f3",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "hn4",
+                    "split": "test",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 4,
+                    "audio_file_id": "f4",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "neg_keep",
+                    "split": "val",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 5,
+                    "audio_file_id": "f5",
+                    "negative_group": "rain",
+                },
+            ],
+        }
+
+        trial_manifest, replay_count = _build_trial_manifest(
+            manifest,
+            ["hn1", "hn2", "hn3", "hn4"],
+            hard_negative_fraction=0.5,
+        )
+
+        assert replay_count == 2
+        splits = {ex["id"]: ex["split"] for ex in trial_manifest["examples"]}
+        assert splits["hn1"] == "train"
+        assert splits["hn2"] == "train"
+        assert splits["hn3"] == "unused"
+        assert splits["hn4"] == "unused"
+        assert splits["neg_keep"] == "val"
+        assert splits["pos_train"] == "train"
+        assert {ex["id"]: ex["split"] for ex in manifest["examples"]}["hn3"] == "test"
+
+    def test_run_search_uses_effective_hard_negative_fraction(
+        self, tmp_path: Path
+    ) -> None:
+        parquet = tmp_path / "test.parquet"
+        _write_synthetic_parquet(parquet, 5)
+        manifest = {
+            "metadata": {},
+            "examples": [
+                {
+                    "id": "pos_train",
+                    "split": "train",
+                    "label": 1,
+                    "parquet_path": str(parquet),
+                    "row_index": 0,
+                    "audio_file_id": "f0",
+                    "negative_group": None,
+                },
+                {
+                    "id": "hn1",
+                    "split": "val",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 1,
+                    "audio_file_id": "f1",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "hn2",
+                    "split": "val",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 2,
+                    "audio_file_id": "f2",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "hn3",
+                    "split": "test",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 3,
+                    "audio_file_id": "f3",
+                    "negative_group": "vessel",
+                },
+                {
+                    "id": "keep_val",
+                    "split": "val",
+                    "label": 0,
+                    "parquet_path": str(parquet),
+                    "row_index": 4,
+                    "audio_file_id": "f4",
+                    "negative_group": "rain",
+                },
+            ],
+        }
+        configs = iter(
+            [
+                {
+                    "feature_norm": "none",
+                    "pca_dim": None,
+                    "classifier": "logreg",
+                    "class_weight_pos": 1.0,
+                    "class_weight_neg": 1.0,
+                    "hard_negative_fraction": 0.0,
+                    "prob_calibration": "none",
+                    "threshold": 0.5,
+                    "context_pooling": "center",
+                },
+                {
+                    "feature_norm": "none",
+                    "pca_dim": None,
+                    "classifier": "logreg",
+                    "class_weight_pos": 1.0,
+                    "class_weight_neg": 1.0,
+                    "hard_negative_fraction": 0.4,
+                    "prob_calibration": "none",
+                    "threshold": 0.5,
+                    "context_pooling": "center",
+                },
+            ]
+        )
+        observed: list[dict[str, Any]] = []
+
+        def fake_sample_config(_rng: random.Random) -> dict[str, Any]:
+            return dict(next(configs))
+
+        def fake_train_eval(
+            trial_manifest: dict[str, Any],
+            config: dict[str, Any],
+            parquet_cache: dict[str, Any] | None = None,
+            precomputed_embeddings: dict[str, np.ndarray] | None = None,
+        ) -> dict[str, Any]:
+            observed.append(
+                {
+                    "fraction": config["hard_negative_fraction"],
+                    "splits": {
+                        ex["id"]: ex["split"]
+                        for ex in trial_manifest["examples"]
+                        if ex["id"].startswith("hn")
+                    },
+                }
+            )
+            return {
+                "metrics": {
+                    "threshold": config["threshold"],
+                    "precision": 1.0,
+                    "recall": 0.5,
+                    "fp_rate": 0.0,
+                    "high_conf_fp_rate": 0.0,
+                    "tp": 1,
+                    "fp": 0,
+                    "fn": 1,
+                    "tn": 1,
+                },
+                "top_false_positives": [{"id": "hn1", "score": 0.8}],
+            }
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            "scripts.autoresearch.run_autoresearch.sample_config",
+            fake_sample_config,
+        )
+        monkeypatch.setattr(
+            "scripts.autoresearch.run_autoresearch.train_eval",
+            fake_train_eval,
+        )
+        try:
+            summary = run_search(
+                manifest=manifest,
+                n_trials=2,
+                objective_name="default",
+                seed=42,
+                results_dir=tmp_path / "results",
+                hard_negative_ids={"hn1", "hn2", "hn3"},
+                embedding_cache={"center": {}},
+            )
+        finally:
+            monkeypatch.undo()
+
+        assert summary["total_trials"] == 2
+        assert observed[0]["fraction"] == 0.0
+        assert set(observed[0]["splits"].values()) == {"unused"}
+        assert observed[1]["fraction"] == 0.4
+        assert list(observed[1]["splits"].values()).count("train") == 1
+        assert list(observed[1]["splits"].values()).count("unused") == 2
 
 
 # ---------------------------------------------------------------------------
