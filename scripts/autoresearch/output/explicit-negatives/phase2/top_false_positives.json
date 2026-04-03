@@ -1,0 +1,252 @@
+[
+  {
+    "id": "det2a5f51f3_92dc01cf-c655-4f60-8c7a-b184151fa5bb",
+    "score": 0.480139,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_1917e9d0-71ac-4dbf-af84-2e0f4745f684",
+    "score": 0.475346,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_edc14626-8361-49a2-8ed6-cdec0ddca234",
+    "score": 0.472747,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det23a1f7ca_7b76db1d-4e70-4563-b20e-c07c63c75d34",
+    "score": 0.472431,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_1229aa93-9aad-43b9-9494-3c0d313a47be",
+    "score": 0.47198,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_8afcd0c8-755d-4b30-a9ef-1ffa4135d24f",
+    "score": 0.471518,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_e1c7604c-caa8-47b2-acf2-7c851bdeeb69",
+    "score": 0.471227,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_ebaae4c6-4f34-4a0f-a266-5b6eb2aca8ab",
+    "score": 0.469306,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_cc7417a7-302c-4e0b-a1e7-4e4f3b65b1e7",
+    "score": 0.468165,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_9dcce88e-41c7-4054-b41d-345bcc52393f",
+    "score": 0.466435,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_594bda94-05b8-41c8-ad94-f3d27f33965c",
+    "score": 0.465537,
+    "negative_group": "background"
+  },
+  {
+    "id": "det23a1f7ca_cd76fc78-cf15-4730-aa21-48fec19d4394",
+    "score": 0.465036,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_d43b2a19-461b-4298-872d-bd90a47c2f15",
+    "score": 0.464935,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_0ebd3a64-f065-4a5f-95aa-a5555a006869",
+    "score": 0.462974,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det23a1f7ca_9a06fe50-cabd-408d-b281-a07de2315ccf",
+    "score": 0.46167,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_7b5f1505-cb47-4127-9043-7664ff5f5dfd",
+    "score": 0.461438,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_99910cbd-4f44-4ccf-8a5c-2a36d102bc35",
+    "score": 0.458697,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_d2f6c34c-3620-4335-95cc-e0ffffc3d124",
+    "score": 0.457506,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_ff623144-305c-4e0c-ac56-05e88a05ad1d",
+    "score": 0.45694,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_fc6d9448-8e19-4a64-a811-52fb40661aa3",
+    "score": 0.452759,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_30ca7f02-5a85-453c-8128-b20b548989d9",
+    "score": 0.451849,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_153c65b1-57d6-40f3-8a33-2bd1a62ab27c",
+    "score": 0.45044,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_09fea8af-02bb-44fe-8220-4571ff257bfc",
+    "score": 0.446848,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_c5053ba3-5689-41dd-880d-a906dcac1b60",
+    "score": 0.445936,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_26a21126-e3ce-46ac-a3b5-490a2aae0d95",
+    "score": 0.441479,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det23a1f7ca_fa497a5d-4c0b-48ad-9482-f9cae3803a7e",
+    "score": 0.441369,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_e7238a65-f336-4a7a-b868-7856d55b2522",
+    "score": 0.439935,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_5a79a8da-492f-4c5d-8286-85467ba659de",
+    "score": 0.439596,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_05c21dd5-6eed-4dbd-ba56-8039a4a1247a",
+    "score": 0.439398,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_a811f6cd-40b4-4169-b3ed-98ae4f3cc544",
+    "score": 0.436817,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_c632391c-eb99-42a5-b9fa-c03c7e1cff90",
+    "score": 0.435934,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_e4511604-9845-4d8d-ae7b-ce6325721894",
+    "score": 0.435119,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_09431188-b8b9-4642-842c-1170c3abb2c6",
+    "score": 0.434101,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_9dbb39d6-ae41-4c2b-9613-9c5fe125fc07",
+    "score": 0.433748,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_1f6db3f2-821c-4f2e-a32d-34d340cf508f",
+    "score": 0.432636,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_d393190e-48c5-4634-9ddb-3b077d04f465",
+    "score": 0.431392,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_5ad5a963-b9a9-4efd-ace2-3b71d375fb5c",
+    "score": 0.431089,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_16555c8f-8f2b-4155-b1a7-4568c8cb9f9b",
+    "score": 0.429991,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_3415fe1c-23e9-4bf1-ab34-3410d6652b50",
+    "score": 0.42844,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_a5335443-8174-4d72-acf6-149756585bce",
+    "score": 0.428427,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_eca29f34-d3ec-45de-b382-e87ccec6ec0f",
+    "score": 0.427017,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_155d431e-06a4-4243-aede-f0905aa73236",
+    "score": 0.42701,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_f91f4716-a615-4349-b32f-a22e7df1806b",
+    "score": 0.426714,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_3c7f7d57-519f-4473-9118-0ef0d66b2264",
+    "score": 0.426321,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_547b58cb-fba8-4d0c-8bbe-cebfd2492b33",
+    "score": 0.426132,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_b9c48661-529b-42f6-af58-5d3aae02f02c",
+    "score": 0.425723,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_33370efd-0a36-4f17-9882-fffcf6e2db4d",
+    "score": 0.425097,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_6c1907f4-a5f0-4458-9508-416485aac694",
+    "score": 0.423524,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_b119fc87-db13-44e7-936c-4d14c6bf9303",
+    "score": 0.423159,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_8bbdcdfd-7f36-4c42-a8b5-1c0e0fdebd07",
+    "score": 0.422752,
+    "negative_group": "ship"
+  }
+]

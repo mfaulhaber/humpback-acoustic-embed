@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 DETECTION_MODE_CREATE_ERROR = (
     "detection_mode is no longer accepted; new jobs are always created in windowed mode"
@@ -43,10 +43,81 @@ class ClassifierTrainingJobOut(BaseModel):
     parameters: Optional[dict[str, Any]] = None
     classifier_model_id: Optional[str] = None
     error_message: Optional[str] = None
+    source_mode: Literal["embedding_sets", "autoresearch_candidate"] = "embedding_sets"
+    source_candidate_id: Optional[str] = None
+    source_model_id: Optional[str] = None
+    manifest_path: Optional[str] = None
+    training_split_name: Optional[str] = None
+    promoted_config: Optional[dict[str, Any]] = None
+    source_comparison_context: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+AutoresearchCandidateStatus = Literal[
+    "imported",
+    "promotable",
+    "blocked",
+    "training",
+    "complete",
+    "failed",
+]
+
+
+class AutoresearchCandidateImport(BaseModel):
+    name: Optional[str] = None
+    manifest_path: str
+    best_run_path: str
+    comparison_path: Optional[str] = None
+    top_false_positives_path: Optional[str] = None
+    source_model_id_override: Optional[str] = None
+    source_model_name_override: Optional[str] = None
+
+
+class AutoresearchCandidateArtifactPaths(BaseModel):
+    manifest_path: str
+    best_run_path: str
+    comparison_path: Optional[str] = None
+    top_false_positives_path: Optional[str] = None
+
+
+class AutoresearchCandidateSummaryOut(BaseModel):
+    id: str
+    name: str
+    status: AutoresearchCandidateStatus
+    phase: Optional[str] = None
+    objective_name: Optional[str] = None
+    threshold: Optional[float] = None
+    comparison_target: Optional[str] = None
+    source_model_id: Optional[str] = None
+    source_model_name: Optional[str] = None
+    is_reproducible_exact: bool
+    promoted_config: dict[str, Any]
+    best_run_metrics: Optional[dict[str, Any]] = None
+    split_metrics: Optional[dict[str, Any]] = None
+    metric_deltas: Optional[dict[str, Any]] = None
+    replay_summary: Optional[dict[str, Any]] = None
+    source_counts: Optional[dict[str, Any]] = None
+    warnings: list[str] = Field(default_factory=list)
+    training_job_id: Optional[str] = None
+    new_model_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AutoresearchCandidateDetailOut(AutoresearchCandidateSummaryOut):
+    artifact_paths: AutoresearchCandidateArtifactPaths
+    source_model_metadata: Optional[dict[str, Any]] = None
+    top_false_positives_preview: Optional[dict[str, Any]] = None
+    prediction_disagreements_preview: Optional[dict[str, Any]] = None
+
+
+class AutoresearchCandidateTrainingJobCreate(BaseModel):
+    new_model_name: str
+    notes: Optional[str] = None
 
 
 class ClassifierModelOut(BaseModel):
@@ -60,6 +131,12 @@ class ClassifierModelOut(BaseModel):
     feature_config: Optional[dict[str, Any]] = None
     training_summary: Optional[dict[str, Any]] = None
     training_job_id: Optional[str] = None
+    training_source_mode: Literal["embedding_sets", "autoresearch_candidate"] = (
+        "embedding_sets"
+    )
+    source_candidate_id: Optional[str] = None
+    source_model_id: Optional[str] = None
+    promotion_provenance: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

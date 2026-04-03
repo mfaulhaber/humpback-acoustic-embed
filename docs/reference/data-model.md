@@ -13,8 +13,9 @@ Condensed model reference. For full field lists, see `src/humpback/database.py`.
 - **ClusteringJob** (`clustering_jobs`) — clustering run (embedding_set_ids JSON, parameters JSON, metrics_json, refined_from_job_id)
 - **Cluster** (`clusters`) — one per cluster label per job (clustering_job_id FK, cluster_label, size, metadata_summary JSON)
 - **ClusterAssignment** (`cluster_assignments`) — links cluster to embedding row index (cluster_id FK, embedding_row_id)
-- **ClassifierModel** (`classifier_models`) — binary classifier artifact (name, model_path .joblib, model_version, vector_dim, training_summary JSON)
-- **ClassifierTrainingJob** (`classifier_training_jobs`) — training run (positive/negative_embedding_set_ids JSON, classifier_model_id set on completion)
+- **ClassifierModel** (`classifier_models`) — binary classifier artifact (name, model_path .joblib, model_version, vector_dim, training_summary JSON, `training_source_mode`, optional `source_candidate_id`/`source_model_id`, `promotion_provenance` JSON for candidate-backed models)
+- **ClassifierTrainingJob** (`classifier_training_jobs`) — training run (positive/negative_embedding_set_ids JSON, classifier_model_id set on completion; candidate-backed jobs also persist `source_mode`, `source_candidate_id`, `source_model_id`, `manifest_path`, `training_split_name`, `promoted_config`, `source_comparison_context`)
+- **AutoresearchCandidate** (`autoresearch_candidates`) — imported autoresearch bundle for review/promotion (artifact paths, promoted config JSON, split metrics/deltas, source counts, warnings, source model metadata, exact-replay status, optional linked training/model ids)
 - **DetectionJob** (`detection_jobs`) — local or hydrophone detection scan (classifier_model_id FK, audio_folder, confidence/hop/threshold params, detection_mode, output_tsv_path, result_summary JSON, extract_* columns)
 - **LabelProcessingJob** (`label_processing_jobs`) — score-based audio sample extraction (classifier_model_id, annotation_folder, audio_folder, output_root, parameters JSON, result_summary JSON)
 - **VocalizationLabel** (`vocalization_labels`) — per-detection vocalization type label (detection_job_id, row_id, label, source). Linked to detection rows by stable UUID `row_id`.

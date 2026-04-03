@@ -44,6 +44,7 @@ import {
 } from "@/hooks/queries/useClassifier";
 import { Separator } from "@/components/ui/separator";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
+import { AutoresearchCandidatesSection } from "./AutoresearchCandidatesSection";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
@@ -356,6 +357,8 @@ export function TrainingTab() {
         </CardContent>
       </Card>
 
+      <AutoresearchCandidatesSection />
+
       {/* Training Jobs Table */}
       {trainingJobs.length > 0 && (
         <div className="border rounded-md">
@@ -538,6 +541,8 @@ function TrainingJobTableRow({
   checked: boolean;
   onToggle: () => void;
 }) {
+  const sourceContext = job.source_comparison_context as Record<string, unknown> | null;
+  const candidateName = sourceContext?.candidate_name as string | undefined;
   return (
     <tr className="border-b last:border-0 hover:bg-muted/30">
       <td className="px-3 py-2">
@@ -546,9 +551,27 @@ function TrainingJobTableRow({
       <td className="px-3 py-2">
         <Badge className={statusColor[job.status] ?? ""}>{job.status}</Badge>
       </td>
-      <td className="px-3 py-2 font-medium">{job.name}</td>
+      <td className="px-3 py-2 font-medium">
+        <div className="flex items-center gap-2">
+          <span>{job.name}</span>
+          {job.source_mode === "autoresearch_candidate" && (
+            <Badge variant="outline" className="text-[10px]">
+              candidate
+            </Badge>
+          )}
+        </div>
+      </td>
       <td className="px-3 py-2 text-muted-foreground">
-        {job.positive_embedding_set_ids.length} set(s)
+        {job.source_mode === "autoresearch_candidate" ? (
+          <div>
+            <div>Manifest {job.training_split_name ?? "train"}</div>
+            {candidateName && (
+              <div className="text-[10px] text-muted-foreground">{candidateName}</div>
+            )}
+          </div>
+        ) : (
+          `${job.positive_embedding_set_ids.length} set(s)`
+        )}
       </td>
       <td className="px-3 py-2 text-muted-foreground">{job.model_version}</td>
       <td className="px-3 py-2 text-muted-foreground">
@@ -586,6 +609,14 @@ function RetrainPanel({ model, workflow }: { model: ClassifierModelInfo; workflo
   const stepIndex = workflow
     ? { importing: 0, processing: 1, training: 2, complete: 3, failed: -1 }[workflow.status] ?? -1
     : -1;
+
+  if (model.training_source_mode === "autoresearch_candidate" && !workflow) {
+    return (
+      <div className="mt-3 border-t pt-3 text-xs text-muted-foreground">
+        Candidate-backed models do not support folder-root retrain yet.
+      </div>
+    );
+  }
 
   if (workflow && !showForm) {
     return (
@@ -772,6 +803,9 @@ function ModelTableRow({
 
   const classifierTag = classifierType === "mlp" ? "MLP" : classifierType === "logistic_regression" ? "LR" : null;
   const classifierLabel = classifierType === "mlp" ? "Neural Network (MLP)" : classifierType === "logistic_regression" ? "Logistic Regression" : classifierType ?? "—";
+  const promotionProvenance = model.promotion_provenance as Record<string, unknown> | null;
+  const promotedCandidateName = promotionProvenance?.candidate_name as string | undefined;
+  const promotedSourceModelName = promotionProvenance?.source_model_name as string | undefined;
 
   // Look up training job for regularization C
   const trainingJob = model.training_job_id
@@ -806,6 +840,11 @@ function ModelTableRow({
             {classifierTag && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
                 {classifierTag}
+              </Badge>
+            )}
+            {model.training_source_mode === "autoresearch_candidate" && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+                Candidate
               </Badge>
             )}
           </span>
@@ -877,6 +916,20 @@ function ModelTableRow({
                     <span className="text-muted-foreground whitespace-nowrap">Classifier Type</span>
                     <span className="font-medium">{classifierLabel}</span>
                   </div>
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground whitespace-nowrap">Training Source</span>
+                    <span className="font-medium">
+                      {model.training_source_mode === "autoresearch_candidate"
+                        ? `Candidate${promotedCandidateName ? `: ${promotedCandidateName}` : ""}`
+                        : "Embedding Sets"}
+                    </span>
+                  </div>
+                  {model.training_source_mode === "autoresearch_candidate" && (
+                    <div className="flex gap-2">
+                      <span className="text-muted-foreground whitespace-nowrap">Compared Against</span>
+                      <span className="font-medium">{promotedSourceModelName ?? model.source_model_id ?? "—"}</span>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <span className="text-muted-foreground whitespace-nowrap">Class Weight</span>
                     <span className="font-medium">{classWeightStrategy ?? (effectiveWeights ? "balanced" : "—")}</span>
@@ -973,18 +1026,42 @@ function ModelTableRow({
               ) : dataSummaryError ? (
                 <div className="text-xs text-muted-foreground">Training data provenance unavailable</div>
               ) : dataSummary ? (
-                <div className="grid grid-cols-2 gap-4 text-xs">
-                  <SourceList
-                    label="Positive"
-                    sources={dataSummary.positive_sources}
-                    total={dataSummary.total_positive}
-                  />
-                  <SourceList
-                    label="Negative"
-                    sources={dataSummary.negative_sources}
-                    total={dataSummary.total_negative}
-                  />
-                </div>
+                model.training_source_mode === "autoresearch_candidate" ? (
+                  <div className="space-y-2 text-xs">
+                    <div className="rounded-md border bg-muted/30 px-3 py-2 text-muted-foreground">
+                      This model was trained from an imported candidate manifest rather than
+                      legacy embedding-set selections, so folder-root provenance is not available
+                      in the retrain summary view.
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="font-medium">Positive</div>
+                        <div className="text-muted-foreground">
+                          {dataSummary.total_positive} manifest vectors
+                        </div>
+                      </div>
+                      <div>
+                        <div className="font-medium">Negative</div>
+                        <div className="text-muted-foreground">
+                          {dataSummary.total_negative} manifest vectors
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <SourceList
+                      label="Positive"
+                      sources={dataSummary.positive_sources}
+                      total={dataSummary.total_positive}
+                    />
+                    <SourceList
+                      label="Negative"
+                      sources={dataSummary.negative_sources}
+                      total={dataSummary.total_negative}
+                    />
+                  </div>
+                )
               ) : null}
             </div>
 

@@ -1,5 +1,9 @@
 import type {
   AudioFile,
+  AutoresearchCandidateDetail,
+  AutoresearchCandidateImport,
+  AutoresearchCandidateSummary,
+  AutoresearchCandidateTrainingJobCreate,
   AvailableModelFile,
   FolderImportResult,
   ClassifierModelInfo,
@@ -240,6 +244,24 @@ export const createTrainingJob = (body: ClassifierTrainingJobCreate) =>
 
 export const fetchTrainingJob = (jobId: string) =>
   api<ClassifierTrainingJob>(`/classifier/training-jobs/${jobId}`);
+
+export const importAutoresearchCandidate = (body: AutoresearchCandidateImport) =>
+  post<AutoresearchCandidateDetail>("/classifier/autoresearch-candidates/import", body);
+
+export const fetchAutoresearchCandidates = () =>
+  api<AutoresearchCandidateSummary[]>("/classifier/autoresearch-candidates");
+
+export const fetchAutoresearchCandidate = (candidateId: string) =>
+  api<AutoresearchCandidateDetail>(`/classifier/autoresearch-candidates/${candidateId}`);
+
+export const createAutoresearchCandidateTrainingJob = (
+  candidateId: string,
+  body: AutoresearchCandidateTrainingJobCreate,
+) =>
+  post<ClassifierTrainingJob>(
+    `/classifier/autoresearch-candidates/${candidateId}/training-jobs`,
+    body,
+  );
 
 export const fetchClassifierModels = () =>
   api<ClassifierModelInfo[]>("/classifier/models");

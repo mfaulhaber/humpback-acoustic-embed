@@ -1,0 +1,315 @@
+{
+  "objective_name": "default",
+  "manifest_summary": {
+    "example_count": 1135,
+    "split_counts": {
+      "train": {
+        "total": 464,
+        "positive": 248,
+        "negative": 216
+      },
+      "val": {
+        "total": 408,
+        "positive": 289,
+        "negative": 119
+      },
+      "test": {
+        "total": 263,
+        "positive": 169,
+        "negative": 94
+      }
+    },
+    "replay": {
+      "hard_negative_from": null,
+      "available_hard_negatives": 0,
+      "replayed_hard_negatives": 0,
+      "used_replay_manifest": false
+    }
+  },
+  "autoresearch": {
+    "trial": 28,
+    "config_hash": "0144175b04c8bb27",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "platt",
+      "threshold": 0.5,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "threshold": 0.5,
+    "source_best_run_metrics": {
+      "threshold": 0.5,
+      "precision": 1.0,
+      "recall": 0.937716,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 271,
+      "fp": 0,
+      "fn": 18,
+      "tn": 119,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "platt",
+        "threshold": 0.5,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 0,
+      "replayed_hard_negatives": 0
+    },
+    "source_best_run_objective": 0.937716
+  },
+  "production": {
+    "id": "392490ff-aee0-45c4-96be-fbd895a4b465",
+    "name": "LR-v12",
+    "model_path": "/Volumes/External_2TB/data/whale/humpback-acoustic-embed/data/classifiers/a7f9a54e-ddca-4dfa-a8d8-2e73464ad692/model.joblib",
+    "model_version": "surfperch-tensorflow2",
+    "training_job_id": "a7f9a54e-ddca-4dfa-a8d8-2e73464ad692",
+    "created_at": "2026-04-01 21:39:37.933258",
+    "training_summary": {
+      "n_positive": 2898,
+      "n_negative": 3399,
+      "balance_ratio": 0.85,
+      "classifier_type": "logistic_regression",
+      "l2_normalize": true,
+      "class_weight_strategy": "balanced",
+      "effective_class_weights": {
+        "0": 0.9263,
+        "1": 1.0864
+      },
+      "cv_accuracy": 0.9547394631667864,
+      "cv_accuracy_std": 0.009168680062054516,
+      "cv_roc_auc": 0.988644480274699,
+      "cv_roc_auc_std": 0.0036450901739068166,
+      "cv_precision": 0.959252212952084,
+      "cv_precision_std": 0.009890071942191488,
+      "cv_recall": 0.9416830444881186,
+      "cv_recall_std": 0.012699378642305966,
+      "cv_f1": 0.9503569095043811,
+      "cv_f1_std": 0.010122410434109927,
+      "n_cv_folds": 5,
+      "positive_mean_score": 5.858887565855023,
+      "negative_mean_score": -4.143569854626064,
+      "score_separation": 3.7664662813054277,
+      "train_confusion": {
+        "tp": 2826,
+        "fp": 33,
+        "tn": 3366,
+        "fn": 72
+      }
+    },
+    "matched_by": "name",
+    "threshold": 0.5,
+    "context_pooling": "center"
+  },
+  "splits": {
+    "test": {
+      "autoresearch": {
+        "metrics": {
+          "threshold": 0.5,
+          "precision": 0.987342,
+          "recall": 0.923077,
+          "fp_rate": 0.021277,
+          "high_conf_fp_rate": 0.0,
+          "tp": 156,
+          "fp": 2,
+          "fn": 13,
+          "tn": 92,
+          "high_conf_fp_rate_by_group": {
+            "background": 0.0,
+            "ship": 0.0,
+            "vocalization_negative": 0.0
+          },
+          "objective": 0.859246
+        },
+        "top_false_positives": [
+          {
+            "id": "det2a5f51f3_eab801a8-16f6-4d16-9c7f-09a63a2cdbbb",
+            "score": 0.746585,
+            "negative_group": "vocalization_negative"
+          },
+          {
+            "id": "det2a5f51f3_65d4c4e4-bbf0-4968-bc38-e60ea9d7a832",
+            "score": 0.647744,
+            "negative_group": "vocalization_negative"
+          },
+          {
+            "id": "det2a5f51f3_d613d62b-9a71-4e32-9582-22046cb6a22e",
+            "score": 0.482914,
+            "negative_group": "ship"
+          },
+          {
+            "id": "det2a5f51f3_dbf369fb-be07-4d05-9ea4-475dde76f470",
+            "score": 0.45366,
+            "negative_group": "vocalization_negative"
+          },
+          {
+            "id": "det2a5f51f3_db410e8d-8f9a-4f3f-8637-53ead37ccb5a",
+            "score": 0.435287,
+            "negative_group": "vocalization_negative"
+          }
+        ]
+      },
+      "production": {
+        "metrics": {
+          "threshold": 0.5,
+          "precision": 0.639847,
+          "recall": 0.988166,
+          "fp_rate": 1.0,
+          "high_conf_fp_rate": 0.904255,
+          "tp": 167,
+          "fp": 94,
+          "fn": 2,
+          "tn": 0,
+          "high_conf_fp_rate_by_group": {
+            "background": 1.0,
+            "ship": 1.0,
+            "vocalization_negative": 0.75
+          },
+          "objective": -15.575659
+        },
+        "top_false_positives": [
+          {
+            "id": "det2a5f51f3_65d4c4e4-bbf0-4968-bc38-e60ea9d7a832",
+            "score": 0.9993,
+            "negative_group": "vocalization_negative"
+          },
+          {
+            "id": "det2a5f51f3_4de8cc4f-cb49-43b9-9048-9329c3a007e1",
+            "score": 0.997013,
+            "negative_group": "vocalization_negative"
+          },
+          {
+            "id": "det23a1f7ca_218edcaa-8b7c-47db-9c41-989da0e1fdb5",
+            "score": 0.996589,
+            "negative_group": "vocalization_negative"
+          },
+          {
+            "id": "det2a5f51f3_a66499f8-c87b-41db-bcc7-96a4e647bcc6",
+            "score": 0.996159,
+            "negative_group": "ship"
+          },
+          {
+            "id": "det23a1f7ca_6bd3844f-0165-4783-bc06-eb12b2f8449a",
+            "score": 0.995623,
+            "negative_group": "vocalization_negative"
+          }
+        ]
+      },
+      "delta": {
+        "objective": 16.434905,
+        "precision": 0.347495,
+        "recall": -0.065089,
+        "fp_rate": -0.978723,
+        "high_conf_fp_rate": -0.904255,
+        "tp": -11.0,
+        "fp": -92.0,
+        "fn": 11.0,
+        "tn": 92.0
+      },
+      "prediction_disagreements": [
+        {
+          "id": "det2a5f51f3_ec189752-a469-4698-bdd0-6ab638f2edd3",
+          "label": 0,
+          "split": "test",
+          "source_type": "detection_job",
+          "label_source": "ship",
+          "negative_group": "ship",
+          "audio_file_id": "det2a5f51f3:2021-11-01T20",
+          "row_id": "ec189752-a469-4698-bdd0-6ab638f2edd3",
+          "row_index": null,
+          "autoresearch_score": 0.000952,
+          "production_score": 0.992108,
+          "autoresearch_pred": 0,
+          "production_pred": 1,
+          "score_delta": -0.991156,
+          "abs_score_delta": 0.991156
+        },
+        {
+          "id": "det23a1f7ca_ac07a18d-b873-4f56-b537-b2bb5f33fb9c",
+          "label": 0,
+          "split": "test",
+          "source_type": "detection_job",
+          "label_source": "vocalization_negative",
+          "negative_group": "vocalization_negative",
+          "audio_file_id": "det23a1f7ca:2021-11-20T07",
+          "row_id": "ac07a18d-b873-4f56-b537-b2bb5f33fb9c",
+          "row_index": null,
+          "autoresearch_score": 0.00156,
+          "production_score": 0.991975,
+          "autoresearch_pred": 0,
+          "production_pred": 1,
+          "score_delta": -0.990415,
+          "abs_score_delta": 0.990415
+        },
+        {
+          "id": "det23a1f7ca_6bd3844f-0165-4783-bc06-eb12b2f8449a",
+          "label": 0,
+          "split": "test",
+          "source_type": "detection_job",
+          "label_source": "vocalization_negative",
+          "negative_group": "vocalization_negative",
+          "audio_file_id": "det23a1f7ca:2021-11-20T07",
+          "row_id": "6bd3844f-0165-4783-bc06-eb12b2f8449a",
+          "row_index": null,
+          "autoresearch_score": 0.006163,
+          "production_score": 0.995623,
+          "autoresearch_pred": 0,
+          "production_pred": 1,
+          "score_delta": -0.98946,
+          "abs_score_delta": 0.98946
+        },
+        {
+          "id": "det23a1f7ca_982c5154-ea3f-46ad-8ac7-6bda38e6544e",
+          "label": 0,
+          "split": "test",
+          "source_type": "detection_job",
+          "label_source": "vocalization_negative",
+          "negative_group": "vocalization_negative",
+          "audio_file_id": "det23a1f7ca:2021-11-20T07",
+          "row_id": "982c5154-ea3f-46ad-8ac7-6bda38e6544e",
+          "row_index": null,
+          "autoresearch_score": 0.001584,
+          "production_score": 0.990814,
+          "autoresearch_pred": 0,
+          "production_pred": 1,
+          "score_delta": -0.98923,
+          "abs_score_delta": 0.98923
+        },
+        {
+          "id": "det2a5f51f3_6d392393-a910-4556-a5e9-19991848dcf6",
+          "label": 0,
+          "split": "test",
+          "source_type": "detection_job",
+          "label_source": "ship",
+          "negative_group": "ship",
+          "audio_file_id": "det2a5f51f3:2021-11-01T20",
+          "row_id": "6d392393-a910-4556-a5e9-19991848dcf6",
+          "row_index": null,
+          "autoresearch_score": 0.002017,
+          "production_score": 0.991008,
+          "autoresearch_pred": 0,
+          "production_pred": 1,
+          "score_delta": -0.988991,
+          "abs_score_delta": 0.988991
+        }
+      ]
+    }
+  }
+}

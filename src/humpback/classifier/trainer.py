@@ -1,10 +1,12 @@
 """Train a binary whale vocalization classifier on embeddings."""
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import pyarrow.parquet as pq
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_validate
@@ -12,6 +14,7 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Normalizer, StandardScaler
 
+from humpback.processing.embeddings import read_embeddings
 from humpback.processing.audio_io import decode_audio, resample
 from humpback.processing.features import extract_logmel_batch
 from humpback.processing.inference import EmbeddingModel
@@ -124,6 +127,172 @@ def embed_audio_folder(
     return np.vstack(all_embeddings)
 
 
+def map_autoresearch_config_to_training_parameters(
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Map a promotable autoresearch config into trainer parameters."""
+    classifier = config.get("classifier", "logreg")
+    if classifier == "logreg":
+        classifier_type = "logistic_regression"
+    elif classifier == "mlp":
+        classifier_type = "mlp"
+    else:
+        raise ValueError(f"Unsupported autoresearch classifier: {classifier!r}")
+
+    feature_norm = config.get("feature_norm", "standard")
+    if feature_norm not in {"none", "l2", "standard"}:
+        raise ValueError(f"Unsupported autoresearch feature_norm: {feature_norm!r}")
+
+    class_weight_pos = float(config.get("class_weight_pos", 1.0))
+    class_weight_neg = float(config.get("class_weight_neg", 1.0))
+    if classifier_type == "mlp" and (
+        class_weight_pos != 1.0 or class_weight_neg != 1.0
+    ):
+        raise ValueError("MLP autoresearch promotion cannot reproduce class weights")
+
+    parameters: dict[str, Any] = {
+        "classifier_type": classifier_type,
+        "feature_norm": feature_norm,
+        "random_state": int(config.get("seed", 42)),
+    }
+    if classifier_type == "logistic_regression":
+        parameters["class_weight"] = {0: class_weight_neg, 1: class_weight_pos}
+
+    return parameters
+
+
+def _load_manifest_examples(manifest_path: Path | str) -> list[dict[str, Any]]:
+    path = Path(manifest_path)
+    manifest = json.loads(path.read_text())
+    examples = manifest.get("examples")
+    if not isinstance(examples, list):
+        raise ValueError(f"Manifest examples missing or invalid: {path}")
+    return [ex for ex in examples if isinstance(ex, dict)]
+
+
+def _load_manifest_parquet_cache(
+    examples: list[dict[str, Any]],
+) -> dict[str, tuple[np.ndarray | None, np.ndarray, list[str] | None]]:
+    """Load each unique manifest parquet once.
+
+    Cache entries are `(row_indices, embeddings, row_ids)`.
+    """
+    cache: dict[str, tuple[np.ndarray | None, np.ndarray, list[str] | None]] = {}
+    for parquet_path in sorted({str(ex["parquet_path"]) for ex in examples}):
+        schema = pq.read_schema(parquet_path)
+        col_names = set(schema.names)
+        if "row_index" in col_names:
+            row_indices, embeddings = read_embeddings(Path(parquet_path))
+            cache[parquet_path] = (row_indices, embeddings, None)
+            continue
+
+        table = pq.read_table(parquet_path)
+        embeddings = np.array(
+            [value.as_py() for value in table["embedding"]],
+            dtype=np.float32,
+        )
+
+        if "row_id" in col_names:
+            row_ids = [
+                str(row_id or "").strip() for row_id in table["row_id"].to_pylist()
+            ]
+            cache[parquet_path] = (None, embeddings, row_ids)
+            continue
+
+        if "filename" in col_names:
+            row_indices = np.arange(len(embeddings), dtype=np.int32)
+            cache[parquet_path] = (row_indices, embeddings, None)
+            continue
+
+        raise ValueError(
+            f"Unknown manifest parquet format in {parquet_path}: columns {sorted(col_names)}"
+        )
+
+    return cache
+
+
+def load_manifest_split_embeddings(
+    manifest_path: Path | str,
+    *,
+    split: str = "train",
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Load positive/negative embeddings for a manifest split."""
+    examples = _load_manifest_examples(manifest_path)
+    split_examples = [ex for ex in examples if ex.get("split") == split]
+    if not split_examples:
+        raise ValueError(
+            f"Manifest has no examples for split {split!r}: {manifest_path}"
+        )
+
+    cache = _load_manifest_parquet_cache(split_examples)
+    row_index_lookups: dict[str, dict[int, int]] = {}
+    row_id_lookups: dict[str, dict[str, int]] = {}
+    for path, (row_indices, _embeddings, row_ids) in cache.items():
+        if row_indices is not None:
+            row_index_lookups[path] = {
+                int(row_index): idx for idx, row_index in enumerate(row_indices)
+            }
+        if row_ids is not None:
+            row_id_lookups[path] = {
+                row_id: idx for idx, row_id in enumerate(row_ids) if row_id
+            }
+
+    positive: list[np.ndarray] = []
+    negative: list[np.ndarray] = []
+    missing_example_ids: list[str] = []
+
+    for example in split_examples:
+        path = str(example["parquet_path"])
+        row_indices, embeddings, row_ids = cache[path]
+        idx: int | None = None
+
+        row_id = str(example.get("row_id") or "").strip()
+        if row_id and row_ids is not None:
+            idx = row_id_lookups.get(path, {}).get(row_id)
+        elif example.get("row_index") is not None and row_indices is not None:
+            idx = row_index_lookups.get(path, {}).get(int(example["row_index"]))
+
+        if idx is None:
+            missing_example_ids.append(str(example.get("id") or "unknown"))
+            continue
+
+        vector = embeddings[idx]
+        if int(example.get("label", 0)) == 1:
+            positive.append(vector)
+        else:
+            negative.append(vector)
+
+    if missing_example_ids:
+        raise ValueError(
+            "Manifest examples missing embeddings for split "
+            f"{split!r}: {len(missing_example_ids)} missing"
+        )
+    if len(positive) < 2:
+        raise ValueError(
+            f"Need at least 2 positive manifest examples for split {split!r}, got {len(positive)}"
+        )
+    if len(negative) < 2:
+        raise ValueError(
+            f"Need at least 2 negative manifest examples for split {split!r}, got {len(negative)}"
+        )
+
+    positive_embeddings = np.array(positive, dtype=np.float32)
+    negative_embeddings = np.array(negative, dtype=np.float32)
+    source_summary = {
+        "manifest_path": str(Path(manifest_path)),
+        "split": split,
+        "example_count": len(split_examples),
+        "positive_count": int(positive_embeddings.shape[0]),
+        "negative_count": int(negative_embeddings.shape[0]),
+        "vector_dim": int(
+            positive_embeddings.shape[1]
+            if positive_embeddings.size
+            else negative_embeddings.shape[1]
+        ),
+    }
+    return positive_embeddings, negative_embeddings, source_summary
+
+
 def train_binary_classifier(
     positive_embeddings: np.ndarray,
     negative_embeddings: np.ndarray,
@@ -153,14 +322,39 @@ def train_binary_classifier(
     )
 
     classifier_type = parameters.get("classifier_type", "logistic_regression")
-    l2_normalize = parameters.get("l2_normalize", False)
+    feature_norm = parameters.get("feature_norm")
+    use_l2_norm = False
+    use_standard_scaler = False
+    if feature_norm is None:
+        l2_normalize = parameters.get("l2_normalize", False)
+        use_l2_norm = bool(l2_normalize)
+        use_standard_scaler = True
+        feature_norm_summary = "l2_then_standard" if use_l2_norm else "standard"
+    elif feature_norm == "none":
+        l2_normalize = False
+        feature_norm_summary = "none"
+    elif feature_norm == "l2":
+        l2_normalize = True
+        use_l2_norm = True
+        feature_norm_summary = "l2"
+    elif feature_norm == "standard":
+        l2_normalize = False
+        use_standard_scaler = True
+        feature_norm_summary = "standard"
+    else:
+        raise ValueError(f"Unsupported feature_norm: {feature_norm!r}")
     class_weight = parameters.get("class_weight", "balanced")
+    if isinstance(class_weight, dict):
+        class_weight = {
+            int(label): float(weight) for label, weight in class_weight.items()
+        }
 
     # Build pipeline steps
     steps: list[tuple] = []
-    if l2_normalize:
+    if use_l2_norm:
         steps.append(("l2_norm", Normalizer(norm="l2")))
-    steps.append(("scaler", StandardScaler()))
+    if use_standard_scaler:
+        steps.append(("scaler", StandardScaler()))
 
     if classifier_type == "mlp":
         steps.append(
@@ -170,7 +364,7 @@ def train_binary_classifier(
                     hidden_layer_sizes=(128,),
                     max_iter=parameters.get("max_iter", 500),
                     early_stopping=True,
-                    random_state=42,
+                    random_state=parameters.get("random_state", 42),
                 ),
             )
         )
@@ -259,6 +453,7 @@ def train_binary_classifier(
         "balance_ratio": balance_ratio,
         "classifier_type": classifier_type,
         "l2_normalize": l2_normalize,
+        "feature_norm": feature_norm_summary,
         "class_weight_strategy": str(class_weight),
         "effective_class_weights": effective_class_weights,
         "cv_accuracy": float(np.nanmean(cv_results["test_accuracy"])),

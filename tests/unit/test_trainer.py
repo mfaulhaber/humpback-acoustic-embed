@@ -1,12 +1,47 @@
 """Tests for binary classifier trainer."""
 
+import json
+from pathlib import Path
+
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import Normalizer
 
-from humpback.classifier.trainer import train_binary_classifier
+from humpback.classifier.trainer import (
+    load_manifest_split_embeddings,
+    map_autoresearch_config_to_training_parameters,
+    train_binary_classifier,
+)
+
+
+def _write_embedding_set_parquet(path: Path, rows: list[list[float]]) -> None:
+    table = pa.table(
+        {
+            "row_index": pa.array(list(range(len(rows))), type=pa.int32()),
+            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, str(path))
+
+
+def _write_detection_embeddings_parquet(
+    path: Path,
+    row_ids: list[str],
+    rows: list[list[float]],
+) -> None:
+    table = pa.table(
+        {
+            "row_id": pa.array(row_ids, type=pa.string()),
+            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, str(path))
 
 
 def test_train_basic():
@@ -317,3 +352,102 @@ def test_classifier_type_in_summary():
         parameters={"classifier_type": "mlp"},
     )
     assert mlp_summary["classifier_type"] == "mlp"
+
+
+def test_feature_norm_none_skips_normalization_steps():
+    """Autoresearch-style feature_norm='none' should train without preprocessors."""
+    rng = np.random.RandomState(42)
+    positive = rng.randn(30, 16) + 2.0
+    negative = rng.randn(30, 16) - 2.0
+
+    pipeline, summary = train_binary_classifier(
+        positive,
+        negative,
+        parameters={"feature_norm": "none"},
+    )
+
+    assert len(pipeline.steps) == 1
+    assert pipeline.steps[0][0] == "classifier"
+    assert summary["feature_norm"] == "none"
+
+
+def test_map_autoresearch_config_to_training_parameters():
+    """Promotable autoresearch configs map to explicit trainer parameters."""
+    params = map_autoresearch_config_to_training_parameters(
+        {
+            "classifier": "logreg",
+            "feature_norm": "l2",
+            "class_weight_pos": 3.0,
+            "class_weight_neg": 1.0,
+            "seed": 7,
+        }
+    )
+
+    assert params["classifier_type"] == "logistic_regression"
+    assert params["feature_norm"] == "l2"
+    assert params["class_weight"] == {0: 1.0, 1: 3.0}
+    assert params["random_state"] == 7
+
+
+def test_load_manifest_split_embeddings_supports_mixed_sources(
+    tmp_path: Path,
+) -> None:
+    """Manifest loader should resolve row_index and row_id training examples."""
+    es_path = tmp_path / "embedding_set.parquet"
+    det_path = tmp_path / "detections" / "job-1" / "detection_embeddings.parquet"
+    _write_embedding_set_parquet(
+        es_path,
+        rows=[[2.0, 2.0], [2.5, 2.5]],
+    )
+    _write_detection_embeddings_parquet(
+        det_path,
+        row_ids=["neg-1", "neg-2"],
+        rows=[[-2.0, -2.0], [-2.5, -2.5]],
+    )
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "metadata": {},
+                "examples": [
+                    {
+                        "id": "pos-0",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(es_path),
+                        "row_index": 0,
+                    },
+                    {
+                        "id": "pos-1",
+                        "split": "train",
+                        "label": 1,
+                        "parquet_path": str(es_path),
+                        "row_index": 1,
+                    },
+                    {
+                        "id": "neg-1",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-1",
+                    },
+                    {
+                        "id": "neg-2",
+                        "split": "train",
+                        "label": 0,
+                        "parquet_path": str(det_path),
+                        "row_id": "neg-2",
+                    },
+                ],
+            }
+        )
+    )
+
+    positive, negative, summary = load_manifest_split_embeddings(manifest_path)
+
+    assert positive.shape == (2, 2)
+    assert negative.shape == (2, 2)
+    assert summary["split"] == "train"
+    assert summary["positive_count"] == 2
+    assert summary["negative_count"] == 2

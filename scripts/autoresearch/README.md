@@ -12,7 +12,7 @@ The autoresearch workflow has three stages:
 
 **2. Run the search** — The search loop randomly samples classifier configurations from a bounded hyperparameter space (normalization, PCA, classifier type, class weights, calibration, threshold, context pooling). Each trial trains a classifier, evaluates on the validation split, and scores the result using a custom objective that heavily penalizes high-confidence false positives. Results are persisted incrementally.
 
-**3. Analyze and iterate** — Review `best_run.json` for the winning config and `top_false_positives.json` for the most confusing negatives. Optionally run a second search phase that feeds those false positives back as hard negatives in training. Transfer the winning configuration manually to the platform's classifier training.
+**3. Analyze and iterate** — Review `best_run.json` for the winning config and `top_false_positives.json` for the most confusing negatives. Optionally run a second search phase that feeds those false positives back as hard negatives in training. Compare the winning config against a live production model such as `LR-v12`, then either promote the reviewed candidate through the platform UI/API when it is exactly reproducible or fall back to manual transfer for unsupported configs.
 
 ```
 generate_manifest.py        run_autoresearch.py          Analyze results
@@ -24,6 +24,13 @@ generate_manifest.py        run_autoresearch.py          Analyze results
                                     v
                           Optional: phase 2 search
                           with --hard-negative-from
+                                    |
+                                    v
+                        Compare vs production (e.g. LR-v12)
+                                    |
+                                    v
+                    Import artifacts into Training tab candidate review
+                    and promote when the config is exactly reproducible
 ```
 
 ## Quick Start
@@ -170,7 +177,68 @@ uv run scripts/autoresearch/compare_classifiers.py \
   --output results/phase2/lr_v12_comparison.json
 ```
 
-The output JSON includes split-level metrics for both models, metric deltas (`autoresearch - production`), top false positives for each model, and the largest prediction disagreements between them.
+The output JSON includes split-level metrics for both models, metric deltas (`autoresearch - production`), top false positives for each model, and the largest prediction disagreements between them. That comparison artifact is what the platform import flow uses to populate candidate review details and promotion evidence.
+
+## Import and Promote a Reviewed Candidate
+
+After you have a manifest, `best_run.json`, and optionally a production comparison plus top-false-positive preview, import the bundle into the Classifier Training page:
+
+1. Open the `Training` tab and find `Autoresearch Candidates`.
+2. Import the server-visible paths for:
+   - `manifest.json`
+   - `best_run.json`
+   - optional comparison JSON such as `phase1/lr-v12-comparison.json`
+   - optional `top_false_positives.json`
+3. Review the candidate summary and expanded detail:
+   - source model and phase
+   - split-level comparison metrics and deltas
+   - disagreement preview and top false positives
+   - reproducibility warnings
+4. If the candidate is marked `promotable`, enter a new model name and start candidate-backed training.
+
+Candidate-backed promotion trains directly from the manifest `train` split and preserves the imported comparison provenance on the resulting training job and model.
+
+### Candidate Promotion vs Legacy Retrain
+
+These are two different workflows:
+
+- **Candidate-backed promotion** starts from imported autoresearch artifacts and manifest examples. It does not reconstruct folder roots and is intended for reviewed search winners.
+- **Legacy retrain-from-folders** starts from an existing trained model that was originally built from embedding-set imports tied back to source folders. It reimports folders, reprocesses audio, and then retrains.
+
+Today, candidate-backed models do not support the folder-root retrain flow because the promotion path is manifest-backed rather than folder-backed.
+
+## Current Promotion Limits
+
+The platform only marks a candidate as `promotable` when the current production trainer can replay the autoresearch config faithfully. The following settings are promotable today:
+
+- `classifier`: `logreg`, `mlp`
+- `feature_norm`: `none`, `l2`, `standard`
+- `context_pooling`: `center`
+- `prob_calibration`: `none`
+- `pca_dim`: `null`
+- `hard_negative_fraction`: `0.0`
+- MLP class weights: `class_weight_pos=1.0` and `class_weight_neg=1.0`
+
+The following features currently block promotion and leave the candidate in `blocked` status:
+
+- unsupported classifier families
+- any non-`center` context pooling such as `mean3` or `max3`
+- any probability calibration (`platt`, `isotonic`)
+- any PCA projection (`pca_dim != null`)
+- replay-adjusted hard-negative sampling (`hard_negative_fraction > 0`)
+- explicit MLP class weights other than `1.0`
+
+Blocked candidates are still useful review artifacts, but their winning configs must still be transferred manually if you want to reproduce them outside the current promotion contract.
+
+## Vendored Fixture Bundle
+
+For UI and API development, the repo vendors a stable explicit-negative artifact bundle under [`scripts/autoresearch/output/`](./output/). In particular:
+
+- [`scripts/autoresearch/output/explicit-negatives/manifest.json`](./output/explicit-negatives/manifest.json)
+- [`scripts/autoresearch/output/explicit-negatives/phase1/best_run.json`](./output/explicit-negatives/phase1/best_run.json)
+- [`scripts/autoresearch/output/explicit-negatives/phase1/lr-v12-comparison.json`](./output/explicit-negatives/phase1/lr-v12-comparison.json)
+
+Those fixtures are the reference bundle used by the candidate import API tests and the Training-tab promotion UI coverage.
 
 ## Results
 
@@ -237,5 +305,4 @@ When `--hard-negative-from` is absent, `hard_negative_fraction` is normalized to
 
 - Embeddings are frozen (no encoder finetuning)
 - Search is random sampling, not Bayesian optimization
-- Results are advisory — winning configs must be manually transferred to the platform's classifier training
-- No UI integration
+- Only exactly reproducible candidates can be promoted automatically; unsupported configs still require manual transfer

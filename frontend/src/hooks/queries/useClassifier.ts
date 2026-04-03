@@ -1,8 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  createAutoresearchCandidateTrainingJob,
   fetchTrainingJobs,
   createTrainingJob,
+  fetchAutoresearchCandidate,
+  fetchAutoresearchCandidates,
   fetchClassifierModels,
+  importAutoresearchCandidate,
   deleteClassifierModel,
   browseDirectories,
   bulkDeleteTrainingJobs,
@@ -26,6 +30,8 @@ import {
 } from "@/api/client";
 import { toast } from "@/components/ui/use-toast";
 import type {
+  AutoresearchCandidateImport,
+  AutoresearchCandidateTrainingJobCreate,
   ClassifierTrainingJobCreate,
   DetectionLabelRow,
   DetectionRowStateUpdate,
@@ -38,6 +44,22 @@ export function useTrainingJobs(refetchInterval?: number) {
     queryKey: ["trainingJobs"],
     queryFn: fetchTrainingJobs,
     refetchInterval,
+  });
+}
+
+export function useAutoresearchCandidates(refetchInterval?: number) {
+  return useQuery({
+    queryKey: ["autoresearchCandidates"],
+    queryFn: fetchAutoresearchCandidates,
+    refetchInterval,
+  });
+}
+
+export function useAutoresearchCandidate(candidateId: string | null) {
+  return useQuery({
+    queryKey: ["autoresearchCandidate", candidateId],
+    queryFn: () => fetchAutoresearchCandidate(candidateId!),
+    enabled: candidateId !== null,
   });
 }
 
@@ -54,6 +76,60 @@ export function useCreateTrainingJob() {
     mutationFn: (body: ClassifierTrainingJobCreate) => createTrainingJob(body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["trainingJobs"] });
+    },
+  });
+}
+
+export function useImportAutoresearchCandidate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AutoresearchCandidateImport) =>
+      importAutoresearchCandidate(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["autoresearchCandidates"] });
+      qc.invalidateQueries({ queryKey: ["autoresearchCandidate"] });
+      toast({
+        title: "Candidate imported",
+        description: "The autoresearch candidate is ready for review.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Import failed",
+        description: err.message,
+        variant: "destructive",
+        duration: 8000,
+      });
+    },
+  });
+}
+
+export function useCreateAutoresearchCandidateTrainingJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      candidateId,
+      body,
+    }: {
+      candidateId: string;
+      body: AutoresearchCandidateTrainingJobCreate;
+    }) => createAutoresearchCandidateTrainingJob(candidateId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["autoresearchCandidates"] });
+      qc.invalidateQueries({ queryKey: ["autoresearchCandidate"] });
+      qc.invalidateQueries({ queryKey: ["trainingJobs"] });
+      toast({
+        title: "Candidate training queued",
+        description: "The candidate-backed training job has been created.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Promotion failed",
+        description: err.message,
+        variant: "destructive",
+        duration: 8000,
+      });
     },
   });
 }

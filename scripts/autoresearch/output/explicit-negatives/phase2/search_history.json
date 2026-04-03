@@ -1,0 +1,2452 @@
+[
+  {
+    "trial": 0,
+    "config_hash": "927d357e94100bde",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": null,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "none",
+      "threshold": 0.7,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.7,
+      "precision": 1.0,
+      "recall": 0.878893,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 254,
+      "fp": 0,
+      "fn": 35,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": null,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "none",
+        "threshold": 0.7,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.878893,
+    "timestamp": 1775235766.704735
+  },
+  {
+    "trial": 1,
+    "config_hash": "59509ecb60466808",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 256,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "none",
+      "threshold": 0.85,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.871972,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 252,
+      "fp": 0,
+      "fn": 37,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 256,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "none",
+        "threshold": 0.85,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.871972,
+    "timestamp": 1775235766.776298
+  },
+  {
+    "trial": 2,
+    "config_hash": "0d4276c26990928c",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 256,
+      "classifier": "logreg",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "platt",
+      "threshold": 0.9,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.785467,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 227,
+      "fp": 0,
+      "fn": 62,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 256,
+        "classifier": "logreg",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "platt",
+        "threshold": 0.9,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.785467,
+    "timestamp": 1775235766.866234
+  },
+  {
+    "trial": 3,
+    "config_hash": "52541b54824c8e76",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 128,
+      "classifier": "linear_svm",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "platt",
+      "threshold": 0.7,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.7,
+      "precision": 1.0,
+      "recall": 0.885813,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 256,
+      "fp": 0,
+      "fn": 33,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 128,
+        "classifier": "linear_svm",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "platt",
+        "threshold": 0.7,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.885813,
+    "timestamp": 1775235766.9138272
+  },
+  {
+    "trial": 4,
+    "config_hash": "81c7db96341f909b",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": null,
+      "classifier": "linear_svm",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "isotonic",
+      "threshold": 0.97,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.97,
+      "precision": 1.0,
+      "recall": 0.702422,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 203,
+      "fp": 0,
+      "fn": 86,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": null,
+        "classifier": "linear_svm",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "isotonic",
+        "threshold": 0.97,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.702422,
+    "timestamp": 1775235766.983223
+  },
+  {
+    "trial": 5,
+    "config_hash": "fc9488f8d6d09de8",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.7,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.7,
+      "precision": 1.0,
+      "recall": 0.910035,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 263,
+      "fp": 0,
+      "fn": 26,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.7,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.910035,
+    "timestamp": 1775235767.0514061
+  },
+  {
+    "trial": 6,
+    "config_hash": "3c817f2e0ef68f05",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 32,
+      "classifier": "linear_svm",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "platt",
+      "threshold": 0.9,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.792388,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 229,
+      "fp": 0,
+      "fn": 60,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 32,
+        "classifier": "linear_svm",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "platt",
+        "threshold": 0.9,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.792388,
+    "timestamp": 1775235767.110087
+  },
+  {
+    "trial": 7,
+    "config_hash": "95640a70f868bf98",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 64,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.9,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.823529,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 238,
+      "fp": 0,
+      "fn": 51,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 64,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.9,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.823529,
+    "timestamp": 1775235767.168105
+  },
+  {
+    "trial": 8,
+    "config_hash": "459872d8969a6339",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": null,
+      "classifier": "mlp",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "platt",
+      "threshold": 0.95,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.95,
+      "precision": 1.0,
+      "recall": 0.788927,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 228,
+      "fp": 0,
+      "fn": 61,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": null,
+        "classifier": "mlp",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "platt",
+        "threshold": 0.95,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.788927,
+    "timestamp": 1775235767.740574
+  },
+  {
+    "trial": 9,
+    "config_hash": "33fd359795d3f58b",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 256,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "none",
+      "threshold": 0.93,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.93,
+      "precision": 1.0,
+      "recall": 0.861592,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 249,
+      "fp": 0,
+      "fn": 40,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 256,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "none",
+        "threshold": 0.93,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.861592,
+    "timestamp": 1775235767.819013
+  },
+  {
+    "trial": 10,
+    "config_hash": "86441eaede15b4bd",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": null,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.4,
+      "prob_calibration": "platt",
+      "threshold": 0.97,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.97,
+      "precision": 1.0,
+      "recall": 0.733564,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 212,
+      "fp": 0,
+      "fn": 77,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": null,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.4,
+        "prob_calibration": "platt",
+        "threshold": 0.97,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 20
+    },
+    "objective": 0.733564,
+    "timestamp": 1775235767.868608
+  },
+  {
+    "trial": 11,
+    "config_hash": "9f76abbc355d4c02",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 32,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.4,
+      "prob_calibration": "platt",
+      "threshold": 0.85,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.861592,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 249,
+      "fp": 0,
+      "fn": 40,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 32,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.4,
+        "prob_calibration": "platt",
+        "threshold": 0.85,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 20
+    },
+    "objective": 0.861592,
+    "timestamp": 1775235767.922297
+  },
+  {
+    "trial": 12,
+    "config_hash": "0b023ddbe027937a",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.8,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.8,
+      "precision": 1.0,
+      "recall": 0.868512,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 251,
+      "fp": 0,
+      "fn": 38,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.8,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.868512,
+    "timestamp": 1775235767.993866
+  },
+  {
+    "trial": 13,
+    "config_hash": "db8c146b8be91896",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 256,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.4,
+      "prob_calibration": "isotonic",
+      "threshold": 0.9,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.871972,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 252,
+      "fp": 0,
+      "fn": 37,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 256,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.4,
+        "prob_calibration": "isotonic",
+        "threshold": 0.9,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 20
+    },
+    "objective": 0.871972,
+    "timestamp": 1775235768.075039
+  },
+  {
+    "trial": 14,
+    "config_hash": "b8d0baf89958140b",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": null,
+      "classifier": "mlp",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "platt",
+      "threshold": 0.95,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.95,
+      "precision": 1.0,
+      "recall": 0.719723,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 208,
+      "fp": 0,
+      "fn": 81,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": null,
+        "classifier": "mlp",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "platt",
+        "threshold": 0.95,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.719723,
+    "timestamp": 1775235768.566747
+  },
+  {
+    "trial": 15,
+    "config_hash": "38150fdb97007160",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": null,
+      "classifier": "mlp",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "isotonic",
+      "threshold": 0.9,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.882353,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 255,
+      "fp": 0,
+      "fn": 34,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": null,
+        "classifier": "mlp",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "isotonic",
+        "threshold": 0.9,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.882353,
+    "timestamp": 1775235768.914536
+  },
+  {
+    "trial": 16,
+    "config_hash": "f32a036b71d7d00b",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 256,
+      "classifier": "logreg",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.5,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.5,
+      "precision": 1.0,
+      "recall": 0.913495,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 264,
+      "fp": 0,
+      "fn": 25,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 256,
+        "classifier": "logreg",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.5,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.913495,
+    "timestamp": 1775235768.998167
+  },
+  {
+    "trial": 17,
+    "config_hash": "9d497201f0a57980",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.2,
+      "prob_calibration": "none",
+      "threshold": 0.5,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.5,
+      "precision": 1.0,
+      "recall": 0.889273,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 257,
+      "fp": 0,
+      "fn": 32,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.2,
+        "prob_calibration": "none",
+        "threshold": 0.5,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 10
+    },
+    "objective": 0.889273,
+    "timestamp": 1775235769.0412722
+  },
+  {
+    "trial": 18,
+    "config_hash": "bbc3f92cc6c80b22",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": null,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "none",
+      "threshold": 0.97,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.97,
+      "precision": 1.0,
+      "recall": 0.795848,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 230,
+      "fp": 0,
+      "fn": 59,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": null,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "none",
+        "threshold": 0.97,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.795848,
+    "timestamp": 1775235769.057018
+  },
+  {
+    "trial": 19,
+    "config_hash": "5aa497af330e874b",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 64,
+      "classifier": "mlp",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.9,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.643599,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 186,
+      "fp": 0,
+      "fn": 103,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 64,
+        "classifier": "mlp",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.9,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.643599,
+    "timestamp": 1775235769.911375
+  },
+  {
+    "trial": 20,
+    "config_hash": "c2c65151d1e9a7f6",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 64,
+      "classifier": "linear_svm",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "none",
+      "threshold": 0.7,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.7,
+      "precision": 1.0,
+      "recall": 0.889273,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 257,
+      "fp": 0,
+      "fn": 32,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 64,
+        "classifier": "linear_svm",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "none",
+        "threshold": 0.7,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.889273,
+    "timestamp": 1775235769.958171
+  },
+  {
+    "trial": 21,
+    "config_hash": "b183b531f44beba7",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 256,
+      "classifier": "mlp",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "none",
+      "threshold": 0.5,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.5,
+      "precision": 1.0,
+      "recall": 0.955017,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 276,
+      "fp": 0,
+      "fn": 13,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 256,
+        "classifier": "mlp",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "none",
+        "threshold": 0.5,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.955017,
+    "timestamp": 1775235770.156323
+  },
+  {
+    "trial": 22,
+    "config_hash": "1e6da0e4058d5894",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": null,
+      "classifier": "linear_svm",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.2,
+      "prob_calibration": "isotonic",
+      "threshold": 0.97,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.97,
+      "precision": 1.0,
+      "recall": 0.67128,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 194,
+      "fp": 0,
+      "fn": 95,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": null,
+        "classifier": "linear_svm",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.2,
+        "prob_calibration": "isotonic",
+        "threshold": 0.97,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 10
+    },
+    "objective": 0.67128,
+    "timestamp": 1775235770.2196548
+  },
+  {
+    "trial": 23,
+    "config_hash": "3324ffa54d0942a4",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 32,
+      "classifier": "mlp",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.4,
+      "prob_calibration": "platt",
+      "threshold": 0.85,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.598616,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 173,
+      "fp": 0,
+      "fn": 116,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 32,
+        "classifier": "mlp",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.4,
+        "prob_calibration": "platt",
+        "threshold": 0.85,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 20
+    },
+    "objective": 0.598616,
+    "timestamp": 1775235770.5500128
+  },
+  {
+    "trial": 24,
+    "config_hash": "85d3e62977e8a158",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 128,
+      "classifier": "linear_svm",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.4,
+      "prob_calibration": "isotonic",
+      "threshold": 0.5,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.5,
+      "precision": 1.0,
+      "recall": 0.934256,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 270,
+      "fp": 0,
+      "fn": 19,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 128,
+        "classifier": "linear_svm",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.4,
+        "prob_calibration": "isotonic",
+        "threshold": 0.5,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 20
+    },
+    "objective": 0.934256,
+    "timestamp": 1775235770.6198678
+  },
+  {
+    "trial": 25,
+    "config_hash": "e6b1fc809961e067",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": null,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "none",
+      "threshold": 0.85,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.851211,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 246,
+      "fp": 0,
+      "fn": 43,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": null,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "none",
+        "threshold": 0.85,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.851211,
+    "timestamp": 1775235770.633612
+  },
+  {
+    "trial": 26,
+    "config_hash": "786b239b82295471",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.2,
+      "prob_calibration": "platt",
+      "threshold": 0.85,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.802768,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 232,
+      "fp": 0,
+      "fn": 57,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.2,
+        "prob_calibration": "platt",
+        "threshold": 0.85,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 10
+    },
+    "objective": 0.802768,
+    "timestamp": 1775235770.710745
+  },
+  {
+    "trial": 27,
+    "config_hash": "98b6d0f2f347dbbf",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 256,
+      "classifier": "logreg",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "none",
+      "threshold": 0.8,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.8,
+      "precision": 1.0,
+      "recall": 0.740484,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 214,
+      "fp": 0,
+      "fn": 75,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 256,
+        "classifier": "logreg",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "none",
+        "threshold": 0.8,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.740484,
+    "timestamp": 1775235770.790439
+  },
+  {
+    "trial": 28,
+    "config_hash": "56fb1adf0e8a3b96",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "platt",
+      "threshold": 0.5,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.5,
+      "precision": 1.0,
+      "recall": 0.930796,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 269,
+      "fp": 0,
+      "fn": 20,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "platt",
+        "threshold": 0.5,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.930796,
+    "timestamp": 1775235770.866551
+  },
+  {
+    "trial": 29,
+    "config_hash": "288bda3338e6aa8f",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 128,
+      "classifier": "linear_svm",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "none",
+      "threshold": 0.9,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.802768,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 232,
+      "fp": 0,
+      "fn": 57,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 128,
+        "classifier": "linear_svm",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "none",
+        "threshold": 0.9,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.802768,
+    "timestamp": 1775235770.933641
+  },
+  {
+    "trial": 30,
+    "config_hash": "020a198d2ffe1a47",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 256,
+      "classifier": "mlp",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "none",
+      "threshold": 0.97,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.97,
+      "precision": 0.0,
+      "recall": 0.0,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 289,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 256,
+        "classifier": "mlp",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "none",
+        "threshold": 0.97,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.0,
+    "timestamp": 1775235771.0725482
+  },
+  {
+    "trial": 31,
+    "config_hash": "e8ef2c75fbc31fea",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 32,
+      "classifier": "logreg",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "isotonic",
+      "threshold": 0.7,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.7,
+      "precision": 1.0,
+      "recall": 0.899654,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 260,
+      "fp": 0,
+      "fn": 29,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 32,
+        "classifier": "logreg",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "isotonic",
+        "threshold": 0.7,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.899654,
+    "timestamp": 1775235771.122134
+  },
+  {
+    "trial": 32,
+    "config_hash": "1ba42ab6991de571",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "platt",
+      "threshold": 0.93,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.93,
+      "precision": 1.0,
+      "recall": 0.782007,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 226,
+      "fp": 0,
+      "fn": 63,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "platt",
+        "threshold": 0.93,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.782007,
+    "timestamp": 1775235771.18879
+  },
+  {
+    "trial": 33,
+    "config_hash": "430f70980398bb09",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 64,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.9,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.892734,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 258,
+      "fp": 0,
+      "fn": 31,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 64,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.9,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.892734,
+    "timestamp": 1775235771.23394
+  },
+  {
+    "trial": 34,
+    "config_hash": "5ea372078c3ebffd",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": null,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "isotonic",
+      "threshold": 0.85,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.899654,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 260,
+      "fp": 0,
+      "fn": 29,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": null,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "isotonic",
+        "threshold": 0.85,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.899654,
+    "timestamp": 1775235771.286052
+  },
+  {
+    "trial": 35,
+    "config_hash": "425a717d24fdceeb",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 32,
+      "classifier": "linear_svm",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.2,
+      "prob_calibration": "platt",
+      "threshold": 0.8,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.8,
+      "precision": 1.0,
+      "recall": 0.871972,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 252,
+      "fp": 0,
+      "fn": 37,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 32,
+        "classifier": "linear_svm",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.2,
+        "prob_calibration": "platt",
+        "threshold": 0.8,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 10
+    },
+    "objective": 0.871972,
+    "timestamp": 1775235771.328394
+  },
+  {
+    "trial": 36,
+    "config_hash": "01d40ae1ed39f9f3",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 64,
+      "classifier": "mlp",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "none",
+      "threshold": 0.9,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 1.0,
+      "recall": 0.619377,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 179,
+      "fp": 0,
+      "fn": 110,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 64,
+        "classifier": "mlp",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "none",
+        "threshold": 0.9,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.619377,
+    "timestamp": 1775235771.4108748
+  },
+  {
+    "trial": 37,
+    "config_hash": "a04790b6fbc145c0",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 256,
+      "classifier": "logreg",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.93,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.93,
+      "precision": 1.0,
+      "recall": 0.84083,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 243,
+      "fp": 0,
+      "fn": 46,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 256,
+        "classifier": "logreg",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.93,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.84083,
+    "timestamp": 1775235771.489372
+  },
+  {
+    "trial": 38,
+    "config_hash": "42dbff501ddf176a",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 64,
+      "classifier": "mlp",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "none",
+      "threshold": 0.95,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.95,
+      "precision": 1.0,
+      "recall": 0.460208,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 133,
+      "fp": 0,
+      "fn": 156,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 64,
+        "classifier": "mlp",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "none",
+        "threshold": 0.95,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.460208,
+    "timestamp": 1775235771.576271
+  },
+  {
+    "trial": 39,
+    "config_hash": "683bdf7cdca5a4d7",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": null,
+      "classifier": "linear_svm",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.97,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.97,
+      "precision": 1.0,
+      "recall": 0.67474,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 195,
+      "fp": 0,
+      "fn": 94,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": null,
+        "classifier": "linear_svm",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.97,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.67474,
+    "timestamp": 1775235771.650366
+  },
+  {
+    "trial": 40,
+    "config_hash": "2da6addbf3efbd8a",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 128,
+      "classifier": "mlp",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "isotonic",
+      "threshold": 0.8,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.8,
+      "precision": 1.0,
+      "recall": 0.477509,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 138,
+      "fp": 0,
+      "fn": 151,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 128,
+        "classifier": "mlp",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "isotonic",
+        "threshold": 0.8,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.477509,
+    "timestamp": 1775235771.9275289
+  },
+  {
+    "trial": 41,
+    "config_hash": "cd666848ae22a7f0",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 64,
+      "classifier": "mlp",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "none",
+      "threshold": 0.9,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.9,
+      "precision": 0.0,
+      "recall": 0.0,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 289,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 64,
+        "classifier": "mlp",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "none",
+        "threshold": 0.9,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.0,
+    "timestamp": 1775235772.069788
+  },
+  {
+    "trial": 42,
+    "config_hash": "29fb559b03cf4c73",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 64,
+      "classifier": "logreg",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.2,
+      "prob_calibration": "isotonic",
+      "threshold": 0.95,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.95,
+      "precision": 1.0,
+      "recall": 0.84083,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 243,
+      "fp": 0,
+      "fn": 46,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 64,
+        "classifier": "logreg",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.2,
+        "prob_calibration": "isotonic",
+        "threshold": 0.95,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 10
+    },
+    "objective": 0.84083,
+    "timestamp": 1775235772.13261
+  },
+  {
+    "trial": 43,
+    "config_hash": "f373b6c92525db5e",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 32,
+      "classifier": "logreg",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 1.5,
+      "hard_negative_fraction": 0.4,
+      "prob_calibration": "none",
+      "threshold": 0.8,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.8,
+      "precision": 1.0,
+      "recall": 0.896194,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 259,
+      "fp": 0,
+      "fn": 30,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 32,
+        "classifier": "logreg",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 1.5,
+        "hard_negative_fraction": 0.4,
+        "prob_calibration": "none",
+        "threshold": 0.8,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 20
+    },
+    "objective": 0.896194,
+    "timestamp": 1775235772.177849
+  },
+  {
+    "trial": 44,
+    "config_hash": "99bc7ec2d0eec301",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": 128,
+      "classifier": "mlp",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.1,
+      "prob_calibration": "isotonic",
+      "threshold": 0.7,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.7,
+      "precision": 1.0,
+      "recall": 0.685121,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 198,
+      "fp": 0,
+      "fn": 91,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": 128,
+        "classifier": "mlp",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.1,
+        "prob_calibration": "isotonic",
+        "threshold": 0.7,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 5
+    },
+    "objective": 0.685121,
+    "timestamp": 1775235772.720905
+  },
+  {
+    "trial": 45,
+    "config_hash": "9c55ccf224dd89fd",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 128,
+      "classifier": "logreg",
+      "class_weight_pos": 1.5,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.2,
+      "prob_calibration": "platt",
+      "threshold": 0.85,
+      "context_pooling": "center",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.83737,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 242,
+      "fp": 0,
+      "fn": 47,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 128,
+        "classifier": "logreg",
+        "class_weight_pos": 1.5,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.2,
+        "prob_calibration": "platt",
+        "threshold": 0.85,
+        "context_pooling": "center",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 10
+    },
+    "objective": 0.83737,
+    "timestamp": 1775235772.8123982
+  },
+  {
+    "trial": 46,
+    "config_hash": "f6ee25a0d632ef21",
+    "config": {
+      "feature_norm": "none",
+      "pca_dim": 32,
+      "classifier": "linear_svm",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "platt",
+      "threshold": 0.93,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.93,
+      "precision": 1.0,
+      "recall": 0.792388,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 229,
+      "fp": 0,
+      "fn": 60,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "none",
+        "pca_dim": 32,
+        "classifier": "linear_svm",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "platt",
+        "threshold": 0.93,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.792388,
+    "timestamp": 1775235772.849212
+  },
+  {
+    "trial": 47,
+    "config_hash": "24ba5277059e6554",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 128,
+      "classifier": "mlp",
+      "class_weight_pos": 2.0,
+      "class_weight_neg": 1.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "platt",
+      "threshold": 0.8,
+      "context_pooling": "max3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.8,
+      "precision": 1.0,
+      "recall": 0.460208,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 133,
+      "fp": 0,
+      "fn": 156,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 128,
+        "classifier": "mlp",
+        "class_weight_pos": 2.0,
+        "class_weight_neg": 1.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "platt",
+        "threshold": 0.8,
+        "context_pooling": "max3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.460208,
+    "timestamp": 1775235773.1100218
+  },
+  {
+    "trial": 48,
+    "config_hash": "ca3c26faa7e27139",
+    "config": {
+      "feature_norm": "l2",
+      "pca_dim": null,
+      "classifier": "logreg",
+      "class_weight_pos": 3.0,
+      "class_weight_neg": 2.0,
+      "hard_negative_fraction": 0.2,
+      "prob_calibration": "platt",
+      "threshold": 0.7,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.7,
+      "precision": 1.0,
+      "recall": 0.896194,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 259,
+      "fp": 0,
+      "fn": 30,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "l2",
+        "pca_dim": null,
+        "classifier": "logreg",
+        "class_weight_pos": 3.0,
+        "class_weight_neg": 2.0,
+        "hard_negative_fraction": 0.2,
+        "prob_calibration": "platt",
+        "threshold": 0.7,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 10
+    },
+    "objective": 0.896194,
+    "timestamp": 1775235773.153175
+  },
+  {
+    "trial": 49,
+    "config_hash": "840df2cd8cf7be80",
+    "config": {
+      "feature_norm": "standard",
+      "pca_dim": 32,
+      "classifier": "linear_svm",
+      "class_weight_pos": 1.0,
+      "class_weight_neg": 3.0,
+      "hard_negative_fraction": 0.0,
+      "prob_calibration": "isotonic",
+      "threshold": 0.85,
+      "context_pooling": "mean3",
+      "seed": 42
+    },
+    "metrics": {
+      "threshold": 0.85,
+      "precision": 1.0,
+      "recall": 0.83045,
+      "fp_rate": 0.0,
+      "high_conf_fp_rate": 0.0,
+      "tp": 240,
+      "fp": 0,
+      "fn": 49,
+      "tn": 69,
+      "high_conf_fp_rate_by_group": {
+        "background": 0.0,
+        "ship": 0.0,
+        "vocalization_negative": 0.0
+      },
+      "seed": 42,
+      "config": {
+        "feature_norm": "standard",
+        "pca_dim": 32,
+        "classifier": "linear_svm",
+        "class_weight_pos": 1.0,
+        "class_weight_neg": 3.0,
+        "hard_negative_fraction": 0.0,
+        "prob_calibration": "isotonic",
+        "threshold": 0.85,
+        "context_pooling": "mean3",
+        "seed": 42
+      },
+      "available_hard_negatives": 50,
+      "replayed_hard_negatives": 0
+    },
+    "objective": 0.83045,
+    "timestamp": 1775235773.223617
+  }
+]

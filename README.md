@@ -23,6 +23,7 @@ Highlights:
 - Multi-model support for TFLite spectrogram models and TF2 waveform models
 - Clustering, evaluation, and optional metric-learning refinement workflows
 - Binary classifier training plus hydrophone/archive detection
+- Autoresearch candidate import, review, and exact-replay promotion into classifier training
 - Multi-label vocalization type classifier with managed vocabulary, per-type thresholds, and inference scoring
 - Interactive web UI and REST API for review, labeling, and extraction
 - Local-first artifact storage using SQL and Parquet-backed outputs
@@ -506,6 +507,10 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/clustering/jobs/{id}/refinement` | Get metric learning refinement report |
 | GET | `/clustering/clusters/{id}/assignments` | Get assignments |
 | POST | `/classifier/training-jobs` | Queue classifier training job |
+| POST | `/classifier/autoresearch-candidates/import` | Import an autoresearch artifact bundle for review |
+| GET | `/classifier/autoresearch-candidates` | List imported autoresearch candidates |
+| GET | `/classifier/autoresearch-candidates/{id}` | Get candidate detail with comparison previews |
+| POST | `/classifier/autoresearch-candidates/{id}/training-jobs` | Promote a reviewed candidate into a manifest-backed training job |
 | GET | `/classifier/training-jobs` | List training jobs |
 | GET | `/classifier/training-jobs/{id}` | Get training job |
 | GET | `/classifier/models` | List trained classifier models |
@@ -580,6 +585,32 @@ Validation and error behavior notes:
   output. Detection-time auto-selection metadata is persisted there, TSV download is generated
   from that row store, and `PUT /classifier/detection-jobs/{id}/row-state` can atomically
   persist one row's labels plus manual positive-window bounds.
+
+### Autoresearch Candidate Promotion
+
+The Classifier Training page now supports two distinct ways to produce a new model:
+
+- **Embedding-set training** is the original path: choose positive and negative embedding sets and queue a training job directly.
+- **Autoresearch candidate promotion** imports a reviewed artifact bundle (`manifest.json`, `best_run.json`, optional comparison JSON, optional `top_false_positives.json`) and, when the config is exactly reproducible, starts a manifest-backed training job from the candidate's `train` split.
+
+Candidate promotion is intended for reviewed search winners compared against production models such as `LR-v12`. The Training tab surfaces:
+
+- source model and phase
+- split-level metric deltas versus production
+- disagreement previews and top false positives
+- reproducibility warnings that explain why a candidate is `promotable` or `blocked`
+
+Current promotion limits:
+
+- promotable: `logreg` and `mlp`, `feature_norm` in `none|l2|standard`, `context_pooling=center`, `prob_calibration=none`, `pca_dim=null`, `hard_negative_fraction=0.0`
+- blocked: pooled contexts (`mean3`, `max3`), calibrated probabilities, PCA, replay-adjusted hard negatives, unsupported classifier families, and explicit MLP class weights other than `1.0`
+
+Candidate-backed promotion is not the same as legacy retrain-from-folders:
+
+- **Retrain-from-folders** reimports the original positive and negative folder roots for an existing embedding-set-backed model, reprocesses audio, and trains again.
+- **Candidate-backed promotion** trains directly from the imported manifest examples and preserves candidate comparison provenance on the resulting model. Because it is manifest-backed rather than folder-backed, these promoted models do not currently support the folder-root retrain workflow.
+
+For stable development fixtures used by both the import API tests and the Training-tab UI coverage, see [`scripts/autoresearch/output/README.md`](/Users/michael/development/humpback-acoustic-embed/scripts/autoresearch/output/README.md) and the explicit-negative bundle under [`scripts/autoresearch/output/explicit-negatives/`](/Users/michael/development/humpback-acoustic-embed/scripts/autoresearch/output/explicit-negatives).
 
 ---
 

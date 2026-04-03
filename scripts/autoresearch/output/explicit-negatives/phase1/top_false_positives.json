@@ -1,0 +1,252 @@
+[
+  {
+    "id": "det2a5f51f3_63c4c5e6-e1bc-4fc8-9af1-2685cd8bee8f",
+    "score": 0.276432,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_bd14a2c7-709e-4584-9ac7-1f5925b7b022",
+    "score": 0.193056,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_f0a0a185-754a-4763-a0e0-95f108938242",
+    "score": 0.188985,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_264b8f29-7d71-4203-85ce-5c9ce5dbd02b",
+    "score": 0.176652,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_04da1fc5-cd52-4c38-8bea-eaf914065fd6",
+    "score": 0.1292,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_10893368-76d2-481d-9cc8-98663361e9fa",
+    "score": 0.112602,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_d7590ec1-0fa6-4fcf-9204-0b3e7bd0e7a5",
+    "score": 0.103213,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_be690c07-060b-4452-8e43-ca8523327e86",
+    "score": 0.101203,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_c5b03af7-b8b4-4274-a1fb-a3f0ee3ab79c",
+    "score": 0.098037,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_08382642-1803-4f5e-8664-cd7099af752c",
+    "score": 0.089697,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_bb1cc7c7-8d51-409d-ad07-a4431937854e",
+    "score": 0.08052,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_8d882fdb-17bc-4aa8-99f0-cc30f7f4cc26",
+    "score": 0.075078,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_c2a0af35-df61-4397-acd5-11b1be5266b1",
+    "score": 0.068585,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_8c9ce6ab-36de-438b-b550-495807ce9b95",
+    "score": 0.05976,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_6a306827-e967-4368-b1ae-7f2d9fc9dc13",
+    "score": 0.049648,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_29be51c5-94f1-4cbc-8b8b-e7a50cd4cfbe",
+    "score": 0.048505,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_130b336f-888e-452a-8f19-7abe91965d14",
+    "score": 0.043754,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_647c6d18-17d8-4f30-a9cf-9ecd41edb2da",
+    "score": 0.042481,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_78f885cf-ba4e-478a-a12d-463cc5e03284",
+    "score": 0.03877,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_bb203c72-768a-4d40-97b2-91cce607ff32",
+    "score": 0.03789,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_fbad50e4-b54f-4e45-9fe9-daad115fb0e3",
+    "score": 0.037497,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_40d29276-e345-4a64-8c35-6a357ae9d2ae",
+    "score": 0.036267,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_7a836a54-fe9a-4066-8cde-1cb29cb5aefd",
+    "score": 0.035162,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_ffbec60a-7518-43e5-a195-266a76d4d099",
+    "score": 0.03403,
+    "negative_group": "background"
+  },
+  {
+    "id": "det23a1f7ca_6f4ba266-4eb9-4bcb-a3c5-57167ba795c2",
+    "score": 0.032191,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_00c101fa-dc70-4b6f-94f9-8455acb0c09d",
+    "score": 0.03214,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_2e26a8ab-45c9-4a52-8f24-04f40fa53c58",
+    "score": 0.029141,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_bd00754c-f646-4cf2-8464-5b985bd9f865",
+    "score": 0.028992,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_d45f03f8-f30b-4953-9854-7c2a7605df76",
+    "score": 0.028069,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_f1ae3c07-181b-4d0f-ad99-8e3001959244",
+    "score": 0.024578,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_a1b0eb4e-dc76-4b59-b6ba-1df4c0fb543b",
+    "score": 0.020914,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_b212f78c-e770-4348-b661-184e310a47af",
+    "score": 0.020764,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_52f06390-039d-459f-a49a-5692a9c6cf20",
+    "score": 0.019087,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_70838d69-4706-40a6-bfe6-1071bf6e372b",
+    "score": 0.018911,
+    "negative_group": "background"
+  },
+  {
+    "id": "det2a5f51f3_31b88a87-db51-4082-8247-160a5685ed25",
+    "score": 0.018156,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_0200b259-74a4-48e9-97d0-6ae3df6b182e",
+    "score": 0.017976,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_e9d6a654-884d-49e0-94f7-d0d4b6c31fb3",
+    "score": 0.017744,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_35096651-cad3-45c5-a5b5-0a6a57371fdd",
+    "score": 0.017625,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_7f533a24-2a29-4a34-afef-1ca8af41942c",
+    "score": 0.01746,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det23a1f7ca_14bdb993-d8a1-4490-a0c0-7571a3c4ec5c",
+    "score": 0.016938,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_cc244c4b-e111-464f-9d8a-d3fd862e82e1",
+    "score": 0.016842,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_5d6a2140-ffb4-459b-95ad-b3a2d538227b",
+    "score": 0.01663,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_66c5f882-27e2-48ff-b052-dd7f751dc526",
+    "score": 0.015117,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det23a1f7ca_7e77525b-1c44-4b9e-9de5-3aeb1c261a4b",
+    "score": 0.015002,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_3fc6ac2f-9dfd-4033-afc5-a7c697613c95",
+    "score": 0.014876,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_1a76b96c-6f10-4e42-852e-40c5936be965",
+    "score": 0.013677,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_e1f6826c-528b-4d84-a948-5d0051b41c56",
+    "score": 0.012272,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_84b7060a-853e-4963-a409-335190f4d4ce",
+    "score": 0.011693,
+    "negative_group": "vocalization_negative"
+  },
+  {
+    "id": "det2a5f51f3_be252479-82db-481b-a70c-9c383d5a6c14",
+    "score": 0.010971,
+    "negative_group": "ship"
+  },
+  {
+    "id": "det2a5f51f3_43156028-e1f7-412f-93be-7fa41e082985",
+    "score": 0.010388,
+    "negative_group": "ship"
+  }
+]
