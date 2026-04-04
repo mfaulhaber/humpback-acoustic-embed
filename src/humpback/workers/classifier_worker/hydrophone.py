@@ -278,6 +278,8 @@ def _hydrophone_detection_subprocess_main(
             prefetch_workers=int(runtime["prefetch_workers"]),
             prefetch_inflight_segments=int(runtime["prefetch_inflight_segments"]),
             detection_mode=runtime.get("detection_mode"),
+            window_selection=runtime.get("window_selection"),
+            min_prominence=runtime.get("min_prominence"),
         )
         event_queue.put(
             {
@@ -688,6 +690,8 @@ async def run_hydrophone_detection_job(
                         "prefetch_workers": settings.hydrophone_prefetch_workers,
                         "prefetch_inflight_segments": settings.hydrophone_prefetch_inflight_segments,
                         "detection_mode": job.detection_mode,
+                        "window_selection": job.window_selection,
+                        "min_prominence": job.min_prominence,
                     },
                     cancel_event=cancel_event,
                     pause_gate=pause_gate,
@@ -732,6 +736,8 @@ async def run_hydrophone_detection_job(
                     prefetch_workers=settings.hydrophone_prefetch_workers,
                     prefetch_inflight_segments=settings.hydrophone_prefetch_inflight_segments,
                     detection_mode=job.detection_mode,
+                    window_selection=job.window_selection,
+                    min_prominence=job.min_prominence,
                 )
         except FileNotFoundError as exc:
             raise FileNotFoundError(

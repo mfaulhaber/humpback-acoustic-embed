@@ -195,6 +195,8 @@ async def run_detection_job(
             on_file_complete,
             job.detection_mode,
             True,  # emit_embeddings
+            job.window_selection,
+            job.min_prominence,
         )
 
         # Write window diagnostics

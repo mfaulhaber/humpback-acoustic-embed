@@ -523,3 +523,25 @@ vocalization type). Key design choices:
 - Verification mismatch does not fail the job — the model is saved but flagged
 - Calibration is baked into the sklearn Pipeline; `predict_proba()` returns calibrated probabilities directly
 - `linear_svm`, `hard_negative_fraction > 0`, and MLP with class weights remain blocked
+
+---
+
+## ADR-044: Prominence-based window selection for detection
+
+**Date**: 2026-04-04
+**Status**: Accepted
+
+**Context**: In windowed detection mode, NMS selects non-overlapping 5-second peak windows from merged events by suppressing all windows within `window_size_seconds` of each selected peak. This creates 2–4 second gaps between detection items, even in regions where the classifier scores every window above 0.9. Distinct vocalizations falling in these gaps are missed for both labeling and training data. Investigation of job `d52e03cc` confirmed the classifier scores 0.95–0.997 at 02:16:53–56 UTC, but no detection item is emitted because it falls in the NMS gap between adjacent selected peaks.
+
+**Decision**: Add a `window_selection` parameter to detection jobs with two modes:
+- `"nms"` (default) — existing greedy NMS with `window_size_seconds` suppression zone, non-overlapping output.
+- `"prominence"` — peak prominence detection using raw (unsmoothed) scores. Finds local maxima in raw confidence scores and computes prominence as peak score minus the highest valley between the peak and its nearest higher neighbor. Peaks passing `min_prominence` (default 0.03) and `min_score` emit 5-second windows that may overlap. A fallback emits the single highest window when no peaks pass prominence (e.g., plateau regions).
+
+Raw scores are used for both peak finding and prominence computation (no smoothing) to preserve the true dip depth between vocalizations. Smoothing was found to shift peak positions in short sequences, creating inconsistencies between smoothed peak locations and raw prominence values.
+
+**Consequences**:
+- Every detected vocalization event gets at least one detection item; dense singing regions produce overlapping windows covering each distinct call
+- Overlapping detection windows are compatible with all downstream systems (row store, embeddings, labeling, extraction, training datasets) because they are keyed by `row_id`, not time-range uniqueness
+- Requires Alembic migration 038 (`window_selection`, `min_prominence` columns on `detection_jobs`)
+- NMS remains the default; prominence mode is opt-in via UI toggle or API parameter
+- Side-by-side comparison is possible by running the same time range with each mode

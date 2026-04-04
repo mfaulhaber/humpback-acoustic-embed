@@ -431,6 +431,8 @@ async def create_detection_job(
             body.hop_seconds,
             body.high_threshold,
             body.low_threshold,
+            body.window_selection,
+            body.min_prominence,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

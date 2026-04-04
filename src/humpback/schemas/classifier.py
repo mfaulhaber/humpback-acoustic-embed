@@ -151,6 +151,8 @@ class DetectionJobCreate(BaseModel):
     hop_seconds: float = 1.0
     high_threshold: float = 0.70
     low_threshold: float = 0.45
+    window_selection: Optional[Literal["nms", "prominence"]] = None
+    min_prominence: Optional[float] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -165,6 +167,8 @@ class DetectionJobCreate(BaseModel):
             raise ValueError("high_threshold must be >= low_threshold")
         if self.hop_seconds <= 0:
             raise ValueError("hop_seconds must be positive")
+        if self.min_prominence is not None and self.min_prominence <= 0:
+            raise ValueError("min_prominence must be > 0")
         return self
 
 
@@ -178,6 +182,8 @@ class DetectionJobOut(BaseModel):
     high_threshold: float
     low_threshold: float
     detection_mode: Optional[str] = None
+    window_selection: Optional[str] = None
+    min_prominence: Optional[float] = None
     output_row_store_path: Optional[str] = None
     result_summary: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -223,6 +229,8 @@ class HydrophoneDetectionJobCreate(BaseModel):
     high_threshold: float = 0.70
     low_threshold: float = 0.45
     local_cache_path: Optional[str] = None
+    window_selection: Optional[Literal["nms", "prominence"]] = None
+    min_prominence: Optional[float] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -242,6 +250,8 @@ class HydrophoneDetectionJobCreate(BaseModel):
         max_range = 7 * 24 * 3600  # 7 days
         if self.end_timestamp - self.start_timestamp > max_range:
             raise ValueError("Time range must be <= 7 days")
+        if self.min_prominence is not None and self.min_prominence <= 0:
+            raise ValueError("min_prominence must be > 0")
         return self
 
 

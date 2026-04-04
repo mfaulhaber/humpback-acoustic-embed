@@ -27,6 +27,7 @@ from humpback.classifier.detector_utils import (
     resolve_audio_for_window,
     resolve_audio_for_window_hydrophone,
     select_peak_windows_from_events,
+    select_prominent_peaks_from_events,
     snap_and_merge_detection_events,
     snap_event_bounds,
     write_detection_embeddings,
@@ -64,6 +65,7 @@ __all__ = [
     "resolve_audio_for_window",
     "resolve_audio_for_window_hydrophone",
     "select_peak_windows_from_events",
+    "select_prominent_peaks_from_events",
     "snap_and_merge_detection_events",
     "snap_event_bounds",
     "write_detection_embeddings",
@@ -94,6 +96,8 @@ def run_detection(
     on_file_complete: Callable[[list[dict], int, int], None] | None = None,
     detection_mode: str | None = None,
     emit_embeddings: bool = False,
+    window_selection: str | None = None,
+    min_prominence: float | None = None,
 ) -> tuple[list[dict], dict, list[dict] | None, list[dict] | None]:
     """Scan audio folder, classify each window, merge events.
 
@@ -249,14 +253,25 @@ def run_detection(
             )
             events = snap_and_merge_detection_events(events, window_size_seconds)
 
-            # Windowed mode: reduce each event to peak 5-sec windows via NMS.
+            # Windowed mode: reduce each event to peak windows.
             if detection_mode == "windowed":
-                events = select_peak_windows_from_events(
-                    events,
-                    window_records,
-                    window_size_seconds,
-                    min_score=high_threshold,
-                )
+                if window_selection == "prominence":
+                    events = select_prominent_peaks_from_events(
+                        events,
+                        window_records,
+                        window_size_seconds,
+                        min_score=high_threshold,
+                        min_prominence=min_prominence
+                        if min_prominence is not None
+                        else 0.03,
+                    )
+                else:
+                    events = select_peak_windows_from_events(
+                        events,
+                        window_records,
+                        window_size_seconds,
+                        min_score=high_threshold,
+                    )
 
             # Collect per-detection embeddings (peak-window vector)
             if emit_embeddings:
@@ -331,6 +346,7 @@ def run_detection(
         "high_threshold": high_threshold,
         "low_threshold": low_threshold,
         "detection_mode": detection_mode or "merged",
+        "window_selection": window_selection or "nms",
     }
 
     if all_confidences:

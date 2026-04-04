@@ -727,3 +727,340 @@ class TestSelectPeakWindowsFromEvents:
         starts = [d["start_sec"] for d in result]
         # offset 5 should appear only once despite being in both events
         assert starts.count(5.0) == 1
+
+
+# ---- select_prominent_peaks_from_events (prominence-based) ----
+
+
+class TestSelectProminentPeaksFromEvents:
+    """Tests for prominence-based peak window selection within merged events."""
+
+    def _make_window_records(
+        self,
+        offsets: list[float] | list[int],
+        confidences: list[float],
+        window_size: float = 5.0,
+    ) -> list[dict]:
+        return [
+            {"offset_sec": o, "end_sec": o + window_size, "confidence": c}
+            for o, c in zip(offsets, confidences)
+        ]
+
+    def _make_event(self, start: float, end: float, n_windows: int) -> dict:
+        return {
+            "start_sec": start,
+            "end_sec": end,
+            "n_windows": n_windows,
+            "raw_start_sec": start,
+            "raw_end_sec": end,
+            "merged_event_count": 1,
+        }
+
+    def test_empty_events(self):
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        result = select_prominent_peaks_from_events([], [], 5.0, min_score=0.7)
+        assert result == []
+
+    def test_empty_window_records(self):
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        events = [self._make_event(0.0, 10.0, 5)]
+        result = select_prominent_peaks_from_events(events, [], 5.0, min_score=0.7)
+        assert result == []
+
+    def test_clear_peaks_separated_by_deep_valley(self):
+        """Two peaks separated by a large score drop — both detected."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 20))
+        confidences = [
+            0.5,
+            0.7,
+            0.9,
+            0.95,
+            0.8,  # peak around 3
+            0.4,
+            0.2,
+            0.1,
+            0.2,
+            0.3,  # valley
+            0.5,
+            0.7,
+            0.85,
+            0.92,
+            0.88,  # peak around 13
+            0.6,
+            0.4,
+            0.3,
+            0.2,
+            0.1,  # tail
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 24.0, 20)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        assert len(result) == 2
+        starts = [d["start_sec"] for d in result]
+        assert starts[0] < starts[1]
+
+    def test_subtle_peak_above_threshold(self):
+        """A peak with prominence just above min_prominence is detected."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Dip from 0.95 to 0.91 = prominence 0.04, above min_prominence=0.03
+        offsets = list(range(0, 12))
+        confidences = [
+            0.8,
+            0.9,
+            0.95,
+            0.93,  # peak at 2
+            0.91,  # shallow valley
+            0.93,
+            0.95,
+            0.94,  # peak at 6
+            0.9,
+            0.85,
+            0.8,
+            0.7,
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 16.0, 12)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        # Both peaks should be detected (prominence ~0.04 > 0.03)
+        assert len(result) == 2
+
+    def test_subtle_peak_below_threshold(self):
+        """A peak with prominence below min_prominence is filtered out."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Dip from 0.95 to 0.94 = prominence 0.01, below min_prominence=0.03
+        offsets = list(range(0, 10))
+        confidences = [
+            0.8,
+            0.9,
+            0.95,
+            0.94,
+            0.95,
+            0.94,
+            0.9,
+            0.85,
+            0.8,
+            0.7,
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 14.0, 10)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        # Only one peak should survive (the others are too similar)
+        assert len(result) == 1
+
+    def test_plateau_single_peak(self):
+        """Constant high scores produce a single peak at the edge."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 8))
+        confidences = [0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 12.0, 8)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        # All peaks have zero prominence, but fallback emits the highest window
+        # so a high-confidence event always produces at least one detection.
+        assert len(result) == 1
+
+    def test_single_peak_in_event(self):
+        """One clear peak — emits one window."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 6))
+        confidences = [0.5, 0.6, 0.9, 0.8, 0.6, 0.4]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 10.0, 6)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        assert len(result) == 1
+        assert result[0]["start_sec"] == 2.0
+        assert result[0]["end_sec"] == 7.0
+
+    def test_no_peaks_above_min_score(self):
+        """No windows above min_score — empty result."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 5))
+        confidences = [0.3, 0.4, 0.5, 0.4, 0.3]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 9.0, 5)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        assert result == []
+
+    def test_overlapping_windows_emitted(self):
+        """Peaks < 5 seconds apart produce overlapping 5-sec windows."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 12))
+        confidences = [
+            0.5,
+            0.7,
+            0.95,
+            0.7,  # peak at 2
+            0.3,  # valley
+            0.7,
+            0.92,
+            0.7,  # peak at 6 — only 4s from peak at 2
+            0.3,
+            0.2,
+            0.1,
+            0.1,
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 16.0, 12)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        assert len(result) == 2
+        # Windows overlap: [2,7] and [6,11]
+        assert result[0]["start_sec"] == 2.0
+        assert result[0]["end_sec"] == 7.0
+        assert result[1]["start_sec"] == 6.0
+        assert result[1]["end_sec"] == 11.0
+        # Confirm they overlap
+        assert result[0]["end_sec"] > result[1]["start_sec"]
+
+    def test_edge_peaks(self):
+        """Peaks at first and last window are handled correctly."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 8))
+        confidences = [0.95, 0.7, 0.5, 0.3, 0.3, 0.5, 0.7, 0.92]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 12.0, 8)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        assert len(result) == 2
+        assert result[0]["start_sec"] == 0.0
+        assert result[1]["start_sec"] == 7.0
+
+    def test_raw_scores_used_for_prominence(self):
+        """Prominence uses raw scores, detecting dips that smoothing would blur."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Two clear peaks at indices 2 and 7 with a dip at index 4 (0.90).
+        # Raw prominence = 0.96 - 0.90 = 0.06, comfortably above 0.04.
+        offsets = list(range(0, 11))
+        confidences = [
+            0.7,
+            0.85,
+            0.96,  # peak 1
+            0.93,
+            0.90,  # dip
+            0.92,
+            0.94,
+            0.97,  # peak 2
+            0.91,
+            0.8,
+            0.6,
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 15.0, 11)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.04
+        )
+        # Should detect two peaks because raw prominence > 0.04
+        assert len(result) == 2
+        assert result[0]["start_sec"] == 2.0
+        assert result[1]["start_sec"] == 7.0
+
+    def test_preserves_audit_fields(self):
+        """Audit fields and extra event fields are preserved."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = [0, 1, 2]
+        confidences = [0.5, 0.9, 0.6]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 7.0,
+                "n_windows": 3,
+                "raw_start_sec": 0.3,
+                "raw_end_sec": 6.8,
+                "merged_event_count": 2,
+                "filename": "test.wav",
+            }
+        ]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        assert len(result) == 1
+        assert result[0]["raw_start_sec"] == 0.3
+        assert result[0]["raw_end_sec"] == 6.8
+        assert result[0]["merged_event_count"] == 2
+        assert result[0]["filename"] == "test.wav"
+
+    def test_deduplication_across_events(self):
+        """Two events sharing the same peak produce one detection."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        window_records = self._make_window_records(
+            offsets=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            confidences=[0.3, 0.4, 0.5, 0.6, 0.7, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4],
+        )
+        events = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 10.0,
+                "n_windows": 6,
+                "raw_start_sec": 1.0,
+                "raw_end_sec": 8.0,
+                "merged_event_count": 1,
+            },
+            {
+                "start_sec": 5.0,
+                "end_sec": 15.0,
+                "n_windows": 6,
+                "raw_start_sec": 6.0,
+                "raw_end_sec": 14.0,
+                "merged_event_count": 1,
+            },
+        ]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        )
+        starts = [d["start_sec"] for d in result]
+        assert starts.count(5.0) == 1

@@ -331,6 +331,8 @@ export function HydrophoneTab() {
   const [hopSeconds, setHopSeconds] = useState(1.0);
   const [highThreshold, setHighThreshold] = useState(0.80);
   const [lowThreshold, setLowThreshold] = useState(0.70);
+  const [windowSelection, setWindowSelection] = useState<"nms" | "prominence">("nms");
+  const [minProminence, setMinProminence] = useState(0.03);
   const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);
@@ -499,6 +501,8 @@ export function HydrophoneTab() {
       hop_seconds: hopSeconds,
       high_threshold: highThreshold,
       low_threshold: lowThreshold,
+      window_selection: windowSelection,
+      ...(windowSelection === "prominence" ? { min_prominence: minProminence } : {}),
       ...(sourceType === "local" ? { local_cache_path: localCachePath } : {}),
     });
   };
@@ -817,6 +821,35 @@ export function HydrophoneTab() {
               onChange={(e) => setHopSeconds(parseFloat(e.target.value) || 1.0)}
               className="mt-1"
             />
+          </div>
+          <div className="flex items-center gap-4">
+            <div>
+              <label className="text-sm font-medium">Window Selection</label>
+              <select
+                value={windowSelection}
+                onChange={(e) => setWindowSelection(e.target.value as "nms" | "prominence")}
+                className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="nms">NMS (non-overlapping)</option>
+                <option value="prominence">Prominence (overlapping)</option>
+              </select>
+            </div>
+            {windowSelection === "prominence" && (
+              <div>
+                <label className="text-sm font-medium">
+                  Min Prominence: {minProminence.toFixed(2)}
+                </label>
+                <input
+                  type="range"
+                  min="0.01"
+                  max="0.20"
+                  step="0.01"
+                  value={minProminence}
+                  onChange={(e) => setMinProminence(parseFloat(e.target.value))}
+                  className="w-full mt-1"
+                />
+              </div>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
             New jobs use fixed 5-second windowed detections.
