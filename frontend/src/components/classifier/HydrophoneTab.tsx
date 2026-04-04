@@ -332,7 +332,7 @@ export function HydrophoneTab() {
   const [highThreshold, setHighThreshold] = useState(0.80);
   const [lowThreshold, setLowThreshold] = useState(0.70);
   const [windowSelection, setWindowSelection] = useState<"nms" | "prominence">("nms");
-  const [minProminence, setMinProminence] = useState(0.03);
+  const [minProminence, setMinProminence] = useState(2.0);
   const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);
@@ -837,13 +837,13 @@ export function HydrophoneTab() {
             {windowSelection === "prominence" && (
               <div>
                 <label className="text-sm font-medium">
-                  Min Prominence: {minProminence.toFixed(2)}
+                  Min Prominence: {minProminence.toFixed(1)}
                 </label>
                 <input
                   type="range"
-                  min="0.01"
-                  max="0.20"
-                  step="0.01"
+                  min="0.5"
+                  max="5.0"
+                  step="0.1"
                   value={minProminence}
                   onChange={(e) => setMinProminence(parseFloat(e.target.value))}
                   className="w-full mt-1"
