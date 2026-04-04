@@ -1,6 +1,9 @@
 import numpy as np
 
-from humpback.processing.embeddings import IncrementalParquetWriter, read_embeddings
+from humpback.processing.embeddings import (
+    IncrementalParquetWriter,
+    read_embeddings,
+)
 
 
 def test_write_and_read(tmp_path):
@@ -44,3 +47,58 @@ def test_total_rows(tmp_path):
     writer.add(np.array([3.0, 4.0], dtype=np.float32))
     assert writer.total_rows == 2
     writer.close()
+
+
+# ---------------------------------------------------------------------------
+# read_embedding_vectors
+# ---------------------------------------------------------------------------
+
+
+def test_read_embedding_vectors(tmp_path):
+    from humpback.processing.embeddings import read_embedding_vectors
+
+    final = tmp_path / "vecs.parquet"
+    writer = IncrementalParquetWriter(final, vector_dim=3, batch_size=10)
+    writer.add(np.array([1.0, 2.0, 3.0], dtype=np.float32))
+    writer.add(np.array([4.0, 5.0, 6.0], dtype=np.float32))
+    writer.close()
+
+    vecs = read_embedding_vectors(final)
+    assert vecs.dtype == np.float32
+    assert vecs.shape == (2, 3)
+    np.testing.assert_array_almost_equal(vecs[0], [1.0, 2.0, 3.0])
+    np.testing.assert_array_almost_equal(vecs[1], [4.0, 5.0, 6.0])
+
+
+def test_read_embedding_vectors_empty(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from humpback.processing.embeddings import read_embedding_vectors
+
+    # Write an empty parquet with correct schema (IncrementalParquetWriter
+    # doesn't create a file when no rows are added).
+    final = tmp_path / "empty.parquet"
+    schema = pa.schema([("embedding", pa.list_(pa.float32(), 4))])
+    pq.write_table(
+        pa.table(
+            {"embedding": pa.array([], type=pa.list_(pa.float32(), 4))}, schema=schema
+        ),
+        str(final),
+    )
+
+    vecs = read_embedding_vectors(final)
+    assert vecs.dtype == np.float32
+    assert vecs.shape == (0, 0)
+
+
+def test_read_embedding_vectors_accepts_str(tmp_path):
+    from humpback.processing.embeddings import read_embedding_vectors
+
+    final = tmp_path / "str_path.parquet"
+    writer = IncrementalParquetWriter(final, vector_dim=2, batch_size=10)
+    writer.add(np.array([1.0, 2.0], dtype=np.float32))
+    writer.close()
+
+    vecs = read_embedding_vectors(str(final))
+    assert vecs.shape == (1, 2)

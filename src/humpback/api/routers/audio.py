@@ -27,41 +27,11 @@ from humpback.schemas.audio import (
     FolderImportResult,
     SpectrogramOut,
 )
+from humpback.schemas.converters import audio_file_to_out as _audio_to_out
 from humpback.services import audio_service
 from humpback.storage import resolve_audio_path
 
 router = APIRouter(prefix="/audio", tags=["audio"])
-
-
-def _audio_to_out(af) -> AudioFileOut:
-    meta = None
-    if af.metadata_:
-        m = af.metadata_
-        meta = AudioMetadataOut(
-            id=m.id,
-            audio_file_id=m.audio_file_id,
-            tag_data=json.loads(m.tag_data) if m.tag_data else None,
-            visual_observations=json.loads(m.visual_observations)
-            if m.visual_observations
-            else None,
-            group_composition=json.loads(m.group_composition)
-            if m.group_composition
-            else None,
-            prey_density_proxy=json.loads(m.prey_density_proxy)
-            if m.prey_density_proxy
-            else None,
-        )
-    return AudioFileOut(
-        id=af.id,
-        filename=af.filename,
-        folder_path=af.folder_path,
-        source_folder=af.source_folder,
-        checksum_sha256=af.checksum_sha256,
-        duration_seconds=af.duration_seconds,
-        sample_rate_original=af.sample_rate_original,
-        created_at=af.created_at,
-        metadata=meta,
-    )
 
 
 def _normalize_folder_path(raw: str) -> str:

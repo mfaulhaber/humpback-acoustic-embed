@@ -68,3 +68,16 @@ def read_embeddings(path: Path) -> tuple[np.ndarray, np.ndarray]:
     # Convert list column to 2D numpy array
     embeddings = np.array([v.as_py() for v in table["embedding"]], dtype=np.float32)
     return row_indices, embeddings
+
+
+def read_embedding_vectors(path: Path | str) -> np.ndarray:
+    """Read only the embedding column from a Parquet file as a float32 2D array.
+
+    Unlike ``read_embeddings``, this does not require a ``row_index`` column
+    and returns only the embedding matrix.  Returns an empty (0, 0) array
+    when the table has no rows.
+    """
+    table = pq.read_table(str(path), columns=["embedding"])
+    if table.num_rows == 0:
+        return np.empty((0, 0), dtype=np.float32)
+    return np.array([v.as_py() for v in table["embedding"]], dtype=np.float32)
