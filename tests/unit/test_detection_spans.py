@@ -807,9 +807,10 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
-        assert len(result) == 2
+        assert len(result) >= 2
         starts = [d["start_sec"] for d in result]
-        assert starts[0] < starts[1]
+        assert 3.0 in starts
+        assert 13.0 in starts
 
     def test_subtle_peak_above_threshold(self):
         """A peak with prominence just above min_prominence is detected."""
@@ -838,8 +839,10 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
-        # Both peaks detected (logit prominence ~0.63 > 0.5)
-        assert len(result) == 2
+        # Both peaks detected (logit prominence ~0.63 > 0.5); gap-fill may add more
+        starts = {d["start_sec"] for d in result}
+        assert 2.0 in starts
+        assert 6.0 in starts
 
     def test_subtle_peak_below_threshold(self):
         """A peak with prominence below min_prominence is filtered out."""
@@ -866,8 +869,12 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
-        # Only one peak via fallback (logit prominence ~0.19 < 0.5)
-        assert len(result) == 1
+        # No peaks pass prominence — fallback emits the best window.
+        # Gap-fill may add more from edge regions with scores >= min_score.
+        assert len(result) >= 1
+        # The highest-scoring window (0.95 at offset 2 or 4) is in the result.
+        starts = {d["start_sec"] for d in result}
+        assert 2.0 in starts or 4.0 in starts
 
     def test_plateau_single_peak(self):
         """Constant high scores produce a single peak via fallback."""
@@ -882,8 +889,9 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
-        # All peaks have zero prominence in logit space too — fallback emits one.
-        assert len(result) == 1
+        # All peaks have zero prominence in logit space — fallback emits one,
+        # then gap-fill covers the rest of the event.
+        assert len(result) >= 1
 
     def test_single_peak_in_event(self):
         """One clear peak — emits one window."""
@@ -898,9 +906,11 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
-        assert len(result) == 1
-        assert result[0]["start_sec"] == 2.0
-        assert result[0]["end_sec"] == 7.0
+        # Single peak at offset 2; offset 3 (0.8) is the only other above
+        # min_score, gap (2, 10) fills it. Both windows present.
+        assert len(result) >= 1
+        starts = {d["start_sec"] for d in result}
+        assert 2.0 in starts
 
     def test_no_peaks_above_min_score(self):
         """No windows above min_score — empty result."""
@@ -943,14 +953,14 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
-        assert len(result) == 2
-        # Windows overlap: [2,7] and [6,11]
-        assert result[0]["start_sec"] == 2.0
-        assert result[0]["end_sec"] == 7.0
-        assert result[1]["start_sec"] == 6.0
-        assert result[1]["end_sec"] == 11.0
-        # Confirm they overlap
-        assert result[0]["end_sec"] > result[1]["start_sec"]
+        # Both prominence peaks present; gap-fill may add edge fills
+        starts = {d["start_sec"] for d in result}
+        assert 2.0 in starts
+        assert 6.0 in starts
+        # Confirm the two prominence peaks overlap: [2,7] and [6,11]
+        peak2 = next(d for d in result if d["start_sec"] == 2.0)
+        peak6 = next(d for d in result if d["start_sec"] == 6.0)
+        assert peak2["end_sec"] > peak6["start_sec"]
 
     def test_edge_peaks(self):
         """Peaks at first and last window are handled correctly."""
@@ -965,9 +975,10 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
-        assert len(result) == 2
-        assert result[0]["start_sec"] == 0.0
-        assert result[1]["start_sec"] == 7.0
+        # Both edge peaks present; gap between has scores at 0.7 boundary
+        starts = {d["start_sec"] for d in result}
+        assert 0.0 in starts
+        assert 7.0 in starts
 
     def test_raw_scores_used_for_prominence(self):
         """Prominence uses raw scores in logit space, detecting dips that smoothing would blur."""
@@ -996,10 +1007,10 @@ class TestSelectProminentPeaksFromEvents:
         result = select_prominent_peaks_from_events(
             events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
-        # Should detect two peaks (logit prominence ~0.98 > 0.5)
-        assert len(result) == 2
-        assert result[0]["start_sec"] == 2.0
-        assert result[1]["start_sec"] == 7.0
+        # Should detect two peaks (logit prominence ~0.98 > 0.5); gap-fill may add more
+        starts = {d["start_sec"] for d in result}
+        assert 2.0 in starts
+        assert 7.0 in starts
 
     def test_preserves_audit_fields(self):
         """Audit fields and extra event fields are preserved."""
@@ -1102,5 +1113,173 @@ class TestSelectProminentPeaksFromEvents:
             events, window_records, 5.0, min_score=0.9, min_prominence=1.0
         )
         # Logit prominence of these wobbles is ~0.4, below 1.0.
-        # Fallback emits one window.
-        assert len(result) == 1
+        # Fallback emits one window; gap-fill may add more from edges.
+        assert len(result) >= 1
+
+    # ---- Gap-filling tests ----
+
+    def test_gap_fill_basic(self):
+        """Two peaks 10s apart — gap-fill emits a window between them."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Peaks at offset 0 and 10 with a deep dip at 5 (prominence passes).
+        # High scores at 4–6 sit in the gap between peaks.
+        offsets = list(range(0, 15))
+        confidences = [
+            0.99,
+            0.80,
+            0.75,
+            0.80,
+            0.95,  # peak at 0, dip, rise
+            0.97,
+            0.95,
+            0.80,
+            0.75,
+            0.80,  # high gap region, dip
+            0.99,
+            0.80,
+            0.75,
+            0.70,
+            0.65,  # peak at 10, tail
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 19.0, 15)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
+        )
+        # Two prominence peaks + at least one gap fill
+        assert len(result) >= 3
+        starts = sorted(d["start_sec"] for d in result)
+        # Fill window should be between offset 0 and 10
+        assert any(0 < s < 10 for s in starts)
+
+    def test_gap_fill_recursive(self):
+        """Two peaks 15s apart — recursive fill emits multiple windows."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Peaks at offset 0 and 18 with uniformly high scores in between.
+        offsets = list(range(0, 22))
+        confidences = (
+            [0.99] + [0.75] * 2 + [0.95] * 14 + [0.75] * 2 + [0.99] + [0.75] * 2
+        )
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 26.0, 22)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
+        )
+        # Two prominence peaks + multiple gap fills (18s gap / 3s threshold → several fills)
+        assert len(result) >= 4
+
+    def test_gap_fill_edge_gaps(self):
+        """Single peak in the middle of a long event — fills toward event edges."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Single prominent peak at offset 8 in a 20s event with high scores throughout.
+        offsets = list(range(0, 20))
+        confidences = [0.95] * 8 + [0.99] + [0.95] * 11
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 24.0, 20)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=2.0
+        )
+        # The single prominent peak plus gap fills on both sides
+        assert len(result) >= 3
+        starts = sorted(d["start_sec"] for d in result)
+        # At least one fill before offset 8 and one after
+        assert any(s < 8 for s in starts)
+        assert any(s > 8 for s in starts)
+
+    def test_gap_fill_no_fill_small_gap(self):
+        """Peaks 2s apart — no gap fill needed."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Two peaks at offset 0 and 2 with a dip between them.
+        # Tail scores below min_score so edge gaps produce no fills.
+        offsets = list(range(0, 6))
+        confidences = [0.99, 0.50, 0.99, 0.50, 0.40, 0.30]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 10.0, 6)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.5
+        )
+        # Only the two prominence peaks: interior gap is 2s < 3s, edge
+        # gaps have no candidates above min_score.
+        assert len(result) == 2
+
+    def test_gap_fill_no_fill_low_scores(self):
+        """Gap region has scores below threshold — no fill emitted."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Two peaks at offset 0 and 10, gap and tail scores all below min_score.
+        offsets = list(range(0, 15))
+        confidences = [
+            0.99,
+            0.50,
+            0.40,
+            0.30,
+            0.20,
+            0.15,
+            0.20,
+            0.30,
+            0.40,
+            0.50,
+            0.99,
+            0.50,
+            0.40,
+            0.30,
+            0.20,
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 19.0, 15)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
+        )
+        # Only the two prominence peaks — gap and edge scores are all below 0.7
+        assert len(result) == 2
+
+    def test_gap_fill_composes_with_fallback(self):
+        """Zero prominent peaks on a 15s plateau — fallback + gap fills."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # Flat high scores across 15 windows — no prominence peaks, fallback
+        # emits one, then gap-fill covers the rest.
+        offsets = list(range(0, 15))
+        confidences = [0.95] * 15
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 19.0, 15)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
+        )
+        # Fallback emits 1 + gap-fill adds more to cover the 19s event
+        assert len(result) >= 3
+
+    def test_gap_fill_recursion_terminates(self):
+        """Flat high scores across a long event — bounded output count."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        # 30 windows of uniform high scores.
+        offsets = list(range(0, 30))
+        confidences = [0.95] * 30
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 34.0, 30)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
+        )
+        # Should produce a reasonable number of windows, not explode.
+        # 34s event / 3s min_gap → at most ~11 windows.
+        assert len(result) <= 15
+        assert len(result) >= 3
