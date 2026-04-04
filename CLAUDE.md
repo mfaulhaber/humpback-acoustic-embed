@@ -249,6 +249,7 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Detection job deletion guard**: detection jobs with vocalization labels or training dataset references cannot be deleted; returns HTTP 409 with dependency details
 - **Detection–vocalization consistency**: detection rows and vocalization labels are linked by stable `row_id` (UUID4). Deleting a detection row via batch edit cascade-deletes associated vocalization labels. No version tracking or reconciliation needed.
 - **Candidate-backed replay training**: `source_mode="autoresearch_candidate"` training jobs use exact replay via `promoted_config` and the shared `replay.py` module — they bypass `train_binary_classifier` and `map_autoresearch_config_to_training_parameters`. Replay verification compares produced metrics against imported candidate metrics and persists the result in `training_summary` and `source_comparison_context`.
+- **Window selection modes**: detection jobs have a `window_selection` parameter (`"nms"` default or `"prominence"`). NMS produces non-overlapping peak windows via greedy suppression. Prominence finds local score peaks via raw-score prominence, allowing overlapping detection windows. When `window_selection="prominence"`, `min_prominence` (default 0.03) controls the minimum score dip required to distinguish two peaks as separate vocalizations. If no peaks pass the prominence filter but the event has windows above threshold, a fallback emits the single highest-scoring window.
 
 ### 8.8 Classifier API Surface
 
@@ -278,7 +279,7 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 - Processing pipeline: TFLite + TF2 SavedModel, overlap-back windowing, incremental Parquet
 - Embedding similarity search (cosine/euclidean, cross-set, detection-sourced, score calibration with percentile ranks and distribution histogram, pluggable projector for future classifier-projected search)
 - Clustering: HDBSCAN/K-Means/Agglomerative, UMAP/PCA, parameter sweeps, metric learning
-- Binary classifier training (LogisticRegression/MLP) + local/hydrophone detection
+- Binary classifier training (LogisticRegression/MLP) + local/hydrophone detection with configurable window selection (NMS non-overlapping or prominence-based overlapping)
 - Hydrophone streaming: Orcasound HLS + NOAA archives, pause/resume/cancel, subprocess isolation
 - Label processing: score-based + sample-builder workflows
 - Vocalization labeling: per-window type labels on detection rows linked by stable row_id, cascade deletion on row removal
@@ -293,7 +294,7 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `037_classifier_training_candidate_provenance.py`
+- **Latest migration**: `038_window_selection_columns.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels
 
 ### 9.3 Sensitive Components

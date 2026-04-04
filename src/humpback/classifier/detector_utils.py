@@ -239,6 +239,168 @@ def _smooth_scores(scores: list[float], window_size: int) -> list[float]:
     return [float(v) for v in smoothed]
 
 
+def _find_prominent_peaks(
+    raw_scores: list[float],
+    min_prominence: float,
+    min_score: float,
+) -> list[int]:
+    """Find local peaks in *raw* scores filtered by prominence.
+
+    A local peak is an index where the raw value is >= both neighbors
+    (or >= its one neighbor at the edges).
+
+    Prominence is computed on raw scores: the peak's value minus the highest
+    valley between it and its nearest higher neighbor on each side.
+
+    Returns sorted indices of peaks passing both ``min_prominence`` and
+    ``min_score``.
+    """
+    n = len(raw_scores)
+    if n == 0:
+        return []
+
+    # Step 1: find local maxima in raw scores.
+    peak_indices: list[int] = []
+    for i in range(n):
+        if raw_scores[i] < min_score:
+            continue
+        left_ok = i == 0 or raw_scores[i] >= raw_scores[i - 1]
+        right_ok = i == n - 1 or raw_scores[i] >= raw_scores[i + 1]
+        if left_ok and right_ok:
+            peak_indices.append(i)
+
+    if not peak_indices:
+        return []
+
+    # Step 2: compute prominence for each peak.
+    # For each peak, look left and right to find the highest valley (minimum
+    # raw score) between the peak and the nearest higher-or-equal raw peak.
+    surviving: list[int] = []
+    for pi in peak_indices:
+        raw_peak = raw_scores[pi]
+
+        # Search left for the minimum raw score before a higher peak.
+        # If the peak is at the left edge, this side imposes no constraint.
+        if pi == 0:
+            left_min = float("-inf")
+        else:
+            left_min = raw_peak
+            for j in range(pi - 1, -1, -1):
+                left_min = min(left_min, raw_scores[j])
+                if raw_scores[j] >= raw_peak:
+                    break
+
+        # Search right for the minimum raw score before a higher peak.
+        # If the peak is at the right edge, this side imposes no constraint.
+        if pi == n - 1:
+            right_min = float("-inf")
+        else:
+            right_min = raw_peak
+            for j in range(pi + 1, n):
+                right_min = min(right_min, raw_scores[j])
+                if raw_scores[j] >= raw_peak:
+                    break
+
+        # Prominence = peak raw score - highest valley on either side.
+        prominence = raw_peak - max(left_min, right_min)
+        if prominence >= min_prominence:
+            surviving.append(pi)
+
+    return surviving
+
+
+def select_prominent_peaks_from_events(
+    events: list[dict],
+    window_records: list[dict],
+    window_size_seconds: float,
+    min_score: float,
+    min_prominence: float = 0.03,
+) -> list[dict]:
+    """Select peak windows via prominence-based detection (overlapping allowed).
+
+    For each merged event, finds overlapping window records, then identifies
+    peaks in raw scores with sufficient prominence.  Each peak emits a
+    ``window_size_seconds`` detection window.  Unlike NMS, neighboring peaks
+    are NOT suppressed, so output windows may overlap.
+
+    Peak finding and prominence computation both use raw (unsmoothed) scores
+    to preserve the true dip depth between vocalizations.
+
+    Returns detection dicts each spanning exactly ``window_size_seconds``.
+    Audit fields (``raw_start_sec``, ``raw_end_sec``, ``merged_event_count``)
+    are preserved from the parent event.
+    """
+    if not events or not window_records:
+        return []
+
+    result: list[dict] = []
+
+    for event in events:
+        ev_start = float(event["start_sec"])
+        ev_end = float(event["end_sec"])
+
+        candidates = sorted(
+            (
+                rec
+                for rec in window_records
+                if float(rec["offset_sec"]) + 1e-6 >= ev_start
+                and float(rec["end_sec"]) - 1e-6 <= ev_end
+            ),
+            key=lambda r: float(r["offset_sec"]),
+        )
+        if not candidates:
+            continue
+
+        raw_scores = [float(r["confidence"]) for r in candidates]
+
+        peak_indices = _find_prominent_peaks(raw_scores, min_prominence, min_score)
+
+        # Fallback: if no peaks pass the prominence filter but the event has
+        # windows above min_score, emit the single highest-scoring window.
+        # This ensures every detected event produces at least one detection
+        # (e.g. a broad plateau vocalization with tiny internal dips).
+        if not peak_indices:
+            above = [i for i, s in enumerate(raw_scores) if s >= min_score]
+            if above:
+                peak_indices = [max(above, key=lambda i: raw_scores[i])]
+
+        for idx in peak_indices:
+            rec = candidates[idx]
+            offset = float(rec["offset_sec"])
+            conf = raw_scores[idx]
+
+            peak_det: dict = {
+                "start_sec": offset,
+                "end_sec": offset + window_size_seconds,
+                "avg_confidence": conf,
+                "peak_confidence": conf,
+                "n_windows": int(event.get("n_windows", 1)),
+                "raw_start_sec": float(event.get("raw_start_sec", ev_start)),
+                "raw_end_sec": float(event.get("raw_end_sec", ev_end)),
+                "merged_event_count": int(event.get("merged_event_count", 1)),
+            }
+            for key in event:
+                if key not in peak_det:
+                    peak_det[key] = event[key]
+            result.append(peak_det)
+
+    # Deduplicate: adjacent events can share window records.
+    seen: dict[tuple[float, float], int] = {}
+    deduped: list[dict] = []
+    for det in result:
+        key = (det["start_sec"], det["end_sec"])
+        if key in seen:
+            existing = deduped[seen[key]]
+            if det["peak_confidence"] > existing["peak_confidence"]:
+                deduped[seen[key]] = det
+        else:
+            seen[key] = len(deduped)
+            deduped.append(det)
+
+    deduped.sort(key=lambda d: (d.get("filename", ""), d["start_sec"]))
+    return deduped
+
+
 def select_peak_windows_from_events(
     events: list[dict],
     window_records: list[dict],

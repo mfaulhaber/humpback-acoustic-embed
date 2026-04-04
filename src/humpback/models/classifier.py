@@ -96,6 +96,8 @@ class DetectionJob(UUIDMixin, TimestampMixin, Base):
     high_threshold: Mapped[float] = mapped_column(default=0.70)
     low_threshold: Mapped[float] = mapped_column(default=0.45)
     detection_mode: Mapped[Optional[str]] = mapped_column(default=None)
+    window_selection: Mapped[Optional[str]] = mapped_column(default=None)
+    min_prominence: Mapped[Optional[float]] = mapped_column(default=None)
     output_row_store_path: Mapped[Optional[str]] = mapped_column(default=None)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)

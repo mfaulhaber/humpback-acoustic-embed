@@ -467,6 +467,8 @@ export interface DetectionJob {
   high_threshold: number;
   low_threshold: number;
   detection_mode: "merged" | "windowed" | null;
+  window_selection: "nms" | "prominence" | null;
+  min_prominence: number | null;
   output_tsv_path: string | null;
   output_row_store_path: string | null;
   result_summary: Record<string, unknown> | null;
@@ -514,6 +516,8 @@ export interface HydrophoneDetectionJobCreate {
   high_threshold?: number;
   low_threshold?: number;
   local_cache_path?: string;
+  window_selection?: "nms" | "prominence";
+  min_prominence?: number;
 }
 
 export interface ExtractionSettings {

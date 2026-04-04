@@ -384,3 +384,116 @@ def test_row_id_in_fieldnames() -> None:
     """row_id is part of ROW_STORE_FIELDNAMES."""
     assert "row_id" in ROW_STORE_FIELDNAMES
     assert ROW_STORE_FIELDNAMES[0] == "row_id"
+
+
+# ---- Overlapping detection window tests ----
+
+
+def test_overlapping_rows_write_read_roundtrip(tmp_path) -> None:
+    """Overlapping detection rows can be written to and read from Parquet row store."""
+    path = tmp_path / "rows.parquet"
+    # Two rows with overlapping time ranges (3 seconds of overlap)
+    rows_in = [
+        {"start_utc": "1000.0", "end_utc": "1005.0", "avg_confidence": "0.95"},
+        {"start_utc": "1002.0", "end_utc": "1007.0", "avg_confidence": "0.93"},
+    ]
+    write_detection_row_store(path, rows_in)
+    _, rows_out = read_detection_row_store(path)
+    assert len(rows_out) == 2
+    assert rows_out[0]["start_utc"] == "1000.0"
+    assert rows_out[1]["start_utc"] == "1002.0"
+
+
+def test_overlapping_rows_get_unique_row_ids(tmp_path) -> None:
+    """Overlapping detection rows each get a distinct row_id."""
+    path = tmp_path / "rows.parquet"
+    rows_in = [
+        {"start_utc": "1000.0", "end_utc": "1005.0"},
+        {"start_utc": "1002.0", "end_utc": "1007.0"},
+        {"start_utc": "1004.0", "end_utc": "1009.0"},
+    ]
+    write_detection_row_store(path, rows_in)
+    _, rows_out = read_detection_row_store(path)
+    ids = [r["row_id"] for r in rows_out]
+    assert len(set(ids)) == 3
+    for rid in ids:
+        uuid.UUID(rid)  # valid UUIDs
+
+
+def test_overlapping_rows_label_independently(tmp_path) -> None:
+    """Labeling operations work on overlapping rows independently."""
+    path = tmp_path / "rows.parquet"
+    rows_in = [
+        {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0"},
+        {"row_id": "r2", "start_utc": "1002.0", "end_utc": "1007.0"},
+    ]
+    write_detection_row_store(path, rows_in)
+    _, rows = read_detection_row_store(path)
+
+    # Label first row as humpback, second as background
+    edits = [
+        {"action": "change_type", "row_id": "r1", "label": "humpback"},
+        {"action": "change_type", "row_id": "r2", "label": "background"},
+    ]
+    result = apply_label_edits(rows, edits, job_duration=2000.0)
+    assert result[0]["humpback"] == "1"
+    assert result[0]["background"] == ""
+    assert result[1]["humpback"] == ""
+    assert result[1]["background"] == "1"
+
+
+def test_prominence_vs_nms_side_by_side() -> None:
+    """Prominence mode finds more peaks than NMS in dense high-scoring regions."""
+    from humpback.classifier.detector_utils import (
+        select_peak_windows_from_events,
+        select_prominent_peaks_from_events,
+    )
+
+    # Dense region with two distinct peaks 3 seconds apart (within NMS suppression zone)
+    offsets = list(range(0, 12))
+    confidences = [
+        0.5,
+        0.7,
+        0.95,  # peak at 2
+        0.6,  # valley
+        0.3,
+        0.7,
+        0.93,  # peak at 6 — only 4s from peak at 2 (< 5s NMS zone)
+        0.6,
+        0.4,
+        0.3,
+        0.2,
+        0.1,
+    ]
+    window_records = [
+        {"offset_sec": o, "end_sec": o + 5.0, "confidence": c}
+        for o, c in zip(offsets, confidences)
+    ]
+    events = [
+        {
+            "start_sec": 0.0,
+            "end_sec": 16.0,
+            "n_windows": 12,
+            "raw_start_sec": 0.0,
+            "raw_end_sec": 16.0,
+            "merged_event_count": 1,
+        }
+    ]
+
+    nms_result = select_peak_windows_from_events(
+        events, window_records, 5.0, min_score=0.7
+    )
+    prominence_result = select_prominent_peaks_from_events(
+        events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+    )
+
+    # NMS: peak at 2 suppresses peak at 6 (distance 4 < window_size 5)
+    assert len(nms_result) == 1
+
+    # Prominence: both peaks have clear prominence, both detected
+    assert len(prominence_result) == 2
+    # Prominence allows overlapping windows
+    starts = [d["start_sec"] for d in prominence_result]
+    assert starts[0] < starts[1]
+    # Confirm overlap exists ([2,7] and [6,11])
+    assert prominence_result[0]["end_sec"] > prominence_result[1]["start_sec"]

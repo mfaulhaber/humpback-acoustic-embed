@@ -12,6 +12,7 @@ from humpback.classifier.archive import ArchiveProvider
 from humpback.classifier.detector import (
     merge_detection_events,
     select_peak_windows_from_events,
+    select_prominent_peaks_from_events,
     snap_and_merge_detection_events,
 )
 from humpback.classifier.s3_stream import (
@@ -54,6 +55,8 @@ def run_hydrophone_detection(
     prefetch_workers: int = DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
     prefetch_inflight_segments: int = DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
     detection_mode: str | None = None,
+    window_selection: str | None = None,
+    min_prominence: float | None = None,
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
@@ -225,14 +228,25 @@ def run_hydrophone_detection(
         events = merge_detection_events(window_records, high_threshold, low_threshold)
         events = snap_and_merge_detection_events(events, window_size_seconds)
 
-        # Windowed mode: reduce each event to peak windows via NMS.
+        # Windowed mode: reduce each event to peak windows.
         if detection_mode == "windowed":
-            events = select_peak_windows_from_events(
-                events,
-                window_records,
-                window_size_seconds,
-                min_score=high_threshold,
-            )
+            if window_selection == "prominence":
+                events = select_prominent_peaks_from_events(
+                    events,
+                    window_records,
+                    window_size_seconds,
+                    min_score=high_threshold,
+                    min_prominence=(
+                        min_prominence if min_prominence is not None else 0.03
+                    ),
+                )
+            else:
+                events = select_peak_windows_from_events(
+                    events,
+                    window_records,
+                    window_size_seconds,
+                    min_score=high_threshold,
+                )
 
         # Collect per-detection embeddings (peak-window vector) for this chunk
         if on_chunk_embeddings is not None:
@@ -298,6 +312,7 @@ def run_hydrophone_detection(
         "high_threshold": high_threshold,
         "low_threshold": low_threshold,
         "detection_mode": detection_mode or "merged",
+        "window_selection": window_selection or "nms",
         "hydrophone_id": provider.source_id,
         "time_covered_sec": time_covered,
         "prefetch_enabled": use_prefetch,
