@@ -1099,8 +1099,8 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 9.0, 5)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.9, min_prominence=2.0
+            events, window_records, 5.0, min_score=0.9, min_prominence=1.0
         )
-        # Logit prominence of these wobbles is ~0.4, far below 2.0.
+        # Logit prominence of these wobbles is ~0.4, below 1.0.
         # Fallback emits one window.
         assert len(result) == 1

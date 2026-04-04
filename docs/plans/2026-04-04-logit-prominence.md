@@ -14,7 +14,7 @@
 - [ ] Add a `_to_logit` helper that converts a probability to log-odds with epsilon clamping (1e-7)
 - [ ] `select_prominent_peaks_from_events()` transforms raw confidence scores to logit space before passing to `_find_prominent_peaks()`
 - [ ] `select_prominent_peaks_from_events()` transforms `min_score` to logit space before passing to `_find_prominent_peaks()`
-- [ ] Default `min_prominence` parameter changes from 0.03 to 2.0
+- [ ] Default `min_prominence` parameter changes from 0.03 to 1.0
 - [ ] `_find_prominent_peaks()` is unchanged — it still receives scores and thresholds generically
 
 **Tests needed:**
@@ -31,8 +31,8 @@
 - Modify: `src/humpback/classifier/hydrophone_detector.py`
 
 **Acceptance criteria:**
-- [ ] `run_detection()` default for `min_prominence` when None changes from 0.03 to 2.0
-- [ ] `run_hydrophone_detection()` default for `min_prominence` when None changes from 0.03 to 2.0
+- [ ] `run_detection()` default for `min_prominence` when None changes from 0.03 to 1.0
+- [ ] `run_hydrophone_detection()` default for `min_prominence` when None changes from 0.03 to 1.0
 
 **Tests needed:**
 - Covered by integration through Task 4 tests
@@ -45,7 +45,7 @@
 - Modify: `frontend/src/components/classifier/HydrophoneTab.tsx`
 
 **Acceptance criteria:**
-- [ ] Default state value changes from 0.03 to 2.0
+- [ ] Default state value changes from 0.03 to 1.0
 - [ ] Slider range changes from [0.01, 0.20] step 0.01 to [0.5, 5.0] step 0.1
 - [ ] Display label shows one decimal place (e.g., "2.0" not "2.00")
 

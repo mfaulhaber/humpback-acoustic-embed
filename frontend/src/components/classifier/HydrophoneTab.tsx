@@ -332,7 +332,7 @@ export function HydrophoneTab() {
   const [highThreshold, setHighThreshold] = useState(0.80);
   const [lowThreshold, setLowThreshold] = useState(0.70);
   const [windowSelection, setWindowSelection] = useState<"nms" | "prominence">("nms");
-  const [minProminence, setMinProminence] = useState(2.0);
+  const [minProminence, setMinProminence] = useState(1.0);
   const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);

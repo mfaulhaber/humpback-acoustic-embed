@@ -323,7 +323,7 @@ def select_prominent_peaks_from_events(
     window_records: list[dict],
     window_size_seconds: float,
     min_score: float,
-    min_prominence: float = 2.0,
+    min_prominence: float = 1.0,
 ) -> list[dict]:
     """Select peak windows via prominence-based detection (overlapping allowed).
 

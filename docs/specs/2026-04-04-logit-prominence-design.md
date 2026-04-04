@@ -47,13 +47,14 @@ inputs. This keeps the function testable with arbitrary score sequences.
 
 ### Default `min_prominence` Changes
 
-The default changes from 0.03 (probability units) to 2.0 (logit units).
+The default changes from 0.03 (probability units) to 1.0 (logit units).
 
 Empirical basis from detection job `7e674dcf`:
-- Noise-level wobbles: 0.9–1.4 logit prominence
-- Genuine inter-vocalization dips: 2.8–4.8 logit prominence
-- A default of 2.0 is permissive enough to catch real dips while filtering
-  most score noise. The parameter remains tunable per job.
+- Noise-level wobbles: 0.4–0.9 logit prominence
+- Genuine inter-vocalization dips: 1.0–4.8+ logit prominence
+- A default of 1.0 catches legitimate peaks in both moderate (0.87–0.99)
+  and extreme (0.99+) confidence regions while filtering pure noise.
+  The parameter remains tunable per job.
 
 ### No New API Parameters
 
