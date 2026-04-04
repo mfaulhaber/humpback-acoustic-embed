@@ -239,6 +239,15 @@ def _smooth_scores(scores: list[float], window_size: int) -> list[float]:
     return [float(v) for v in smoothed]
 
 
+_LOGIT_EPS = 1e-7
+
+
+def _to_logit(p: float) -> float:
+    """Convert a probability to log-odds, clamping to avoid ±infinity."""
+    p = max(_LOGIT_EPS, min(1.0 - _LOGIT_EPS, p))
+    return math.log(p / (1.0 - p))
+
+
 def _find_prominent_peaks(
     raw_scores: list[float],
     min_prominence: float,
@@ -314,7 +323,7 @@ def select_prominent_peaks_from_events(
     window_records: list[dict],
     window_size_seconds: float,
     min_score: float,
-    min_prominence: float = 0.03,
+    min_prominence: float = 1.0,
 ) -> list[dict]:
     """Select peak windows via prominence-based detection (overlapping allowed).
 
@@ -323,8 +332,11 @@ def select_prominent_peaks_from_events(
     ``window_size_seconds`` detection window.  Unlike NMS, neighboring peaks
     are NOT suppressed, so output windows may overlap.
 
-    Peak finding and prominence computation both use raw (unsmoothed) scores
-    to preserve the true dip depth between vocalizations.
+    Scores are transformed to logit (log-odds) space before peak finding and
+    prominence computation.  This amplifies meaningful dips in high-confidence
+    regions where probability scores saturate near 1.0.
+
+    ``min_prominence`` is in logit units (default 2.0).
 
     Returns detection dicts each spanning exactly ``window_size_seconds``.
     Audit fields (``raw_start_sec``, ``raw_end_sec``, ``merged_event_count``)
@@ -332,6 +344,8 @@ def select_prominent_peaks_from_events(
     """
     if not events or not window_records:
         return []
+
+    logit_min_score = _to_logit(min_score)
 
     result: list[dict] = []
 
@@ -352,8 +366,11 @@ def select_prominent_peaks_from_events(
             continue
 
         raw_scores = [float(r["confidence"]) for r in candidates]
+        logit_scores = [_to_logit(s) for s in raw_scores]
 
-        peak_indices = _find_prominent_peaks(raw_scores, min_prominence, min_score)
+        peak_indices = _find_prominent_peaks(
+            logit_scores, min_prominence, logit_min_score
+        )
 
         # Fallback: if no peaks pass the prominence filter but the event has
         # windows above min_score, emit the single highest-scoring window.

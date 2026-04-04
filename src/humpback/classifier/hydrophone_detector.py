@@ -237,7 +237,7 @@ def run_hydrophone_detection(
                     window_size_seconds,
                     min_score=high_threshold,
                     min_prominence=(
-                        min_prominence if min_prominence is not None else 0.03
+                        min_prominence if min_prominence is not None else 1.0
                     ),
                 )
             else:

@@ -263,7 +263,7 @@ def run_detection(
                         min_score=high_threshold,
                         min_prominence=min_prominence
                         if min_prominence is not None
-                        else 0.03,
+                        else 1.0,
                     )
                 else:
                     events = select_peak_windows_from_events(

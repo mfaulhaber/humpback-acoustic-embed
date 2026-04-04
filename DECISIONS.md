@@ -535,9 +535,9 @@ vocalization type). Key design choices:
 
 **Decision**: Add a `window_selection` parameter to detection jobs with two modes:
 - `"nms"` (default) — existing greedy NMS with `window_size_seconds` suppression zone, non-overlapping output.
-- `"prominence"` — peak prominence detection using raw (unsmoothed) scores. Finds local maxima in raw confidence scores and computes prominence as peak score minus the highest valley between the peak and its nearest higher neighbor. Peaks passing `min_prominence` (default 0.03) and `min_score` emit 5-second windows that may overlap. A fallback emits the single highest window when no peaks pass prominence (e.g., plateau regions).
+- `"prominence"` — peak prominence detection in logit (log-odds) space. Raw confidence scores are transformed to logits (`ln(p/(1-p))`) before peak finding and prominence computation. This amplifies meaningful dips in high-confidence regions where probability scores saturate near 1.0 (e.g., a dip from 0.999 to 0.983 is 0.016 in probability but 2.15 in logit units). Peaks passing `min_prominence` (default 1.0, in logit units) and `min_score` emit 5-second windows that may overlap. A fallback emits the single highest window when no peaks pass prominence (e.g., true plateau regions).
 
-Raw scores are used for both peak finding and prominence computation (no smoothing) to preserve the true dip depth between vocalizations. Smoothing was found to shift peak positions in short sequences, creating inconsistencies between smoothed peak locations and raw prominence values.
+Raw scores are used (no smoothing) to preserve the true dip depth between vocalizations. Smoothing was found to shift peak positions in short sequences, creating inconsistencies between smoothed peak locations and raw prominence values.
 
 **Consequences**:
 - Every detected vocalization event gets at least one detection item; dense singing regions produce overlapping windows covering each distinct call

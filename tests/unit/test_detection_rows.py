@@ -484,7 +484,7 @@ def test_prominence_vs_nms_side_by_side() -> None:
         events, window_records, 5.0, min_score=0.7
     )
     prominence_result = select_prominent_peaks_from_events(
-        events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+        events, window_records, 5.0, min_score=0.7, min_prominence=1.0
     )
 
     # NMS: peak at 2 suppresses peak at 6 (distance 4 < window_size 5)

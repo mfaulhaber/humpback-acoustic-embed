@@ -805,7 +805,7 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 24.0, 20)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
         assert len(result) == 2
         starts = [d["start_sec"] for d in result]
@@ -817,7 +817,7 @@ class TestSelectProminentPeaksFromEvents:
             select_prominent_peaks_from_events,
         )
 
-        # Dip from 0.95 to 0.91 = prominence 0.04, above min_prominence=0.03
+        # Dip from 0.95 to 0.91 → logit prominence ~0.63, above 0.5
         offsets = list(range(0, 12))
         confidences = [
             0.8,
@@ -836,9 +836,9 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 16.0, 12)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
-        # Both peaks should be detected (prominence ~0.04 > 0.03)
+        # Both peaks detected (logit prominence ~0.63 > 0.5)
         assert len(result) == 2
 
     def test_subtle_peak_below_threshold(self):
@@ -847,7 +847,7 @@ class TestSelectProminentPeaksFromEvents:
             select_prominent_peaks_from_events,
         )
 
-        # Dip from 0.95 to 0.94 = prominence 0.01, below min_prominence=0.03
+        # Dip from 0.95 to 0.94 → logit prominence ~0.19, below 0.5
         offsets = list(range(0, 10))
         confidences = [
             0.8,
@@ -864,13 +864,13 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 14.0, 10)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
-        # Only one peak should survive (the others are too similar)
+        # Only one peak via fallback (logit prominence ~0.19 < 0.5)
         assert len(result) == 1
 
     def test_plateau_single_peak(self):
-        """Constant high scores produce a single peak at the edge."""
+        """Constant high scores produce a single peak via fallback."""
         from humpback.classifier.detector_utils import (
             select_prominent_peaks_from_events,
         )
@@ -880,10 +880,9 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 12.0, 8)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
-        # All peaks have zero prominence, but fallback emits the highest window
-        # so a high-confidence event always produces at least one detection.
+        # All peaks have zero prominence in logit space too — fallback emits one.
         assert len(result) == 1
 
     def test_single_peak_in_event(self):
@@ -897,7 +896,7 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 10.0, 6)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
         assert len(result) == 1
         assert result[0]["start_sec"] == 2.0
@@ -914,7 +913,7 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 9.0, 5)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
         assert result == []
 
@@ -942,7 +941,7 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 16.0, 12)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
         assert len(result) == 2
         # Windows overlap: [2,7] and [6,11]
@@ -964,20 +963,20 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 12.0, 8)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=1.0
         )
         assert len(result) == 2
         assert result[0]["start_sec"] == 0.0
         assert result[1]["start_sec"] == 7.0
 
     def test_raw_scores_used_for_prominence(self):
-        """Prominence uses raw scores, detecting dips that smoothing would blur."""
+        """Prominence uses raw scores in logit space, detecting dips that smoothing would blur."""
         from humpback.classifier.detector_utils import (
             select_prominent_peaks_from_events,
         )
 
         # Two clear peaks at indices 2 and 7 with a dip at index 4 (0.90).
-        # Raw prominence = 0.96 - 0.90 = 0.06, comfortably above 0.04.
+        # Logit prominence ~0.98, above min_prominence=0.5.
         offsets = list(range(0, 11))
         confidences = [
             0.7,
@@ -995,9 +994,9 @@ class TestSelectProminentPeaksFromEvents:
         window_records = self._make_window_records(offsets, confidences)
         events = [self._make_event(0.0, 15.0, 11)]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.04
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
-        # Should detect two peaks because raw prominence > 0.04
+        # Should detect two peaks (logit prominence ~0.98 > 0.5)
         assert len(result) == 2
         assert result[0]["start_sec"] == 2.0
         assert result[1]["start_sec"] == 7.0
@@ -1023,7 +1022,7 @@ class TestSelectProminentPeaksFromEvents:
             }
         ]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
         assert len(result) == 1
         assert result[0]["raw_start_sec"] == 0.3
@@ -1060,7 +1059,48 @@ class TestSelectProminentPeaksFromEvents:
             },
         ]
         result = select_prominent_peaks_from_events(
-            events, window_records, 5.0, min_score=0.7, min_prominence=0.03
+            events, window_records, 5.0, min_score=0.7, min_prominence=0.5
         )
         starts = [d["start_sec"] for d in result]
         assert starts.count(5.0) == 1
+
+    def test_high_confidence_plateau_detects_dips_in_logit_space(self):
+        """Logit transform detects peaks in high-confidence plateaus.
+
+        In probability space the dip from 0.998 to 0.983 has prominence 0.015,
+        which would be invisible at any reasonable threshold.  In logit space
+        the same dip produces ~2.15 logit units of prominence.
+        """
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 5))
+        confidences = [0.99, 0.998, 0.983, 0.997, 0.999]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 9.0, 5)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.9, min_prominence=1.0
+        )
+        # Both peaks (0.998 at index 1, 0.999 at index 4) detected —
+        # the 0.983 dip at index 2 has ~2.15 logit prominence, well above 1.0.
+        assert len(result) == 2
+        assert result[0]["start_sec"] == 1.0
+        assert result[1]["start_sec"] == 4.0
+
+    def test_noise_level_wobbles_filtered_at_default_threshold(self):
+        """Score jitter (0.997–0.998) does not produce spurious peaks."""
+        from humpback.classifier.detector_utils import (
+            select_prominent_peaks_from_events,
+        )
+
+        offsets = list(range(0, 5))
+        confidences = [0.997, 0.998, 0.996, 0.998, 0.997]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 9.0, 5)]
+        result = select_prominent_peaks_from_events(
+            events, window_records, 5.0, min_score=0.9, min_prominence=1.0
+        )
+        # Logit prominence of these wobbles is ~0.4, below 1.0.
+        # Fallback emits one window.
+        assert len(result) == 1
