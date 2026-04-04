@@ -1,0 +1,280 @@
+"""Classifier training job execution."""
+
+import asyncio
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, cast
+
+import joblib
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from humpback.config import Settings
+from humpback.models.classifier import (
+    AutoresearchCandidate,
+    ClassifierModel,
+    ClassifierTrainingJob,
+)
+from humpback.processing.embeddings import read_embeddings
+from humpback.storage import classifier_dir, ensure_dir
+
+logger = logging.getLogger(__name__)
+
+
+async def run_training_job(
+    session: AsyncSession,
+    job: ClassifierTrainingJob,
+    settings: Settings,
+) -> None:
+    """Execute a classifier training job end-to-end."""
+    try:
+        import numpy as np
+        from sqlalchemy import select
+
+        from humpback.models.processing import EmbeddingSet
+
+        # Parse parameters
+        parameters = json.loads(job.parameters) if job.parameters else None
+        promotion_provenance = (
+            json.loads(job.source_comparison_context)
+            if job.source_comparison_context
+            else None
+        )
+
+        if job.source_mode == "autoresearch_candidate":
+            if not job.manifest_path:
+                raise ValueError("Candidate-backed training job missing manifest_path")
+
+            from humpback.classifier.replay import (
+                apply_context_pooling,
+                build_embedding_lookup,
+                build_replay_pipeline,
+                verify_replay,  # noqa: F811
+            )
+            from humpback.classifier.trainer import load_manifest_split_data
+
+            promoted_config = (
+                json.loads(job.promoted_config) if job.promoted_config else {}
+            )
+
+            split_data = await asyncio.to_thread(
+                load_manifest_split_data,
+                Path(job.manifest_path),
+                split=job.training_split_name or "train",
+            )
+            source_summary = split_data.source_summary
+            vector_dim = int(source_summary["vector_dim"])
+
+            # Context pooling on raw embeddings (data-level, before pipeline)
+            embedding_lookup = build_embedding_lookup(
+                split_data.manifest, split_data.parquet_cache
+            )
+            pooling_mode = promoted_config.get("context_pooling", "center")
+            pooled_lookup, pooling_report = apply_context_pooling(
+                split_data.manifest,
+                embedding_lookup,
+                split_data.parquet_cache,
+                pooling_mode,
+            )
+
+            # Re-collect train split arrays from pooled embeddings
+            from humpback.classifier.replay import collect_split_arrays
+
+            _ids, y_train, X_train, _neg_groups = collect_split_arrays(
+                split_data.manifest,
+                pooled_lookup,
+                split_data.source_summary["split"],
+            )
+
+            # Build and fit replay pipeline
+            pipeline, effective_config = await asyncio.to_thread(
+                build_replay_pipeline,
+                promoted_config,
+                X_train,
+                y_train,
+            )
+
+            effective_config.context_pooling = pooling_mode
+            effective_config.context_pooling_applied_count = (
+                pooling_report.applied_count
+            )
+            effective_config.context_pooling_fallback_count = (
+                pooling_report.fallback_count
+            )
+
+            summary: dict[str, Any] = {
+                "training_source_mode": job.source_mode,
+                "training_data_source": source_summary,
+                "replay_effective_config": effective_config.to_dict(),
+                "replay_pooling_report": {
+                    "applied_count": pooling_report.applied_count,
+                    "fallback_count": pooling_report.fallback_count,
+                },
+                "promoted_config": promoted_config,
+            }
+            if promotion_provenance:
+                summary["promotion_provenance"] = promotion_provenance
+
+            # Replay verification — compare against imported candidate metrics
+            candidate_split_metrics = (
+                promotion_provenance.get("split_metrics", {})
+                if promotion_provenance
+                else {}
+            )
+            threshold = float(promoted_config.get("threshold", 0.5))
+            if candidate_split_metrics:
+                replay_verification = await asyncio.to_thread(
+                    verify_replay,
+                    pipeline,
+                    split_data.manifest,
+                    split_data.parquet_cache,
+                    promoted_config,
+                    candidate_split_metrics,
+                    threshold,
+                    settings.replay_metric_tolerance,
+                    effective_config,
+                )
+                summary["replay_verification"] = replay_verification
+                # Also store in source_comparison_context for API access
+                if promotion_provenance is not None:
+                    promotion_provenance["replay_verification"] = replay_verification
+        else:
+            from humpback.classifier.trainer import train_binary_classifier
+
+            es_ids = json.loads(job.positive_embedding_set_ids)
+            result = await session.execute(
+                select(EmbeddingSet).where(EmbeddingSet.id.in_(es_ids))
+            )
+            embedding_sets = list(result.scalars().all())
+
+            positive_parts: list[np.ndarray] = []
+            for es in embedding_sets:
+                _, vectors = read_embeddings(Path(es.parquet_path))
+                positive_parts.append(vectors)
+            positive_embeddings = np.vstack(positive_parts)
+
+            neg_ids = json.loads(job.negative_embedding_set_ids)
+            neg_result = await session.execute(
+                select(EmbeddingSet).where(EmbeddingSet.id.in_(neg_ids))
+            )
+            neg_embedding_sets = list(neg_result.scalars().all())
+
+            negative_parts: list[np.ndarray] = []
+            for es in neg_embedding_sets:
+                _, vectors = read_embeddings(Path(es.parquet_path))
+                negative_parts.append(vectors)
+            negative_embeddings = np.vstack(negative_parts)
+
+            source_summary = {
+                "source_mode": "embedding_sets",
+                "positive_embedding_set_count": len(embedding_sets),
+                "negative_embedding_set_count": len(neg_embedding_sets),
+            }
+            vector_dim = int(embedding_sets[0].vector_dim)
+
+            # Train classifier (CPU-bound)
+            pipeline, train_summary = await asyncio.to_thread(
+                train_binary_classifier,
+                positive_embeddings,
+                negative_embeddings,
+                parameters,
+            )
+            summary = cast(dict[str, Any], train_summary)
+            summary["training_source_mode"] = job.source_mode
+            summary["training_data_source"] = source_summary
+            if promotion_provenance:
+                summary["promotion_provenance"] = promotion_provenance
+
+        # Save model atomically
+        cdir = ensure_dir(classifier_dir(settings.storage_root, job.id))
+        tmp_path = cdir / "model.tmp.joblib"
+        final_path = cdir / "model.joblib"
+        joblib.dump(pipeline, tmp_path)
+        tmp_path.rename(final_path)
+
+        # Save training summary
+        summary_path = cdir / "training_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2))
+
+        # Create ClassifierModel record
+        cm = ClassifierModel(
+            name=job.name,
+            model_path=str(final_path),
+            model_version=job.model_version,
+            vector_dim=vector_dim,
+            window_size_seconds=job.window_size_seconds,
+            target_sample_rate=job.target_sample_rate,
+            feature_config=job.feature_config,
+            training_summary=json.dumps(summary),
+            training_job_id=job.id,
+            training_source_mode=job.source_mode,
+            source_candidate_id=job.source_candidate_id,
+            source_model_id=job.source_model_id,
+            promotion_provenance=json.dumps(promotion_provenance)
+            if promotion_provenance
+            else None,
+        )
+        session.add(cm)
+        await session.flush()
+
+        completion_time = datetime.now(timezone.utc)
+        job_update_values: dict[str, Any] = {
+            "classifier_model_id": cm.id,
+            "status": "complete",
+            "updated_at": completion_time,
+        }
+        if promotion_provenance is not None:
+            job_update_values["source_comparison_context"] = json.dumps(
+                promotion_provenance
+            )
+        await session.execute(
+            update(ClassifierTrainingJob)
+            .where(ClassifierTrainingJob.id == job.id)
+            .values(**job_update_values)
+        )
+        if job.source_candidate_id:
+            await session.execute(
+                update(AutoresearchCandidate)
+                .where(AutoresearchCandidate.id == job.source_candidate_id)
+                .values(
+                    status="complete",
+                    training_job_id=job.id,
+                    new_model_id=cm.id,
+                    error_message=None,
+                    updated_at=completion_time,
+                )
+            )
+        await session.commit()
+
+    except Exception as e:
+        logger.exception("Training job %s failed", job.id)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        try:
+            failure_time = datetime.now(timezone.utc)
+            await session.execute(
+                update(ClassifierTrainingJob)
+                .where(ClassifierTrainingJob.id == job.id)
+                .values(
+                    status="failed",
+                    error_message=str(e),
+                    updated_at=failure_time,
+                )
+            )
+            if job.source_candidate_id:
+                await session.execute(
+                    update(AutoresearchCandidate)
+                    .where(AutoresearchCandidate.id == job.source_candidate_id)
+                    .values(
+                        status="failed",
+                        error_message=str(e),
+                        updated_at=failure_time,
+                    )
+                )
+            await session.commit()
+        except Exception:
+            logger.exception("Failed to mark training job as failed")
