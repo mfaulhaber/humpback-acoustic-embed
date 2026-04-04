@@ -152,16 +152,12 @@ async def _load_training_dataset(
     Returns (X, all_label_sets) where X is (N, D) and all_label_sets[i] is
     the set of type labels for row i. "(Negative)" labels produce an empty set.
     """
-    table = pq.read_table(dataset.parquet_path)
-    n_rows = table.num_rows
-    if n_rows == 0:
-        return np.empty((0, 0), dtype=np.float32), []
+    from humpback.processing.embeddings import read_embedding_vectors
 
-    embeddings_col = table.column("embedding")
-    X = np.array(
-        [row.as_py() for row in embeddings_col],
-        dtype=np.float32,
-    )
+    X = read_embedding_vectors(dataset.parquet_path)
+    n_rows = X.shape[0]
+    if n_rows == 0:
+        return X, []
 
     # Build label index from training_dataset_labels grouped by row_index
     result = await session.execute(

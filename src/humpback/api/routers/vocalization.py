@@ -20,7 +20,6 @@ from humpback.schemas.vocalization import (
     TrainingDatasetExtendRequest,
     TrainingDatasetLabelCreate,
     TrainingDatasetLabelOut,
-    TrainingDatasetOut,
     TrainingDatasetRowOut,
     VocalizationInferenceJobCreate,
     VocalizationInferenceJobOut,
@@ -47,58 +46,16 @@ from humpback.services.vocalization_service import (
     update_type,
 )
 
+from humpback.schemas.converters import (
+    training_dataset_to_out as _dataset_to_out,
+    vocalization_inference_job_to_out as _inference_job_to_out,
+    vocalization_model_to_out as _model_to_out,
+    vocalization_training_job_to_out as _training_job_to_out,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vocalization", tags=["vocalization"])
-
-
-# ---- Helpers ----
-
-
-def _model_to_out(m: VocalizationClassifierModel) -> VocalizationModelOut:
-    return VocalizationModelOut(
-        id=m.id,
-        name=m.name,
-        model_dir_path=m.model_dir_path,
-        vocabulary_snapshot=json.loads(m.vocabulary_snapshot),
-        per_class_thresholds=json.loads(m.per_class_thresholds),
-        per_class_metrics=json.loads(m.per_class_metrics)
-        if m.per_class_metrics
-        else None,
-        training_summary=json.loads(m.training_summary) if m.training_summary else None,
-        is_active=m.is_active,
-        training_dataset_id=m.training_dataset_id,
-        created_at=m.created_at,
-    )
-
-
-def _training_job_to_out(j: VocalizationTrainingJob) -> VocalizationTrainingJobOut:
-    return VocalizationTrainingJobOut(
-        id=j.id,
-        status=j.status,
-        source_config=json.loads(j.source_config),
-        parameters=json.loads(j.parameters) if j.parameters else None,
-        vocalization_model_id=j.vocalization_model_id,
-        result_summary=json.loads(j.result_summary) if j.result_summary else None,
-        error_message=j.error_message,
-        created_at=j.created_at,
-        updated_at=j.updated_at,
-    )
-
-
-def _inference_job_to_out(j: VocalizationInferenceJob) -> VocalizationInferenceJobOut:
-    return VocalizationInferenceJobOut(
-        id=j.id,
-        status=j.status,
-        vocalization_model_id=j.vocalization_model_id,
-        source_type=j.source_type,
-        source_id=j.source_id,
-        output_path=j.output_path,
-        result_summary=json.loads(j.result_summary) if j.result_summary else None,
-        error_message=j.error_message,
-        created_at=j.created_at,
-        updated_at=j.updated_at,
-    )
 
 
 # ---- Vocabulary ----
@@ -509,18 +466,6 @@ async def export_vocalization_inference(
 
 
 # ---- Training Datasets ----
-
-
-def _dataset_to_out(d: TrainingDataset) -> TrainingDatasetOut:
-    return TrainingDatasetOut(
-        id=d.id,
-        name=d.name,
-        source_config=json.loads(d.source_config),
-        total_rows=d.total_rows,
-        vocabulary=json.loads(d.vocabulary),
-        created_at=d.created_at,
-        updated_at=d.updated_at,
-    )
 
 
 async def _get_dataset_or_404(session: SessionDep, dataset_id: str) -> TrainingDataset:

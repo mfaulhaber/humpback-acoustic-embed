@@ -18,34 +18,14 @@ from humpback.schemas.clustering import (
     ClusteringJobOut,
     ClusterOut,
 )
+from humpback.schemas.converters import (
+    cluster_to_out as _cluster_to_out,
+    clustering_job_to_out as _job_to_out,
+)
 from humpback.services import clustering_service
 from humpback.storage import cluster_dir
 
 router = APIRouter(prefix="/clustering", tags=["clustering"])
-
-
-def _job_to_out(job) -> ClusteringJobOut:
-    return ClusteringJobOut(
-        id=job.id,
-        status=job.status,
-        embedding_set_ids=json.loads(job.embedding_set_ids),
-        parameters=json.loads(job.parameters) if job.parameters else None,
-        error_message=job.error_message,
-        metrics=json.loads(job.metrics_json) if job.metrics_json else None,
-        refined_from_job_id=job.refined_from_job_id,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
-
-
-def _cluster_to_out(c) -> ClusterOut:
-    return ClusterOut(
-        id=c.id,
-        clustering_job_id=c.clustering_job_id,
-        cluster_label=c.cluster_label,
-        size=c.size,
-        metadata_summary=json.loads(c.metadata_summary) if c.metadata_summary else None,
-    )
 
 
 @router.get("/jobs")

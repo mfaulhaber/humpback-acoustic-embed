@@ -1,4 +1,3 @@
-import json
 from typing import List
 
 from fastapi import APIRouter, HTTPException
@@ -10,6 +9,7 @@ from humpback.schemas.processing import (
     ProcessingJobCreate,
     ProcessingJobOut,
 )
+from humpback.schemas.converters import processing_job_to_out as _job_to_out
 from humpback.services import processing_service
 
 
@@ -31,24 +31,6 @@ class FolderEmbeddingSetResponse(BaseModel):
 
 
 router = APIRouter(prefix="/processing", tags=["processing"])
-
-
-def _job_to_out(job, skipped: bool = False) -> ProcessingJobOut:
-    return ProcessingJobOut(
-        id=job.id,
-        audio_file_id=job.audio_file_id,
-        status=job.status,
-        encoding_signature=job.encoding_signature,
-        model_version=job.model_version,
-        window_size_seconds=job.window_size_seconds,
-        target_sample_rate=job.target_sample_rate,
-        feature_config=json.loads(job.feature_config) if job.feature_config else None,
-        error_message=job.error_message,
-        warning_message=job.warning_message,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        skipped=skipped,
-    )
 
 
 @router.post("/jobs", status_code=201)

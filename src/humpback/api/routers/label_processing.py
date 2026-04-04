@@ -1,7 +1,5 @@
 """API router for label processing jobs."""
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,28 +17,9 @@ from humpback.services.label_processing_service import (
     preview_annotations,
 )
 
+from humpback.schemas.converters import label_processing_job_to_out as _job_to_out
+
 router = APIRouter(prefix="/label-processing", tags=["label-processing"])
-
-
-def _job_to_out(job) -> LabelProcessingJobOut:
-    """Convert a LabelProcessingJob ORM instance to its response schema."""
-    return LabelProcessingJobOut(
-        id=job.id,
-        status=job.status,
-        workflow=job.workflow or "score_based",
-        classifier_model_id=job.classifier_model_id,
-        annotation_folder=job.annotation_folder,
-        audio_folder=job.audio_folder,
-        output_root=job.output_root,
-        parameters=json.loads(job.parameters) if job.parameters else None,
-        files_processed=job.files_processed,
-        files_total=job.files_total,
-        annotations_total=job.annotations_total,
-        result_summary=json.loads(job.result_summary) if job.result_summary else None,
-        error_message=job.error_message,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
 
 
 @router.post("/jobs", response_model=LabelProcessingJobOut)
