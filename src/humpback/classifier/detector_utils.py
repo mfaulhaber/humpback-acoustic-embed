@@ -318,7 +318,7 @@ def _find_prominent_peaks(
     return surviving
 
 
-_DEFAULT_MIN_GAP_FILL = 3.0
+_DEFAULT_MIN_GAP_FILL = 5.0
 
 
 def _fill_gaps_recursive(
@@ -354,9 +354,9 @@ def _fill_gaps_recursive(
             continue
         if raw_scores[i] >= min_score:
             dist = abs(offset - midpoint)
-            if raw_scores[i] > best_score or (
-                raw_scores[i] == best_score and dist < best_dist
-            ):
+            # Prefer proximity to gap midpoint; use score as tiebreaker.
+            # This spaces fills evenly rather than clustering near peaks.
+            if dist < best_dist or (dist == best_dist and raw_scores[i] > best_score):
                 best_idx = i
                 best_score = raw_scores[i]
                 best_dist = dist

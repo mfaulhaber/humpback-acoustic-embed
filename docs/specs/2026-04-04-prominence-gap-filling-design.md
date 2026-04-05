@@ -47,12 +47,17 @@ a gap-fill pass scans for uncovered regions and emits additional windows.
 
 ### Parameters
 
-- **`min_gap_fill`**: 3.0 seconds. Hardcoded inside
-  `select_prominent_peaks_from_events`. Not exposed to the API. Can be
-  promoted to a parameter later if tuning is needed.
+- **`min_gap_fill`**: 5.0 seconds (matching `window_size_seconds`). Hardcoded
+  inside `select_prominent_peaks_from_events`. Not exposed to the API. Can be
+  promoted to a parameter later if tuning is needed. Originally 3.0 seconds
+  but increased after testing showed 2-second window spacing with excessive
+  overlap.
+- **Fill placement**: Prefer proximity to gap midpoint, with raw probability
+  as tiebreaker. This spaces fills evenly across the gap rather than
+  clustering next to existing peaks (where scores are naturally highest).
 - **Score space for fill selection**: Raw probability (not logit). Logit
   transform matters for detecting dips (prominence computation), not for
-  finding a max-score candidate.
+  qualifying a candidate.
 - **`min_score`**: Same `min_score` (high threshold) already passed to
   `select_prominent_peaks_from_events`.
 
