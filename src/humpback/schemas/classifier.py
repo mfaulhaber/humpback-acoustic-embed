@@ -151,8 +151,9 @@ class DetectionJobCreate(BaseModel):
     hop_seconds: float = 1.0
     high_threshold: float = 0.70
     low_threshold: float = 0.45
-    window_selection: Optional[Literal["nms", "prominence"]] = None
+    window_selection: Optional[Literal["nms", "prominence", "tiling"]] = None
     min_prominence: Optional[float] = None
+    max_logit_drop: Optional[float] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -169,6 +170,8 @@ class DetectionJobCreate(BaseModel):
             raise ValueError("hop_seconds must be positive")
         if self.min_prominence is not None and self.min_prominence <= 0:
             raise ValueError("min_prominence must be > 0")
+        if self.max_logit_drop is not None and self.max_logit_drop <= 0:
+            raise ValueError("max_logit_drop must be > 0")
         return self
 
 
@@ -184,6 +187,7 @@ class DetectionJobOut(BaseModel):
     detection_mode: Optional[str] = None
     window_selection: Optional[str] = None
     min_prominence: Optional[float] = None
+    max_logit_drop: Optional[float] = None
     output_row_store_path: Optional[str] = None
     result_summary: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -229,8 +233,9 @@ class HydrophoneDetectionJobCreate(BaseModel):
     high_threshold: float = 0.70
     low_threshold: float = 0.45
     local_cache_path: Optional[str] = None
-    window_selection: Optional[Literal["nms", "prominence"]] = None
+    window_selection: Optional[Literal["nms", "prominence", "tiling"]] = None
     min_prominence: Optional[float] = None
+    max_logit_drop: Optional[float] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -252,6 +257,8 @@ class HydrophoneDetectionJobCreate(BaseModel):
             raise ValueError("Time range must be <= 7 days")
         if self.min_prominence is not None and self.min_prominence <= 0:
             raise ValueError("min_prominence must be > 0")
+        if self.max_logit_drop is not None and self.max_logit_drop <= 0:
+            raise ValueError("max_logit_drop must be > 0")
         return self
 
 

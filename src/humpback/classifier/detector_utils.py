@@ -520,6 +520,179 @@ def select_prominent_peaks_from_events(
     return deduped
 
 
+_DEFAULT_MAX_LOGIT_DROP = 2.0
+
+
+def _find_nearest_candidate(
+    candidates: list[dict],
+    target_offset: float,
+    uncovered: set[int],
+    max_dist: float,
+) -> int | None:
+    """Return the uncovered index nearest to *target_offset* within *max_dist*."""
+    best_idx: int | None = None
+    best_dist = float("inf")
+    for i in uncovered:
+        dist = abs(float(candidates[i]["offset_sec"]) - target_offset)
+        if dist < best_dist and dist <= max_dist:
+            best_dist = dist
+            best_idx = i
+    return best_idx
+
+
+def select_tiled_windows_from_events(
+    events: list[dict],
+    window_records: list[dict],
+    window_size_seconds: float,
+    min_score: float,
+    max_logit_drop: float = _DEFAULT_MAX_LOGIT_DROP,
+) -> list[dict]:
+    """Select non-overlapping detection windows by tiling outward from peaks.
+
+    For each merged event, finds the highest-scoring uncovered window (seed),
+    then tiles left and right in ``window_size_seconds`` steps — each new tile
+    is the candidate closest to the next non-overlapping position.  Tiling stops
+    when the logit-space drop from the seed exceeds ``max_logit_drop`` or no
+    uncovered candidate exists near the target offset.  Repeats with the next
+    highest uncovered window until all qualifying windows are covered or claimed.
+
+    Output windows are non-overlapping (spaced by ``window_size_seconds``).
+    Unlike NMS, this produces contiguous coverage of high-scoring regions.
+    Unlike prominence, it does not require score dips to identify boundaries —
+    flat plateaus are fully covered.
+
+    Returns detection dicts each spanning exactly ``window_size_seconds``.
+    """
+    if not events or not window_records:
+        return []
+
+    result: list[dict] = []
+
+    for event in events:
+        ev_start = float(event["start_sec"])
+        ev_end = float(event["end_sec"])
+
+        candidates = sorted(
+            (
+                rec
+                for rec in window_records
+                if float(rec["offset_sec"]) + 1e-6 >= ev_start
+                and float(rec["end_sec"]) - 1e-6 <= ev_end
+            ),
+            key=lambda r: float(r["offset_sec"]),
+        )
+        if not candidates:
+            continue
+
+        raw_scores = [float(r["confidence"]) for r in candidates]
+        logit_scores = [_to_logit(s) for s in raw_scores]
+
+        # Build set of indices that are above min_score and not yet covered.
+        uncovered: set[int] = {i for i, s in enumerate(raw_scores) if s >= min_score}
+
+        while uncovered:
+            # Seed: highest logit among uncovered.
+            seed = max(uncovered, key=lambda i: logit_scores[i])
+            seed_logit = logit_scores[seed]
+            seed_offset = float(candidates[seed]["offset_sec"])
+
+            tiled: list[int] = [seed]
+            uncovered.discard(seed)
+
+            # Tile left in window_size_seconds steps.
+            half_window = window_size_seconds / 2.0
+            target = seed_offset - window_size_seconds
+            while target >= ev_start - 1e-6:
+                j = _find_nearest_candidate(
+                    candidates, target, uncovered, max_dist=half_window
+                )
+                if j is None:
+                    break
+                if seed_logit - logit_scores[j] > max_logit_drop:
+                    break
+                tiled.append(j)
+                uncovered.discard(j)
+                target = float(candidates[j]["offset_sec"]) - window_size_seconds
+
+            # Tile right in window_size_seconds steps.
+            target = seed_offset + window_size_seconds
+            while target <= ev_end - window_size_seconds + 1e-6:
+                j = _find_nearest_candidate(
+                    candidates, target, uncovered, max_dist=half_window
+                )
+                if j is None:
+                    break
+                if seed_logit - logit_scores[j] > max_logit_drop:
+                    break
+                tiled.append(j)
+                uncovered.discard(j)
+                target = float(candidates[j]["offset_sec"]) + window_size_seconds
+
+            # Mark all candidates whose windows would overlap with any
+            # placed tile as covered.  Two windows overlap when their
+            # start offsets are less than window_size_seconds apart.
+            for idx in tiled:
+                tile_offset = float(candidates[idx]["offset_sec"])
+                to_remove = [
+                    k
+                    for k in uncovered
+                    if abs(float(candidates[k]["offset_sec"]) - tile_offset)
+                    < window_size_seconds - 1e-6
+                ]
+                uncovered -= set(to_remove)
+
+            for idx in tiled:
+                rec = candidates[idx]
+                offset = float(rec["offset_sec"])
+                conf = raw_scores[idx]
+
+                det: dict = {
+                    "start_sec": offset,
+                    "end_sec": offset + window_size_seconds,
+                    "avg_confidence": conf,
+                    "peak_confidence": conf,
+                    "n_windows": int(event.get("n_windows", 1)),
+                    "raw_start_sec": float(event.get("raw_start_sec", ev_start)),
+                    "raw_end_sec": float(event.get("raw_end_sec", ev_end)),
+                    "merged_event_count": int(event.get("merged_event_count", 1)),
+                }
+                for key in event:
+                    if key not in det:
+                        det[key] = event[key]
+                result.append(det)
+
+    # Deduplicate: adjacent events can share window records.
+    seen: dict[tuple[float, float], int] = {}
+    deduped: list[dict] = []
+    for det in result:
+        key = (det["start_sec"], det["end_sec"])
+        if key in seen:
+            existing = deduped[seen[key]]
+            if det["peak_confidence"] > existing["peak_confidence"]:
+                deduped[seen[key]] = det
+        else:
+            seen[key] = len(deduped)
+            deduped.append(det)
+
+    # Suppress overlapping windows across events: sort by confidence
+    # descending and greedily keep windows that don't overlap with any
+    # already-kept higher-scoring window.
+    deduped.sort(key=lambda d: -d["peak_confidence"])
+    kept: list[dict] = []
+    kept_offsets: list[float] = []
+    for det in deduped:
+        offset = det["start_sec"]
+        overlaps = any(
+            abs(offset - k) < window_size_seconds - 1e-6 for k in kept_offsets
+        )
+        if not overlaps:
+            kept.append(det)
+            kept_offsets.append(offset)
+
+    kept.sort(key=lambda d: (d.get("filename", ""), d["start_sec"]))
+    return kept
+
+
 def select_peak_windows_from_events(
     events: list[dict],
     window_records: list[dict],

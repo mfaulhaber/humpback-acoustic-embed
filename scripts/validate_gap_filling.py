@@ -1,15 +1,19 @@
-"""Validate prominence gap-filling spacing for a detection job.
+"""Validate window selection spacing for a detection job.
 
-Reads window diagnostics from an existing job, re-runs the prominence peak
-selection + gap-filling algorithm with the current code, and compares results
-against the job's stored detection rows.
+Reads window diagnostics from an existing job, re-runs window selection
+algorithms with the current code, and compares results against the job's
+stored detection rows.
 
 Usage:
-    uv run python scripts/validate_gap_filling.py JOB_ID START_UTC END_UTC
+    uv run python scripts/validate_gap_filling.py JOB_ID START_UTC END_UTC [--mode MODE] [--max-logit-drop VALUE]
 
-    # Validate job 4ae10fc6 from 02:11:00 to 02:14:00
+    # Validate job 4ae10fc6 from 02:11:00 to 02:14:00 (default: prominence)
     uv run python scripts/validate_gap_filling.py \
         4ae10fc6-9083-4366-b5d7-02c64c5f3098 02:11:00 02:14:00
+
+    # Compare with tiling mode
+    uv run python scripts/validate_gap_filling.py \
+        4ae10fc6-9083-4366-b5d7-02c64c5f3098 02:11:00 02:14:00 --mode tiling --max-logit-drop 2.0
 
 Times are HH:MM:SS within the detection job's date (inferred from data).
 """
@@ -28,6 +32,7 @@ import pyarrow.parquet as pq
 from humpback.classifier.detector_utils import (  # noqa: E402
     merge_detection_events,
     select_prominent_peaks_from_events,
+    select_tiled_windows_from_events,
     snap_and_merge_detection_events,
 )
 from humpback.config import Settings  # noqa: E402
@@ -94,17 +99,35 @@ def _analyze_detections(
 
 
 def main() -> None:
-    if len(sys.argv) != 4:
-        print(__doc__)
-        sys.exit(1)
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("job_id", help="Detection job UUID")
+    parser.add_argument("start_utc", help="Start time HH:MM:SS")
+    parser.add_argument("end_utc", help="End time HH:MM:SS")
+    parser.add_argument(
+        "--mode",
+        choices=["prominence", "tiling"],
+        default=None,
+        help="Override re-run mode (default: use job's mode)",
+    )
+    parser.add_argument(
+        "--max-logit-drop",
+        type=float,
+        default=2.0,
+        help="Max logit drop for tiling mode (default: 2.0)",
+    )
+    args = parser.parse_args()
 
     from dotenv import load_dotenv
 
     load_dotenv()
 
-    job_id = sys.argv[1]
-    start_hms = sys.argv[2]
-    end_hms = sys.argv[3]
+    job_id = args.job_id
+    start_hms = args.start_utc
+    end_hms = args.end_utc
+    override_mode: str | None = args.mode
+    max_logit_drop: float = args.max_logit_drop
 
     settings = Settings()
     job_dir = settings.storage_root / "detections" / job_id
@@ -122,10 +145,11 @@ def main() -> None:
     window_selection = summary.get("window_selection", "prominence")
     min_prominence = float(summary.get("min_prominence", 1.0))
     window_size_seconds = 5.0  # standard for this project
+    rerun_mode = override_mode or window_selection
 
-    if window_selection != "prominence":
+    if rerun_mode not in ("prominence", "tiling"):
         print(
-            f"Job uses window_selection='{window_selection}', not prominence. Nothing to validate."
+            f"Job uses window_selection='{window_selection}' and no --mode override. Nothing to validate."
         )
         sys.exit(0)
 
@@ -198,7 +222,7 @@ def main() -> None:
 
     all_utc_windows.sort(key=lambda w: w["start"])
 
-    # --- Re-run prominence selection per file ---
+    # --- Re-run window selection per file ---
     rerun_detections_utc: list[dict] = []
 
     for fname, w_recs in sorted(file_windows.items()):
@@ -212,14 +236,23 @@ def main() -> None:
         if not events:
             continue
 
-        # Run prominence selection with current code (includes gap-filling)
-        peak_dets = select_prominent_peaks_from_events(
-            events,
-            w_recs,
-            window_size_seconds,
-            min_score=high_threshold,
-            min_prominence=min_prominence,
-        )
+        # Run window selection with current code
+        if rerun_mode == "tiling":
+            peak_dets = select_tiled_windows_from_events(
+                events,
+                w_recs,
+                window_size_seconds,
+                min_score=high_threshold,
+                max_logit_drop=max_logit_drop,
+            )
+        else:
+            peak_dets = select_prominent_peaks_from_events(
+                events,
+                w_recs,
+                window_size_seconds,
+                min_score=high_threshold,
+                min_prominence=min_prominence,
+            )
 
         # Convert to UTC
         for det in peak_dets:
@@ -239,9 +272,14 @@ def main() -> None:
     # --- Output ---
     print(f"Job: {job_id}")
     print(f"Range: {start_hms} - {end_hms}")
-    print(
-        f"Params: high={high_threshold} low={low_threshold} min_prominence={min_prominence}"
-    )
+    if rerun_mode == "tiling":
+        print(
+            f"Params: high={high_threshold} low={low_threshold} rerun_mode=tiling max_logit_drop={max_logit_drop}"
+        )
+    else:
+        print(
+            f"Params: high={high_threshold} low={low_threshold} rerun_mode=prominence min_prominence={min_prominence}"
+        )
     print(f"Window scores in range: {len(all_utc_windows)}")
     print()
 
@@ -251,7 +289,7 @@ def main() -> None:
     _analyze_detections("stored", stored_detections, all_utc_windows)
 
     print("=" * 72)
-    print("RE-RUN (current code)")
+    print(f"RE-RUN ({rerun_mode})")
     print("=" * 72)
     _analyze_detections("rerun", rerun_detections_utc, all_utc_windows)
 

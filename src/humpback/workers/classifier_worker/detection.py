@@ -197,6 +197,7 @@ async def run_detection_job(
             True,  # emit_embeddings
             job.window_selection,
             job.min_prominence,
+            job.max_logit_drop,
         )
 
         # Write window diagnostics

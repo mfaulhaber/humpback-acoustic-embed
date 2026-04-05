@@ -13,6 +13,7 @@ from humpback.classifier.detector import (
     merge_detection_events,
     select_peak_windows_from_events,
     select_prominent_peaks_from_events,
+    select_tiled_windows_from_events,
     snap_and_merge_detection_events,
 )
 from humpback.classifier.s3_stream import (
@@ -57,6 +58,7 @@ def run_hydrophone_detection(
     detection_mode: str | None = None,
     window_selection: str | None = None,
     min_prominence: float | None = None,
+    max_logit_drop: float | None = None,
 ) -> tuple[list[dict], dict]:
     """Run detection on streamed hydrophone audio.
 
@@ -238,6 +240,16 @@ def run_hydrophone_detection(
                     min_score=high_threshold,
                     min_prominence=(
                         min_prominence if min_prominence is not None else 1.0
+                    ),
+                )
+            elif window_selection == "tiling":
+                events = select_tiled_windows_from_events(
+                    events,
+                    window_records,
+                    window_size_seconds,
+                    min_score=high_threshold,
+                    max_logit_drop=(
+                        max_logit_drop if max_logit_drop is not None else 2.0
                     ),
                 )
             else:

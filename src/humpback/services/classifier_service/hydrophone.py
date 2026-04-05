@@ -21,6 +21,7 @@ async def create_hydrophone_detection_job(
     local_cache_path: str | None = None,
     window_selection: str | None = None,
     min_prominence: float | None = None,
+    max_logit_drop: float | None = None,
 ) -> DetectionJob:
     """Create a hydrophone detection job after validating inputs."""
     from humpback.config import (
@@ -82,6 +83,7 @@ async def create_hydrophone_detection_job(
         detection_mode="windowed",
         window_selection=window_selection,
         min_prominence=min_prominence,
+        max_logit_drop=max_logit_drop,
     )
     session.add(job)
     await session.commit()

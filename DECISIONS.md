@@ -551,3 +551,27 @@ Raw scores are used (no smoothing) to preserve the true dip depth between vocali
 Prominence correctly rejects peaks with low prominence, but this misses strong vocalizations in flat score regions between adjacent equal-strength detections (e.g., confidence 0.988 with only 0.05 logit prominence). The score curve is genuinely flat — no score transformation helps.
 
 After prominence peak selection, a recursive gap-filling pass scans for gaps > 5.0 seconds between consecutive selected peaks (and from event edges to the nearest peak). For each gap, the candidate closest to the gap midpoint (with score as tiebreaker) above `min_score` is emitted, splitting the gap into two sub-gaps that are checked recursively. Midpoint-first placement prevents fills from clustering next to existing peaks where scores are naturally highest, producing evenly spaced coverage instead. The 5.0-second threshold (matching `window_size_seconds`) was chosen after testing showed that 3.0 seconds produced 2-second spacing between windows — 60% overlap with minimal new coverage. This is always-on in prominence mode; the threshold is hardcoded (not an API parameter).
+
+---
+
+## ADR-045: Tiling window selection for detection
+
+**Date**: 2026-04-04
+**Status**: Accepted
+
+**Context**: Both NMS and prominence-based window selection are peak-centric — they identify discrete score peaks then (in prominence's case) retroactively fill gaps between them. Flat plateau regions where the classifier scores 0.99 across many consecutive windows have no peaks or prominence to exploit. Gap-filling patches this with midpoint insertion, but it is an after-the-fact heuristic bolted onto a peak-finding algorithm.
+
+**Decision**: Add a third `window_selection` mode called `"tiling"` that treats high-scoring regions as spans to cover rather than peaks to find:
+
+1. Within each event, collect candidates above `min_score` and compute logit scores.
+2. **Multi-pass**: while uncovered candidates remain, pick the highest-scoring uncovered window as seed, tile left and right through consecutive candidates while `seed_logit - candidate_logit <= max_logit_drop`, mark tiled windows as covered.
+3. Stop tiling at the first window where the drop exceeds the threshold — no look-ahead. Recovered regions become their own seeds in subsequent passes.
+
+`max_logit_drop` (default 2.0, in logit units) controls tiling extent. Requires Alembic migration 039.
+
+**Consequences**:
+- Plateau regions get full contiguous coverage without gap-filling heuristics
+- Multi-pass naturally segments distinct vocalizations separated by score drops without prominence computation
+- Every above-threshold window is either tiled from a seed or becomes a seed itself — exhaustive coverage
+- Overlapping output windows are compatible with all downstream systems (same as prominence mode)
+- NMS remains the default; tiling and prominence are opt-in via UI or API parameter

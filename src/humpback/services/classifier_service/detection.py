@@ -31,6 +31,7 @@ async def create_detection_job(
     low_threshold: float = 0.45,
     window_selection: str | None = None,
     min_prominence: float | None = None,
+    max_logit_drop: float | None = None,
 ) -> DetectionJob:
     """Create a detection job after validating inputs."""
     # Validate classifier model exists
@@ -68,6 +69,7 @@ async def create_detection_job(
         detection_mode="windowed",
         window_selection=window_selection,
         min_prominence=min_prominence,
+        max_logit_drop=max_logit_drop,
     )
     session.add(job)
     await session.commit()
