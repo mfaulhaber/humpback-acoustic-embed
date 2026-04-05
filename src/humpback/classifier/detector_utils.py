@@ -527,13 +527,14 @@ def _find_nearest_candidate(
     candidates: list[dict],
     target_offset: float,
     uncovered: set[int],
+    max_dist: float,
 ) -> int | None:
-    """Return the index in *candidates* closest to *target_offset* among *uncovered*."""
+    """Return the uncovered index nearest to *target_offset* within *max_dist*."""
     best_idx: int | None = None
     best_dist = float("inf")
     for i in uncovered:
         dist = abs(float(candidates[i]["offset_sec"]) - target_offset)
-        if dist < best_dist:
+        if dist < best_dist and dist <= max_dist:
             best_dist = dist
             best_idx = i
     return best_idx
@@ -599,9 +600,12 @@ def select_tiled_windows_from_events(
             uncovered.discard(seed)
 
             # Tile left in window_size_seconds steps.
+            half_window = window_size_seconds / 2.0
             target = seed_offset - window_size_seconds
             while target >= ev_start - 1e-6:
-                j = _find_nearest_candidate(candidates, target, uncovered)
+                j = _find_nearest_candidate(
+                    candidates, target, uncovered, max_dist=half_window
+                )
                 if j is None:
                     break
                 if seed_logit - logit_scores[j] > max_logit_drop:
@@ -613,7 +617,9 @@ def select_tiled_windows_from_events(
             # Tile right in window_size_seconds steps.
             target = seed_offset + window_size_seconds
             while target <= ev_end - window_size_seconds + 1e-6:
-                j = _find_nearest_candidate(candidates, target, uncovered)
+                j = _find_nearest_candidate(
+                    candidates, target, uncovered, max_dist=half_window
+                )
                 if j is None:
                     break
                 if seed_logit - logit_scores[j] > max_logit_drop:
@@ -622,16 +628,16 @@ def select_tiled_windows_from_events(
                 uncovered.discard(j)
                 target = float(candidates[j]["offset_sec"]) + window_size_seconds
 
-            # Mark all candidates overlapped by placed tiles as covered
-            # so they don't become seeds in subsequent passes.
+            # Mark all candidates whose windows would overlap with any
+            # placed tile as covered.  Two windows overlap when their
+            # start offsets are less than window_size_seconds apart.
             for idx in tiled:
-                tile_start = float(candidates[idx]["offset_sec"])
-                tile_end = tile_start + window_size_seconds
+                tile_offset = float(candidates[idx]["offset_sec"])
                 to_remove = [
                     k
                     for k in uncovered
-                    if float(candidates[k]["offset_sec"]) >= tile_start - 1e-6
-                    and float(candidates[k]["offset_sec"]) < tile_end - 1e-6
+                    if abs(float(candidates[k]["offset_sec"]) - tile_offset)
+                    < window_size_seconds - 1e-6
                 ]
                 uncovered -= set(to_remove)
 
@@ -668,8 +674,23 @@ def select_tiled_windows_from_events(
             seen[key] = len(deduped)
             deduped.append(det)
 
-    deduped.sort(key=lambda d: (d.get("filename", ""), d["start_sec"]))
-    return deduped
+    # Suppress overlapping windows across events: sort by confidence
+    # descending and greedily keep windows that don't overlap with any
+    # already-kept higher-scoring window.
+    deduped.sort(key=lambda d: -d["peak_confidence"])
+    kept: list[dict] = []
+    kept_offsets: list[float] = []
+    for det in deduped:
+        offset = det["start_sec"]
+        overlaps = any(
+            abs(offset - k) < window_size_seconds - 1e-6 for k in kept_offsets
+        )
+        if not overlaps:
+            kept.append(det)
+            kept_offsets.append(offset)
+
+    kept.sort(key=lambda d: (d.get("filename", ""), d["start_sec"]))
+    return kept
 
 
 def select_peak_windows_from_events(
