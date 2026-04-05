@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import threading
-import wave
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
@@ -17,6 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.processing.audio_encoding import encode_mp3, encode_wav
 from humpback.processing.timeline_cache import TimelinePrepareLock, TimelineTileCache
 from humpback.processing.timeline_tiles import (
     ZOOM_LEVELS,
@@ -561,63 +560,6 @@ def _neighbor_prepare_targets(
     return {zoom_level: indices}
 
 
-def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:
-    """Encode float32 audio to 16-bit PCM WAV bytes with peak normalization."""
-    # Peak-normalize so raw hydrophone audio is audible
-    peak = float(np.max(np.abs(audio)))
-    if peak > 0:
-        audio = audio / peak
-    audio_clipped = np.clip(audio, -1.0, 1.0)
-    pcm = (audio_clipped * 32767).astype(np.int16)
-
-    buf = io.BytesIO()
-    with wave.open(buf, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm.tobytes())
-    return buf.getvalue()
-
-
-def _encode_mp3(audio: np.ndarray, sample_rate: int) -> bytes:
-    """Encode float32 audio to MP3 via ffmpeg subprocess."""
-    import subprocess
-    import tempfile
-    from pathlib import Path
-
-    wav_bytes = _encode_wav(audio, sample_rate)
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_f:
-        wav_path = wav_f.name
-        wav_f.write(wav_bytes)
-
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as mp3_f:
-        mp3_path = mp3_f.name
-
-    try:
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                wav_path,
-                "-codec:a",
-                "libmp3lame",
-                "-b:a",
-                "128k",
-                "-ac",
-                "1",
-                mp3_path,
-            ],
-            capture_output=True,
-            check=True,
-        )
-        return Path(mp3_path).read_bytes()
-    finally:
-        Path(wav_path).unlink(missing_ok=True)
-        Path(mp3_path).unlink(missing_ok=True)
-
-
 # ---- Endpoints ----
 
 
@@ -833,10 +775,10 @@ async def get_audio(
     )
 
     if format == "mp3":
-        data = _encode_mp3(audio, 32000)
+        data = encode_mp3(audio, 32000)
         return Response(content=data, media_type="audio/mpeg")
     else:
-        data = _encode_wav(audio, sample_rate=32000)
+        data = encode_wav(audio, sample_rate=32000)
         return Response(content=data, media_type="audio/wav")
 
 
@@ -925,3 +867,49 @@ async def prepare_status(
         rendered = cache.tile_count_for_zoom(job.id, zoom)
         status[zoom] = {"total": total, "rendered": min(rendered, total)}
     return status
+
+
+# ---- Export ----
+
+
+class ExportRequest(BaseModel):
+    output_dir: str
+
+
+class ExportResponse(BaseModel):
+    job_id: str
+    output_path: str
+    tile_count: int
+    audio_chunk_count: int
+    manifest_size_bytes: int
+
+
+@router.post("/export")
+async def export_timeline_endpoint(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    request: ExportRequest = Body(...),
+) -> ExportResponse:
+    """Export a detection job timeline as a self-contained static bundle."""
+    from pathlib import Path
+
+    from humpback.services.timeline_export import ExportError, export_timeline
+
+    try:
+        result = await export_timeline(
+            job_id=job_id,
+            output_dir=Path(request.output_dir),
+            db=session,
+            settings=settings,
+        )
+    except ExportError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+    return ExportResponse(
+        job_id=result.job_id,
+        output_path=result.output_path,
+        tile_count=result.tile_count,
+        audio_chunk_count=result.audio_chunk_count,
+        manifest_size_bytes=result.manifest_size_bytes,
+    )
