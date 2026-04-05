@@ -269,6 +269,9 @@ Classifier training currently has three distinct flows:
 
 Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model. After candidate-backed training completes, the training job's `source_comparison_context` and the model's `training_summary` include a `replay_verification` dict with status (`"verified"`/`"mismatch"`), per-split metric comparisons, and effective config. The candidate detail endpoint (`GET /classifier/autoresearch-candidates/{id}`) also exposes `replay_verification` when the linked model exists.
 
+- **Timeline export**:
+  - `POST /classifier/detection-jobs/{id}/timeline/export` — export a completed detection job's timeline as a self-contained static bundle (tiles, MP3 audio, JSON manifest) for hosting as a readonly viewer on S3. Also available as `scripts/export_timeline.py` CLI.
+
 ---
 
 ## 9. Current State
@@ -288,7 +291,7 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 - Training dataset review: unified editable snapshot of training data (from embedding sets and detection jobs), type-filtered positive/negative browsing with large inline spectrograms, batch label editing with save/cancel, dataset extend for incremental source addition, retrain from edited labels
 - Autoresearch candidate promotion: import reviewed manifest-backed autoresearch bundles, inspect split deltas versus production, and create candidate-backed training jobs with persisted provenance. AR-v1 exact replay: candidates with PCA, probability calibration (platt/isotonic), and context pooling (mean3/max3) are promotable via shared replay module with replay verification against imported candidate metrics
 - Retrain workflow: reimport -> reprocess -> retrain
-- Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans)
+- Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans), static export for readonly S3-hosted viewer
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier (Training, Hydrophone, Embeddings), Vocalization, Search, Label Processing, Admin
 
 ### 9.2 Database Schema
