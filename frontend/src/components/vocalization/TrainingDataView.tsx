@@ -80,6 +80,9 @@ export function TrainingDataView() {
   const vocabulary = dataset?.vocabulary ?? [];
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [group, setGroup] = useState<"positive" | "negative">("positive");
+  const [sourceType, setSourceType] = useState<
+    "detection_job" | "embedding_set" | null
+  >(null);
   const [page, setPage] = useState(0);
 
   // Pending label state
@@ -119,6 +122,7 @@ export function TrainingDataView() {
     {
       type: selectedType ?? undefined,
       group: selectedType ? group : undefined,
+      source_type: sourceType ?? undefined,
       offset: page * PAGE_SIZE,
       limit: PAGE_SIZE,
     },
@@ -268,8 +272,46 @@ export function TrainingDataView() {
 
       {dataset && (
         <>
-          {/* Type filter bar */}
+          {/* Filter bar */}
           <div className="flex flex-wrap items-center gap-2">
+            {/* Source type filter */}
+            <div className="flex items-center gap-1 border rounded-md p-0.5 mr-2">
+              <Button
+                size="sm"
+                variant={sourceType === null ? "default" : "ghost"}
+                className="h-7 text-xs"
+                onClick={() => {
+                  setSourceType(null);
+                  setPage(0);
+                }}
+              >
+                All Sources
+              </Button>
+              <Button
+                size="sm"
+                variant={sourceType === "detection_job" ? "default" : "ghost"}
+                className="h-7 text-xs"
+                onClick={() => {
+                  setSourceType("detection_job");
+                  setPage(0);
+                }}
+              >
+                Detection
+              </Button>
+              <Button
+                size="sm"
+                variant={sourceType === "embedding_set" ? "default" : "ghost"}
+                className="h-7 text-xs"
+                onClick={() => {
+                  setSourceType("embedding_set");
+                  setPage(0);
+                }}
+              >
+                Embedding
+              </Button>
+            </div>
+
+            {/* Type filter */}
             <Button
               size="sm"
               variant={selectedType === null ? "default" : "outline"}

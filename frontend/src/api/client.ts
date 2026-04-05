@@ -720,6 +720,7 @@ export const fetchTrainingDatasetRows = (
   params?: {
     type?: string;
     group?: string;
+    source_type?: string;
     offset?: number;
     limit?: number;
   },
@@ -727,6 +728,7 @@ export const fetchTrainingDatasetRows = (
   const qs = new URLSearchParams();
   if (params?.type) qs.set("type", params.type);
   if (params?.group) qs.set("group", params.group);
+  if (params?.source_type) qs.set("source_type", params.source_type);
   if (params?.offset !== undefined) qs.set("offset", String(params.offset));
   if (params?.limit !== undefined) qs.set("limit", String(params.limit));
   const suffix = qs.toString() ? `?${qs}` : "";

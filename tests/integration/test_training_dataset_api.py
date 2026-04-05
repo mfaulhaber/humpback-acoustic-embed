@@ -179,6 +179,55 @@ async def test_get_rows_pagination(client, app_settings):
     assert len(data["rows"]) == 2
 
 
+# ---- Source type filter ----
+
+
+@pytest.mark.asyncio
+async def test_get_rows_filter_by_source_type(client, app_settings):
+    """source_type param filters rows by their parquet source_type column."""
+    dataset_id = await _seed_dataset(client, app_settings)
+
+    # All rows in the seed are from embedding sets
+    resp_emb = await client.get(
+        f"/vocalization/training-datasets/{dataset_id}/rows",
+        params={"source_type": "embedding_set"},
+    )
+    assert resp_emb.status_code == 200
+    data_emb = resp_emb.json()
+    assert data_emb["total"] == 6
+    for row in data_emb["rows"]:
+        assert row["source_type"] == "embedding_set"
+
+    # No detection rows in the seed
+    resp_det = await client.get(
+        f"/vocalization/training-datasets/{dataset_id}/rows",
+        params={"source_type": "detection_job"},
+    )
+    assert resp_det.status_code == 200
+    assert resp_det.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_rows_source_type_composes_with_type_filter(client, app_settings):
+    """source_type filter composes with type+group filters."""
+    dataset_id = await _seed_dataset(client, app_settings)
+
+    resp = await client.get(
+        f"/vocalization/training-datasets/{dataset_id}/rows",
+        params={
+            "source_type": "embedding_set",
+            "type": "Whup",
+            "group": "positive",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3
+    for row in data["rows"]:
+        assert row["source_type"] == "embedding_set"
+        assert "Whup" in row["labels"]
+
+
 # ---- Labels ----
 
 

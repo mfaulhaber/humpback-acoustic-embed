@@ -300,7 +300,7 @@ export function useTrainingDataset(datasetId: string | null) {
 
 export function useTrainingDatasetRows(
   datasetId: string | null,
-  params?: { type?: string; group?: string; offset?: number; limit?: number },
+  params?: { type?: string; group?: string; source_type?: string; offset?: number; limit?: number },
 ) {
   return useQuery({
     queryKey: ["vocalization", "training-dataset-rows", datasetId, params],

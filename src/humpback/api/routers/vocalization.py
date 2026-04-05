@@ -498,10 +498,11 @@ async def get_training_dataset_rows(
     session: SessionDep,
     type: str | None = Query(None),
     group: str | None = Query(None),
+    source_type: str | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
 ):
-    """Paginated rows with labels, filterable by type and positive/negative group."""
+    """Paginated rows with labels, filterable by type, group, and source_type."""
 
     import pyarrow.parquet as pq
 
@@ -537,6 +538,11 @@ async def get_training_dataset_rows(
     # Build row dicts
     rows = []
     for i in range(table.num_rows):
+        # Filter by source_type (before label filters)
+        if source_type is not None:
+            if table.column("source_type")[i].as_py() != source_type:
+                continue
+
         row_idx = int(table.column("row_index")[i].as_py())
         row_labels = labels_by_row.get(row_idx, [])
 
