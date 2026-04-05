@@ -433,6 +433,7 @@ async def create_detection_job(
             body.low_threshold,
             body.window_selection,
             body.min_prominence,
+            body.max_logit_drop,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

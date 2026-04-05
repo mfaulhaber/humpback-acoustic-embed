@@ -1283,3 +1283,220 @@ class TestSelectProminentPeaksFromEvents:
         # 34s event / 3s min_gap → at most ~11 windows.
         assert len(result) <= 15
         assert len(result) >= 3
+
+
+# ---- select_tiled_windows_from_events (tiling-based) ----
+
+
+class TestSelectTiledWindowsFromEvents:
+    """Tests for tiling-based window selection within merged events."""
+
+    def _make_window_records(
+        self,
+        offsets: list[float] | list[int],
+        confidences: list[float],
+        window_size: float = 5.0,
+    ) -> list[dict]:
+        return [
+            {"offset_sec": o, "end_sec": o + window_size, "confidence": c}
+            for o, c in zip(offsets, confidences)
+        ]
+
+    def _make_event(self, start: float, end: float, n_windows: int) -> dict:
+        return {
+            "start_sec": start,
+            "end_sec": end,
+            "n_windows": n_windows,
+            "raw_start_sec": start,
+            "raw_end_sec": end,
+            "merged_event_count": 1,
+        }
+
+    def test_empty_events(self):
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        result = select_tiled_windows_from_events([], [], 5.0, min_score=0.7)
+        assert result == []
+
+    def test_empty_window_records(self):
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        events = [self._make_event(0.0, 10.0, 5)]
+        result = select_tiled_windows_from_events(events, [], 5.0, min_score=0.7)
+        assert result == []
+
+    def test_basic_symmetric_tiling(self):
+        """Single peak with symmetric score drop-off tiles outward."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        # Peak at offset 5 (conf 0.99), drops off both sides
+        offsets = list(range(0, 11))
+        confidences = [0.75, 0.85, 0.92, 0.96, 0.98, 0.99, 0.98, 0.96, 0.92, 0.85, 0.75]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 15.0, 11)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
+        )
+        # All windows are above min_score and logit drop from 0.99 to 0.75 is
+        # about 2.87 logits, so the edges should be excluded.
+        starts = sorted(d["start_sec"] for d in result)
+        assert 5.0 in starts  # the peak itself
+        # At least the neighbors close to the peak should be included
+        assert len(result) >= 5
+
+    def test_multi_pass_two_peaks(self):
+        """Two peaks separated by deep dip produce two tile groups."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        offsets = list(range(0, 15))
+        confidences = [
+            0.5,
+            0.7,
+            0.9,
+            0.95,
+            0.9,
+            0.7,  # peak at 3
+            0.3,
+            0.2,
+            0.3,  # deep valley
+            0.7,
+            0.9,
+            0.95,
+            0.9,
+            0.7,
+            0.5,  # peak at 11
+        ]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 19.0, 15)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
+        )
+        starts = sorted(d["start_sec"] for d in result)
+        # Both peaks should be present
+        assert 3.0 in starts
+        assert 11.0 in starts
+        # Valley windows (0.2, 0.3) are below min_score, should not appear
+        assert 7.0 not in starts
+
+    def test_plateau_all_windows_emitted(self):
+        """Flat high scores — all windows should be emitted (logit drop = 0)."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        offsets = list(range(0, 10))
+        confidences = [0.99] * 10
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 14.0, 10)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
+        )
+        assert len(result) == 10
+
+    def test_edge_clipping(self):
+        """Tiling stops at event boundary."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        offsets = list(range(0, 5))
+        confidences = [0.95, 0.96, 0.97, 0.96, 0.95]
+        window_records = self._make_window_records(offsets, confidences)
+        # Event covers all windows
+        events = [self._make_event(0.0, 9.0, 5)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
+        )
+        # All 5 windows should be included — they all fit within the event
+        assert len(result) == 5
+        starts = sorted(d["start_sec"] for d in result)
+        assert starts == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+    def test_boundary_drop_within_threshold_included(self):
+        """Windows with logit drop just under max_logit_drop are included."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        # Peak at 0.95, edges at 0.75. Logit drop ≈ 1.85, under 2.0 threshold.
+        offsets = [0, 1, 2]
+        confidences = [0.75, 0.95, 0.75]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 7.0, 3)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.5, max_logit_drop=2.0
+        )
+        # All three included: drop is within threshold
+        assert len(result) == 3
+
+    def test_boundary_drop_exceeds_threshold_excluded(self):
+        """Windows with logit drop exceeding max_logit_drop are excluded."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        # Peak at 0.95, edges at 0.55. Logit drop ≈ 2.74, over 2.0 threshold.
+        offsets = [0, 1, 2]
+        confidences = [0.55, 0.95, 0.55]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 7.0, 3)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.5, max_logit_drop=2.0
+        )
+        # Peak + edges as separate seeds (edges are above min_score but
+        # exceed logit drop from peak, so they become their own seeds)
+        assert len(result) == 3
+        starts = sorted(d["start_sec"] for d in result)
+        assert starts == [0.0, 1.0, 2.0]
+
+    def test_no_qualifying_windows(self):
+        """All windows below min_score — returns empty."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        offsets = list(range(0, 5))
+        confidences = [0.3, 0.4, 0.5, 0.4, 0.3]
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 9.0, 5)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
+        )
+        assert result == []
+
+    def test_deduplication_across_adjacent_events(self):
+        """Adjacent events sharing window records deduplicate correctly."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        offsets = list(range(0, 10))
+        confidences = [0.95] * 10
+        window_records = self._make_window_records(offsets, confidences)
+        # Two overlapping events sharing windows at offsets 4-5
+        events = [
+            self._make_event(0.0, 9.0, 5),
+            self._make_event(4.0, 14.0, 6),
+        ]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
+        )
+        # No duplicate start_sec values
+        starts = [d["start_sec"] for d in result]
+        assert len(starts) == len(set(starts))

@@ -331,8 +331,9 @@ export function HydrophoneTab() {
   const [hopSeconds, setHopSeconds] = useState(1.0);
   const [highThreshold, setHighThreshold] = useState(0.80);
   const [lowThreshold, setLowThreshold] = useState(0.70);
-  const [windowSelection, setWindowSelection] = useState<"nms" | "prominence">("nms");
+  const [windowSelection, setWindowSelection] = useState<"nms" | "prominence" | "tiling">("nms");
   const [minProminence, setMinProminence] = useState(1.0);
+  const [maxLogitDrop, setMaxLogitDrop] = useState(2.0);
   const [sourceType, setSourceType] = useState<"orcasound" | "noaa" | "local">("orcasound");
   const [localCachePath, setLocalCachePath] = useState("");
   const [browseRoot, setBrowseRoot] = useState<string | null>(null);
@@ -503,6 +504,7 @@ export function HydrophoneTab() {
       low_threshold: lowThreshold,
       window_selection: windowSelection,
       ...(windowSelection === "prominence" ? { min_prominence: minProminence } : {}),
+      ...(windowSelection === "tiling" ? { max_logit_drop: maxLogitDrop } : {}),
       ...(sourceType === "local" ? { local_cache_path: localCachePath } : {}),
     });
   };
@@ -827,11 +829,12 @@ export function HydrophoneTab() {
               <label className="text-sm font-medium">Window Selection</label>
               <select
                 value={windowSelection}
-                onChange={(e) => setWindowSelection(e.target.value as "nms" | "prominence")}
+                onChange={(e) => setWindowSelection(e.target.value as "nms" | "prominence" | "tiling")}
                 className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="nms">NMS (non-overlapping)</option>
                 <option value="prominence">Prominence (overlapping)</option>
+                <option value="tiling">Tiling (contiguous)</option>
               </select>
             </div>
             {windowSelection === "prominence" && (
@@ -846,6 +849,22 @@ export function HydrophoneTab() {
                   step="0.1"
                   value={minProminence}
                   onChange={(e) => setMinProminence(parseFloat(e.target.value))}
+                  className="w-full mt-1"
+                />
+              </div>
+            )}
+            {windowSelection === "tiling" && (
+              <div>
+                <label className="text-sm font-medium">
+                  Max Logit Drop: {maxLogitDrop.toFixed(1)}
+                </label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="5.0"
+                  step="0.1"
+                  value={maxLogitDrop}
+                  onChange={(e) => setMaxLogitDrop(parseFloat(e.target.value))}
                   className="w-full mt-1"
                 />
               </div>

@@ -28,6 +28,7 @@ from humpback.classifier.detector_utils import (
     resolve_audio_for_window_hydrophone,
     select_peak_windows_from_events,
     select_prominent_peaks_from_events,
+    select_tiled_windows_from_events,
     snap_and_merge_detection_events,
     snap_event_bounds,
     write_detection_embeddings,
@@ -66,6 +67,7 @@ __all__ = [
     "resolve_audio_for_window_hydrophone",
     "select_peak_windows_from_events",
     "select_prominent_peaks_from_events",
+    "select_tiled_windows_from_events",
     "snap_and_merge_detection_events",
     "snap_event_bounds",
     "write_detection_embeddings",
@@ -98,6 +100,7 @@ def run_detection(
     emit_embeddings: bool = False,
     window_selection: str | None = None,
     min_prominence: float | None = None,
+    max_logit_drop: float | None = None,
 ) -> tuple[list[dict], dict, list[dict] | None, list[dict] | None]:
     """Scan audio folder, classify each window, merge events.
 
@@ -264,6 +267,16 @@ def run_detection(
                         min_prominence=min_prominence
                         if min_prominence is not None
                         else 1.0,
+                    )
+                elif window_selection == "tiling":
+                    events = select_tiled_windows_from_events(
+                        events,
+                        window_records,
+                        window_size_seconds,
+                        min_score=high_threshold,
+                        max_logit_drop=max_logit_drop
+                        if max_logit_drop is not None
+                        else 2.0,
                     )
                 else:
                     events = select_peak_windows_from_events(

@@ -520,6 +520,120 @@ def select_prominent_peaks_from_events(
     return deduped
 
 
+_DEFAULT_MAX_LOGIT_DROP = 2.0
+
+
+def select_tiled_windows_from_events(
+    events: list[dict],
+    window_records: list[dict],
+    window_size_seconds: float,
+    min_score: float,
+    max_logit_drop: float = _DEFAULT_MAX_LOGIT_DROP,
+) -> list[dict]:
+    """Select detection windows by tiling outward from peaks.
+
+    For each merged event, finds the highest-scoring uncovered window (seed),
+    then tiles left and right through consecutive candidate windows until the
+    logit-space drop from the seed exceeds ``max_logit_drop``.  Repeats with the
+    next highest uncovered window until all qualifying windows are covered or
+    claimed.
+
+    Unlike NMS, this produces contiguous coverage of high-scoring regions.
+    Unlike prominence, it does not require score dips to identify boundaries —
+    flat plateaus are fully covered.
+
+    Returns detection dicts each spanning exactly ``window_size_seconds``.
+    """
+    if not events or not window_records:
+        return []
+
+    result: list[dict] = []
+
+    for event in events:
+        ev_start = float(event["start_sec"])
+        ev_end = float(event["end_sec"])
+
+        candidates = sorted(
+            (
+                rec
+                for rec in window_records
+                if float(rec["offset_sec"]) + 1e-6 >= ev_start
+                and float(rec["end_sec"]) - 1e-6 <= ev_end
+            ),
+            key=lambda r: float(r["offset_sec"]),
+        )
+        if not candidates:
+            continue
+
+        raw_scores = [float(r["confidence"]) for r in candidates]
+        logit_scores = [_to_logit(s) for s in raw_scores]
+
+        # Build set of indices that are above min_score and not yet covered.
+        uncovered: set[int] = {i for i, s in enumerate(raw_scores) if s >= min_score}
+
+        while uncovered:
+            # Seed: highest logit among uncovered.
+            seed = max(uncovered, key=lambda i: logit_scores[i])
+            seed_logit = logit_scores[seed]
+
+            tiled: list[int] = [seed]
+            uncovered.discard(seed)
+
+            # Tile left.
+            j = seed - 1
+            while j >= 0 and j in uncovered:
+                if seed_logit - logit_scores[j] > max_logit_drop:
+                    break
+                tiled.append(j)
+                uncovered.discard(j)
+                j -= 1
+
+            # Tile right.
+            j = seed + 1
+            while j < len(candidates) and j in uncovered:
+                if seed_logit - logit_scores[j] > max_logit_drop:
+                    break
+                tiled.append(j)
+                uncovered.discard(j)
+                j += 1
+
+            for idx in tiled:
+                rec = candidates[idx]
+                offset = float(rec["offset_sec"])
+                conf = raw_scores[idx]
+
+                det: dict = {
+                    "start_sec": offset,
+                    "end_sec": offset + window_size_seconds,
+                    "avg_confidence": conf,
+                    "peak_confidence": conf,
+                    "n_windows": int(event.get("n_windows", 1)),
+                    "raw_start_sec": float(event.get("raw_start_sec", ev_start)),
+                    "raw_end_sec": float(event.get("raw_end_sec", ev_end)),
+                    "merged_event_count": int(event.get("merged_event_count", 1)),
+                }
+                for key in event:
+                    if key not in det:
+                        det[key] = event[key]
+                result.append(det)
+
+    # Deduplicate: adjacent events can share window records.
+    seen: dict[tuple[float, float], int] = {}
+    deduped: list[dict] = []
+    for det in result:
+        key = (det["start_sec"], det["end_sec"])
+        if key in seen:
+            existing = deduped[seen[key]]
+            if det["peak_confidence"] > existing["peak_confidence"]:
+                deduped[seen[key]] = det
+        else:
+            seen[key] = len(deduped)
+            deduped.append(det)
+
+    deduped.sort(key=lambda d: (d.get("filename", ""), d["start_sec"]))
+    return deduped
+
+
 def select_peak_windows_from_events(
     events: list[dict],
     window_records: list[dict],

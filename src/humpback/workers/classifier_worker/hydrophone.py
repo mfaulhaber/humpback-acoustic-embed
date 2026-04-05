@@ -280,6 +280,7 @@ def _hydrophone_detection_subprocess_main(
             detection_mode=runtime.get("detection_mode"),
             window_selection=runtime.get("window_selection"),
             min_prominence=runtime.get("min_prominence"),
+            max_logit_drop=runtime.get("max_logit_drop"),
         )
         event_queue.put(
             {
@@ -692,6 +693,7 @@ async def run_hydrophone_detection_job(
                         "detection_mode": job.detection_mode,
                         "window_selection": job.window_selection,
                         "min_prominence": job.min_prominence,
+                        "max_logit_drop": job.max_logit_drop,
                     },
                     cancel_event=cancel_event,
                     pause_gate=pause_gate,
@@ -738,6 +740,7 @@ async def run_hydrophone_detection_job(
                     detection_mode=job.detection_mode,
                     window_selection=job.window_selection,
                     min_prominence=job.min_prominence,
+                    max_logit_drop=job.max_logit_drop,
                 )
         except FileNotFoundError as exc:
             raise FileNotFoundError(

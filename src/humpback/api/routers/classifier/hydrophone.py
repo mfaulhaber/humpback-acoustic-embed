@@ -50,6 +50,7 @@ async def create_hydrophone_detection_job(
             body.local_cache_path,
             body.window_selection,
             body.min_prominence,
+            body.max_logit_drop,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
