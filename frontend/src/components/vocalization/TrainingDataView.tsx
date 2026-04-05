@@ -516,9 +516,23 @@ function TrainingDataRow({
 
   const duration = row.end_sec - row.start_sec;
   const pendingAddSet = pendingAdds ?? new Set<string>();
-  const pendingRemovalSet = pendingRemovals ?? new Set<string>();
+  // pendingRemovals now stores label IDs (UUIDs), not label names
+  const pendingRemovalIdSet = pendingRemovals ?? new Set<string>();
 
-  const existingLabels = new Set(row.labels);
+  // Derive name-based sets from label objects for display/filter logic
+  const existingLabelNames = useMemo(
+    () => new Set(row.labels.map((l) => l.label)),
+    [row.labels],
+  );
+  // Set of label names whose IDs are pending removal
+  const pendingRemovalNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const lbl of row.labels) {
+      if (pendingRemovalIdSet.has(lbl.id)) names.add(lbl.label);
+    }
+    return names;
+  }, [row.labels, pendingRemovalIdSet]);
+
   const allTypes = useMemo(() => {
     const set = new Set([...vocabulary]);
     set.delete(NEGATIVE_LABEL);
@@ -526,25 +540,27 @@ function TrainingDataRow({
   }, [vocabulary]);
 
   const hasNegative =
-    existingLabels.has(NEGATIVE_LABEL) || pendingAddSet.has(NEGATIVE_LABEL);
+    (existingLabelNames.has(NEGATIVE_LABEL) &&
+      !pendingRemovalNames.has(NEGATIVE_LABEL)) ||
+    pendingAddSet.has(NEGATIVE_LABEL);
 
-  // Available types to add
+  // Available types to add (exclude existing non-removed and pending adds)
   const availableTypes = allTypes.filter(
-    (t) => !existingLabels.has(t) && !pendingAddSet.has(t),
+    (t) =>
+      (!existingLabelNames.has(t) || pendingRemovalNames.has(t)) &&
+      !pendingAddSet.has(t),
   );
-  const showNegativeOption =
-    !hasNegative ||
-    (existingLabels.has(NEGATIVE_LABEL) &&
-      pendingRemovalSet.has(NEGATIVE_LABEL));
+  const showNegativeOption = !hasNegative;
 
   function handleAddWithExclusivity(label: string) {
     if (label === NEGATIVE_LABEL) {
       for (const t of pendingAddSet) {
         if (t !== NEGATIVE_LABEL) onRemovePendingAdd(t);
       }
-      for (const lbl of existingLabels) {
-        if (lbl !== NEGATIVE_LABEL && !pendingRemovalSet.has(lbl)) {
-          onAddPendingRemoval(lbl);
+      // Mark existing type labels for removal by their IDs
+      for (const lbl of row.labels) {
+        if (lbl.label !== NEGATIVE_LABEL && !pendingRemovalIdSet.has(lbl.id)) {
+          onAddPendingRemoval(lbl.id);
         }
       }
       onAddPending(NEGATIVE_LABEL);
@@ -552,9 +568,10 @@ function TrainingDataRow({
       if (pendingAddSet.has(NEGATIVE_LABEL)) {
         onRemovePendingAdd(NEGATIVE_LABEL);
       }
-      for (const lbl of existingLabels) {
-        if (lbl === NEGATIVE_LABEL && !pendingRemovalSet.has(lbl)) {
-          onAddPendingRemoval(lbl);
+      // Mark existing (Negative) label for removal by its ID
+      for (const lbl of row.labels) {
+        if (lbl.label === NEGATIVE_LABEL && !pendingRemovalIdSet.has(lbl.id)) {
+          onAddPendingRemoval(lbl.id);
         }
       }
       onAddPending(label);
@@ -615,26 +632,26 @@ function TrainingDataRow({
         {/* Label tags */}
         <div className="flex flex-wrap gap-1.5 items-center">
           {/* Saved labels */}
-          {row.labels.map((label) => {
-            const isPendingRemoval = pendingRemovalSet.has(label);
+          {row.labels.map((labelObj) => {
+            const isPendingRemoval = pendingRemovalIdSet.has(labelObj.id);
             const color =
-              typeColorMap.get(label) ?? TYPE_COLORS[0];
+              typeColorMap.get(labelObj.label) ?? TYPE_COLORS[0];
             return (
               <Badge
-                key={label}
+                key={labelObj.id}
                 variant="outline"
                 className={`cursor-pointer select-none text-xs ${color} ${
                   isPendingRemoval ? "opacity-40 line-through" : ""
                 }`}
                 onClick={() => {
                   if (isPendingRemoval) {
-                    onRemovePendingRemoval(label);
+                    onRemovePendingRemoval(labelObj.id);
                   } else {
-                    onAddPendingRemoval(label);
+                    onAddPendingRemoval(labelObj.id);
                   }
                 }}
               >
-                {label}
+                {labelObj.label}
                 {isPendingRemoval && (
                   <X className="h-3 w-3 ml-0.5" />
                 )}
