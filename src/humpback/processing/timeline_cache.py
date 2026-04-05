@@ -131,6 +131,25 @@ class TimelineTileCache:
         path = self.cache_dir / job_id / ".prepare_plan.json"
         self._write_atomic(path, json.dumps(plan))
 
+    def get_gain_profile(self, job_id: str) -> dict | None:
+        """Return the cached gain normalization profile, or None if not computed."""
+        path = self.cache_dir / job_id / ".gain_profile.json"
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data
+
+    def put_gain_profile(self, job_id: str, profile: dict) -> None:
+        """Store the gain normalization profile for a job."""
+        self._touch_job(job_id)
+        path = self.cache_dir / job_id / ".gain_profile.json"
+        self._write_atomic(path, json.dumps(profile))
+
     def get_audio_manifest(self, job_id: str) -> dict | None:
         """Return a persisted audio manifest for a job, if present."""
         path = self.cache_dir / job_id / ".audio_manifest.json"

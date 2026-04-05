@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.processing.audio_encoding import encode_mp3, encode_wav
+from humpback.processing.gain_normalization import GainProfile, apply_gain_profile
 from humpback.processing.timeline_cache import TimelinePrepareLock, TimelineTileCache
 from humpback.processing.timeline_tiles import (
     ZOOM_LEVELS,
@@ -143,6 +144,74 @@ def _resolve_tile_audio(
     return audio, sr
 
 
+def _compute_job_gain_profile(
+    *,
+    job,
+    settings,
+    cache: TimelineTileCache,
+) -> "GainProfile":
+    """Compute (or retrieve cached) gain normalization profile for a job."""
+    from humpback.processing.gain_normalization import compute_gain_profile
+    from humpback.processing.timeline_audio import resolve_timeline_audio
+
+    cached = cache.get_gain_profile(job.id)
+    if cached is not None:
+        return GainProfile.from_dict(cached)
+
+    job_start = job.start_timestamp or 0.0
+    job_end = job.end_timestamp or 0.0
+    if job_end <= job_start:
+        profile = GainProfile()
+        cache.put_gain_profile(job.id, profile.to_dict())
+        return profile
+
+    def audio_resolver(
+        start_epoch: float, duration_sec: float, target_sr: int
+    ) -> np.ndarray:
+        return resolve_timeline_audio(
+            hydrophone_id=job.hydrophone_id or "",
+            local_cache_path=job.local_cache_path or settings.s3_cache_path or "",
+            job_start_timestamp=job_start,
+            job_end_timestamp=job_end,
+            start_sec=start_epoch,
+            duration_sec=duration_sec,
+            target_sr=target_sr,
+            noaa_cache_path=settings.noaa_cache_path,
+            timeline_cache=cache,
+            job_id=job.id,
+            manifest_cache_items=settings.timeline_manifest_memory_cache_items,
+            pcm_cache_max_bytes=_pcm_cache_bytes_limit(settings),
+        )
+
+    profile = compute_gain_profile(
+        audio_resolver=audio_resolver,
+        job_start=job_start,
+        job_end=job_end,
+        threshold_db=settings.gain_norm_threshold_db,
+        min_duration_sec=settings.gain_norm_min_duration_sec,
+    )
+    cache.put_gain_profile(job.id, profile.to_dict())
+    logger.info(
+        "Computed gain profile for job %s: %d segment(s)",
+        job.id,
+        len(profile.segments),
+    )
+    return profile
+
+
+def _apply_gain_correction(
+    audio: np.ndarray,
+    sample_rate: int,
+    start_epoch: float,
+    gain_profile: "GainProfile | None",
+) -> np.ndarray:
+    """Apply gain correction if a profile is available."""
+    if gain_profile is None or not gain_profile.segments:
+        return audio
+
+    return apply_gain_profile(audio, sample_rate, start_epoch, gain_profile)
+
+
 def _render_tile_sync(
     *,
     job,
@@ -151,6 +220,7 @@ def _render_tile_sync(
     settings,
     cache: TimelineTileCache,
     ref_db: float | None = None,
+    gain_profile: "GainProfile | None" = None,
 ) -> bytes:
     """Render a spectrogram tile (CPU-bound, runs in thread)."""
     audio, sr = _resolve_tile_audio(
@@ -160,6 +230,12 @@ def _render_tile_sync(
         settings=settings,
         cache=cache,
     )
+
+    # Apply gain normalization before rendering
+    start_epoch = tile_time_range(
+        zoom_level, tile_index=tile_index, job_start_timestamp=job.start_timestamp
+    )[0]
+    audio = _apply_gain_correction(audio, sr, start_epoch, gain_profile)
 
     # Adapt n_fft so it does not exceed the audio length
     n_fft = min(2048, len(audio))
@@ -331,13 +407,15 @@ def _compute_job_ref_db(
     job,
     settings,
     cache: TimelineTileCache,
+    gain_profile: "GainProfile | None" = None,
 ) -> float:
     """Sample tiles across the job to compute a per-job reference dB level.
 
     Returns the cached value if already computed, otherwise samples up to
     _STATS_SAMPLE_COUNT tiles and takes the max of per-sample max_db values
     as ref_db.  Tries multiple zoom levels in priority order, skipping
-    silence tiles.
+    silence tiles.  When a gain_profile is provided, sampled audio is
+    gain-corrected before power stats are computed.
     """
     from humpback.processing.timeline_tiles import compute_power_db_stats
 
@@ -373,6 +451,13 @@ def _compute_job_ref_db(
                     settings=settings,
                     cache=cache,
                 )
+                # Apply gain correction before computing stats
+                start_epoch = tile_time_range(
+                    stats_zoom,
+                    tile_index=idx,
+                    job_start_timestamp=job.start_timestamp,
+                )[0]
+                audio = _apply_gain_correction(audio, sr, start_epoch, gain_profile)
                 # Skip silence / zero-audio tiles
                 if float(np.max(np.abs(audio))) < 1e-10:
                     continue
@@ -425,8 +510,13 @@ def _prepare_tiles_sync(
     if duration <= 0:
         return 0
 
-    # Pass 1: compute per-job reference dB level
-    ref_db = _compute_job_ref_db(job=job, settings=settings, cache=cache)
+    # Pass 0: compute gain normalization profile (before ref_db)
+    gain_profile = _compute_job_gain_profile(job=job, settings=settings, cache=cache)
+
+    # Pass 1: compute per-job reference dB level (with gain correction applied)
+    ref_db = _compute_job_ref_db(
+        job=job, settings=settings, cache=cache, gain_profile=gain_profile
+    )
 
     prepare_targets = targets or _build_full_prepare_targets(job)
 
@@ -453,6 +543,7 @@ def _prepare_tiles_sync(
                 settings=settings,
                 cache=cache,
                 ref_db=ref_db,
+                gain_profile=gain_profile,
             )
             return 1
         except Exception:
@@ -596,11 +687,18 @@ async def get_tile(
     if cached is not None:
         return Response(content=cached, media_type="image/png")
 
-    # Use per-job ref_db; compute it on-demand if /prepare hasn't run yet
+    # Compute gain profile + ref_db on-demand if /prepare hasn't run yet
+    gain_profile = await asyncio.to_thread(
+        _compute_job_gain_profile, job=job, settings=settings, cache=cache
+    )
     ref_db = cache.get_ref_db(job.id)
     if ref_db is None:
         ref_db = await asyncio.to_thread(
-            _compute_job_ref_db, job=job, settings=settings, cache=cache
+            _compute_job_ref_db,
+            job=job,
+            settings=settings,
+            cache=cache,
+            gain_profile=gain_profile,
         )
 
     # Render on miss (CPU-bound -> thread)
@@ -612,6 +710,7 @@ async def get_tile(
         settings=settings,
         cache=cache,
         ref_db=ref_db,
+        gain_profile=gain_profile,
     )
 
     neighbor_targets = _neighbor_prepare_targets(
@@ -773,6 +872,12 @@ async def get_audio(
         manifest_cache_items=settings.timeline_manifest_memory_cache_items,
         pcm_cache_max_bytes=_pcm_cache_bytes_limit(settings),
     )
+
+    # Apply gain normalization if a profile has been computed
+    gain_profile_data = cache.get_gain_profile(job.id)
+    if gain_profile_data is not None:
+        profile = GainProfile.from_dict(gain_profile_data)
+        audio = apply_gain_profile(audio, 32000, start_sec, profile)
 
     if format == "mp3":
         data = encode_mp3(audio, 32000)

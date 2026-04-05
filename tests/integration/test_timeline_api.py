@@ -485,9 +485,14 @@ def test_prepare_tiles_sync_passes_shared_ref_db_to_all_render_calls(
     seen_ref_db: list[float | None] = []
 
     monkeypatch.setattr(timeline_router, "_compute_job_ref_db", lambda **kwargs: -42.5)
+    monkeypatch.setattr(
+        timeline_router,
+        "_compute_job_gain_profile",
+        lambda **kwargs: timeline_router.GainProfile(),
+    )
 
     def fake_render_tile_sync(
-        *, job, zoom_level, tile_index, settings, cache, ref_db=None
+        *, job, zoom_level, tile_index, settings, cache, ref_db=None, gain_profile=None
     ):
         seen_ref_db.append(ref_db)
         cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
@@ -516,9 +521,14 @@ async def test_tile_endpoint_miss_launches_neighbor_prepare(
     launched: dict[str, object] = {}
 
     monkeypatch.setattr(timeline_router, "_compute_job_ref_db", lambda **kwargs: -55.0)
+    monkeypatch.setattr(
+        timeline_router,
+        "_compute_job_gain_profile",
+        lambda **kwargs: timeline_router.GainProfile(),
+    )
 
     def fake_render_tile_sync(
-        *, job, zoom_level, tile_index, settings, cache, ref_db=None
+        *, job, zoom_level, tile_index, settings, cache, ref_db=None, gain_profile=None
     ):
         cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
         return b"\x89PNG"
