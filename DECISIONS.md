@@ -545,3 +545,9 @@ Raw scores are used (no smoothing) to preserve the true dip depth between vocali
 - Requires Alembic migration 038 (`window_selection`, `min_prominence` columns on `detection_jobs`)
 - NMS remains the default; prominence mode is opt-in via UI toggle or API parameter
 - Side-by-side comparison is possible by running the same time range with each mode
+
+**Update (2026-04-04): Recursive gap-filling**
+
+Prominence correctly rejects peaks with low prominence, but this misses strong vocalizations in flat score regions between adjacent equal-strength detections (e.g., confidence 0.988 with only 0.05 logit prominence). The score curve is genuinely flat — no score transformation helps.
+
+After prominence peak selection, a recursive gap-filling pass scans for gaps > 5.0 seconds between consecutive selected peaks (and from event edges to the nearest peak). For each gap, the candidate closest to the gap midpoint (with score as tiebreaker) above `min_score` is emitted, splitting the gap into two sub-gaps that are checked recursively. Midpoint-first placement prevents fills from clustering next to existing peaks where scores are naturally highest, producing evenly spaced coverage instead. The 5.0-second threshold (matching `window_size_seconds`) was chosen after testing showed that 3.0 seconds produced 2-second spacing between windows — 60% overlap with minimal new coverage. This is always-on in prominence mode; the threshold is hardcoded (not an API parameter).

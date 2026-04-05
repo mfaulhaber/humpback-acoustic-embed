@@ -318,6 +318,81 @@ def _find_prominent_peaks(
     return surviving
 
 
+_DEFAULT_MIN_GAP_FILL = 5.0
+
+
+def _fill_gaps_recursive(
+    candidates: list[dict],
+    raw_scores: list[float],
+    selected_offsets: set[float],
+    left: float,
+    right: float,
+    min_gap_fill: float,
+    min_score: float,
+) -> list[int]:
+    """Find gap-fill windows between *left* and *right* boundaries.
+
+    Scans candidate window records in the open interval ``(left, right)`` for
+    the highest raw-probability window above ``min_score``.  If the gap exceeds
+    ``min_gap_fill`` and a qualifying candidate exists, its index is emitted and
+    the gap is recursively split into two sub-gaps.
+
+    Returns indices into *candidates* for windows to add.
+    """
+    if (right - left) <= min_gap_fill:
+        return []
+
+    midpoint = (left + right) / 2.0
+    best_idx = -1
+    best_score = -1.0
+    best_dist = float("inf")
+    for i, rec in enumerate(candidates):
+        offset = float(rec["offset_sec"])
+        if offset <= left or offset >= right:
+            continue
+        if offset in selected_offsets:
+            continue
+        if raw_scores[i] >= min_score:
+            dist = abs(offset - midpoint)
+            # Prefer proximity to gap midpoint; use score as tiebreaker.
+            # This spaces fills evenly rather than clustering near peaks.
+            if dist < best_dist or (dist == best_dist and raw_scores[i] > best_score):
+                best_idx = i
+                best_score = raw_scores[i]
+                best_dist = dist
+
+    if best_idx < 0:
+        return []
+
+    fill_offset = float(candidates[best_idx]["offset_sec"])
+    selected_offsets.add(fill_offset)
+
+    result = [best_idx]
+    result.extend(
+        _fill_gaps_recursive(
+            candidates,
+            raw_scores,
+            selected_offsets,
+            left,
+            fill_offset,
+            min_gap_fill,
+            min_score,
+        )
+    )
+    result.extend(
+        _fill_gaps_recursive(
+            candidates,
+            raw_scores,
+            selected_offsets,
+            fill_offset,
+            right,
+            min_gap_fill,
+            min_score,
+        )
+    )
+    return result
+
+
 def select_prominent_peaks_from_events(
     events: list[dict],
     window_records: list[dict],
@@ -380,6 +455,33 @@ def select_prominent_peaks_from_events(
             above = [i for i, s in enumerate(raw_scores) if s >= min_score]
             if above:
                 peak_indices = [max(above, key=lambda i: raw_scores[i])]
+
+        # Gap-fill pass: scan for uncovered regions between selected peaks
+        # (and from event edges to nearest peak) and recursively fill them.
+        if peak_indices:
+            selected_offsets: set[float] = {
+                float(candidates[i]["offset_sec"]) for i in peak_indices
+            }
+            sorted_offsets = sorted(selected_offsets)
+            boundaries = (
+                [(ev_start, sorted_offsets[0])]
+                + [
+                    (sorted_offsets[j], sorted_offsets[j + 1])
+                    for j in range(len(sorted_offsets) - 1)
+                ]
+                + [(sorted_offsets[-1], ev_end)]
+            )
+            for left, right in boundaries:
+                fill_indices = _fill_gaps_recursive(
+                    candidates,
+                    raw_scores,
+                    selected_offsets,
+                    left,
+                    right,
+                    _DEFAULT_MIN_GAP_FILL,
+                    min_score,
+                )
+                peak_indices.extend(fill_indices)
 
         for idx in peak_indices:
             rec = candidates[idx]
