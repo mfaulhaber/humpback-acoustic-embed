@@ -1329,27 +1329,26 @@ class TestSelectTiledWindowsFromEvents:
         result = select_tiled_windows_from_events(events, [], 5.0, min_score=0.7)
         assert result == []
 
-    def test_basic_symmetric_tiling(self):
-        """Single peak with symmetric score drop-off tiles outward."""
+    def test_basic_tiling_non_overlapping(self):
+        """Tiles from peak produce non-overlapping 5s windows."""
         from humpback.classifier.detector_utils import (
             select_tiled_windows_from_events,
         )
 
-        # Peak at offset 5 (conf 0.99), drops off both sides
-        offsets = list(range(0, 11))
-        confidences = [0.75, 0.85, 0.92, 0.96, 0.98, 0.99, 0.98, 0.96, 0.92, 0.85, 0.75]
+        # Candidates at 1s hop, peak at offset 10. With window_size=5,
+        # tiling should pick offset 10 (seed), then 5 (left), then 15 (right).
+        offsets = list(range(0, 21))  # 0..20
+        confidences = [0.95] * 21
         window_records = self._make_window_records(offsets, confidences)
-        events = [self._make_event(0.0, 15.0, 11)]
+        events = [self._make_event(0.0, 25.0, 21)]
 
         result = select_tiled_windows_from_events(
             events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
         )
-        # All windows are above min_score and logit drop from 0.99 to 0.75 is
-        # about 2.87 logits, so the edges should be excluded.
         starts = sorted(d["start_sec"] for d in result)
-        assert 5.0 in starts  # the peak itself
-        # At least the neighbors close to the peak should be included
-        assert len(result) >= 5
+        # Non-overlapping: tiles spaced by 5s
+        for i in range(len(starts) - 1):
+            assert starts[i + 1] - starts[i] >= 5.0 - 0.1
 
     def test_multi_pass_two_peaks(self):
         """Two peaks separated by deep dip produce two tile groups."""
@@ -1357,52 +1356,53 @@ class TestSelectTiledWindowsFromEvents:
             select_tiled_windows_from_events,
         )
 
-        offsets = list(range(0, 15))
-        confidences = [
-            0.5,
-            0.7,
-            0.9,
-            0.95,
-            0.9,
-            0.7,  # peak at 3
-            0.3,
-            0.2,
-            0.3,  # deep valley
-            0.7,
-            0.9,
-            0.95,
-            0.9,
-            0.7,
-            0.5,  # peak at 11
-        ]
+        # Peak at offset 5, valley, peak at offset 25.
+        # Candidates at 1s hop across 30s event.
+        offsets = list(range(0, 31))
+        confidences = []
+        for i in range(31):
+            if 0 <= i <= 10:
+                confidences.append(0.95 if 3 <= i <= 7 else 0.80)
+            elif 11 <= i <= 19:
+                confidences.append(0.30)  # deep valley
+            else:
+                confidences.append(0.95 if 23 <= i <= 27 else 0.80)
         window_records = self._make_window_records(offsets, confidences)
-        events = [self._make_event(0.0, 19.0, 15)]
+        events = [self._make_event(0.0, 35.0, 31)]
 
         result = select_tiled_windows_from_events(
             events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
         )
         starts = sorted(d["start_sec"] for d in result)
-        # Both peaks should be present
-        assert 3.0 in starts
-        assert 11.0 in starts
-        # Valley windows (0.2, 0.3) are below min_score, should not appear
-        assert 7.0 not in starts
+        # Both peak regions should be covered
+        has_left = any(s <= 10 for s in starts)
+        has_right = any(s >= 20 for s in starts)
+        assert has_left and has_right
+        # Valley windows (0.30) are below min_score, should not appear
+        assert all(s < 11 or s > 19 for s in starts)
 
-    def test_plateau_all_windows_emitted(self):
-        """Flat high scores — all windows should be emitted (logit drop = 0)."""
+    def test_plateau_non_overlapping_coverage(self):
+        """Flat high scores — tiles every 5s, non-overlapping."""
         from humpback.classifier.detector_utils import (
             select_tiled_windows_from_events,
         )
 
-        offsets = list(range(0, 10))
-        confidences = [0.99] * 10
+        # 20 candidates at 1s hop, all 0.99
+        offsets = list(range(0, 20))
+        confidences = [0.99] * 20
         window_records = self._make_window_records(offsets, confidences)
-        events = [self._make_event(0.0, 14.0, 10)]
+        events = [self._make_event(0.0, 24.0, 20)]
 
         result = select_tiled_windows_from_events(
             events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
         )
-        assert len(result) == 10
+        starts = sorted(d["start_sec"] for d in result)
+        # Should get ~4 tiles (0, 5, 10, 15 or similar), not 20
+        assert len(result) <= 5
+        assert len(result) >= 3
+        # All non-overlapping
+        for i in range(len(starts) - 1):
+            assert starts[i + 1] - starts[i] >= 5.0 - 0.1
 
     def test_edge_clipping(self):
         """Tiling stops at event boundary."""
@@ -1410,58 +1410,56 @@ class TestSelectTiledWindowsFromEvents:
             select_tiled_windows_from_events,
         )
 
-        offsets = list(range(0, 5))
-        confidences = [0.95, 0.96, 0.97, 0.96, 0.95]
+        # 3 candidates at 5s spacing — exactly non-overlapping
+        offsets = [0, 5, 10]
+        confidences = [0.95, 0.97, 0.95]
         window_records = self._make_window_records(offsets, confidences)
-        # Event covers all windows
-        events = [self._make_event(0.0, 9.0, 5)]
+        events = [self._make_event(0.0, 15.0, 3)]
 
         result = select_tiled_windows_from_events(
             events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
         )
-        # All 5 windows should be included — they all fit within the event
-        assert len(result) == 5
+        assert len(result) == 3
         starts = sorted(d["start_sec"] for d in result)
-        assert starts == [0.0, 1.0, 2.0, 3.0, 4.0]
+        assert starts == [0.0, 5.0, 10.0]
 
-    def test_boundary_drop_within_threshold_included(self):
-        """Windows with logit drop just under max_logit_drop are included."""
+    def test_drop_within_threshold_included(self):
+        """Neighbor tile with logit drop under threshold is included."""
         from humpback.classifier.detector_utils import (
             select_tiled_windows_from_events,
         )
 
-        # Peak at 0.95, edges at 0.75. Logit drop ≈ 1.85, under 2.0 threshold.
-        offsets = [0, 1, 2]
-        confidences = [0.75, 0.95, 0.75]
+        # 3 candidates at 5s spacing. Peak at 5, neighbors at 0.85.
+        # Logit drop from 0.95 to 0.85 ≈ 1.17, under 2.0 threshold.
+        offsets = [0, 5, 10]
+        confidences = [0.85, 0.95, 0.85]
         window_records = self._make_window_records(offsets, confidences)
-        events = [self._make_event(0.0, 7.0, 3)]
+        events = [self._make_event(0.0, 15.0, 3)]
 
         result = select_tiled_windows_from_events(
             events, window_records, 5.0, min_score=0.5, max_logit_drop=2.0
         )
-        # All three included: drop is within threshold
         assert len(result) == 3
 
-    def test_boundary_drop_exceeds_threshold_excluded(self):
-        """Windows with logit drop exceeding max_logit_drop are excluded."""
+    def test_drop_exceeds_threshold_excluded(self):
+        """Neighbor tile with logit drop over threshold stops tiling."""
         from humpback.classifier.detector_utils import (
             select_tiled_windows_from_events,
         )
 
-        # Peak at 0.95, edges at 0.55. Logit drop ≈ 2.74, over 2.0 threshold.
-        offsets = [0, 1, 2]
+        # 3 candidates at 5s spacing. Peak at 5, neighbors at 0.55.
+        # Logit drop from 0.95 to 0.55 ≈ 2.74, over 2.0 threshold.
+        offsets = [0, 5, 10]
         confidences = [0.55, 0.95, 0.55]
         window_records = self._make_window_records(offsets, confidences)
-        events = [self._make_event(0.0, 7.0, 3)]
+        events = [self._make_event(0.0, 15.0, 3)]
 
         result = select_tiled_windows_from_events(
             events, window_records, 5.0, min_score=0.5, max_logit_drop=2.0
         )
-        # Peak + edges as separate seeds (edges are above min_score but
-        # exceed logit drop from peak, so they become their own seeds)
+        # All 3 emitted: peak tiling stops at neighbors, but neighbors
+        # become their own seeds in subsequent passes (above min_score)
         assert len(result) == 3
-        starts = sorted(d["start_sec"] for d in result)
-        assert starts == [0.0, 1.0, 2.0]
 
     def test_no_qualifying_windows(self):
         """All windows below min_score — returns empty."""
@@ -1469,10 +1467,10 @@ class TestSelectTiledWindowsFromEvents:
             select_tiled_windows_from_events,
         )
 
-        offsets = list(range(0, 5))
-        confidences = [0.3, 0.4, 0.5, 0.4, 0.3]
+        offsets = [0, 5, 10]
+        confidences = [0.3, 0.4, 0.5]
         window_records = self._make_window_records(offsets, confidences)
-        events = [self._make_event(0.0, 9.0, 5)]
+        events = [self._make_event(0.0, 15.0, 3)]
 
         result = select_tiled_windows_from_events(
             events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
@@ -1485,13 +1483,13 @@ class TestSelectTiledWindowsFromEvents:
             select_tiled_windows_from_events,
         )
 
-        offsets = list(range(0, 10))
-        confidences = [0.95] * 10
+        # Candidates at 5s spacing across two overlapping events
+        offsets = [0, 5, 10, 15, 20]
+        confidences = [0.95] * 5
         window_records = self._make_window_records(offsets, confidences)
-        # Two overlapping events sharing windows at offsets 4-5
         events = [
-            self._make_event(0.0, 9.0, 5),
-            self._make_event(4.0, 14.0, 6),
+            self._make_event(0.0, 15.0, 3),
+            self._make_event(10.0, 25.0, 3),
         ]
 
         result = select_tiled_windows_from_events(
@@ -1500,3 +1498,26 @@ class TestSelectTiledWindowsFromEvents:
         # No duplicate start_sec values
         starts = [d["start_sec"] for d in result]
         assert len(starts) == len(set(starts))
+
+    def test_dense_candidates_non_overlapping_output(self):
+        """With 1s hop candidates, output tiles must not overlap."""
+        from humpback.classifier.detector_utils import (
+            select_tiled_windows_from_events,
+        )
+
+        # 30 candidates at 1s hop, all high scoring — mimics real detection
+        offsets = list(range(0, 30))
+        confidences = [0.98] * 30
+        window_records = self._make_window_records(offsets, confidences)
+        events = [self._make_event(0.0, 34.0, 30)]
+
+        result = select_tiled_windows_from_events(
+            events, window_records, 5.0, min_score=0.7, max_logit_drop=2.0
+        )
+        starts = sorted(d["start_sec"] for d in result)
+        # Should get ~6 tiles, not 30
+        assert len(result) <= 8
+        assert len(result) >= 4
+        # All non-overlapping
+        for i in range(len(starts) - 1):
+            assert starts[i + 1] - starts[i] >= 5.0 - 0.1

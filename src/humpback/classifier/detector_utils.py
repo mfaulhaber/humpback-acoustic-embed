@@ -523,6 +523,22 @@ def select_prominent_peaks_from_events(
 _DEFAULT_MAX_LOGIT_DROP = 2.0
 
 
+def _find_nearest_candidate(
+    candidates: list[dict],
+    target_offset: float,
+    uncovered: set[int],
+) -> int | None:
+    """Return the index in *candidates* closest to *target_offset* among *uncovered*."""
+    best_idx: int | None = None
+    best_dist = float("inf")
+    for i in uncovered:
+        dist = abs(float(candidates[i]["offset_sec"]) - target_offset)
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = i
+    return best_idx
+
+
 def select_tiled_windows_from_events(
     events: list[dict],
     window_records: list[dict],
@@ -530,14 +546,16 @@ def select_tiled_windows_from_events(
     min_score: float,
     max_logit_drop: float = _DEFAULT_MAX_LOGIT_DROP,
 ) -> list[dict]:
-    """Select detection windows by tiling outward from peaks.
+    """Select non-overlapping detection windows by tiling outward from peaks.
 
     For each merged event, finds the highest-scoring uncovered window (seed),
-    then tiles left and right through consecutive candidate windows until the
-    logit-space drop from the seed exceeds ``max_logit_drop``.  Repeats with the
-    next highest uncovered window until all qualifying windows are covered or
-    claimed.
+    then tiles left and right in ``window_size_seconds`` steps — each new tile
+    is the candidate closest to the next non-overlapping position.  Tiling stops
+    when the logit-space drop from the seed exceeds ``max_logit_drop`` or no
+    uncovered candidate exists near the target offset.  Repeats with the next
+    highest uncovered window until all qualifying windows are covered or claimed.
 
+    Output windows are non-overlapping (spaced by ``window_size_seconds``).
     Unlike NMS, this produces contiguous coverage of high-scoring regions.
     Unlike prominence, it does not require score dips to identify boundaries —
     flat plateaus are fully covered.
@@ -575,27 +593,47 @@ def select_tiled_windows_from_events(
             # Seed: highest logit among uncovered.
             seed = max(uncovered, key=lambda i: logit_scores[i])
             seed_logit = logit_scores[seed]
+            seed_offset = float(candidates[seed]["offset_sec"])
 
             tiled: list[int] = [seed]
             uncovered.discard(seed)
 
-            # Tile left.
-            j = seed - 1
-            while j >= 0 and j in uncovered:
+            # Tile left in window_size_seconds steps.
+            target = seed_offset - window_size_seconds
+            while target >= ev_start - 1e-6:
+                j = _find_nearest_candidate(candidates, target, uncovered)
+                if j is None:
+                    break
                 if seed_logit - logit_scores[j] > max_logit_drop:
                     break
                 tiled.append(j)
                 uncovered.discard(j)
-                j -= 1
+                target = float(candidates[j]["offset_sec"]) - window_size_seconds
 
-            # Tile right.
-            j = seed + 1
-            while j < len(candidates) and j in uncovered:
+            # Tile right in window_size_seconds steps.
+            target = seed_offset + window_size_seconds
+            while target <= ev_end - window_size_seconds + 1e-6:
+                j = _find_nearest_candidate(candidates, target, uncovered)
+                if j is None:
+                    break
                 if seed_logit - logit_scores[j] > max_logit_drop:
                     break
                 tiled.append(j)
                 uncovered.discard(j)
-                j += 1
+                target = float(candidates[j]["offset_sec"]) + window_size_seconds
+
+            # Mark all candidates overlapped by placed tiles as covered
+            # so they don't become seeds in subsequent passes.
+            for idx in tiled:
+                tile_start = float(candidates[idx]["offset_sec"])
+                tile_end = tile_start + window_size_seconds
+                to_remove = [
+                    k
+                    for k in uncovered
+                    if float(candidates[k]["offset_sec"]) >= tile_start - 1e-6
+                    and float(candidates[k]["offset_sec"]) < tile_end - 1e-6
+                ]
+                uncovered -= set(to_remove)
 
             for idx in tiled:
                 rec = candidates[idx]
