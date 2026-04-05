@@ -20,6 +20,7 @@ from humpback.schemas.vocalization import (
     TrainingDatasetExtendRequest,
     TrainingDatasetLabelCreate,
     TrainingDatasetLabelOut,
+    TrainingDatasetRowLabelOut,
     TrainingDatasetRowOut,
     VocalizationInferenceJobCreate,
     VocalizationInferenceJobOut,
@@ -498,10 +499,11 @@ async def get_training_dataset_rows(
     session: SessionDep,
     type: str | None = Query(None),
     group: str | None = Query(None),
+    source_type: str | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
 ):
-    """Paginated rows with labels, filterable by type and positive/negative group."""
+    """Paginated rows with labels, filterable by type, group, and source_type."""
 
     import pyarrow.parquet as pq
 
@@ -537,18 +539,27 @@ async def get_training_dataset_rows(
     # Build row dicts
     rows = []
     for i in range(table.num_rows):
+        # Filter by source_type (before label filters)
+        if source_type is not None:
+            if table.column("source_type")[i].as_py() != source_type:
+                continue
+
         row_idx = int(table.column("row_index")[i].as_py())
-        row_labels = labels_by_row.get(row_idx, [])
+        row_label_names = labels_by_row.get(row_idx, [])
 
         # Filter by type and group
         if type is not None and group is not None:
-            has_type = type in row_labels
+            has_type = type in row_label_names
             if group == "positive" and not has_type:
                 continue
             if group == "negative" and has_type:
                 continue
 
         conf_val = table.column("confidence")[i].as_py()
+        row_label_objs = [
+            TrainingDatasetRowLabelOut(id=lbl.id, label=lbl.label)
+            for lbl in label_objs_by_row.get(row_idx, [])
+        ]
         rows.append(
             TrainingDatasetRowOut(
                 row_index=row_idx,
@@ -558,7 +569,7 @@ async def get_training_dataset_rows(
                 source_type=table.column("source_type")[i].as_py(),
                 source_id=table.column("source_id")[i].as_py(),
                 confidence=float(conf_val) if conf_val is not None else None,
-                labels=row_labels,
+                labels=row_label_objs,
             )
         )
 
@@ -813,6 +824,11 @@ async def create_training_dataset_label(
         )
     )
     existing = existing_result.scalars().all()
+
+    # Skip if this exact label already exists on this row
+    if any(lbl.label == body.label for lbl in existing):
+        dup = next(lbl for lbl in existing if lbl.label == body.label)
+        return TrainingDatasetLabelOut.model_validate(dup)
 
     if body.label == "(Negative)":
         # Remove all type labels for this row

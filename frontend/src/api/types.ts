@@ -1029,6 +1029,11 @@ export interface TrainingDataset {
   updated_at: string;
 }
 
+export interface TrainingDatasetRowLabel {
+  id: string;
+  label: string;
+}
+
 export interface TrainingDatasetRow {
   row_index: number;
   filename: string;
@@ -1037,7 +1042,7 @@ export interface TrainingDatasetRow {
   source_type: string;
   source_id: string;
   confidence: number | null;
-  labels: string[];
+  labels: TrainingDatasetRowLabel[];
 }
 
 export interface TrainingDatasetRowsResponse {

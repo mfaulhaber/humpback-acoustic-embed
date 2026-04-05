@@ -138,6 +138,11 @@ class TrainingDatasetOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TrainingDatasetRowLabelOut(BaseModel):
+    id: str
+    label: str
+
+
 class TrainingDatasetRowOut(BaseModel):
     row_index: int
     filename: str
@@ -146,7 +151,7 @@ class TrainingDatasetRowOut(BaseModel):
     source_type: str
     source_id: str
     confidence: float | None = None
-    labels: list[str]
+    labels: list[TrainingDatasetRowLabelOut]
 
 
 class TrainingDatasetLabelCreate(BaseModel):
