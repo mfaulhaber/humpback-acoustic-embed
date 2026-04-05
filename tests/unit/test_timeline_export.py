@@ -246,10 +246,43 @@ async def test_export_job_not_complete(session, settings, engine, tmp_path, mode
         await export_timeline(job_id, tmp_path, session, settings)
 
 
-async def test_export_tiles_not_prepared(completed_job, session, settings, tmp_path):
-    """Export fails when tiles haven't been rendered."""
-    with pytest.raises(ExportError, match="not fully rendered"):
-        await export_timeline(completed_job, tmp_path, session, settings)
+async def test_export_auto_prepares_tiles(
+    completed_job, session, settings, tmp_path, job_duration
+):
+    """Export auto-prepares tiles when they are missing."""
+    output_dir = tmp_path / "export_output"
+    fake_audio = np.zeros(int(32000 * 300), dtype=np.float32)
+
+    # _prepare_tiles_sync is called to render tiles; we mock it to populate the cache
+    def fake_prepare(*, job, settings, cache):
+        for zoom in ZOOM_LEVELS:
+            n = tile_count(zoom, job_duration_sec=job_duration)
+            zoom_dir = cache.cache_dir / job.id / zoom
+            zoom_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(n):
+                (zoom_dir / f"tile_{i:04d}.png").write_bytes(
+                    b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+                )
+        return 0
+
+    with (
+        patch(
+            "humpback.api.routers.timeline._prepare_tiles_sync",
+            side_effect=fake_prepare,
+        ),
+        patch(
+            "humpback.processing.timeline_audio.resolve_timeline_audio",
+            return_value=fake_audio,
+        ),
+        patch(
+            "humpback.processing.audio_encoding.encode_mp3",
+            return_value=b"fake-mp3-data",
+        ),
+    ):
+        result = await export_timeline(completed_job, output_dir, session, settings)
+
+    assert result.tile_count > 0
+    assert Path(result.output_path, "manifest.json").exists()
 
 
 async def test_export_full_pipeline(

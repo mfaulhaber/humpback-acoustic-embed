@@ -103,17 +103,42 @@ async def export_timeline(
         memory_cache_max_items=0,  # No memory cache needed for export
     )
 
-    # Check all tiles are rendered
+    # Check all tiles are rendered; prepare if needed
     expected_tiles = 0
+    needs_prepare = False
     for zoom in ZOOM_LEVELS:
         expected = tile_count(zoom, job_duration_sec=job_duration)
         actual = cache.tile_count_for_zoom(job_id, zoom)
         if actual < expected:
-            raise ExportError(
-                f"Tiles not fully rendered at {zoom}: {actual}/{expected}. "
-                "Run timeline prepare with scope=full first."
-            )
+            needs_prepare = True
         expected_tiles += expected
+
+    if needs_prepare:
+        if progress_callback:
+            progress_callback("prepare", 0, expected_tiles)
+
+        import asyncio
+
+        from humpback.api.routers.timeline import _prepare_tiles_sync
+
+        await asyncio.to_thread(
+            _prepare_tiles_sync,
+            job=job,
+            settings=settings,
+            cache=cache,
+        )
+
+        # Verify all tiles now exist
+        for zoom in ZOOM_LEVELS:
+            expected = tile_count(zoom, job_duration_sec=job_duration)
+            actual = cache.tile_count_for_zoom(job_id, zoom)
+            if actual < expected:
+                raise ExportError(
+                    f"Tile preparation incomplete at {zoom}: {actual}/{expected}"
+                )
+
+        if progress_callback:
+            progress_callback("prepare", expected_tiles, expected_tiles)
 
     # ---- 2. Create output directory ----
     job_dir = output_dir / job_id
