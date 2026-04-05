@@ -16,6 +16,7 @@ from humpback.models.processing import EmbeddingSet
 from humpback.models.training_dataset import TrainingDataset, TrainingDatasetLabel
 from humpback.storage import (
     detection_embeddings_path,
+    detection_row_store_path,
     ensure_dir,
     training_dataset_dir,
     training_dataset_parquet_path,
@@ -160,6 +161,14 @@ async def extend_training_dataset(
 # ---- Internal helpers ----
 
 
+def _filename_from_utc(epoch: float) -> str:
+    """Generate a synthetic filename from an absolute UTC epoch timestamp."""
+    from datetime import datetime, timezone
+
+    dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+    return dt.strftime("%Y%m%dT%H%M%SZ.wav")
+
+
 def _write_parquet(rows: list[dict], path: Path) -> None:
     table = _rows_to_table(rows)
     pq.write_table(table, str(path))
@@ -283,6 +292,25 @@ async def _collect_from_sources(
                 labels_by_row_id[vl.row_id] = set()
             labels_by_row_id[vl.row_id].add(vl.label)
 
+        # Build row_id -> (filename, start_sec, end_sec) from row store
+        row_meta: dict[str, tuple[str, float, float]] = {}
+        rs_path = detection_row_store_path(storage_root, det_job_id)
+        if rs_path.exists():
+            rs_table = pq.read_table(
+                str(rs_path), columns=["row_id", "start_utc", "end_utc"]
+            )
+            for j in range(rs_table.num_rows):
+                rs_rid = rs_table.column("row_id")[j].as_py()
+                s_utc = float(rs_table.column("start_utc")[j].as_py())
+                e_utc = float(rs_table.column("end_utc")[j].as_py())
+                fname = _filename_from_utc(s_utc)
+                row_meta[rs_rid] = (fname, 0.0, e_utc - s_utc)
+        else:
+            logger.warning(
+                "No row store for detection job %s, metadata will be empty",
+                det_job_id,
+            )
+
         table = pq.read_table(str(emb_path))
         row_ids = table.column("row_id").to_pylist()
         embeddings_col = table.column("embedding")
@@ -309,6 +337,7 @@ async def _collect_from_sources(
             confidence = (
                 float(conf_col[i]) if conf_col and conf_col[i] is not None else None
             )
+            fname, s_sec, e_sec = row_meta.get(rid, ("", 0.0, 0.0))
 
             rows.append(
                 {
@@ -316,9 +345,9 @@ async def _collect_from_sources(
                     "embedding": vec,
                     "source_type": "detection_job",
                     "source_id": det_job_id,
-                    "filename": "",
-                    "start_sec": 0.0,
-                    "end_sec": 0.0,
+                    "filename": fname,
+                    "start_sec": s_sec,
+                    "end_sec": e_sec,
                     "confidence": confidence,
                 }
             )
