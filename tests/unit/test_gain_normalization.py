@@ -191,6 +191,104 @@ def test_multiple_gain_regions():
     assert len(profile.segments) == 2
 
 
+def test_long_job_uses_sampling_path():
+    """A job longer than 10 minutes should use the two-pass sampling approach."""
+    from humpback.processing.gain_normalization import compute_gain_profile
+
+    normal_rms = 0.01
+    loud_rms = 0.1
+    # 3600s = 1 hour, triggers the sampling path (> 600s)
+    duration = 3600.0
+
+    rng = np.random.RandomState(42)
+
+    def resolver(start_epoch: float, dur: float, target_sr: int) -> np.ndarray:
+        n_samples = int(target_sr * dur)
+        audio = rng.randn(n_samples).astype(np.float32)
+        current = float(np.sqrt(np.mean(audio**2)))
+        if current == 0:
+            return audio
+        # High gain region from 600s to 1200s
+        offset = start_epoch - job_start
+        end_offset = offset + dur
+        if offset >= 600.0 and end_offset <= 1200.0:
+            return audio * (loud_rms / current)
+        elif offset < 600.0 and end_offset > 600.0:
+            # Partial overlap with loud region
+            return audio * (normal_rms / current)
+        elif offset < 1200.0 and end_offset > 1200.0:
+            return audio * (normal_rms / current)
+        return audio * (normal_rms / current)
+
+    job_start = 0.0
+    job_end = duration
+
+    profile = compute_gain_profile(
+        audio_resolver=resolver,
+        job_start=job_start,
+        job_end=job_end,
+        threshold_db=6.0,
+        min_duration_sec=5.0,
+    )
+
+    assert len(profile.segments) >= 1
+    seg = profile.segments[0]
+    # Segment should be roughly in the 600-1200s region
+    assert seg.start_sec < 650.0
+    assert seg.end_sec > 1150.0
+    assert seg.attenuation_db > 10.0
+
+
+def test_internal_drop_splits_segment():
+    """A segment with two distinct gain levels should be split into two."""
+    from humpback.processing.gain_normalization import compute_gain_profile
+
+    sr = 4000
+    normal_rms = 0.005  # ~-46 dB
+    very_loud_rms = 0.5  # ~-6 dB, 40 dB above normal
+    moderately_loud_rms = 0.05  # ~-26 dB, 20 dB above normal
+    # Both levels are well above threshold (median + 6 dB) but differ by ~20 dB
+    duration = 50.0
+
+    # Build: 15s normal, 10s very loud, 10s moderately loud, 15s normal
+    rng = np.random.RandomState(42)
+    n_total = int(sr * duration)
+    audio = rng.randn(n_total).astype(np.float32)
+
+    sections = [
+        (0, 15, normal_rms),
+        (15, 25, very_loud_rms),
+        (25, 35, moderately_loud_rms),
+        (35, 50, normal_rms),
+    ]
+    for start_s, end_s, target_rms in sections:
+        chunk = audio[start_s * sr : end_s * sr]
+        current = float(np.sqrt(np.mean(chunk**2)))
+        if current > 0:
+            audio[start_s * sr : end_s * sr] = chunk * (target_rms / current)
+
+    job_start = 0.0
+    job_end = duration
+
+    def resolver(start_epoch: float, dur: float, target_sr: int) -> np.ndarray:
+        start_sample = int((start_epoch - job_start) * sr)
+        end_sample = start_sample + int(dur * sr)
+        return audio[start_sample:end_sample]
+
+    profile = compute_gain_profile(
+        audio_resolver=resolver,
+        job_start=job_start,
+        job_end=job_end,
+        threshold_db=6.0,
+        min_duration_sec=5.0,
+    )
+
+    # Should produce two segments (very loud and moderately loud) instead of one
+    assert len(profile.segments) == 2
+    # The very loud segment should have higher attenuation
+    assert profile.segments[0].attenuation_db > profile.segments[1].attenuation_db
+
+
 # ---- apply_gain_profile tests ----
 
 

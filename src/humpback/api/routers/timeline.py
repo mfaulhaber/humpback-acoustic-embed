@@ -687,10 +687,10 @@ async def get_tile(
     if cached is not None:
         return Response(content=cached, media_type="image/png")
 
-    # Compute gain profile + ref_db on-demand if /prepare hasn't run yet
-    gain_profile = await asyncio.to_thread(
-        _compute_job_gain_profile, job=job, settings=settings, cache=cache
-    )
+    # Load cached gain profile (computed by /prepare); skip if not yet available
+    # to avoid blocking the request with a long-running gain analysis.
+    cached_gp = cache.get_gain_profile(job.id)
+    gain_profile = GainProfile.from_dict(cached_gp) if cached_gp is not None else None
     ref_db = cache.get_ref_db(job.id)
     if ref_db is None:
         ref_db = await asyncio.to_thread(
