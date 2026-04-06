@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     timeline_manifest_memory_cache_items: int = 8
     timeline_pcm_memory_cache_mb: int = 128
 
+    # Gain normalization settings
+    gain_norm_threshold_db: float = 6.0
+    gain_norm_min_duration_sec: float = 5.0
+
     # Replay verification settings
     replay_metric_tolerance: float = 0.01
 
