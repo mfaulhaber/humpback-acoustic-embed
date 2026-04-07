@@ -2389,7 +2389,6 @@ git commit -m "test: add Playwright e2e tests for timeline viewer"
 
 **Files:**
 - Modify: `CLAUDE.md`
-- Modify: `STATUS.md`
 - Modify: `DECISIONS.md`
 - Modify: `README.md`
 
@@ -2397,9 +2396,9 @@ git commit -m "test: add Playwright e2e tests for timeline viewer"
 
 Add the timeline viewer route to the frontend file structure section. Add a note in the Hydrophone section about the timeline viewer page.
 
-- [ ] **Step 2: Update STATUS.md**
+- [ ] **Step 2: Update CLAUDE.md current-state sections**
 
-Add timeline viewer to current capabilities. Note the new migration (025), new API endpoints, and new frontend route.
+Add timeline viewer to the current-state coverage in `CLAUDE.md`. Note the new migration (025), new API endpoints, and new frontend route.
 
 - [ ] **Step 3: Append ADR to DECISIONS.md**
 
@@ -2427,7 +2426,7 @@ Add timeline viewer to the feature list and API endpoint documentation.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add CLAUDE.md STATUS.md DECISIONS.md README.md
+git add CLAUDE.md DECISIONS.md README.md
 git commit -m "docs: update project docs for timeline viewer feature"
 ```
 
