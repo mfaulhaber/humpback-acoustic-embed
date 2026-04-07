@@ -18,8 +18,8 @@ Adopt the superpowers skill workflow as the canonical development process for th
 | File | Lines | Role |
 |------|-------|------|
 | `CLAUDE.md` | ~285 | Behavioral rules, dev constraints, testing, Definition of Done |
-| `MEMORY.md` | ~600 | Data models, workflows, signal params, storage layout |
-| `STATUS.md` | ~140 | Implemented capabilities, schema version, constraints |
+| Legacy project reference doc | ~600 | Data models, workflows, signal params, storage layout |
+| Legacy project state doc | ~140 | Implemented capabilities, schema version, constraints |
 | `PLANS.md` | ~175 | Active/backlog/completed plan index |
 | `DECISIONS.md` | ~500+ | Append-only architecture decision log |
 | `AGENTS.md` | ~42 | Codex entry point |
@@ -40,7 +40,7 @@ Located in `.agents/skills/<name>/SKILL.md` with `.claude/commands/<name>.md` wr
 ### Problems
 
 1. **Duplication** — session skills overlap substantially with superpowers skills (brainstorming, writing-plans, executing-plans, verification-before-completion, finishing-a-development-branch, systematic-debugging)
-2. **File sprawl** — 6 repo-root `.md` files with overlapping concerns (STATUS.md vs auto-memory, MEMORY.md reference vs code-derivable facts, PLANS.md vs superpowers plan files)
+2. **File sprawl** — 6 repo-root `.md` files with overlapping concerns (legacy project state doc vs auto-memory, legacy reference doc vs code-derivable facts, PLANS.md vs superpowers plan files)
 3. **Missing capabilities** — session skills lack brainstorming/design phase, TDD enforcement, subagent-driven execution, spec/code review subagents, git worktree isolation
 4. **Codex gap** — Codex uses the same session skills but can't run superpowers tools; needs its own workflow
 
@@ -54,7 +54,7 @@ Located in `.agents/skills/<name>/SKILL.md` with `.claude/commands/<name>.md` wr
 
 | File | Role | Changes |
 |------|------|---------|
-| `CLAUDE.md` | Authoritative project rulebook | Absorbs STATUS.md + MEMORY.md reference content; gains workflow/superpowers section |
+| `CLAUDE.md` | Authoritative project rulebook | Absorbs the legacy state + reference content; gains workflow/superpowers section |
 | `DECISIONS.md` | Append-only ADR log | No changes |
 | `AGENTS.md` | Codex-specific entry point | Full rewrite with Codex-compatible workflow |
 
@@ -62,11 +62,11 @@ Located in `.agents/skills/<name>/SKILL.md` with `.claude/commands/<name>.md` wr
 
 | File | Destination |
 |------|-------------|
-| `STATUS.md` | Capabilities/constraints → CLAUDE.md §9 |
+| Legacy project state doc | Capabilities/constraints → CLAUDE.md §9 |
 | `PLANS.md` | Retired — superpowers manages `docs/plans/` |
-| `MEMORY.md` | See MEMORY.md content disposition table below for per-section keep/drop decisions |
+| Legacy project reference doc | See the legacy reference content disposition table below for per-section keep/drop decisions |
 
-### MEMORY.md Content Disposition
+### Legacy Reference Content Disposition
 
 | Section | Action | Destination |
 |---------|--------|-------------|
@@ -113,7 +113,7 @@ The backlog items from PLANS.md will be moved to `docs/plans/backlog.md` as a si
    5.1–5.5 (existing)
 ## 6. Definition of Done (existing)
 ## 7. Non-Goals (existing)
-## 8. Project Reference (NEW — from MEMORY.md)
+## 8. Project Reference (NEW — from the legacy reference doc)
    8.1 Technology Stack
    8.2 Repository Layout
    8.3 Data Model Summary (condensed: model names, key fields, relationships)
@@ -121,7 +121,7 @@ The backlog items from PLANS.md will be moved to `docs/plans/backlog.md` as a si
    8.5 Storage Layout
    8.6 Runtime Configuration (condensed)
    8.7 Behavioral Constraints (worker priority, prefetch semantics, row-store upgrade, queue safety)
-## 9. Current State (NEW — from STATUS.md)
+## 9. Current State (NEW — from the legacy project state doc)
    9.1 Implemented Capabilities (condensed bullet list)
    9.2 Database Schema (engine, latest migration, table list)
    9.3 Sensitive Components
@@ -148,7 +148,7 @@ architecture, or workflows, update the relevant files:
 
 #### Section 8.3 — Data Model (Condensed)
 
-Include ALL models from the current MEMORY.md Data Model section. For each: model name, key fields (not exhaustive), and one-line purpose. Drop the full field-by-field enumeration that is derivable from `database.py`.
+Include ALL models from the legacy reference doc's Data Model section. For each: model name, key fields (not exhaustive), and one-line purpose. Drop the full field-by-field enumeration that is derivable from `database.py`.
 
 All models to include: ModelConfig, AudioFile, AudioMetadata, ProcessingJob, EmbeddingSet, SearchJob, LabelProcessingJob, ClusteringJob, Cluster, ClusterAssignment, ClassifierModel, ClassifierTrainingJob, DetectionJob.
 
@@ -319,9 +319,9 @@ Delete the `.agents/` directory entirely (it only contains `skills/` subdirector
 
 Delete retired repo-root files:
 ```
-STATUS.md
 PLANS.md
-MEMORY.md
+legacy project state doc
+legacy project reference doc
 ```
 
 ### 5. New Directories & Gitignore
@@ -333,7 +333,7 @@ Ensure:
 
 ### 6. Auto-Memory Update
 
-Update `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/MEMORY.md` to:
+Update the project auto-memory file under `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/` to:
 
 ```markdown
 # Humpback Acoustic Embed — Session Memory
@@ -377,11 +377,11 @@ Corrections applied during update:
 - Removed stale reference to `.agents/workflows/` (directory does not exist)
 - Removed stale `/project:*` command names (replaced by superpowers workflow)
 - Removed stale "Latest migration: 024" (derivable from code; actual latest is 025)
-- Removed references to retired files (STATUS.md, PLANS.md, MEMORY.md)
+- Removed references to retired repo-root docs
 
 ### 7. CLAUDE.md Preamble Update
 
-The existing CLAUDE.md preamble (lines 17-28) contains a "Memory Files" table referencing STATUS.md, MEMORY.md, PLANS.md, and DECISIONS.md. This table must be removed during implementation and replaced with the updated §3.6 documentation list. The new preamble should state:
+The existing CLAUDE.md preamble (lines 17-28) contains a "Memory Files" table referencing the retired state/reference docs, `PLANS.md`, and `DECISIONS.md`. This table must be removed during implementation and replaced with the updated §3.6 documentation list. The new preamble should state:
 
 ```markdown
 This document defines behavioral rules, engineering constraints, project reference

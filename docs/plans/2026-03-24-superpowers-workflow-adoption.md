@@ -4,7 +4,7 @@
 
 **Goal:** Replace 6 custom session-* skills with the superpowers workflow, consolidate 6 repo-root .md files down to 3, and provide a Codex-compatible workflow in AGENTS.md.
 
-**Architecture:** This is a pure documentation/configuration restructuring — no application code changes. Content from STATUS.md and MEMORY.md is absorbed into CLAUDE.md. Session skills and command wrappers are deleted. AGENTS.md is rewritten for Codex. An ADR is appended to DECISIONS.md.
+**Architecture:** This is a pure documentation/configuration restructuring — no application code changes. Content from the legacy state and reference docs is absorbed into CLAUDE.md. Session skills and command wrappers are deleted. AGENTS.md is rewritten for Codex. An ADR is appended to DECISIONS.md.
 
 **Tech Stack:** Markdown files, git
 
@@ -93,9 +93,9 @@ Replace the content of section 3.6 with:
 
 Run: `head -30 CLAUDE.md`
 
-Expected: the new preamble text, no "Memory Files" table, no references to MEMORY.md/STATUS.md/PLANS.md.
+Expected: the new preamble text, no "Memory Files" table, and no references to the retired repo-root docs.
 
-Run: `grep -n "MEMORY.md\|STATUS.md\|PLANS.md" CLAUDE.md`
+Run: inspect `CLAUDE.md` for any mentions of the retired repo-root docs in sections 1-3
 
 Expected: no matches (these references should all be gone from sections 1-3).
 
@@ -113,7 +113,7 @@ git commit -m "Update CLAUDE.md preamble and documentation section for consolida
 **Files:**
 - Modify: `CLAUDE.md` (append after section 7)
 
-This is the largest task. It absorbs content from MEMORY.md into a new section 8.
+This is the largest task. It absorbs content from the legacy reference doc into a new section 8.
 
 - [ ] **Step 1: Add section 8 header and subsections 8.1-8.2**
 
@@ -372,7 +372,7 @@ Expected: all 7 subsection headings appear.
 
 ```bash
 git add CLAUDE.md
-git commit -m "Add CLAUDE.md section 8: project reference (absorbed from MEMORY.md)"
+git commit -m "Add CLAUDE.md section 8: project reference (absorbed from legacy reference doc)"
 ```
 
 ---
@@ -447,7 +447,7 @@ Expected: `4`
 
 ```bash
 git add CLAUDE.md
-git commit -m "Add CLAUDE.md section 9: current state (absorbed from STATUS.md)"
+git commit -m "Add CLAUDE.md section 9: current state (absorbed from legacy state doc)"
 ```
 
 ---
@@ -690,9 +690,9 @@ git commit -m "ADR-041: Adopt superpowers workflow, consolidate documentation"
 - Delete: `.claude/commands/session-debug.md`
 - Delete: `.agents/` directory
 - Delete: `.claude/commands/` directory
-- Delete: `STATUS.md`
 - Delete: `PLANS.md`
-- Delete: `MEMORY.md`
+- Delete: retired repo-root state doc
+- Delete: retired repo-root reference doc
 
 - [ ] **Step 1: Delete session skill files**
 
@@ -727,9 +727,7 @@ Do NOT delete `.claude/` — it contains `hooks/`, `settings.json`, `settings.lo
 
 - [ ] **Step 4: Delete retired repo-root files**
 
-```bash
-rm STATUS.md PLANS.md MEMORY.md
-```
+Delete `PLANS.md` plus the retired repo-root state/reference docs.
 
 - [ ] **Step 5: Verify deletions**
 
@@ -745,14 +743,14 @@ Run: `ls .claude/`
 
 Expected: should contain `hooks/`, `settings.json`, `settings.local.json` (NOT `commands/`)
 
-Run: `ls STATUS.md PLANS.md MEMORY.md 2>&1`
+Run: confirm the retired repo-root docs are absent with `ls`
 
-Expected: `ls: STATUS.md: No such file or directory` (etc. for each)
+Expected: each retired doc path reports `No such file or directory`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -u .agents/ .claude/commands/ STATUS.md PLANS.md MEMORY.md
+git add -u .agents/ .claude/commands/ .
 git commit -m "Remove session-* skills, command wrappers, and retired doc files"
 ```
 
@@ -761,11 +759,11 @@ git commit -m "Remove session-* skills, command wrappers, and retired doc files"
 ### Task 9: Update Auto-Memory
 
 **Files:**
-- Modify: `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/MEMORY.md`
+- Modify: project auto-memory file under `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/`
 
 - [ ] **Step 1: Replace auto-memory index**
 
-Replace the entire contents of `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/MEMORY.md` with:
+Replace the entire contents of the project auto-memory file under `~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/` with:
 
 ```markdown
 # Humpback Acoustic Embed — Session Memory
@@ -807,7 +805,7 @@ Replace the entire contents of `~/.claude/projects/-Users-michael-development-hu
 
 - [ ] **Step 2: Verify**
 
-Run: `grep "STATUS.md\|PLANS.md\|MEMORY.md\|session-" ~/.claude/projects/-Users-michael-development-humpback-acoustic-embed/memory/MEMORY.md`
+Run: search the project auto-memory file for retired repo-root docs and `session-` command names
 
 Expected: no matches (all stale references removed).
 
@@ -825,9 +823,9 @@ Expected: exactly `AGENTS.md`, `CLAUDE.md`, `DECISIONS.md`, `README.md` (README.
 
 - [ ] **Step 2: Verify no dangling references in CLAUDE.md**
 
-Run: `grep "STATUS.md\|PLANS.md\|MEMORY.md\|session-start\|session-transition\|session-implement\|session-review\|session-end\|session-debug" CLAUDE.md`
+Run: `grep "session-start\|session-transition\|session-implement\|session-review\|session-end\|session-debug" CLAUDE.md`
 
-Expected: no matches.
+Expected: no matches, and the retired repo-root docs are no longer referenced there either.
 
 - [ ] **Step 3: Verify docs structure**
 
