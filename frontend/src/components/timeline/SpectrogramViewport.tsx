@@ -31,8 +31,12 @@ export interface SpectrogramViewportProps {
   onPan?: (t: number) => void;
   /** When true, replaces DetectionOverlay with a label editor element. */
   labelMode?: boolean;
+  /** Which type of label editing is active. */
+  labelEditMode?: "detection" | "vocalization" | null;
   /** Render function for the label editor; receives canvas width and height. */
   renderLabelEditor?: (width: number, height: number) => React.ReactNode;
+  /** Render function for vocalization label editor; receives canvas width and height. */
+  renderVocLabelEditor?: (width: number, height: number) => React.ReactNode;
   /** Which overlay to show: detection labels or vocalization types. */
   overlayMode?: "detection" | "vocalization";
   /** Vocalization labels for the overlay. */
@@ -163,7 +167,9 @@ export function SpectrogramViewport({
   onCenterChange,
   onPan,
   labelMode,
+  labelEditMode,
   renderLabelEditor,
+  renderVocLabelEditor,
   overlayMode = "detection",
   vocalizationLabels,
 }: SpectrogramViewportProps) {
@@ -421,7 +427,8 @@ export function SpectrogramViewport({
               visible={showLabels}
             />
           )}
-          {labelMode && renderLabelEditor?.(canvasWidth, canvasHeight + CONFIDENCE_STRIP_HEIGHT)}
+          {labelMode && labelEditMode === "detection" && renderLabelEditor?.(canvasWidth, canvasHeight + CONFIDENCE_STRIP_HEIGHT)}
+          {labelMode && labelEditMode === "vocalization" && renderVocLabelEditor?.(canvasWidth, canvasHeight + CONFIDENCE_STRIP_HEIGHT)}
 
           {/* Detection click popover */}
           {selectedRow !== null && (

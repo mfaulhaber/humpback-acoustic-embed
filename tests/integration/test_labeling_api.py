@@ -780,3 +780,169 @@ async def test_cascade_delete_labels_on_row_delete(client, app_settings, tmp_pat
         f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_2}"
     )
     assert len(resp5.json()) == 0
+
+
+# ---- Batch Vocalization Label Endpoint ----
+
+
+@pytest.mark.asyncio
+async def test_batch_add_labels(client, app_settings, tmp_path):
+    """Batch add creates vocalization labels atomically."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    resp = await client.patch(
+        f"/labeling/vocalization-labels/{job_id}/batch",
+        json={
+            "edits": [
+                {"action": "add", "row_id": ROW_ID_1, "label": "whup"},
+                {"action": "add", "row_id": ROW_ID_1, "label": "moan"},
+                {"action": "add", "row_id": ROW_ID_2, "label": "whup"},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    labels = resp.json()
+    manual_labels = [lbl for lbl in labels if lbl["source"] == "manual"]
+    assert len(manual_labels) == 3
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_labels(client, app_settings, tmp_path):
+    """Batch delete removes vocalization labels."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Seed labels
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
+        json={"label": "whup"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
+        json={"label": "moan"},
+    )
+
+    # Batch delete one
+    resp = await client.patch(
+        f"/labeling/vocalization-labels/{job_id}/batch",
+        json={"edits": [{"action": "delete", "row_id": ROW_ID_1, "label": "whup"}]},
+    )
+    assert resp.status_code == 200
+    manual_labels = [lbl for lbl in resp.json() if lbl["source"] == "manual"]
+    assert len(manual_labels) == 1
+    assert manual_labels[0]["label"] == "moan"
+
+
+@pytest.mark.asyncio
+async def test_batch_idempotent_add(client, app_settings, tmp_path):
+    """Adding the same label twice in a batch is idempotent."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    resp = await client.patch(
+        f"/labeling/vocalization-labels/{job_id}/batch",
+        json={
+            "edits": [
+                {"action": "add", "row_id": ROW_ID_1, "label": "whup"},
+                {"action": "add", "row_id": ROW_ID_1, "label": "whup"},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    manual_labels = [lbl for lbl in resp.json() if lbl["source"] == "manual"]
+    # Only one label should exist, not two
+    whup_labels = [lbl for lbl in manual_labels if lbl["label"] == "whup"]
+    assert len(whup_labels) == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_nonexistent_noop(client, app_settings, tmp_path):
+    """Deleting a non-existent label in a batch is a no-op."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    resp = await client.patch(
+        f"/labeling/vocalization-labels/{job_id}/batch",
+        json={
+            "edits": [{"action": "delete", "row_id": ROW_ID_1, "label": "nonexistent"}]
+        },
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_batch_negative_mutual_exclusivity(client, app_settings, tmp_path):
+    """Adding (Negative) via batch removes type labels on same window."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Seed type labels
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
+        json={"label": "whup"},
+    )
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
+        json={"label": "moan"},
+    )
+
+    # Batch add (Negative) — should remove whup and moan
+    resp = await client.patch(
+        f"/labeling/vocalization-labels/{job_id}/batch",
+        json={"edits": [{"action": "add", "row_id": ROW_ID_1, "label": "(Negative)"}]},
+    )
+    assert resp.status_code == 200
+    manual_labels = [lbl for lbl in resp.json() if lbl["source"] == "manual"]
+    assert len(manual_labels) == 1
+    assert manual_labels[0]["label"] == "(Negative)"
+
+
+@pytest.mark.asyncio
+async def test_batch_mixed_add_delete(client, app_settings, tmp_path):
+    """Mixed add and delete operations in a single batch."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    # Seed a label
+    await client.post(
+        f"/labeling/vocalization-labels/{job_id}?row_id={ROW_ID_1}",
+        json={"label": "whup"},
+    )
+
+    # Batch: delete whup, add moan on same row; add whup on different row
+    resp = await client.patch(
+        f"/labeling/vocalization-labels/{job_id}/batch",
+        json={
+            "edits": [
+                {"action": "delete", "row_id": ROW_ID_1, "label": "whup"},
+                {"action": "add", "row_id": ROW_ID_1, "label": "moan"},
+                {"action": "add", "row_id": ROW_ID_2, "label": "whup"},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    manual_labels = [lbl for lbl in resp.json() if lbl["source"] == "manual"]
+    label_set = {(lbl["start_utc"], lbl["label"]) for lbl in manual_labels}
+    # ROW_ID_1 (start_utc=BASE_EPOCH) should have moan, not whup
+    assert (BASE_EPOCH, "moan") in label_set
+    assert (BASE_EPOCH, "whup") not in label_set
+    # ROW_ID_2 (start_utc=BASE_EPOCH+5) should have whup
+    assert (BASE_EPOCH + 5.0, "whup") in label_set
+
+
+@pytest.mark.asyncio
+async def test_batch_empty_edits(client, app_settings, tmp_path):
+    """Empty edits list returns current labels."""
+    job_id, _ = await _seed_detection_job(app_settings, tmp_path)
+
+    resp = await client.patch(
+        f"/labeling/vocalization-labels/{job_id}/batch",
+        json={"edits": []},
+    )
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_batch_nonexistent_job(client):
+    """Batch endpoint returns 404 for non-existent detection job."""
+    resp = await client.patch(
+        "/labeling/vocalization-labels/nonexistent-job/batch",
+        json={"edits": [{"action": "add", "row_id": "r1", "label": "whup"}]},
+    )
+    assert resp.status_code == 404

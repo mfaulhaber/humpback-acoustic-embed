@@ -1,19 +1,23 @@
 // frontend/src/components/timeline/TimelineViewer.tsx
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useLocation, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ZoomLevel } from "@/api/types";
 import { useTimelineConfidence, useTimelineDetections, usePrepareStatus, useSaveLabels } from "@/hooks/queries/useTimeline";
 import { useHydrophoneDetectionJobs, useExtractLabeledSamples } from "@/hooks/queries/useClassifier";
 import { useVocalizationOverlay } from "@/hooks/queries/useVocalizationOverlay";
 import { useLabelEdits } from "@/hooks/queries/useLabelEdits";
+import { useVocLabelEdits, serializeEdits } from "@/hooks/queries/useVocLabelEdits";
 import { useEmbeddingStatus, useSyncEmbeddings, useEmbeddingGenerationStatus } from "@/hooks/queries/useVocalization";
-import { timelineAudioUrl } from "@/api/client";
+import { timelineAudioUrl, patchVocalizationLabels } from "@/api/client";
 import { TimelineHeader } from "./TimelineHeader";
 import { ZoomSelector } from "./ZoomSelector";
 import { PlaybackControls } from "./PlaybackControls";
 import { SpectrogramViewport } from "./SpectrogramViewport";
 import { LabelToolbar } from "./LabelToolbar";
 import { LabelEditor } from "./LabelEditor";
+import { VocLabelEditor } from "./VocLabelEditor";
+import { VocLabelToolbar } from "./VocLabelToolbar";
 import { ExtractDialog } from "../classifier/ExtractDialog";
 import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC, AUDIO_FORMAT } from "./constants";
 import type { LabelType } from "./constants";
@@ -21,6 +25,7 @@ import type { LabelType } from "./constants";
 export function TimelineViewer() {
   const { jobId } = useParams<{ jobId: string }>();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const { data: jobs } = useHydrophoneDetectionJobs(0);
   const job = jobs?.find((j) => j.id === jobId);
   const prepareRequested = Boolean(
@@ -55,6 +60,7 @@ export function TimelineViewer() {
 
   // Label mode state
   const [labelMode, setLabelMode] = useState(false);
+  const [labelEditMode, setLabelEditMode] = useState<"detection" | "vocalization" | null>(null);
   const [labelSubMode, setLabelSubMode] = useState<"select" | "add">("select");
   const [selectedLabel, setSelectedLabel] = useState<LabelType | null>(null);
 
@@ -209,11 +215,21 @@ export function TimelineViewer() {
   const { data: detections } = useTimelineDetections(jobId ?? "");
   const { labels: vocalizationLabels, hasVocalizationData } = useVocalizationOverlay(jobId ?? "");
 
-  // Label editing hooks
+  // Label editing hooks (detection)
   const { state: labelState, dispatch: labelDispatch, mergedRows, isDirty, selectedId } =
     useLabelEdits(detections ?? []);
   const saveMutation = useSaveLabels(jobId ?? "");
   const extractMutation = useExtractLabeledSamples();
+
+  // Label editing hooks (vocalization)
+  const {
+    state: vocLabelState,
+    dispatch: vocLabelDispatch,
+    isDirty: vocIsDirty,
+    editCount: vocEditCount,
+    selectedRowId: vocSelectedRowId,
+  } = useVocLabelEdits();
+  const [vocSaving, setVocSaving] = useState(false);
 
   // Sync selectedLabel to the detection's current label when selection changes
   useEffect(() => {
@@ -247,45 +263,82 @@ export function TimelineViewer() {
 
   // Toggle detection labels overlay
   const toggleDetectionOverlay = useCallback(() => {
-    setOverlayMode((prev) => (prev === "detection" ? "off" : "detection"));
-  }, []);
+    if (overlayMode === "detection") {
+      // Exit detection label mode if active
+      if (labelMode && labelEditMode === "detection") {
+        if (isDirty && !confirm("Discard unsaved label changes?")) return;
+        setLabelMode(false);
+        setLabelEditMode(null);
+        labelDispatch({ type: "clear" });
+      }
+      setOverlayMode("off");
+    } else {
+      // Exit voc label mode if active
+      if (labelMode && labelEditMode === "vocalization") {
+        if (vocIsDirty && !confirm("Discard unsaved vocalization label changes?")) return;
+        setLabelMode(false);
+        setLabelEditMode(null);
+        vocLabelDispatch({ type: "clear" });
+      }
+      setOverlayMode("detection");
+    }
+  }, [overlayMode, labelMode, labelEditMode, isDirty, vocIsDirty, labelDispatch, vocLabelDispatch]);
 
   // Toggle vocalization overlay
   const toggleVocalizationOverlay = useCallback(() => {
     if (overlayMode === "vocalization") {
+      // Exit voc label mode if active
+      if (labelMode && labelEditMode === "vocalization") {
+        if (vocIsDirty && !confirm("Discard unsaved vocalization label changes?")) return;
+        setLabelMode(false);
+        setLabelEditMode(null);
+        vocLabelDispatch({ type: "clear" });
+      }
       setOverlayMode("off");
     } else {
-      // Exit label mode if active before switching to vocalization
-      if (labelMode) {
+      // Exit detection label mode if active before switching
+      if (labelMode && labelEditMode === "detection") {
         if (isDirty && !confirm("Discard unsaved label changes?")) return;
         setLabelMode(false);
+        setLabelEditMode(null);
         labelDispatch({ type: "clear" });
       }
       setOverlayMode("vocalization");
     }
-  }, [overlayMode, labelMode, isDirty, labelDispatch]);
+  }, [overlayMode, labelMode, labelEditMode, isDirty, vocIsDirty, labelDispatch, vocLabelDispatch]);
 
-  // Toggle label mode callback
+  // Toggle label mode callback — dispatches to correct editor based on overlayMode
   const toggleLabelMode = useCallback(() => {
     if (labelMode) {
-      if (isDirty && !confirm("Discard unsaved label changes?")) return;
+      // Exit whichever label mode is active
+      if (labelEditMode === "detection") {
+        if (isDirty && !confirm("Discard unsaved label changes?")) return;
+        labelDispatch({ type: "clear" });
+      } else if (labelEditMode === "vocalization") {
+        if (vocIsDirty && !confirm("Discard unsaved vocalization label changes?")) return;
+        vocLabelDispatch({ type: "clear" });
+      }
       setLabelMode(false);
-      labelDispatch({ type: "clear" });
+      setLabelEditMode(null);
     } else {
       setIsPlaying(false);
       setLabelMode(true);
+      setLabelEditMode(overlayMode === "vocalization" ? "vocalization" : "detection");
     }
-  }, [labelMode, isDirty, labelDispatch]);
+  }, [labelMode, labelEditMode, isDirty, vocIsDirty, labelDispatch, vocLabelDispatch, overlayMode]);
 
   // Play/pause — exits label mode if active
   const togglePlay = useCallback(() => {
     if (labelMode) {
-      if (isDirty && !confirm("Discard unsaved label changes?")) return;
+      if (labelEditMode === "detection" && isDirty && !confirm("Discard unsaved label changes?")) return;
+      if (labelEditMode === "vocalization" && vocIsDirty && !confirm("Discard unsaved vocalization label changes?")) return;
       setLabelMode(false);
+      setLabelEditMode(null);
       labelDispatch({ type: "clear" });
+      vocLabelDispatch({ type: "clear" });
     }
     setIsPlaying((prev) => !prev);
-  }, [labelMode, isDirty, labelDispatch]);
+  }, [labelMode, labelEditMode, isDirty, vocIsDirty, labelDispatch, vocLabelDispatch]);
 
   // Skip to next/prev detection
   // Detection row start_utc/end_utc are absolute UTC epoch seconds.
@@ -326,14 +379,14 @@ export function TimelineViewer() {
 
   // Warn before navigating away with unsaved label edits
   useEffect(() => {
-    if (!isDirty) return;
+    if (!isDirty && !vocIsDirty) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [isDirty]);
+  }, [isDirty, vocIsDirty]);
 
   if (!jobId || !job) {
     return (
@@ -384,6 +437,7 @@ export function TimelineViewer() {
           onCenterChange={setCenterTimestamp}
           onPan={handlePan}
           labelMode={labelMode}
+          labelEditMode={labelEditMode}
           overlayMode={overlayMode === "vocalization" ? "vocalization" : "detection"}
           vocalizationLabels={vocalizationLabels}
           renderLabelEditor={(w, h) => (
@@ -395,6 +449,19 @@ export function TimelineViewer() {
               dispatch={labelDispatch}
               jobStart={job.start_timestamp ?? 0}
               jobDuration={(job.end_timestamp ?? 0) - (job.start_timestamp ?? 0)}
+              centerTimestamp={centerTimestamp}
+              zoomLevel={zoomLevel}
+              width={w}
+              height={h}
+            />
+          )}
+          renderVocLabelEditor={(w, h) => (
+            <VocLabelEditor
+              detectionRows={detections ?? []}
+              vocLabels={vocalizationLabels}
+              edits={vocLabelState.edits}
+              selectedRowId={vocSelectedRowId}
+              dispatch={vocLabelDispatch}
               centerTimestamp={centerTimestamp}
               zoomLevel={zoomLevel}
               width={w}
@@ -413,8 +480,8 @@ export function TimelineViewer() {
         className="shrink-0"
         style={{ background: COLORS.headerBg, borderTop: `1px solid ${COLORS.border}` }}
       >
-        {/* Label toolbar (shown only in label mode) */}
-        {labelMode && (
+        {/* Label toolbar (shown only in detection label mode) */}
+        {labelMode && labelEditMode === "detection" && (
           <LabelToolbar
             mode={labelSubMode}
             onModeChange={setLabelSubMode}
@@ -431,7 +498,6 @@ export function TimelineViewer() {
             }}
             onDelete={() => {
               if (!selectedId) return;
-              // selectedId is either a row_id or a generated UUID for new rows
               labelDispatch({ type: "delete", row_id: selectedId });
             }}
             onSave={() => {
@@ -450,12 +516,55 @@ export function TimelineViewer() {
             onCancel={() => {
               if (isDirty && !confirm("Discard unsaved label changes?")) return;
               setLabelMode(false);
+              setLabelEditMode(null);
               labelDispatch({ type: "clear" });
             }}
             isDirty={isDirty}
             isSaving={saveMutation.isPending}
             hasSelection={selectedId !== null}
           />
+        )}
+
+        {/* Vocalization label toolbar (shown only in vocalization label mode) */}
+        {labelMode && labelEditMode === "vocalization" && (
+          <VocLabelToolbar
+            onSave={async () => {
+              if (!jobId) return;
+              setVocSaving(true);
+              try {
+                const items = serializeEdits(vocLabelState.edits);
+                await patchVocalizationLabels(jobId, { edits: items });
+                await queryClient.invalidateQueries({ queryKey: ["vocalizationLabelsAll", jobId] });
+                vocLabelDispatch({ type: "clear" });
+              } finally {
+                setVocSaving(false);
+              }
+            }}
+            onCancel={() => {
+              if (vocIsDirty && !confirm("Discard unsaved vocalization label changes?")) return;
+              setLabelMode(false);
+              setLabelEditMode(null);
+              vocLabelDispatch({ type: "clear" });
+            }}
+            isDirty={vocIsDirty}
+            isSaving={vocSaving}
+            editCount={vocEditCount}
+          />
+        )}
+
+        {/* Toolbar placeholder — matches toolbar height when no toolbar is active */}
+        {!labelMode && (
+          <div
+            className="flex items-center gap-3 px-3 py-1.5"
+            style={{
+              borderTop: `1px solid ${COLORS.border}`,
+              background: COLORS.headerBg,
+              minHeight: 32,
+            }}
+          >
+            {/* Invisible spacer matching toolbar button height */}
+            <span style={{ fontSize: 10, lineHeight: "16px", padding: "2px 0", border: "1px solid transparent", visibility: "hidden" }}>&nbsp;</span>
+          </div>
         )}
 
         <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />

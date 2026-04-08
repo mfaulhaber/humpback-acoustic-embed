@@ -55,6 +55,7 @@ import type {
   LabelProcessingPreview,
   VocalizationLabel,
   TimelineVocalizationLabel,
+  VocalizationLabelBatchRequest,
   DetectionNeighborsResponse,
   LabelingSummary,
   TrainingSummary,
@@ -514,6 +515,15 @@ export const deleteVocalizationLabel = async (labelId: string) => {
     throw new ApiError(res.status, text);
   }
 };
+
+export const patchVocalizationLabels = (
+  detectionJobId: string,
+  body: VocalizationLabelBatchRequest,
+) =>
+  patch<TimelineVocalizationLabel[]>(
+    `/labeling/vocalization-labels/${detectionJobId}/batch`,
+    body,
+  );
 
 export const fetchLabelVocabulary = () =>
   api<string[]>("/labeling/label-vocabulary");
