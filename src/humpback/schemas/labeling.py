@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -76,3 +77,18 @@ class DetectionNeighborsRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=100)
     metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
     embedding_set_ids: list[str] | None = None
+
+
+class VocalizationLabelBatchEditItem(BaseModel):
+    """Single edit in a batch vocalization label request."""
+
+    action: Literal["add", "delete"]
+    row_id: str
+    label: str
+    source: str = "manual"
+
+
+class VocalizationLabelBatchRequest(BaseModel):
+    """Batch vocalization label edit request."""
+
+    edits: list[VocalizationLabelBatchEditItem]

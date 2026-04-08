@@ -18,6 +18,7 @@ from humpback.schemas.labeling import (
     TimelineVocalizationLabel,
     TrainingSummary,
     NeighborHit,
+    VocalizationLabelBatchRequest,
     VocalizationLabelCreate,
     VocalizationLabelOut,
     VocalizationLabelUpdate,
@@ -251,6 +252,75 @@ async def delete_vocalization_label(
 
     await session.delete(label)
     await session.commit()
+
+
+@router.patch(
+    "/vocalization-labels/{detection_job_id}/batch",
+    response_model=list[TimelineVocalizationLabel],
+)
+async def batch_vocalization_labels(
+    detection_job_id: str,
+    body: VocalizationLabelBatchRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    """Atomically apply a batch of vocalization label add/delete edits."""
+    from sqlalchemy import and_, delete
+
+    await _get_detection_job_or_404(session, detection_job_id)
+
+    for edit in body.edits:
+        same_window = and_(
+            VocalizationLabel.detection_job_id == detection_job_id,
+            VocalizationLabel.row_id == edit.row_id,
+        )
+
+        if edit.action == "add":
+            # Idempotent: skip if already exists
+            existing = await session.execute(
+                select(VocalizationLabel).where(
+                    same_window,
+                    VocalizationLabel.label == edit.label,
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                continue
+
+            # Mutual exclusivity
+            if edit.label == "(Negative)":
+                await session.execute(
+                    delete(VocalizationLabel).where(
+                        same_window, VocalizationLabel.label != "(Negative)"
+                    )
+                )
+            else:
+                await session.execute(
+                    delete(VocalizationLabel).where(
+                        same_window, VocalizationLabel.label == "(Negative)"
+                    )
+                )
+
+            session.add(
+                VocalizationLabel(
+                    detection_job_id=detection_job_id,
+                    row_id=edit.row_id,
+                    label=edit.label,
+                    source=edit.source,
+                )
+            )
+
+        elif edit.action == "delete":
+            await session.execute(
+                delete(VocalizationLabel).where(
+                    same_window,
+                    VocalizationLabel.label == edit.label,
+                )
+            )
+
+    await session.commit()
+
+    # Return full updated label set (reuse the /all endpoint logic)
+    return await list_all_vocalization_labels(detection_job_id, session, settings)
 
 
 async def _get_detection_job_or_404(session, detection_job_id: str):

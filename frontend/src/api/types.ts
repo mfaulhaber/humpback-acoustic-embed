@@ -843,6 +843,17 @@ export interface TimelineVocalizationLabel {
   source: string;
 }
 
+export interface VocalizationLabelBatchEditItem {
+  action: "add" | "delete";
+  row_id: string;
+  label: string;
+  source?: string;
+}
+
+export interface VocalizationLabelBatchRequest {
+  edits: VocalizationLabelBatchEditItem[];
+}
+
 export interface NeighborHit {
   score: number;
   embedding_set_id: string;
