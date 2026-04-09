@@ -13,7 +13,7 @@ import { test, expect } from "@playwright/test";
 const E2E_DIR = dirname(fileURLToPath(import.meta.url));
 const AUTORESEARCH_FIXTURE_DIR = resolve(
   E2E_DIR,
-  "../../scripts/autoresearch/output/explicit-negatives",
+  "../../tests/fixtures/autoresearch/explicit-negatives",
 );
 const VENDORED_MANIFEST = JSON.parse(
   readFileSync(resolve(AUTORESEARCH_FIXTURE_DIR, "manifest.json"), "utf8"),

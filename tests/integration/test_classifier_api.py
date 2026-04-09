@@ -19,10 +19,9 @@ _20250702T080118Z = 1751443278.0
 
 def _autoresearch_fixture_dir() -> Path:
     return (
-        Path(__file__).resolve().parents[2]
-        / "scripts"
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
         / "autoresearch"
-        / "output"
         / "explicit-negatives"
     )
 

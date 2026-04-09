@@ -214,6 +214,52 @@ def build_prediction_disagreements(
 
 
 # ---------------------------------------------------------------------------
+# Production model config extraction
+# ---------------------------------------------------------------------------
+
+_DEFAULT_CONTEXT_POOLING = "center"
+_DEFAULT_THRESHOLD = 0.5
+
+
+def _resolve_production_defaults(
+    production_classifier: dict[str, Any],
+) -> tuple[str, float]:
+    """Extract context_pooling and threshold from a production classifier.
+
+    Checks ``promoted_config`` first, then ``replay_effective_config``,
+    falling back to legacy defaults for older models without training
+    summary data.
+    """
+    ts = production_classifier.get("training_summary")
+    if not ts or not isinstance(ts, dict):
+        return _DEFAULT_CONTEXT_POOLING, _DEFAULT_THRESHOLD
+
+    for key in ("promoted_config", "replay_effective_config"):
+        config = ts.get(key)
+        if config and isinstance(config, dict):
+            pooling = config.get("context_pooling")
+            threshold = config.get("threshold")
+            if pooling is not None and threshold is not None:
+                return str(pooling), float(threshold)
+
+    # One field present in one config but not the other — collect best available
+    pooling: str | None = None
+    threshold: float | None = None
+    for key in ("promoted_config", "replay_effective_config"):
+        config = ts.get(key)
+        if config and isinstance(config, dict):
+            if pooling is None and config.get("context_pooling") is not None:
+                pooling = str(config["context_pooling"])
+            if threshold is None and config.get("threshold") is not None:
+                threshold = float(config["threshold"])
+
+    return (
+        pooling if pooling is not None else _DEFAULT_CONTEXT_POOLING,
+        threshold if threshold is not None else _DEFAULT_THRESHOLD,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main comparison
 # ---------------------------------------------------------------------------
 
@@ -224,8 +270,8 @@ def compare_classifiers(
     production_classifier: dict[str, Any],
     *,
     splits: list[str] | tuple[str, ...] = ("val", "test"),
-    production_context_pooling: str = "center",
-    production_threshold: float = 0.5,
+    production_context_pooling: str | None = None,
+    production_threshold: float | None = None,
     autoresearch_threshold: float | None = None,
     top_n: int = 25,
 ) -> dict[str, Any]:
@@ -242,7 +288,18 @@ def compare_classifiers(
         if autoresearch_threshold is not None
         else autoresearch_config.get("threshold", 0.5)
     )
-    effective_production_threshold = float(production_threshold)
+
+    auto_pooling, auto_threshold = _resolve_production_defaults(production_classifier)
+    effective_production_pooling = (
+        production_context_pooling
+        if production_context_pooling is not None
+        else auto_pooling
+    )
+    effective_production_threshold = (
+        float(production_threshold)
+        if production_threshold is not None
+        else auto_threshold
+    )
 
     from humpback.services.hyperparameter_service.train_eval import (
         load_parquet_cache as _load_parquet_cache,
@@ -258,7 +315,7 @@ def compare_classifiers(
     )
     production_embeddings = prepare_embeddings(
         manifest,
-        {"context_pooling": production_context_pooling},
+        {"context_pooling": effective_production_pooling},
         parquet_cache=parquet_cache,
     )
     production_model = joblib.load(production_classifier["model_path"])
@@ -331,7 +388,7 @@ def compare_classifiers(
         "production": {
             **production_classifier,
             "threshold": effective_production_threshold,
-            "context_pooling": production_context_pooling,
+            "context_pooling": effective_production_pooling,
         },
         "splits": split_results,
     }

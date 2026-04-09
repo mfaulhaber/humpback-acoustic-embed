@@ -610,8 +610,6 @@ Candidate-backed promotion is not the same as legacy retrain-from-folders:
 - **Retrain-from-folders** reimports the original positive and negative folder roots for an existing embedding-set-backed model, reprocesses audio, and trains again.
 - **Candidate-backed promotion** trains directly from the imported manifest examples and preserves candidate comparison provenance on the resulting model. Because it is manifest-backed rather than folder-backed, these promoted models do not currently support the folder-root retrain workflow.
 
-For stable development fixtures used by both the import API tests and the Training-tab UI coverage, see [`scripts/autoresearch/output/README.md`](/Users/michael/development/humpback-acoustic-embed/scripts/autoresearch/output/README.md) and the explicit-negative bundle under [`scripts/autoresearch/output/explicit-negatives/`](/Users/michael/development/humpback-acoustic-embed/scripts/autoresearch/output/explicit-negatives).
-
 ---
 
 ## Storage Layout
