@@ -44,7 +44,6 @@ import {
 } from "@/hooks/queries/useClassifier";
 import { Separator } from "@/components/ui/separator";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
-import { AutoresearchCandidatesSection } from "./AutoresearchCandidatesSection";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
@@ -356,8 +355,6 @@ export function TrainingTab() {
           )}
         </CardContent>
       </Card>
-
-      <AutoresearchCandidatesSection />
 
       {/* Training Jobs Table */}
       {trainingJobs.length > 0 && (

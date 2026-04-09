@@ -36,6 +36,7 @@ const navItems: NavItem[] = [
       { label: "Training", to: "/app/classifier/training" },
       { label: "Hydrophone Detection", to: "/app/classifier/hydrophone" },
       { label: "Embeddings", to: "/app/classifier/embeddings" },
+      { label: "Tuning", to: "/app/classifier/tuning" },
     ],
   },
   {

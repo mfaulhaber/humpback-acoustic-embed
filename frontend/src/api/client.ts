@@ -4,6 +4,14 @@ import type {
   AutoresearchCandidateImport,
   AutoresearchCandidateSummary,
   AutoresearchCandidateTrainingJobCreate,
+  HyperparameterManifestDetail,
+  HyperparameterManifestSummary,
+  HyperparameterSearchDetail,
+  HyperparameterSearchSummary,
+  ManifestCreateRequest,
+  SearchCreateRequest,
+  SearchHistoryEntry,
+  SearchSpaceDefaults,
   AvailableModelFile,
   FolderImportResult,
   ClassifierModelInfo,
@@ -126,6 +134,8 @@ function patch<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+const HP = "/classifier/hyperparameter";
+
 // ---- Audio ----
 
 export const importFolder = (folderPath: string) =>
@@ -247,20 +257,20 @@ export const fetchTrainingJob = (jobId: string) =>
   api<ClassifierTrainingJob>(`/classifier/training-jobs/${jobId}`);
 
 export const importAutoresearchCandidate = (body: AutoresearchCandidateImport) =>
-  post<AutoresearchCandidateDetail>("/classifier/autoresearch-candidates/import", body);
+  post<AutoresearchCandidateDetail>(`${HP}/candidates/import`, body);
 
 export const fetchAutoresearchCandidates = () =>
-  api<AutoresearchCandidateSummary[]>("/classifier/autoresearch-candidates");
+  api<AutoresearchCandidateSummary[]>(`${HP}/candidates`);
 
 export const fetchAutoresearchCandidate = (candidateId: string) =>
-  api<AutoresearchCandidateDetail>(`/classifier/autoresearch-candidates/${candidateId}`);
+  api<AutoresearchCandidateDetail>(`${HP}/candidates/${candidateId}`);
 
 export const createAutoresearchCandidateTrainingJob = (
   candidateId: string,
   body: AutoresearchCandidateTrainingJobCreate,
 ) =>
   post<ClassifierTrainingJob>(
-    `/classifier/autoresearch-candidates/${candidateId}/training-jobs`,
+    `${HP}/candidates/${candidateId}/training-jobs`,
     body,
   );
 
@@ -800,3 +810,38 @@ export function getHealth(): Promise<HealthStatus> {
       detail: "Could not reach the API server.",
     }));
 }
+
+// ---- Hyperparameter Tuning ----
+
+export const createManifest = (body: ManifestCreateRequest) =>
+  post<HyperparameterManifestSummary>(`${HP}/manifests`, body);
+
+export const listManifests = () =>
+  api<HyperparameterManifestSummary[]>(`${HP}/manifests`);
+
+export const getManifest = (id: string) =>
+  api<HyperparameterManifestDetail>(`${HP}/manifests/${id}`);
+
+export const deleteManifest = (id: string) =>
+  api<{ status: string }>(`${HP}/manifests/${id}`, { method: "DELETE" });
+
+export const createSearch = (body: SearchCreateRequest) =>
+  post<HyperparameterSearchSummary>(`${HP}/searches`, body);
+
+export const listSearches = () =>
+  api<HyperparameterSearchSummary[]>(`${HP}/searches`);
+
+export const getSearch = (id: string) =>
+  api<HyperparameterSearchDetail>(`${HP}/searches/${id}`);
+
+export const getSearchHistory = (id: string) =>
+  api<SearchHistoryEntry[]>(`${HP}/searches/${id}/history`);
+
+export const deleteSearch = (id: string) =>
+  api<{ status: string }>(`${HP}/searches/${id}`, { method: "DELETE" });
+
+export const getSearchSpaceDefaults = () =>
+  api<SearchSpaceDefaults>(`${HP}/search-space-defaults`);
+
+export const importCandidateFromSearch = (searchId: string) =>
+  post<AutoresearchCandidateDetail>(`${HP}/searches/${searchId}/import-candidate`, {});

@@ -21,6 +21,9 @@ from humpback.api.routers.classifier.detection import (
 from humpback.api.routers.classifier.embeddings import (
     router as embeddings_router,
 )
+from humpback.api.routers.classifier.hyperparameter import (
+    router as hyperparameter_router,
+)
 from humpback.api.routers.classifier.hydrophone import (
     router as hydrophone_router,
 )
@@ -37,6 +40,7 @@ router.include_router(training_router)
 router.include_router(detection_router)
 router.include_router(hydrophone_router)
 router.include_router(embeddings_router)
+router.include_router(hyperparameter_router)
 
 __all__ = [
     "_DecodedAudioCache",

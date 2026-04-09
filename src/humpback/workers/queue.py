@@ -230,6 +230,41 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count10:
         logger.warning(f"Recovered {count10} stale detection embedding job(s)")
 
+    from humpback.models.hyperparameter import (
+        HyperparameterManifest,
+        HyperparameterSearchJob,
+    )
+
+    result11 = await session.execute(
+        update(HyperparameterManifest)
+        .where(
+            HyperparameterManifest.status == "running",
+            HyperparameterManifest.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count11 = _rowcount(result11)
+    if count11:
+        logger.warning(f"Recovered {count11} stale hyperparameter manifest job(s)")
+
+    result12 = await session.execute(
+        update(HyperparameterSearchJob)
+        .where(
+            HyperparameterSearchJob.status == "running",
+            HyperparameterSearchJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count12 = _rowcount(result12)
+    if count12:
+        logger.warning(f"Recovered {count12} stale hyperparameter search job(s)")
+
     total = (
         count
         + count2
@@ -241,6 +276,8 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count8
         + count9
         + count10
+        + count11
+        + count12
     )
     if total:
         await session.commit()
@@ -644,6 +681,43 @@ async def claim_vocalization_inference_job(session: AsyncSession):
 
 
 # ---- Detection Embedding Jobs ----
+
+
+# ---- Hyperparameter Jobs ----
+
+
+async def claim_manifest_job(session: AsyncSession):
+    from humpback.models.hyperparameter import HyperparameterManifest
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            HyperparameterManifest,
+            status_attr=HyperparameterManifest.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=HyperparameterManifest.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_hyperparameter_search_job(session: AsyncSession):
+    from humpback.models.hyperparameter import HyperparameterSearchJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            HyperparameterSearchJob,
+            status_attr=HyperparameterSearchJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=HyperparameterSearchJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
 
 
 async def claim_detection_embedding_job(

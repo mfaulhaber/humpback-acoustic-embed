@@ -81,6 +81,18 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
+def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
+    return storage_root / "hyperparameter" / "manifests" / manifest_id
+
+
+def hyperparameter_manifest_path(storage_root: Path, manifest_id: str) -> Path:
+    return hyperparameter_manifest_dir(storage_root, manifest_id) / "manifest.json"
+
+
+def hyperparameter_search_results_dir(storage_root: Path, search_id: str) -> Path:
+    return storage_root / "hyperparameter" / "searches" / search_id
+
+
 def resolve_audio_path(af, storage_root: Path) -> Path:
     """Return the on-disk path for an AudioFile.
 

@@ -12,6 +12,7 @@ import { SearchTab } from "@/components/search/SearchTab";
 import { LabelProcessingTab } from "@/components/label-processing/LabelProcessingTab";
 import { TimelineViewer } from "@/components/timeline/TimelineViewer";
 import { EmbeddingsPage } from "@/components/classifier/EmbeddingsPage";
+import { TuningTab } from "@/components/classifier/TuningTab";
 import { VocalizationTrainingTab } from "@/components/vocalization/VocalizationTrainingTab";
 import { VocalizationLabelingTab } from "@/components/vocalization/VocalizationLabelingTab";
 import { TrainingDataView } from "@/components/vocalization/TrainingDataView";
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
         <Route path="/app/classifier/labeling" element={<LabelingTab />} />
         <Route path="/app/classifier/embeddings" element={<EmbeddingsPage />} />
+        <Route path="/app/classifier/tuning" element={<TuningTab />} />
         <Route path="/app/classifier/timeline/:jobId" element={<TimelineViewer />} />
         <Route path="/app/vocalization" element={<Navigate to="/app/vocalization/training" replace />} />
         <Route path="/app/vocalization/training" element={<VocalizationTrainingTab />} />

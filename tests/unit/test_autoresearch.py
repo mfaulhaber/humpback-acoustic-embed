@@ -11,31 +11,33 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from scripts.autoresearch.compare_classifiers import build_trial_manifest_for_best_run
-from scripts.autoresearch.objectives import default_objective, get_objective
-from scripts.autoresearch.run_autoresearch import (
-    _build_trial_manifest,
-    _hard_negative_replay_count,
-    _ordered_replay_candidate_ids,
-    run_search,
-)
-from scripts.autoresearch.search_space import (
-    SEARCH_SPACE,
+from humpback.services.hyperparameter_service.search import default_objective
+from humpback.services.hyperparameter_service.search_space import (
     config_hash,
-    sample_config,
 )
-from scripts.autoresearch.train_eval import (
-    _load_parquet_cache,
+from humpback.services.hyperparameter_service.train_eval import (
     apply_context_pooling,
     apply_transforms,
     build_classifier,
     build_feature_pipeline,
     compute_metrics,
     evaluate_classifier_on_split,
-    fit_autoresearch_classifier,
     find_top_false_positives,
+    fit_autoresearch_classifier,
+    load_parquet_cache as _load_parquet_cache,
     train_eval,
 )
+
+# Legacy imports for hard-negative replay tests (deprecated scripts)
+from scripts.autoresearch.compare_classifiers import build_trial_manifest_for_best_run
+from scripts.autoresearch.objectives import get_objective
+from scripts.autoresearch.run_autoresearch import (
+    _build_trial_manifest,
+    _hard_negative_replay_count,
+    _ordered_replay_candidate_ids,
+    run_search,
+)
+from scripts.autoresearch.search_space import SEARCH_SPACE, sample_config
 
 
 # ---------------------------------------------------------------------------
@@ -1053,7 +1055,9 @@ class TestDetectionContextPooling:
             ],
         }
         cache = _load_parquet_cache(manifest)
-        from scripts.autoresearch.train_eval import _build_embedding_lookup
+        from humpback.services.hyperparameter_service.train_eval import (
+            build_embedding_lookup as _build_embedding_lookup,
+        )
 
         lookup = _build_embedding_lookup(manifest, cache)
         result = apply_context_pooling(manifest, lookup, cache, "mean3")
@@ -1083,7 +1087,9 @@ class TestDetectionContextPooling:
             ],
         }
         cache = _load_parquet_cache(manifest)
-        from scripts.autoresearch.train_eval import _build_embedding_lookup
+        from humpback.services.hyperparameter_service.train_eval import (
+            build_embedding_lookup as _build_embedding_lookup,
+        )
 
         lookup = _build_embedding_lookup(manifest, cache)
         result = apply_context_pooling(manifest, lookup, cache, "mean3")
@@ -1117,7 +1123,9 @@ class TestDetectionContextPooling:
             ],
         }
         cache = _load_parquet_cache(manifest)
-        from scripts.autoresearch.train_eval import _build_embedding_lookup
+        from humpback.services.hyperparameter_service.train_eval import (
+            build_embedding_lookup as _build_embedding_lookup,
+        )
 
         lookup = _build_embedding_lookup(manifest, cache)
         mean_result = apply_context_pooling(manifest, lookup, cache, "mean3")

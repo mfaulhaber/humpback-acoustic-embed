@@ -1,5 +1,7 @@
 # Autoresearch: Bounded Classifier Head Search
 
+> **Prefer the web UI.** The Classifier > Tuning page provides the same manifest generation, hyperparameter search, and production comparison workflow through the browser. These CLI scripts are thin wrappers over `humpback.services.hyperparameter_service` and are retained for scripting and CI use cases.
+
 Constrained hyperparameter search over binary classifier heads trained on frozen Perch embeddings. The primary optimization target is reducing **high-confidence false positives** (negatives scored >= 0.90) while preserving acceptable recall.
 
 ## Process Overview
