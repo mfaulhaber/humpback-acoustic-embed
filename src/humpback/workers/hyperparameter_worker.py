@@ -231,6 +231,10 @@ async def run_hyperparameter_search_job(
                     production_threshold=job.comparison_threshold or 0.5,
                 )
 
+        if comparison_result is not None:
+            comparison_file = results_dir / "comparison.json"
+            comparison_file.write_text(json.dumps(comparison_result, indent=2))
+
         await session.execute(
             update(HyperparameterSearchJob)
             .where(HyperparameterSearchJob.id == job.id)

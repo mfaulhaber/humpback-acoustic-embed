@@ -11,12 +11,12 @@
 - Modify: `src/humpback/classifier/replay.py`
 
 **Acceptance criteria:**
-- [ ] New function `compute_sample_weight(class_weight: dict, y: ndarray) -> ndarray` that maps per-class weights to per-sample weights
-- [ ] Returns `None` when all class weights are 1.0 (uniform)
-- [ ] `build_replay_pipeline()` computes sample weight from config's `class_weight_pos`/`class_weight_neg`
-- [ ] `pipeline.fit()` call at line ~613 passes `classifier__sample_weight` when MLP and weights are non-uniform
-- [ ] `CalibratedClassifierCV.fit()` call at line ~621 also passes `sample_weight` when applicable
-- [ ] LogisticRegression and LinearSVC paths unaffected (they use native `class_weight`)
+- [x] New function `compute_sample_weight(class_weight: dict, y: ndarray) -> ndarray` that maps per-class weights to per-sample weights
+- [x] Returns `None` when all class weights are 1.0 (uniform)
+- [x] `build_replay_pipeline()` computes sample weight from config's `class_weight_pos`/`class_weight_neg`
+- [x] `pipeline.fit()` call at line ~613 passes `classifier__sample_weight` when MLP and weights are non-uniform
+- [x] `CalibratedClassifierCV.fit()` call at line ~621 also passes `sample_weight` when applicable
+- [x] LogisticRegression and LinearSVC paths unaffected (they use native `class_weight`)
 
 **Tests needed:**
 - `compute_sample_weight` returns correct array for non-uniform weights
@@ -32,11 +32,11 @@
 - Modify: `src/humpback/classifier/trainer.py`
 
 **Acceptance criteria:**
-- [ ] `map_autoresearch_config_to_training_parameters()` no longer raises `ValueError` for MLP with explicit class weights; instead includes class_weight dict in returned parameters for MLP
-- [ ] `train_binary_classifier()` computes sample weight when classifier_type is "mlp" and class_weight is non-uniform
-- [ ] `cross_validate()` call passes `fit_params={"classifier__sample_weight": sw}` for MLP with non-uniform weights
-- [ ] `pipeline.fit()` final call passes `classifier__sample_weight` for MLP with non-uniform weights
-- [ ] LogisticRegression path unaffected
+- [x] `map_autoresearch_config_to_training_parameters()` no longer raises `ValueError` for MLP with explicit class weights; instead includes class_weight dict in returned parameters for MLP
+- [x] `train_binary_classifier()` computes sample weight when classifier_type is "mlp" and class_weight is non-uniform
+- [x] `cross_validate()` call passes `fit_params={"classifier__sample_weight": sw}` for MLP with non-uniform weights
+- [x] `pipeline.fit()` final call passes `classifier__sample_weight` for MLP with non-uniform weights
+- [x] LogisticRegression path unaffected
 
 **Tests needed:**
 - `map_autoresearch_config_to_training_parameters` with MLP + non-default weights returns class_weight in parameters without raising
@@ -50,8 +50,8 @@
 - Modify: `src/humpback/services/classifier_service/autoresearch.py`
 
 **Acceptance criteria:**
-- [ ] `_assess_reproducibility()` no longer adds "MLP promotion cannot yet reproduce explicit class weights" blocker
-- [ ] Other existing blockers (e.g., hard_negative_fraction) unchanged
+- [x] `_assess_reproducibility()` no longer adds "MLP promotion cannot yet reproduce explicit class weights" blocker
+- [x] Other existing blockers (e.g., hard_negative_fraction) unchanged
 
 **Tests needed:**
 - `_assess_reproducibility` with MLP + explicit weights returns reproducible=True (assuming no other blockers)
@@ -65,9 +65,9 @@
 - Modify: `src/humpback/workers/hyperparameter_worker.py`
 
 **Acceptance criteria:**
-- [ ] After `compare_classifiers()` returns, write result to `results_dir / "comparison.json"` before DB update
-- [ ] Only write when `comparison_result` is not None
-- [ ] Existing DB storage of `comparison_result` unchanged
+- [x] After `compare_classifiers()` returns, write result to `results_dir / "comparison.json"` before DB update
+- [x] Only write when `comparison_result` is not None
+- [x] Existing DB storage of `comparison_result` unchanged
 
 **Tests needed:**
 - Worker writes `comparison.json` to results_dir when comparison_result exists

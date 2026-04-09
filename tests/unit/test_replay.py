@@ -15,6 +15,7 @@ from humpback.classifier.replay import (
     apply_context_pooling,
     build_replay_pipeline,
     compute_metrics,
+    compute_sample_weight,
     evaluate_on_split,
     load_parquet_cache,
 )
@@ -705,12 +706,12 @@ class TestAssessReproducibility:
         assert ok is False
         assert any("hard-negative" in b.lower() for b in blockers)
 
-    def test_mlp_with_class_weights_still_blocked(self) -> None:
+    def test_mlp_with_class_weights_promotable(self) -> None:
         ok, blockers = self._assess(
             {"classifier": "mlp", "class_weight_pos": 2.0, "class_weight_neg": 1.0}
         )
-        assert ok is False
-        assert any("MLP" in b for b in blockers)
+        assert ok is True
+        assert blockers == []
 
     def test_simple_logreg_promotable(self) -> None:
         ok, blockers = self._assess(
@@ -722,3 +723,68 @@ class TestAssessReproducibility:
         )
         assert ok is True
         assert blockers == []
+
+
+# ---------------------------------------------------------------------------
+# compute_sample_weight tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeSampleWeight:
+    def test_uniform_returns_none(self) -> None:
+        y = np.array([0, 0, 1, 1])
+        result = compute_sample_weight({0: 1.0, 1: 1.0}, y)
+        assert result is None
+
+    def test_non_uniform_returns_array(self) -> None:
+        y = np.array([0, 0, 1, 1, 0])
+        result = compute_sample_weight({0: 1.0, 1: 1.5}, y)
+        assert result is not None
+        expected = np.array([1.0, 1.0, 1.5, 1.5, 1.0])
+        np.testing.assert_array_equal(result, expected)
+
+    def test_both_non_default(self) -> None:
+        y = np.array([1, 0, 1])
+        result = compute_sample_weight({0: 2.0, 1: 3.0}, y)
+        assert result is not None
+        np.testing.assert_array_equal(result, np.array([3.0, 2.0, 3.0]))
+
+
+# ---------------------------------------------------------------------------
+# MLP replay pipeline with sample weights
+# ---------------------------------------------------------------------------
+
+
+class TestMlpReplayWithClassWeights:
+    def test_mlp_non_uniform_weights_trains(self) -> None:
+        rng = np.random.RandomState(42)
+        X = np.vstack([rng.randn(30, VECTOR_DIM) + 2, rng.randn(30, VECTOR_DIM) - 2])
+        y = np.concatenate([np.ones(30), np.zeros(30)])
+        config: dict[str, Any] = {
+            "classifier": "mlp",
+            "feature_norm": "standard",
+            "class_weight_pos": 1.0,
+            "class_weight_neg": 1.5,
+            "prob_calibration": "none",
+            "seed": 42,
+        }
+        pipeline, effective = build_replay_pipeline(config, X, y)
+        assert hasattr(pipeline, "predict_proba")
+        assert effective.class_weight == {0: 1.5, 1: 1.0}
+
+    def test_logreg_does_not_use_sample_weight(self) -> None:
+        """LogisticRegression uses native class_weight, not sample_weight."""
+        rng = np.random.RandomState(42)
+        X = np.vstack([rng.randn(30, VECTOR_DIM) + 2, rng.randn(30, VECTOR_DIM) - 2])
+        y = np.concatenate([np.ones(30), np.zeros(30)])
+        config: dict[str, Any] = {
+            "classifier": "logreg",
+            "feature_norm": "standard",
+            "class_weight_pos": 3.0,
+            "class_weight_neg": 1.0,
+            "prob_calibration": "none",
+            "seed": 42,
+        }
+        pipeline, effective = build_replay_pipeline(config, X, y)
+        clf = pipeline.named_steps["classifier"]
+        assert clf.class_weight == {0: 1.0, 1: 3.0}

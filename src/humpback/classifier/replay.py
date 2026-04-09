@@ -360,6 +360,24 @@ def _feature_dim_from_lookup(embedding_lookup: dict[str, np.ndarray]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Sample weight helper
+# ---------------------------------------------------------------------------
+
+
+def compute_sample_weight(
+    class_weight: dict[int, float], y: np.ndarray
+) -> np.ndarray | None:
+    """Convert per-class weights to a per-sample weight array.
+
+    Returns ``None`` when all weights are uniform (1.0) — the caller can skip
+    passing ``sample_weight`` entirely.
+    """
+    if all(w == 1.0 for w in class_weight.values()):
+        return None
+    return np.array([class_weight[int(label)] for label in y], dtype=np.float64)
+
+
+# ---------------------------------------------------------------------------
 # Classifier construction
 # ---------------------------------------------------------------------------
 
@@ -610,7 +628,17 @@ def build_replay_pipeline(
     # --- Build pipeline without calibration first, fit it ---
     steps.append(("classifier", clf))
     pipeline = Pipeline(steps)
-    pipeline.fit(X_train, y_train)
+
+    # MLP has no native class_weight param; pass sample_weight through the
+    # pipeline's fit_params instead.  LogisticRegression/LinearSVC use their
+    # own class_weight kwarg directly so they don't need this.
+    fit_params: dict[str, Any] = {}
+    if clf_type == "mlp":
+        sw = compute_sample_weight(effective.class_weight, y_train)
+        if sw is not None:
+            fit_params["classifier__sample_weight"] = sw
+
+    pipeline.fit(X_train, y_train, **fit_params)
 
     # --- Calibration (wraps the fitted pipeline) ---
     cal_mode = config.get("prob_calibration", "none")
@@ -618,7 +646,9 @@ def build_replay_pipeline(
     if cal_mode != "none" and clf_type != "linear_svm":
         method = "sigmoid" if cal_mode == "platt" else "isotonic"
         calibrated = CalibratedClassifierCV(pipeline, cv=3, method=method)
-        calibrated.fit(X_train, y_train)
+        # CalibratedClassifierCV.fit() accepts sample_weight directly
+        cal_sw = fit_params.get("classifier__sample_weight")
+        calibrated.fit(X_train, y_train, sample_weight=cal_sw)
         # Return the calibrated wrapper as the pipeline — it has predict_proba
         return calibrated, effective  # type: ignore[return-value]
 

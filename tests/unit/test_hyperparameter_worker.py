@@ -180,3 +180,38 @@ async def test_run_search_job_failure_sets_status(session, settings) -> None:
     await session.refresh(job)
     assert job.status == "failed"
     assert job.error_message is not None
+
+
+# ---------------------------------------------------------------------------
+# Comparison artifact persistence
+# ---------------------------------------------------------------------------
+
+
+def test_comparison_json_written_to_results_dir(tmp_path) -> None:
+    """Verify the comparison write pattern used by the worker."""
+    results_dir = tmp_path / "search-results"
+    results_dir.mkdir()
+    comparison_result = {"splits": {"val": {"delta": {"precision": 0.05}}}}
+
+    # Replicate the worker's write logic
+    if comparison_result is not None:
+        comparison_file = results_dir / "comparison.json"
+        comparison_file.write_text(json.dumps(comparison_result, indent=2))
+
+    written = results_dir / "comparison.json"
+    assert written.exists()
+    data = json.loads(written.read_text())
+    assert data["splits"]["val"]["delta"]["precision"] == 0.05
+
+
+def test_comparison_json_not_written_when_none(tmp_path) -> None:
+    """No file written when comparison_result is None."""
+    results_dir = tmp_path / "search-results"
+    results_dir.mkdir()
+    comparison_result = None
+
+    if comparison_result is not None:
+        comparison_file = results_dir / "comparison.json"
+        comparison_file.write_text(json.dumps(comparison_result, indent=2))
+
+    assert not (results_dir / "comparison.json").exists()

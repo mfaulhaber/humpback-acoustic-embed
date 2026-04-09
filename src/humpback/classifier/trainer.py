@@ -146,18 +146,15 @@ def map_autoresearch_config_to_training_parameters(
 
     class_weight_pos = float(config.get("class_weight_pos", 1.0))
     class_weight_neg = float(config.get("class_weight_neg", 1.0))
-    if classifier_type == "mlp" and (
-        class_weight_pos != 1.0 or class_weight_neg != 1.0
-    ):
-        raise ValueError("MLP autoresearch promotion cannot reproduce class weights")
 
     parameters: dict[str, Any] = {
         "classifier_type": classifier_type,
         "feature_norm": feature_norm,
         "random_state": int(config.get("seed", 42)),
     }
-    if classifier_type == "logistic_regression":
-        parameters["class_weight"] = {0: class_weight_neg, 1: class_weight_pos}
+    # Both logreg and MLP need the class_weight dict; logreg passes it
+    # natively, MLP uses it to compute sample_weight in train_binary_classifier.
+    parameters["class_weight"] = {0: class_weight_neg, 1: class_weight_pos}
 
     return parameters
 
@@ -461,6 +458,16 @@ def train_binary_classifier(
 
     pipeline = Pipeline(steps)
 
+    # MLP has no native class_weight param; pass sample_weight through the
+    # pipeline's fit_params instead.
+    fit_params: dict[str, Any] = {}
+    if classifier_type == "mlp" and isinstance(class_weight, dict):
+        from humpback.classifier.replay import compute_sample_weight
+
+        sw = compute_sample_weight(class_weight, y)
+        if sw is not None:
+            fit_params["classifier__sample_weight"] = sw
+
     # Cross-validation for honest estimates.
     # n_splits must not exceed the size of the minority class so that
     # every fold contains at least one sample from each class.
@@ -477,10 +484,11 @@ def train_binary_classifier(
         scoring=["accuracy", "roc_auc", "precision", "recall", "f1"],
         return_train_score=False,
         error_score=cast(Any, "raise"),
+        params=fit_params if fit_params else None,
     )
 
     # Final fit on all data
-    pipeline.fit(X, y)
+    pipeline.fit(X, y, **fit_params)
 
     n_pos = len(positive_embeddings)
     n_neg = len(negative_embeddings)

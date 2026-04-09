@@ -522,7 +522,7 @@ vocalization type). Key design choices:
 - Replay verification proves parity with the reviewed candidate on val/test splits
 - Verification mismatch does not fail the job — the model is saved but flagged
 - Calibration is baked into the sklearn Pipeline; `predict_proba()` returns calibrated probabilities directly
-- `linear_svm`, `hard_negative_fraction > 0`, and MLP with class weights remain blocked
+- `linear_svm` and `hard_negative_fraction > 0` remain blocked; MLP with explicit class weights is now supported via `sample_weight`
 
 ---
 
