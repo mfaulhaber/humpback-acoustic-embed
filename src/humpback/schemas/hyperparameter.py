@@ -38,6 +38,8 @@ class ManifestSummary(BaseModel):
     split_ratio: list[int]
     seed: int
     example_count: Optional[int] = None
+    positive_count: Optional[int] = None
+    negative_count: Optional[int] = None
     error_message: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None

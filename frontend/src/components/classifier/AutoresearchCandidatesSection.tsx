@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Trash2,
 } from "lucide-react";
 
 import type {
@@ -34,9 +35,18 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   useAutoresearchCandidate,
   useAutoresearchCandidates,
   useCreateAutoresearchCandidateTrainingJob,
+  useDeleteCandidate,
   useImportCandidateFromSearch,
   useSearches,
 } from "@/hooks/queries/useClassifier";
@@ -551,11 +561,13 @@ function CandidateCard({
 }) {
   const [newModelName, setNewModelName] = useState(defaultPromotionName(candidate));
   const [notes, setNotes] = useState("");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const { data: detail, isLoading, isError } = useAutoresearchCandidate(
     open ? candidate.id : null,
   );
   const promoteMutation = useCreateAutoresearchCandidateTrainingJob();
+  const deleteMutation = useDeleteCandidate();
 
   const deltaEntries = useMemo(() => buildPrimaryDeltas(candidate), [candidate]);
   const splitName = useMemo(
@@ -632,6 +644,19 @@ function CandidateCard({
                   {exampleCount != null && <span>{exampleCount} manifest rows</span>}
                   {splitCountsLabel && <span>{splitCountsLabel}</span>}
                 </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 w-6 p-0 shrink-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowDeleteDialog(true);
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
                 {deltaEntries.length > 0 ? (
@@ -881,6 +906,40 @@ function CandidateCard({
           )}
         </CollapsibleContent>
       </div>
+
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Candidate</DialogTitle>
+            <DialogDescription>
+              {candidate.new_model_id
+                ? "This candidate has been promoted to a classifier model. Are you sure you want to delete it?"
+                : `Delete candidate "${candidate.name}"?`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowDeleteDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                deleteMutation.mutate(candidate.id, {
+                  onSuccess: () => setShowDeleteDialog(false),
+                });
+              }}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Collapsible>
   );
 }

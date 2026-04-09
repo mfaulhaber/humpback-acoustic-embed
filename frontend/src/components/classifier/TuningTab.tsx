@@ -130,8 +130,10 @@ function formatValue(v: unknown): string {
 
 function ManifestDetail({
   manifestId,
+  detectionJobs,
 }: {
   manifestId: string;
+  detectionJobs: DetectionJob[];
 }) {
   // We use the summary list data; for split_summary we fetch detail on expand
   const { data: manifests = [] } = useManifests();
@@ -148,10 +150,26 @@ function ManifestDetail({
     return null;
   }
 
+  const detectionJobLabels = manifest.detection_job_ids
+    .map((id) => {
+      const job = detectionJobs.find((j) => j.id === id);
+      return job ? fmtDetectionJobLabel(job) : id.slice(0, 8);
+    });
+
   return (
     <div className="text-xs text-muted-foreground mt-2 space-y-1">
       <p>Examples: {manifest.example_count ?? "—"}</p>
-      <p>Sources: {sourceSummary(manifest)}</p>
+      {detectionJobLabels.length > 0 && (
+        <div>
+          <p className="font-medium text-foreground mb-0.5">Detection Jobs</p>
+          {detectionJobLabels.map((label, i) => (
+            <p key={i}>{label}</p>
+          ))}
+        </div>
+      )}
+      {manifest.training_job_ids.length > 0 && (
+        <p>Training jobs: {manifest.training_job_ids.length}</p>
+      )}
     </div>
   );
 }
@@ -262,6 +280,8 @@ function ManifestsSection() {
                   <th className="py-2 pr-3 font-medium">Status</th>
                   <th className="py-2 pr-3 font-medium">Sources</th>
                   <th className="py-2 pr-3 font-medium">Examples</th>
+                  <th className="py-2 pr-3 font-medium">Positives</th>
+                  <th className="py-2 pr-3 font-medium">Negatives</th>
                   <th className="py-2 pr-3 font-medium">Split</th>
                   <th className="py-2 pr-3 font-medium">Created</th>
                   <th className="py-2 font-medium" />
@@ -286,7 +306,7 @@ function ManifestsSection() {
                         {m.name}
                       </span>
                       {expandedId === m.id && (
-                        <ManifestDetail manifestId={m.id} />
+                        <ManifestDetail manifestId={m.id} detectionJobs={detectionJobs} />
                       )}
                     </td>
                     <td className="py-2 pr-3">
@@ -299,6 +319,8 @@ function ManifestsSection() {
                     </td>
                     <td className="py-2 pr-3">{sourceSummary(m)}</td>
                     <td className="py-2 pr-3">{m.example_count ?? "—"}</td>
+                    <td className="py-2 pr-3">{m.positive_count ?? "—"}</td>
+                    <td className="py-2 pr-3">{m.negative_count ?? "—"}</td>
                     <td className="py-2 pr-3">{m.split_ratio.join("/")}</td>
                     <td className="py-2 pr-3">{fmtDate(m.created_at)}</td>
                     <td className="py-2">

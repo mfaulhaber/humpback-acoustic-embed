@@ -1133,6 +1133,8 @@ export interface HyperparameterManifestSummary {
   split_ratio: number[];
   seed: number;
   example_count: number | null;
+  positive_count: number | null;
+  negative_count: number | null;
   error_message: string | null;
   created_at: string;
   completed_at: string | null;

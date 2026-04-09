@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.models.classifier import AutoresearchCandidate
 from humpback.models.hyperparameter import (
     HyperparameterManifest,
     HyperparameterSearchJob,
@@ -58,7 +59,23 @@ def _parse_json(val: str | None) -> Any:
     return json.loads(val)
 
 
+def _split_summary_totals(
+    raw: str | None,
+) -> tuple[int | None, int | None]:
+    """Sum positive/negative counts across all splits in split_summary JSON."""
+    if raw is None:
+        return None, None
+    summary = json.loads(raw)
+    pos = neg = 0
+    for split_data in summary.values():
+        if isinstance(split_data, dict):
+            pos += split_data.get("positive", 0)
+            neg += split_data.get("negative", 0)
+    return pos, neg
+
+
 def _manifest_to_summary(m: HyperparameterManifest) -> ManifestSummary:
+    pos, neg = _split_summary_totals(m.split_summary)
     return ManifestSummary(
         id=m.id,
         name=m.name,
@@ -68,6 +85,8 @@ def _manifest_to_summary(m: HyperparameterManifest) -> ManifestSummary:
         split_ratio=json.loads(m.split_ratio),
         seed=m.seed,
         example_count=m.example_count,
+        positive_count=pos,
+        negative_count=neg,
         error_message=m.error_message,
         created_at=m.created_at,
         completed_at=m.completed_at,
@@ -75,6 +94,7 @@ def _manifest_to_summary(m: HyperparameterManifest) -> ManifestSummary:
 
 
 def _manifest_to_detail(m: HyperparameterManifest) -> ManifestDetail:
+    pos, neg = _split_summary_totals(m.split_summary)
     return ManifestDetail(
         id=m.id,
         name=m.name,
@@ -84,6 +104,8 @@ def _manifest_to_detail(m: HyperparameterManifest) -> ManifestDetail:
         split_ratio=json.loads(m.split_ratio),
         seed=m.seed,
         example_count=m.example_count,
+        positive_count=pos,
+        negative_count=neg,
         error_message=m.error_message,
         created_at=m.created_at,
         completed_at=m.completed_at,
@@ -459,3 +481,16 @@ async def create_training_job_from_candidate(
     except ValueError as e:
         raise HTTPException(400, str(e))
     return _training_job_to_out(job)
+
+
+@router.delete("/candidates/{candidate_id}")
+async def delete_candidate(
+    candidate_id: str,
+    session: SessionDep,
+) -> dict[str, str]:
+    candidate = await session.get(AutoresearchCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(404, "Candidate not found")
+    await session.delete(candidate)
+    await session.commit()
+    return {"status": "deleted"}

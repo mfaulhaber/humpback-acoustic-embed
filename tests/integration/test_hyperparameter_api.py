@@ -337,3 +337,132 @@ async def test_both_paths_return_same_list(client: AsyncClient) -> None:
     assert old_resp.status_code == 200
     assert new_resp.status_code == 200
     assert old_resp.json() == new_resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Manifest summary counts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_manifest_summary_has_null_counts_when_queued(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post(
+        f"{BASE}/manifests",
+        json={"name": "counts-test", "training_job_ids": ["t1"]},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["positive_count"] is None
+    assert data["negative_count"] is None
+
+
+@pytest.mark.asyncio
+async def test_manifest_summary_has_counts_when_complete(
+    app_settings,
+) -> None:
+    import json
+
+    from httpx import ASGITransport
+
+    from humpback.api.app import create_app
+    from humpback.models.hyperparameter import HyperparameterManifest
+
+    app = create_app(app_settings)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        await app.router.startup()
+
+        # Create a manifest
+        resp = await ac.post(
+            f"{BASE}/manifests",
+            json={"name": "counts-complete", "training_job_ids": ["t1"]},
+        )
+        manifest_id = resp.json()["id"]
+
+        # Simulate worker completion by updating DB directly
+        async with app.state.session_factory() as session:
+            m = await session.get(HyperparameterManifest, manifest_id)
+            assert m is not None
+            m.status = "complete"
+            m.example_count = 100
+            m.split_summary = json.dumps(
+                {
+                    "train": {"total": 70, "positive": 20, "negative": 50},
+                    "val": {"total": 15, "positive": 5, "negative": 10},
+                    "test": {"total": 15, "positive": 3, "negative": 12},
+                }
+            )
+            await session.commit()
+
+        # Verify list endpoint returns counts
+        resp = await ac.get(f"{BASE}/manifests")
+        data = resp.json()
+        manifest = next(m for m in data if m["id"] == manifest_id)
+        assert manifest["positive_count"] == 28
+        assert manifest["negative_count"] == 72
+
+        # Verify detail endpoint also returns counts
+        resp = await ac.get(f"{BASE}/manifests/{manifest_id}")
+        detail = resp.json()
+        assert detail["positive_count"] == 28
+        assert detail["negative_count"] == 72
+
+        await app.router.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Candidate delete
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_candidate(app_settings) -> None:
+    import json
+
+    from httpx import ASGITransport
+
+    from humpback.api.app import create_app
+    from humpback.models.classifier import AutoresearchCandidate
+
+    app = create_app(app_settings)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        await app.router.startup()
+
+        # Seed a candidate directly in the DB
+        async with app.state.session_factory() as session:
+            candidate = AutoresearchCandidate(
+                id="test-candidate-del",
+                name="test-candidate",
+                status="imported",
+                manifest_path="/tmp/fake/manifest.json",
+                best_run_path="/tmp/fake/best_run.json",
+                promoted_config=json.dumps({"classifier": "logreg"}),
+            )
+            session.add(candidate)
+            await session.commit()
+
+        # Verify it exists
+        resp = await ac.get(f"{NEW_CANDIDATES}/test-candidate-del")
+        assert resp.status_code == 200
+
+        # Delete it
+        resp = await ac.delete(f"{NEW_CANDIDATES}/test-candidate-del")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "deleted"
+
+        # Verify it's gone
+        resp = await ac.get(f"{NEW_CANDIDATES}/test-candidate-del")
+        assert resp.status_code == 404
+
+        await app.router.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_delete_candidate_not_found(client: AsyncClient) -> None:
+    resp = await client.delete(f"{NEW_CANDIDATES}/nonexistent")
+    assert resp.status_code == 404

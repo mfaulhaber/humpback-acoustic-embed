@@ -845,3 +845,6 @@ export const getSearchSpaceDefaults = () =>
 
 export const importCandidateFromSearch = (searchId: string) =>
   post<AutoresearchCandidateDetail>(`${HP}/searches/${searchId}/import-candidate`, {});
+
+export const deleteCandidate = (id: string) =>
+  api<{ status: string }>(`${HP}/candidates/${id}`, { method: "DELETE" });
