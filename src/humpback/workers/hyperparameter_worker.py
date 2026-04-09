@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -239,11 +240,14 @@ async def run_hyperparameter_search_job(
                 with open(best_run_path) as f:
                     best_run = json.load(f)
 
+                kwargs: dict[str, Any] = {}
+                if job.comparison_threshold is not None:
+                    kwargs["production_threshold"] = job.comparison_threshold
                 comparison_result = compare_classifiers(
                     manifest,
                     best_run,
                     production_classifier,
-                    production_threshold=job.comparison_threshold or 0.5,
+                    **kwargs,
                 )
 
         if comparison_result is not None:

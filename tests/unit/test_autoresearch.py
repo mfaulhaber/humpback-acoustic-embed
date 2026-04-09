@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +10,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from humpback.services.hyperparameter_service.comparison import (
+    _resolve_production_defaults,
+)
 from humpback.services.hyperparameter_service.search import default_objective
 from humpback.services.hyperparameter_service.search_space import (
     config_hash,
@@ -27,17 +29,6 @@ from humpback.services.hyperparameter_service.train_eval import (
     load_parquet_cache as _load_parquet_cache,
     train_eval,
 )
-
-# Legacy imports for hard-negative replay tests (deprecated scripts)
-from scripts.autoresearch.compare_classifiers import build_trial_manifest_for_best_run
-from scripts.autoresearch.objectives import get_objective
-from scripts.autoresearch.run_autoresearch import (
-    _build_trial_manifest,
-    _hard_negative_replay_count,
-    _ordered_replay_candidate_ids,
-    run_search,
-)
-from scripts.autoresearch.search_space import SEARCH_SPACE, sample_config
 
 
 # ---------------------------------------------------------------------------
@@ -124,52 +115,6 @@ class TestObjectives:
         bad = {"recall": 0.9, "high_conf_fp_rate": 0.1, "fp_rate": 0.05}
         assert default_objective(good) > default_objective(bad)
 
-    def test_get_objective_default(self) -> None:
-        fn = get_objective("default")
-        assert fn is default_objective
-
-    def test_get_objective_unknown_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown objective"):
-            get_objective("nonexistent")
-
-
-# ---------------------------------------------------------------------------
-# Search space tests
-# ---------------------------------------------------------------------------
-
-
-class TestSearchSpace:
-    def test_all_dimensions_present(self) -> None:
-        expected = {
-            "feature_norm",
-            "pca_dim",
-            "classifier",
-            "class_weight_pos",
-            "class_weight_neg",
-            "hard_negative_fraction",
-            "prob_calibration",
-            "threshold",
-            "context_pooling",
-        }
-        assert set(SEARCH_SPACE.keys()) == expected
-
-    def test_sample_config_has_all_keys(self) -> None:
-        rng = random.Random(42)
-        config = sample_config(rng)
-        assert set(config.keys()) == set(SEARCH_SPACE.keys())
-
-    def test_sample_config_values_in_space(self) -> None:
-        rng = random.Random(42)
-        for _ in range(20):
-            config = sample_config(rng)
-            for key, val in config.items():
-                assert val in SEARCH_SPACE[key], f"{key}={val} not in space"
-
-    def test_sample_config_deterministic(self) -> None:
-        c1 = sample_config(random.Random(123))
-        c2 = sample_config(random.Random(123))
-        assert c1 == c2
-
     def test_config_hash_deterministic(self) -> None:
         config = {"a": 1, "b": "x"}
         assert config_hash(config) == config_hash(config)
@@ -180,286 +125,88 @@ class TestSearchSpace:
         assert config_hash(c1) != config_hash(c2)
 
 
-class TestHardNegativeReplay:
-    def test_hard_negative_replay_count(self) -> None:
-        assert _hard_negative_replay_count(0, 0.4) == 0
-        assert _hard_negative_replay_count(50, 0.0) == 0
-        assert _hard_negative_replay_count(50, 0.1) == 5
-        assert _hard_negative_replay_count(50, 0.4) == 20
-        assert _hard_negative_replay_count(3, 0.1) == 1
+# ---------------------------------------------------------------------------
+# Production defaults resolution tests
+# ---------------------------------------------------------------------------
 
-    def test_ordered_replay_candidates_skip_train_examples(
-        self, tmp_path: Path
-    ) -> None:
-        parquet = tmp_path / "test.parquet"
-        _write_synthetic_parquet(parquet, 5)
-        manifest = {
-            "metadata": {},
-            "examples": [
-                {
-                    "id": "neg_train",
-                    "split": "train",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 0,
-                    "audio_file_id": "f0",
-                    "negative_group": "vessel",
+
+class TestResolveProductionDefaults:
+    def test_promoted_config_extracts_both_fields(self) -> None:
+        classifier = {
+            "training_summary": {
+                "promoted_config": {
+                    "context_pooling": "mean3",
+                    "threshold": 0.75,
                 },
-                {
-                    "id": "neg_val_a",
-                    "split": "val",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 1,
-                    "audio_file_id": "f1",
-                    "negative_group": "vessel",
-                },
-                {
-                    "id": "neg_test_b",
-                    "split": "test",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 2,
-                    "audio_file_id": "f2",
-                    "negative_group": "vessel",
-                },
-            ],
+            },
         }
-        order = _ordered_replay_candidate_ids(
-            manifest,
-            {"neg_train", "neg_val_a", "neg_test_b"},
-            seed=42,
-        )
-        assert "neg_train" not in order
-        assert sorted(order) == ["neg_test_b", "neg_val_a"]
+        pooling, threshold = _resolve_production_defaults(classifier)
+        assert pooling == "mean3"
+        assert threshold == 0.75
 
-    def test_build_trial_manifest_moves_unsampled_candidates_to_unused(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        parquet = tmp_path / "test.parquet"
-        _write_synthetic_parquet(parquet, 6)
-        manifest = {
-            "metadata": {"name": "test"},
-            "examples": [
-                {
-                    "id": "pos_train",
-                    "split": "train",
-                    "label": 1,
-                    "parquet_path": str(parquet),
-                    "row_index": 0,
-                    "audio_file_id": "f0",
-                    "negative_group": None,
+    def test_replay_effective_config_fallback(self) -> None:
+        classifier = {
+            "training_summary": {
+                "replay_effective_config": {
+                    "context_pooling": "max3",
+                    "threshold": 0.6,
                 },
-                {
-                    "id": "hn1",
-                    "split": "val",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 1,
-                    "audio_file_id": "f1",
-                    "negative_group": "vessel",
-                },
-                {
-                    "id": "hn2",
-                    "split": "val",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 2,
-                    "audio_file_id": "f2",
-                    "negative_group": "vessel",
-                },
-                {
-                    "id": "hn3",
-                    "split": "test",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 3,
-                    "audio_file_id": "f3",
-                    "negative_group": "vessel",
-                },
-                {
-                    "id": "hn4",
-                    "split": "test",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 4,
-                    "audio_file_id": "f4",
-                    "negative_group": "vessel",
-                },
-                {
-                    "id": "neg_keep",
-                    "split": "val",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 5,
-                    "audio_file_id": "f5",
-                    "negative_group": "rain",
-                },
-            ],
+            },
         }
+        pooling, threshold = _resolve_production_defaults(classifier)
+        assert pooling == "max3"
+        assert threshold == 0.6
 
-        trial_manifest, replay_count = _build_trial_manifest(
-            manifest,
-            ["hn1", "hn2", "hn3", "hn4"],
-            hard_negative_fraction=0.5,
-        )
-
-        assert replay_count == 2
-        splits = {ex["id"]: ex["split"] for ex in trial_manifest["examples"]}
-        assert splits["hn1"] == "train"
-        assert splits["hn2"] == "train"
-        assert splits["hn3"] == "unused"
-        assert splits["hn4"] == "unused"
-        assert splits["neg_keep"] == "val"
-        assert splits["pos_train"] == "train"
-        assert {ex["id"]: ex["split"] for ex in manifest["examples"]}["hn3"] == "test"
-
-    def test_run_search_uses_effective_hard_negative_fraction(
-        self, tmp_path: Path
-    ) -> None:
-        parquet = tmp_path / "test.parquet"
-        _write_synthetic_parquet(parquet, 5)
-        manifest = {
-            "metadata": {},
-            "examples": [
-                {
-                    "id": "pos_train",
-                    "split": "train",
-                    "label": 1,
-                    "parquet_path": str(parquet),
-                    "row_index": 0,
-                    "audio_file_id": "f0",
-                    "negative_group": None,
+    def test_promoted_config_takes_precedence(self) -> None:
+        classifier = {
+            "training_summary": {
+                "promoted_config": {
+                    "context_pooling": "mean3",
+                    "threshold": 0.75,
                 },
-                {
-                    "id": "hn1",
-                    "split": "val",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 1,
-                    "audio_file_id": "f1",
-                    "negative_group": "vessel",
+                "replay_effective_config": {
+                    "context_pooling": "max3",
+                    "threshold": 0.6,
                 },
-                {
-                    "id": "hn2",
-                    "split": "val",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 2,
-                    "audio_file_id": "f2",
-                    "negative_group": "vessel",
-                },
-                {
-                    "id": "hn3",
-                    "split": "test",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 3,
-                    "audio_file_id": "f3",
-                    "negative_group": "vessel",
-                },
-                {
-                    "id": "keep_val",
-                    "split": "val",
-                    "label": 0,
-                    "parquet_path": str(parquet),
-                    "row_index": 4,
-                    "audio_file_id": "f4",
-                    "negative_group": "rain",
-                },
-            ],
+            },
         }
-        configs = iter(
-            [
-                {
-                    "feature_norm": "none",
-                    "pca_dim": None,
-                    "classifier": "logreg",
-                    "class_weight_pos": 1.0,
-                    "class_weight_neg": 1.0,
-                    "hard_negative_fraction": 0.0,
-                    "prob_calibration": "none",
-                    "threshold": 0.5,
-                    "context_pooling": "center",
+        pooling, threshold = _resolve_production_defaults(classifier)
+        assert pooling == "mean3"
+        assert threshold == 0.75
+
+    def test_none_training_summary_returns_defaults(self) -> None:
+        classifier: dict[str, Any] = {"training_summary": None}
+        pooling, threshold = _resolve_production_defaults(classifier)
+        assert pooling == "center"
+        assert threshold == 0.5
+
+    def test_missing_training_summary_returns_defaults(self) -> None:
+        classifier: dict[str, Any] = {}
+        pooling, threshold = _resolve_production_defaults(classifier)
+        assert pooling == "center"
+        assert threshold == 0.5
+
+    def test_empty_training_summary_returns_defaults(self) -> None:
+        classifier = {"training_summary": {"cv_f1": 0.95}}
+        pooling, threshold = _resolve_production_defaults(classifier)
+        assert pooling == "center"
+        assert threshold == 0.5
+
+    def test_partial_config_collects_best_available(self) -> None:
+        """Pooling from promoted_config, threshold from replay_effective_config."""
+        classifier = {
+            "training_summary": {
+                "promoted_config": {
+                    "context_pooling": "mean3",
                 },
-                {
-                    "feature_norm": "none",
-                    "pca_dim": None,
-                    "classifier": "logreg",
-                    "class_weight_pos": 1.0,
-                    "class_weight_neg": 1.0,
-                    "hard_negative_fraction": 0.4,
-                    "prob_calibration": "none",
-                    "threshold": 0.5,
-                    "context_pooling": "center",
+                "replay_effective_config": {
+                    "threshold": 0.8,
                 },
-            ]
-        )
-        observed: list[dict[str, Any]] = []
-
-        def fake_sample_config(_rng: random.Random) -> dict[str, Any]:
-            return dict(next(configs))
-
-        def fake_train_eval(
-            trial_manifest: dict[str, Any],
-            config: dict[str, Any],
-            parquet_cache: dict[str, Any] | None = None,
-            precomputed_embeddings: dict[str, np.ndarray] | None = None,
-        ) -> dict[str, Any]:
-            observed.append(
-                {
-                    "fraction": config["hard_negative_fraction"],
-                    "splits": {
-                        ex["id"]: ex["split"]
-                        for ex in trial_manifest["examples"]
-                        if ex["id"].startswith("hn")
-                    },
-                }
-            )
-            return {
-                "metrics": {
-                    "threshold": config["threshold"],
-                    "precision": 1.0,
-                    "recall": 0.5,
-                    "fp_rate": 0.0,
-                    "high_conf_fp_rate": 0.0,
-                    "tp": 1,
-                    "fp": 0,
-                    "fn": 1,
-                    "tn": 1,
-                },
-                "top_false_positives": [{"id": "hn1", "score": 0.8}],
-            }
-
-        monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr(
-            "scripts.autoresearch.run_autoresearch.sample_config",
-            fake_sample_config,
-        )
-        monkeypatch.setattr(
-            "scripts.autoresearch.run_autoresearch.train_eval",
-            fake_train_eval,
-        )
-        try:
-            summary = run_search(
-                manifest=manifest,
-                n_trials=2,
-                objective_name="default",
-                seed=42,
-                results_dir=tmp_path / "results",
-                hard_negative_ids={"hn1", "hn2", "hn3"},
-                embedding_cache={"center": {}},
-            )
-        finally:
-            monkeypatch.undo()
-
-        assert summary["total_trials"] == 2
-        assert observed[0]["fraction"] == 0.0
-        assert set(observed[0]["splits"].values()) == {"unused"}
-        assert observed[1]["fraction"] == 0.4
-        assert list(observed[1]["splits"].values()).count("train") == 1
-        assert list(observed[1]["splits"].values()).count("unused") == 2
+            },
+        }
+        pooling, threshold = _resolve_production_defaults(classifier)
+        assert pooling == "mean3"
+        assert threshold == 0.8
 
 
 # ---------------------------------------------------------------------------
@@ -818,24 +565,6 @@ class TestTrainEval:
         assert split_result["top_false_positives"] == expected["top_false_positives"]
 
 
-class TestCompareClassifiers:
-    def test_phase2_best_run_requires_hard_negative_source(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Phase-2 best runs should not be silently replayed from the base manifest."""
-        parquet = tmp_path / "test.parquet"
-        _write_synthetic_parquet(parquet, 6)
-        manifest = _make_manifest(str(parquet), n_pos=3, n_neg=3)
-        best_run = {
-            "config": {"hard_negative_fraction": 0.0, "seed": 42},
-            "metrics": {"available_hard_negatives": 5},
-        }
-
-        with pytest.raises(ValueError, match="provide --hard-negative-from"):
-            build_trial_manifest_for_best_run(manifest, best_run, None)
-
-
 # ---------------------------------------------------------------------------
 # Detection job integration tests
 # ---------------------------------------------------------------------------
@@ -925,23 +654,6 @@ def _write_detection_row_store(
         schema=ROW_STORE_SCHEMA,
     )
     pq.write_table(table, str(path))
-
-
-class TestScoreBands:
-    def test_score_to_band_mapping(self) -> None:
-        from scripts.autoresearch.generate_manifest import _score_to_band
-
-        assert _score_to_band(0.5) == "det_0.50_0.90"
-        assert _score_to_band(0.89) == "det_0.50_0.90"
-        assert _score_to_band(0.90) == "det_0.90_0.95"
-        assert _score_to_band(0.949) == "det_0.90_0.95"
-        assert _score_to_band(0.95) == "det_0.95_0.99"
-        assert _score_to_band(0.99) == "det_0.99_1.00"
-
-    def test_score_below_range_returns_none(self) -> None:
-        from scripts.autoresearch.generate_manifest import _score_to_band
-
-        assert _score_to_band(0.1) is None
 
 
 class TestDetectionParquetLoading:
@@ -1133,332 +845,6 @@ class TestDetectionContextPooling:
 
         np.testing.assert_array_equal(mean_result["d1"], lookup["d1"])
         np.testing.assert_array_equal(max_result["d1"], lookup["d1"])
-
-
-class TestCollectDetectionExamples:
-    def test_row_id_label_classification_and_summary(self, tmp_path: Path) -> None:
-        """Default row-id manifests should only include explicit supervision."""
-        det_dir = tmp_path / "detections" / "job1"
-        det_dir.mkdir(parents=True)
-        emb_path = det_dir / "detection_embeddings.parquet"
-        row_path = det_dir / "detection_rows.parquet"
-
-        _write_row_id_detection_parquet(
-            emb_path,
-            row_ids=[
-                "rid-pos-voc",
-                "rid-neg-voc",
-                "rid-pos-binary",
-                "rid-ship",
-                "rid-band",
-                "rid-null",
-            ],
-            confidences=[0.99, None, 0.92, 0.91, 0.94, None],
-        )
-        _write_detection_row_store(
-            row_path,
-            [
-                {"row_id": "rid-pos-voc", "start_utc": "1712109600.0"},
-                {"row_id": "rid-neg-voc", "start_utc": "1712109660.0"},
-                {
-                    "row_id": "rid-pos-binary",
-                    "start_utc": "1712109720.0",
-                    "humpback": "1",
-                },
-                {"row_id": "rid-ship", "start_utc": "1712109780.0", "ship": "1"},
-                {"row_id": "rid-band", "start_utc": "1712109840.0"},
-                {"row_id": "rid-null", "start_utc": "1712109900.0"},
-            ],
-        )
-
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "humpback.storage.detection_embeddings_path",
-                return_value=emb_path,
-            ),
-            patch(
-                "humpback.storage.detection_row_store_path",
-                return_value=row_path,
-            ),
-        ):
-            from scripts.autoresearch.generate_manifest import (
-                _collect_detection_examples,
-            )
-            from humpback.config import Settings
-
-            settings = Settings()
-            examples, summaries = _collect_detection_examples(
-                [{"id": "job1-full-uuid-here"}],
-                settings,
-                score_range=(0.5, 0.995),
-                vocalization_labels_by_job={
-                    "job1-full-uuid-here": {
-                        "rid-pos-voc": {"whup"},
-                        "rid-neg-voc": {"(Negative)"},
-                    }
-                },
-            )
-
-        assert len(examples) == 4
-        examples_by_row_id = {ex["row_id"]: ex for ex in examples}
-        assert examples_by_row_id["rid-pos-voc"]["label"] == 1
-        assert (
-            examples_by_row_id["rid-pos-voc"]["label_source"] == "vocalization_positive"
-        )
-        assert examples_by_row_id["rid-neg-voc"]["label"] == 0
-        assert (
-            examples_by_row_id["rid-neg-voc"]["negative_group"]
-            == "vocalization_negative"
-        )
-        assert examples_by_row_id["rid-pos-binary"]["label_source"] == "binary_positive"
-        assert examples_by_row_id["rid-ship"]["negative_group"] == "ship"
-        assert "rid-band" not in examples_by_row_id
-        assert "rid-null" not in examples_by_row_id
-
-        from scripts.autoresearch.generate_manifest import _row_id_split_group
-
-        assert examples_by_row_id["rid-pos-voc"][
-            "audio_file_id"
-        ] == _row_id_split_group(
-            "job1-full-uuid-here",
-            1712109600.0,
-        )
-        assert examples_by_row_id["rid-neg-voc"]["detection_confidence"] is None
-
-        summary = summaries["job1-full-uuid-here"]
-        assert summary["included_positive"] == 2
-        assert summary["included_negative"] == 2
-        assert summary["included_positives_by_source"]["vocalization_positive"] == 1
-        assert summary["included_positives_by_source"]["binary_positive"] == 1
-        assert summary["included_negatives_by_source"]["vocalization_negative"] == 1
-        assert summary["included_negatives_by_source"]["ship"] == 1
-        assert summary["included_negatives_by_source"]["score_band"] == 0
-        assert summary["skipped_unlabeled_not_explicit_negative"] == 2
-        assert summary["skipped_null_confidence_unlabeled"] == 0
-        assert summary["skipped_conflicts"] == 0
-
-    def test_row_id_conflicts_are_skipped(self, tmp_path: Path) -> None:
-        """Contradictory vocalization and row-store labels should be excluded."""
-        det_dir = tmp_path / "detections" / "job2"
-        det_dir.mkdir(parents=True)
-        emb_path = det_dir / "detection_embeddings.parquet"
-        row_path = det_dir / "detection_rows.parquet"
-
-        _write_row_id_detection_parquet(
-            emb_path,
-            row_ids=["rid-conflict-a", "rid-conflict-b", "rid-ok"],
-            confidences=[0.91, 0.92, 0.93],
-        )
-        _write_detection_row_store(
-            row_path,
-            [
-                {"row_id": "rid-conflict-a", "humpback": "1"},
-                {"row_id": "rid-conflict-b", "ship": "1"},
-                {"row_id": "rid-ok", "background": "1"},
-            ],
-        )
-
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "humpback.storage.detection_embeddings_path",
-                return_value=emb_path,
-            ),
-            patch(
-                "humpback.storage.detection_row_store_path",
-                return_value=row_path,
-            ),
-        ):
-            from scripts.autoresearch.generate_manifest import (
-                _collect_detection_examples,
-            )
-            from humpback.config import Settings
-
-            settings = Settings()
-            examples, summaries = _collect_detection_examples(
-                [{"id": "job2-full-uuid-here"}],
-                settings,
-                score_range=(0.5, 0.995),
-                vocalization_labels_by_job={
-                    "job2-full-uuid-here": {
-                        "rid-conflict-a": {"(Negative)"},
-                        "rid-conflict-b": {"whup"},
-                    }
-                },
-            )
-
-        assert len(examples) == 1
-        assert examples[0]["row_id"] == "rid-ok"
-        assert summaries["job2-full-uuid-here"]["skipped_conflicts"] == 2
-
-    def test_row_id_unlabeled_windows_are_excluded_by_default(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Unlabeled rows should not become negatives unless explicitly enabled."""
-        det_dir = tmp_path / "detections" / "job3"
-        det_dir.mkdir(parents=True)
-        emb_path = det_dir / "detection_embeddings.parquet"
-        row_path = det_dir / "detection_rows.parquet"
-
-        _write_row_id_detection_parquet(
-            emb_path,
-            row_ids=["rid-low", "rid-mid", "rid-high"],
-            confidences=[0.30, 0.70, 0.999],
-        )
-        _write_detection_row_store(
-            row_path,
-            [
-                {"row_id": "rid-low"},
-                {"row_id": "rid-mid"},
-                {"row_id": "rid-high"},
-                {"row_id": "rid-missing", "background": "1"},
-            ],
-        )
-
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "humpback.storage.detection_embeddings_path",
-                return_value=emb_path,
-            ),
-            patch(
-                "humpback.storage.detection_row_store_path",
-                return_value=row_path,
-            ),
-        ):
-            from scripts.autoresearch.generate_manifest import (
-                _collect_detection_examples,
-            )
-            from humpback.config import Settings
-
-            settings = Settings()
-            examples, summaries = _collect_detection_examples(
-                [{"id": "job3-full-uuid-here"}],
-                settings,
-                score_range=(0.5, 0.995),
-            )
-
-        assert len(examples) == 0
-        summary = summaries["job3-full-uuid-here"]
-        assert summary["skipped_unlabeled_not_explicit_negative"] == 3
-        assert summary["skipped_out_of_range_unlabeled"] == 0
-        assert summary["skipped_null_confidence_unlabeled"] == 0
-        assert summary["skipped_missing_embeddings"] == 1
-
-    def test_row_id_unlabeled_windows_can_be_opted_in_as_score_band_negatives(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Opt-in should restore score-band unlabeled negatives."""
-        det_dir = tmp_path / "detections" / "job3b"
-        det_dir.mkdir(parents=True)
-        emb_path = det_dir / "detection_embeddings.parquet"
-        row_path = det_dir / "detection_rows.parquet"
-
-        _write_row_id_detection_parquet(
-            emb_path,
-            row_ids=["rid-low", "rid-mid", "rid-high"],
-            confidences=[0.30, 0.70, 0.999],
-        )
-        _write_detection_row_store(
-            row_path,
-            [
-                {"row_id": "rid-low"},
-                {"row_id": "rid-mid"},
-                {"row_id": "rid-high"},
-            ],
-        )
-
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "humpback.storage.detection_embeddings_path",
-                return_value=emb_path,
-            ),
-            patch(
-                "humpback.storage.detection_row_store_path",
-                return_value=row_path,
-            ),
-        ):
-            from scripts.autoresearch.generate_manifest import (
-                _collect_detection_examples,
-            )
-            from humpback.config import Settings
-
-            settings = Settings()
-            examples, summaries = _collect_detection_examples(
-                [{"id": "job3b-full-uuid-here"}],
-                settings,
-                score_range=(0.5, 0.995),
-                include_unlabeled_hard_negatives=True,
-            )
-
-        assert len(examples) == 1
-        assert examples[0]["row_id"] == "rid-mid"
-        assert examples[0]["negative_group"] == "det_0.50_0.90"
-        summary = summaries["job3b-full-uuid-here"]
-        assert summary["included_negatives_by_source"]["score_band"] == 1
-        assert summary["skipped_out_of_range_unlabeled"] == 2
-
-    def test_legacy_detection_embeddings_still_work(self, tmp_path: Path) -> None:
-        """Legacy filename-based detection embeddings should still be supported."""
-        det_dir = tmp_path / "detections" / "job4"
-        det_dir.mkdir(parents=True)
-        emb_path = det_dir / "detection_embeddings.parquet"
-        row_path = det_dir / "detection_rows.parquet"
-
-        _write_detection_parquet(
-            emb_path,
-            filenames=["a.flac"] * 3,
-            confidences=[0.99, 0.91, 0.72],
-        )
-        _write_detection_row_store(
-            row_path,
-            [
-                {"row_id": "rid-pos", "humpback": "1"},
-                {"row_id": "rid-ship", "ship": "1"},
-                {"row_id": "rid-band"},
-            ],
-        )
-
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "humpback.storage.detection_embeddings_path",
-                return_value=emb_path,
-            ),
-            patch(
-                "humpback.storage.detection_row_store_path",
-                return_value=row_path,
-            ),
-        ):
-            from scripts.autoresearch.generate_manifest import (
-                _collect_detection_examples,
-            )
-            from humpback.config import Settings
-
-            settings = Settings()
-            examples, summaries = _collect_detection_examples(
-                [{"id": "job4-full-uuid-here"}],
-                settings,
-                score_range=(0.5, 0.995),
-            )
-
-        assert [ex["row_index"] for ex in examples] == [0, 1]
-        assert [ex["label"] for ex in examples] == [1, 0]
-        assert examples[1]["negative_group"] == "ship"
-        assert summaries["job4-full-uuid-here"]["included_negative"] == 1
-        assert (
-            summaries["job4-full-uuid-here"]["skipped_unlabeled_not_explicit_negative"]
-            == 1
-        )
 
 
 class TestMixedSourceTrainEval:

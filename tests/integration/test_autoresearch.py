@@ -7,7 +7,6 @@ runs a small search, and verifies all output artifacts.
 from __future__ import annotations
 
 import json
-import random
 from pathlib import Path
 
 import joblib
@@ -25,13 +24,12 @@ from humpback.services.hyperparameter_service.comparison import (
     compare_classifiers,
     resolve_production_classifier,
 )
+from humpback.services.hyperparameter_service.search import run_search
+from humpback.services.hyperparameter_service.search_space import DEFAULT_SEARCH_SPACE
 from humpback.services.hyperparameter_service.train_eval import (
     collect_split_arrays,
     prepare_embeddings,
 )
-
-# Integration tests use the legacy run_search (with hard_negative support)
-from scripts.autoresearch.run_autoresearch import run_search
 
 
 VECTOR_DIM = 16
@@ -125,7 +123,7 @@ def test_search_loop_end_to_end(tmp_path: Path) -> None:
     summary = run_search(
         manifest=manifest,
         n_trials=5,
-        objective_name="default",
+        search_space=DEFAULT_SEARCH_SPACE,
         seed=42,
         results_dir=results_dir,
     )
@@ -197,7 +195,7 @@ def test_search_dedup_skips_repeats(tmp_path: Path) -> None:
     summary = run_search(
         manifest=manifest,
         n_trials=10,
-        objective_name="default",
+        search_space=DEFAULT_SEARCH_SPACE,
         seed=42,
         results_dir=results_dir,
     )
@@ -206,64 +204,6 @@ def test_search_dedup_skips_repeats(tmp_path: Path) -> None:
     # (not guaranteed with 10 trials on the full space, but the
     # mechanism is tested structurally)
     assert summary["total_trials"] + summary["skipped_duplicates"] == 10
-
-
-def test_search_without_replay_dedups_hard_negative_fraction_only_variants(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Without replay IDs, hard_negative_fraction should not create new trials."""
-    manifest = _create_test_data(tmp_path)
-    results_dir = tmp_path / "results-no-replay"
-    configs = iter(
-        [
-            {
-                "feature_norm": "none",
-                "pca_dim": None,
-                "classifier": "logreg",
-                "class_weight_pos": 1.0,
-                "class_weight_neg": 1.0,
-                "hard_negative_fraction": 0.0,
-                "prob_calibration": "none",
-                "threshold": 0.5,
-                "context_pooling": "center",
-            },
-            {
-                "feature_norm": "none",
-                "pca_dim": None,
-                "classifier": "logreg",
-                "class_weight_pos": 1.0,
-                "class_weight_neg": 1.0,
-                "hard_negative_fraction": 0.4,
-                "prob_calibration": "none",
-                "threshold": 0.5,
-                "context_pooling": "center",
-            },
-        ]
-    )
-
-    def fake_sample_config(_rng: random.Random) -> dict[str, object]:
-        return dict(next(configs))
-
-    monkeypatch.setattr(
-        "scripts.autoresearch.run_autoresearch.sample_config",
-        fake_sample_config,
-    )
-
-    summary = run_search(
-        manifest=manifest,
-        n_trials=2,
-        objective_name="default",
-        seed=42,
-        results_dir=results_dir,
-    )
-
-    assert summary["total_trials"] == 1
-    assert summary["skipped_duplicates"] == 1
-
-    with open(results_dir / "best_run.json") as f:
-        best_run = json.load(f)
-    assert best_run["config"]["hard_negative_fraction"] == 0.0
 
 
 def _create_mixed_source_data(tmp_path: Path) -> dict:
@@ -364,7 +304,7 @@ def test_mixed_source_search(tmp_path: Path) -> None:
     summary = run_search(
         manifest=manifest,
         n_trials=3,
-        objective_name="default",
+        search_space=DEFAULT_SEARCH_SPACE,
         seed=42,
         results_dir=results_dir,
     )
@@ -401,7 +341,7 @@ def test_compare_classifiers_against_production_model(
     run_search(
         manifest=manifest,
         n_trials=3,
-        objective_name="default",
+        search_space=DEFAULT_SEARCH_SPACE,
         seed=42,
         results_dir=results_dir,
     )
@@ -490,6 +430,9 @@ def test_compare_classifiers_against_production_model(
 
     assert comparison["production"]["name"] == "LR-v12"
     assert comparison["production"]["matched_by"] == "name"
+    # No promoted_config in training_summary → should fall back to defaults
+    assert comparison["production"]["context_pooling"] == "center"
+    assert comparison["production"]["threshold"] == 0.5
     assert comparison["splits"].keys() == {"val", "test"}
     for split_name in ["val", "test"]:
         split_result = comparison["splits"][split_name]
@@ -499,3 +442,112 @@ def test_compare_classifiers_against_production_model(
         assert "prediction_disagreements" in split_result
         assert "objective" in split_result["autoresearch"]["metrics"]
         assert "objective" in split_result["production"]["metrics"]
+
+
+def test_compare_auto_detects_production_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Comparison auto-detects context_pooling and threshold from training_summary."""
+    manifest = _create_test_data(tmp_path)
+    results_dir = tmp_path / "results"
+
+    run_search(
+        manifest=manifest,
+        n_trials=2,
+        search_space=DEFAULT_SEARCH_SPACE,
+        seed=42,
+        results_dir=results_dir,
+    )
+    with open(results_dir / "best_run.json") as f:
+        best_run = json.load(f)
+
+    pooled = prepare_embeddings(manifest, {"context_pooling": "center"})
+    _train_ids, y_train, X_train, _train_neg_groups = collect_split_arrays(
+        manifest,
+        pooled,
+        "train",
+    )
+    production_pipeline = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("classifier", LogisticRegression(C=0.1, max_iter=1000)),
+        ]
+    )
+    production_pipeline.fit(X_train, y_train)
+
+    model_path = tmp_path / "prod-with-config.joblib"
+    joblib.dump(production_pipeline, model_path)
+
+    training_summary = {
+        "promoted_config": {
+            "context_pooling": "mean3",
+            "threshold": 0.75,
+        },
+    }
+
+    db_path = tmp_path / "auto_detect.sqlite"
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE classifier_models (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        model_path TEXT NOT NULL,
+                        model_version TEXT NOT NULL,
+                        training_summary TEXT,
+                        training_job_id TEXT,
+                        created_at TEXT
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO classifier_models (
+                        id, name, model_path, model_version,
+                        training_summary, training_job_id, created_at
+                    ) VALUES (
+                        :id, :name, :model_path, :model_version,
+                        :training_summary, :training_job_id, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": "prod-with-config",
+                    "name": "ConfiguredModel",
+                    "model_path": str(model_path),
+                    "model_version": "surfperch-tensorflow2",
+                    "training_summary": json.dumps(training_summary),
+                    "training_job_id": "job-prod-config",
+                    "created_at": "2026-04-09 12:00:00",
+                },
+            )
+    finally:
+        engine.dispose()
+
+    monkeypatch.setenv(
+        "HUMPBACK_DATABASE_URL",
+        f"sqlite+aiosqlite:///{db_path}",
+    )
+    settings = Settings()
+    production_classifier = resolve_production_classifier(
+        settings,
+        classifier_name="ConfiguredModel",
+    )
+
+    comparison = compare_classifiers(
+        manifest,
+        best_run,
+        production_classifier,
+        splits=["test"],
+        top_n=3,
+    )
+
+    # Auto-detected from promoted_config
+    assert comparison["production"]["context_pooling"] == "mean3"
+    assert comparison["production"]["threshold"] == 0.75
