@@ -25,6 +25,11 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -45,7 +50,7 @@ import {
   useTrainingJobs,
   useClassifierModels,
 } from "@/hooks/queries/useClassifier";
-import { fetchDetectionJobs } from "@/api/client";
+import { fetchDetectionJobs, fetchHydrophoneDetectionJobs } from "@/api/client";
 import type {
   DetectionJob,
   HyperparameterManifestSummary,
@@ -80,6 +85,29 @@ function fmtDate(iso: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function fmtDetectionJobLabel(j: DetectionJob): string {
+  const name = j.hydrophone_name ?? j.audio_folder ?? j.id.slice(0, 8);
+  if (j.start_timestamp != null && j.end_timestamp != null) {
+    const fmt = (ts: number) => {
+      const d = new Date(ts * 1000);
+      return (
+        d.getUTCFullYear() +
+        "-" +
+        String(d.getUTCMonth() + 1).padStart(2, "0") +
+        "-" +
+        String(d.getUTCDate()).padStart(2, "0") +
+        " " +
+        String(d.getUTCHours()).padStart(2, "0") +
+        ":" +
+        String(d.getUTCMinutes()).padStart(2, "0") +
+        " UTC"
+      );
+    };
+    return `${name}\u2003${fmt(j.start_timestamp)} — ${fmt(j.end_timestamp)}`;
+  }
+  return name;
 }
 
 function sourceSummary(m: HyperparameterManifestSummary) {
@@ -134,8 +162,14 @@ function ManifestsSection() {
   const deleteMutation = useDeleteManifest();
   const { data: trainingJobs = [] } = useTrainingJobs();
   const { data: detectionJobs = [] } = useQuery({
-    queryKey: ["detectionJobs"],
-    queryFn: fetchDetectionJobs,
+    queryKey: ["allDetectionJobs"],
+    queryFn: async () => {
+      const [local, hydro] = await Promise.all([
+        fetchDetectionJobs(),
+        fetchHydrophoneDetectionJobs(),
+      ]);
+      return [...local, ...hydro];
+    },
   });
 
   const [showDialog, setShowDialog] = useState(false);
@@ -156,9 +190,16 @@ function ManifestsSection() {
   );
   const labeledDetectionJobs = useMemo(
     () =>
-      detectionJobs.filter(
-        (j) => j.status === "complete" && j.has_positive_labels,
-      ),
+      detectionJobs
+        .filter(
+          (j) =>
+            j.status === "complete" && j.has_positive_labels === true,
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() -
+            new Date(a.created_at).getTime(),
+        ),
     [detectionJobs],
   );
 
@@ -334,31 +375,49 @@ function ManifestsSection() {
                 <label className="text-xs font-medium">
                   Detection Jobs ({selectedDetectionJobIds.size} selected)
                 </label>
-                <div className="max-h-32 overflow-y-auto border rounded p-2 space-y-1">
-                  {labeledDetectionJobs.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      No labeled detection jobs
-                    </p>
-                  ) : (
-                    labeledDetectionJobs.map((j) => (
-                      <label
-                        key={j.id}
-                        className="flex items-center gap-2 text-xs"
-                      >
-                        <Checkbox
-                          checked={selectedDetectionJobIds.has(j.id)}
-                          onCheckedChange={(checked) => {
-                            const next = new Set(selectedDetectionJobIds);
-                            if (checked) next.add(j.id);
-                            else next.delete(j.id);
-                            setSelectedDetectionJobIds(next);
-                          }}
-                        />
-                        {j.hydrophone_name ?? j.audio_folder ?? j.id}
-                      </label>
-                    ))
-                  )}
-                </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      className="w-full justify-between text-sm font-normal"
+                    >
+                      <span className="truncate">
+                        {selectedDetectionJobIds.size === 0
+                          ? "Select detection jobs…"
+                          : `${selectedDetectionJobIds.size} detection job${selectedDetectionJobIds.size > 1 ? "s" : ""} selected`}
+                      </span>
+                      <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+                      {labeledDetectionJobs.length === 0 ? (
+                        <p className="text-xs text-muted-foreground px-1 py-1.5">
+                          No labeled detection jobs
+                        </p>
+                      ) : (
+                        labeledDetectionJobs.map((j) => (
+                          <label
+                            key={j.id}
+                            className="flex items-center gap-2 text-xs cursor-pointer rounded px-1 py-1 hover:bg-muted"
+                          >
+                            <Checkbox
+                              checked={selectedDetectionJobIds.has(j.id)}
+                              onCheckedChange={(checked) => {
+                                const next = new Set(selectedDetectionJobIds);
+                                if (checked) next.add(j.id);
+                                else next.delete(j.id);
+                                setSelectedDetectionJobIds(next);
+                              }}
+                            />
+                            {fmtDetectionJobLabel(j)}
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

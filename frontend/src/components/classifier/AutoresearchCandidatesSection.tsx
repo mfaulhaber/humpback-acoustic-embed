@@ -25,12 +25,20 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import {
   useAutoresearchCandidate,
   useAutoresearchCandidates,
   useCreateAutoresearchCandidateTrainingJob,
-  useImportAutoresearchCandidate,
+  useImportCandidateFromSearch,
+  useSearches,
 } from "@/hooks/queries/useClassifier";
 import { cn } from "@/lib/utils";
 
@@ -879,14 +887,16 @@ function CandidateCard({
 
 export function AutoresearchCandidatesSection() {
   const { data: candidates = [], isLoading } = useAutoresearchCandidates(3000);
-  const importMutation = useImportAutoresearchCandidate();
+  const { data: searches = [] } = useSearches();
+  const importMutation = useImportCandidateFromSearch();
 
-  const [name, setName] = useState("");
-  const [manifestPath, setManifestPath] = useState("");
-  const [bestRunPath, setBestRunPath] = useState("");
-  const [comparisonPath, setComparisonPath] = useState("");
-  const [topFalsePositivesPath, setTopFalsePositivesPath] = useState("");
+  const [selectedSearchId, setSelectedSearchId] = useState("");
   const [openCandidateId, setOpenCandidateId] = useState<string | null>(null);
+
+  const completedSearches = useMemo(
+    () => searches.filter((s) => s.status === "complete"),
+    [searches],
+  );
 
   const promotableCount = useMemo(
     () => candidates.filter((candidate) => candidate.status === "promotable").length,
@@ -894,28 +904,12 @@ export function AutoresearchCandidatesSection() {
   );
 
   const handleImport = () => {
-    if (!manifestPath.trim() || !bestRunPath.trim()) {
-      return;
-    }
-    importMutation.mutate(
-      {
-        name: emptyToUndefined(name) ?? null,
-        manifest_path: manifestPath.trim(),
-        best_run_path: bestRunPath.trim(),
-        comparison_path: emptyToUndefined(comparisonPath) ?? null,
-        top_false_positives_path: emptyToUndefined(topFalsePositivesPath) ?? null,
+    if (!selectedSearchId) return;
+    importMutation.mutate(selectedSearchId, {
+      onSuccess: () => {
+        setSelectedSearchId("");
       },
-      {
-        onSuccess: (candidate) => {
-          setName("");
-          setManifestPath("");
-          setBestRunPath("");
-          setComparisonPath("");
-          setTopFalsePositivesPath("");
-          setOpenCandidateId(candidate.id);
-        },
-      },
-    );
+    });
   };
 
   return (
@@ -940,90 +934,39 @@ export function AutoresearchCandidatesSection() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-lg border bg-muted/20 p-4">
-          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>
-              Paths are read on the backend, so the files must already exist on
-              this machine and be accessible from the API server process.
+          <div className="flex items-center gap-3">
+            <div className="flex-1 space-y-1">
+              <label className="text-sm font-medium">Import from Search</label>
+              <Select value={selectedSearchId} onValueChange={setSelectedSearchId}>
+                <SelectTrigger className="text-sm">
+                  <SelectValue placeholder="Select a completed search…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {completedSearches.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No completed searches
+                    </div>
+                  ) : (
+                    completedSearches.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                        {s.best_objective != null
+                          ? ` (obj: ${s.best_objective.toFixed(4)})`
+                          : ""}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
             </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <div>
-              <label htmlFor="candidate-import-name" className="text-sm font-medium">
-                Candidate Name
-              </label>
-              <Input
-                id="candidate-import-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="optional display name"
-              />
-            </div>
-            <div>
-              <label htmlFor="candidate-import-manifest" className="text-sm font-medium">
-                Manifest Path
-              </label>
-              <Input
-                id="candidate-import-manifest"
-                value={manifestPath}
-                onChange={(event) => setManifestPath(event.target.value)}
-                placeholder="/abs/path/manifest.json"
-              />
-            </div>
-            <div>
-              <label htmlFor="candidate-import-best-run" className="text-sm font-medium">
-                Best Run Path
-              </label>
-              <Input
-                id="candidate-import-best-run"
-                value={bestRunPath}
-                onChange={(event) => setBestRunPath(event.target.value)}
-                placeholder="/abs/path/phase1/best_run.json"
-              />
-            </div>
-            <div>
-              <label htmlFor="candidate-import-comparison" className="text-sm font-medium">
-                Comparison Path
-              </label>
-              <Input
-                id="candidate-import-comparison"
-                value={comparisonPath}
-                onChange={(event) => setComparisonPath(event.target.value)}
-                placeholder="/abs/path/comparison.json"
-              />
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                Prefer `phase*/lr-v12-comparison.json` for full deltas. Summary files
-                such as `comparison_summary.json` import with limited detail.
-              </div>
-            </div>
-            <div>
-              <label
-                htmlFor="candidate-import-false-positives"
-                className="text-sm font-medium"
+            <div className="flex items-end pt-5">
+              <Button
+                onClick={handleImport}
+                disabled={!selectedSearchId || importMutation.isPending}
               >
-                Top False Positives Path
-              </label>
-              <Input
-                id="candidate-import-false-positives"
-                value={topFalsePositivesPath}
-                onChange={(event) => setTopFalsePositivesPath(event.target.value)}
-                placeholder="/abs/path/top_false_positives.json"
-              />
+                {importMutation.isPending ? "Importing…" : "Import Candidate"}
+              </Button>
             </div>
-          </div>
-
-          <div className="mt-4">
-            <Button
-              onClick={handleImport}
-              disabled={
-                !manifestPath.trim() ||
-                !bestRunPath.trim() ||
-                importMutation.isPending
-              }
-            >
-              {importMutation.isPending ? "Importing…" : "Import Candidate"}
-            </Button>
           </div>
         </div>
 
