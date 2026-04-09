@@ -276,6 +276,7 @@ Classifier training currently has three distinct flows:
   - `POST /classifier/hyperparameter/candidates/import`
   - `GET /classifier/hyperparameter/candidates`
   - `GET /classifier/hyperparameter/candidates/{candidate_id}`
+  - `DELETE /classifier/hyperparameter/candidates/{candidate_id}` — delete candidate
   - `POST /classifier/hyperparameter/candidates/{candidate_id}/training-jobs`
 - **Legacy retrain workflow**:
   - `GET /classifier/models/{id}/retrain-info`
