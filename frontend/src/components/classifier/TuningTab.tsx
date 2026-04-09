@@ -599,7 +599,7 @@ function SearchesSection() {
   const [manifestId, setManifestId] = useState("");
   const [nTrials, setNTrials] = useState("100");
   const [seed, setSeed] = useState("42");
-  const [comparisonModelId, setComparisonModelId] = useState<string>("");
+  const [comparisonModelId, setComparisonModelId] = useState<string>("none");
   const [comparisonThreshold, setComparisonThreshold] = useState("0.85");
   const [searchSpace, setSearchSpace] = useState<Record<
     string,
@@ -627,10 +627,14 @@ function SearchesSection() {
         search_space: searchSpace ?? undefined,
         n_trials: parseInt(nTrials, 10) || 100,
         seed: parseInt(seed, 10) || 42,
-        comparison_model_id: comparisonModelId || null,
-        comparison_threshold: comparisonModelId
-          ? parseFloat(comparisonThreshold) || 0.85
-          : null,
+        comparison_model_id:
+          comparisonModelId && comparisonModelId !== "none"
+            ? comparisonModelId
+            : null,
+        comparison_threshold:
+          comparisonModelId && comparisonModelId !== "none"
+            ? parseFloat(comparisonThreshold) || 0.85
+            : null,
       },
       {
         onSuccess: () => {
@@ -639,7 +643,7 @@ function SearchesSection() {
           setManifestId("");
           setNTrials("100");
           setSeed("42");
-          setComparisonModelId("");
+          setComparisonModelId("none");
           setComparisonThreshold("0.85");
           setSearchSpace(null);
         },
@@ -840,7 +844,7 @@ function SearchesSection() {
                         <SelectValue placeholder="None (skip comparison)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">None</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
                         {models.map((m) => (
                           <SelectItem key={m.id} value={m.id}>
                             {m.name}
@@ -848,7 +852,7 @@ function SearchesSection() {
                         ))}
                       </SelectContent>
                     </Select>
-                    {comparisonModelId && (
+                    {comparisonModelId && comparisonModelId !== "none" && (
                       <div className="space-y-1">
                         <label className="text-xs font-medium">
                           Decision Threshold
