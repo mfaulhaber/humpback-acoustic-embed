@@ -38,6 +38,7 @@ import {
   deleteSearch,
   getSearchSpaceDefaults,
   importCandidateFromSearch,
+  deleteCandidate,
 } from "@/api/client";
 import { toast } from "@/components/ui/use-toast";
 import type {
@@ -500,6 +501,24 @@ export function useImportCandidateFromSearch() {
     onError: (err: Error) => {
       toast({
         title: "Import failed",
+        description: err.message,
+        variant: "destructive",
+        duration: 8000,
+      });
+    },
+  });
+}
+
+export function useDeleteCandidate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteCandidate(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["autoresearchCandidates"] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Cannot delete candidate",
         description: err.message,
         variant: "destructive",
         duration: 8000,
