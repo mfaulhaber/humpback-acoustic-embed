@@ -27,6 +27,17 @@ import {
   fetchRetrainInfo,
   createRetrainWorkflow,
   fetchRetrainWorkflows,
+  createManifest,
+  listManifests,
+  getManifest,
+  deleteManifest,
+  createSearch,
+  listSearches,
+  getSearch,
+  getSearchHistory,
+  deleteSearch,
+  getSearchSpaceDefaults,
+  importCandidateFromSearch,
 } from "@/api/client";
 import { toast } from "@/components/ui/use-toast";
 import type {
@@ -36,7 +47,9 @@ import type {
   DetectionLabelRow,
   DetectionRowStateUpdate,
   HydrophoneDetectionJobCreate,
+  ManifestCreateRequest,
   RetrainWorkflowCreate,
+  SearchCreateRequest,
 } from "@/api/types";
 
 export function useTrainingJobs(refetchInterval?: number) {
@@ -370,6 +383,127 @@ export function useCreateRetrainWorkflow() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["retrainWorkflows"] });
       qc.invalidateQueries({ queryKey: ["classifierModels"] });
+    },
+  });
+}
+
+// ---- Hyperparameter Tuning ----
+
+export function useManifests(refetchInterval?: number) {
+  return useQuery({
+    queryKey: ["hyperparameterManifests"],
+    queryFn: listManifests,
+    refetchInterval,
+  });
+}
+
+export function useManifest(id: string | null) {
+  return useQuery({
+    queryKey: ["hyperparameterManifest", id],
+    queryFn: () => getManifest(id!),
+    enabled: id !== null,
+  });
+}
+
+export function useCreateManifest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ManifestCreateRequest) => createManifest(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hyperparameterManifests"] });
+    },
+  });
+}
+
+export function useDeleteManifest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteManifest(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hyperparameterManifests"] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Cannot delete manifest",
+        description: err.message,
+        variant: "destructive",
+        duration: 8000,
+      });
+    },
+  });
+}
+
+export function useSearches(refetchInterval?: number) {
+  return useQuery({
+    queryKey: ["hyperparameterSearches"],
+    queryFn: listSearches,
+    refetchInterval,
+  });
+}
+
+export function useSearch(id: string | null) {
+  return useQuery({
+    queryKey: ["hyperparameterSearch", id],
+    queryFn: () => getSearch(id!),
+    enabled: id !== null,
+  });
+}
+
+export function useSearchHistory(id: string | null) {
+  return useQuery({
+    queryKey: ["hyperparameterSearchHistory", id],
+    queryFn: () => getSearchHistory(id!),
+    enabled: id !== null,
+  });
+}
+
+export function useCreateSearch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SearchCreateRequest) => createSearch(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hyperparameterSearches"] });
+    },
+  });
+}
+
+export function useDeleteSearch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteSearch(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hyperparameterSearches"] });
+    },
+  });
+}
+
+export function useSearchSpaceDefaults() {
+  return useQuery({
+    queryKey: ["searchSpaceDefaults"],
+    queryFn: getSearchSpaceDefaults,
+    staleTime: Infinity,
+  });
+}
+
+export function useImportCandidateFromSearch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (searchId: string) => importCandidateFromSearch(searchId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["autoresearchCandidates"] });
+      qc.invalidateQueries({ queryKey: ["hyperparameterSearches"] });
+      toast({
+        title: "Candidate imported",
+        description: "The search result has been imported as a candidate.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Import failed",
+        description: err.message,
+        variant: "destructive",
+        duration: 8000,
+      });
     },
   });
 }

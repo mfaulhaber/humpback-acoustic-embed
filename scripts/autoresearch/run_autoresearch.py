@@ -1,7 +1,10 @@
 """Bounded autoresearch search loop.
 
-Samples configs from the search space, runs train_eval for each,
-tracks results, and persists the best run.
+.. deprecated::
+    This module is deprecated. Use
+    ``humpback.services.hyperparameter_service.search`` instead.
+    This file is retained for CLI backward compatibility and legacy
+    hard-negative replay features not present in the service.
 """
 
 from __future__ import annotations

@@ -261,6 +261,42 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then manifest generation jobs
+        mfjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_manifest_job
+
+            mfjob = await claim_manifest_job(session)
+        if mfjob:
+            logger.info(f"Manifest generation job {mfjob.id}")
+            from humpback.workers.hyperparameter_worker import run_manifest_job
+
+            async with session_factory() as session:
+                await run_manifest_job(session, mfjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then hyperparameter search jobs
+        hsjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_hyperparameter_search_job
+
+            hsjob = await claim_hyperparameter_search_job(session)
+        if hsjob:
+            logger.info(f"Hyperparameter search job {hsjob.id}")
+            from humpback.workers.hyperparameter_worker import (
+                run_hyperparameter_search_job,
+            )
+
+            async with session_factory() as session:
+                await run_hyperparameter_search_job(session, hsjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

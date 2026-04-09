@@ -1,22 +1,14 @@
-"""Pluggable objective functions for autoresearch model selection."""
+"""Pluggable objective functions for autoresearch model selection.
+
+Thin wrapper — the default objective lives in
+``humpback.services.hyperparameter_service.search``.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-
-def default_objective(metrics: dict[str, Any]) -> float:
-    """Conservative FP-penalizing objective.
-
-    Heavily penalizes high-confidence false positives (15x) and
-    general false positives (3x) relative to recall.
-    """
-    return (
-        metrics["recall"]
-        - 15.0 * metrics["high_conf_fp_rate"]
-        - 3.0 * metrics["fp_rate"]
-    )
-
+from humpback.services.hyperparameter_service.search import default_objective
 
 OBJECTIVES: dict[str, type[object] | object] = {
     "default": default_objective,

@@ -1,15 +1,14 @@
-"""Generate a data manifest from humpback platform classifier training jobs.
+"""Generate data manifests for hyperparameter search.
 
-.. deprecated::
-    This module is deprecated. Use
-    ``humpback.services.hyperparameter_service.manifest`` instead.
-    This file is retained for CLI backward compatibility and legacy
-    hard-negative features not present in the service.
+Queries the database for classifier training jobs (embedding sets) and/or
+detection jobs (human-labeled windows), then builds a stable train/val/test
+split grouped by audio file.
+
+Only human-annotated labels are included — no unlabeled score-band negatives.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import random
 from datetime import datetime, timezone
@@ -24,13 +23,10 @@ from humpback.config import Settings
 
 NEGATIVE_VOCALIZATION_LABEL = "(Negative)"
 
-# Score band boundaries for negative_group assignment on detection windows.
-SCORE_BANDS: list[tuple[float, float, str]] = [
-    (0.50, 0.90, "det_0.50_0.90"),
-    (0.90, 0.95, "det_0.90_0.95"),
-    (0.95, 0.99, "det_0.95_0.99"),
-    (0.99, 1.01, "det_0.99_1.00"),  # upper inclusive via > max
-]
+
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
 
 
 def _get_sync_db_url(settings: Settings) -> str:
@@ -170,12 +166,9 @@ def _count_parquet_rows(parquet_path: str) -> int:
     return metadata.num_rows
 
 
-def _score_to_band(score: float) -> str | None:
-    """Map a confidence score to a score-band negative_group string."""
-    for low, high, band_name in SCORE_BANDS:
-        if low <= score < high:
-            return band_name
-    return None
+# ---------------------------------------------------------------------------
+# Row classification (human-annotated only)
+# ---------------------------------------------------------------------------
 
 
 def _parse_label_flag(value: Any) -> bool:
@@ -187,11 +180,11 @@ def _parse_optional_float(value: Any) -> float | None:
     """Parse a nullable float stored in Parquet/string form."""
     if value is None:
         return None
-    text = str(value).strip()
-    if not text:
+    t = str(value).strip()
+    if not t:
         return None
     try:
-        return float(text)
+        return float(t)
     except ValueError:
         return None
 
@@ -209,80 +202,14 @@ def _row_id_split_group(job_id: str, start_utc: float) -> str:
     return f"det{job_id[:8]}:{hour_bucket}"
 
 
-def _read_detection_row_store_rows(
-    row_store_path: Path,
-) -> list[dict[str, Any]]:
-    """Read the minimal row-store fields needed by autoresearch."""
-    table = pq.read_table(
-        str(row_store_path),
-        columns=["row_id", "start_utc", "humpback", "orca", "ship", "background"],
-    )
-    rows: list[dict[str, Any]] = []
-    for row in table.to_pylist():
-        rows.append(
-            {
-                "row_id": str(row.get("row_id") or "").strip(),
-                "start_utc": _parse_optional_float(row.get("start_utc")),
-                "humpback": _parse_label_flag(row.get("humpback")),
-                "orca": _parse_label_flag(row.get("orca")),
-                "ship": _parse_label_flag(row.get("ship")),
-                "background": _parse_label_flag(row.get("background")),
-            }
-        )
-    return rows
-
-
-def _new_detection_job_summary() -> dict[str, Any]:
-    """Create a JSON-serializable summary bucket for one detection job."""
-    return {
-        "included_positive": 0,
-        "included_negative": 0,
-        "included_positives_by_source": {
-            "vocalization_positive": 0,
-            "binary_positive": 0,
-        },
-        "included_negatives_by_source": {
-            "vocalization_negative": 0,
-            "ship": 0,
-            "background": 0,
-            "score_band": 0,
-        },
-        "included_score_band_negatives": 0,
-        "skipped_conflicts": 0,
-        "skipped_unlabeled_not_explicit_negative": 0,
-        "skipped_null_confidence_unlabeled": 0,
-        "skipped_out_of_range_unlabeled": 0,
-        "skipped_missing_embeddings": 0,
-        "skipped_missing_row_store": 0,
-        "skipped_missing_start_utc": 0,
-    }
-
-
-def _record_included_example(
-    summary: dict[str, Any],
-    label: int,
-    label_source: str,
-) -> None:
-    """Update per-job summary counts after including an example."""
-    if label == 1:
-        summary["included_positive"] += 1
-        summary["included_positives_by_source"][label_source] += 1
-        return
-
-    summary["included_negative"] += 1
-    summary["included_negatives_by_source"][label_source] += 1
-    if label_source == "score_band":
-        summary["included_score_band_negatives"] += 1
-
-
 def _classify_detection_row(
     row: dict[str, Any],
     vocalization_labels: set[str],
-    confidence: float | None,
-    score_range: tuple[float, float],
-    include_unlabeled_hard_negatives: bool,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Classify one detection row into autoresearch supervision buckets."""
+    """Classify one detection row using human-annotated labels only.
+
+    Returns (classification_dict, None) on success or (None, skip_reason) on skip.
+    """
     has_vocalization_positive = any(
         label != NEGATIVE_VOCALIZATION_LABEL for label in vocalization_labels
     )
@@ -334,35 +261,91 @@ def _classify_detection_row(
             "label_source": "background",
         }, None
 
-    if not include_unlabeled_hard_negatives:
-        return None, "unlabeled_not_explicit_negative"
+    # Unlabeled row — skip (no score-band negatives)
+    return None, "unlabeled"
 
-    if confidence is None:
-        return None, "null_confidence_unlabeled"
 
-    score_min, score_max = score_range
-    if not (score_min <= confidence <= score_max):
-        return None, "out_of_range_unlabeled"
+# ---------------------------------------------------------------------------
+# Detection job summary tracking
+# ---------------------------------------------------------------------------
 
-    band = _score_to_band(confidence)
-    if band is None:
-        return None, "out_of_range_unlabeled"
 
+def _new_detection_job_summary() -> dict[str, Any]:
+    """Create a JSON-serializable summary bucket for one detection job."""
     return {
-        "label": 0,
-        "negative_group": band,
-        "label_source": "score_band",
-    }, None
+        "included_positive": 0,
+        "included_negative": 0,
+        "included_positives_by_source": {
+            "vocalization_positive": 0,
+            "binary_positive": 0,
+        },
+        "included_negatives_by_source": {
+            "vocalization_negative": 0,
+            "ship": 0,
+            "background": 0,
+        },
+        "skipped_conflicts": 0,
+        "skipped_unlabeled": 0,
+        "skipped_missing_embeddings": 0,
+        "skipped_missing_row_store": 0,
+        "skipped_missing_start_utc": 0,
+    }
+
+
+def _record_included_example(
+    summary: dict[str, Any],
+    label: int,
+    label_source: str,
+) -> None:
+    """Update per-job summary counts after including an example."""
+    if label == 1:
+        summary["included_positive"] += 1
+        summary["included_positives_by_source"][label_source] += 1
+        return
+
+    summary["included_negative"] += 1
+    summary["included_negatives_by_source"][label_source] += 1
+
+
+# ---------------------------------------------------------------------------
+# Detection row-store reading
+# ---------------------------------------------------------------------------
+
+
+def _read_detection_row_store_rows(
+    row_store_path: Path,
+) -> list[dict[str, Any]]:
+    """Read the minimal row-store fields needed for manifest generation."""
+    table = pq.read_table(
+        str(row_store_path),
+        columns=["row_id", "start_utc", "humpback", "orca", "ship", "background"],
+    )
+    rows: list[dict[str, Any]] = []
+    for row in table.to_pylist():
+        rows.append(
+            {
+                "row_id": str(row.get("row_id") or "").strip(),
+                "start_utc": _parse_optional_float(row.get("start_utc")),
+                "humpback": _parse_label_flag(row.get("humpback")),
+                "orca": _parse_label_flag(row.get("orca")),
+                "ship": _parse_label_flag(row.get("ship")),
+                "background": _parse_label_flag(row.get("background")),
+            }
+        )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Detection example collection
+# ---------------------------------------------------------------------------
 
 
 def _collect_detection_examples(
     detection_jobs: list[dict[str, Any]],
     settings: Settings,
-    score_range: tuple[float, float],
     vocalization_labels_by_job: dict[str, dict[str, set[str]]] | None = None,
-    include_unlabeled_hard_negatives: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Build manifest examples from detection job data."""
+    """Build manifest examples from detection job data (human-annotated only)."""
     from humpback.storage import detection_embeddings_path, detection_row_store_path
 
     examples: list[dict[str, Any]] = []
@@ -444,19 +427,12 @@ def _collect_detection_examples(
                 classification, skip_reason = _classify_detection_row(
                     row=row,
                     vocalization_labels=labels_by_row_id.get(rid, set()),
-                    confidence=confidence,
-                    score_range=score_range,
-                    include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
                 )
                 if classification is None:
                     if skip_reason == "conflict":
                         summary["skipped_conflicts"] += 1
-                    elif skip_reason == "unlabeled_not_explicit_negative":
-                        summary["skipped_unlabeled_not_explicit_negative"] += 1
-                    elif skip_reason == "null_confidence_unlabeled":
-                        summary["skipped_null_confidence_unlabeled"] += 1
                     else:
-                        summary["skipped_out_of_range_unlabeled"] += 1
+                        summary["skipped_unlabeled"] += 1
                     continue
 
                 example = {
@@ -480,6 +456,7 @@ def _collect_detection_examples(
                 )
             continue
 
+        # Legacy filename-based detection embeddings
         if "filename" not in col_names:
             msg = f"Unsupported detection embeddings format in {emb_path}: {col_names}"
             raise ValueError(msg)
@@ -506,19 +483,12 @@ def _collect_detection_examples(
             classification, skip_reason = _classify_detection_row(
                 row=row,
                 vocalization_labels=labels_by_row_id.get(rid, set()),
-                confidence=confidence,
-                score_range=score_range,
-                include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
             )
             if classification is None:
                 if skip_reason == "conflict":
                     summary["skipped_conflicts"] += 1
-                elif skip_reason == "unlabeled_not_explicit_negative":
-                    summary["skipped_unlabeled_not_explicit_negative"] += 1
-                elif skip_reason == "null_confidence_unlabeled":
-                    summary["skipped_null_confidence_unlabeled"] += 1
                 else:
-                    summary["skipped_out_of_range_unlabeled"] += 1
+                    summary["skipped_unlabeled"] += 1
                 continue
 
             example = {
@@ -543,6 +513,11 @@ def _collect_detection_examples(
             )
 
     return examples, summaries
+
+
+# ---------------------------------------------------------------------------
+# Split assignment
+# ---------------------------------------------------------------------------
 
 
 def _assign_splits(
@@ -572,18 +547,24 @@ def _assign_splits(
     return assignments
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
 def generate_manifest(
-    job_ids: list[int | str] | None = None,
+    training_job_ids: list[int | str] | None = None,
     detection_job_ids: list[str] | None = None,
     split_ratio: tuple[int, int, int] = (70, 15, 15),
     seed: int = 42,
-    score_range: tuple[float, float] = (0.5, 0.995),
-    include_unlabeled_hard_negatives: bool = False,
     db_url: str | None = None,
 ) -> dict[str, Any]:
-    """Generate a data manifest from training jobs and/or detection jobs."""
-    if not job_ids and not detection_job_ids:
-        msg = "At least one of job_ids or detection_job_ids must be provided"
+    """Generate a data manifest from training jobs and/or detection jobs.
+
+    Only human-annotated labels are included. No unlabeled score-band negatives.
+    """
+    if not training_job_ids and not detection_job_ids:
+        msg = "At least one of training_job_ids or detection_job_ids must be provided"
         raise ValueError(msg)
 
     settings = Settings.from_repo_env()
@@ -595,8 +576,8 @@ def generate_manifest(
     negative_ids: list[str] = []
 
     # Embedding set sources
-    if job_ids:
-        positive_ids, negative_ids = _query_job_embedding_sets(db_url, job_ids)
+    if training_job_ids:
+        positive_ids, negative_ids = _query_job_embedding_sets(db_url, training_job_ids)
         pos_sets = _query_embedding_sets(db_url, positive_ids)
         neg_sets = _query_embedding_sets(db_url, negative_ids)
 
@@ -642,9 +623,7 @@ def generate_manifest(
         det_examples, detection_job_summaries = _collect_detection_examples(
             detection_jobs,
             settings,
-            score_range,
             vocalization_labels_by_job=vocalization_labels_by_job,
-            include_unlabeled_hard_negatives=include_unlabeled_hard_negatives,
         )
         examples.extend(det_examples)
 
@@ -657,13 +636,13 @@ def generate_manifest(
     manifest = {
         "metadata": {
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "source_job_ids": [str(j) for j in job_ids] if job_ids else [],
+            "source_training_job_ids": (
+                [str(j) for j in training_job_ids] if training_job_ids else []
+            ),
             "positive_embedding_set_ids": positive_ids,
             "negative_embedding_set_ids": negative_ids,
             "detection_job_ids": det_job_id_list,
             "detection_job_summaries": detection_job_summaries,
-            "score_range": list(score_range),
-            "include_unlabeled_hard_negatives": include_unlabeled_hard_negatives,
             "split_strategy": "by_audio_file",
             "detection_split_strategy": (
                 "by_job_hour_utc" if det_job_id_list else None
@@ -675,91 +654,3 @@ def generate_manifest(
     }
 
     return manifest
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate autoresearch data manifest from training jobs"
-    )
-    parser.add_argument(
-        "--job-ids",
-        default=None,
-        help="Comma-separated classifier training job IDs",
-    )
-    parser.add_argument(
-        "--detection-job-ids",
-        default=None,
-        help="Comma-separated detection job IDs (must have positive labels)",
-    )
-    parser.add_argument(
-        "--score-range",
-        default="0.5,0.995",
-        help="Min,max confidence for unlabeled hard negatives when explicitly enabled (default: 0.5,0.995)",
-    )
-    parser.add_argument(
-        "--include-unlabeled-hard-negatives",
-        action="store_true",
-        help="Include unlabeled detections inside --score-range as hard negatives; default is explicit negatives only",
-    )
-    parser.add_argument(
-        "--split-ratio",
-        default="70,15,15",
-        help="Train,val,test ratio (default: 70,15,15)",
-    )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for splits")
-    parser.add_argument(
-        "--output", required=True, help="Output path for data_manifest.json"
-    )
-    args = parser.parse_args()
-
-    job_ids = None
-    if args.job_ids:
-        job_ids = [j.strip() for j in args.job_ids.split(",")]
-
-    detection_job_ids = None
-    if args.detection_job_ids:
-        detection_job_ids = [j.strip() for j in args.detection_job_ids.split(",")]
-
-    if not job_ids and not detection_job_ids:
-        parser.error("At least one of --job-ids or --detection-job-ids is required")
-
-    score_parts = [float(x) for x in args.score_range.split(",")]
-    if len(score_parts) != 2:
-        msg = "score-range must have exactly 2 comma-separated floats"
-        raise ValueError(msg)
-    score_range = (score_parts[0], score_parts[1])
-
-    ratio_parts = [int(x) for x in args.split_ratio.split(",")]
-    if len(ratio_parts) != 3:
-        msg = "split-ratio must have exactly 3 comma-separated integers"
-        raise ValueError(msg)
-    split_ratio = (ratio_parts[0], ratio_parts[1], ratio_parts[2])
-
-    manifest = generate_manifest(
-        job_ids=job_ids,
-        detection_job_ids=detection_job_ids,
-        split_ratio=split_ratio,
-        seed=args.seed,
-        score_range=score_range,
-        include_unlabeled_hard_negatives=args.include_unlabeled_hard_negatives,
-    )
-
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-
-    n_det = sum(
-        1 for ex in manifest["examples"] if ex.get("source_type") == "detection_job"
-    )
-    n_es = sum(
-        1 for ex in manifest["examples"] if ex.get("source_type") == "embedding_set"
-    )
-    print(
-        f"Manifest written to {output_path} "
-        f"({len(manifest['examples'])} examples: {n_es} from embedding sets, {n_det} from detection jobs)"
-    )
-
-
-if __name__ == "__main__":
-    main()

@@ -1,5 +1,9 @@
 from humpback.models.audio import AudioFile, AudioMetadata
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
+from humpback.models.hyperparameter import (
+    HyperparameterManifest,
+    HyperparameterSearchJob,
+)
 from humpback.models.label_processing import LabelProcessingJob
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
@@ -16,6 +20,8 @@ from humpback.models.vocalization import (
 __all__ = [
     "AudioFile",
     "AudioMetadata",
+    "HyperparameterManifest",
+    "HyperparameterSearchJob",
     "LabelProcessingJob",
     "ModelConfig",
     "TFLiteModelConfig",

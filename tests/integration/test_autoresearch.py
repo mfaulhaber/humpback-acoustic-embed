@@ -21,12 +21,17 @@ from sklearn.preprocessing import StandardScaler
 from sqlalchemy import create_engine, text
 
 from humpback.config import Settings
-from scripts.autoresearch.compare_classifiers import (
+from humpback.services.hyperparameter_service.comparison import (
     compare_classifiers,
     resolve_production_classifier,
 )
+from humpback.services.hyperparameter_service.train_eval import (
+    collect_split_arrays,
+    prepare_embeddings,
+)
+
+# Integration tests use the legacy run_search (with hard_negative support)
 from scripts.autoresearch.run_autoresearch import run_search
-from scripts.autoresearch.train_eval import collect_split_arrays, prepare_embeddings
 
 
 VECTOR_DIM = 16

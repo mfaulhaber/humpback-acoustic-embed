@@ -35,6 +35,11 @@
   {detection_job_id}/run_summary.json
 /training_datasets/
   {dataset_id}/embeddings.parquet                 (unified training embeddings: row_index, embedding, source_type, source_id, filename, start_sec, end_sec, confidence)
+/hyperparameter/
+  manifests/{manifest_id}/manifest.json              (generated training data manifest with split assignments)
+  searches/{search_id}/search_history.json           (per-trial config, metrics, objective)
+  searches/{search_id}/best_run.json                 (best trial config + metrics)
+  searches/{search_id}/top_false_positives.json      (highest-scoring false positives from best run)
 /timeline_cache/
   {job_id}/{zoom_level}/tile_{NNNN}.png   (per-job LRU-evicted spectrogram tiles)
 ```

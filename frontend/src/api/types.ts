@@ -1113,3 +1113,83 @@ export interface LabelEditItem {
 export interface LabelEditRequest {
   edits: LabelEditItem[];
 }
+
+// ---- Hyperparameter tuning ----
+
+export interface ManifestCreateRequest {
+  name: string;
+  training_job_ids?: string[];
+  detection_job_ids?: string[];
+  split_ratio?: number[];
+  seed?: number;
+}
+
+export interface HyperparameterManifestSummary {
+  id: string;
+  name: string;
+  status: string;
+  training_job_ids: string[];
+  detection_job_ids: string[];
+  split_ratio: number[];
+  seed: number;
+  example_count: number | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface HyperparameterManifestDetail
+  extends HyperparameterManifestSummary {
+  manifest_path: string | null;
+  split_summary: Record<string, unknown> | null;
+  detection_job_summaries: Record<string, unknown> | null;
+}
+
+export interface SearchCreateRequest {
+  name: string;
+  manifest_id: string;
+  search_space?: Record<string, unknown[]>;
+  n_trials?: number;
+  seed?: number;
+  comparison_model_id?: string | null;
+  comparison_threshold?: number | null;
+}
+
+export interface HyperparameterSearchSummary {
+  id: string;
+  name: string;
+  status: string;
+  manifest_id: string;
+  manifest_name: string | null;
+  n_trials: number;
+  seed: number;
+  objective_name: string;
+  trials_completed: number;
+  best_objective: number | null;
+  comparison_model_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface HyperparameterSearchDetail
+  extends HyperparameterSearchSummary {
+  search_space: Record<string, unknown[]>;
+  results_dir: string | null;
+  best_config: Record<string, unknown> | null;
+  best_metrics: Record<string, unknown> | null;
+  comparison_threshold: number | null;
+  comparison_result: Record<string, unknown> | null;
+}
+
+export interface SearchSpaceDefaults {
+  search_space: Record<string, unknown[]>;
+}
+
+export interface SearchHistoryEntry {
+  trial: number;
+  config: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  objective: number;
+  timestamp: string;
+}
