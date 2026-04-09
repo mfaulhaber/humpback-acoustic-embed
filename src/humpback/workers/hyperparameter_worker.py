@@ -1,5 +1,6 @@
 """Worker functions for hyperparameter manifest generation and search jobs."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -170,19 +171,24 @@ async def run_hyperparameter_search_job(
             )
             await session.commit()
 
+        _pending_progress_task: asyncio.Task | None = None  # type: ignore[type-arg]
+
         def sync_progress_callback(
             trials_completed: int,
             best_objective: float | None,
             best_config: dict | None,
             best_metrics: dict | None,
         ) -> None:
-            import asyncio
+            nonlocal _pending_progress_task
 
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    # Schedule the coroutine but don't block
-                    loop.create_task(
+                    # Cancel any still-pending progress update to avoid
+                    # concurrent session.commit() calls.
+                    if _pending_progress_task and not _pending_progress_task.done():
+                        _pending_progress_task.cancel()
+                    _pending_progress_task = loop.create_task(
                         _update_progress(
                             trials_completed, best_objective, best_config, best_metrics
                         )
@@ -205,6 +211,15 @@ async def run_hyperparameter_search_job(
             results_dir=results_dir,
             progress_callback=sync_progress_callback,
         )
+
+        # Drain any in-flight progress task before touching the session again
+        if _pending_progress_task is not None:
+            if not _pending_progress_task.done():
+                _pending_progress_task.cancel()
+            try:
+                await _pending_progress_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
         # Run comparison if a production model was specified
         comparison_result = None
@@ -230,6 +245,10 @@ async def run_hyperparameter_search_job(
                     production_classifier,
                     production_threshold=job.comparison_threshold or 0.5,
                 )
+
+        if comparison_result is not None:
+            comparison_file = results_dir / "comparison.json"
+            comparison_file.write_text(json.dumps(comparison_result, indent=2))
 
         await session.execute(
             update(HyperparameterSearchJob)

@@ -269,13 +269,6 @@ def _assess_reproducibility(config: dict[str, Any]) -> tuple[bool, list[str]]:
             "Replay-adjusted hard-negative sampling is not yet supported for promotion"
         )
 
-    if classifier == "mlp":
-        if (
-            float(config.get("class_weight_pos", 1.0)) != 1.0
-            or float(config.get("class_weight_neg", 1.0)) != 1.0
-        ):
-            blockers.append("MLP promotion cannot yet reproduce explicit class weights")
-
     return not blockers, blockers
 
 

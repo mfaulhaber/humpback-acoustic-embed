@@ -389,6 +389,44 @@ def test_map_autoresearch_config_to_training_parameters():
     assert params["random_state"] == 7
 
 
+def test_map_autoresearch_config_mlp_with_class_weights():
+    """MLP configs with explicit class weights are now accepted."""
+    params = map_autoresearch_config_to_training_parameters(
+        {
+            "classifier": "mlp",
+            "feature_norm": "standard",
+            "class_weight_pos": 1.0,
+            "class_weight_neg": 1.5,
+            "seed": 42,
+        }
+    )
+
+    assert params["classifier_type"] == "mlp"
+    assert params["class_weight"] == {0: 1.5, 1: 1.0}
+
+
+def test_train_mlp_with_explicit_class_weights():
+    """MLP training with non-uniform class weights produces a valid model."""
+    rng = np.random.RandomState(42)
+    n = 50
+    dim = 16
+    positive = rng.randn(n, dim) + 2.0
+    negative = rng.randn(n, dim) - 2.0
+
+    pipeline, summary = train_binary_classifier(
+        positive,
+        negative,
+        parameters={
+            "classifier_type": "mlp",
+            "class_weight": {0: 1.0, 1: 1.5},
+        },
+    )
+
+    assert hasattr(pipeline, "predict_proba")
+    assert isinstance(pipeline.named_steps["classifier"], MLPClassifier)
+    assert summary["classifier_type"] == "mlp"
+
+
 def test_load_manifest_split_embeddings_supports_mixed_sources(
     tmp_path: Path,
 ) -> None:
