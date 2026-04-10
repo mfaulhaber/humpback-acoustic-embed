@@ -1277,3 +1277,224 @@ async def test_run_training_job_candidate_replay_with_pca_and_calibration(
     probs = loaded_pipeline.predict_proba(test_input)
     assert probs.shape == (3, 2)
     assert np.all(probs >= 0) and np.all(probs <= 1)
+
+
+async def test_run_training_job_candidate_replay_linear_svm_verified(
+    session,
+    settings,
+    tmp_path,
+) -> None:
+    """Linear SVM candidates train end-to-end via replay and pass verification."""
+    import numpy as np
+
+    rng = np.random.RandomState(7)
+    dim = 16
+    n_pos = 30
+    n_neg = 30
+
+    # Well-separated clusters so both the trained model and the "expected"
+    # metrics converge to perfect classification on the train split.
+    pos_path = tmp_path / "embeddings" / "pos.parquet"
+    pos_embeddings = rng.randn(n_pos, dim).astype(np.float32) + 3.0
+    pos_table = pa.table(
+        {
+            "row_index": pa.array(list(range(n_pos)), type=pa.int32()),
+            "embedding": pa.array(
+                [row.tolist() for row in pos_embeddings],
+                type=pa.list_(pa.float32(), dim),
+            ),
+        }
+    )
+    pos_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pos_table, str(pos_path))
+
+    det_job_id = "det-job-svm"
+    det_path = (
+        settings.storage_root
+        / "detections"
+        / det_job_id
+        / "detection_embeddings.parquet"
+    )
+    neg_embeddings = rng.randn(n_neg, dim).astype(np.float32) - 3.0
+    neg_row_ids = [f"neg-{i}" for i in range(n_neg)]
+    _write_detection_embeddings_parquet(
+        det_path,
+        row_ids=neg_row_ids,
+        rows=[row.tolist() for row in neg_embeddings],
+    )
+
+    examples = []
+    for i in range(n_pos):
+        examples.append(
+            {
+                "id": f"pos-{i}",
+                "split": "train",
+                "label": 1,
+                "parquet_path": str(pos_path),
+                "row_index": i,
+            }
+        )
+    for i in range(n_neg):
+        examples.append(
+            {
+                "id": f"neg-{i}",
+                "split": "train",
+                "label": 0,
+                "parquet_path": str(det_path),
+                "row_id": f"neg-{i}",
+            }
+        )
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"metadata": {}, "examples": examples}))
+
+    source_model = ClassifierModel(
+        id="source-model-svm",
+        name="source-model-svm",
+        model_path="/tmp/source.joblib",
+        model_version="perch_v1",
+        vector_dim=dim,
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+    )
+    session.add(source_model)
+
+    from humpback.models.audio import AudioFile
+    from humpback.models.processing import EmbeddingSet
+
+    af = AudioFile(
+        id="af-pos-svm",
+        filename="pos.wav",
+        folder_path="positive",
+        checksum_sha256="pos-checksum-svm",
+    )
+    session.add(af)
+    session.add(
+        EmbeddingSet(
+            id="es-pos-svm",
+            audio_file_id=af.id,
+            encoding_signature="sig-svm",
+            model_version="perch_v1",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            vector_dim=dim,
+            parquet_path=str(pos_path),
+        )
+    )
+    session.add(
+        DetectionJob(
+            id=det_job_id,
+            status="complete",
+            classifier_model_id=source_model.id,
+            audio_folder=str(tmp_path / "audio"),
+            confidence_threshold=0.5,
+            detection_mode="windowed",
+        )
+    )
+
+    # Expected metrics the candidate would have reported on the train split
+    # during autoresearch. With well-separated clusters these should match
+    # the replayed results exactly.
+    expected_train_metrics = {
+        "threshold": 0.5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "fp_rate": 0.0,
+        "high_conf_fp_rate": 0.0,
+        "tp": n_pos,
+        "fp": 0,
+        "fn": 0,
+        "tn": n_neg,
+    }
+
+    candidate = AutoresearchCandidate(
+        id="cand-svm",
+        name="SVM Candidate",
+        status="training",
+        manifest_path=str(manifest_path),
+        best_run_path=str(tmp_path / "best_run.json"),
+        promoted_config=json.dumps(
+            {
+                "classifier": "linear_svm",
+                "feature_norm": "standard",
+                "prob_calibration": "none",
+                "context_pooling": "center",
+                "class_weight_pos": 1.0,
+                "class_weight_neg": 1.0,
+                "hard_negative_fraction": 0.0,
+                "threshold": 0.5,
+                "seed": 42,
+            }
+        ),
+        source_model_id=source_model.id,
+        source_model_name=source_model.name,
+        training_job_id="train-job-svm",
+        is_reproducible_exact=True,
+    )
+    session.add(candidate)
+    session.add(
+        ClassifierTrainingJob(
+            id="train-job-svm",
+            status="running",
+            name="svm-candidate-model",
+            positive_embedding_set_ids=json.dumps([]),
+            negative_embedding_set_ids=json.dumps([]),
+            model_version="perch_v1",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            parameters=json.dumps(
+                {
+                    "classifier_type": "linear_svm",
+                    "feature_norm": "standard",
+                    "class_weight": {"0": 1.0, "1": 1.0},
+                }
+            ),
+            source_mode="autoresearch_candidate",
+            source_candidate_id=candidate.id,
+            source_model_id=source_model.id,
+            manifest_path=str(manifest_path),
+            training_split_name="train",
+            promoted_config=candidate.promoted_config,
+            source_comparison_context=json.dumps(
+                {
+                    "candidate_id": candidate.id,
+                    "candidate_name": candidate.name,
+                    "split_metrics": {"train": expected_train_metrics},
+                }
+            ),
+        )
+    )
+    await session.commit()
+
+    job = await session.get(ClassifierTrainingJob, "train-job-svm")
+    assert job is not None
+
+    await run_training_job(session, job, settings)
+
+    await session.refresh(candidate)
+    await session.refresh(job)
+
+    assert job.status == "complete"
+    assert job.classifier_model_id is not None
+
+    model = await session.get(ClassifierModel, job.classifier_model_id)
+    assert model is not None
+
+    summary = json.loads(model.training_summary or "{}")
+    eff = summary["replay_effective_config"]
+    assert eff["classifier_type"] == "linear_svm"
+    assert eff["feature_norm"] == "standard"
+    assert eff["prob_calibration"] == "none"
+
+    verification = summary["replay_verification"]
+    assert verification["status"] == "verified"
+    assert verification["splits"]["train"]["pass"] is True
+
+    # The saved pipeline must expose predict_proba for the detection path.
+    import joblib
+
+    loaded_pipeline = joblib.load(model.model_path)
+    test_input = rng.randn(5, dim).astype(np.float32)
+    probs = loaded_pipeline.predict_proba(test_input)
+    assert probs.shape == (5, 2)
+    assert np.all(probs >= 0) and np.all(probs <= 1)

@@ -456,29 +456,29 @@ async def test_create_training_job_from_promotable_autoresearch_candidate(
 async def test_blocked_autoresearch_candidate_cannot_create_training_job(
     client, app_settings
 ):
-    """Candidates with unsupported configs (e.g. linear_svm) should remain blocked."""
+    """Candidates with still-unsupported configs must remain blocked."""
     fixture_dir = _autoresearch_fixture_dir()
 
-    # Create a custom best_run with linear_svm (still blocked)
+    # hard_negative_fraction > 0 is still blocked (ADR-043, not lifted).
     blocked_best_run = app_settings.storage_root / "blocked_best_run.json"
     blocked_best_run.parent.mkdir(parents=True, exist_ok=True)
     blocked_best_run.write_text(
         json.dumps(
             {
                 "config": {
-                    "classifier": "linear_svm",
+                    "classifier": "logreg",
                     "feature_norm": "l2",
                     "pca_dim": None,
                     "class_weight_pos": 1.0,
                     "class_weight_neg": 1.0,
-                    "hard_negative_fraction": 0.0,
+                    "hard_negative_fraction": 0.25,
                     "prob_calibration": "none",
                     "threshold": 0.5,
                     "context_pooling": "center",
                     "seed": 42,
                 },
                 "metrics": {"threshold": 0.5, "precision": 0.9, "recall": 0.9},
-                "config_hash": "blocked_svm",
+                "config_hash": "blocked_hardneg",
             }
         )
     )
@@ -486,7 +486,7 @@ async def test_blocked_autoresearch_candidate_cannot_create_training_job(
     import_resp = await client.post(
         "/classifier/autoresearch-candidates/import",
         json={
-            "name": "Blocked SVM Candidate",
+            "name": "Blocked Hard-Negative Candidate",
             "manifest_path": str(fixture_dir / "manifest.json"),
             "best_run_path": str(blocked_best_run),
         },
@@ -501,6 +501,52 @@ async def test_blocked_autoresearch_candidate_cannot_create_training_job(
     )
     assert promote_resp.status_code == 400
     assert "not promotable" in promote_resp.text
+
+
+async def test_import_linear_svm_candidate_is_promotable(client, app_settings):
+    """Linear SVM candidates are now reproducible via the shared replay module."""
+    fixture_dir = _autoresearch_fixture_dir()
+
+    svm_best_run = app_settings.storage_root / "svm_best_run.json"
+    svm_best_run.parent.mkdir(parents=True, exist_ok=True)
+    svm_best_run.write_text(
+        json.dumps(
+            {
+                "config": {
+                    "classifier": "linear_svm",
+                    "feature_norm": "standard",
+                    "pca_dim": None,
+                    "class_weight_pos": 2.0,
+                    "class_weight_neg": 1.0,
+                    "hard_negative_fraction": 0.0,
+                    "prob_calibration": "none",
+                    "threshold": 0.5,
+                    "context_pooling": "center",
+                    "seed": 42,
+                },
+                "metrics": {"threshold": 0.5, "precision": 0.95, "recall": 0.93},
+                "config_hash": "svm_promotable",
+            }
+        )
+    )
+
+    import_resp = await client.post(
+        "/classifier/autoresearch-candidates/import",
+        json={
+            "name": "Promotable Linear SVM Candidate",
+            "manifest_path": str(fixture_dir / "manifest.json"),
+            "best_run_path": str(svm_best_run),
+        },
+    )
+    assert import_resp.status_code == 201
+    candidate = import_resp.json()
+    assert candidate["status"] == "promotable"
+    assert candidate["is_reproducible_exact"] is True
+    # Warnings may include "no comparison artifact" since we don't supply one
+    # in this test; the important thing is that no blockers prevent promotion.
+    assert not any("linear_svm" in w for w in candidate["warnings"]), candidate[
+        "warnings"
+    ]
 
 
 async def test_delete_model_not_found(client):

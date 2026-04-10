@@ -798,8 +798,22 @@ function ModelTableRow({
   const effectiveWeights = summary?.effective_class_weights as Record<string, string> | undefined;
   const configWarning = summary?._config_mismatch_warning as string | undefined;
 
-  const classifierTag = classifierType === "mlp" ? "MLP" : classifierType === "logistic_regression" ? "LR" : null;
-  const classifierLabel = classifierType === "mlp" ? "Neural Network (MLP)" : classifierType === "logistic_regression" ? "Logistic Regression" : classifierType ?? "—";
+  const classifierTag =
+    classifierType === "mlp"
+      ? "MLP"
+      : classifierType === "logistic_regression"
+        ? "LR"
+        : classifierType === "linear_svm"
+          ? "SVM"
+          : null;
+  const classifierLabel =
+    classifierType === "mlp"
+      ? "Neural Network (MLP)"
+      : classifierType === "logistic_regression"
+        ? "Logistic Regression"
+        : classifierType === "linear_svm"
+          ? "Linear SVM"
+          : classifierType ?? "—";
   const promotionProvenance = model.promotion_provenance as Record<string, unknown> | null;
   const promotedCandidateName = promotionProvenance?.candidate_name as string | undefined;
   const promotedSourceModelName = promotionProvenance?.source_model_name as string | undefined;
