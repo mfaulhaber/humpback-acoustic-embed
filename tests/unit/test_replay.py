@@ -393,6 +393,29 @@ class TestBuildReplayPipeline:
         assert isinstance(pipeline, Pipeline)
         assert eff.prob_calibration == "none"
 
+    def test_linear_svm_pipeline_deterministic(self) -> None:
+        """Linear SVM candidates must produce identical scores across rebuilds."""
+        X, y = self._make_data(n_samples=60)
+        config: dict[str, Any] = {
+            "feature_norm": "standard",
+            "classifier": "linear_svm",
+            "prob_calibration": "none",
+            "seed": 42,
+        }
+        pipeline_a, eff_a = build_replay_pipeline(config, X, y)
+        pipeline_b, _ = build_replay_pipeline(config, X, y)
+
+        assert hasattr(pipeline_a, "predict_proba")
+        assert eff_a.classifier_type == "linear_svm"
+
+        probs_a = pipeline_a.predict_proba(X)
+        probs_b = pipeline_b.predict_proba(X)
+        assert probs_a.shape == (60, 2)
+        # Determinism guard: CalibratedClassifierCV(cv=3) wrapping LinearSVC
+        # must produce identical scores when seeded, so replay verification
+        # can match imported candidate metrics within tolerance.
+        np.testing.assert_array_equal(probs_a, probs_b)
+
     def test_effective_config_to_dict(self) -> None:
         X, y = self._make_data()
         config: dict[str, Any] = {
@@ -694,10 +717,15 @@ class TestAssessReproducibility:
         assert ok is True
         assert blockers == []
 
-    def test_linear_svm_still_blocked(self) -> None:
+    def test_linear_svm_is_reproducible(self) -> None:
         ok, blockers = self._assess({"classifier": "linear_svm"})
+        assert ok is True
+        assert blockers == []
+
+    def test_unknown_classifier_still_blocked(self) -> None:
+        ok, blockers = self._assess({"classifier": "xgboost"})
         assert ok is False
-        assert any("linear_svm" in b for b in blockers)
+        assert any("xgboost" in b for b in blockers)
 
     def test_hard_negative_fraction_still_blocked(self) -> None:
         ok, blockers = self._assess(

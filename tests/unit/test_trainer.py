@@ -405,6 +405,30 @@ def test_map_autoresearch_config_mlp_with_class_weights():
     assert params["class_weight"] == {0: 1.5, 1: 1.0}
 
 
+def test_map_autoresearch_config_linear_svm():
+    """Linear SVM configs map to classifier_type='linear_svm' without raising."""
+    params = map_autoresearch_config_to_training_parameters(
+        {
+            "classifier": "linear_svm",
+            "feature_norm": "standard",
+            "class_weight_pos": 2.0,
+            "class_weight_neg": 1.5,
+            "seed": 13,
+        }
+    )
+
+    assert params["classifier_type"] == "linear_svm"
+    assert params["feature_norm"] == "standard"
+    assert params["class_weight"] == {0: 1.5, 1: 2.0}
+    assert params["random_state"] == 13
+
+
+def test_map_autoresearch_config_unknown_classifier_raises():
+    """Unknown classifier strings still raise ValueError."""
+    with pytest.raises(ValueError, match="Unsupported autoresearch classifier"):
+        map_autoresearch_config_to_training_parameters({"classifier": "xgboost"})
+
+
 def test_train_mlp_with_explicit_class_weights():
     """MLP training with non-uniform class weights produces a valid model."""
     rng = np.random.RandomState(42)

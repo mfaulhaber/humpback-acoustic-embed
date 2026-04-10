@@ -252,7 +252,7 @@ def _assess_reproducibility(config: dict[str, Any]) -> tuple[bool, list[str]]:
     blockers: list[str] = []
 
     classifier = config.get("classifier", "logreg")
-    if classifier not in {"logreg", "mlp"}:
+    if classifier not in {"logreg", "mlp", "linear_svm"}:
         blockers.append(
             f"classifier={classifier!r} is not supported by the production trainer"
         )

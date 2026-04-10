@@ -575,3 +575,25 @@ After prominence peak selection, a recursive gap-filling pass scans for gaps > 5
 - Every above-threshold window is either tiled from a seed or becomes a seed itself — exhaustive coverage
 - Overlapping output windows are compatible with all downstream systems (same as prominence mode)
 - NMS remains the default; tiling and prominence are opt-in via UI or API parameter
+
+---
+
+## ADR-046: Promote `linear_svm` candidates from hyperparameter tuning
+
+**Date**: 2026-04-10
+**Status**: Accepted
+**Supersedes aspect of**: ADR-043
+
+**Context**: ADR-043 shipped exact-replay promotion for AR-v1 candidates but left `linear_svm` on the blocked list because no reviewed research candidate justified the added surface area at the time. The hyperparameter tuning page search space (`DEFAULT_SEARCH_SPACE`) already includes `linear_svm`, so searches run end-to-end and produce winning trials. One such trial (candidate `s-v2 (imported)`) is now worth promoting, and the error message `classifier='linear_svm' is not supported by the production trainer` blocks it at import time.
+
+The runtime replay path already supports `linear_svm`: `replay.build_classifier` wraps `LinearSVC` in `CalibratedClassifierCV(cv=3, method="sigmoid")` to expose `predict_proba`, `apply_calibration` short-circuits for SVMs (already calibrated), and the candidate-backed training worker uses `build_replay_pipeline` directly via `source_mode == "autoresearch_candidate"`. The only thing preventing promotion is a two-line allowlist in `_assess_reproducibility` plus a matching branch in `map_autoresearch_config_to_training_parameters` (used for display metadata only).
+
+**Decision**: Add `linear_svm` to the promotable-classifier allowlist. Detection code (`detector.py`, `hydrophone_detector.py`) is already classifier-agnostic because it calls `predict_proba` on the saved sklearn pipeline. `hard_negative_fraction > 0` remains blocked — that path would require new data-resampling logic the replay module does not own.
+
+**Consequences**:
+- Linear SVM candidates from the tuning page are now promotable via the existing candidate import → promotion flow
+- No schema change, no migration, no worker change, no detector change
+- The Classifier → Training tab still offers only Logistic Regression and MLP for direct training; linear_svm remains tuning-only
+- A new frontend label ("SVM" / "Linear SVM") surfaces on promoted models
+- Replay verification still gates promotion quality; the cv=3 `CalibratedClassifierCV` wrapping is deterministic under a fixed seed, which a new `test_linear_svm_pipeline_deterministic` unit test explicitly guards
+- `hard_negative_fraction > 0` remains deferred until a research candidate justifies the data-resampling work

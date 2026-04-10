@@ -137,6 +137,8 @@ def map_autoresearch_config_to_training_parameters(
         classifier_type = "logistic_regression"
     elif classifier == "mlp":
         classifier_type = "mlp"
+    elif classifier == "linear_svm":
+        classifier_type = "linear_svm"
     else:
         raise ValueError(f"Unsupported autoresearch classifier: {classifier!r}")
 
