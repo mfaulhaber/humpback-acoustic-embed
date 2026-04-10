@@ -344,6 +344,120 @@ async def test_export_full_pipeline(
     assert isinstance(manifest["vocalization_types"], list)
 
 
+async def test_export_audio_is_rms_normalized(
+    completed_job, session, settings, tmp_path, populated_tile_cache
+):
+    """Exported audio chunks should be RMS-normalized to the target level.
+
+    This pins the fix for the pre-PCEN inconsistency where exported
+    chunks bypassed the viewer's normalization and shipped raw audio.
+    """
+    import subprocess
+
+    output_dir = tmp_path / "export_rms"
+    sr = 32000
+    duration_sec = 300
+    # Build an input signal at a known RMS far from the target so any
+    # regression that bypasses ``normalize_for_playback`` is visible.
+    t = np.arange(sr * duration_sec, dtype=np.float32) / sr
+    fake_audio = (0.5 * np.sin(2.0 * np.pi * 440.0 * t)).astype(np.float32)
+
+    # Pass the real encode_mp3 through by not patching it. Tiles still
+    # need to be provided via the ``populated_tile_cache`` fixture.
+    with patch(
+        "humpback.processing.timeline_audio.resolve_timeline_audio",
+        return_value=fake_audio,
+    ):
+        result = await export_timeline(completed_job, output_dir, session, settings)
+
+    chunk_path = Path(result.output_path) / "audio" / "chunk_0000.mp3"
+    assert chunk_path.exists()
+
+    # Decode the MP3 back to raw float samples via ffmpeg so we can
+    # measure the RMS of the exported data.
+    ffmpeg = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            str(chunk_path),
+            "-ac",
+            "1",
+            "-f",
+            "f32le",
+            "-ar",
+            str(sr),
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    decoded = np.frombuffer(ffmpeg.stdout, dtype=np.float32)
+    assert decoded.size > 0
+
+    rms = float(np.sqrt(np.mean(decoded.astype(np.float64) ** 2)))
+    rms_dbfs = 20.0 * np.log10(rms) if rms > 0 else -np.inf
+    # MP3 encoding introduces some drift; accept ±2 dB.
+    assert abs(rms_dbfs - settings.playback_target_rms_dbfs) < 2.0, (
+        f"Exported chunk RMS {rms_dbfs:.2f} dBFS far from target "
+        f"{settings.playback_target_rms_dbfs} dBFS"
+    )
+
+
+async def test_export_writes_cache_version_marker(
+    completed_job, session, settings, tmp_path
+):
+    """Exporting a job should leave a current-version marker in its cache
+    directory (set by the first ``_prepare_tiles_sync`` call), and must
+    not leave any legacy gain-profile or ref_db sidecars behind.
+    """
+    from humpback.processing.timeline_cache import TIMELINE_CACHE_VERSION
+
+    output_dir = tmp_path / "export_version"
+    fake_audio = np.zeros(int(32000 * 300), dtype=np.float32)
+
+    # _prepare_tiles_sync will run because the tile cache for this job
+    # does not yet exist — we intercept the per-tile renderer to avoid
+    # pulling in real STFT work. Mirror the real prepare pass: migrate
+    # first (writing the version marker) before generating any tiles so
+    # migration does not sweep them away.
+    def fake_prepare(*, job, settings, cache):
+        job_dir = cache.cache_dir / job.id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        cache.ensure_job_cache_current(job.id)
+        for zoom in ZOOM_LEVELS:
+            n = tile_count(zoom, job_duration_sec=100.0)
+            zoom_dir = job_dir / zoom
+            zoom_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(n):
+                (zoom_dir / f"tile_{i:04d}.png").write_bytes(
+                    b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+                )
+        return 0
+
+    with (
+        patch(
+            "humpback.api.routers.timeline._prepare_tiles_sync",
+            side_effect=fake_prepare,
+        ),
+        patch(
+            "humpback.processing.timeline_audio.resolve_timeline_audio",
+            return_value=fake_audio,
+        ),
+        patch(
+            "humpback.processing.audio_encoding.encode_mp3",
+            return_value=b"fake-mp3-data",
+        ),
+    ):
+        await export_timeline(completed_job, output_dir, session, settings)
+
+    job_cache_dir = settings.storage_root / "timeline_cache" / completed_job
+    version_path = job_cache_dir / ".cache_version"
+    assert version_path.exists()
+    assert int(version_path.read_text().strip()) == TIMELINE_CACHE_VERSION
+    assert not (job_cache_dir / ".ref_db.json").exists()
+    assert not (job_cache_dir / ".gain_profile.json").exists()
+
+
 async def test_export_with_vocalization_types(
     completed_job, session, settings, tmp_path, populated_tile_cache, engine
 ):

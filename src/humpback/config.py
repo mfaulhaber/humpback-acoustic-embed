@@ -51,7 +51,6 @@ class Settings(BaseSettings):
     timeline_tile_width_px: int = 512
     timeline_tile_height_px: int = 256
     timeline_cache_max_jobs: int = 15
-    timeline_dynamic_range_db: float = 80.0
     timeline_prepare_workers: int = 2
     timeline_startup_radius_tiles: int = 2
     timeline_startup_coarse_levels: int = 1
@@ -60,9 +59,19 @@ class Settings(BaseSettings):
     timeline_manifest_memory_cache_items: int = 8
     timeline_pcm_memory_cache_mb: int = 128
 
-    # Gain normalization settings
-    gain_norm_threshold_db: float = 6.0
-    gain_norm_min_duration_sec: float = 5.0
+    # Timeline PCEN normalization (spectrogram rendering)
+    pcen_time_constant_sec: float = 0.5
+    pcen_gain: float = 0.98
+    pcen_bias: float = 10.0
+    pcen_power: float = 0.25
+    pcen_eps: float = 1e-6
+    pcen_warmup_sec: float = 2.0
+    pcen_vmin: float = 0.0
+    pcen_vmax: float = 0.15
+
+    # Timeline audio playback normalization
+    playback_target_rms_dbfs: float = -20.0
+    playback_ceiling: float = 0.95
 
     # Replay verification settings
     replay_metric_tolerance: float = 0.01

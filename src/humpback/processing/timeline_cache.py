@@ -15,6 +15,20 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+# Incremented whenever the on-disk tile format changes in a way that
+# would make previously cached tiles invalid. Current value bumped from
+# implicit 1 → 2 when gain-step normalization + global ref_db rendering
+# was replaced with PCEN per-tile rendering.
+TIMELINE_CACHE_VERSION = 2
+
+# Sidecars written by older versions of the renderer that are no longer
+# read. ``.prepare_plan.json`` is intentionally NOT listed here — it is
+# actively used by the prepare-status endpoint and outlives migration.
+_LEGACY_SIDECARS = (
+    ".ref_db.json",
+    ".gain_profile.json",
+)
+
 
 class TimelinePrepareLock:
     """Advisory file lock that coordinates prepare work across processes."""
@@ -93,24 +107,43 @@ class TimelineTileCache:
             return 0
         return sum(1 for f in zoom_dir.iterdir() if f.suffix == ".png")
 
-    def get_ref_db(self, job_id: str) -> float | None:
-        """Return the cached per-job reference dB level, or None if not yet computed."""
-        import json
+    def ensure_job_cache_current(self, job_id: str) -> None:
+        """Migrate a job's cache directory to the current format if needed.
 
-        path = self.cache_dir / job_id / ".ref_db.json"
-        if not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text())
-            return float(data["ref_db"])
-        except (json.JSONDecodeError, KeyError, ValueError):
-            return None
+        Reads ``.cache_version`` from the job directory; if missing or
+        older than :data:`TIMELINE_CACHE_VERSION`, deletes legacy sidecar
+        files (``.ref_db.json``, ``.gain_profile.json``) and every
+        ``tile_*.png`` under the job's zoom subdirectories, then writes
+        the current version marker. The ``.audio_manifest.json``,
+        ``.prepare_plan.json``, and ``.last_access`` files are preserved.
 
-    def put_ref_db(self, job_id: str, ref_db: float) -> None:
-        """Store the per-job reference dB level."""
-        self._touch_job(job_id)
-        path = self.cache_dir / job_id / ".ref_db.json"
-        self._write_atomic(path, json.dumps({"ref_db": ref_db}))
+        This is a one-shot no-op after the first call per job: subsequent
+        calls see the current version and return immediately.
+        """
+        job_dir = self.cache_dir / job_id
+        if not job_dir.exists():
+            return
+
+        version_path = job_dir / ".cache_version"
+        current = 0
+        if version_path.exists():
+            try:
+                current = int(version_path.read_text().strip())
+            except (OSError, ValueError):
+                current = 0
+
+        if current >= TIMELINE_CACHE_VERSION:
+            return
+
+        for sub in job_dir.iterdir():
+            if sub.is_dir():
+                for tile in sub.glob("tile_*.png"):
+                    tile.unlink(missing_ok=True)
+        for sidecar_name in _LEGACY_SIDECARS:
+            (job_dir / sidecar_name).unlink(missing_ok=True)
+
+        self._drop_memory_for_job(job_id)
+        self._write_atomic(version_path, str(TIMELINE_CACHE_VERSION))
 
     def get_prepare_plan(self, job_id: str) -> dict | None:
         """Return the persisted prepare plan for a job, if present."""
@@ -130,25 +163,6 @@ class TimelineTileCache:
         self._touch_job(job_id)
         path = self.cache_dir / job_id / ".prepare_plan.json"
         self._write_atomic(path, json.dumps(plan))
-
-    def get_gain_profile(self, job_id: str) -> dict | None:
-        """Return the cached gain normalization profile, or None if not computed."""
-        path = self.cache_dir / job_id / ".gain_profile.json"
-        if not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text())
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(data, dict):
-            return None
-        return data
-
-    def put_gain_profile(self, job_id: str, profile: dict) -> None:
-        """Store the gain normalization profile for a job."""
-        self._touch_job(job_id)
-        path = self.cache_dir / job_id / ".gain_profile.json"
-        self._write_atomic(path, json.dumps(profile))
 
     def get_audio_manifest(self, job_id: str) -> dict | None:
         """Return a persisted audio manifest for a job, if present."""

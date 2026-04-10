@@ -41,10 +41,15 @@
   searches/{search_id}/best_run.json                 (best trial config + metrics)
   searches/{search_id}/top_false_positives.json      (highest-scoring false positives from best run)
 /timeline_cache/
-  {job_id}/{zoom_level}/tile_{NNNN}.png   (per-job LRU-evicted spectrogram tiles)
+  {job_id}/{zoom_level}/tile_{NNNN}.png   (PCEN-normalized spectrogram tiles, LRU-evicted per job)
+  {job_id}/.cache_version                  (integer; current is 2. Migrations run on first access when missing or lower)
+  {job_id}/.audio_manifest.json            (optional persisted HLS segment manifest for reuse across resampling rates)
+  {job_id}/.prepare_plan.json              (active prepare scope used by /prepare-status)
+  {job_id}/.last_access                    (mtime sentinel for per-job LRU eviction)
+  {job_id}/.prepare.lock                   (advisory flock for exclusive prepare ownership)
 ```
 
-Timeline audio endpoint supports `format=mp3` for compressed playback (128kbps mono, up to 600s segments).
+Timeline audio endpoint supports `format=mp3` for compressed playback (128kbps mono, up to 600s segments). Playback audio is RMS-scaled to `playback_target_rms_dbfs` with a `tanh` soft-clip before encoding.
 
 ## Extraction Output
 
