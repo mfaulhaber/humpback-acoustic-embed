@@ -25,6 +25,7 @@ Highlights:
 - Binary classifier training plus hydrophone/archive detection
 - Autoresearch candidate import, review, and exact-replay promotion into classifier training
 - Multi-label vocalization type classifier with managed vocabulary, per-type thresholds, and inference scoring
+- Four-pass call parsing pipeline (Phase 0 scaffold — region detect → event segment → event classify → sequence export; pass logic ships incrementally)
 - Interactive web UI and REST API for review, labeling, and extraction
 - Local-first artifact storage using SQL and Parquet-backed outputs
 - Zoomable timeline viewer for hydrophone detection jobs (Pattern Radio-inspired, 6 zoom levels, Ocean Depth colormap, startup-scoped tile warming, synchronized audio playback)

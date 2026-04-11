@@ -1,4 +1,11 @@
 from humpback.models.audio import AudioFile, AudioMetadata
+from humpback.models.call_parsing import (
+    CallParsingRun,
+    EventClassificationJob,
+    EventSegmentationJob,
+    RegionDetectionJob,
+    SegmentationModel,
+)
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.hyperparameter import (
     HyperparameterManifest,
@@ -20,10 +27,15 @@ from humpback.models.vocalization import (
 __all__ = [
     "AudioFile",
     "AudioMetadata",
+    "CallParsingRun",
+    "EventClassificationJob",
+    "EventSegmentationJob",
     "HyperparameterManifest",
     "HyperparameterSearchJob",
     "LabelProcessingJob",
     "ModelConfig",
+    "RegionDetectionJob",
+    "SegmentationModel",
     "TFLiteModelConfig",
     "ProcessingJob",
     "EmbeddingSet",

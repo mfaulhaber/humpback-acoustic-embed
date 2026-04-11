@@ -261,6 +261,63 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then call parsing Pass 1 — region detection jobs
+        rdjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_region_detection_job
+
+            rdjob = await claim_region_detection_job(session)
+        if rdjob:
+            logger.info(f"Region detection job {rdjob.id}")
+            from humpback.workers.region_detection_worker import (
+                run_region_detection_job,
+            )
+
+            async with session_factory() as session:
+                await run_region_detection_job(session, rdjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then call parsing Pass 2 — event segmentation jobs
+        esjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_event_segmentation_job
+
+            esjob = await claim_event_segmentation_job(session)
+        if esjob:
+            logger.info(f"Event segmentation job {esjob.id}")
+            from humpback.workers.event_segmentation_worker import (
+                run_event_segmentation_job,
+            )
+
+            async with session_factory() as session:
+                await run_event_segmentation_job(session, esjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then call parsing Pass 3 — event classification jobs
+        ecjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_event_classification_job
+
+            ecjob = await claim_event_classification_job(session)
+        if ecjob:
+            logger.info(f"Event classification job {ecjob.id}")
+            from humpback.workers.event_classification_worker import (
+                run_event_classification_job,
+            )
+
+            async with session_factory() as session:
+                await run_event_classification_job(session, ecjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # Then manifest generation jobs
         mfjob = None
         async with session_factory() as session:

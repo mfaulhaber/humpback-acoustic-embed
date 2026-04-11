@@ -1,0 +1,128 @@
+"""SQLAlchemy models for the call parsing pipeline (Phase 0 scaffold).
+
+Four-pass humpback call parsing pipeline: detect → segment → classify →
+export. See ``docs/specs/2026-04-11-call-parsing-pipeline-phase0-design.md``
+for the architecture contract.
+
+Phase 0 ships the table skeleton and worker shells; subsequent passes
+each brainstorm and implement their own internal logic against this
+contract.
+"""
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import DateTime, Integer, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from humpback.database import Base, TimestampMixin, UUIDMixin
+
+
+class CallParsingRun(UUIDMixin, TimestampMixin, Base):
+    """Parent row threading one end-to-end pipeline run across the four passes.
+
+    The nullable child job FKs are populated by the orchestration service
+    as each pass is queued. Child jobs created as part of a parent run
+    carry this row's id in their ``parent_run_id`` column; standalone
+    child jobs leave ``parent_run_id`` NULL.
+    """
+
+    __tablename__ = "call_parsing_runs"
+
+    audio_source_id: Mapped[str]
+    status: Mapped[str] = mapped_column(default="queued")
+    config_snapshot: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    region_detection_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    event_segmentation_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    event_classification_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+
+
+class SegmentationModel(UUIDMixin, Base):
+    """Pass 2 PyTorch segmentation model checkpoint registry.
+
+    Distinct from ``vocalization_models`` because framewise segmentation is
+    a different task type from per-event multi-label classification. Pass 3
+    lives under the existing ``vocalization_models`` table (extended with
+    ``model_family`` / ``input_mode`` columns in migration 042).
+    """
+
+    __tablename__ = "segmentation_models"
+
+    name: Mapped[str]
+    model_family: Mapped[str]
+    model_path: Mapped[str]
+    config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    training_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.utcnow()
+    )
+
+
+class RegionDetectionJob(UUIDMixin, TimestampMixin, Base):
+    """Pass 1 — dense Perch inference + hysteresis → padded regions.
+
+    The worker writes ``trace.parquet`` (dense per-window scores) and
+    ``regions.parquet`` (padded continuous whale-active regions) to the
+    per-job storage directory. Phase 0 ships an empty shell that claims
+    and fails; Pass 1 implements the actual logic.
+    """
+
+    __tablename__ = "region_detection_jobs"
+
+    status: Mapped[str] = mapped_column(default="queued")
+    parent_run_id: Mapped[Optional[str]] = mapped_column(default=None)
+    audio_source_id: Mapped[str]
+    model_config_id: Mapped[Optional[str]] = mapped_column(default=None)
+    classifier_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    trace_row_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    region_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+
+
+class EventSegmentationJob(UUIDMixin, TimestampMixin, Base):
+    """Pass 2 — framewise segmentation over regions produces events.
+
+    Consumes ``regions.parquet`` produced by a completed
+    ``RegionDetectionJob`` and writes ``events.parquet``. Phase 0 ships an
+    empty shell; Pass 2 introduces the PyTorch CRNN/transformer model and
+    event decoding.
+    """
+
+    __tablename__ = "event_segmentation_jobs"
+
+    status: Mapped[str] = mapped_column(default="queued")
+    parent_run_id: Mapped[Optional[str]] = mapped_column(default=None)
+    region_detection_job_id: Mapped[str]
+    segmentation_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    event_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+
+
+class EventClassificationJob(UUIDMixin, TimestampMixin, Base):
+    """Pass 3 — per-event multi-label call-type classification.
+
+    Consumes ``events.parquet`` from a completed ``EventSegmentationJob``
+    and writes ``typed_events.parquet``. Pass 3 reuses the existing
+    ``vocalization_models`` table via the new ``model_family`` column
+    (``pytorch_event_cnn``).
+    """
+
+    __tablename__ = "event_classification_jobs"
+
+    status: Mapped[str] = mapped_column(default="queued")
+    parent_run_id: Mapped[Optional[str]] = mapped_column(default=None)
+    event_segmentation_job_id: Mapped[str]
+    vocalization_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    typed_event_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)

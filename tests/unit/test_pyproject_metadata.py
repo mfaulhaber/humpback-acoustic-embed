@@ -33,12 +33,15 @@ def test_tensorflow_extras_are_platform_specific_and_conflicting() -> None:
     assert optional["tf-macos"] == [
         "tensorflow-macos>=2.16,<2.17; sys_platform == 'darwin' and platform_machine == 'arm64'",
         "tensorflow-metal>=1.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
+        "torch>=2.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
     ]
     assert optional["tf-linux-cpu"] == [
         "tensorflow>=2.20,<2.21; sys_platform == 'linux'",
+        "torch>=2.4; sys_platform == 'linux'",
     ]
     assert optional["tf-linux-gpu"] == [
         "tensorflow[and-cuda]>=2.20,<2.21; sys_platform == 'linux'",
+        "torch>=2.4; sys_platform == 'linux'",
     ]
 
     assert data["tool"]["uv"]["conflicts"] == [

@@ -25,6 +25,12 @@ class VocalizationClassifierModel(UUIDMixin, TimestampMixin, Base):
     training_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
     is_active: Mapped[bool] = mapped_column(default=False)
     training_dataset_id: Mapped[Optional[str]] = mapped_column(default=None)
+    # Pass 3 (call parsing pipeline) coexistence axis. "sklearn_perch_embedding"
+    # is the legacy multi-label-on-5s-windows family; "pytorch_event_cnn" is the
+    # Pass 3 event-crop CNN family. input_mode: "detection_row" (5s window) vs
+    # "segmented_event" (variable-length crop from Pass 2).
+    model_family: Mapped[str] = mapped_column(default="sklearn_perch_embedding")
+    input_mode: Mapped[str] = mapped_column(default="detection_row")
 
 
 class VocalizationTrainingJob(UUIDMixin, TimestampMixin, Base):
@@ -37,6 +43,10 @@ class VocalizationTrainingJob(UUIDMixin, TimestampMixin, Base):
     training_dataset_id: Mapped[Optional[str]] = mapped_column(default=None)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    # Same coexistence axis as VocalizationClassifierModel — a training job's
+    # family determines which trainer code path runs when the worker claims it.
+    model_family: Mapped[str] = mapped_column(default="sklearn_perch_embedding")
+    input_mode: Mapped[str] = mapped_column(default="detection_row")
 
 
 class VocalizationInferenceJob(UUIDMixin, TimestampMixin, Base):

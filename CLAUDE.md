@@ -242,7 +242,7 @@ See [docs/reference/storage-layout.md](docs/reference/storage-layout.md) for ful
 
 Non-obvious constraints that are not immediately derivable from code:
 
-- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> detection embedding generation -> label processing -> retrain -> vocalization training -> vocalization inference -> manifest generation -> hyperparameter search
+- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> detection embedding generation -> label processing -> retrain -> vocalization training -> vocalization inference -> region detection -> event segmentation -> event classification -> manifest generation -> hyperparameter search
 - **Job claim semantics**: Workers claim queued jobs via atomic compare-and-set (`WHERE id=:candidate AND status='queued'`). SQLite has no true row-level locks; correctness relies on atomic status updates, not `SELECT ... FOR UPDATE`.
 - **Job status transitions**: `queued -> running -> complete`, `queued -> running -> failed`, `queued -> canceled`
 - **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
@@ -294,6 +294,29 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 - **Timeline export**:
   - `POST /classifier/detection-jobs/{id}/timeline/export` — export a completed detection job's timeline as a self-contained static bundle (tiles, MP3 audio, JSON manifest) for hosting as a readonly viewer on S3. Also available as `scripts/export_timeline.py` CLI.
 
+### 8.9 Call Parsing Pipeline API Surface
+
+Four-pass pipeline under `/call-parsing/*`. Phase 0 ships parent-run CRUD and pure-DB pass-job list/get/delete; the endpoints that require pass logic return HTTP 501 until the corresponding Pass is implemented. Per-pass job status transitions follow the standard `queued → running → complete|failed|canceled` pattern.
+
+- **Parent runs** (functional in Phase 0):
+  - `POST /call-parsing/runs` — create a parent run and its queued Pass 1 job in one transaction
+  - `GET /call-parsing/runs` — list runs with pagination
+  - `GET /call-parsing/runs/{id}` — parent run with nested Pass 1/2/3 status summaries
+  - `DELETE /call-parsing/runs/{id}` — cascade deletes all three child jobs and their parquet directories
+  - `GET /call-parsing/runs/{id}/sequence` — **501** (Pass 4 sequence export)
+- **Pass 1 — region detection**:
+  - `POST /call-parsing/region-jobs` — **501** (Pass 1 creation)
+  - `GET /call-parsing/region-jobs`, `GET /call-parsing/region-jobs/{id}`, `DELETE /call-parsing/region-jobs/{id}` — functional (DB-only)
+  - `GET /call-parsing/region-jobs/{id}/trace`, `/regions` — **501** (Pass 1 artifacts)
+- **Pass 2 — event segmentation**:
+  - `POST /call-parsing/segmentation-jobs` — **501** (Pass 2 creation)
+  - `GET /call-parsing/segmentation-jobs`, `GET /call-parsing/segmentation-jobs/{id}`, `DELETE /call-parsing/segmentation-jobs/{id}` — functional (DB-only)
+  - `GET /call-parsing/segmentation-jobs/{id}/events` — **501** (Pass 2 artifacts)
+- **Pass 3 — event classification**:
+  - `POST /call-parsing/classification-jobs` — **501** (Pass 3 creation)
+  - `GET /call-parsing/classification-jobs`, `GET /call-parsing/classification-jobs/{id}`, `DELETE /call-parsing/classification-jobs/{id}` — functional (DB-only)
+  - `GET /call-parsing/classification-jobs/{id}/typed-events` — **501** (Pass 3 artifacts)
+
 ---
 
 ## 9. Current State
@@ -316,12 +339,13 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), vocalization label editing via popover (add/remove type labels on detection windows with batch save), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans), static export for readonly S3-hosted viewer, PCEN spectrogram normalization and RMS-targeted audio playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier (Training, Hydrophone, Embeddings, Tuning), Vocalization, Search, Label Processing, Admin
+- Four-pass call parsing pipeline — Phase 0 scaffold (architecture, tables, workers, stub endpoints; pass logic deferred to Passes 1–4)
 
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `041_hyperparameter_search_jobs.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs
+- **Latest migration**: `042_call_parsing_tables.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models
 
 ### 9.3 Sensitive Components
 
