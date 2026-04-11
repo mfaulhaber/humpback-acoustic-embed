@@ -4,14 +4,22 @@ import io
 import math
 import struct
 import wave
+from pathlib import Path
 
+import numpy as np
 import pyarrow.parquet as pq
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sklearn.pipeline import Pipeline
 
 from humpback.api.app import create_app
+from humpback.call_parsing.storage import region_job_dir
+from humpback.classifier.trainer import train_binary_classifier
 from humpback.config import Settings
 from humpback.database import create_engine, create_session_factory
+from humpback.models.audio import AudioFile
+from humpback.models.classifier import ClassifierModel
+from humpback.models.model_registry import ModelConfig
 from humpback.processing.inference import FakeTFLiteModel
 from humpback.workers.classifier_worker import run_detection_job, run_training_job
 from humpback.workers.clustering_worker import run_clustering_job
@@ -22,6 +30,7 @@ from humpback.workers.queue import (
     claim_processing_job,
     claim_training_job,
 )
+from humpback.workers.region_detection_worker import run_one_iteration
 
 
 def make_wav_bytes(duration: float = 10.0, sample_rate: int = 16000) -> bytes:
@@ -391,5 +400,146 @@ async def test_short_audio_warns_no_embedding_set(e2e_settings, e2e_client):
     assert resp.status_code == 200
     es_list = [es for es in resp.json() if es["audio_file_id"] == audio_id]
     assert len(es_list) == 0
+
+    await engine.dispose()
+
+
+def _write_wav(path: Path, duration_sec: float, sample_rate: int = 16000) -> None:
+    n = int(sample_rate * duration_sec)
+    samples = [
+        int(32767 * 0.7 * math.sin(2 * math.pi * 440 * i / sample_rate))
+        for i in range(n)
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(struct.pack(f"<{n}h", *samples))
+
+
+def _synthetic_classifier() -> Pipeline:
+    rng = np.random.RandomState(42)
+    seed_embedding = np.sin(np.arange(64) * 2 / 64).astype(np.float32)
+    pos = np.tile(seed_embedding, (20, 1)) + rng.randn(20, 64) * 0.01
+    neg = rng.randn(20, 64) * 0.5 - 2.0
+    pipeline, _ = train_binary_classifier(pos, neg)
+    return pipeline
+
+
+async def test_call_parsing_pass1_smoke(
+    e2e_settings, e2e_client, tmp_path, monkeypatch
+):
+    """E2E: create Pass 1 job → run worker → trace/regions endpoints → delete cleanup."""
+    client = e2e_client
+    settings = e2e_settings
+
+    audio_dir = tmp_path / "call_parsing_audio"
+    audio_path = audio_dir / "sample.wav"
+    _write_wav(audio_path, duration_sec=12.0)
+
+    engine = create_engine(settings.database_url)
+    session_factory = create_session_factory(engine)
+
+    async with session_factory() as session:
+        audio = AudioFile(
+            filename=audio_path.name,
+            folder_path="",
+            source_folder=str(audio_dir),
+            checksum_sha256="call-parsing-smoke-sha",
+        )
+        model_config = ModelConfig(
+            name="perch_v2_smoke",
+            display_name="Perch v2 (smoke)",
+            path="/tmp/perch.tflite",
+            vector_dim=64,
+        )
+        classifier = ClassifierModel(
+            name="pass1-smoke-binary",
+            model_path="/tmp/binary.joblib",
+            model_version="perch_v2_smoke",
+            vector_dim=64,
+            window_size_seconds=5.0,
+            target_sample_rate=16000,
+        )
+        session.add_all([audio, model_config, classifier])
+        await session.commit()
+        audio_id = audio.id
+        model_config_id = model_config.id
+        classifier_id = classifier.id
+
+    pipeline = _synthetic_classifier()
+    fake_perch = FakeTFLiteModel(vector_dim=64)
+
+    def _fake_joblib_load(_path):
+        return pipeline
+
+    async def _fake_get_model_by_version(_session, _model_version, _settings):
+        return fake_perch, "spectrogram"
+
+    monkeypatch.setattr(
+        "humpback.workers.region_detection_worker.joblib.load",
+        _fake_joblib_load,
+    )
+    monkeypatch.setattr(
+        "humpback.workers.region_detection_worker.get_model_by_version",
+        _fake_get_model_by_version,
+    )
+
+    resp = await client.post(
+        "/call-parsing/region-jobs",
+        json={
+            "audio_file_id": audio_id,
+            "model_config_id": model_config_id,
+            "classifier_model_id": classifier_id,
+        },
+    )
+    assert resp.status_code == 201
+    job_id = resp.json()["id"]
+    assert resp.json()["status"] == "queued"
+
+    # Trace and regions are 409 while the job is still queued.
+    queued_trace = await client.get(f"/call-parsing/region-jobs/{job_id}/trace")
+    queued_regions = await client.get(f"/call-parsing/region-jobs/{job_id}/regions")
+    assert queued_trace.status_code == 409
+    assert queued_regions.status_code == 409
+
+    async with session_factory() as session:
+        claimed = await run_one_iteration(session, settings)
+    assert claimed is not None
+    assert claimed.id == job_id
+
+    detail = await client.get(f"/call-parsing/region-jobs/{job_id}")
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "complete"
+    assert detail.json()["trace_row_count"] > 0
+    assert detail.json()["region_count"] >= 1
+
+    trace_resp = await client.get(f"/call-parsing/region-jobs/{job_id}/trace")
+    assert trace_resp.status_code == 200
+    trace_rows = trace_resp.json()
+    assert len(trace_rows) > 0
+    assert set(trace_rows[0].keys()) == {"time_sec", "score"}
+
+    regions_resp = await client.get(f"/call-parsing/region-jobs/{job_id}/regions")
+    assert regions_resp.status_code == 200
+    regions = regions_resp.json()
+    assert len(regions) >= 1
+    for region in regions:
+        assert 0.0 <= region["padded_start_sec"] <= region["padded_end_sec"] <= 12.0
+        assert region["start_sec"] <= region["end_sec"]
+        assert region["n_windows"] >= 1
+
+    job_dir = region_job_dir(settings.storage_root, job_id)
+    assert job_dir.exists()
+    assert (job_dir / "trace.parquet").exists()
+    assert (job_dir / "regions.parquet").exists()
+
+    delete_resp = await client.delete(f"/call-parsing/region-jobs/{job_id}")
+    assert delete_resp.status_code == 204
+    assert not job_dir.exists()
+
+    missing = await client.get(f"/call-parsing/region-jobs/{job_id}")
+    assert missing.status_code == 404
 
     await engine.dispose()

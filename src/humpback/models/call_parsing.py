@@ -25,12 +25,20 @@ class CallParsingRun(UUIDMixin, TimestampMixin, Base):
     as each pass is queued. Child jobs created as part of a parent run
     carry this row's id in their ``parent_run_id`` column; standalone
     child jobs leave ``parent_run_id`` NULL.
+
+    Source identity is carried as ``audio_file_id`` XOR the hydrophone
+    triple (``hydrophone_id`` + ``start_timestamp`` + ``end_timestamp``).
+    The exactly-one-of invariant is enforced by the service layer and the
+    Pydantic request model, not by a DB CHECK constraint.
     """
 
     __tablename__ = "call_parsing_runs"
 
-    audio_source_id: Mapped[str]
     status: Mapped[str] = mapped_column(default="queued")
+    audio_file_id: Mapped[Optional[str]] = mapped_column(default=None)
+    hydrophone_id: Mapped[Optional[str]] = mapped_column(default=None)
+    start_timestamp: Mapped[Optional[float]] = mapped_column(default=None)
+    end_timestamp: Mapped[Optional[float]] = mapped_column(default=None)
     config_snapshot: Mapped[Optional[str]] = mapped_column(Text, default=None)
     region_detection_job_id: Mapped[Optional[str]] = mapped_column(default=None)
     event_segmentation_job_id: Mapped[Optional[str]] = mapped_column(default=None)
@@ -67,13 +75,20 @@ class RegionDetectionJob(UUIDMixin, TimestampMixin, Base):
     ``regions.parquet`` (padded continuous whale-active regions) to the
     per-job storage directory. Phase 0 ships an empty shell that claims
     and fails; Pass 1 implements the actual logic.
+
+    Source identity mirrors ``CallParsingRun``: ``audio_file_id`` XOR the
+    hydrophone triple, enforced by the service layer and Pydantic request
+    model rather than a DB CHECK constraint.
     """
 
     __tablename__ = "region_detection_jobs"
 
     status: Mapped[str] = mapped_column(default="queued")
     parent_run_id: Mapped[Optional[str]] = mapped_column(default=None)
-    audio_source_id: Mapped[str]
+    audio_file_id: Mapped[Optional[str]] = mapped_column(default=None)
+    hydrophone_id: Mapped[Optional[str]] = mapped_column(default=None)
+    start_timestamp: Mapped[Optional[float]] = mapped_column(default=None)
+    end_timestamp: Mapped[Optional[float]] = mapped_column(default=None)
     model_config_id: Mapped[Optional[str]] = mapped_column(default=None)
     classifier_model_id: Mapped[Optional[str]] = mapped_column(default=None)
     config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)

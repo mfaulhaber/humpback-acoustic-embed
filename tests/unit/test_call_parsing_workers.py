@@ -52,9 +52,17 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
-async def test_region_detection_worker_marks_job_failed(session_factory, tmp_path):
+async def test_region_detection_worker_fails_without_classifier_model(
+    session_factory, tmp_path
+):
+    """Pass 1 worker marks a job ``failed`` when required FKs are missing.
+
+    Pre-Pass-1 this suite asserted the NotImplementedError stub message.
+    Now the Pass 1 worker does real work, so the minimal-fixture path
+    exercises the worker's validation + error-path code instead.
+    """
     async with session_factory() as session:
-        job = RegionDetectionJob(audio_source_id="audio-1", status="queued")
+        job = RegionDetectionJob(audio_file_id="audio-1", status="queued")
         session.add(job)
         await session.commit()
         job_id = job.id
@@ -70,12 +78,12 @@ async def test_region_detection_worker_marks_job_failed(session_factory, tmp_pat
         assert refreshed is not None
         assert refreshed.status == "failed"
         assert refreshed.error_message is not None
-        assert "Pass 1" in refreshed.error_message
+        assert "classifier_model_id" in refreshed.error_message
 
 
 async def test_event_segmentation_worker_marks_job_failed(session_factory, tmp_path):
     async with session_factory() as session:
-        parent = RegionDetectionJob(audio_source_id="audio-1", status="complete")
+        parent = RegionDetectionJob(audio_file_id="audio-1", status="complete")
         session.add(parent)
         await session.flush()
         job = EventSegmentationJob(region_detection_job_id=parent.id, status="queued")
@@ -98,7 +106,7 @@ async def test_event_segmentation_worker_marks_job_failed(session_factory, tmp_p
 
 async def test_event_classification_worker_marks_job_failed(session_factory, tmp_path):
     async with session_factory() as session:
-        region = RegionDetectionJob(audio_source_id="audio-1", status="complete")
+        region = RegionDetectionJob(audio_file_id="audio-1", status="complete")
         session.add(region)
         await session.flush()
         seg = EventSegmentationJob(region_detection_job_id=region.id, status="complete")
@@ -124,7 +132,7 @@ async def test_event_classification_worker_marks_job_failed(session_factory, tmp
 async def test_claim_is_exclusive_for_region_detection(session_factory):
     """Two racing claim attempts: only one wins, the other returns None."""
     async with session_factory() as session:
-        job = RegionDetectionJob(audio_source_id="audio-race", status="queued")
+        job = RegionDetectionJob(audio_file_id="audio-race", status="queued")
         session.add(job)
         await session.commit()
 
@@ -140,7 +148,7 @@ async def test_claim_is_exclusive_for_region_detection(session_factory):
 
 async def test_claim_is_exclusive_for_event_segmentation(session_factory):
     async with session_factory() as session:
-        region = RegionDetectionJob(audio_source_id="audio-race", status="complete")
+        region = RegionDetectionJob(audio_file_id="audio-race", status="complete")
         session.add(region)
         await session.flush()
         job = EventSegmentationJob(region_detection_job_id=region.id, status="queued")
@@ -158,7 +166,7 @@ async def test_claim_is_exclusive_for_event_segmentation(session_factory):
 
 async def test_claim_is_exclusive_for_event_classification(session_factory):
     async with session_factory() as session:
-        region = RegionDetectionJob(audio_source_id="audio-race", status="complete")
+        region = RegionDetectionJob(audio_file_id="audio-race", status="complete")
         session.add(region)
         await session.flush()
         seg = EventSegmentationJob(region_detection_job_id=region.id, status="complete")
@@ -187,7 +195,7 @@ async def test_priority_order_region_before_segmentation_before_classification(
     corresponding section of the runner's main loop.
     """
     async with session_factory() as session:
-        region = RegionDetectionJob(audio_source_id="audio-1", status="queued")
+        region = RegionDetectionJob(audio_file_id="audio-1", status="queued")
         session.add(region)
         await session.flush()
         seg = EventSegmentationJob(region_detection_job_id=region.id, status="queued")

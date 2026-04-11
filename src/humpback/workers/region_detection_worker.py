@@ -1,36 +1,325 @@
-"""Pass 1 worker shell — Phase 0 stub.
+"""Pass 1 — region detection worker.
 
-Claims a queued ``RegionDetectionJob`` and immediately marks it
-``failed`` with a ``NotImplementedError`` message. Pass 1 replaces this
-body with the real region-detection logic: dense Perch inference +
-hysteresis + padded region emission. The claim/dispatch pattern is the
-same as every other worker in the project (ADR-009).
+Runs dense Perch inference + hysteresis + padded region emission on one
+audio source (uploaded file or hydrophone range) and writes
+``trace.parquet`` + ``regions.parquet`` to the per-job storage directory.
+See ``docs/specs/2026-04-11-call-parsing-pass1-region-detector-design.md``
+for the algorithmic contract and ADR-049 for the defaults rationale.
 """
 
 from __future__ import annotations
 
+import logging
+import math
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
+import joblib
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.regions import decode_regions
+from humpback.call_parsing.storage import (
+    region_job_dir,
+    write_regions,
+    write_trace,
+)
+from humpback.call_parsing.types import WindowScore
+from humpback.classifier.detector import score_audio_windows
+from humpback.classifier.detector_utils import merge_detection_events
 from humpback.config import Settings
+from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import RegionDetectionJob
+from humpback.models.classifier import ClassifierModel
+from humpback.processing.audio_io import decode_audio, resample
+from humpback.schemas.call_parsing import RegionDetectionConfig
+from humpback.storage import ensure_dir, resolve_audio_path
+from humpback.workers.model_cache import get_model_by_version
 from humpback.workers.queue import claim_region_detection_job
+
+logger = logging.getLogger(__name__)
+
+
+def _aligned_chunk_edges(
+    start_ts: float,
+    end_ts: float,
+    chunk_sec: float,
+    alignment_sec: float,
+) -> list[tuple[float, float]]:
+    """Chunk boundaries for the hydrophone streaming loop.
+
+    Every chunk is at most ``chunk_sec`` wide and every boundary offset
+    from ``start_ts`` is a whole multiple of ``alignment_sec``, so a Perch
+    window that starts inside a chunk cannot have its body extend into
+    the next chunk as long as ``hop_seconds == window_size_seconds``.
+    With the ADR-049 defaults (``chunk_sec=1800``, ``alignment_sec=5``)
+    the normal case is 48 even chunks per 24-hour range.
+
+    Raises ``ValueError`` on malformed input (non-positive chunk/alignment
+    or end <= start). The last chunk's right edge is always exactly
+    ``end_ts`` even if it is shorter than ``chunk_sec`` or not aligned.
+    """
+    if chunk_sec <= 0 or alignment_sec <= 0:
+        raise ValueError("chunk_sec and alignment_sec must be positive")
+    if end_ts <= start_ts:
+        raise ValueError("end_ts must be strictly after start_ts")
+
+    # Round chunk width down to the nearest multiple of alignment_sec so
+    # every "normal" chunk is a whole-window multiple. If chunk_sec is
+    # smaller than one alignment unit we fall back to a single alignment
+    # unit so the loop always makes progress.
+    units = max(int(math.floor(chunk_sec / alignment_sec)), 1)
+    aligned_chunk_sec = units * alignment_sec
+
+    edges: list[tuple[float, float]] = []
+    cursor = start_ts
+    while cursor < end_ts:
+        nxt = min(cursor + aligned_chunk_sec, end_ts)
+        edges.append((cursor, nxt))
+        cursor = nxt
+    return edges
+
+
+def _detector_config(
+    config: RegionDetectionConfig, input_format: str
+) -> dict[str, Any]:
+    return {
+        "window_size_seconds": config.window_size_seconds,
+        "hop_seconds": config.hop_seconds,
+        "input_format": input_format,
+    }
+
+
+def _score_records_to_window_scores(
+    records: list[dict[str, Any]],
+) -> list[WindowScore]:
+    return [
+        WindowScore(time_sec=float(r["offset_sec"]), score=float(r["confidence"]))
+        for r in records
+    ]
+
+
+def _cleanup_partial_artifacts(job_dir: Path) -> None:
+    """Delete parquet files and ``.tmp`` sidecars left by a failed run."""
+    if not job_dir.exists():
+        return
+    for name in ("trace.parquet", "regions.parquet"):
+        path = job_dir / name
+        if path.exists():
+            try:
+                path.unlink()
+            except OSError:
+                logger.warning("Failed to delete %s", path, exc_info=True)
+    for tmp in job_dir.glob("*.tmp"):
+        try:
+            tmp.unlink()
+        except OSError:
+            logger.warning("Failed to delete %s", tmp, exc_info=True)
+
+
+async def _load_file_trace(
+    audio_file: AudioFile,
+    *,
+    config: RegionDetectionConfig,
+    perch_model: Any,
+    classifier: Any,
+    input_format: str,
+    target_sample_rate: int,
+    storage_root: Path,
+) -> tuple[list[dict[str, Any]], float]:
+    """Decode the whole audio file and run one ``score_audio_windows`` call."""
+    path = resolve_audio_path(audio_file, storage_root)
+    audio, sr = decode_audio(path)
+    audio = resample(audio, sr, target_sample_rate)
+    duration_sec = float(len(audio)) / float(target_sample_rate)
+    records = score_audio_windows(
+        audio=audio,
+        sample_rate=target_sample_rate,
+        perch_model=perch_model,
+        classifier=classifier,
+        config=_detector_config(config, input_format),
+    )
+    del audio
+    return records, duration_sec
+
+
+async def _load_hydrophone_trace(
+    hydrophone_id: str,
+    start_ts: float,
+    end_ts: float,
+    *,
+    config: RegionDetectionConfig,
+    perch_model: Any,
+    classifier: Any,
+    input_format: str,
+    target_sample_rate: int,
+    settings: Settings,
+) -> tuple[list[dict[str, Any]], float]:
+    """Stream a hydrophone range, scoring each chunk independently.
+
+    Uses ``_aligned_chunk_edges`` to compute a chunk-aligned partition and
+    fetches each chunk via ``iter_audio_chunks``. The per-chunk buffer is
+    explicitly deleted before the next iteration to bound peak memory.
+    """
+    from humpback.classifier.providers import build_archive_playback_provider
+    from humpback.classifier.s3_stream import iter_audio_chunks
+
+    provider = build_archive_playback_provider(
+        hydrophone_id,
+        cache_path=settings.s3_cache_path,
+        noaa_cache_path=settings.noaa_cache_path,
+    )
+
+    edges = _aligned_chunk_edges(
+        start_ts,
+        end_ts,
+        chunk_sec=config.stream_chunk_sec,
+        alignment_sec=config.window_size_seconds,
+    )
+
+    trace: list[dict[str, Any]] = []
+    for chunk_start, chunk_end in edges:
+        for audio_buf, _seg_start_utc, _segs_done, _segs_total in iter_audio_chunks(
+            provider,
+            chunk_start,
+            chunk_end,
+            chunk_seconds=chunk_end - chunk_start,
+            target_sr=target_sample_rate,
+        ):
+            records = score_audio_windows(
+                audio=audio_buf,
+                sample_rate=target_sample_rate,
+                perch_model=perch_model,
+                classifier=classifier,
+                config=_detector_config(config, input_format),
+                time_offset_sec=chunk_start - start_ts,
+            )
+            trace.extend(records)
+            del audio_buf
+
+    return trace, float(end_ts - start_ts)
 
 
 async def run_region_detection_job(
     session: AsyncSession,
     job: RegionDetectionJob,
-    _settings: Settings,
+    settings: Settings,
 ) -> None:
-    """Phase 0 stub: mark the claimed job as failed."""
-    job.status = "failed"
-    job.error_message = (
-        "NotImplementedError: Pass 1 (region detection) not yet implemented in Phase 0"
-    )
-    job.updated_at = datetime.now(timezone.utc)
-    job.completed_at = datetime.now(timezone.utc)
-    await session.commit()
+    """Execute a Pass 1 region detection job end-to-end."""
+    # Capture everything we might need after a rollback into locals, since
+    # rollback expires attached instances and accessing the bound columns
+    # afterwards triggers lazy refresh SQL that fails in async contexts.
+    job_id = job.id
+    classifier_model_id = job.classifier_model_id
+    model_config_id = job.model_config_id
+    config_json = job.config_json
+    audio_file_id = job.audio_file_id
+    hydrophone_id = job.hydrophone_id
+    start_timestamp = job.start_timestamp
+    end_timestamp = job.end_timestamp
+
+    job_dir = ensure_dir(region_job_dir(settings.storage_root, job_id))
+    try:
+        if not classifier_model_id:
+            raise ValueError("region detection job missing classifier_model_id")
+        if not model_config_id:
+            raise ValueError("region detection job missing model_config_id")
+        if not config_json:
+            raise ValueError("region detection job missing config_json")
+
+        config = RegionDetectionConfig.model_validate_json(config_json)
+
+        cm_result = await session.execute(
+            select(ClassifierModel).where(ClassifierModel.id == classifier_model_id)
+        )
+        cm = cm_result.scalar_one_or_none()
+        if cm is None:
+            raise ValueError(f"ClassifierModel {classifier_model_id} not found")
+
+        target_sample_rate = cm.target_sample_rate
+        pipeline = joblib.load(cm.model_path)
+        perch_model, input_format = await get_model_by_version(
+            session, cm.model_version, settings
+        )
+
+        job.started_at = datetime.now(timezone.utc)
+        await session.commit()
+
+        if audio_file_id:
+            af_result = await session.execute(
+                select(AudioFile).where(AudioFile.id == audio_file_id)
+            )
+            audio_file = af_result.scalar_one_or_none()
+            if audio_file is None:
+                raise ValueError(f"AudioFile {audio_file_id} not found")
+            trace_records, audio_duration_sec = await _load_file_trace(
+                audio_file,
+                config=config,
+                perch_model=perch_model,
+                classifier=pipeline,
+                input_format=input_format,
+                target_sample_rate=target_sample_rate,
+                storage_root=settings.storage_root,
+            )
+        else:
+            if not hydrophone_id or start_timestamp is None or end_timestamp is None:
+                raise ValueError(
+                    "region detection job missing hydrophone source fields"
+                )
+            trace_records, audio_duration_sec = await _load_hydrophone_trace(
+                hydrophone_id,
+                float(start_timestamp),
+                float(end_timestamp),
+                config=config,
+                perch_model=perch_model,
+                classifier=pipeline,
+                input_format=input_format,
+                target_sample_rate=target_sample_rate,
+                settings=settings,
+            )
+
+        events = merge_detection_events(
+            trace_records,
+            config.high_threshold,
+            config.low_threshold,
+        )
+        regions = decode_regions(events, audio_duration_sec, config)
+
+        write_trace(
+            job_dir / "trace.parquet",
+            _score_records_to_window_scores(trace_records),
+        )
+        write_regions(job_dir / "regions.parquet", regions)
+
+        now = datetime.now(timezone.utc)
+        refreshed = await session.get(RegionDetectionJob, job_id)
+        target = refreshed if refreshed is not None else job
+        target.trace_row_count = len(trace_records)
+        target.region_count = len(regions)
+        target.completed_at = now
+        target.updated_at = now
+        target.status = "complete"
+        await session.commit()
+
+    except Exception as exc:
+        logger.exception("Region detection job %s failed", job_id)
+        _cleanup_partial_artifacts(job_dir)
+        try:
+            await session.rollback()
+        except Exception:
+            logger.debug("rollback failed", exc_info=True)
+        try:
+            refreshed = await session.get(RegionDetectionJob, job_id)
+            if refreshed is not None:
+                now = datetime.now(timezone.utc)
+                refreshed.status = "failed"
+                refreshed.error_message = str(exc) or type(exc).__name__
+                refreshed.updated_at = now
+                refreshed.completed_at = now
+                await session.commit()
+        except Exception:
+            logger.exception("Failed to mark region detection job %s as failed", job_id)
 
 
 async def run_one_iteration(

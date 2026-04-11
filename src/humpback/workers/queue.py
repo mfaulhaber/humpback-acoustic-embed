@@ -265,6 +265,23 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count12:
         logger.warning(f"Recovered {count12} stale hyperparameter search job(s)")
 
+    from humpback.models.call_parsing import RegionDetectionJob
+
+    result13 = await session.execute(
+        update(RegionDetectionJob)
+        .where(
+            RegionDetectionJob.status == "running",
+            RegionDetectionJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count13 = _rowcount(result13)
+    if count13:
+        logger.warning(f"Recovered {count13} stale region detection job(s)")
+
     total = (
         count
         + count2
@@ -278,6 +295,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count10
         + count11
         + count12
+        + count13
     )
     if total:
         await session.commit()

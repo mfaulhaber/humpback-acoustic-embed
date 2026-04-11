@@ -15,3 +15,4 @@
 - Investigate a lower-overhead Orcasound decode path, likely chunk-level or persistent-stream decode, and treat it as a signal-processing/runtime change that needs validation plus an ADR.
 - Make `hydrophone_id` optional for local-cache detection jobs in the backend API, service layer, and worker.
 - Remove vestigial `output_tsv_path` and `output_row_store_path` fields from the detection model, schema, and database via migration.
+- Add a hydrophone-source integration test for the Pass 1 region detection worker once an `ArchivePlaybackProvider` mock surface exists. Pass 1 shipped with only the file-source integration test; the chunk-aligned streaming loop is currently covered indirectly by the `score_audio_windows` chunking unit test.
