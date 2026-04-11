@@ -680,6 +680,60 @@ async def claim_vocalization_inference_job(session: AsyncSession):
     return None
 
 
+# ---- Call Parsing Pipeline Jobs ----
+
+
+async def claim_region_detection_job(session: AsyncSession):
+    from humpback.models.call_parsing import RegionDetectionJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            RegionDetectionJob,
+            status_attr=RegionDetectionJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=RegionDetectionJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_event_segmentation_job(session: AsyncSession):
+    from humpback.models.call_parsing import EventSegmentationJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            EventSegmentationJob,
+            status_attr=EventSegmentationJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=EventSegmentationJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_event_classification_job(session: AsyncSession):
+    from humpback.models.call_parsing import EventClassificationJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            EventClassificationJob,
+            status_attr=EventClassificationJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=EventClassificationJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
 # ---- Detection Embedding Jobs ----
 
 

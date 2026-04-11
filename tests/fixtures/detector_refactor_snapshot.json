@@ -1,0 +1,94 @@
+{
+  "detections": [
+    {
+      "avg_confidence": 0.9507009574420491,
+      "peak_confidence": 0.9507009574420491,
+      "n_windows": 8,
+      "merged_event_count": 1,
+      "start_utc": 1775865600.0,
+      "end_utc": 1775865615.0,
+      "raw_start_utc": 1775865600.0,
+      "raw_end_utc": 1775865612.0
+    }
+  ],
+  "diagnostics": [
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 0,
+      "offset_sec": 0.0,
+      "end_sec": 5.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    },
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 1,
+      "offset_sec": 1.0,
+      "end_sec": 6.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    },
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 2,
+      "offset_sec": 2.0,
+      "end_sec": 7.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    },
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 3,
+      "offset_sec": 3.0,
+      "end_sec": 8.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    },
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 4,
+      "offset_sec": 4.0,
+      "end_sec": 9.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    },
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 5,
+      "offset_sec": 5.0,
+      "end_sec": 10.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    },
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 6,
+      "offset_sec": 6.0,
+      "end_sec": 11.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    },
+    {
+      "filename": "sample_20260411T000000Z.wav",
+      "window_index": 7,
+      "offset_sec": 7.0,
+      "end_sec": 12.0,
+      "confidence": 0.9507009574420491,
+      "is_overlapped": false,
+      "overlap_sec": 0.0
+    }
+  ],
+  "summary_subset": {
+    "n_files": 1,
+    "n_windows": 8,
+    "n_detections": 8,
+    "n_spans": 1
+  }
+}

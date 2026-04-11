@@ -93,12 +93,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(clustering.router)
     app.include_router(classifier.router)
     app.include_router(admin.router)
-    from humpback.api.routers import label_processing, labeling, search, vocalization
+    from humpback.api.routers import (
+        call_parsing,
+        label_processing,
+        labeling,
+        search,
+        vocalization,
+    )
 
     app.include_router(search.router)
     app.include_router(label_processing.router)
     app.include_router(labeling.router)
     app.include_router(vocalization.router)
+    app.include_router(call_parsing.router)
 
     # Serve React SPA from dist/ if it exists, otherwise fall back to legacy index.html
     has_dist = DIST_DIR.is_dir() and (DIST_DIR / "index.html").exists()

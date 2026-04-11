@@ -1,8 +1,11 @@
 """Run detection: scan audio folder, classify windows, merge spans."""
 
 import logging
+import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from sklearn.pipeline import Pipeline
@@ -76,10 +79,149 @@ __all__ = [
     "write_window_diagnostics_shard",
     # Defined here
     "AUDIO_EXTENSIONS",
+    "compute_hysteresis_events",
     "run_detection",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _DetectionPipelineState:
+    """Shared intermediate state produced for one audio buffer.
+
+    ``run_detection`` needs ``window_metas`` (for diagnostics and per-event
+    embedding lookup) and ``embeddings`` (for per-event embedding export),
+    while ``compute_hysteresis_events`` only exposes ``window_records`` and
+    ``events``. The state dataclass lets both code paths share the same
+    underlying computation without exposing internals as a public API.
+    """
+
+    window_metas: list[WindowMetadata] = field(default_factory=list)
+    embeddings: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0), dtype=np.float32)
+    )
+    window_confidences: list[float] = field(default_factory=list)
+    window_records: list[dict[str, Any]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    t_features: float = 0.0
+    t_inference: float = 0.0
+
+
+def _run_window_pipeline(
+    audio: np.ndarray,
+    target_sample_rate: int,
+    model: EmbeddingModel,
+    pipeline: Pipeline,
+    window_size_seconds: float,
+    hop_seconds: float,
+    input_format: str,
+    normalization: str,
+    high_threshold: float,
+    low_threshold: float,
+) -> _DetectionPipelineState:
+    """Window → feature-extract → embed → classify → hysteresis-merge.
+
+    The common backbone shared by ``run_detection`` and
+    ``compute_hysteresis_events``. Returns the full intermediate state so
+    downstream callers can read whichever parts they need without redoing
+    inference. Empty audio (shorter than one window) produces an empty
+    state and the caller is responsible for the short-audio log/skip.
+    """
+    state = _DetectionPipelineState()
+
+    window_samples = window_sample_count(target_sample_rate, window_size_seconds)
+    if len(audio) < window_samples:
+        return state
+
+    raw_windows: list[np.ndarray] = []
+    for window, meta in slice_windows_with_metadata(
+        audio,
+        target_sample_rate,
+        window_size_seconds,
+        hop_seconds=hop_seconds,
+    ):
+        state.window_metas.append(meta)
+        raw_windows.append(window)
+
+    if not raw_windows:
+        return state
+
+    if input_format == "waveform":
+        batch_items: list[np.ndarray] = raw_windows
+    else:
+        t0 = time.monotonic()
+        batch_items = extract_logmel_batch(
+            raw_windows,
+            target_sample_rate,
+            n_mels=128,
+            hop_length=1252,
+            target_frames=128,
+            normalization=normalization,
+        )
+        state.t_features = time.monotonic() - t0
+
+    batch_size = 64
+    file_embeddings: list[np.ndarray] = []
+    for i in range(0, len(batch_items), batch_size):
+        batch = np.stack(batch_items[i : i + batch_size])
+        t0 = time.monotonic()
+        embeddings = model.embed(batch)
+        state.t_inference += time.monotonic() - t0
+        file_embeddings.append(embeddings)
+
+    state.embeddings = np.vstack(file_embeddings)
+
+    proba = pipeline.predict_proba(state.embeddings)[:, 1]
+    state.window_confidences = proba.tolist()
+
+    state.window_records = [
+        {
+            "offset_sec": meta.offset_sec,
+            "end_sec": meta.offset_sec + window_size_seconds,
+            "confidence": conf,
+        }
+        for meta, conf in zip(state.window_metas, state.window_confidences)
+    ]
+
+    state.events = merge_detection_events(
+        state.window_records, high_threshold, low_threshold
+    )
+    return state
+
+
+def compute_hysteresis_events(
+    audio: np.ndarray,
+    sample_rate: int,
+    perch_model: EmbeddingModel,
+    classifier: Pipeline,
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run the Pass 1 backbone on one audio buffer.
+
+    ``audio`` is a mono waveform already resampled to ``sample_rate``.
+    ``config`` must contain ``window_size_seconds``, ``hop_seconds``,
+    ``high_threshold``, and ``low_threshold``; ``input_format`` and
+    ``normalization`` are optional (defaults mirror ``run_detection``).
+
+    Returns ``(window_records, events)`` — the dense per-window score
+    records and the hysteresis-merged events, both as the dict-shaped
+    types ``run_detection`` already uses internally. Returns two empty
+    lists when the audio is shorter than one window.
+    """
+    state = _run_window_pipeline(
+        audio=audio,
+        target_sample_rate=sample_rate,
+        model=perch_model,
+        pipeline=classifier,
+        window_size_seconds=float(config["window_size_seconds"]),
+        hop_seconds=float(config.get("hop_seconds", 1.0)),
+        input_format=str(config.get("input_format", "spectrogram")),
+        normalization=str(config.get("normalization", "per_window_max")),
+        high_threshold=float(config["high_threshold"]),
+        low_threshold=float(config["low_threshold"]),
+    )
+    return state.window_records, state.events
 
 
 def run_detection(
@@ -112,7 +254,6 @@ def run_detection(
     When ``detection_mode="windowed"``, each merged event is reduced to
     non-overlapping peak windows of exactly ``window_size_seconds`` via NMS.
     """
-    import time
 
     feature_config = feature_config or {}
     normalization = feature_config.get("normalization", "per_window_max")
@@ -161,69 +302,37 @@ def run_detection(
                     on_file_complete([], files_done, n_audio_files)
                 continue
 
-            # Phase 1: Collect all windows
-            raw_windows: list[np.ndarray] = []
-            window_metas: list[WindowMetadata] = []
-            for window, meta in slice_windows_with_metadata(
-                audio,
-                target_sample_rate,
-                window_size_seconds,
+            state = _run_window_pipeline(
+                audio=audio,
+                target_sample_rate=target_sample_rate,
+                model=model,
+                pipeline=pipeline,
+                window_size_seconds=window_size_seconds,
                 hop_seconds=hop_seconds,
-            ):
-                window_metas.append(meta)
-                raw_windows.append(window)
-
-            if not raw_windows:
+                input_format=input_format,
+                normalization=normalization,
+                high_threshold=high_threshold,
+                low_threshold=low_threshold,
+            )
+            if not state.window_metas:
                 files_done += 1
                 if on_file_complete is not None:
                     on_file_complete([], files_done, n_audio_files)
                 continue
 
-            # Phase 2: Feature extraction (batch for spectrogram, pass-through for waveform)
-            n_windows_total += len(raw_windows)
-            if input_format == "waveform":
-                batch_items: list[np.ndarray] = raw_windows
-            else:
-                t0 = time.monotonic()
-                batch_items = extract_logmel_batch(
-                    raw_windows,
-                    target_sample_rate,
-                    n_mels=128,
-                    hop_length=1252,
-                    target_frames=128,
-                    normalization=normalization,
-                )
-                t_features_total += time.monotonic() - t0
+            window_metas = state.window_metas
+            all_emb = state.embeddings
+            window_confidences = state.window_confidences
+            window_records = state.window_records
+            events = state.events
 
-            # Phase 3: Batch embed (groups of 64 — optimal for TFLite on M-series)
-            batch_size = 64
-            file_embeddings: list[np.ndarray] = []
-            for i in range(0, len(batch_items), batch_size):
-                batch = np.stack(batch_items[i : i + batch_size])
-                t0 = time.monotonic()
-                embeddings = model.embed(batch)
-                t_inference_total += time.monotonic() - t0
-                file_embeddings.append(embeddings)
-
-            all_emb = np.vstack(file_embeddings)
+            n_windows_total += len(window_metas)
+            t_features_total += state.t_features
+            t_inference_total += state.t_inference
             total_windows += len(all_emb)
-
-            # Classify
-            proba = pipeline.predict_proba(all_emb)[:, 1]  # P(whale)
-            window_confidences = proba.tolist()
 
             rel_path = str(audio_path.relative_to(audio_folder))
             base_epoch = _file_base_epoch(audio_path)
-
-            # Build window records for event merging
-            window_records = [
-                {
-                    "offset_sec": meta.offset_sec,
-                    "end_sec": meta.offset_sec + window_size_seconds,
-                    "confidence": conf,
-                }
-                for meta, conf in zip(window_metas, window_confidences)
-            ]
 
             # Collect per-window diagnostics
             if emit_diagnostics:
@@ -250,10 +359,8 @@ def run_detection(
                         }
                     )
 
-            # Merge events using hysteresis, then canonicalize snapped bounds.
-            events = merge_detection_events(
-                window_records, high_threshold, low_threshold
-            )
+            # Canonicalize hysteresis-merged bounds (hysteresis merge itself
+            # already happened inside ``_run_window_pipeline``).
             events = snap_and_merge_detection_events(events, window_size_seconds)
 
             # Windowed mode: reduce each event to peak windows.
