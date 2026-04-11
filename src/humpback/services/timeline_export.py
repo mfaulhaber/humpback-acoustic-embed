@@ -163,7 +163,7 @@ async def export_timeline(
             progress_callback("tiles", total_copied, expected_tiles)
 
     # ---- 4. Generate audio chunks ----
-    from humpback.processing.audio_encoding import encode_mp3
+    from humpback.processing.audio_encoding import encode_mp3, normalize_for_playback
     from humpback.processing.timeline_audio import resolve_timeline_audio
 
     n_chunks = math.ceil(job_duration / _AUDIO_CHUNK_SEC)
@@ -182,6 +182,11 @@ async def export_timeline(
             noaa_cache_path=settings.noaa_cache_path,
             timeline_cache=cache,
             job_id=job_id,
+        )
+        audio = normalize_for_playback(
+            audio,
+            target_rms_dbfs=settings.playback_target_rms_dbfs,
+            ceiling=settings.playback_ceiling,
         )
 
         mp3_bytes = encode_mp3(audio, _AUDIO_SAMPLE_RATE)

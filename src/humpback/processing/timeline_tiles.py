@@ -10,11 +10,12 @@ import math
 import matplotlib
 import numpy as np
 
+from humpback.processing.pcen_rendering import PcenParams, render_tile_pcen
+
 matplotlib.use("Agg")
 
 import matplotlib.colors as mcolors  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
-from scipy.signal import stft  # noqa: E402
 
 # ---- Ocean Depth Colormap ----
 
@@ -72,44 +73,6 @@ def tile_time_range(
     return start, end
 
 
-# ---- Power Statistics (for per-job normalization) ----
-
-
-def compute_power_db_stats(
-    audio: np.ndarray,
-    sample_rate: int,
-    freq_min: int = 0,
-    freq_max: int = 3000,
-    n_fft: int = 2048,
-    hop_length: int = 256,
-) -> dict[str, float]:
-    """Compute dB power statistics for an audio chunk.
-
-    Returns dict with keys: min_db, max_db, p95_db, mean_db.
-    """
-    if len(audio) < n_fft:
-        audio = np.pad(audio, (0, n_fft - len(audio)))
-
-    noverlap = n_fft - hop_length
-    f, _t, Zxx = stft(
-        audio, fs=sample_rate, window="hann", nperseg=n_fft, noverlap=noverlap
-    )
-
-    power = np.abs(Zxx) ** 2
-    power = np.maximum(power, 1e-12)
-    power_db = 10.0 * np.log10(power)
-
-    freq_mask = (f >= freq_min) & (f <= freq_max)
-    power_db = power_db[freq_mask, :]
-
-    return {
-        "min_db": float(np.min(power_db)),
-        "max_db": float(np.max(power_db)),
-        "p95_db": float(np.percentile(power_db, 95)),
-        "mean_db": float(np.mean(power_db)),
-    }
-
-
 # ---- Tile Renderer ----
 
 
@@ -120,33 +83,41 @@ def generate_timeline_tile(
     freq_max: int = 3000,
     n_fft: int = 2048,
     hop_length: int = 256,
-    dynamic_range_db: float = 80.0,
-    ref_db: float = -50.0,
+    warmup_samples: int = 0,
+    pcen_params: PcenParams | None = None,
+    vmin: float = 0.0,
+    vmax: float = 0.15,
     width_px: int = 512,
     height_px: int = 256,
 ) -> bytes:
     """Render a marker-free spectrogram PNG tile with Ocean Depth colormap.
 
+    The input ``audio`` is expected to begin with ``warmup_samples`` of
+    pre-tile audio so the PCEN filter state can settle before the first
+    rendered frame. Those frames are trimmed off the PCEN output before
+    rendering.
+
     Returns raw PNG bytes with no axes, labels, or padding — just pixels.
     """
-    if len(audio) < n_fft:
-        audio = np.pad(audio, (0, n_fft - len(audio)))
-
-    noverlap = n_fft - hop_length
-    f, _t, Zxx = stft(
-        audio, fs=sample_rate, window="hann", nperseg=n_fft, noverlap=noverlap
+    freqs, pcen_power = render_tile_pcen(
+        audio=audio,
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        warmup_samples=warmup_samples,
+        params=pcen_params,
     )
 
-    power = np.abs(Zxx) ** 2
-    power = np.maximum(power, 1e-12)
-    power_db = 10.0 * np.log10(power)
+    if pcen_power.shape[1] == 0:
+        # Empty tile (no audio available) — render a flat vmin-valued
+        # image at the requested pixel size so downstream code still gets
+        # a valid PNG.
+        pcen_power = np.full((len(freqs), max(1, width_px)), vmin, dtype=np.float32)
 
-    # Frequency cropping
-    freq_mask = (f >= freq_min) & (f <= freq_max)
-    power_db = power_db[freq_mask, :]
-
-    vmax = ref_db
-    vmin = ref_db - dynamic_range_db
+    freq_mask = (freqs >= freq_min) & (freqs <= freq_max)
+    pcen_cropped = pcen_power[freq_mask, :]
+    if pcen_cropped.shape[0] == 0:
+        pcen_cropped = pcen_power
 
     cmap = get_ocean_depth_colormap()
 
@@ -156,13 +127,13 @@ def generate_timeline_tile(
     ax.set_axis_off()
 
     ax.imshow(
-        power_db,
+        pcen_cropped,
         aspect="auto",
         origin="lower",
         vmin=vmin,
         vmax=vmax,
         cmap=cmap,
-        interpolation="bilinear",
+        interpolation="bicubic",
     )
 
     buf = io.BytesIO()

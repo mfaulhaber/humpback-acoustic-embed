@@ -466,10 +466,13 @@ async def test_prepare_endpoint_succeeds_when_other_process_holds_lock(
     assert data["timeline_tiles_ready"] is True
 
 
-def test_prepare_tiles_sync_passes_shared_ref_db_to_all_render_calls(
+def test_prepare_tiles_sync_renders_each_requested_tile_once(
     app_settings, monkeypatch, tmp_path
 ):
-    """All prepared tiles for a job should use the same shared ref_db."""
+    """``_prepare_tiles_sync`` should call the per-tile renderer exactly
+    once for every requested target (PCEN has no per-job state, so every
+    tile is rendered independently).
+    """
     from humpback.api.routers import timeline as timeline_router
 
     job = type(
@@ -482,19 +485,10 @@ def test_prepare_tiles_sync_passes_shared_ref_db_to_all_render_calls(
         },
     )()
     cache = timeline_router.TimelineTileCache(tmp_path / "tile_cache", max_jobs=5)
-    seen_ref_db: list[float | None] = []
+    seen_targets: list[tuple[str, int]] = []
 
-    monkeypatch.setattr(timeline_router, "_compute_job_ref_db", lambda **kwargs: -42.5)
-    monkeypatch.setattr(
-        timeline_router,
-        "_compute_job_gain_profile",
-        lambda **kwargs: timeline_router.GainProfile(),
-    )
-
-    def fake_render_tile_sync(
-        *, job, zoom_level, tile_index, settings, cache, ref_db=None, gain_profile=None
-    ):
-        seen_ref_db.append(ref_db)
+    def fake_render_tile_sync(*, job, zoom_level, tile_index, settings, cache):
+        seen_targets.append((zoom_level, tile_index))
         cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
         return b"\x89PNG"
 
@@ -508,7 +502,7 @@ def test_prepare_tiles_sync_passes_shared_ref_db_to_all_render_calls(
     )
 
     assert rendered == 3
-    assert seen_ref_db == [-42.5, -42.5, -42.5]
+    assert sorted(seen_targets) == sorted([("1h", 0), ("1h", 1), ("6h", 0)])
 
 
 async def test_tile_endpoint_miss_launches_neighbor_prepare(
@@ -520,16 +514,7 @@ async def test_tile_endpoint_miss_launches_neighbor_prepare(
     job_id = await _create_completed_hydrophone_job(app_settings, num_windows=400)
     launched: dict[str, object] = {}
 
-    monkeypatch.setattr(timeline_router, "_compute_job_ref_db", lambda **kwargs: -55.0)
-    monkeypatch.setattr(
-        timeline_router,
-        "_compute_job_gain_profile",
-        lambda **kwargs: timeline_router.GainProfile(),
-    )
-
-    def fake_render_tile_sync(
-        *, job, zoom_level, tile_index, settings, cache, ref_db=None, gain_profile=None
-    ):
+    def fake_render_tile_sync(*, job, zoom_level, tile_index, settings, cache):
         cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
         return b"\x89PNG"
 
