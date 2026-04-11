@@ -12,23 +12,26 @@ from dataclasses import dataclass
 
 import librosa
 import numpy as np
+import scipy.signal
 from scipy.signal import stft
 
 
 @dataclass(frozen=True)
 class PcenParams:
-    """PCEN tuning parameters with defaults chosen for hydrophone audio.
+    """PCEN tuning parameters with defaults tuned for hydrophone audio.
 
-    Defaults use a slightly longer ``time_constant`` than librosa's 0.4 s
-    preset so a 1–2 s whale vocalization is less likely to AGC itself out
-    mid-call, combined with stronger root compression (``power=0.25``,
-    ``bias=10``) for clearer contrast on timeline tiles.
+    Uses librosa's default ``bias``/``power`` (2.0, 0.5) for well-behaved
+    dynamic range, ``gain=0.98`` for aggressive per-bin AGC (empirically
+    lowering gain produces severe darkness at ``vmax=1.0`` because the
+    per-bin steady-state output scales roughly as ``M^(1-gain)``), and a
+    longer ``time_constant=2.0`` so a 1–3 s whale vocalization is not
+    fully tracked out mid-call at coarse zoom levels.
     """
 
-    time_constant: float = 0.5
+    time_constant: float = 2.0
     gain: float = 0.98
-    bias: float = 10.0
-    power: float = 0.25
+    bias: float = 2.0
+    power: float = 0.5
     eps: float = 1e-6
 
 
@@ -92,6 +95,22 @@ def render_tile_pcen(
     # is tuned for magnitude envelopes.
     magnitude = np.abs(Zxx).astype(np.float32)
 
+    # librosa.pcen's default initial filter state is lfilter_zi scaled
+    # for a unit-amplitude step input, which leaves the per-bin low-pass
+    # starting around 1.0. Hydrophone STFT magnitudes are typically
+    # orders of magnitude smaller, so the default zi causes the first
+    # many frames to have near-zero PCEN output (the denominator is
+    # still decaying from ~1 toward the actual signal level). That
+    # shows up as a dark strip at the left edge of every tile.
+    #
+    # Pre-scaling zi by the first frame's magnitude places each
+    # frequency bin's low-pass filter at its own settled level from
+    # the first frame on, eliminating the cold-start transient.
+    t_frames = params.time_constant * sample_rate / float(hop_length)
+    b_coef = (np.sqrt(1.0 + 4.0 * t_frames**2) - 1.0) / (2.0 * t_frames**2)
+    zi_base = scipy.signal.lfilter_zi([b_coef], [1.0, b_coef - 1.0])
+    zi = magnitude[:, 0:1] * zi_base
+
     pcen = librosa.pcen(
         magnitude,
         sr=sample_rate,
@@ -101,6 +120,8 @@ def render_tile_pcen(
         bias=params.bias,
         power=params.power,
         eps=params.eps,
+        b=b_coef,
+        zi=zi,
     )
 
     if not np.all(np.isfinite(pcen)):

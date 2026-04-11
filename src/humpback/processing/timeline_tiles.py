@@ -133,7 +133,7 @@ def generate_timeline_tile(
         vmin=vmin,
         vmax=vmax,
         cmap=cmap,
-        interpolation="bilinear",
+        interpolation="bicubic",
     )
 
     buf = io.BytesIO()

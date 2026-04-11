@@ -12,19 +12,30 @@ def _freq_index(freqs: np.ndarray, target_hz: float) -> int:
     return int(np.argmin(np.abs(freqs - target_hz)))
 
 
-def test_chirp_in_noise_rises_above_floor():
-    """A narrowband tone embedded in broadband noise should show up as a
-    PCEN peak clearly above the adjacent noise-floor bins.
+def test_transient_tone_burst_rises_above_floor():
+    """A brief tone burst embedded in steady broadband noise should show
+    up as a PCEN peak at the tone frequency during the burst, above the
+    steady-state level of adjacent noise bins.
+
+    PCEN normalizes each frequency bin against its own running envelope,
+    so a *stationary* tone would be flattened toward the noise bins. A
+    transient burst is the right probe for the AGC's transient response.
     """
     sr = 8000
-    duration = 3.0
-    t = np.linspace(0, duration, int(sr * duration), endpoint=False)
+    duration = 8.0
+    n_samples = int(sr * duration)
     rng = np.random.default_rng(42)
 
+    noise = 0.01 * rng.standard_normal(n_samples).astype(np.float32)
+    audio = noise.copy()
+
     tone_hz = 1200.0
-    tone = 0.05 * np.sin(2.0 * np.pi * tone_hz * t)
-    noise = 0.01 * rng.standard_normal(t.shape[0]).astype(np.float32)
-    audio = (tone + noise).astype(np.float32)
+    burst_start_sec = 4.0
+    burst_dur_sec = 0.5
+    bs = int(burst_start_sec * sr)
+    be = bs + int(burst_dur_sec * sr)
+    t_burst = np.arange(be - bs) / sr
+    audio[bs:be] += 0.2 * np.sin(2.0 * np.pi * tone_hz * t_burst).astype(np.float32)
 
     freqs, pcen = render_tile_pcen(
         audio=audio,
@@ -34,18 +45,21 @@ def test_chirp_in_noise_rises_above_floor():
     )
 
     tone_bin = _freq_index(freqs, tone_hz)
-    # Sample noise bins well away from the tone to avoid spectral leakage.
     noise_bins = [
         _freq_index(freqs, 200.0),
         _freq_index(freqs, 2500.0),
         _freq_index(freqs, 3200.0),
     ]
 
-    tone_mean = float(np.mean(pcen[tone_bin, :]))
-    noise_mean = float(np.mean([np.mean(pcen[b, :]) for b in noise_bins]))
+    # Frame index of burst start/end (accounting for STFT hop).
+    burst_start_frame = int(bs / 128)
+    burst_end_frame = int(be / 128)
+    tone_burst_peak = float(np.max(pcen[tone_bin, burst_start_frame:burst_end_frame]))
+    # Noise floor: steady-state level well away from the burst.
+    noise_floor = float(np.mean(pcen[noise_bins, : burst_start_frame - 20]))
 
-    assert tone_mean > noise_mean * 3.0, (
-        f"Tone bin should dominate ({tone_mean=}, {noise_mean=})"
+    assert tone_burst_peak > noise_floor * 3.0, (
+        f"Tone burst should dominate noise floor ({tone_burst_peak=}, {noise_floor=})"
     )
 
 
@@ -54,10 +68,10 @@ def test_step_gain_pcen_flattens():
     signal recorded at different gain levels.
     """
     sr = 8000
-    # Use 5 s per segment so the default 0.5 s time constant has ~10
-    # time constants to fully converge in each region before we inspect
-    # the tail.
-    segment_sec = 5.0
+    # Use 20 s per segment so the 2.0 s time constant has ~10 time
+    # constants to fully converge in each region before we inspect the
+    # tail.
+    segment_sec = 20.0
     rng = np.random.default_rng(7)
 
     def noise_at_rms(n: int, target_rms: float) -> np.ndarray:
@@ -94,22 +108,55 @@ def test_step_gain_pcen_flattens():
     assert 0.25 < ratio < 2.5, f"PCEN did not flatten gain step (ratio={ratio})"
 
 
-def test_warmup_affects_leading_frames():
-    """Warm-up should bring the PCEN filter into its settled state before
-    the first rendered frame. With warm-up, the first frames reflect the
-    converged filter behavior; without warm-up, they climb from zero.
+def test_no_cold_start_transient_at_first_frame():
+    """The first rendered frames must already reflect the signal's
+    steady-state PCEN level — no near-zero dark strip at the left edge.
+
+    Before the warm-zi fix, librosa.pcen's default ``lfilter_zi``
+    initialized the per-bin low-pass filter as if the signal had been at
+    unit amplitude forever. Real hydrophone magnitudes are orders of
+    magnitude smaller, so the filter spent many frames decaying and the
+    PCEN output was crushed to near zero at the start of every tile,
+    producing a dark vertical strip at the junction between tiles.
     """
     sr = 8000
     rng = np.random.default_rng(1)
-    # 15 s of stationary noise so both the cold and warm renders have
-    # enough frames past the settling region to verify convergence.
+    audio = (0.01 * rng.standard_normal(sr * 5).astype(np.float32)).astype(np.float32)
+
+    _, pcen = render_tile_pcen(
+        audio=audio,
+        sample_rate=sr,
+        n_fft=1024,
+        hop_length=128,
+        warmup_samples=0,
+    )
+
+    # Compare the first handful of frames to the stable mid-signal region.
+    head_mean = float(np.mean(pcen[:, :8]))
+    mid_mean = float(np.mean(pcen[:, 150:250]))
+
+    assert mid_mean > 0
+    ratio = head_mean / mid_mean
+    assert 0.5 < ratio < 2.0, (
+        f"First frames should already be at the steady-state level, not "
+        f"decaying from a cold-start (head={head_mean}, mid={mid_mean}, "
+        f"ratio={ratio})"
+    )
+
+
+def test_warmup_matches_no_warmup_for_stationary_signal():
+    """With warm zi, a render over [−warm, end] should converge to the
+    same body as a render over [0, end] beyond a few PCEN time constants.
+    """
+    sr = 8000
+    rng = np.random.default_rng(1)
     audio = 0.05 * rng.standard_normal(sr * 15).astype(np.float32)
 
     warmup_samples = 2 * sr
     n_fft = 1024
     hop_length = 128
 
-    _, pcen_cold = render_tile_pcen(
+    _, pcen_no_warm = render_tile_pcen(
         audio=audio[warmup_samples:],
         sample_rate=sr,
         n_fft=n_fft,
@@ -124,29 +171,13 @@ def test_warmup_affects_leading_frames():
         warmup_samples=warmup_samples,
     )
 
-    # Same number of rendered frames after trimming.
-    assert pcen_cold.shape[1] == pcen_warm.shape[1]
-
-    # The first few frames should differ dramatically: cold starts from
-    # a filter state of zero, warm starts already settled.
-    cold_early = float(np.mean(pcen_cold[:, :4]))
-    warm_early = float(np.mean(pcen_warm[:, :4]))
-    assert warm_early > cold_early * 10, (
-        f"Warm-up should yield substantially higher early-frame values "
-        f"({warm_early=}, {cold_early=})"
-    )
-
-    # Past the filter's settling region, both should converge to the
-    # same steady-state level. With time_constant=0.5 s, hop=128,
-    # sr=8000, the filter needs ~5 time constants ≈ 155 frames to
-    # reach 99% of the settled level — well within the 500-frame mark.
-    cold_tail = float(np.mean(pcen_cold[:, 500:]))
-    warm_tail = float(np.mean(pcen_warm[:, 500:]))
-    tail_ratio = warm_tail / max(cold_tail, 1e-12)
-    assert 0.9 < tail_ratio < 1.1, (
-        f"Trailing frames should converge ({warm_tail=}, {cold_tail=}, "
-        f"ratio={tail_ratio})"
-    )
+    assert pcen_no_warm.shape[1] == pcen_warm.shape[1]
+    # Past the filter's settling region both should converge to the
+    # same steady state for a stationary input.
+    a = float(np.mean(pcen_no_warm[:, 500:]))
+    b = float(np.mean(pcen_warm[:, 500:]))
+    ratio = b / max(a, 1e-12)
+    assert 0.9 < ratio < 1.1, f"Tails should converge ({a=}, {b=}, {ratio=})"
 
 
 def test_tile_at_start_with_less_warmup_than_requested():

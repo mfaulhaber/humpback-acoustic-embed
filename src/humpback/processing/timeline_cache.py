@@ -16,10 +16,14 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 # Incremented whenever the on-disk tile format changes in a way that
-# would make previously cached tiles invalid. Current value bumped from
-# implicit 1 → 2 when gain-step normalization + global ref_db rendering
-# was replaced with PCEN per-tile rendering.
-TIMELINE_CACHE_VERSION = 2
+# would make previously cached tiles invalid. 1 → 2 when gain-step
+# normalization + global ref_db rendering was replaced with PCEN
+# per-tile rendering; 2 → 3 when the PCEN cold-start fix and the
+# parameter retune landed; 3 → 4 when display interpolation switched
+# to bicubic; 4 → 5 was a brief ``pcen_gain=0.75`` / ``time_constant=1``
+# experiment; 5 → 7 after reverting to ``gain=0.98`` + ``tc=2`` because
+# lower gain was empirically too dark at ``vmax=1.0``.
+TIMELINE_CACHE_VERSION = 7
 
 # Sidecars written by older versions of the renderer that are no longer
 # read. ``.prepare_plan.json`` is intentionally NOT listed here — it is

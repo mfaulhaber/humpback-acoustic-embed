@@ -60,14 +60,14 @@ class Settings(BaseSettings):
     timeline_pcm_memory_cache_mb: int = 128
 
     # Timeline PCEN normalization (spectrogram rendering)
-    pcen_time_constant_sec: float = 0.5
+    pcen_time_constant_sec: float = 2.0
     pcen_gain: float = 0.98
-    pcen_bias: float = 10.0
-    pcen_power: float = 0.25
+    pcen_bias: float = 2.0
+    pcen_power: float = 0.5
     pcen_eps: float = 1e-6
     pcen_warmup_sec: float = 2.0
     pcen_vmin: float = 0.0
-    pcen_vmax: float = 0.15
+    pcen_vmax: float = 1.0
 
     # Timeline audio playback normalization
     playback_target_rms_dbfs: float = -20.0
