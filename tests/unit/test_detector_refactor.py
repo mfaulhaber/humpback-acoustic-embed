@@ -17,7 +17,12 @@ import numpy as np
 import pytest
 from sklearn.pipeline import Pipeline
 
-from humpback.classifier.detector import compute_hysteresis_events, run_detection
+from humpback.classifier.detector import (
+    compute_hysteresis_events,
+    run_detection,
+    score_audio_windows,
+)
+from humpback.classifier.detector_utils import merge_detection_events
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.processing.inference import FakeTFLiteModel
 
@@ -58,6 +63,15 @@ def _build_fixture_audio_dir(tmp_path: Path) -> Path:
     return audio_dir
 
 
+def _fixture_audio() -> np.ndarray:
+    sample_rate = 16000
+    n = int(sample_rate * 12.0)
+    return np.array(
+        [0.7 * math.sin(2 * math.pi * 440 * i / sample_rate) for i in range(n)],
+        dtype=np.float32,
+    )
+
+
 def test_run_detection_matches_pre_refactor_snapshot(tmp_path: Path) -> None:
     """Post-refactor ``run_detection`` output matches the committed snapshot."""
     audio_dir = _build_fixture_audio_dir(tmp_path)
@@ -92,16 +106,11 @@ def test_compute_hysteresis_events_shapes(tmp_path: Path) -> None:
     pipeline = _synthetic_classifier()
     model = FakeTFLiteModel(vector_dim=64)
 
-    sample_rate = 16000
-    n = int(sample_rate * 12.0)
-    audio = np.array(
-        [0.7 * math.sin(2 * math.pi * 440 * i / sample_rate) for i in range(n)],
-        dtype=np.float32,
-    )
+    audio = _fixture_audio()
 
     window_records, events = compute_hysteresis_events(
         audio=audio,
-        sample_rate=sample_rate,
+        sample_rate=16000,
         perch_model=model,
         classifier=pipeline,
         config={
@@ -117,6 +126,46 @@ def test_compute_hysteresis_events_shapes(tmp_path: Path) -> None:
     assert len(events) >= 1
     for ev in events:
         assert ev["start_sec"] <= ev["end_sec"]
+
+
+def test_compute_hysteresis_events_matches_explicit_composition() -> None:
+    """``compute_hysteresis_events`` equals the explicit
+    ``score_audio_windows`` + ``merge_detection_events`` composition to
+    float64 precision. Locks the Pass 1 refactor's two-call contract.
+    """
+    pipeline = _synthetic_classifier()
+    model = FakeTFLiteModel(vector_dim=64)
+    audio = _fixture_audio()
+    config = {
+        "window_size_seconds": 5.0,
+        "hop_seconds": 1.0,
+        "high_threshold": 0.70,
+        "low_threshold": 0.45,
+    }
+
+    window_records, events = compute_hysteresis_events(
+        audio=audio,
+        sample_rate=16000,
+        perch_model=model,
+        classifier=pipeline,
+        config=config,
+    )
+
+    manual_records = score_audio_windows(
+        audio=audio,
+        sample_rate=16000,
+        perch_model=model,
+        classifier=pipeline,
+        config=config,
+    )
+    manual_events = merge_detection_events(
+        manual_records,
+        config["high_threshold"],
+        config["low_threshold"],
+    )
+
+    assert window_records == manual_records
+    assert events == manual_events
 
 
 def test_compute_hysteresis_events_short_audio_returns_empty() -> None:
@@ -147,6 +196,11 @@ def test_compute_hysteresis_events_is_importable() -> None:
     # Static import at top of file already validates this; the assertion
     # is a sentinel so a future rename can't silently break the contract.
     assert compute_hysteresis_events.__name__ == "compute_hysteresis_events"
+
+
+def test_score_audio_windows_is_importable() -> None:
+    """Pass 1 streaming primitive is importable from ``detector``."""
+    assert score_audio_windows.__name__ == "score_audio_windows"
 
 
 @pytest.mark.skipif(not SNAPSHOT_PATH.exists(), reason="snapshot not committed")

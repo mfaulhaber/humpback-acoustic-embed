@@ -1,11 +1,9 @@
-"""Phase 0 API router for the call parsing pipeline.
+"""API router for the call parsing pipeline.
 
-Phase 0 ships the parent-run CRUD, pure DB list/get/delete for each
-pass job table, and 501-Not-Implemented shells for every endpoint whose
-body requires pass logic (creating pass jobs directly, exporting
-sequences, streaming per-pass parquet artifacts). The 501 detail
-messages name the owning Pass so the frontend surfaces a clear
-placeholder until that Pass lands.
+Parent-run CRUD + pass-job list/get/delete are functional for every
+pass. Pass 1 also exposes creation, trace, and regions endpoints backed
+by the region detection worker. Passes 2–4 still return 501 for the
+endpoints whose bodies require their yet-to-be-implemented pass logic.
 """
 
 from __future__ import annotations
@@ -14,9 +12,11 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.call_parsing.storage import read_regions, read_trace, region_job_dir
 from humpback.schemas.call_parsing import (
     CallParsingRunCreate,
     CallParsingRunResponse,
+    CreateRegionJobRequest,
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
@@ -29,7 +29,10 @@ router = APIRouter(prefix="/call-parsing", tags=["call-parsing"])
 def _run_to_response(run, rd, es, ec) -> CallParsingRunResponse:
     return CallParsingRunResponse(
         id=run.id,
-        audio_source_id=run.audio_source_id,
+        audio_file_id=run.audio_file_id,
+        hydrophone_id=run.hydrophone_id,
+        start_timestamp=run.start_timestamp,
+        end_timestamp=run.end_timestamp,
         status=run.status,
         config_snapshot=run.config_snapshot,
         error_message=run.error_message,
@@ -53,11 +56,10 @@ def _run_to_response(run, rd, es, ec) -> CallParsingRunResponse:
 
 @router.post("/runs", status_code=201, response_model=CallParsingRunResponse)
 async def create_run(body: CallParsingRunCreate, session: SessionDep):
-    run = await service.create_parent_run(
-        session,
-        audio_source_id=body.audio_source_id,
-        config_snapshot=body.config_snapshot,
-    )
+    try:
+        run = await service.create_parent_run(session, body)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     loaded = await service.load_run_with_children(session, run.id)
     assert loaded is not None
     return _run_to_response(*loaded)
@@ -106,14 +108,15 @@ async def get_run_sequence(run_id: str):
 # ---- Pass 1: region detection jobs --------------------------------------
 
 
-@router.post("/region-jobs")
-async def create_region_job():
-    return JSONResponse(
-        status_code=501,
-        content={
-            "detail": "Pass 1 (region detection) creation not yet implemented",
-        },
-    )
+@router.post("/region-jobs", status_code=201, response_model=RegionDetectionJobSummary)
+async def create_region_job(body: CreateRegionJobRequest, session: SessionDep):
+    try:
+        job = await service.create_region_job(session, body)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await session.commit()
+    await session.refresh(job)
+    return RegionDetectionJobSummary.model_validate(job)
 
 
 @router.get("/region-jobs", response_model=list[RegionDetectionJobSummary])
@@ -139,23 +142,49 @@ async def delete_region_job(job_id: str, session: SessionDep, settings: Settings
 
 
 @router.get("/region-jobs/{job_id}/trace")
-async def get_region_trace(job_id: str):
-    return JSONResponse(
-        status_code=501,
-        content={
-            "detail": "Pass 1 (region detection) trace access not yet implemented"
-        },
-    )
+async def get_region_trace(job_id: str, session: SessionDep, settings: SettingsDep):
+    job = await service.get_region_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Region detection job not found")
+    if job.status != "complete":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Region detection job status is {job.status!r}, not 'complete'",
+        )
+    trace_path = region_job_dir(settings.storage_root, job_id) / "trace.parquet"
+    if not trace_path.exists():
+        raise HTTPException(status_code=404, detail="trace.parquet not found")
+    rows = read_trace(trace_path)
+    return [{"time_sec": row.time_sec, "score": row.score} for row in rows]
 
 
 @router.get("/region-jobs/{job_id}/regions")
-async def get_region_regions(job_id: str):
-    return JSONResponse(
-        status_code=501,
-        content={
-            "detail": "Pass 1 (region detection) region access not yet implemented"
-        },
-    )
+async def get_region_regions(job_id: str, session: SessionDep, settings: SettingsDep):
+    job = await service.get_region_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Region detection job not found")
+    if job.status != "complete":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Region detection job status is {job.status!r}, not 'complete'",
+        )
+    regions_path = region_job_dir(settings.storage_root, job_id) / "regions.parquet"
+    if not regions_path.exists():
+        raise HTTPException(status_code=404, detail="regions.parquet not found")
+    rows = sorted(read_regions(regions_path), key=lambda r: r.start_sec)
+    return [
+        {
+            "region_id": r.region_id,
+            "start_sec": r.start_sec,
+            "end_sec": r.end_sec,
+            "padded_start_sec": r.padded_start_sec,
+            "padded_end_sec": r.padded_end_sec,
+            "max_score": r.max_score,
+            "mean_score": r.mean_score,
+            "n_windows": r.n_windows,
+        }
+        for r in rows
+    ]
 
 
 # ---- Pass 2: segmentation jobs ------------------------------------------

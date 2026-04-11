@@ -81,6 +81,7 @@ __all__ = [
     "AUDIO_EXTENSIONS",
     "compute_hysteresis_events",
     "run_detection",
+    "score_audio_windows",
 ]
 
 logger = logging.getLogger(__name__)
@@ -92,9 +93,9 @@ class _DetectionPipelineState:
 
     ``run_detection`` needs ``window_metas`` (for diagnostics and per-event
     embedding lookup) and ``embeddings`` (for per-event embedding export),
-    while ``compute_hysteresis_events`` only exposes ``window_records`` and
-    ``events``. The state dataclass lets both code paths share the same
-    underlying computation without exposing internals as a public API.
+    while ``score_audio_windows`` / ``compute_hysteresis_events`` only need
+    ``window_records``. The state dataclass lets both code paths share the
+    same underlying computation without exposing internals as a public API.
     """
 
     window_metas: list[WindowMetadata] = field(default_factory=list)
@@ -103,7 +104,6 @@ class _DetectionPipelineState:
     )
     window_confidences: list[float] = field(default_factory=list)
     window_records: list[dict[str, Any]] = field(default_factory=list)
-    events: list[dict[str, Any]] = field(default_factory=list)
     t_features: float = 0.0
     t_inference: float = 0.0
 
@@ -117,16 +117,13 @@ def _run_window_pipeline(
     hop_seconds: float,
     input_format: str,
     normalization: str,
-    high_threshold: float,
-    low_threshold: float,
 ) -> _DetectionPipelineState:
-    """Window → feature-extract → embed → classify → hysteresis-merge.
+    """Window → feature-extract → embed → classify.
 
-    The common backbone shared by ``run_detection`` and
-    ``compute_hysteresis_events``. Returns the full intermediate state so
-    downstream callers can read whichever parts they need without redoing
-    inference. Empty audio (shorter than one window) produces an empty
-    state and the caller is responsible for the short-audio log/skip.
+    The shared backbone for ``run_detection`` and ``score_audio_windows``.
+    Hysteresis merging lives in the callers so the scoring primitive stays
+    pure and chunk-friendly. Empty audio (shorter than one window) produces
+    an empty state; the caller is responsible for the short-audio log/skip.
     """
     state = _DetectionPipelineState()
 
@@ -183,11 +180,48 @@ def _run_window_pipeline(
         }
         for meta, conf in zip(state.window_metas, state.window_confidences)
     ]
-
-    state.events = merge_detection_events(
-        state.window_records, high_threshold, low_threshold
-    )
     return state
+
+
+def score_audio_windows(
+    audio: np.ndarray,
+    sample_rate: int,
+    perch_model: EmbeddingModel,
+    classifier: Pipeline,
+    config: dict[str, Any],
+    time_offset_sec: float = 0.0,
+) -> list[dict[str, Any]]:
+    """Pass 1 streaming primitive: audio → dense per-window score records.
+
+    Returns window records with keys ``offset_sec``, ``end_sec``, and
+    ``confidence``. ``offset_sec`` / ``end_sec`` are shifted by
+    ``time_offset_sec`` so callers streaming audio chunk-by-chunk can set
+    it to the chunk's absolute start and concatenate per-chunk records
+    into a single absolute-time trace. ``config`` must contain
+    ``window_size_seconds``, ``hop_seconds``; ``input_format`` and
+    ``normalization`` are optional (defaults mirror ``run_detection``).
+    Returns an empty list when the audio is shorter than one window.
+    """
+    state = _run_window_pipeline(
+        audio=audio,
+        target_sample_rate=sample_rate,
+        model=perch_model,
+        pipeline=classifier,
+        window_size_seconds=float(config["window_size_seconds"]),
+        hop_seconds=float(config.get("hop_seconds", 1.0)),
+        input_format=str(config.get("input_format", "spectrogram")),
+        normalization=str(config.get("normalization", "per_window_max")),
+    )
+    if time_offset_sec == 0.0:
+        return state.window_records
+    return [
+        {
+            "offset_sec": r["offset_sec"] + time_offset_sec,
+            "end_sec": r["end_sec"] + time_offset_sec,
+            "confidence": r["confidence"],
+        }
+        for r in state.window_records
+    ]
 
 
 def compute_hysteresis_events(
@@ -204,24 +238,23 @@ def compute_hysteresis_events(
     ``high_threshold``, and ``low_threshold``; ``input_format`` and
     ``normalization`` are optional (defaults mirror ``run_detection``).
 
-    Returns ``(window_records, events)`` — the dense per-window score
-    records and the hysteresis-merged events, both as the dict-shaped
-    types ``run_detection`` already uses internally. Returns two empty
-    lists when the audio is shorter than one window.
+    Re-implemented as a two-call composition of ``score_audio_windows``
+    and ``merge_detection_events``. Returns ``(window_records, events)``.
+    Returns two empty lists when the audio is shorter than one window.
     """
-    state = _run_window_pipeline(
+    window_records = score_audio_windows(
         audio=audio,
-        target_sample_rate=sample_rate,
-        model=perch_model,
-        pipeline=classifier,
-        window_size_seconds=float(config["window_size_seconds"]),
-        hop_seconds=float(config.get("hop_seconds", 1.0)),
-        input_format=str(config.get("input_format", "spectrogram")),
-        normalization=str(config.get("normalization", "per_window_max")),
-        high_threshold=float(config["high_threshold"]),
-        low_threshold=float(config["low_threshold"]),
+        sample_rate=sample_rate,
+        perch_model=perch_model,
+        classifier=classifier,
+        config=config,
     )
-    return state.window_records, state.events
+    events = merge_detection_events(
+        window_records,
+        float(config["high_threshold"]),
+        float(config["low_threshold"]),
+    )
+    return window_records, events
 
 
 def run_detection(
@@ -311,8 +344,6 @@ def run_detection(
                 hop_seconds=hop_seconds,
                 input_format=input_format,
                 normalization=normalization,
-                high_threshold=high_threshold,
-                low_threshold=low_threshold,
             )
             if not state.window_metas:
                 files_done += 1
@@ -324,7 +355,9 @@ def run_detection(
             all_emb = state.embeddings
             window_confidences = state.window_confidences
             window_records = state.window_records
-            events = state.events
+            events = merge_detection_events(
+                window_records, high_threshold, low_threshold
+            )
 
             n_windows_total += len(window_metas)
             t_features_total += state.t_features

@@ -259,6 +259,9 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Timeline audio playback normalization**: playback audio (`/audio` endpoint and timeline export chunks) is RMS-scaled to `playback_target_rms_dbfs` inside `normalize_for_playback`, then soft-clipped with `tanh` at `playback_ceiling` before encoding. This equalizes gain jumps within a playback chunk without tracking per-job gain state; source audio is never modified. The spectrogram and audio paths deliberately use different normalizations because a good visualization filter is not a good listening filter.
 - **Timeline cache version marker**: `TimelineTileCache.ensure_job_cache_current(job_id)` reads `.cache_version` from each job's cache directory and migrates legacy caches (pre-PCEN) on first access by deleting stale tile PNGs and legacy sidecars (`.ref_db.json`, `.gain_profile.json`) and writing the current version. `.prepare_plan.json`, `.audio_manifest.json`, and `.last_access` are preserved. Callers in `_prepare_tiles_sync` and `get_tile` invoke it; the migration is a one-shot no-op after the first call per job.
 - **Window selection modes**: detection jobs have a `window_selection` parameter (`"nms"` default, `"prominence"`, or `"tiling"`). NMS produces non-overlapping peak windows via greedy suppression. Prominence transforms raw confidence scores to logit (log-odds) space before peak finding and prominence computation, amplifying meaningful dips in high-confidence regions where probability scores saturate. When `window_selection="prominence"`, `min_prominence` (default 1.0, in logit units) controls the minimum dip required to distinguish two peaks as separate vocalizations. If no peaks pass the prominence filter but the event has windows above threshold, a fallback emits the single highest-scoring window. After peak selection, a recursive gap-filling pass scans for uncovered regions (gaps > 5.0 seconds between consecutive peaks or from event edges to the nearest peak) and emits additional windows at the gap midpoint. Gap-filling is always-on in prominence mode. When `window_selection="tiling"`, a greedy multi-pass algorithm seeds from the highest-scoring uncovered window and tiles contiguously outward in both directions until the logit-space drop from the seed exceeds `max_logit_drop` (default 2.0). Uncovered windows above threshold become seeds for subsequent passes. This covers flat plateau regions without relying on peak finding or gap-filling heuristics.
+- **Call parsing Pass 1 source contract**: `CallParsingRun` and `RegionDetectionJob` rows carry source identity as exactly one of (`audio_file_id`) or the hydrophone triple (`hydrophone_id` + `start_timestamp` + `end_timestamp`). The exactly-one-of invariant is enforced by the `CreateRegionJobRequest` Pydantic validator and the service layer's FK checks, not by a DB CHECK constraint — matching the `DetectionJob` pattern.
+- **Call parsing Pass 1 streaming chunk alignment**: the region detection worker's hydrophone path fetches audio in chunks whose edges are whole multiples of `config.window_size_seconds` (via `_aligned_chunk_edges`), so no Perch window ever straddles a chunk boundary. Each per-chunk `score_audio_windows` call receives `time_offset_sec = chunk_start - range_start`, and the concatenated trace is hysteresis-merged in one pass. This guarantees the streaming path is mathematically equivalent to a single-buffer call on the full range.
+- **Call parsing Pass 1 crash semantics**: on worker exception the region detection worker deletes the partial `trace.parquet`, `regions.parquet`, and any `.tmp` sidecars under the per-job directory, then flips the row to `failed` with `error_message`. There is no partial-trace resume path — restart is always from scratch, matching the rest of the codebase.
 
 ### 8.8 Classifier API Surface
 
@@ -296,18 +299,19 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 
 ### 8.9 Call Parsing Pipeline API Surface
 
-Four-pass pipeline under `/call-parsing/*`. Phase 0 ships parent-run CRUD and pure-DB pass-job list/get/delete; the endpoints that require pass logic return HTTP 501 until the corresponding Pass is implemented. Per-pass job status transitions follow the standard `queued → running → complete|failed|canceled` pattern.
+Four-pass pipeline under `/call-parsing/*`. Pass 1 is fully functional; Passes 2–4 still return HTTP 501 for the endpoints that require their yet-to-be-implemented pass logic. Per-pass job status transitions follow the standard `queued → running → complete|failed|canceled` pattern.
 
-- **Parent runs** (functional in Phase 0):
-  - `POST /call-parsing/runs` — create a parent run and its queued Pass 1 job in one transaction
+- **Parent runs** (functional):
+  - `POST /call-parsing/runs` — create a parent run and its queued Pass 1 job in one transaction; accepts the same source + model + config shape as `POST /region-jobs`
   - `GET /call-parsing/runs` — list runs with pagination
   - `GET /call-parsing/runs/{id}` — parent run with nested Pass 1/2/3 status summaries
   - `DELETE /call-parsing/runs/{id}` — cascade deletes all three child jobs and their parquet directories
   - `GET /call-parsing/runs/{id}/sequence` — **501** (Pass 4 sequence export)
-- **Pass 1 — region detection**:
-  - `POST /call-parsing/region-jobs` — **501** (Pass 1 creation)
-  - `GET /call-parsing/region-jobs`, `GET /call-parsing/region-jobs/{id}`, `DELETE /call-parsing/region-jobs/{id}` — functional (DB-only)
-  - `GET /call-parsing/region-jobs/{id}/trace`, `/regions` — **501** (Pass 1 artifacts)
+- **Pass 1 — region detection** (functional):
+  - `POST /call-parsing/region-jobs` — create a queued Pass 1 job from an audio-file source or a hydrophone range; validates every FK and the `source` XOR invariant
+  - `GET /call-parsing/region-jobs`, `GET /call-parsing/region-jobs/{id}`, `DELETE /call-parsing/region-jobs/{id}` — list / detail / delete
+  - `GET /call-parsing/region-jobs/{id}/trace` — stream `trace.parquet` as JSON `{time_sec, score}` rows; 409 while the job is not `complete`, 404 if the parquet file is missing
+  - `GET /call-parsing/region-jobs/{id}/regions` — return `regions.parquet` sorted by `start_sec`; same 409/404 guards
 - **Pass 2 — event segmentation**:
   - `POST /call-parsing/segmentation-jobs` — **501** (Pass 2 creation)
   - `GET /call-parsing/segmentation-jobs`, `GET /call-parsing/segmentation-jobs/{id}`, `DELETE /call-parsing/segmentation-jobs/{id}` — functional (DB-only)
@@ -339,12 +343,12 @@ Four-pass pipeline under `/call-parsing/*`. Phase 0 ships parent-run CRUD and pu
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), vocalization label editing via popover (add/remove type labels on detection windows with batch save), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans), static export for readonly S3-hosted viewer, PCEN spectrogram normalization and RMS-targeted audio playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier (Training, Hydrophone, Embeddings, Tuning), Vocalization, Search, Label Processing, Admin
-- Four-pass call parsing pipeline — Phase 0 scaffold (architecture, tables, workers, stub endpoints; pass logic deferred to Passes 1–4)
+- Four-pass call parsing pipeline — Phase 0 scaffold + Pass 1 region detection: streaming Perch inference on uploaded files or hydrophone ranges, hysteresis + padded-overlap merge, `trace.parquet` + `regions.parquet` outputs. Passes 2–4 still deferred.
 
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `042_call_parsing_tables.py`
+- **Latest migration**: `043_call_parsing_pass1_source_columns.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models
 
 ### 9.3 Sensitive Components

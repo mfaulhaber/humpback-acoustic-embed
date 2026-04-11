@@ -1,9 +1,10 @@
-"""Service layer for the call parsing pipeline (Phase 0).
+"""Service layer for the call parsing pipeline.
 
-Creates parent runs and their initial Pass 1 job, loads nested run
-state, and cascades deletion across the four child tables. Phase 0
-knows nothing about the pass bodies themselves — those land when Passes
-1–3 replace the worker shells.
+Creates parent runs and their Pass 1 region detection child jobs with
+exactly-one-of source validation and FK resolution against
+``audio_files``, ``model_configs``, ``classifier_models``, and the
+packaged hydrophone registry. Loads nested run state and cascades
+deletion across the four child tables.
 """
 
 from __future__ import annotations
@@ -19,36 +20,135 @@ from humpback.call_parsing.storage import (
     region_job_dir,
     segmentation_job_dir,
 )
-from humpback.config import Settings
+from humpback.config import Settings, get_archive_source
+from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import (
     CallParsingRun,
     EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
 )
+from humpback.models.classifier import ClassifierModel
+from humpback.models.model_registry import ModelConfig
+from humpback.schemas.call_parsing import CreateRegionJobRequest
+
+
+class CallParsingFKError(Exception):
+    """Raised when a foreign-key lookup for a region detection job fails.
+
+    The router converts this to an HTTP 404 response. ``field`` names the
+    request field that did not resolve; ``value`` echoes the unresolved id
+    so the error message points the user at the broken input.
+    """
+
+    def __init__(self, field: str, value: str) -> None:
+        self.field = field
+        self.value = value
+        super().__init__(f"{field}={value!r} not found")
+
+
+async def _require_audio_file(session: AsyncSession, audio_file_id: str) -> None:
+    result = await session.execute(
+        select(AudioFile.id).where(AudioFile.id == audio_file_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise CallParsingFKError("audio_file_id", audio_file_id)
+
+
+async def _require_model_config(session: AsyncSession, model_config_id: str) -> None:
+    result = await session.execute(
+        select(ModelConfig.id).where(ModelConfig.id == model_config_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise CallParsingFKError("model_config_id", model_config_id)
+
+
+async def _require_classifier_model(
+    session: AsyncSession, classifier_model_id: str
+) -> None:
+    result = await session.execute(
+        select(ClassifierModel.id).where(ClassifierModel.id == classifier_model_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise CallParsingFKError("classifier_model_id", classifier_model_id)
+
+
+def _require_hydrophone(hydrophone_id: str) -> None:
+    if get_archive_source(hydrophone_id) is None:
+        raise CallParsingFKError("hydrophone_id", hydrophone_id)
+
+
+async def _validate_region_job_request(
+    session: AsyncSession, request: CreateRegionJobRequest
+) -> None:
+    """Validate all four FKs in request order: source, model, classifier."""
+    if request.audio_file_id is not None:
+        await _require_audio_file(session, request.audio_file_id)
+    elif request.hydrophone_id is not None:
+        _require_hydrophone(request.hydrophone_id)
+    # Pydantic's exactly-one-of validator guarantees one of the two
+    # branches above is reachable — no untyped fallthrough.
+
+    await _require_model_config(session, request.model_config_id)
+    await _require_classifier_model(session, request.classifier_model_id)
+
+
+async def create_region_job(
+    session: AsyncSession,
+    request: CreateRegionJobRequest,
+) -> RegionDetectionJob:
+    """Create a queued Pass 1 region detection job from a validated request.
+
+    Raises ``CallParsingFKError`` if any of ``audio_file_id``,
+    ``hydrophone_id``, ``model_config_id``, or ``classifier_model_id`` does
+    not resolve. The caller owns the session / transaction boundary;
+    ``create_region_job`` only flushes so the generated ``job.id`` is
+    visible to subsequent operations in the same transaction.
+    """
+    await _validate_region_job_request(session, request)
+
+    job = RegionDetectionJob(
+        status="queued",
+        parent_run_id=request.parent_run_id,
+        audio_file_id=request.audio_file_id,
+        hydrophone_id=request.hydrophone_id,
+        start_timestamp=request.start_timestamp,
+        end_timestamp=request.end_timestamp,
+        model_config_id=request.model_config_id,
+        classifier_model_id=request.classifier_model_id,
+        config_json=request.config.model_dump_json(),
+    )
+    session.add(job)
+    await session.flush()
+    return job
 
 
 async def create_parent_run(
     session: AsyncSession,
-    audio_source_id: str,
-    config_snapshot: Optional[str] = None,
+    request: CreateRegionJobRequest,
 ) -> CallParsingRun:
-    """Create a parent run + queued Pass 1 job in a single transaction."""
+    """Create a parent run + its queued Pass 1 child in a single transaction.
+
+    The source fields are mirrored onto both the parent row and the Pass 1
+    child so downstream list/detail queries can filter the parent by
+    source without joining through the child table. The Pass 1 config is
+    also snapshotted onto the parent as ``config_snapshot`` — Phase 0
+    intended that column to hold the aggregated cross-pass config, and
+    with only Pass 1 implemented today it is the Pass 1 config.
+    """
     run = CallParsingRun(
-        audio_source_id=audio_source_id,
         status="queued",
-        config_snapshot=config_snapshot,
+        audio_file_id=request.audio_file_id,
+        hydrophone_id=request.hydrophone_id,
+        start_timestamp=request.start_timestamp,
+        end_timestamp=request.end_timestamp,
+        config_snapshot=request.config.model_dump_json(),
     )
     session.add(run)
     await session.flush()
 
-    region_job = RegionDetectionJob(
-        audio_source_id=audio_source_id,
-        parent_run_id=run.id,
-        status="queued",
-    )
-    session.add(region_job)
-    await session.flush()
+    child_request = request.model_copy(update={"parent_run_id": run.id})
+    region_job = await create_region_job(session, child_request)
 
     run.region_detection_job_id = region_job.id
     await session.commit()

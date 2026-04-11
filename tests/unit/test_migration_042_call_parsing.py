@@ -67,14 +67,14 @@ def test_call_parsing_orm_roundtrip(tmp_path: Path) -> None:
         try:
             async with session_factory() as session:
                 run = CallParsingRun(
-                    audio_source_id="audio-1",
+                    audio_file_id="audio-1",
                     status="queued",
                 )
                 session.add(run)
                 await session.flush()
 
                 region_job = RegionDetectionJob(
-                    audio_source_id="audio-1",
+                    audio_file_id="audio-1",
                     parent_run_id=run.id,
                     status="queued",
                 )
