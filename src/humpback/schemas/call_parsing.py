@@ -122,6 +122,8 @@ class RegionDetectionJobSummary(_JobSummary):
     model_config_id: Optional[str] = None
     classifier_model_id: Optional[str] = None
     config_json: Optional[str] = None
+    chunks_total: Optional[int] = None
+    chunks_completed: Optional[int] = None
     trace_row_count: Optional[int] = None
     region_count: Optional[int] = None
 

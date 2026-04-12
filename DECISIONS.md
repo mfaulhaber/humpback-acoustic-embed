@@ -201,3 +201,21 @@ Three structural constraints shape the design:
 - `scripts/bootstrap_event_classifier_dataset.py` reads detection job IDs, filters to single-label vocalization-labeled windows, runs Pass 2 segmentation on each window to discover events, transfers labels, and writes a JSON file of training samples. Idempotent via existing-output deduplication.
 - API endpoints `POST /classification-jobs` and `GET /classification-jobs/{id}/typed-events` are fully functional (previously 501 stubs). POST validates model family (422) and upstream completion (409).
 - No new database migration — Pass 3 uses existing tables from migrations 042 (call parsing scaffold) and the `vocalization_models` extensions.
+
+## ADR-052: Chunk artifact system applies to hydrophone path only
+
+**Date**: 2026-04-12
+**Status**: Accepted
+**Supersedes**: ADR-049 "delete-and-restart crash semantics" for hydrophone jobs
+
+**Context**: Multi-hour hydrophone region detection jobs (24h range ≈ 48 chunks at 30 min each) produce no intermediate output, cannot be resumed after a crash, and provide no progress visibility. ADR-049 noted "revisit only if a multi-hour Pass 1 job actually becomes a pain point" — it has.
+
+**Decision**: The chunk artifact system (per-chunk parquet files, manifest.json, DB progress columns, resume logic) applies only to the hydrophone streaming path. File-based region detection continues as a single atomic operation with no intermediate artifacts.
+
+**Consequences**:
+
+- Migration `045_region_detection_progress_columns.py` adds `chunks_total` and `chunks_completed` nullable integer columns to `region_detection_jobs`. Both remain NULL for file-based jobs.
+- The hydrophone worker writes `manifest.json` at job start with all chunks in `pending` status, then writes `chunks/{0000..N}.parquet` per completed chunk with atomic tmp-rename. DB `chunks_completed` is incremented after each chunk commit.
+- On resume (re-queued failed job), the worker reads the existing manifest, verifies each "complete" chunk has a parquet file on disk, resets any without, and continues from the first pending chunk.
+- `_cleanup_partial_artifacts` preserves completed chunk parquets and manifest for resume; only final artifacts (`trace.parquet`, `regions.parquet`) and `.tmp` files are deleted on failure.
+- File-based jobs cannot be paused/resumed. If needed in the future, the file path can be synthetically chunked without affecting the hydrophone path.

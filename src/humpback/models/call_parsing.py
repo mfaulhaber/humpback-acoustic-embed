@@ -92,6 +92,8 @@ class RegionDetectionJob(UUIDMixin, TimestampMixin, Base):
     model_config_id: Mapped[Optional[str]] = mapped_column(default=None)
     classifier_model_id: Mapped[Optional[str]] = mapped_column(default=None)
     config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    chunks_total: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    chunks_completed: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     trace_row_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     region_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
