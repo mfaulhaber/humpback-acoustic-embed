@@ -50,10 +50,18 @@ class OrcasoundHLSProvider:
 class CachingHLSProvider:
     """ArchiveProvider wrapping CachingS3Client (S3 with write-through cache)."""
 
-    def __init__(self, cache_root: str, source_id: str, name: str) -> None:
+    def __init__(
+        self,
+        cache_root: str,
+        source_id: str,
+        name: str,
+        *,
+        force_refresh: bool = True,
+    ) -> None:
         self._source_id = source_id
         self._name = name
         self._client = CachingS3Client(cache_root)
+        self._force_refresh = force_refresh
 
     @property
     def name(self) -> str:
@@ -64,7 +72,13 @@ class CachingHLSProvider:
         return self._source_id
 
     def build_timeline(self, start_ts: float, end_ts: float) -> list[StreamSegment]:
-        return _build_stream_timeline(self._client, self._source_id, start_ts, end_ts)
+        return _build_stream_timeline(
+            self._client,
+            self._source_id,
+            start_ts,
+            end_ts,
+            force_refresh=self._force_refresh,
+        )
 
     def count_segments(self, start_ts: float, end_ts: float) -> int:
         folders = self._client.list_hls_folders(self._source_id, start_ts, end_ts)
@@ -119,12 +133,15 @@ def build_orcasound_detection_provider(
     *,
     local_cache_path: str | None,
     s3_cache_path: str | None,
+    force_refresh: bool = True,
 ) -> ArchiveProvider:
     """Build the provider used by hydrophone detection jobs."""
     if local_cache_path:
         return LocalHLSCacheProvider(local_cache_path, source_id, name)
     if s3_cache_path:
-        return CachingHLSProvider(s3_cache_path, source_id, name)
+        return CachingHLSProvider(
+            s3_cache_path, source_id, name, force_refresh=force_refresh
+        )
     return OrcasoundHLSProvider(source_id, name)
 
 

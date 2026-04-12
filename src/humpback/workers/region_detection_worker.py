@@ -225,6 +225,7 @@ async def _load_hydrophone_trace(
     a ``manifest.json`` for resume support. Updates ``chunks_completed``
     in the DB after each chunk for API polling.
     """
+    from humpback.classifier.archive import StreamSegment
     from humpback.classifier.providers import build_archive_detection_provider
     from humpback.classifier.s3_stream import iter_audio_chunks
 
@@ -233,6 +234,7 @@ async def _load_hydrophone_trace(
         local_cache_path=None,
         s3_cache_path=settings.s3_cache_path,
         noaa_cache_path=settings.noaa_cache_path,
+        force_refresh=False,
     )
 
     edges = _aligned_chunk_edges(
@@ -283,48 +285,79 @@ async def _load_hydrophone_trace(
         hydrophone_id,
     )
 
+    # Build timeline once for the full range, then slice per chunk.
+    try:
+        full_timeline: list[StreamSegment] = provider.build_timeline(start_ts, end_ts)
+    except FileNotFoundError:
+        logger.info(
+            "region_detection | job=%s | no audio in full range, skipping all chunks",
+            job_id,
+        )
+        full_timeline = []
+
+    def _filter_timeline(
+        tl: list[StreamSegment], cs: float, ce: float
+    ) -> list[StreamSegment]:
+        return [s for s in tl if s.start_ts < ce and s.end_ts > cs]
+
     for i, (chunk_start, chunk_end) in enumerate(edges):
         chunk_meta = manifest["chunks"][i]
         if chunk_meta["status"] == "complete":
             continue
 
         chunk_duration = chunk_end - chunk_start
-        logger.info(
-            "region_detection | job=%s | chunk %d/%d | %.1fs-%.1fs | fetching audio",
-            job_id,
-            i + 1,
-            total_chunks,
-            chunk_start - start_ts,
-            chunk_end - start_ts,
-        )
+        chunk_timeline = _filter_timeline(full_timeline, chunk_start, chunk_end)
 
         t0 = time.monotonic()
         chunk_scores: list[WindowScore] = []
-        try:
-            for audio_buf, _seg_start_utc, _segs_done, _segs_total in iter_audio_chunks(
-                provider,
-                chunk_start,
-                chunk_end,
-                chunk_seconds=chunk_end - chunk_start,
-                target_sr=target_sample_rate,
-            ):
-                records = score_audio_windows(
-                    audio=audio_buf,
-                    sample_rate=target_sample_rate,
-                    perch_model=perch_model,
-                    classifier=classifier,
-                    config=_detector_config(config, input_format),
-                    time_offset_sec=chunk_start - start_ts,
-                )
-                chunk_scores.extend(_score_records_to_window_scores(records))
-                del audio_buf
-        except FileNotFoundError:
+
+        if not chunk_timeline:
             logger.info(
                 "region_detection | job=%s | chunk %d/%d | no audio segments, skipping",
                 job_id,
                 i + 1,
                 total_chunks,
             )
+        else:
+            logger.info(
+                "region_detection | job=%s | chunk %d/%d | %.1fs-%.1fs | fetching audio",
+                job_id,
+                i + 1,
+                total_chunks,
+                chunk_start - start_ts,
+                chunk_end - start_ts,
+            )
+            try:
+                for (
+                    audio_buf,
+                    _seg_start_utc,
+                    _segs_done,
+                    _segs_total,
+                ) in iter_audio_chunks(
+                    provider,
+                    chunk_start,
+                    chunk_end,
+                    chunk_seconds=chunk_end - chunk_start,
+                    target_sr=target_sample_rate,
+                    timeline=chunk_timeline,
+                ):
+                    records = score_audio_windows(
+                        audio=audio_buf,
+                        sample_rate=target_sample_rate,
+                        perch_model=perch_model,
+                        classifier=classifier,
+                        config=_detector_config(config, input_format),
+                        time_offset_sec=chunk_start - start_ts,
+                    )
+                    chunk_scores.extend(_score_records_to_window_scores(records))
+                    del audio_buf
+            except FileNotFoundError:
+                logger.info(
+                    "region_detection | job=%s | chunk %d/%d | no audio segments, skipping",
+                    job_id,
+                    i + 1,
+                    total_chunks,
+                )
 
         elapsed = time.monotonic() - t0
         rate = elapsed / (chunk_duration / 60.0) if chunk_duration > 0 else 0.0

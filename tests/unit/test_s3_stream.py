@@ -618,6 +618,38 @@ class TestFolderLookback:
         assert timeline
         assert len(client.window_starts) == 1
 
+    def test_build_timeline_jumps_to_max_when_folders_found_but_no_overlap(self):
+        from humpback.classifier.s3_stream import _build_stream_timeline
+
+        class FakeClient:
+            def __init__(self):
+                self.call_count = 0
+
+            def list_hls_folders(self, _hydrophone_id, start_ts: float, end_ts: float):
+                self.call_count += 1
+                return ["500"] if start_ts <= 500 < end_ts else []
+
+            def list_segments(self, _hydrophone_id, folder_ts: str):
+                if folder_ts == "500":
+                    return [f"hydro/hls/500/live{i}.ts" for i in range(10)]
+                return []
+
+            def fetch_playlist(self, _hydrophone_id, _folder_ts):
+                return None
+
+        client = FakeClient()
+        with pytest.raises(FileNotFoundError):
+            _build_stream_timeline(
+                client=client,
+                hydrophone_id="rpi_orcasound_lab",
+                stream_start_ts=5000.0,
+                stream_end_ts=5500.0,
+            )
+
+        # Should jump from initial step to max lookback (2 calls),
+        # not iterate all intermediate steps (42 calls).
+        assert client.call_count <= 3
+
 
 class TestMergeDetectionEvents:
     """Validate the hysteresis merge function used by hydrophone detector."""
@@ -776,6 +808,139 @@ class TestCachingS3Client:
         assert segs == []
         mock_s3.list_segments.assert_not_called()
 
+    def test_list_segments_writes_manifest_on_s3_result(self, tmp_path):
+        """list_segments writes .segments.json when S3 returns non-empty list."""
+        import json
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        s3_keys = [
+            "rpi_orcasound_lab/hls/1700000000/live000.ts",
+            "rpi_orcasound_lab/hls/1700000000/live001.ts",
+        ]
+        mock_s3.list_segments.return_value = s3_keys
+        client._s3 = mock_s3
+
+        segs = client.list_segments("rpi_orcasound_lab", "1700000000")
+        assert len(segs) == 2
+
+        manifest_path = (
+            tmp_path
+            / ORCASOUND_S3_BUCKET
+            / "rpi_orcasound_lab/hls/1700000000/.segments.json"
+        )
+        assert manifest_path.is_file()
+        manifest = json.loads(manifest_path.read_text())
+        assert set(manifest["segments"]) == set(s3_keys)
+        assert "cached_at_utc" in manifest
+
+    def test_list_segments_force_refresh_false_reads_manifest(self, tmp_path):
+        """force_refresh=False returns manifest keys without S3 call."""
+        import json
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        client._s3 = mock_s3
+
+        folder = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        folder.mkdir(parents=True)
+        manifest_keys = [
+            "rpi_orcasound_lab/hls/1700000000/live000.ts",
+            "rpi_orcasound_lab/hls/1700000000/live001.ts",
+        ]
+        (folder / ".segments.json").write_text(
+            json.dumps({"segments": manifest_keys, "cached_at_utc": "test"})
+        )
+
+        segs = client.list_segments(
+            "rpi_orcasound_lab", "1700000000", force_refresh=False
+        )
+        assert len(segs) == 2
+        assert set(segs) == set(manifest_keys)
+        mock_s3.list_segments.assert_not_called()
+
+    def test_list_segments_force_refresh_false_merges_manifest_with_local(
+        self, tmp_path
+    ):
+        """force_refresh=False merges manifest keys with local .ts files."""
+        import json
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        client._s3 = mock_s3
+
+        folder = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        folder.mkdir(parents=True)
+        (folder / "live000.ts").write_bytes(b"cached")
+        manifest_keys = ["rpi_orcasound_lab/hls/1700000000/live001.ts"]
+        (folder / ".segments.json").write_text(
+            json.dumps({"segments": manifest_keys, "cached_at_utc": "test"})
+        )
+
+        segs = client.list_segments(
+            "rpi_orcasound_lab", "1700000000", force_refresh=False
+        )
+        assert len(segs) == 2
+        assert "rpi_orcasound_lab/hls/1700000000/live000.ts" in segs
+        assert "rpi_orcasound_lab/hls/1700000000/live001.ts" in segs
+        mock_s3.list_segments.assert_not_called()
+
+    def test_list_segments_force_refresh_false_404_still_shortcuts(self, tmp_path):
+        """force_refresh=False with .404.json still short-circuits."""
+        import json
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        client._s3 = mock_s3
+
+        folder = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        folder.mkdir(parents=True)
+        (folder / ".404.json").write_text(json.dumps({"cached_at_utc": "test"}))
+
+        segs = client.list_segments(
+            "rpi_orcasound_lab", "1700000000", force_refresh=False
+        )
+        assert segs == []
+        mock_s3.list_segments.assert_not_called()
+
+    def test_list_segments_force_refresh_true_requeries_s3(self, tmp_path):
+        """force_refresh=True queries S3 even when manifest exists."""
+        import json
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        mock_s3.list_segments.return_value = [
+            "rpi_orcasound_lab/hls/1700000000/live000.ts"
+        ]
+        client._s3 = mock_s3
+
+        folder = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        folder.mkdir(parents=True)
+        (folder / ".segments.json").write_text(
+            json.dumps({"segments": ["old_key.ts"], "cached_at_utc": "test"})
+        )
+
+        segs = client.list_segments(
+            "rpi_orcasound_lab", "1700000000", force_refresh=True
+        )
+        mock_s3.list_segments.assert_called_once()
+        assert "rpi_orcasound_lab/hls/1700000000/live000.ts" in segs
+
     def test_list_hls_folders_merges_local(self, tmp_path):
         """list_hls_folders merges S3 results with locally cached folders."""
         from unittest.mock import MagicMock
@@ -795,6 +960,122 @@ class TestCachingS3Client:
         folders = client.list_hls_folders("rpi_orcasound_lab", 1699999000, 1700004000)
         assert "1700000000" in folders
         assert "1700003600" in folders
+
+    def test_list_hls_folders_force_refresh_false_local_only(self, tmp_path):
+        """force_refresh=False returns local folders only, no S3 call."""
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        client._s3 = mock_s3
+
+        folder = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        folder.mkdir(parents=True)
+        (folder / "live000.ts").write_bytes(b"cached")
+
+        folders = client.list_hls_folders(
+            "rpi_orcasound_lab", 1699999000, 1700004000, force_refresh=False
+        )
+        assert "1700000000" in folders
+        mock_s3.list_hls_folders.assert_not_called()
+
+    def test_list_hls_folders_force_refresh_false_excludes_empty_folders(
+        self, tmp_path
+    ):
+        """force_refresh=False excludes folders with only markers, no .ts files."""
+        import json
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        client._s3 = mock_s3
+
+        # Folder with only .404.json
+        f1 = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        f1.mkdir(parents=True)
+        (f1 / ".404.json").write_text(json.dumps({"cached_at_utc": "test"}))
+
+        # Folder with only live.m3u8.404.json
+        f2 = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700003600"
+        f2.mkdir(parents=True)
+        (f2 / "live.m3u8.404.json").write_text(json.dumps({"cached_at_utc": "test"}))
+
+        # Folder with actual .ts files
+        f3 = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700007200"
+        f3.mkdir(parents=True)
+        (f3 / "live000.ts").write_bytes(b"cached")
+
+        folders = client.list_hls_folders(
+            "rpi_orcasound_lab", 1699999000, 1700008000, force_refresh=False
+        )
+        assert folders == ["1700007200"]
+        mock_s3.list_hls_folders.assert_not_called()
+
+    def test_fetch_playlist_respects_404_marker(self, tmp_path):
+        """fetch_playlist returns None without S3 call when .404.json marker exists."""
+        import json
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        client._s3 = mock_s3
+
+        folder = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        folder.mkdir(parents=True)
+        (folder / "live.m3u8.404.json").write_text(
+            json.dumps({"cached_at_utc": "test"})
+        )
+
+        result = client.fetch_playlist("rpi_orcasound_lab", "1700000000")
+        assert result is None
+        mock_s3.fetch_playlist.assert_not_called()
+
+    def test_fetch_playlist_returns_cached_file(self, tmp_path):
+        """fetch_playlist returns local file without S3 call when cached."""
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        client._s3 = mock_s3
+
+        folder = tmp_path / ORCASOUND_S3_BUCKET / "rpi_orcasound_lab/hls/1700000000"
+        folder.mkdir(parents=True)
+        (folder / "live.m3u8").write_text("#EXTM3U\n#EXTINF:10,\nlive000.ts")
+
+        result = client.fetch_playlist("rpi_orcasound_lab", "1700000000")
+        assert result is not None
+        assert "#EXTM3U" in result
+        mock_s3.fetch_playlist.assert_not_called()
+
+    def test_fetch_playlist_fetches_from_s3_when_no_cache(self, tmp_path):
+        """fetch_playlist queries S3 when no local file or marker exists."""
+        from unittest.mock import MagicMock
+
+        from humpback.classifier.s3_stream import CachingS3Client, ORCASOUND_S3_BUCKET
+
+        client = CachingS3Client(str(tmp_path))
+        mock_s3 = MagicMock()
+        mock_s3.fetch_playlist.return_value = "#EXTM3U\n#EXTINF:10,\nlive000.ts"
+        client._s3 = mock_s3
+
+        result = client.fetch_playlist("rpi_orcasound_lab", "1700000000")
+        assert result is not None
+        mock_s3.fetch_playlist.assert_called_once()
+
+        cached = (
+            tmp_path
+            / ORCASOUND_S3_BUCKET
+            / "rpi_orcasound_lab/hls/1700000000/live.m3u8"
+        )
+        assert cached.is_file()
 
     def test_atomic_write(self, tmp_path):
         """Cached file is written atomically via tmp + os.replace."""
@@ -817,6 +1098,68 @@ class TestCachingS3Client:
 
         # Final file should exist
         assert (cached_dir / "live000.ts").exists()
+
+
+class TestIterAudioChunksTimeline:
+    """Verify pre-built timeline parameter skips build_timeline."""
+
+    def test_prebuilt_timeline_skips_build_timeline(self):
+        from unittest.mock import MagicMock, PropertyMock
+
+        from humpback.classifier.archive import StreamSegment
+        from humpback.classifier.s3_stream import _iter_audio_chunks
+
+        provider = MagicMock()
+        type(provider).name = PropertyMock(return_value="test")
+        type(provider).source_id = PropertyMock(return_value="test_id")
+
+        prebuilt = [
+            StreamSegment(key="k1", start_ts=100.0, duration_sec=10.0),
+        ]
+
+        provider.decode_segment.return_value = MagicMock(
+            __len__=lambda s: 0, dtype=MagicMock()
+        )
+
+        gen = _iter_audio_chunks(
+            provider,
+            start_ts=100.0,
+            end_ts=110.0,
+            chunk_seconds=10.0,
+            timeline=prebuilt,
+        )
+        try:
+            next(gen)
+        except (StopIteration, Exception):
+            pass
+
+        provider.build_timeline.assert_not_called()
+
+    def test_none_timeline_calls_build_timeline(self):
+        from unittest.mock import MagicMock, PropertyMock
+
+        from humpback.classifier.archive import StreamSegment
+        from humpback.classifier.s3_stream import _iter_audio_chunks
+
+        provider = MagicMock()
+        type(provider).name = PropertyMock(return_value="test")
+        type(provider).source_id = PropertyMock(return_value="test_id")
+        provider.build_timeline.return_value = [
+            StreamSegment(key="k1", start_ts=100.0, duration_sec=10.0),
+        ]
+
+        gen = _iter_audio_chunks(
+            provider,
+            start_ts=100.0,
+            end_ts=110.0,
+            chunk_seconds=10.0,
+        )
+        try:
+            next(gen)
+        except (StopIteration, Exception):
+            pass
+
+        provider.build_timeline.assert_called_once()
 
 
 class TestIterAudioChunksTimestamp:

@@ -57,6 +57,15 @@ class _LegacyHLSTimelineClient(Protocol):
     def fetch_playlist(self, hydrophone_id: str, folder_ts: str, /) -> str | None: ...
 
 
+def _force_refresh_kwargs(
+    client: _LegacyHLSTimelineClient, force_refresh: bool
+) -> dict[str, bool]:
+    """Return force_refresh kwarg dict for clients that support it."""
+    if isinstance(client, CachingS3Client):
+        return {"force_refresh": force_refresh}
+    return {}
+
+
 def expected_audio_samples(duration_sec: float, target_sr: int) -> int:
     """Return the rounded sample count expected for a requested clip."""
     return max(1, int(round(duration_sec * target_sr)))
@@ -163,9 +172,14 @@ def _ordered_folder_segments(
     hydrophone_id: str,
     folder_ts: str,
     default_duration_sec: float = DEFAULT_SEGMENT_DURATION_SEC,
+    *,
+    force_refresh: bool = True,
 ) -> list[tuple[str, float, float | None]]:
     """Get ordered (segment_key, duration, optional offset) tuples for one folder."""
-    segment_keys = _sort_segment_keys(client.list_segments(hydrophone_id, folder_ts))
+    _kwargs = _force_refresh_kwargs(client, force_refresh)
+    segment_keys = _sort_segment_keys(
+        client.list_segments(hydrophone_id, folder_ts, **_kwargs)
+    )
     if not segment_keys:
         return []
 
@@ -431,17 +445,15 @@ class CachingS3Client:
         self._root = Path(cache_root) / ORCASOUND_S3_BUCKET
 
     def list_hls_folders(
-        self, hydrophone_id: str, start_ts: float, end_ts: float
+        self,
+        hydrophone_id: str,
+        start_ts: float,
+        end_ts: float,
+        *,
+        force_refresh: bool = True,
     ) -> list[str]:
         """Merge S3 folder list with locally cached folders."""
-        # Query S3 for authoritative list
-        try:
-            s3_folders = self._s3.list_hls_folders(hydrophone_id, start_ts, end_ts)
-        except Exception:
-            logger.warning("S3 list_hls_folders failed, using cache only")
-            s3_folders = []
-
-        # Also check local cache for folders with .ts files in range
+        # Check local cache for folders with .ts files in range
         hls_dir = self._root / hydrophone_id / "hls"
         local_folders: list[str] = []
         if hls_dir.is_dir():
@@ -457,14 +469,31 @@ class CachingS3Client:
                     if has_ts:
                         local_folders.append(entry.name)
 
+        if not force_refresh:
+            return sorted(local_folders, key=int)
+
+        # Query S3 for authoritative list
+        try:
+            s3_folders = self._s3.list_hls_folders(hydrophone_id, start_ts, end_ts)
+        except Exception:
+            logger.warning("S3 list_hls_folders failed, using cache only")
+            s3_folders = []
+
         # Merge and deduplicate
         all_folders = set(s3_folders) | set(local_folders)
         return sorted(all_folders, key=int)
 
-    def list_segments(self, hydrophone_id: str, folder_ts: str) -> list[str]:
+    def list_segments(
+        self,
+        hydrophone_id: str,
+        folder_ts: str,
+        *,
+        force_refresh: bool = True,
+    ) -> list[str]:
         """List segments, merging local cache with S3."""
         folder_dir = self._root / hydrophone_id / "hls" / folder_ts
         marker_path = folder_dir / ".404.json"
+        manifest_path = folder_dir / ".segments.json"
 
         # Collect local .ts files
         local_keys: set[str] = set()
@@ -475,6 +504,18 @@ class CachingS3Client:
 
         # If folder marked as 404, return local-only
         if marker_path.is_file():
+            return _sort_segment_keys(local_keys)
+
+        # Local-first: use cached manifest when available
+        if not force_refresh and manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+                manifest_keys = set(manifest.get("segments", []))
+                return _sort_segment_keys(local_keys | manifest_keys)
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        if not force_refresh:
             return _sort_segment_keys(local_keys)
 
         # Query S3
@@ -496,6 +537,18 @@ class CachingS3Client:
             )
             return []
 
+        # Write segment manifest for future local-first reads
+        if s3_keys:
+            folder_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "segments": list(s3_keys),
+                        "cached_at_utc": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            )
+
         # Merge and deduplicate
         all_keys = local_keys | set(s3_keys)
         return _sort_segment_keys(all_keys)
@@ -505,6 +558,10 @@ class CachingS3Client:
         local_path = self._root / hydrophone_id / "hls" / folder_ts / "live.m3u8"
         if local_path.is_file():
             return local_path.read_text(errors="replace")
+
+        marker_path = local_path.parent / f"{local_path.name}.404.json"
+        if marker_path.is_file():
+            return None
 
         try:
             text = self._s3.fetch_playlist(hydrophone_id, folder_ts)
@@ -642,6 +699,8 @@ def _build_stream_timeline(
     hydrophone_id: str,
     stream_start_ts: float,
     stream_end_ts: float,
+    *,
+    force_refresh: bool = True,
 ) -> list[StreamSegment]:
     """Build ordered stream segments for a hydrophone job range."""
     timeline: list[StreamSegment] = []
@@ -652,10 +711,13 @@ def _build_stream_timeline(
     max_lookback_steps = int(math.ceil(max_lookback_sec / lookback_step_sec))
     lookback_step = 0
     jumped_to_max_lookback = False
+    _list_kwargs = _force_refresh_kwargs(client, force_refresh)
     while lookback_step <= max_lookback_steps:
         lookback_sec = min(lookback_step * lookback_step_sec, max_lookback_sec)
         window_start_ts = stream_start_ts - lookback_sec
-        folders = client.list_hls_folders(hydrophone_id, window_start_ts, stream_end_ts)
+        folders = client.list_hls_folders(
+            hydrophone_id, window_start_ts, stream_end_ts, **_list_kwargs
+        )
         if not folders:
             lookback_step += 1
             continue
@@ -666,7 +728,9 @@ def _build_stream_timeline(
                 continue
             seen_folders.add(folder_ts)
 
-            ordered = _ordered_folder_segments(client, hydrophone_id, folder_ts)
+            ordered = _ordered_folder_segments(
+                client, hydrophone_id, folder_ts, force_refresh=force_refresh
+            )
             if not ordered:
                 continue
             folder_start_ts = float(folder_ts)
@@ -699,11 +763,11 @@ def _build_stream_timeline(
             break
 
         if (
-            timeline
+            found_any_folders
             and not jumped_to_max_lookback
             and lookback_step < max_lookback_steps
         ):
-            # We found overlap in-range but not at the requested start boundary.
+            # We found folders but haven't covered the start boundary yet.
             # Jump straight to max lookback to avoid N incremental list calls.
             lookback_step = max_lookback_steps
             jumped_to_max_lookback = True
@@ -1039,9 +1103,11 @@ def _iter_audio_chunks(
     prefetch_workers: int = DEFAULT_HYDROPHONE_PREFETCH_WORKERS,
     prefetch_inflight_segments: int = DEFAULT_HYDROPHONE_PREFETCH_INFLIGHT_SEGMENTS,
     on_segment_timing: Callable[[float, float], None] | None = None,
+    timeline: list[StreamSegment] | None = None,
 ) -> Generator:
     """Core implementation for iter_audio_chunks."""
-    timeline = provider.build_timeline(start_ts, end_ts)
+    if timeline is None:
+        timeline = provider.build_timeline(start_ts, end_ts)
 
     if skip_segments > 0:
         if skip_segments > len(timeline):

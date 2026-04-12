@@ -32,6 +32,7 @@ def build_archive_detection_provider(
     local_cache_path: str | None,
     s3_cache_path: str | None,
     noaa_cache_path: str | None = None,
+    force_refresh: bool = True,
 ) -> ArchiveProvider:
     source = _require_archive_source(source_id)
     provider_kind = source["provider_kind"]
@@ -42,6 +43,7 @@ def build_archive_detection_provider(
             source["name"],
             local_cache_path=local_cache_path,
             s3_cache_path=s3_cache_path,
+            force_refresh=force_refresh,
         )
 
     if local_cache_path is not None:
