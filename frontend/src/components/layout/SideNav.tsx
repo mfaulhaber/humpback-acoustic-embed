@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Music, Cpu, Network, Zap, AudioWaveform, Search, Settings, ChevronRight, FileAudio } from "lucide-react";
+import { Music, Cpu, Network, Zap, AudioWaveform, Search, Settings, ChevronRight, FileAudio, Activity } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -46,6 +46,13 @@ const navItems: NavItem[] = [
       { label: "Training", to: "/app/vocalization/training" },
       { label: "Labeling", to: "/app/vocalization/labeling" },
       { label: "Training Data", to: "/app/vocalization/training-data" },
+    ],
+  },
+  {
+    label: "Call Parsing",
+    icon: Activity,
+    children: [
+      { label: "Detection", to: "/app/call-parsing/detection" },
     ],
   },
   { label: "Search", icon: Search, to: "/app/search" },

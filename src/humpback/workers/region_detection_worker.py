@@ -162,12 +162,13 @@ async def _load_hydrophone_trace(
     fetches each chunk via ``iter_audio_chunks``. The per-chunk buffer is
     explicitly deleted before the next iteration to bound peak memory.
     """
-    from humpback.classifier.providers import build_archive_playback_provider
+    from humpback.classifier.providers import build_archive_detection_provider
     from humpback.classifier.s3_stream import iter_audio_chunks
 
-    provider = build_archive_playback_provider(
+    provider = build_archive_detection_provider(
         hydrophone_id,
-        cache_path=settings.s3_cache_path,
+        local_cache_path=None,
+        s3_cache_path=settings.s3_cache_path,
         noaa_cache_path=settings.noaa_cache_path,
     )
 
@@ -180,23 +181,30 @@ async def _load_hydrophone_trace(
 
     trace: list[dict[str, Any]] = []
     for chunk_start, chunk_end in edges:
-        for audio_buf, _seg_start_utc, _segs_done, _segs_total in iter_audio_chunks(
-            provider,
-            chunk_start,
-            chunk_end,
-            chunk_seconds=chunk_end - chunk_start,
-            target_sr=target_sample_rate,
-        ):
-            records = score_audio_windows(
-                audio=audio_buf,
-                sample_rate=target_sample_rate,
-                perch_model=perch_model,
-                classifier=classifier,
-                config=_detector_config(config, input_format),
-                time_offset_sec=chunk_start - start_ts,
+        try:
+            for audio_buf, _seg_start_utc, _segs_done, _segs_total in iter_audio_chunks(
+                provider,
+                chunk_start,
+                chunk_end,
+                chunk_seconds=chunk_end - chunk_start,
+                target_sr=target_sample_rate,
+            ):
+                records = score_audio_windows(
+                    audio=audio_buf,
+                    sample_rate=target_sample_rate,
+                    perch_model=perch_model,
+                    classifier=classifier,
+                    config=_detector_config(config, input_format),
+                    time_offset_sec=chunk_start - start_ts,
+                )
+                trace.extend(records)
+                del audio_buf
+        except FileNotFoundError:
+            logger.debug(
+                "No audio segments for chunk %.0f–%.0f, skipping",
+                chunk_start,
+                chunk_end,
             )
-            trace.extend(records)
-            del audio_buf
 
     return trace, float(end_ts - start_ts)
 
