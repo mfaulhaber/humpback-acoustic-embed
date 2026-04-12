@@ -237,7 +237,9 @@ class TestCachingHLSProviderDelegation:
         provider, mock_client = self._make()
         mock_build.return_value = []
         provider.build_timeline(0.0, 100.0)
-        mock_build.assert_called_once_with(mock_client, "rpi_lab", 0.0, 100.0)
+        mock_build.assert_called_once_with(
+            mock_client, "rpi_lab", 0.0, 100.0, force_refresh=True
+        )
 
 
 class TestLocalHLSCacheProviderDelegation:
@@ -639,7 +641,9 @@ class TestProviderBuilders:
             local_cache_path=None,
             s3_cache_path="/s3-cache",
         )
-        mock_caching.assert_called_once_with("/s3-cache", "rpi_lab", "Lab")
+        mock_caching.assert_called_once_with(
+            "/s3-cache", "rpi_lab", "Lab", force_refresh=True
+        )
         assert provider is mock_caching.return_value
 
     @patch("humpback.classifier.providers.orcasound_hls.OrcasoundHLSProvider")
@@ -676,6 +680,7 @@ class TestProviderBuilders:
             "Orcasound Lab",
             local_cache_path="/cache",
             s3_cache_path="/s3-cache",
+            force_refresh=True,
         )
         assert provider is mock_orcasound.return_value
 

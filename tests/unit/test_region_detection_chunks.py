@@ -206,3 +206,48 @@ def test_verify_skips_pending_chunks(tmp_path: Path):
     }
     verified = _verify_manifest_chunks(manifest, tmp_path)
     assert verified == 0
+
+
+# ---- Timeline filtering for per-chunk slicing ------------------------------
+
+
+def test_filter_timeline_selects_overlapping_segments():
+    """Segments overlapping a chunk window are selected; others excluded."""
+    from humpback.classifier.archive import StreamSegment
+
+    full_timeline = [
+        StreamSegment(key="a", start_ts=100.0, duration_sec=50.0),  # 100-150
+        StreamSegment(key="b", start_ts=150.0, duration_sec=50.0),  # 150-200
+        StreamSegment(key="c", start_ts=200.0, duration_sec=50.0),  # 200-250
+        StreamSegment(key="d", start_ts=300.0, duration_sec=50.0),  # 300-350
+    ]
+
+    # Chunk covers 140-210 — should include a (ends at 150>140), b, c (starts at 200<210)
+    filtered = [s for s in full_timeline if s.start_ts < 210.0 and s.end_ts > 140.0]
+    assert [s.key for s in filtered] == ["a", "b", "c"]
+
+    # Chunk covers 250-300 — no segments overlap
+    filtered = [s for s in full_timeline if s.start_ts < 300.0 and s.end_ts > 250.0]
+    assert filtered == []
+
+    # Chunk covers 300-400 — only d
+    filtered = [s for s in full_timeline if s.start_ts < 400.0 and s.end_ts > 300.0]
+    assert [s.key for s in filtered] == ["d"]
+
+
+def test_build_archive_detection_provider_accepts_force_refresh():
+    """build_archive_detection_provider passes force_refresh to CachingHLSProvider."""
+    from unittest.mock import patch
+
+    from humpback.classifier.providers import build_archive_detection_provider
+    from humpback.classifier.providers.orcasound_hls import CachingHLSProvider
+
+    with patch("humpback.classifier.providers.orcasound_hls.CachingS3Client"):
+        provider = build_archive_detection_provider(
+            "rpi_orcasound_lab",
+            local_cache_path=None,
+            s3_cache_path="/tmp/fake-cache",
+            force_refresh=False,
+        )
+    assert isinstance(provider, CachingHLSProvider)
+    assert provider._force_refresh is False
