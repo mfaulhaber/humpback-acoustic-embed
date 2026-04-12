@@ -61,14 +61,18 @@ def _run_epoch(
     grad_context = torch.enable_grad() if is_train else torch.no_grad()
     with grad_context:
         for batch in loader:
-            inputs, targets = batch
-            inputs = inputs.to(device)
-            targets = targets.to(device)
+            # Support ``(inputs, targets)`` and longer tuples like
+            # ``(inputs, targets, mask)``; any element after the first is
+            # forwarded positionally to ``loss_fn``. This lets Pass 2's
+            # segmentation trainer supply a framewise mask without the
+            # harness having to know about it.
+            inputs = batch[0].to(device)
+            extras = [t.to(device) for t in batch[1:]]
 
             outputs = model(inputs)
             if loss_fn is None:
                 raise ValueError("loss_fn is required")
-            loss = loss_fn(outputs, targets)
+            loss = loss_fn(outputs, *extras)
 
             if optimizer is not None:
                 optimizer.zero_grad()

@@ -16,3 +16,6 @@
 - Make `hydrophone_id` optional for local-cache detection jobs in the backend API, service layer, and worker.
 - Remove vestigial `output_tsv_path` and `output_row_store_path` fields from the detection model, schema, and database via migration.
 - Add a hydrophone-source integration test for the Pass 1 region detection worker once an `ArchivePlaybackProvider` mock surface exists. Pass 1 shipped with only the file-source integration test; the chunk-aligned streaming loop is currently covered indirectly by the `score_audio_windows` chunking unit test.
+- Add a hydrophone-source integration test for the Pass 2 event segmentation worker. File-source inference is fully tested; the hydrophone path currently raises `NotImplementedError` in both the event segmentation worker and the segmentation training worker.
+- Run a manual end-to-end Pass 2 training run on real curated bootstrap data (vocalization-labeled detection rows) to validate the CRNN + hysteresis decoder on production audio before shipping the pipeline to users.
+- Build the UI branch for timeline-viewer event-bound editing + dataset/sample CRUD API. The `SegmentationTrainingDataset` / `SegmentationTrainingSample` schema is designed for both the bootstrap script and the future visual editor; no migration needed when the UI extension lands.

@@ -261,6 +261,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then segmentation training jobs (Pass 2 model training)
+        stjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_segmentation_training_job
+
+            stjob = await claim_segmentation_training_job(session)
+        if stjob:
+            logger.info(f"Segmentation training job {stjob.id}")
+            from humpback.workers.segmentation_training_worker import (
+                run_segmentation_training_job,
+            )
+
+            async with session_factory() as session:
+                await run_segmentation_training_job(session, stjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # Then call parsing Pass 1 — region detection jobs
         rdjob = None
         async with session_factory() as session:

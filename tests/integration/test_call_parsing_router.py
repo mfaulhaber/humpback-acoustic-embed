@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import struct
 import wave
@@ -9,17 +10,32 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 from httpx import AsyncClient
 from sklearn.pipeline import Pipeline
 
+from humpback.call_parsing.segmentation.model import SegmentationCRNN
 from humpback.call_parsing.storage import region_job_dir
 from humpback.classifier.trainer import train_binary_classifier
 from humpback.database import create_engine, create_session_factory
+from humpback.ml.checkpointing import save_checkpoint
 from humpback.models.audio import AudioFile
-from humpback.models.call_parsing import RegionDetectionJob
+from humpback.models.call_parsing import (
+    EventSegmentationJob,
+    RegionDetectionJob,
+    SegmentationModel,
+)
 from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
+from humpback.models.segmentation_training import (
+    SegmentationTrainingDataset,
+)
 from humpback.processing.inference import FakeTFLiteModel
+from humpback.schemas.call_parsing import (
+    SegmentationDecoderConfig,
+    SegmentationFeatureConfig,
+)
+from humpback.storage import ensure_dir
 
 BASE = "/call-parsing"
 
@@ -164,6 +180,149 @@ def _run_body(ids: dict[str, str], **overrides) -> dict:
     }
     body.update(overrides)
     return body
+
+
+# ---- Segmentation fixture helpers ----------------------------------------
+
+
+async def _seed_segmentation_training_dataset(
+    app_settings,
+) -> str:
+    """Insert a ``SegmentationTrainingDataset`` and return its id."""
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            ds = SegmentationTrainingDataset(
+                name="router-test-dataset",
+                description="for router tests",
+            )
+            session.add(ds)
+            await session.commit()
+            return ds.id
+    finally:
+        await engine.dispose()
+
+
+def _save_tiny_checkpoint(storage_root: Path) -> tuple[Path, dict]:
+    """Build and save a tiny CRNN checkpoint. Returns (checkpoint_path, config_dict)."""
+    model_config: dict = {
+        "model_type": "SegmentationCRNN",
+        "n_mels": 16,
+        "conv_channels": [4],
+        "gru_hidden": 4,
+        "gru_layers": 1,
+        "feature_config": SegmentationFeatureConfig(n_mels=16).model_dump(),
+    }
+    model = SegmentationCRNN(n_mels=16, conv_channels=[4], gru_hidden=4, gru_layers=1)
+    with torch.no_grad():
+        model.frame_head.bias.fill_(10.0)
+    checkpoint_dir = ensure_dir(storage_root / "segmentation_models" / "tiny-rt")
+    checkpoint_path = checkpoint_dir / "checkpoint.pt"
+    save_checkpoint(
+        path=checkpoint_path, model=model, optimizer=None, config=model_config
+    )
+    return checkpoint_path, model_config
+
+
+async def _seed_segmentation_model(
+    app_settings,
+) -> tuple[str, Path]:
+    """Insert a ``SegmentationModel`` row backed by a tiny checkpoint.
+
+    Returns ``(model_id, checkpoint_dir)``.
+    """
+    checkpoint_path, model_config = _save_tiny_checkpoint(app_settings.storage_root)
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            sm = SegmentationModel(
+                name="router-test-model",
+                model_family="pytorch_crnn",
+                model_path=str(checkpoint_path),
+                config_json=json.dumps(model_config),
+            )
+            session.add(sm)
+            await session.commit()
+            return sm.id, checkpoint_path.parent
+    finally:
+        await engine.dispose()
+
+
+async def _seed_complete_pass1_and_segmentation_model(
+    app_settings,
+) -> tuple[str, str, str]:
+    """Insert AudioFile + completed RegionDetectionJob + SegmentationModel.
+
+    Also writes a synthetic ``regions.parquet`` into the Pass 1 job dir
+    and a tiny checkpoint for the model. Returns
+    ``(upstream_job_id, seg_model_id, audio_file_id)``.
+    """
+    from humpback.call_parsing.storage import write_regions
+    from humpback.call_parsing.types import Region
+
+    storage_root = Path(app_settings.storage_root)
+    audio_dir = storage_root / "audio_src"
+    audio_path = audio_dir / "seg-fixture.wav"
+    _write_sine_wav(audio_path, duration_sec=4.0)
+
+    checkpoint_path, model_config = _save_tiny_checkpoint(storage_root)
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            audio_file = AudioFile(
+                filename="seg-fixture.wav",
+                folder_path="",
+                source_folder=str(audio_dir),
+                checksum_sha256="seg-fixture-sha",
+                duration_seconds=4.0,
+            )
+            session.add(audio_file)
+            await session.flush()
+
+            upstream = RegionDetectionJob(
+                audio_file_id=audio_file.id,
+                status="complete",
+                config_json="{}",
+            )
+            session.add(upstream)
+            await session.flush()
+
+            # Write regions.parquet
+            regions_dir = ensure_dir(region_job_dir(storage_root, upstream.id))
+            write_regions(
+                regions_dir / "regions.parquet",
+                [
+                    Region(
+                        region_id="r-0",
+                        start_sec=0.5,
+                        end_sec=2.0,
+                        padded_start_sec=0.0,
+                        padded_end_sec=2.5,
+                        max_score=0.9,
+                        mean_score=0.7,
+                        n_windows=3,
+                    ),
+                ],
+            )
+
+            sm = SegmentationModel(
+                name="router-test-model",
+                model_family="pytorch_crnn",
+                model_path=str(checkpoint_path),
+                config_json=json.dumps(model_config),
+            )
+            session.add(sm)
+            await session.commit()
+            return upstream.id, sm.id, audio_file.id
+    finally:
+        await engine.dispose()
+
+
+# ---- Parent runs ---------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -559,13 +718,249 @@ async def test_delete_region_job_removes_parquet_dir(
     assert missing.status_code == 404
 
 
+# ---- Pass 2 segmentation jobs (creation + events) -----------------------
+
+
 @pytest.mark.asyncio
-async def test_post_segmentation_jobs_returns_501_naming_pass2(
+async def test_post_segmentation_job_happy_path(
+    client: AsyncClient, app_settings
+) -> None:
+    upstream_id, model_id, _ = await _seed_complete_pass1_and_segmentation_model(
+        app_settings
+    )
+    resp = await client.post(
+        f"{BASE}/segmentation-jobs",
+        json={
+            "region_detection_job_id": upstream_id,
+            "segmentation_model_id": model_id,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["region_detection_job_id"] == upstream_id
+    assert data["segmentation_model_id"] == model_id
+
+
+@pytest.mark.asyncio
+async def test_post_segmentation_job_404_on_unknown_fk(
+    client: AsyncClient, app_settings
+) -> None:
+    upstream_id, model_id, _ = await _seed_complete_pass1_and_segmentation_model(
+        app_settings
+    )
+    resp_bad_upstream = await client.post(
+        f"{BASE}/segmentation-jobs",
+        json={
+            "region_detection_job_id": "no-such-id",
+            "segmentation_model_id": model_id,
+        },
+    )
+    assert resp_bad_upstream.status_code == 404
+    assert "region_detection_job_id" in resp_bad_upstream.json()["detail"]
+
+    resp_bad_model = await client.post(
+        f"{BASE}/segmentation-jobs",
+        json={
+            "region_detection_job_id": upstream_id,
+            "segmentation_model_id": "no-such-model",
+        },
+    )
+    assert resp_bad_model.status_code == 404
+    assert "segmentation_model_id" in resp_bad_model.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_post_segmentation_job_409_when_upstream_not_complete(
+    client: AsyncClient, app_settings
+) -> None:
+    _, model_id, _ = await _seed_complete_pass1_and_segmentation_model(app_settings)
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            queued_upstream = RegionDetectionJob(
+                audio_file_id="dummy", status="queued", config_json="{}"
+            )
+            session.add(queued_upstream)
+            await session.commit()
+            queued_id = queued_upstream.id
+    finally:
+        await engine.dispose()
+
+    resp = await client.post(
+        f"{BASE}/segmentation-jobs",
+        json={
+            "region_detection_job_id": queued_id,
+            "segmentation_model_id": model_id,
+        },
+    )
+    assert resp.status_code == 409
+    assert "not 'complete'" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_segmentation_events_409_while_not_complete(
+    client: AsyncClient, app_settings
+) -> None:
+    upstream_id, model_id, _ = await _seed_complete_pass1_and_segmentation_model(
+        app_settings
+    )
+    create = await client.post(
+        f"{BASE}/segmentation-jobs",
+        json={
+            "region_detection_job_id": upstream_id,
+            "segmentation_model_id": model_id,
+        },
+    )
+    job_id = create.json()["id"]
+    resp = await client.get(f"{BASE}/segmentation-jobs/{job_id}/events")
+    assert resp.status_code == 409
+    assert "not 'complete'" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_segmentation_events_happy_path_after_worker(
+    client: AsyncClient, app_settings
+) -> None:
+    upstream_id, model_id, _ = await _seed_complete_pass1_and_segmentation_model(
+        app_settings
+    )
+    create = await client.post(
+        f"{BASE}/segmentation-jobs",
+        json={
+            "region_detection_job_id": upstream_id,
+            "segmentation_model_id": model_id,
+        },
+    )
+    assert create.status_code == 201
+    job_id = create.json()["id"]
+
+    from humpback.workers.event_segmentation_worker import (
+        run_one_iteration as seg_run,
+    )
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            claimed = await seg_run(session, app_settings)
+    finally:
+        await engine.dispose()
+    assert claimed is not None
+    assert claimed.id == job_id
+
+    detail_resp = await client.get(f"{BASE}/segmentation-jobs/{job_id}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["status"] == "complete"
+
+    events_resp = await client.get(f"{BASE}/segmentation-jobs/{job_id}/events")
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert isinstance(events, list)
+    assert len(events) >= 1
+    for e in events:
+        assert set(e.keys()) == {
+            "event_id",
+            "region_id",
+            "start_sec",
+            "end_sec",
+            "center_sec",
+            "segmentation_confidence",
+        }
+        assert e["start_sec"] <= e["end_sec"]
+
+
+# ---- Pass 2 segmentation training jobs ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_post_segmentation_training_job_happy_path(
+    client: AsyncClient, app_settings
+) -> None:
+    ds_id = await _seed_segmentation_training_dataset(app_settings)
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={"training_dataset_id": ds_id},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["training_dataset_id"] == ds_id
+    assert data["config_json"] is not None
+
+
+@pytest.mark.asyncio
+async def test_post_segmentation_training_job_404_on_missing_dataset(
     client: AsyncClient,
 ) -> None:
-    resp = await client.post(f"{BASE}/segmentation-jobs", json={})
-    assert resp.status_code == 501
-    assert "Pass 2" in resp.json()["detail"]
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={"training_dataset_id": "does-not-exist"},
+    )
+    assert resp.status_code == 404
+    assert "training_dataset_id" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_post_segmentation_training_job_422_on_malformed(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={},
+    )
+    assert resp.status_code == 422
+
+
+# ---- Pass 2 segmentation models -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_segmentation_model_happy_path(
+    client: AsyncClient, app_settings
+) -> None:
+    model_id, checkpoint_dir = await _seed_segmentation_model(app_settings)
+    assert checkpoint_dir.exists()
+    assert (checkpoint_dir / "checkpoint.pt").exists()
+
+    resp = await client.delete(f"{BASE}/segmentation-models/{model_id}")
+    assert resp.status_code == 204
+
+    assert not checkpoint_dir.exists()
+
+    get_resp = await client.get(f"{BASE}/segmentation-models/{model_id}")
+    assert get_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_segmentation_model_409_when_referenced_by_in_flight_job(
+    client: AsyncClient, app_settings
+) -> None:
+    upstream_id, model_id, _ = await _seed_complete_pass1_and_segmentation_model(
+        app_settings
+    )
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            in_flight_job = EventSegmentationJob(
+                region_detection_job_id=upstream_id,
+                segmentation_model_id=model_id,
+                status="running",
+                config_json=SegmentationDecoderConfig().model_dump_json(),
+            )
+            session.add(in_flight_job)
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+    resp = await client.delete(f"{BASE}/segmentation-models/{model_id}")
+    assert resp.status_code == 409
+    assert "in-flight" in resp.json()["detail"]
+
+
+# ---- Pass 3 stubs (unchanged) -------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -587,13 +982,6 @@ async def test_sequence_endpoint_returns_501_naming_pass4(
     resp = await client.get(f"{BASE}/runs/{run_id}/sequence")
     assert resp.status_code == 501
     assert "Pass 4" in resp.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_segmentation_events_endpoint_is_501(client: AsyncClient) -> None:
-    resp = await client.get(f"{BASE}/segmentation-jobs/anything/events")
-    assert resp.status_code == 501
-    assert "Pass 2" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
