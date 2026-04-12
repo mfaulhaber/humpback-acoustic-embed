@@ -960,16 +960,201 @@ async def test_delete_segmentation_model_409_when_referenced_by_in_flight_job(
     assert "in-flight" in resp.json()["detail"]
 
 
-# ---- Pass 3 stubs (unchanged) -------------------------------------------
+# ---- Pass 3 — event classification endpoints ----------------------------
 
 
 @pytest.mark.asyncio
-async def test_post_classification_jobs_returns_501_naming_pass3(
+async def test_post_classification_jobs_missing_fields_returns_422(
     client: AsyncClient,
 ) -> None:
     resp = await client.post(f"{BASE}/classification-jobs", json={})
-    assert resp.status_code == 501
-    assert "Pass 3" in resp.json()["detail"]
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_classification_jobs_missing_model_returns_404(
+    client: AsyncClient, app_settings
+) -> None:
+    resp = await client.post(
+        f"{BASE}/classification-jobs",
+        json={
+            "event_segmentation_job_id": "nonexistent",
+            "vocalization_model_id": "nonexistent",
+        },
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_post_classification_jobs_wrong_model_family_returns_422(
+    client: AsyncClient, app_settings
+) -> None:
+    """Model with sklearn family is rejected with 422."""
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="a1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        vm = VocalizationClassifierModel(
+            name="sklearn-model",
+            model_dir_path="/tmp/fake",
+            vocabulary_snapshot="[]",
+            per_class_thresholds="{}",
+            model_family="sklearn_perch_embedding",
+            input_mode="detection_row",
+        )
+        session.add(vm)
+        await session.commit()
+        es_id, vm_id = es.id, vm.id
+    await engine.dispose()
+
+    resp = await client.post(
+        f"{BASE}/classification-jobs",
+        json={
+            "event_segmentation_job_id": es_id,
+            "vocalization_model_id": vm_id,
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_classification_jobs_upstream_not_complete_returns_409(
+    client: AsyncClient, app_settings
+) -> None:
+    """Non-complete upstream segmentation job is rejected with 409."""
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="a1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="running")
+        session.add(es)
+        await session.flush()
+        vm = VocalizationClassifierModel(
+            name="cnn-model",
+            model_dir_path="/tmp/fake",
+            vocabulary_snapshot="[]",
+            per_class_thresholds="{}",
+            model_family="pytorch_event_cnn",
+            input_mode="segmented_event",
+        )
+        session.add(vm)
+        await session.commit()
+        es_id, vm_id = es.id, vm.id
+    await engine.dispose()
+
+    resp = await client.post(
+        f"{BASE}/classification-jobs",
+        json={
+            "event_segmentation_job_id": es_id,
+            "vocalization_model_id": vm_id,
+        },
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_post_classification_jobs_valid_returns_200(
+    client: AsyncClient, app_settings
+) -> None:
+    """Valid inputs create a queued classification job."""
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="a1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        vm = VocalizationClassifierModel(
+            name="cnn-model",
+            model_dir_path="/tmp/fake",
+            vocabulary_snapshot="[]",
+            per_class_thresholds="{}",
+            model_family="pytorch_event_cnn",
+            input_mode="segmented_event",
+        )
+        session.add(vm)
+        await session.commit()
+        es_id, vm_id = es.id, vm.id
+    await engine.dispose()
+
+    resp = await client.post(
+        f"{BASE}/classification-jobs",
+        json={
+            "event_segmentation_job_id": es_id,
+            "vocalization_model_id": vm_id,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["event_segmentation_job_id"] == es_id
+    assert data["vocalization_model_id"] == vm_id
+
+
+@pytest.mark.asyncio
+async def test_get_typed_events_on_complete_job_returns_sorted(
+    client: AsyncClient, app_settings
+) -> None:
+    """GET typed-events on a complete job returns rows sorted by start_sec."""
+    from humpback.call_parsing.storage import classification_job_dir, write_typed_events
+    from humpback.call_parsing.types import TypedEvent
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="a1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        from humpback.models.call_parsing import EventClassificationJob
+
+        ec = EventClassificationJob(
+            event_segmentation_job_id=es.id,
+            vocalization_model_id="vm-fake",
+            status="complete",
+            typed_event_count=3,
+        )
+        session.add(ec)
+        await session.commit()
+        ec_id = ec.id
+    await engine.dispose()
+
+    # Write typed_events.parquet (out of order to test sorting)
+    job_dir = classification_job_dir(app_settings.storage_root, ec_id)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        job_dir / "typed_events.parquet",
+        [
+            TypedEvent("e2", 5.0, 7.0, "moan", 0.8, True),
+            TypedEvent("e1", 1.0, 3.0, "upcall", 0.9, True),
+            TypedEvent("e1", 1.0, 3.0, "moan", 0.3, False),
+        ],
+    )
+
+    resp = await client.get(f"{BASE}/classification-jobs/{ec_id}/typed-events")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 3
+    assert rows[0]["start_sec"] <= rows[1]["start_sec"] <= rows[2]["start_sec"]
+    assert all(0.0 <= r["score"] <= 1.0 for r in rows)
+    assert all("type_name" in r for r in rows)
 
 
 @pytest.mark.asyncio
@@ -985,12 +1170,41 @@ async def test_sequence_endpoint_returns_501_naming_pass4(
 
 
 @pytest.mark.asyncio
-async def test_classification_typed_events_endpoint_is_501(
+async def test_classification_typed_events_not_complete_returns_409(
+    client: AsyncClient, app_settings
+) -> None:
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.call_parsing import (
+        EventClassificationJob,
+        EventSegmentationJob,
+        RegionDetectionJob,
+    )
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="a1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        ec = EventClassificationJob(event_segmentation_job_id=es.id, status="running")
+        session.add(ec)
+        await session.commit()
+        ec_id = ec.id
+    await engine.dispose()
+
+    resp = await client.get(f"{BASE}/classification-jobs/{ec_id}/typed-events")
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_classification_typed_events_nonexistent_returns_404(
     client: AsyncClient,
 ) -> None:
-    resp = await client.get(f"{BASE}/classification-jobs/anything/typed-events")
-    assert resp.status_code == 501
-    assert "Pass 3" in resp.json()["detail"]
+    resp = await client.get(f"{BASE}/classification-jobs/nonexistent/typed-events")
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

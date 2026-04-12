@@ -298,6 +298,54 @@ async def delete_event_segmentation_job(
     return True
 
 
+async def create_event_classification_job(session: AsyncSession, request):
+    """Create a queued Pass 3 event classification job.
+
+    Validates that ``event_segmentation_job_id`` resolves and is
+    ``complete``, and that ``vocalization_model_id`` resolves and has
+    ``model_family='pytorch_event_cnn'`` + ``input_mode='segmented_event'``.
+    """
+    from humpback.models.vocalization import (
+        VocalizationClassifierModel as _VocModel,
+    )
+    from humpback.schemas.call_parsing import CreateEventClassificationJobRequest
+
+    assert isinstance(request, CreateEventClassificationJobRequest)
+
+    es = await session.get(EventSegmentationJob, request.event_segmentation_job_id)
+    if es is None:
+        raise CallParsingFKError(
+            "event_segmentation_job_id", request.event_segmentation_job_id
+        )
+    if es.status != "complete":
+        raise CallParsingStateError(
+            f"Upstream event segmentation job status is {es.status!r}, not 'complete'"
+        )
+
+    vm = await session.get(_VocModel, request.vocalization_model_id)
+    if vm is None:
+        raise CallParsingFKError("vocalization_model_id", request.vocalization_model_id)
+    if vm.model_family != "pytorch_event_cnn" or vm.input_mode != "segmented_event":
+        raise CallParsingValidationError(
+            f"Vocalization model {request.vocalization_model_id} has "
+            f"model_family={vm.model_family!r}, input_mode={vm.input_mode!r}; "
+            f"expected pytorch_event_cnn / segmented_event"
+        )
+
+    import json
+
+    job = EventClassificationJob(
+        status="queued",
+        parent_run_id=request.parent_run_id,
+        event_segmentation_job_id=request.event_segmentation_job_id,
+        vocalization_model_id=request.vocalization_model_id,
+        config_json=json.dumps(request.config) if request.config else None,
+    )
+    session.add(job)
+    await session.flush()
+    return job
+
+
 async def list_event_classification_jobs(
     session: AsyncSession,
 ) -> list[EventClassificationJob]:
@@ -368,6 +416,17 @@ class CallParsingStateError(Exception):
 
     The router maps this to HTTP 409. ``detail`` is surfaced verbatim in
     the response body.
+    """
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+class CallParsingValidationError(Exception):
+    """Raised when a request field has a valid FK but wrong semantics.
+
+    The router maps this to HTTP 422.
     """
 
     def __init__(self, detail: str) -> None:

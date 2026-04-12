@@ -113,7 +113,15 @@ async def test_event_segmentation_worker_fails_without_config(
         assert "config_json" in refreshed.error_message
 
 
-async def test_event_classification_worker_marks_job_failed(session_factory, tmp_path):
+async def test_event_classification_worker_fails_without_model(
+    session_factory, tmp_path
+):
+    """Pass 3 worker marks a job ``failed`` when required fields are missing.
+
+    Pre-Pass-3 this suite asserted the NotImplementedError stub message.
+    Now the Pass 3 worker does real work, so the minimal-fixture path
+    exercises the worker's validation + error-path code instead.
+    """
     async with session_factory() as session:
         region = RegionDetectionJob(audio_file_id="audio-1", status="complete")
         session.add(region)
@@ -135,7 +143,7 @@ async def test_event_classification_worker_marks_job_failed(session_factory, tmp
         refreshed = await session.get(EventClassificationJob, job_id)
         assert refreshed is not None
         assert refreshed.status == "failed"
-        assert "Pass 3" in (refreshed.error_message or "")
+        assert "vocalization_model_id" in (refreshed.error_message or "")
 
 
 async def test_claim_is_exclusive_for_region_detection(session_factory):

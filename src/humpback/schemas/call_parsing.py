@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -251,6 +251,15 @@ class CreateSegmentationJobRequest(BaseModel):
     segmentation_model_id: str
     parent_run_id: Optional[str] = None
     config: SegmentationDecoderConfig = Field(default_factory=SegmentationDecoderConfig)
+
+
+class CreateEventClassificationJobRequest(BaseModel):
+    """Request body for ``POST /call-parsing/classification-jobs``."""
+
+    event_segmentation_job_id: str
+    vocalization_model_id: str
+    parent_run_id: Optional[str] = None
+    config: Optional[dict[str, Any]] = None
 
 
 class SegmentationTrainingJobResponse(BaseModel):

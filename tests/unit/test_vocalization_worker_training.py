@@ -399,3 +399,133 @@ async def test_empty_dataset_fails_gracefully(session_factory, tmp_path):
         updated_job = job_result.scalar_one()
         assert updated_job.status == "failed"
         assert "No embeddings" in (updated_job.error_message or "")
+
+
+# ---- pytorch_event_cnn dispatch tests ------------------------------------
+
+
+def _make_audio_wav(path: Path, duration_sec: float = 5.0) -> None:
+    """Write a silent WAV file for testing."""
+    import struct
+    import wave
+
+    sr = 16000
+    n = int(duration_sec * sr)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(struct.pack(f"<{n}h", *([0] * n)))
+
+
+@pytest.mark.asyncio
+async def test_pytorch_event_cnn_dispatch_trains_and_creates_model(
+    session_factory, tmp_path
+):
+    """model_family='pytorch_event_cnn' dispatches to event classifier trainer."""
+    settings = _make_settings(tmp_path)
+    audio_dir = tmp_path / "audio_src"
+    audio_dir.mkdir()
+    _make_audio_wav(audio_dir / "test.wav")
+
+    async with session_factory() as session:
+        af = AudioFile(
+            id="af-dispatch",
+            filename="test.wav",
+            source_folder=str(audio_dir),
+            checksum_sha256="dispatch-sha",
+            duration_seconds=5.0,
+        )
+        session.add(af)
+        await session.flush()
+
+        samples = [
+            {
+                "start_sec": 0.0,
+                "end_sec": 1.5,
+                "type_name": "upcall",
+                "audio_file_id": "af-dispatch",
+            },
+            {
+                "start_sec": 1.0,
+                "end_sec": 2.5,
+                "type_name": "upcall",
+                "audio_file_id": "af-dispatch",
+            },
+            {
+                "start_sec": 0.5,
+                "end_sec": 2.0,
+                "type_name": "moan",
+                "audio_file_id": "af-dispatch",
+            },
+            {
+                "start_sec": 1.5,
+                "end_sec": 3.0,
+                "type_name": "moan",
+                "audio_file_id": "af-dispatch",
+            },
+        ]
+        job = VocalizationTrainingJob(
+            source_config="{}",
+            parameters=json.dumps(
+                {
+                    "samples": samples,
+                    "training_config": {
+                        "epochs": 1,
+                        "batch_size": 4,
+                        "min_examples_per_type": 1,
+                    },
+                }
+            ),
+            model_family="pytorch_event_cnn",
+            input_mode="segmented_event",
+        )
+        session.add(job)
+        await session.flush()
+
+        await run_vocalization_training_job(session, job, settings)
+
+        job_result = await session.execute(
+            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job.id)
+        )
+        updated_job = job_result.scalar_one()
+        assert updated_job.status == "complete"
+        assert updated_job.vocalization_model_id is not None
+
+        model_result = await session.execute(
+            select(VocalizationClassifierModel).where(
+                VocalizationClassifierModel.id == updated_job.vocalization_model_id
+            )
+        )
+        model = model_result.scalar_one()
+        assert model.model_family == "pytorch_event_cnn"
+        assert model.input_mode == "segmented_event"
+        vocab = json.loads(model.vocabulary_snapshot)
+        assert "upcall" in vocab
+        assert "moan" in vocab
+
+
+@pytest.mark.asyncio
+async def test_pytorch_event_cnn_empty_samples_fails(session_factory, tmp_path):
+    """pytorch_event_cnn with empty samples sets status to failed."""
+    settings = _make_settings(tmp_path)
+
+    async with session_factory() as session:
+        job = VocalizationTrainingJob(
+            source_config="{}",
+            parameters=json.dumps({"samples": []}),
+            model_family="pytorch_event_cnn",
+            input_mode="segmented_event",
+        )
+        session.add(job)
+        await session.flush()
+
+        await run_vocalization_training_job(session, job, settings)
+
+        job_result = await session.execute(
+            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job.id)
+        )
+        updated_job = job_result.scalar_one()
+        assert updated_job.status == "failed"
+        assert updated_job.error_message is not None
