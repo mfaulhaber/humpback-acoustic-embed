@@ -260,11 +260,19 @@ async def _load_hydrophone_trace(
         write_manifest(job_dir, manifest)
         verified = 0
 
-    # Set chunks_total in DB
+    # Restore windows_detected from completed chunks in manifest
+    restored_windows = sum(
+        c.get("windows_above_threshold", 0) or 0
+        for c in manifest["chunks"]
+        if c["status"] == "complete"
+    )
+
+    # Set progress columns in DB
     refreshed = await session.get(RegionDetectionJob, job_id)
     if refreshed is not None:
         refreshed.chunks_total = total_chunks
         refreshed.chunks_completed = verified
+        refreshed.windows_detected = restored_windows
         await session.commit()
 
     logger.info(
@@ -323,6 +331,7 @@ async def _load_hydrophone_trace(
 
         write_chunk_trace(job_dir, i, chunk_scores)
 
+        above = sum(1 for ws in chunk_scores if ws.score >= config.high_threshold)
         now_utc = datetime.now(timezone.utc).isoformat()
         update_manifest_chunk(
             job_dir,
@@ -331,6 +340,7 @@ async def _load_hydrophone_trace(
                 "status": "complete",
                 "completed_at": now_utc,
                 "trace_rows": len(chunk_scores),
+                "windows_above_threshold": above,
                 "elapsed_sec": round(elapsed, 1),
             },
         )
@@ -338,15 +348,17 @@ async def _load_hydrophone_trace(
         refreshed = await session.get(RegionDetectionJob, job_id)
         if refreshed is not None:
             refreshed.chunks_completed = (refreshed.chunks_completed or 0) + 1
+            refreshed.windows_detected = (refreshed.windows_detected or 0) + above
             refreshed.updated_at = datetime.now(timezone.utc)
             await session.commit()
 
         logger.info(
-            "region_detection | job=%s | chunk %d/%d | scored %d windows | %.1fs (%.1fs/min audio)",
+            "region_detection | job=%s | chunk %d/%d | scored %d windows (%d above threshold) | %.1fs (%.1fs/min audio)",
             job_id,
             i + 1,
             total_chunks,
             len(chunk_scores),
+            above,
             elapsed,
             rate,
         )

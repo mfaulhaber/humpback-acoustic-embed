@@ -1,8 +1,8 @@
 """Add progress tracking columns to region_detection_jobs.
 
-Adds ``chunks_total`` and ``chunks_completed`` nullable integer columns
-for cheap API polling of hydrophone streaming progress. File-based jobs
-leave both columns NULL.
+Adds ``chunks_total``, ``chunks_completed``, and ``windows_detected``
+nullable integer columns for cheap API polling of hydrophone streaming
+progress. File-based jobs leave all columns NULL.
 
 Revision ID: 045
 Revises: 044
@@ -22,9 +22,11 @@ def upgrade() -> None:
     with op.batch_alter_table("region_detection_jobs") as batch_op:
         batch_op.add_column(sa.Column("chunks_total", sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column("chunks_completed", sa.Integer(), nullable=True))
+        batch_op.add_column(sa.Column("windows_detected", sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:
     with op.batch_alter_table("region_detection_jobs") as batch_op:
+        batch_op.drop_column("windows_detected")
         batch_op.drop_column("chunks_completed")
         batch_op.drop_column("chunks_total")

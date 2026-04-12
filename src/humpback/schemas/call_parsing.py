@@ -124,6 +124,7 @@ class RegionDetectionJobSummary(_JobSummary):
     config_json: Optional[str] = None
     chunks_total: Optional[int] = None
     chunks_completed: Optional[int] = None
+    windows_detected: Optional[int] = None
     trace_row_count: Optional[int] = None
     region_count: Optional[int] = None
 
