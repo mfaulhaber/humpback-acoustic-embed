@@ -1229,6 +1229,9 @@ export interface RegionDetectionJob {
   config_json: string | null;
   parent_run_id: string | null;
   error_message: string | null;
+  chunks_total: number | null;
+  chunks_completed: number | null;
+  windows_detected: number | null;
   trace_row_count: number | null;
   region_count: number | null;
   created_at: string;

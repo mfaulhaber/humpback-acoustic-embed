@@ -13,6 +13,7 @@ rename so partial artifacts never appear to readers.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterable, Sequence
 from dataclasses import fields
@@ -150,3 +151,62 @@ def write_typed_events(path: Path, typed_events: Iterable[TypedEvent]) -> None:
 def read_typed_events(path: Path) -> list[TypedEvent]:
     table = pq.read_table(path)
     return _rows_from_table(table, TYPED_EVENT_SCHEMA, TypedEvent)
+
+
+# ---- Chunk manifest (Pass 1 hydrophone progress) -------------------------
+
+
+def _atomic_write_json(data: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(json.dumps(data, indent=2))
+        os.replace(tmp_path, path)
+    except BaseException:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+def write_manifest(job_dir: Path, manifest: dict[str, Any]) -> None:
+    _atomic_write_json(manifest, job_dir / "manifest.json")
+
+
+def read_manifest(job_dir: Path) -> dict[str, Any] | None:
+    path = job_dir / "manifest.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())  # type: ignore[no-any-return]
+
+
+def update_manifest_chunk(
+    job_dir: Path, chunk_index: int, update: dict[str, Any]
+) -> None:
+    manifest = read_manifest(job_dir)
+    if manifest is None:
+        raise FileNotFoundError(f"No manifest.json in {job_dir}")
+    manifest["chunks"][chunk_index].update(update)
+    write_manifest(job_dir, manifest)
+
+
+# ---- Chunk parquet I/O (Pass 1 hydrophone progress) ----------------------
+
+
+def chunk_parquet_path(job_dir: Path, chunk_index: int) -> Path:
+    return job_dir / "chunks" / f"{chunk_index:04d}.parquet"
+
+
+def write_chunk_trace(
+    job_dir: Path, chunk_index: int, scores: Sequence[WindowScore]
+) -> None:
+    table = _table_from_rows(list(scores), TRACE_SCHEMA, WindowScore)
+    _atomic_write_parquet(table, chunk_parquet_path(job_dir, chunk_index))
+
+
+def read_all_chunk_traces(job_dir: Path, total_chunks: int) -> list[WindowScore]:
+    all_scores: list[WindowScore] = []
+    for i in range(total_chunks):
+        path = chunk_parquet_path(job_dir, i)
+        table = pq.read_table(path)
+        all_scores.extend(_rows_from_table(table, TRACE_SCHEMA, WindowScore))
+    return all_scores

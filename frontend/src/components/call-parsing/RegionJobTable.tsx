@@ -271,6 +271,8 @@ export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps)
             {mode === "previous" && sortableHeader("Regions", "regions")}
             {mode === "previous" && <th className="px-3 py-2 text-left font-medium">Timeline</th>}
             {mode === "previous" && <th className="px-3 py-2 text-left font-medium">Error</th>}
+            {mode === "active" && <th className="px-3 py-2 text-left font-medium">Progress</th>}
+            {mode === "active" && <th className="px-3 py-2 text-left font-medium">Detected</th>}
             {mode === "active" && <th className="px-3 py-2 text-left font-medium">Actions</th>}
           </tr>
         </thead>
@@ -334,6 +336,32 @@ export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps)
                 </td>
               )}
               {mode === "active" && (
+                <td className="px-3 py-2 text-xs">
+                  {job.chunks_total != null && job.chunks_total > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden w-20">
+                        <div
+                          className="h-full bg-blue-500 rounded transition-all"
+                          style={{
+                            width: `${Math.round(((job.chunks_completed ?? 0) / job.chunks_total) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-muted-foreground whitespace-nowrap">
+                        {job.chunks_completed ?? 0}/{job.chunks_total}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">pending</span>
+                  )}
+                </td>
+              )}
+              {mode === "active" && (
+                <td className="px-3 py-2 text-xs text-muted-foreground">
+                  {job.windows_detected != null ? job.windows_detected : "—"}
+                </td>
+              )}
+              {mode === "active" && (
                 <td className="px-3 py-2">
                   <Button
                     variant="ghost"
@@ -351,7 +379,7 @@ export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps)
           {paginatedJobs.length === 0 && (
             <tr>
               <td
-                colSpan={mode === "active" ? 6 : 9}
+                colSpan={mode === "active" ? 8 : 9}
                 className="px-3 py-4 text-center text-muted-foreground text-xs"
               >
                 No jobs found.
