@@ -1195,3 +1195,44 @@ export interface SearchHistoryEntry {
   objective: number;
   timestamp: string;
 }
+
+// ---- Call Parsing (Region Detection) ----
+
+export interface RegionDetectionConfig {
+  window_size_seconds: number;
+  hop_seconds: number;
+  high_threshold: number;
+  low_threshold: number;
+  padding_sec: number;
+  min_region_duration_sec: number;
+  stream_chunk_sec: number;
+}
+
+export interface CreateRegionJobRequest {
+  hydrophone_id: string;
+  start_timestamp: number;
+  end_timestamp: number;
+  model_config_id: string;
+  classifier_model_id: string;
+  config?: Partial<RegionDetectionConfig>;
+}
+
+export interface RegionDetectionJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  audio_file_id: string | null;
+  hydrophone_id: string | null;
+  start_timestamp: number | null;
+  end_timestamp: number | null;
+  model_config_id: string | null;
+  classifier_model_id: string | null;
+  config_json: string | null;
+  parent_run_id: string | null;
+  error_message: string | null;
+  trace_row_count: number | null;
+  region_count: number | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}

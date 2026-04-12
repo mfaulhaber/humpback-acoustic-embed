@@ -89,6 +89,8 @@ import type {
   TrainingDatasetRowsResponse,
   TrainingDatasetLabel,
   TrainingDatasetExtendRequest,
+  RegionDetectionJob,
+  CreateRegionJobRequest,
 } from "./types";
 
 class ApiError extends Error {
@@ -848,3 +850,16 @@ export const importCandidateFromSearch = (searchId: string) =>
 
 export const deleteCandidate = (id: string) =>
   api<{ status: string }>(`${HP}/candidates/${id}`, { method: "DELETE" });
+
+// ---- Call Parsing (Region Detection) ----
+
+export const fetchRegionDetectionJobs = () =>
+  api<RegionDetectionJob[]>("/call-parsing/region-jobs");
+
+export const createRegionDetectionJob = (body: CreateRegionJobRequest) =>
+  post<RegionDetectionJob>("/call-parsing/region-jobs", body);
+
+export const deleteRegionDetectionJob = (jobId: string) =>
+  api<{ status: string }>(`/call-parsing/region-jobs/${jobId}`, {
+    method: "DELETE",
+  });
