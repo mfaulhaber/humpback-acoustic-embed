@@ -265,6 +265,10 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Call parsing Pass 2 framewise α supervision**: the segmentation CRNN's training target is binary framewise presence inside/outside event bounds, with masked `BCEWithLogitsLoss` and auto-computed `pos_weight`. Bootstrap row bounds are too loose for onset/offset point targets; α is the simplest target that gives the hysteresis decoder a clean frame probability vector.
 - **Call parsing Pass 2 per-audio-file train/val split**: `split_by_audio_source` groups training samples by `audio_file_id` (or `hydrophone_id`) and ensures no audio source appears in both train and val. This rule is mandatory even on small bootstrap datasets — per-sample random splits leak background noise signature in bioacoustic ML.
 - **Call parsing Pass 2 inherits source from upstream**: the event segmentation worker resolves the audio source from the upstream Pass 1 `RegionDetectionJob`'s `audio_file_id` or `hydrophone_id` columns, never from the Pass 2 `EventSegmentationJob` row itself. Pass 2 rows carry no source identity columns.
+- **Call parsing Pass 3 model family validation**: `POST /classification-jobs` validates that the `vocalization_model_id` has `model_family='pytorch_event_cnn'` and `input_mode='segmented_event'` (422 if wrong). Existing `sklearn_perch_embedding` models are not usable through the call parsing classification job flow — they remain exclusive to detection-job rescoring and embedding-set inference.
+- **Call parsing Pass 3 frequency-only pooling**: the `EventClassifierCNN` uses `MaxPool2d((2,1))` after each convolutional block, pooling only in the frequency axis and preserving the time dimension. This ensures short events (~6 time frames at 0.2s) survive all 4 conv blocks without collapsing. `AdaptiveAvgPool2d((1,1))` handles the final collapse to a fixed-size vector regardless of input time length.
+- **Call parsing Pass 3 bootstrap single-label filter**: the event classifier bootstrap script (`scripts/bootstrap_event_classifier_dataset.py`) only uses detection windows with exactly one distinct vocalization type label (excluding `(Negative)`). Multi-label windows are ambiguous at the event level — a 5-second detection window may contain multiple events of different types, so assigning all types to all contained events would be incorrect. `(Negative)` windows produce no positive training samples.
+- **Call parsing Pass 3 inherits source transitively**: the event classification worker resolves the audio source from the Pass 1 `RegionDetectionJob` through Pass 2's `region_detection_job_id` column. Pass 3 rows carry no source identity columns, matching the Pass 2 pattern.
 
 ### 8.8 Classifier API Surface
 
@@ -302,7 +306,7 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 
 ### 8.9 Call Parsing Pipeline API Surface
 
-Four-pass pipeline under `/call-parsing/*`. Passes 1 and 2 are fully functional; Passes 3–4 still return HTTP 501 for the endpoints that require their yet-to-be-implemented pass logic. Per-pass job status transitions follow the standard `queued → running → complete|failed|canceled` pattern.
+Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; Pass 4 still returns HTTP 501 for the sequence export endpoint. Per-pass job status transitions follow the standard `queued → running → complete|failed|canceled` pattern.
 
 - **Parent runs** (functional):
   - `POST /call-parsing/runs` — create a parent run and its queued Pass 1 job in one transaction; accepts the same source + model + config shape as `POST /region-jobs`
@@ -328,10 +332,14 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1 and 2 are fully functional;
   - `GET /call-parsing/segmentation-models` — list models with condensed metrics
   - `GET /call-parsing/segmentation-models/{id}` — full detail
   - `DELETE /call-parsing/segmentation-models/{id}` — removes row + checkpoint directory on disk; 409 if referenced by an in-flight segmentation job
-- **Pass 3 — event classification**:
-  - `POST /call-parsing/classification-jobs` — **501** (Pass 3 creation)
-  - `GET /call-parsing/classification-jobs`, `GET /call-parsing/classification-jobs/{id}`, `DELETE /call-parsing/classification-jobs/{id}` — functional (DB-only)
-  - `GET /call-parsing/classification-jobs/{id}/typed-events` — **501** (Pass 3 artifacts)
+- **Pass 3 — event classification** (functional):
+  - `POST /call-parsing/classification-jobs` — create a queued Pass 3 job; validates `vocalization_model_id` exists (404) and has `model_family='pytorch_event_cnn'` + `input_mode='segmented_event'` (422); validates `event_segmentation_job_id` exists (404) and is `complete` (409)
+  - `GET /call-parsing/classification-jobs`, `GET /call-parsing/classification-jobs/{id}`, `DELETE /call-parsing/classification-jobs/{id}` — list / detail / delete
+  - `GET /call-parsing/classification-jobs/{id}/typed-events` — return `typed_events.parquet` as JSON sorted by `start_sec`; 409 while job is not `complete`, 404 if parquet file is missing
+- **Pass 3 — event classifier training** (via vocalization training worker):
+  - `VocalizationTrainingJob` with `model_family='pytorch_event_cnn'` dispatches to the event classifier trainer, producing a `VocalizationClassifierModel` row with `model_family='pytorch_event_cnn'` and `input_mode='segmented_event'`
+  - Training samples are provided in the job's `parameters` JSON under a `"samples"` key; each entry has `start_sec`, `end_sec`, `type_name`, and `audio_file_id`
+  - Bootstrap script at `scripts/bootstrap_event_classifier_dataset.py` generates training samples from vocalization-labeled detection windows
 
 ---
 
@@ -355,7 +363,7 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1 and 2 are fully functional;
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), vocalization label editing via popover (add/remove type labels on detection windows with batch save), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans), static export for readonly S3-hosted viewer, PCEN spectrogram normalization and RMS-targeted audio playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier (Training, Hydrophone, Embeddings, Tuning), Vocalization, Search, Label Processing, Admin
-- Four-pass call parsing pipeline — Phase 0 scaffold + Pass 1 region detection + Pass 2 event segmentation: streaming Perch inference on uploaded files or hydrophone ranges, hysteresis + padded-overlap merge, `trace.parquet` + `regions.parquet` outputs; PyTorch CRNN framewise segmentation training + inference with hysteresis decoder producing `events.parquet`; bootstrap script for building training datasets from vocalization-labeled detection rows. Passes 3–4 still deferred.
+- Four-pass call parsing pipeline — Phase 0 scaffold + Pass 1 region detection + Pass 2 event segmentation + Pass 3 event classification: streaming Perch inference on uploaded files or hydrophone ranges, hysteresis + padded-overlap merge, `trace.parquet` + `regions.parquet` outputs; PyTorch CRNN framewise segmentation training + inference with hysteresis decoder producing `events.parquet`; bootstrap script for building training datasets from vocalization-labeled detection rows; PyTorch CNN event classifier training on variable-length event crops with per-type threshold optimization, `typed_events.parquet` output; bootstrap script for event classifier training data from single-label vocalization-labeled detection windows via Pass 2 segmentation. Pass 4 still deferred.
 
 ### 9.2 Database Schema
 

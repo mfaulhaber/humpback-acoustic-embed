@@ -4,7 +4,8 @@ Parent-run CRUD + pass-job list/get/delete are functional for every
 pass. Pass 1 exposes creation, trace, and regions endpoints backed by
 the region detection worker. Pass 2 exposes segmentation-job creation,
 events retrieval, and full CRUD for segmentation training jobs and
-models. Pass 3 still returns 501 for creation and typed-events.
+models. Pass 3 exposes classification-job creation, typed-events
+retrieval, and model-family validation.
 """
 
 from __future__ import annotations
@@ -15,15 +16,18 @@ from fastapi.responses import JSONResponse
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.call_parsing.storage import (
+    classification_job_dir,
     read_events,
     read_regions,
     read_trace,
+    read_typed_events,
     region_job_dir,
     segmentation_job_dir,
 )
 from humpback.schemas.call_parsing import (
     CallParsingRunCreate,
     CallParsingRunResponse,
+    CreateEventClassificationJobRequest,
     CreateRegionJobRequest,
     CreateSegmentationJobRequest,
     CreateSegmentationTrainingJobRequest,
@@ -368,14 +372,25 @@ async def delete_segmentation_model(
 # ---- Pass 3: classification jobs ----------------------------------------
 
 
-@router.post("/classification-jobs")
-async def create_classification_job():
-    return JSONResponse(
-        status_code=501,
-        content={
-            "detail": "Pass 3 (event classification) creation not yet implemented",
-        },
-    )
+@router.post(
+    "/classification-jobs",
+    status_code=201,
+    response_model=EventClassificationJobSummary,
+)
+async def create_classification_job(
+    body: CreateEventClassificationJobRequest, session: SessionDep
+):
+    try:
+        job = await service.create_event_classification_job(session, body)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    except service.CallParsingValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+    await session.commit()
+    await session.refresh(job)
+    return EventClassificationJobSummary.model_validate(job)
 
 
 @router.get("/classification-jobs", response_model=list[EventClassificationJobSummary])
@@ -409,12 +424,36 @@ async def delete_classification_job(
 
 
 @router.get("/classification-jobs/{job_id}/typed-events")
-async def get_classification_typed_events(job_id: str):
-    return JSONResponse(
-        status_code=501,
-        content={
-            "detail": (
-                "Pass 3 (event classification) typed-event access not yet implemented"
-            )
-        },
+async def get_classification_typed_events(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    job = await service.get_event_classification_job(session, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail="Event classification job not found"
+        )
+    if job.status != "complete":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Event classification job status is {job.status!r}, not 'complete'",
+        )
+    typed_path = (
+        classification_job_dir(settings.storage_root, job_id) / "typed_events.parquet"
+    )
+    if not typed_path.exists():
+        raise HTTPException(status_code=404, detail="typed_events.parquet not found")
+    typed_events = read_typed_events(typed_path)
+    return sorted(
+        [
+            {
+                "event_id": te.event_id,
+                "start_sec": te.start_sec,
+                "end_sec": te.end_sec,
+                "type_name": te.type_name,
+                "score": te.score,
+                "above_threshold": te.above_threshold,
+            }
+            for te in typed_events
+        ],
+        key=lambda r: (r["start_sec"], r["type_name"]),
     )
