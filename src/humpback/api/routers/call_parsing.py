@@ -1,25 +1,37 @@
 """API router for the call parsing pipeline.
 
 Parent-run CRUD + pass-job list/get/delete are functional for every
-pass. Pass 1 also exposes creation, trace, and regions endpoints backed
-by the region detection worker. Passes 2–4 still return 501 for the
-endpoints whose bodies require their yet-to-be-implemented pass logic.
+pass. Pass 1 exposes creation, trace, and regions endpoints backed by
+the region detection worker. Pass 2 exposes segmentation-job creation,
+events retrieval, and full CRUD for segmentation training jobs and
+models. Pass 3 still returns 501 for creation and typed-events.
 """
 
 from __future__ import annotations
+
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from humpback.api.deps import SessionDep, SettingsDep
-from humpback.call_parsing.storage import read_regions, read_trace, region_job_dir
+from humpback.call_parsing.storage import (
+    read_events,
+    read_regions,
+    read_trace,
+    region_job_dir,
+    segmentation_job_dir,
+)
 from humpback.schemas.call_parsing import (
     CallParsingRunCreate,
     CallParsingRunResponse,
     CreateRegionJobRequest,
+    CreateSegmentationJobRequest,
+    CreateSegmentationTrainingJobRequest,
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
+    SegmentationModelResponse,
+    SegmentationTrainingJobResponse,
 )
 from humpback.services import call_parsing as service
 
@@ -190,14 +202,23 @@ async def get_region_regions(job_id: str, session: SessionDep, settings: Setting
 # ---- Pass 2: segmentation jobs ------------------------------------------
 
 
-@router.post("/segmentation-jobs")
-async def create_segmentation_job():
-    return JSONResponse(
-        status_code=501,
-        content={
-            "detail": "Pass 2 (event segmentation) creation not yet implemented",
-        },
-    )
+@router.post(
+    "/segmentation-jobs",
+    status_code=201,
+    response_model=EventSegmentationJobSummary,
+)
+async def create_segmentation_job(
+    body: CreateSegmentationJobRequest, session: SessionDep
+):
+    try:
+        job = await service.create_segmentation_job(session, body)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    await session.commit()
+    await session.refresh(job)
+    return EventSegmentationJobSummary.model_validate(job)
 
 
 @router.get("/segmentation-jobs", response_model=list[EventSegmentationJobSummary])
@@ -225,13 +246,123 @@ async def delete_segmentation_job(
 
 
 @router.get("/segmentation-jobs/{job_id}/events")
-async def get_segmentation_events(job_id: str):
-    return JSONResponse(
-        status_code=501,
-        content={
-            "detail": "Pass 2 (event segmentation) event access not yet implemented"
-        },
-    )
+async def get_segmentation_events(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    job = await service.get_event_segmentation_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Event segmentation job not found")
+    if job.status != "complete":
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Event segmentation job status is {job.status!r}, not 'complete'"),
+        )
+    events_path = segmentation_job_dir(settings.storage_root, job_id) / "events.parquet"
+    if not events_path.exists():
+        raise HTTPException(status_code=404, detail="events.parquet not found")
+    events = read_events(events_path)
+    return [
+        {
+            "event_id": e.event_id,
+            "region_id": e.region_id,
+            "start_sec": e.start_sec,
+            "end_sec": e.end_sec,
+            "center_sec": e.center_sec,
+            "segmentation_confidence": e.segmentation_confidence,
+        }
+        for e in events
+    ]
+
+
+# ---- Pass 2: segmentation training jobs ---------------------------------
+
+
+@router.post(
+    "/segmentation-training-jobs",
+    status_code=201,
+    response_model=SegmentationTrainingJobResponse,
+)
+async def create_segmentation_training_job(
+    body: CreateSegmentationTrainingJobRequest, session: SessionDep
+):
+    try:
+        job = await service.create_segmentation_training_job(session, body)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await session.commit()
+    await session.refresh(job)
+    return SegmentationTrainingJobResponse.model_validate(job)
+
+
+@router.get(
+    "/segmentation-training-jobs",
+    response_model=list[SegmentationTrainingJobResponse],
+)
+async def list_segmentation_training_jobs(session: SessionDep):
+    jobs = await service.list_segmentation_training_jobs(session)
+    return [SegmentationTrainingJobResponse.model_validate(j) for j in jobs]
+
+
+@router.get(
+    "/segmentation-training-jobs/{job_id}",
+    response_model=SegmentationTrainingJobResponse,
+)
+async def get_segmentation_training_job(job_id: str, session: SessionDep):
+    job = await service.get_segmentation_training_job(session, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail="Segmentation training job not found"
+        )
+    return SegmentationTrainingJobResponse.model_validate(job)
+
+
+@router.delete("/segmentation-training-jobs/{job_id}", status_code=204)
+async def delete_segmentation_training_job(job_id: str, session: SessionDep):
+    try:
+        deleted = await service.delete_segmentation_training_job(session, job_id)
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail="Segmentation training job not found"
+        )
+    return None
+
+
+# ---- Pass 2: segmentation models ----------------------------------------
+
+
+@router.get(
+    "/segmentation-models",
+    response_model=list[SegmentationModelResponse],
+)
+async def list_segmentation_models(session: SessionDep):
+    models = await service.list_segmentation_models(session)
+    return [SegmentationModelResponse.model_validate(m) for m in models]
+
+
+@router.get(
+    "/segmentation-models/{model_id}",
+    response_model=SegmentationModelResponse,
+)
+async def get_segmentation_model(model_id: str, session: SessionDep):
+    model = await service.get_segmentation_model(session, model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Segmentation model not found")
+    return SegmentationModelResponse.model_validate(model)
+
+
+@router.delete("/segmentation-models/{model_id}", status_code=204)
+async def delete_segmentation_model(
+    model_id: str, session: SessionDep, settings: SettingsDep
+):
+    try:
+        deleted = await service.delete_segmentation_model(session, model_id, settings)
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Segmentation model not found")
+    return None
 
 
 # ---- Pass 3: classification jobs ----------------------------------------

@@ -242,7 +242,7 @@ See [docs/reference/storage-layout.md](docs/reference/storage-layout.md) for ful
 
 Non-obvious constraints that are not immediately derivable from code:
 
-- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> detection embedding generation -> label processing -> retrain -> vocalization training -> vocalization inference -> region detection -> event segmentation -> event classification -> manifest generation -> hyperparameter search
+- **Worker priority order**: search -> processing -> clustering -> classifier training -> detection -> extraction -> detection embedding generation -> label processing -> retrain -> vocalization training -> vocalization inference -> segmentation training -> region detection -> event segmentation -> event classification -> manifest generation -> hyperparameter search
 - **Job claim semantics**: Workers claim queued jobs via atomic compare-and-set (`WHERE id=:candidate AND status='queued'`). SQLite has no true row-level locks; correctness relies on atomic status updates, not `SELECT ... FOR UPDATE`.
 - **Job status transitions**: `queued -> running -> complete`, `queued -> running -> failed`, `queued -> canceled`
 - **Processing concurrency**: prevent two running ProcessingJobs for same encoding_signature; allow multiple clustering jobs in parallel
@@ -262,6 +262,9 @@ Non-obvious constraints that are not immediately derivable from code:
 - **Call parsing Pass 1 source contract**: `CallParsingRun` and `RegionDetectionJob` rows carry source identity as exactly one of (`audio_file_id`) or the hydrophone triple (`hydrophone_id` + `start_timestamp` + `end_timestamp`). The exactly-one-of invariant is enforced by the `CreateRegionJobRequest` Pydantic validator and the service layer's FK checks, not by a DB CHECK constraint — matching the `DetectionJob` pattern.
 - **Call parsing Pass 1 streaming chunk alignment**: the region detection worker's hydrophone path fetches audio in chunks whose edges are whole multiples of `config.window_size_seconds` (via `_aligned_chunk_edges`), so no Perch window ever straddles a chunk boundary. Each per-chunk `score_audio_windows` call receives `time_offset_sec = chunk_start - range_start`, and the concatenated trace is hysteresis-merged in one pass. This guarantees the streaming path is mathematically equivalent to a single-buffer call on the full range.
 - **Call parsing Pass 1 crash semantics**: on worker exception the region detection worker deletes the partial `trace.parquet`, `regions.parquet`, and any `.tmp` sidecars under the per-job directory, then flips the row to `failed` with `error_message`. There is no partial-trace resume path — restart is always from scratch, matching the rest of the codebase.
+- **Call parsing Pass 2 framewise α supervision**: the segmentation CRNN's training target is binary framewise presence inside/outside event bounds, with masked `BCEWithLogitsLoss` and auto-computed `pos_weight`. Bootstrap row bounds are too loose for onset/offset point targets; α is the simplest target that gives the hysteresis decoder a clean frame probability vector.
+- **Call parsing Pass 2 per-audio-file train/val split**: `split_by_audio_source` groups training samples by `audio_file_id` (or `hydrophone_id`) and ensures no audio source appears in both train and val. This rule is mandatory even on small bootstrap datasets — per-sample random splits leak background noise signature in bioacoustic ML.
+- **Call parsing Pass 2 inherits source from upstream**: the event segmentation worker resolves the audio source from the upstream Pass 1 `RegionDetectionJob`'s `audio_file_id` or `hydrophone_id` columns, never from the Pass 2 `EventSegmentationJob` row itself. Pass 2 rows carry no source identity columns.
 
 ### 8.8 Classifier API Surface
 
@@ -299,7 +302,7 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 
 ### 8.9 Call Parsing Pipeline API Surface
 
-Four-pass pipeline under `/call-parsing/*`. Pass 1 is fully functional; Passes 2–4 still return HTTP 501 for the endpoints that require their yet-to-be-implemented pass logic. Per-pass job status transitions follow the standard `queued → running → complete|failed|canceled` pattern.
+Four-pass pipeline under `/call-parsing/*`. Passes 1 and 2 are fully functional; Passes 3–4 still return HTTP 501 for the endpoints that require their yet-to-be-implemented pass logic. Per-pass job status transitions follow the standard `queued → running → complete|failed|canceled` pattern.
 
 - **Parent runs** (functional):
   - `POST /call-parsing/runs` — create a parent run and its queued Pass 1 job in one transaction; accepts the same source + model + config shape as `POST /region-jobs`
@@ -312,10 +315,19 @@ Four-pass pipeline under `/call-parsing/*`. Pass 1 is fully functional; Passes 2
   - `GET /call-parsing/region-jobs`, `GET /call-parsing/region-jobs/{id}`, `DELETE /call-parsing/region-jobs/{id}` — list / detail / delete
   - `GET /call-parsing/region-jobs/{id}/trace` — stream `trace.parquet` as JSON `{time_sec, score}` rows; 409 while the job is not `complete`, 404 if the parquet file is missing
   - `GET /call-parsing/region-jobs/{id}/regions` — return `regions.parquet` sorted by `start_sec`; same 409/404 guards
-- **Pass 2 — event segmentation**:
-  - `POST /call-parsing/segmentation-jobs` — **501** (Pass 2 creation)
-  - `GET /call-parsing/segmentation-jobs`, `GET /call-parsing/segmentation-jobs/{id}`, `DELETE /call-parsing/segmentation-jobs/{id}` — functional (DB-only)
-  - `GET /call-parsing/segmentation-jobs/{id}/events` — **501** (Pass 2 artifacts)
+- **Pass 2 — event segmentation** (functional):
+  - `POST /call-parsing/segmentation-jobs` — create a queued Pass 2 job; validates `region_detection_job_id` (404) and `segmentation_model_id` (404); 409 if upstream Pass 1 job is not `complete`
+  - `GET /call-parsing/segmentation-jobs`, `GET /call-parsing/segmentation-jobs/{id}`, `DELETE /call-parsing/segmentation-jobs/{id}` — list / detail / delete
+  - `GET /call-parsing/segmentation-jobs/{id}/events` — return `events.parquet` as JSON; 409 while job is not `complete`, 404 if parquet file is missing
+- **Pass 2 — segmentation training** (functional):
+  - `POST /call-parsing/segmentation-training-jobs` — create a queued training job; validates `training_dataset_id` (404)
+  - `GET /call-parsing/segmentation-training-jobs` — list with pagination
+  - `GET /call-parsing/segmentation-training-jobs/{id}` — detail including `result_summary`
+  - `DELETE /call-parsing/segmentation-training-jobs/{id}` — 409 if linked model is referenced by an in-flight segmentation job
+- **Pass 2 — segmentation models** (functional):
+  - `GET /call-parsing/segmentation-models` — list models with condensed metrics
+  - `GET /call-parsing/segmentation-models/{id}` — full detail
+  - `DELETE /call-parsing/segmentation-models/{id}` — removes row + checkpoint directory on disk; 409 if referenced by an in-flight segmentation job
 - **Pass 3 — event classification**:
   - `POST /call-parsing/classification-jobs` — **501** (Pass 3 creation)
   - `GET /call-parsing/classification-jobs`, `GET /call-parsing/classification-jobs/{id}`, `DELETE /call-parsing/classification-jobs/{id}` — functional (DB-only)
@@ -343,13 +355,13 @@ Four-pass pipeline under `/call-parsing/*`. Pass 1 is fully functional; Passes 2
 - Retrain workflow: reimport -> reprocess -> retrain
 - Timeline viewer: zoomable spectrogram with startup-scoped background tile pre-caching plus bounded in-memory manifest/PCM reuse, interactive species labeling (add/move/delete/change-type with batch save at 1m and 5m zoom), warm/cool color-coded detection label bars with hover tooltips, toggleable vocalization type overlay (inference suggestions + manual labels as purple bars with colored type badges), vocalization label editing via popover (add/remove type labels on detection windows with batch save), audio-authoritative playhead sync, gapless double-buffered MP3 playback, embedding sync button (diff row store vs embeddings, generate missing, remove orphans), static export for readonly S3-hosted viewer, PCEN spectrogram normalization and RMS-targeted audio playback
 - Web UI: routed SPA with Audio, Processing, Clustering, Classifier (Training, Hydrophone, Embeddings, Tuning), Vocalization, Search, Label Processing, Admin
-- Four-pass call parsing pipeline — Phase 0 scaffold + Pass 1 region detection: streaming Perch inference on uploaded files or hydrophone ranges, hysteresis + padded-overlap merge, `trace.parquet` + `regions.parquet` outputs. Passes 2–4 still deferred.
+- Four-pass call parsing pipeline — Phase 0 scaffold + Pass 1 region detection + Pass 2 event segmentation: streaming Perch inference on uploaded files or hydrophone ranges, hysteresis + padded-overlap merge, `trace.parquet` + `regions.parquet` outputs; PyTorch CRNN framewise segmentation training + inference with hysteresis decoder producing `events.parquet`; bootstrap script for building training datasets from vocalization-labeled detection rows. Passes 3–4 still deferred.
 
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `043_call_parsing_pass1_source_columns.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models
+- **Latest migration**: `044_segmentation_training_tables.py`
+- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models, segmentation_training_datasets, segmentation_training_samples, segmentation_training_jobs
 
 ### 9.3 Sensitive Components
 

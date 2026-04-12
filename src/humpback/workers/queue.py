@@ -265,7 +265,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count12:
         logger.warning(f"Recovered {count12} stale hyperparameter search job(s)")
 
-    from humpback.models.call_parsing import RegionDetectionJob
+    from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
 
     result13 = await session.execute(
         update(RegionDetectionJob)
@@ -282,6 +282,38 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count13:
         logger.warning(f"Recovered {count13} stale region detection job(s)")
 
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    result14 = await session.execute(
+        update(SegmentationTrainingJob)
+        .where(
+            SegmentationTrainingJob.status == "running",
+            SegmentationTrainingJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count14 = _rowcount(result14)
+    if count14:
+        logger.warning(f"Recovered {count14} stale segmentation training job(s)")
+
+    result15 = await session.execute(
+        update(EventSegmentationJob)
+        .where(
+            EventSegmentationJob.status == "running",
+            EventSegmentationJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count15 = _rowcount(result15)
+    if count15:
+        logger.warning(f"Recovered {count15} stale event segmentation job(s)")
+
     total = (
         count
         + count2
@@ -296,6 +328,8 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count11
         + count12
         + count13
+        + count14
+        + count15
     )
     if total:
         await session.commit()
@@ -699,6 +733,23 @@ async def claim_vocalization_inference_job(session: AsyncSession):
 
 
 # ---- Call Parsing Pipeline Jobs ----
+
+
+async def claim_segmentation_training_job(session: AsyncSession):
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            SegmentationTrainingJob,
+            status_attr=SegmentationTrainingJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=SegmentationTrainingJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
 
 
 async def claim_region_detection_job(session: AsyncSession):

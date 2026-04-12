@@ -17,6 +17,11 @@ from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
 from humpback.models.processing import EmbeddingSet, ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
 from humpback.models.search import SearchJob
+from humpback.models.segmentation_training import (
+    SegmentationTrainingDataset,
+    SegmentationTrainingJob,
+    SegmentationTrainingSample,
+)
 from humpback.models.vocalization import (
     VocalizationClassifierModel,
     VocalizationInferenceJob,
@@ -44,6 +49,9 @@ __all__ = [
     "ClusterAssignment",
     "RetrainWorkflow",
     "SearchJob",
+    "SegmentationTrainingDataset",
+    "SegmentationTrainingJob",
+    "SegmentationTrainingSample",
     "VocalizationLabel",
     "VocalizationType",
     "VocalizationClassifierModel",

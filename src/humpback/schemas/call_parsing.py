@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class RegionDetectionConfig(BaseModel):
@@ -158,5 +158,134 @@ class CallParsingRunResponse(BaseModel):
     region_detection_job: Optional[RegionDetectionJobSummary] = None
     event_segmentation_job: Optional[EventSegmentationJobSummary] = None
     event_classification_job: Optional[EventClassificationJobSummary] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ---- Pass 2: segmentation schemas ---------------------------------------
+
+
+class SegmentationFeatureConfig(BaseModel):
+    """Frozen feature-extractor parameters for the Pass 2 segmentation model.
+
+    Matches the parameters documented in the Pass 2 design spec. The
+    trainer and the event segmentation worker both instantiate a
+    ``SegmentationFeatureConfig`` at the defaults; overriding is possible
+    but not exposed on the public API surface.
+    """
+
+    sample_rate: int = 16000
+    n_fft: int = 2048
+    hop_length: int = 512
+    n_mels: int = 64
+    fmin: float = 20.0
+    fmax: float = 4000.0
+    normalize: str = "per_region_zscore"
+
+
+class SegmentationTrainingConfig(BaseModel):
+    """Hyperparameters for a segmentation training job.
+
+    Defaults track ADR-050 — conservative CRNN at ~300k parameters,
+    30 epochs, early stop patience 5, Adam 1e-3, weight decay 1e-4.
+    """
+
+    epochs: int = 30
+    batch_size: int = 16
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-4
+    early_stopping_patience: int = 5
+    grad_clip: float = 1.0
+    seed: int = 42
+    val_fraction: float = 0.2
+    # Model knobs (forwarded into SegmentationCRNN).
+    n_mels: int = 64
+    conv_channels: list[int] = Field(default_factory=lambda: [32, 64, 96, 128])
+    gru_hidden: int = 64
+    gru_layers: int = 2
+
+    @field_validator("val_fraction")
+    @classmethod
+    def _val_fraction_range(cls, v: float) -> float:
+        if not 0.0 <= v < 1.0:
+            raise ValueError("val_fraction must satisfy 0.0 <= val_fraction < 1.0")
+        return v
+
+
+class SegmentationDecoderConfig(BaseModel):
+    """Hysteresis decoder thresholds for the event segmentation worker."""
+
+    high_threshold: float = 0.5
+    low_threshold: float = 0.3
+    min_event_sec: float = 0.2
+    merge_gap_sec: float = 0.1
+
+    @model_validator(mode="after")
+    def _thresholds_valid(self) -> "SegmentationDecoderConfig":
+        if not 0.0 <= self.low_threshold <= 1.0:
+            raise ValueError("low_threshold must be in [0.0, 1.0]")
+        if not 0.0 <= self.high_threshold <= 1.0:
+            raise ValueError("high_threshold must be in [0.0, 1.0]")
+        if self.low_threshold >= self.high_threshold:
+            raise ValueError("low_threshold must be strictly less than high_threshold")
+        if self.min_event_sec < 0:
+            raise ValueError("min_event_sec must be >= 0")
+        if self.merge_gap_sec < 0:
+            raise ValueError("merge_gap_sec must be >= 0")
+        return self
+
+
+class CreateSegmentationTrainingJobRequest(BaseModel):
+    """Request body for ``POST /call-parsing/segmentation-training-jobs``."""
+
+    training_dataset_id: str
+    config: SegmentationTrainingConfig = Field(
+        default_factory=SegmentationTrainingConfig
+    )
+
+
+class CreateSegmentationJobRequest(BaseModel):
+    """Request body for ``POST /call-parsing/segmentation-jobs``."""
+
+    region_detection_job_id: str
+    segmentation_model_id: str
+    parent_run_id: Optional[str] = None
+    config: SegmentationDecoderConfig = Field(default_factory=SegmentationDecoderConfig)
+
+
+class SegmentationTrainingJobResponse(BaseModel):
+    id: str
+    status: str
+    training_dataset_id: str
+    config_json: str
+    segmentation_model_id: Optional[str] = None
+    result_summary: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class SegmentationModelResponse(BaseModel):
+    id: str
+    name: str
+    model_family: str
+    model_path: str
+    config_json: Optional[str] = None
+    training_job_id: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SegmentationTrainingDatasetResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}

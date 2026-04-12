@@ -543,3 +543,275 @@ async def test_call_parsing_pass1_smoke(
     assert missing.status_code == 404
 
     await engine.dispose()
+
+
+async def test_call_parsing_pass2_smoke(
+    e2e_settings, e2e_client, tmp_path, monkeypatch
+):
+    """E2E: Pass 1 → train segmentation model → Pass 2 inference → events endpoint → delete cleanup."""
+    import json
+
+    from humpback.call_parsing.storage import segmentation_job_dir
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingDataset,
+        SegmentationTrainingSample,
+    )
+    from humpback.workers.event_segmentation_worker import (
+        run_one_iteration as seg_run_one_iteration,
+    )
+    from humpback.workers.segmentation_training_worker import (
+        run_one_iteration as train_run_one_iteration,
+    )
+
+    client = e2e_client
+    settings = e2e_settings
+
+    # ---- Step 1: Run Pass 1 to produce regions.parquet ----
+
+    audio_dir = tmp_path / "call_parsing_audio"
+    audio_path = audio_dir / "sample.wav"
+    _write_wav(audio_path, duration_sec=12.0)
+
+    engine = create_engine(settings.database_url)
+    session_factory = create_session_factory(engine)
+
+    async with session_factory() as session:
+        audio = AudioFile(
+            filename=audio_path.name,
+            folder_path="",
+            source_folder=str(audio_dir),
+            checksum_sha256="pass2-smoke-sha",
+            duration_seconds=12.0,
+        )
+        model_config = ModelConfig(
+            name="perch_v2_pass2_smoke",
+            display_name="Perch v2 (pass2 smoke)",
+            path="/tmp/perch.tflite",
+            vector_dim=64,
+        )
+        classifier = ClassifierModel(
+            name="pass2-smoke-binary",
+            model_path="/tmp/binary.joblib",
+            model_version="perch_v2_pass2_smoke",
+            vector_dim=64,
+            window_size_seconds=5.0,
+            target_sample_rate=16000,
+        )
+        session.add_all([audio, model_config, classifier])
+        await session.commit()
+        audio_id = audio.id
+        model_config_id = model_config.id
+        classifier_id = classifier.id
+
+    pipeline = _synthetic_classifier()
+    fake_perch = FakeTFLiteModel(vector_dim=64)
+
+    def _fake_joblib_load(_path):
+        return pipeline
+
+    async def _fake_get_model_by_version(_session, _model_version, _settings):
+        return fake_perch, "spectrogram"
+
+    monkeypatch.setattr(
+        "humpback.workers.region_detection_worker.joblib.load",
+        _fake_joblib_load,
+    )
+    monkeypatch.setattr(
+        "humpback.workers.region_detection_worker.get_model_by_version",
+        _fake_get_model_by_version,
+    )
+
+    resp = await client.post(
+        "/call-parsing/region-jobs",
+        json={
+            "audio_file_id": audio_id,
+            "model_config_id": model_config_id,
+            "classifier_model_id": classifier_id,
+        },
+    )
+    assert resp.status_code == 201
+    pass1_job_id = resp.json()["id"]
+
+    async with session_factory() as session:
+        claimed = await run_one_iteration(session, settings)
+    assert claimed is not None
+    assert claimed.id == pass1_job_id
+
+    detail = await client.get(f"/call-parsing/region-jobs/{pass1_job_id}")
+    assert detail.json()["status"] == "complete"
+    assert detail.json()["region_count"] >= 1
+
+    # ---- Step 2: Create synthetic training dataset + samples ----
+
+    async with session_factory() as session:
+        dataset = SegmentationTrainingDataset(
+            name="pass2-smoke-dataset",
+            description="synthetic tone + silence for smoke test",
+        )
+        session.add(dataset)
+        await session.flush()
+        dataset_id = dataset.id
+
+        for i in range(4):
+            pos_path = audio_dir / f"train_pos_{i}.wav"
+            neg_path = audio_dir / f"train_neg_{i}.wav"
+            _write_wav(pos_path, duration_sec=1.0)
+            _write_wav(neg_path, duration_sec=1.0)
+
+            pos_af = AudioFile(
+                filename=pos_path.name,
+                folder_path="",
+                source_folder=str(audio_dir),
+                checksum_sha256=f"pass2-pos-{i}",
+                duration_seconds=1.0,
+            )
+            neg_af = AudioFile(
+                filename=neg_path.name,
+                folder_path="",
+                source_folder=str(audio_dir),
+                checksum_sha256=f"pass2-neg-{i}",
+                duration_seconds=1.0,
+            )
+            session.add_all([pos_af, neg_af])
+            await session.flush()
+
+            session.add(
+                SegmentationTrainingSample(
+                    training_dataset_id=dataset_id,
+                    audio_file_id=pos_af.id,
+                    crop_start_sec=0.0,
+                    crop_end_sec=1.0,
+                    events_json=json.dumps([{"start_sec": 0.0, "end_sec": 1.0}]),
+                    source="smoke_test",
+                )
+            )
+            session.add(
+                SegmentationTrainingSample(
+                    training_dataset_id=dataset_id,
+                    audio_file_id=neg_af.id,
+                    crop_start_sec=0.0,
+                    crop_end_sec=1.0,
+                    events_json="[]",
+                    source="smoke_test",
+                )
+            )
+
+        await session.commit()
+
+    # ---- Step 3: Create and run segmentation training job ----
+
+    train_resp = await client.post(
+        "/call-parsing/segmentation-training-jobs",
+        json={
+            "training_dataset_id": dataset_id,
+            "config": {
+                "epochs": 2,
+                "batch_size": 2,
+                "learning_rate": 1e-2,
+                "weight_decay": 0.0,
+                "early_stopping_patience": 100,
+                "grad_clip": 1.0,
+                "seed": 0,
+                "val_fraction": 0.25,
+                "conv_channels": [8],
+                "gru_hidden": 8,
+                "gru_layers": 1,
+            },
+        },
+    )
+    assert train_resp.status_code == 201
+    train_job_id = train_resp.json()["id"]
+    assert train_resp.json()["status"] == "queued"
+
+    async with session_factory() as session:
+        claimed = await train_run_one_iteration(session, settings)
+    assert claimed is not None
+    assert claimed.id == train_job_id
+
+    # ---- Step 4: Verify training completed and model persisted ----
+
+    train_detail = await client.get(
+        f"/call-parsing/segmentation-training-jobs/{train_job_id}"
+    )
+    assert train_detail.status_code == 200
+    assert train_detail.json()["status"] == "complete"
+    assert train_detail.json()["segmentation_model_id"] is not None
+    assert train_detail.json()["result_summary"] is not None
+    seg_model_id = train_detail.json()["segmentation_model_id"]
+
+    models_resp = await client.get("/call-parsing/segmentation-models")
+    assert models_resp.status_code == 200
+    model_ids = [m["id"] for m in models_resp.json()]
+    assert seg_model_id in model_ids
+
+    model_detail = await client.get(f"/call-parsing/segmentation-models/{seg_model_id}")
+    assert model_detail.status_code == 200
+    assert model_detail.json()["model_family"] == "pytorch_crnn"
+
+    # ---- Step 5: Run Pass 2 event segmentation against the trained model ----
+
+    seg_resp = await client.post(
+        "/call-parsing/segmentation-jobs",
+        json={
+            "region_detection_job_id": pass1_job_id,
+            "segmentation_model_id": seg_model_id,
+            "config": {
+                "high_threshold": 0.01,
+                "low_threshold": 0.005,
+                "min_event_sec": 0.0,
+            },
+        },
+    )
+    assert seg_resp.status_code == 201
+    seg_job_id = seg_resp.json()["id"]
+    assert seg_resp.json()["status"] == "queued"
+
+    events_409 = await client.get(
+        f"/call-parsing/segmentation-jobs/{seg_job_id}/events"
+    )
+    assert events_409.status_code == 409
+
+    async with session_factory() as session:
+        claimed = await seg_run_one_iteration(session, settings)
+    assert claimed is not None
+    assert claimed.id == seg_job_id
+
+    # ---- Step 6: Verify events via API ----
+
+    seg_detail = await client.get(f"/call-parsing/segmentation-jobs/{seg_job_id}")
+    assert seg_detail.status_code == 200
+    assert seg_detail.json()["status"] == "complete"
+    assert seg_detail.json()["event_count"] >= 1
+
+    events_resp = await client.get(
+        f"/call-parsing/segmentation-jobs/{seg_job_id}/events"
+    )
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert len(events) >= 1
+    for e in events:
+        assert set(e.keys()) == {
+            "event_id",
+            "region_id",
+            "start_sec",
+            "end_sec",
+            "center_sec",
+            "segmentation_confidence",
+        }
+        assert e["start_sec"] <= e["end_sec"]
+        assert 0.0 <= e["segmentation_confidence"] <= 1.0
+
+    # ---- Step 7: Delete segmentation job and verify cleanup ----
+
+    job_dir = segmentation_job_dir(settings.storage_root, seg_job_id)
+    assert job_dir.exists()
+    assert (job_dir / "events.parquet").exists()
+
+    del_resp = await client.delete(f"/call-parsing/segmentation-jobs/{seg_job_id}")
+    assert del_resp.status_code == 204
+    assert not (job_dir / "events.parquet").exists()
+
+    missing = await client.get(f"/call-parsing/segmentation-jobs/{seg_job_id}")
+    assert missing.status_code == 404
+
+    await engine.dispose()

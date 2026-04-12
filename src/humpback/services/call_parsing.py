@@ -30,7 +30,9 @@ from humpback.models.call_parsing import (
 )
 from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
-from humpback.schemas.call_parsing import CreateRegionJobRequest
+from humpback.schemas.call_parsing import (
+    CreateRegionJobRequest,
+)
 
 
 class CallParsingFKError(Exception):
@@ -321,5 +323,213 @@ async def delete_event_classification_job(
         return False
     _remove_dir(classification_job_dir(settings.storage_root, job.id))
     await session.delete(job)
+    await session.commit()
+    return True
+
+
+# ---- Pass 2: segmentation training + inference jobs --------------------
+
+
+async def create_segmentation_training_job(session, request):
+    """Create a queued Pass 2 training job.
+
+    Validates that ``training_dataset_id`` resolves; raises
+    ``CallParsingFKError`` on miss. The caller owns the transaction
+    boundary; this function only flushes so the generated ``job.id`` is
+    visible.
+    """
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingDataset,
+        SegmentationTrainingJob,
+    )
+    from humpback.schemas.call_parsing import CreateSegmentationTrainingJobRequest
+
+    assert isinstance(request, CreateSegmentationTrainingJobRequest)
+    ds_result = await session.execute(
+        select(SegmentationTrainingDataset.id).where(
+            SegmentationTrainingDataset.id == request.training_dataset_id
+        )
+    )
+    if ds_result.scalar_one_or_none() is None:
+        raise CallParsingFKError("training_dataset_id", request.training_dataset_id)
+
+    job = SegmentationTrainingJob(
+        status="queued",
+        training_dataset_id=request.training_dataset_id,
+        config_json=request.config.model_dump_json(),
+    )
+    session.add(job)
+    await session.flush()
+    return job
+
+
+class CallParsingStateError(Exception):
+    """Raised when a create/delete request conflicts with current job state.
+
+    The router maps this to HTTP 409. ``detail`` is surfaced verbatim in
+    the response body.
+    """
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+async def create_segmentation_job(session, request):
+    """Create a queued Pass 2 event segmentation job.
+
+    Validates that both ``region_detection_job_id`` and
+    ``segmentation_model_id`` resolve, and that the upstream Pass 1 job
+    is in ``complete`` state. Raises ``CallParsingFKError`` (404) on a
+    missing FK and ``CallParsingStateError`` (409) when the upstream
+    Pass 1 job is not yet complete.
+    """
+    from humpback.models.call_parsing import (
+        RegionDetectionJob as _RegionDetectionJob,
+    )
+    from humpback.models.call_parsing import (
+        SegmentationModel as _SegmentationModel,
+    )
+    from humpback.schemas.call_parsing import CreateSegmentationJobRequest
+
+    assert isinstance(request, CreateSegmentationJobRequest)
+
+    rd = await session.get(_RegionDetectionJob, request.region_detection_job_id)
+    if rd is None:
+        raise CallParsingFKError(
+            "region_detection_job_id", request.region_detection_job_id
+        )
+    if rd.status != "complete":
+        raise CallParsingStateError(
+            f"Upstream region detection job status is {rd.status!r}, not 'complete'"
+        )
+
+    sm_result = await session.execute(
+        select(_SegmentationModel.id).where(
+            _SegmentationModel.id == request.segmentation_model_id
+        )
+    )
+    if sm_result.scalar_one_or_none() is None:
+        raise CallParsingFKError("segmentation_model_id", request.segmentation_model_id)
+
+    job = EventSegmentationJob(
+        status="queued",
+        parent_run_id=request.parent_run_id,
+        region_detection_job_id=request.region_detection_job_id,
+        segmentation_model_id=request.segmentation_model_id,
+        config_json=request.config.model_dump_json(),
+    )
+    session.add(job)
+    await session.flush()
+    return job
+
+
+# ---- Segmentation training datasets / jobs / models read-side ----------
+
+
+async def list_segmentation_training_jobs(session):
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    result = await session.execute(
+        select(SegmentationTrainingJob).order_by(
+            SegmentationTrainingJob.created_at.desc()
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_segmentation_training_job(session, job_id: str):
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    return await session.get(SegmentationTrainingJob, job_id)
+
+
+async def delete_segmentation_training_job(session, job_id: str) -> bool:
+    """Delete a training job. Returns True if a row was removed.
+
+    Raises ``CallParsingStateError`` (409) when the linked
+    ``segmentation_models`` row is still referenced by an in-flight
+    ``event_segmentation_jobs`` row.
+    """
+    from humpback.models.call_parsing import (
+        EventSegmentationJob as _EventSegmentationJob,
+    )
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    job = await session.get(SegmentationTrainingJob, job_id)
+    if job is None:
+        return False
+
+    if job.segmentation_model_id:
+        in_flight = await session.execute(
+            select(_EventSegmentationJob.id).where(
+                _EventSegmentationJob.segmentation_model_id
+                == job.segmentation_model_id,
+                _EventSegmentationJob.status.in_(["queued", "running"]),
+            )
+        )
+        if in_flight.scalar_one_or_none() is not None:
+            raise CallParsingStateError(
+                "Segmentation training job's model is referenced by an "
+                "in-flight event segmentation job"
+            )
+
+    await session.delete(job)
+    await session.commit()
+    return True
+
+
+async def list_segmentation_models(session):
+    from humpback.models.call_parsing import SegmentationModel
+
+    result = await session.execute(
+        select(SegmentationModel).order_by(SegmentationModel.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_segmentation_model(session, model_id: str):
+    from humpback.models.call_parsing import SegmentationModel
+
+    return await session.get(SegmentationModel, model_id)
+
+
+async def delete_segmentation_model(session, model_id: str, settings: Settings) -> bool:
+    """Delete a segmentation model row + its checkpoint directory.
+
+    Raises ``CallParsingStateError`` (409) when the model is still
+    referenced by an in-flight ``event_segmentation_jobs`` row.
+    """
+    from pathlib import Path as _Path
+
+    from humpback.models.call_parsing import (
+        EventSegmentationJob as _EventSegmentationJob,
+    )
+    from humpback.models.call_parsing import (
+        SegmentationModel,
+    )
+
+    model = await session.get(SegmentationModel, model_id)
+    if model is None:
+        return False
+
+    in_flight = await session.execute(
+        select(_EventSegmentationJob.id).where(
+            _EventSegmentationJob.segmentation_model_id == model_id,
+            _EventSegmentationJob.status.in_(["queued", "running"]),
+        )
+    )
+    if in_flight.scalar_one_or_none() is not None:
+        raise CallParsingStateError(
+            "Segmentation model is referenced by an in-flight event segmentation job"
+        )
+
+    if model.model_path:
+        checkpoint_path = _Path(model.model_path)
+        if checkpoint_path.exists() and checkpoint_path.is_file():
+            checkpoint_dir = checkpoint_path.parent
+            _remove_dir(checkpoint_dir)
+
+    await session.delete(model)
     await session.commit()
     return True
