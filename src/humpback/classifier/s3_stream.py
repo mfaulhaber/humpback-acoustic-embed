@@ -540,7 +540,8 @@ class CachingS3Client:
         # Write segment manifest for future local-first reads
         if s3_keys:
             folder_dir.mkdir(parents=True, exist_ok=True)
-            manifest_path.write_text(
+            tmp_manifest = manifest_path.with_suffix(".tmp")
+            tmp_manifest.write_text(
                 json.dumps(
                     {
                         "segments": list(s3_keys),
@@ -548,6 +549,7 @@ class CachingS3Client:
                     }
                 )
             )
+            os.replace(str(tmp_manifest), str(manifest_path))
 
         # Merge and deduplicate
         all_keys = local_keys | set(s3_keys)
