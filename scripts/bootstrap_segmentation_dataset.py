@@ -1,15 +1,22 @@
 """Bootstrap a segmentation training dataset from vocalization-labeled detection rows.
 
-Reads row IDs from a file, resolves each to its detection job's row
-store, checks for vocalization labels, computes an audio-relative crop
-window centered on the detection event, and inserts
-``SegmentationTrainingSample`` rows. Idempotent: rows with an existing
-``(training_dataset_id, source_ref=row_id)`` pair are skipped.
+Reads row IDs from a file **or** discovers single-label rows from
+detection jobs, resolves each to its detection job's row store, checks
+for vocalization labels, computes an audio-relative crop window centered
+on the detection event, and inserts ``SegmentationTrainingSample`` rows.
+Idempotent: rows with an existing ``(training_dataset_id,
+source_ref=row_id)`` pair are skipped.
 
 Usage::
 
+    # From explicit row IDs:
     uv run python scripts/bootstrap_segmentation_dataset.py \\
         --row-ids-file rows.txt --dataset-name "bootstrap-v1" \\
+        --crop-seconds 10.0 --dry-run
+
+    # From detection job IDs (auto-discovers single-label rows):
+    uv run python scripts/bootstrap_segmentation_dataset.py \\
+        --detection-job-ids JOB1 JOB2 --dataset-name "bootstrap-v1" \\
         --crop-seconds 10.0 --dry-run
 
 """
@@ -28,6 +35,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from humpback.classifier.detection_rows import (
     parse_recording_timestamp,
@@ -96,6 +104,56 @@ def read_row_ids(path: Path) -> list[str]:
             continue
         ids.append(stripped)
     return ids
+
+
+async def _discover_row_ids_from_jobs(
+    session: AsyncSession,
+    detection_job_ids: list[str],
+) -> list[str]:
+    """Discover single-label vocalization-labeled row IDs from detection jobs.
+
+    Matches the event classifier bootstrap filter: only rows with exactly
+    one distinct non-negative vocalization type label are included.
+    """
+    row_ids: list[str] = []
+    for dj_id in detection_job_ids:
+        dj = await session.get(DetectionJob, dj_id)
+        if dj is None:
+            logger.warning("detection job %s not found, skipping", dj_id)
+            continue
+
+        label_result = await session.execute(
+            select(VocalizationLabel).where(
+                VocalizationLabel.detection_job_id == dj_id,
+                VocalizationLabel.source == "manual",
+            )
+        )
+        labels = list(label_result.scalars().all())
+
+        labels_by_row: dict[str, list[str]] = defaultdict(list)
+        for lb in labels:
+            labels_by_row[lb.row_id].append(lb.label)
+
+        for row_id, type_labels in labels_by_row.items():
+            non_negative = [t for t in type_labels if t != "(Negative)"]
+            if not non_negative:
+                logger.info("row_id=%s: (Negative) only, skipping", row_id)
+                continue
+            if len(set(non_negative)) > 1:
+                logger.info(
+                    "row_id=%s: %d distinct type labels, skipping",
+                    row_id,
+                    len(set(non_negative)),
+                )
+                continue
+            row_ids.append(row_id)
+
+    logger.info(
+        "Discovered %d single-label rows from %d detection jobs",
+        len(row_ids),
+        len(detection_job_ids),
+    )
+    return row_ids
 
 
 async def _get_or_create_dataset(
@@ -183,9 +241,12 @@ async def _process_one_row(
 ) -> str | None:
     """Process one row_id. Returns skip reason or None on success."""
 
-    # 1. Look up vocalization labels
+    # 1. Look up human-annotated vocalization labels (skip inference results)
     label_result = await session.execute(
-        select(VocalizationLabel).where(VocalizationLabel.row_id == row_id)
+        select(VocalizationLabel).where(
+            VocalizationLabel.row_id == row_id,
+            VocalizationLabel.source == "manual",
+        )
     )
     labels = list(label_result.scalars().all())
     if not labels:
@@ -373,19 +434,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Bootstrap a segmentation training dataset from detection rows."
     )
-    parser.add_argument(
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument(
         "--row-ids-file",
         type=Path,
-        required=True,
         help="Text file with one row_id per line (blank lines and # comments skipped).",
     )
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
+    source_group.add_argument(
+        "--detection-job-ids",
+        nargs="+",
+        help="One or more detection job IDs to discover single-label rows from.",
+    )
+    dataset_group = parser.add_mutually_exclusive_group(required=True)
+    dataset_group.add_argument(
         "--dataset-name",
         type=str,
         help="Create a new dataset with this name.",
     )
-    group.add_argument(
+    dataset_group.add_argument(
         "--dataset-id",
         type=str,
         help="Add samples to an existing dataset by ID.",
@@ -404,7 +470,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--allow-multi-label",
         action="store_true",
-        help="Include rows with >1 distinct vocalization type label.",
+        help="Include rows with >1 distinct vocalization type label (only with --row-ids-file).",
     )
     return parser.parse_args(argv)
 
@@ -413,26 +479,41 @@ async def async_main(args: argparse.Namespace) -> None:
     load_dotenv()
     settings = Settings()
 
-    if not args.row_ids_file.exists():
-        raise SystemExit(f"ERROR: row ids file not found: {args.row_ids_file}")
-
-    row_ids = read_row_ids(args.row_ids_file)
-    if not row_ids:
-        raise SystemExit("ERROR: no row IDs found in file")
-
-    print(f"Loaded {len(row_ids)} row IDs from {args.row_ids_file}")
-
     engine = create_engine(settings.database_url)
     try:
         session_factory = create_session_factory(engine)
         async with session_factory() as session:
+            if args.detection_job_ids is not None:
+                row_ids = await _discover_row_ids_from_jobs(
+                    session, args.detection_job_ids
+                )
+                if not row_ids:
+                    raise SystemExit(
+                        "ERROR: no single-label rows found in the given detection jobs"
+                    )
+                print(
+                    f"Discovered {len(row_ids)} single-label rows "
+                    f"from {len(args.detection_job_ids)} detection jobs"
+                )
+                allow_multi_label = False
+            else:
+                if not args.row_ids_file.exists():
+                    raise SystemExit(
+                        f"ERROR: row ids file not found: {args.row_ids_file}"
+                    )
+                row_ids = read_row_ids(args.row_ids_file)
+                if not row_ids:
+                    raise SystemExit("ERROR: no row IDs found in file")
+                print(f"Loaded {len(row_ids)} row IDs from {args.row_ids_file}")
+                allow_multi_label = args.allow_multi_label
+
             result = await run_bootstrap(
                 session,
                 row_ids=row_ids,
                 dataset_name=args.dataset_name,
                 dataset_id=args.dataset_id,
                 crop_seconds=args.crop_seconds,
-                allow_multi_label=args.allow_multi_label,
+                allow_multi_label=allow_multi_label,
                 dry_run=args.dry_run,
                 storage_root=settings.storage_root,
             )

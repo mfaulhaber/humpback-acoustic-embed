@@ -212,9 +212,12 @@ async def _collect_windows(
             _, rows = read_detection_row_store(rs_path)
             row_store_cache[dj_id] = {r.get("row_id", ""): r for r in rows}
 
-        # Load vocalization labels for this detection job
+        # Load human-annotated vocalization labels (skip inference results)
         label_result = await session.execute(
-            select(VocalizationLabel).where(VocalizationLabel.detection_job_id == dj_id)
+            select(VocalizationLabel).where(
+                VocalizationLabel.detection_job_id == dj_id,
+                VocalizationLabel.source == "manual",
+            )
         )
         labels = list(label_result.scalars().all())
 

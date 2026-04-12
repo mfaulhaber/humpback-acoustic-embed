@@ -29,6 +29,7 @@ from humpback.models.segmentation_training import (
 from humpback.storage import detection_row_store_path
 
 from scripts.bootstrap_segmentation_dataset import (
+    _discover_row_ids_from_jobs,
     parse_args,
     read_row_ids,
     run_bootstrap,
@@ -120,7 +121,7 @@ async def _seed_fixture(
                     detection_job_id=dj.id,
                     row_id=row_id,
                     label=label,
-                    source="test",
+                    source="manual",
                 )
             )
 
@@ -398,3 +399,177 @@ def test_read_row_ids_skips_blanks_and_comments(tmp_path):
     f.write_text("# header comment\nrow-1\n\n  row-2  \n# another\nrow-3\n")
     ids = read_row_ids(f)
     assert ids == ["row-1", "row-2", "row-3"]
+
+
+# -- _discover_row_ids_from_jobs tests --
+
+
+async def _seed_discovery_fixture(
+    session_factory,
+    tmp_path: Path,
+    *,
+    rows: list[tuple[str, list[tuple[str, str]]]],
+) -> str:
+    """Seed a detection job with multiple rows, each having labels.
+
+    ``rows`` is a list of ``(row_id, [(label, source), ...])``.
+    Returns the detection job ID.
+    """
+    audio_dir = tmp_path / "audio_src"
+    audio_path = audio_dir / "sample_19700101T000000Z.wav"
+    _write_sine_wav(audio_path, duration_sec=30.0)
+
+    async with session_factory() as session:
+        cm = ClassifierModel(
+            name="fake-cm",
+            model_path="/tmp/not-a-real-file.joblib",
+            model_version="perch_v1",
+            vector_dim=64,
+            window_size_seconds=5.0,
+            target_sample_rate=16000,
+        )
+        session.add(cm)
+        await session.flush()
+
+        dj = DetectionJob(
+            classifier_model_id=cm.id,
+            audio_folder=str(audio_dir),
+            status="complete",
+        )
+        session.add(dj)
+        await session.flush()
+
+        for row_id, label_pairs in rows:
+            for label, source in label_pairs:
+                session.add(
+                    VocalizationLabel(
+                        detection_job_id=dj.id,
+                        row_id=row_id,
+                        label=label,
+                        source=source,
+                    )
+                )
+
+        await session.commit()
+        return dj.id
+
+
+async def test_discover_single_label_rows(session_factory, tmp_path):
+    dj_id = await _seed_discovery_fixture(
+        session_factory,
+        tmp_path,
+        rows=[
+            ("row-single", [("upcall", "manual")]),
+            ("row-multi", [("upcall", "manual"), ("downsweep", "manual")]),
+            ("row-neg", [("(Negative)", "manual")]),
+        ],
+    )
+
+    async with session_factory() as session:
+        row_ids = await _discover_row_ids_from_jobs(session, [dj_id])
+
+    assert row_ids == ["row-single"]
+
+
+async def test_discover_skips_inference_labels(session_factory, tmp_path):
+    dj_id = await _seed_discovery_fixture(
+        session_factory,
+        tmp_path,
+        rows=[
+            ("row-manual", [("upcall", "manual")]),
+            ("row-infer", [("upcall", "inference")]),
+            ("row-mixed", [("upcall", "manual"), ("downsweep", "inference")]),
+        ],
+    )
+
+    async with session_factory() as session:
+        row_ids = await _discover_row_ids_from_jobs(session, [dj_id])
+
+    assert set(row_ids) == {"row-manual", "row-mixed"}
+
+
+async def test_discover_nonexistent_job_returns_empty(session_factory):
+    async with session_factory() as session:
+        row_ids = await _discover_row_ids_from_jobs(session, ["does-not-exist"])
+
+    assert row_ids == []
+
+
+async def test_inference_labels_skipped_in_row_ids_path(session_factory, tmp_path):
+    """Rows with only inference labels are skipped even via --row-ids-file."""
+    storage_root = tmp_path / "storage"
+    audio_dir = tmp_path / "audio_src"
+    audio_path = audio_dir / "sample_19700101T000000Z.wav"
+    _write_sine_wav(audio_path, duration_sec=30.0)
+
+    async with session_factory() as session:
+        cm = ClassifierModel(
+            name="fake-cm",
+            model_path="/tmp/not-a-real-file.joblib",
+            model_version="perch_v1",
+            vector_dim=64,
+            window_size_seconds=5.0,
+            target_sample_rate=16000,
+        )
+        session.add(cm)
+        await session.flush()
+
+        af = AudioFile(
+            filename="sample_19700101T000000Z.wav",
+            folder_path="",
+            source_folder=str(audio_dir),
+            checksum_sha256=f"sum-{tmp_path.name}",
+            duration_seconds=30.0,
+        )
+        session.add(af)
+        await session.flush()
+
+        dj = DetectionJob(
+            classifier_model_id=cm.id,
+            audio_folder=str(audio_dir),
+            status="complete",
+        )
+        session.add(dj)
+        await session.flush()
+
+        session.add(
+            VocalizationLabel(
+                detection_job_id=dj.id,
+                row_id="row-infer",
+                label="upcall",
+                source="inference",
+            )
+        )
+        await session.commit()
+        dj_id = dj.id
+
+    rs_path = detection_row_store_path(storage_root, dj_id)
+    rs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_detection_row_store(
+        rs_path,
+        [
+            {
+                "row_id": "row-infer",
+                "start_utc": "5.0",
+                "end_utc": "10.0",
+                "avg_confidence": "0.8",
+                "peak_confidence": "0.9",
+                "n_windows": "2",
+            }
+        ],
+    )
+
+    async with session_factory() as session:
+        result = await run_bootstrap(
+            session,
+            row_ids=["row-infer"],
+            dataset_name="test-ds",
+            dataset_id=None,
+            crop_seconds=10.0,
+            allow_multi_label=False,
+            dry_run=False,
+            storage_root=storage_root,
+        )
+
+    assert result.inserted == 0
+    assert result.skipped.get("no vocalization label") == 1
