@@ -8,8 +8,8 @@ Follow these phases in order for any task. Each phase references a workflow file
 in `docs/workflows/` — read the full file for detailed steps.
 
 ### Phase 1: Context (`docs/workflows/session-begin.md`)
-- Read CLAUDE.md (rules + reference)
-- Read DECISIONS.md (recent ADRs)
+- CLAUDE.md is auto-loaded — do not re-read it
+- Scan ADR titles from DECISIONS.md; read full text only when relevant
 - Check for active feature branches and in-progress plans
 - Understand what's being asked before acting
 
@@ -39,7 +39,7 @@ in `docs/workflows/` — read the full file for detailed steps.
 - Repeatable — as many rounds as needed
 
 ### Phase 6: Verify (`docs/workflows/session-review.md`)
-- Run the project verification gates (CLAUDE.md §10.4)
+- Run the project verification gates (CLAUDE.md §10.2)
 - All must pass before proceeding
 - Explicit verdict: `Ready for session-end: yes/no`
 

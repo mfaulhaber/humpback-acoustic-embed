@@ -14,9 +14,9 @@ Start of every session — normalize repo state, read context, ask what to work 
    - Fetch `origin/main` and fast-forward local `main`
    - If fast-forward fails, stop and report (do not merge, rebase, or stash)
 
-3. **Read context files**
-   - `CLAUDE.md` — rules, reference, project state
-   - `DECISIONS.md` — recent architecture decisions
+3. **Acknowledge context already loaded**
+   - `CLAUDE.md` is auto-loaded into every conversation — do NOT read it again
+   - Read only the ADR titles from `DECISIONS.md` (e.g., `grep '^## ADR-' DECISIONS.md`) — read full ADR text only when relevant to the task at hand
 
 4. **Check for active feature branches**
    - Look for local `feature/*` branches only, ignore remote feature/* branches
@@ -37,6 +37,7 @@ Start of every session — normalize repo state, read context, ask what to work 
 - Create a feature branch (deferred to `session-plan`)
 - Start any implementation work
 - Read memory files unless the task requires it
+- Re-read CLAUDE.md (it is already in the system prompt)
 
 ## Output
 
