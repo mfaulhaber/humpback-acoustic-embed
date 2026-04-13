@@ -2,10 +2,13 @@
 
 Reads row IDs from a file **or** discovers single-label rows from
 detection jobs, resolves each to its detection job's row store, checks
-for vocalization labels, computes an audio-relative crop window centered
-on the detection event, and inserts ``SegmentationTrainingSample`` rows.
-Idempotent: rows with an existing ``(training_dataset_id,
-source_ref=row_id)`` pair are skipped.
+for vocalization labels, computes a UTC crop window centered on the
+detection event, and inserts ``SegmentationTrainingSample`` rows with
+hydrophone source fields.  Idempotent: rows with an existing
+``(training_dataset_id, source_ref=row_id)`` pair are skipped.
+
+Only hydrophone-sourced detection jobs are supported — file-based jobs
+are skipped with a warning.
 
 Usage::
 
@@ -27,7 +30,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,12 +40,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from humpback.classifier.detection_rows import (
-    parse_recording_timestamp,
     read_detection_row_store,
 )
 from humpback.config import Settings
 from humpback.database import create_engine, create_session_factory
-from humpback.models.audio import AudioFile
 from humpback.models.classifier import DetectionJob
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.segmentation_training import (
@@ -54,46 +54,12 @@ from humpback.storage import detection_row_store_path
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".aif", ".aiff"}
-
 
 @dataclass
 class BootstrapResult:
     dataset_id: str = ""
     inserted: int = 0
     skipped: dict[str, int] = field(default_factory=lambda: defaultdict(int))
-
-
-def _file_base_epoch(filepath: Path) -> float:
-    ts = parse_recording_timestamp(filepath.name)
-    if ts is not None:
-        return ts.timestamp()
-    try:
-        return os.path.getmtime(filepath)
-    except OSError:
-        return 0.0
-
-
-def _build_audio_index(audio_folder: Path) -> list[tuple[float, Path]]:
-    index: list[tuple[float, Path]] = []
-    for child in sorted(audio_folder.iterdir()):
-        if child.suffix.lower() in _KNOWN_AUDIO_EXTENSIONS and child.is_file():
-            index.append((_file_base_epoch(child), child))
-    index.sort(key=lambda x: x[0])
-    return index
-
-
-def _resolve_file_for_row(
-    start_utc: float, audio_index: list[tuple[float, Path]]
-) -> tuple[Path, float] | None:
-    """Return ``(file_path, base_epoch)`` for the file covering ``start_utc``."""
-    best: tuple[Path, float] | None = None
-    for base_epoch, path in audio_index:
-        if base_epoch <= start_utc + 1e-6:
-            best = (path, base_epoch)
-        else:
-            break
-    return best
 
 
 def read_row_ids(path: Path) -> list[str]:
@@ -120,6 +86,10 @@ async def _discover_row_ids_from_jobs(
         dj = await session.get(DetectionJob, dj_id)
         if dj is None:
             logger.warning("detection job %s not found, skipping", dj_id)
+            continue
+
+        if not dj.hydrophone_id:
+            logger.warning("detection job %s: not a hydrophone job, skipping", dj_id)
             continue
 
         label_result = await session.execute(
@@ -195,8 +165,6 @@ async def run_bootstrap(
 
     detection_job_cache: dict[str, DetectionJob] = {}
     row_store_cache: dict[str, dict[str, dict[str, str]]] = {}
-    audio_index_cache: dict[str, list[tuple[float, Path]]] = {}
-    audio_file_cache: dict[str, AudioFile | None] = {}
 
     for row_id in row_ids:
         skip_reason = await _process_one_row(
@@ -209,8 +177,6 @@ async def run_bootstrap(
             storage_root=storage_root,
             detection_job_cache=detection_job_cache,
             row_store_cache=row_store_cache,
-            audio_index_cache=audio_index_cache,
-            audio_file_cache=audio_file_cache,
         )
         if skip_reason is not None:
             result.skipped[skip_reason] += 1
@@ -236,8 +202,6 @@ async def _process_one_row(
     storage_root: Path,
     detection_job_cache: dict[str, DetectionJob],
     row_store_cache: dict[str, dict[str, dict[str, str]]],
-    audio_index_cache: dict[str, list[tuple[float, Path]]],
-    audio_file_cache: dict[str, AudioFile | None],
 ) -> str | None:
     """Process one row_id. Returns skip reason or None on success."""
 
@@ -264,7 +228,7 @@ async def _process_one_row(
 
     detection_job_id = labels[0].detection_job_id
 
-    # 2. Load detection job
+    # 2. Load detection job and verify it is hydrophone-sourced
     if detection_job_id not in detection_job_cache:
         dj = await session.get(DetectionJob, detection_job_id)
         if dj is None:
@@ -277,20 +241,21 @@ async def _process_one_row(
         detection_job_cache[detection_job_id] = dj
     dj = detection_job_cache[detection_job_id]
 
-    if dj.hydrophone_id:
+    if not dj.hydrophone_id:
         logger.warning(
-            "row_id=%s: hydrophone detection jobs not yet supported, skipping",
-            row_id,
-        )
-        return "hydrophone source (not supported)"
-
-    if not dj.audio_folder:
-        logger.warning(
-            "row_id=%s: detection job %s has no audio_folder, skipping",
+            "row_id=%s: detection job %s is not hydrophone-sourced, skipping",
             row_id,
             detection_job_id,
         )
-        return "no audio source"
+        return "not hydrophone source"
+
+    if dj.start_timestamp is None or dj.end_timestamp is None:
+        logger.warning(
+            "row_id=%s: detection job %s missing start/end timestamps, skipping",
+            row_id,
+            detection_job_id,
+        )
+        return "missing job timestamps"
 
     # 3. Load row store and find the row
     if detection_job_id not in row_store_cache:
@@ -313,73 +278,25 @@ async def _process_one_row(
         logger.warning("row_id=%s: not found in row store, skipping", row_id)
         return "detection row not found"
 
-    # 4. Resolve audio file
-    audio_folder = Path(dj.audio_folder)
-    if str(audio_folder) not in audio_index_cache:
-        if not audio_folder.exists():
-            logger.warning(
-                "row_id=%s: audio folder %s does not exist, skipping",
-                row_id,
-                audio_folder,
-            )
-            return "audio folder missing"
-        audio_index_cache[str(audio_folder)] = _build_audio_index(audio_folder)
-
-    audio_index = audio_index_cache[str(audio_folder)]
+    # 4. Compute crop bounds (absolute UTC)
     start_utc = float(det_row.get("start_utc") or 0)
     end_utc = float(det_row.get("end_utc") or 0)
-
-    resolved = _resolve_file_for_row(start_utc, audio_index)
-    if resolved is None:
-        logger.warning("row_id=%s: cannot resolve audio file, skipping", row_id)
-        return "audio file not resolved"
-    file_path, base_epoch = resolved
-
-    # 5. Find AudioFile row
-    af_cache_key = f"{audio_folder}:{file_path.name}"
-    if af_cache_key not in audio_file_cache:
-        af_result = await session.execute(
-            select(AudioFile).where(
-                AudioFile.source_folder == str(audio_folder),
-                AudioFile.filename == file_path.name,
-            )
-        )
-        audio_file_cache[af_cache_key] = af_result.scalar_one_or_none()
-    af = audio_file_cache[af_cache_key]
-    if af is None:
-        logger.warning(
-            "row_id=%s: no AudioFile for %s in %s, skipping",
-            row_id,
-            file_path.name,
-            audio_folder,
-        )
-        return "audio file row not found"
-
-    audio_duration = af.duration_seconds
-    if audio_duration is None or audio_duration <= 0:
-        logger.warning(
-            "row_id=%s: AudioFile %s has no duration, skipping", row_id, af.id
-        )
-        return "audio duration unknown"
-
-    # 6. Compute crop bounds
-    start_sec = start_utc - base_epoch
-    end_sec = end_utc - base_epoch
-    center = (start_sec + end_sec) / 2.0
+    center = (start_utc + end_utc) / 2.0
     half = crop_seconds / 2.0
-    crop_start = max(0.0, center - half)
-    crop_end = min(audio_duration, center + half)
+    crop_start = max(dj.start_timestamp, center - half)
+    crop_end = min(dj.end_timestamp, center + half)
+    crop_duration = crop_end - crop_start
 
-    if (crop_end - crop_start) < crop_seconds * 0.5:
+    if crop_duration < crop_seconds * 0.5:
         logger.info(
             "row_id=%s: crop too short at boundary (%.2f s < %.2f s minimum), skipping",
             row_id,
-            crop_end - crop_start,
+            crop_duration,
             crop_seconds * 0.5,
         )
         return "crop too short at boundary"
 
-    # 7. Check idempotency
+    # 5. Check idempotency
     existing = await session.execute(
         select(SegmentationTrainingSample.id).where(
             SegmentationTrainingSample.training_dataset_id == dataset_id,
@@ -390,15 +307,19 @@ async def _process_one_row(
         logger.info("row_id=%s: already present in dataset, skipping", row_id)
         return "already present"
 
-    # 8. Build events_json (audio-relative)
-    events_json = json.dumps([{"start_sec": start_sec, "end_sec": end_sec}])
+    # 6. Build events_json (relative to crop start)
+    event_start_rel = start_utc - crop_start
+    event_end_rel = end_utc - crop_start
+    events_json = json.dumps([{"start_sec": event_start_rel, "end_sec": event_end_rel}])
 
-    # 9. Insert
+    # 7. Insert
     sample = SegmentationTrainingSample(
         training_dataset_id=dataset_id,
-        audio_file_id=af.id,
-        crop_start_sec=crop_start,
-        crop_end_sec=crop_end,
+        hydrophone_id=dj.hydrophone_id,
+        start_timestamp=crop_start,
+        end_timestamp=crop_end,
+        crop_start_sec=0.0,
+        crop_end_sec=crop_duration,
         events_json=events_json,
         source="bootstrap_vocalization_row",
         source_ref=row_id,
@@ -408,11 +329,11 @@ async def _process_one_row(
         await session.flush()
     else:
         logger.info(
-            "row_id=%s: would insert (crop [%.2f, %.2f], audio_file=%s)",
+            "row_id=%s: would insert (crop [%.2f, %.2f] UTC, hydrophone=%s)",
             row_id,
             crop_start,
             crop_end,
-            af.id,
+            dj.hydrophone_id,
         )
 
     return None

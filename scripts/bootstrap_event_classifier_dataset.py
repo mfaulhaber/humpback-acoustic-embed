@@ -7,6 +7,9 @@ event. Outputs a JSON file of training samples compatible with the event
 classifier trainer (and the ``pytorch_event_cnn`` vocalization training
 worker).
 
+Only hydrophone-sourced detection jobs are supported — file-based jobs
+are skipped with a warning.
+
 Usage::
 
     uv run python scripts/bootstrap_event_classifier_dataset.py \\
@@ -23,7 +26,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,17 +40,15 @@ from humpback.call_parsing.segmentation.inference import run_inference
 from humpback.call_parsing.segmentation.model import SegmentationCRNN
 from humpback.call_parsing.types import Event
 from humpback.classifier.detection_rows import (
-    parse_recording_timestamp,
     read_detection_row_store,
 )
 from humpback.config import Settings
 from humpback.database import create_engine, create_session_factory
 from humpback.ml.checkpointing import load_checkpoint
-from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import SegmentationModel
 from humpback.models.classifier import DetectionJob
 from humpback.models.labeling import VocalizationLabel
-from humpback.processing.audio_io import decode_audio, resample
+from humpback.processing.timeline_audio import resolve_timeline_audio
 from humpback.schemas.call_parsing import (
     SegmentationDecoderConfig,
     SegmentationFeatureConfig,
@@ -56,8 +56,6 @@ from humpback.schemas.call_parsing import (
 from humpback.storage import detection_row_store_path
 
 logger = logging.getLogger(__name__)
-
-_KNOWN_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".aif", ".aiff"}
 
 
 @dataclass
@@ -73,37 +71,6 @@ class _WindowInfo:
     type_name: str
     start_utc: float
     end_utc: float
-
-
-def _file_base_epoch(filepath: Path) -> float:
-    ts = parse_recording_timestamp(filepath.name)
-    if ts is not None:
-        return ts.timestamp()
-    try:
-        return os.path.getmtime(filepath)
-    except OSError:
-        return 0.0
-
-
-def _build_audio_index(audio_folder: Path) -> list[tuple[float, Path]]:
-    index: list[tuple[float, Path]] = []
-    for child in sorted(audio_folder.iterdir()):
-        if child.suffix.lower() in _KNOWN_AUDIO_EXTENSIONS and child.is_file():
-            index.append((_file_base_epoch(child), child))
-    index.sort(key=lambda x: x[0])
-    return index
-
-
-def _resolve_file_for_row(
-    start_utc: float, audio_index: list[tuple[float, Path]]
-) -> tuple[Path, float] | None:
-    best: tuple[Path, float] | None = None
-    for base_epoch, path in audio_index:
-        if base_epoch <= start_utc + 1e-6:
-            best = (path, base_epoch)
-        else:
-            break
-    return best
 
 
 def _instantiate_segmentation_model(
@@ -167,15 +134,10 @@ async def _collect_windows(
     detection_job_ids: list[str],
     storage_root: Path,
 ) -> tuple[list[_WindowInfo], dict[str, int]]:
-    """Collect single-label vocalization-labeled windows from detection jobs.
-
-    Returns ``(windows, skip_counts)`` where ``skip_counts`` maps skip
-    reasons to counts.
-    """
+    """Collect single-label vocalization-labeled windows from hydrophone detection jobs."""
     skip_counts: dict[str, int] = defaultdict(int)
     windows: list[_WindowInfo] = []
 
-    detection_job_cache: dict[str, DetectionJob] = {}
     row_store_cache: dict[str, dict[str, dict[str, str]]] = {}
 
     for dj_id in detection_job_ids:
@@ -184,18 +146,17 @@ async def _collect_windows(
             logger.warning("detection job %s not found, skipping", dj_id)
             skip_counts["detection job not found"] += 1
             continue
-        detection_job_cache[dj_id] = dj
 
-        if dj.hydrophone_id:
-            logger.warning(
-                "detection job %s: hydrophone source not supported, skipping", dj_id
-            )
-            skip_counts["hydrophone source (not supported)"] += 1
+        if not dj.hydrophone_id:
+            logger.warning("detection job %s: not a hydrophone job, skipping", dj_id)
+            skip_counts["not hydrophone source"] += 1
             continue
 
-        if not dj.audio_folder:
-            logger.warning("detection job %s: no audio_folder, skipping", dj_id)
-            skip_counts["no audio source"] += 1
+        if dj.start_timestamp is None or dj.end_timestamp is None:
+            logger.warning(
+                "detection job %s: missing start/end timestamps, skipping", dj_id
+            )
+            skip_counts["missing job timestamps"] += 1
             continue
 
         # Load row store
@@ -268,6 +229,7 @@ async def run_bootstrap(
     dry_run: bool,
     output_path: Path,
     storage_root: Path,
+    settings: Settings,
 ) -> BootstrapResult:
     """Core bootstrap logic — testable without argparse."""
     result = BootstrapResult()
@@ -325,77 +287,68 @@ async def run_bootstrap(
     for dj_id, job_windows in windows_by_job.items():
         dj = await session.get(DetectionJob, dj_id)
         assert dj is not None
-        audio_folder = Path(dj.audio_folder)  # type: ignore[arg-type]
-
-        if not audio_folder.exists():
-            for w in job_windows:
-                result.skipped["audio folder missing"] = (
-                    result.skipped.get("audio folder missing", 0) + 1
-                )
-            continue
-
-        audio_index = _build_audio_index(audio_folder)
-        audio_cache: dict[str, tuple[np.ndarray, float]] = {}
+        assert dj.hydrophone_id is not None
+        assert dj.start_timestamp is not None
+        assert dj.end_timestamp is not None
 
         for w in job_windows:
-            resolved = _resolve_file_for_row(w.start_utc, audio_index)
-            if resolved is None:
-                result.skipped["audio file not resolved"] = (
-                    result.skipped.get("audio file not resolved", 0) + 1
-                )
-                continue
-            file_path, base_epoch = resolved
+            duration = w.end_utc - w.start_utc
 
-            # Find AudioFile row
-            af_result = await session.execute(
-                select(AudioFile).where(
-                    AudioFile.source_folder == str(audio_folder),
-                    AudioFile.filename == file_path.name,
-                )
+            # Fetch wider context so per_region_zscore normalization
+            # has enough frames — the model was trained on 10s crops.
+            context_sec = max(10.0, duration)
+            pad = (context_sec - duration) / 2.0
+            ctx_start = max(dj.start_timestamp, w.start_utc - pad)
+            ctx_end = min(dj.end_timestamp, w.end_utc + pad)
+            ctx_duration = ctx_end - ctx_start
+            win_offset = w.start_utc - ctx_start
+
+            audio = await asyncio.to_thread(
+                resolve_timeline_audio,
+                hydrophone_id=dj.hydrophone_id,
+                local_cache_path=str(settings.s3_cache_path or ""),
+                job_start_timestamp=dj.start_timestamp,
+                job_end_timestamp=dj.end_timestamp,
+                start_sec=ctx_start,
+                duration_sec=ctx_duration,
+                target_sr=target_sr,
+                noaa_cache_path=str(settings.noaa_cache_path)
+                if settings.noaa_cache_path
+                else None,
             )
-            af = af_result.scalar_one_or_none()
-            if af is None:
-                result.skipped["audio file row not found"] = (
-                    result.skipped.get("audio file row not found", 0) + 1
-                )
-                continue
 
-            # Load audio (cached per file)
-            cache_key = f"{audio_folder}:{file_path.name}"
-            if cache_key not in audio_cache:
-                raw, sr = decode_audio(file_path)
-                resampled = np.asarray(resample(raw, sr, target_sr), dtype=np.float32)
-                audio_cache[cache_key] = (resampled, base_epoch)
-            audio, base_epoch = audio_cache[cache_key]
-
-            # Audio-relative window bounds
-            win_start = w.start_utc - base_epoch
-            win_end = w.end_utc - base_epoch
-
-            # Run segmentation on the window
+            # Run inference on the full context buffer
             events = await asyncio.to_thread(
                 _run_segmentation_on_window,
                 model=crnn,
                 audio=audio,
-                start_sec=win_start,
-                end_sec=win_end,
+                start_sec=0.0,
+                end_sec=ctx_duration,
                 target_sr=target_sr,
                 feature_config=feature_config,
                 decoder_config=decoder_config,
             )
 
+            # Clip events to the original window bounds
             for event in events:
-                if event.start_sec >= win_start and event.end_sec <= win_end:
-                    new_samples.append(
-                        {
-                            "start_sec": round(event.start_sec, 4),
-                            "end_sec": round(event.end_sec, 4),
-                            "type_name": w.type_name,
-                            "audio_file_id": af.id,
-                            "source_row_id": w.row_id,
-                        }
-                    )
-                    result.inserted += 1
+                ev_start = event.start_sec - win_offset
+                ev_end = event.end_sec - win_offset
+                if ev_end <= 0.0 or ev_start >= duration:
+                    continue
+                ev_start = max(0.0, ev_start)
+                ev_end = min(duration, ev_end)
+                if (ev_end - ev_start) < 0.2:
+                    continue
+                new_samples.append(
+                    {
+                        "start_sec": round(w.start_utc + ev_start, 4),
+                        "end_sec": round(w.start_utc + ev_end, 4),
+                        "type_name": w.type_name,
+                        "hydrophone_id": dj.hydrophone_id,
+                        "source_row_id": w.row_id,
+                    }
+                )
+                result.inserted += 1
 
     if not dry_run:
         all_samples = existing_samples + new_samples
@@ -464,6 +417,7 @@ async def async_main(args: argparse.Namespace) -> None:
                 dry_run=args.dry_run,
                 output_path=args.output,
                 storage_root=settings.storage_root,
+                settings=settings,
             )
         _print_summary(result, dry_run=args.dry_run)
     finally:

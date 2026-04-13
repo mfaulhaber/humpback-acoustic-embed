@@ -4,7 +4,10 @@ Verifies:
 - Single-label windows produce correctly labeled events.
 - Multi-label windows are excluded.
 - ``(Negative)`` windows are excluded.
-- Events outside the window time range are not labeled.
+- Events outside the window time range are not included.
+
+All fixtures use hydrophone-sourced detection jobs with mocked
+``resolve_timeline_audio`` for audio fetching.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from humpback.call_parsing.types import Event
@@ -22,11 +26,14 @@ from humpback.classifier.detection_rows import (
 )
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
-from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import SegmentationModel
 from humpback.models.classifier import DetectionJob
 from humpback.models.labeling import VocalizationLabel
 from scripts.bootstrap_event_classifier_dataset import run_bootstrap
+
+JOB_START_TS = 0.0
+JOB_END_TS = 100.0
+HYDROPHONE_ID = "test_hydrophone"
 
 
 def _make_row(row_id: str, start_utc: float, end_utc: float) -> dict[str, str]:
@@ -54,34 +61,6 @@ def _settings(tmp_path: Path) -> Settings:
         storage_root=storage,
         database_url=f"sqlite+aiosqlite:///{tmp_path}/test.db",
     )
-
-
-def _write_fake_audio(
-    folder: Path,
-    filename: str,
-    duration_sec: float = 10.0,
-    mtime_epoch: float = 90.0,
-) -> Path:
-    """Write a small WAV file to disk for testing.
-
-    Sets the file's mtime to ``mtime_epoch`` so that
-    ``_resolve_file_for_row`` can map ``start_utc`` values to this file.
-    """
-    import os
-    import struct
-    import wave
-
-    filepath = folder / filename
-    sr = 16000
-    n_samples = int(duration_sec * sr)
-    with wave.open(str(filepath), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        data = struct.pack(f"<{n_samples}h", *([0] * n_samples))
-        wf.writeframes(data)
-    os.utime(filepath, (mtime_epoch, mtime_epoch))
-    return filepath
 
 
 def _setup_fake_segmentation_model(tmp_path: Path) -> tuple[str, str]:
@@ -127,35 +106,43 @@ def _mock_segmentation_events(
     )
 
 
+def _mock_timeline_audio():
+    """Return a patcher that replaces resolve_timeline_audio with synthetic audio."""
+
+    def _fake_resolve(**kwargs):
+        duration_sec = kwargs["duration_sec"]
+        target_sr = kwargs["target_sr"]
+        n = int(target_sr * duration_sec)
+        return np.zeros(n, dtype=np.float32)
+
+    return patch(
+        "scripts.bootstrap_event_classifier_dataset.resolve_timeline_audio",
+        side_effect=_fake_resolve,
+    )
+
+
 async def _setup_detection_job(
     session,
     *,
     job_id: str,
-    audio_folder: str,
     row_store_path: Path,
     rows: list[dict[str, str]],
     labels: list[tuple[str, str]],
-    audio_file_id: str = "af-1",
-    audio_filename: str = "test.wav",
+    hydrophone_id: str = HYDROPHONE_ID,
+    start_timestamp: float = JOB_START_TS,
+    end_timestamp: float = JOB_END_TS,
 ):
-    """Create a detection job, row store, audio file row, and vocalization labels."""
+    """Create a hydrophone detection job, row store, and vocalization labels."""
     dj = DetectionJob(
         id=job_id,
         classifier_model_id="fake-model",
-        audio_folder=audio_folder,
+        hydrophone_id=hydrophone_id,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
         output_row_store_path=str(row_store_path),
         status="complete",
     )
     session.add(dj)
-
-    af = AudioFile(
-        id=audio_file_id,
-        filename=audio_filename,
-        source_folder=audio_folder,
-        checksum_sha256=f"fake-sha256-{audio_file_id}",
-        duration_seconds=10.0,
-    )
-    session.add(af)
 
     for row_id, label_name in labels:
         lb = VocalizationLabel(
@@ -173,10 +160,6 @@ class TestSingleLabelWindow:
     async def test_produces_labeled_events(self, session_factory, tmp_path):
         """A single-label window produces correct labeled events."""
         settings = _settings(tmp_path)
-        audio_folder = tmp_path / "audio"
-        audio_folder.mkdir()
-        # mtime=0 so audio-relative seconds == UTC seconds
-        _write_fake_audio(audio_folder, "test.wav", mtime_epoch=0.0)
 
         row_store_path = tmp_path / "rows.parquet"
         rows = [_make_row("row-1", 1.0, 6.0)]
@@ -187,7 +170,6 @@ class TestSingleLabelWindow:
             await _setup_detection_job(
                 session,
                 job_id="dj-1",
-                audio_folder=str(audio_folder),
                 row_store_path=row_store_path,
                 rows=rows,
                 labels=[("row-1", "upcall")],
@@ -203,28 +185,28 @@ class TestSingleLabelWindow:
             session.add(seg_model)
             await session.commit()
 
-            # Events within the window (audio-relative [1.0, 6.0])
+            # Events within the window duration [0, 5.0] (buffer-relative)
             mock_events = [
                 Event(
                     "e1",
                     "r1",
-                    start_sec=1.5,
-                    end_sec=3.0,
-                    center_sec=2.25,
+                    start_sec=0.5,
+                    end_sec=2.0,
+                    center_sec=1.25,
                     segmentation_confidence=0.9,
                 ),
                 Event(
                     "e2",
                     "r1",
-                    start_sec=4.0,
-                    end_sec=5.5,
-                    center_sec=4.75,
+                    start_sec=3.0,
+                    end_sec=4.5,
+                    center_sec=3.75,
                     segmentation_confidence=0.8,
                 ),
             ]
 
             output_path = tmp_path / "output.json"
-            with _mock_segmentation_events(mock_events):
+            with _mock_segmentation_events(mock_events), _mock_timeline_audio():
                 result = await run_bootstrap(
                     session,
                     detection_job_ids=["dj-1"],
@@ -232,22 +214,21 @@ class TestSingleLabelWindow:
                     dry_run=False,
                     output_path=output_path,
                     storage_root=settings.storage_root,
+                    settings=settings,
                 )
 
             assert result.inserted == 2
             samples = json.loads(output_path.read_text())
             assert len(samples) == 2
             assert all(s["type_name"] == "upcall" for s in samples)
-            assert all(s["audio_file_id"] == "af-1" for s in samples)
+            assert all(s["hydrophone_id"] == HYDROPHONE_ID for s in samples)
+            assert "audio_file_id" not in samples[0]
 
 
 class TestMultiLabelExcluded:
     async def test_multi_label_window_skipped(self, session_factory, tmp_path):
         """Windows with more than one distinct type label are excluded."""
         settings = _settings(tmp_path)
-        audio_folder = tmp_path / "audio"
-        audio_folder.mkdir()
-        _write_fake_audio(audio_folder, "test.wav", mtime_epoch=0.0)
 
         row_store_path = tmp_path / "rows.parquet"
         rows = [_make_row("row-ml", 1.0, 6.0)]
@@ -258,11 +239,9 @@ class TestMultiLabelExcluded:
             await _setup_detection_job(
                 session,
                 job_id="dj-2",
-                audio_folder=str(audio_folder),
                 row_store_path=row_store_path,
                 rows=rows,
                 labels=[("row-ml", "upcall"), ("row-ml", "downcall")],
-                audio_file_id="af-2",
             )
 
             seg_model = SegmentationModel(
@@ -276,7 +255,7 @@ class TestMultiLabelExcluded:
             await session.commit()
 
             output_path = tmp_path / "output.json"
-            with _mock_segmentation_events([]):
+            with _mock_segmentation_events([]), _mock_timeline_audio():
                 result = await run_bootstrap(
                     session,
                     detection_job_ids=["dj-2"],
@@ -284,6 +263,7 @@ class TestMultiLabelExcluded:
                     dry_run=False,
                     output_path=output_path,
                     storage_root=settings.storage_root,
+                    settings=settings,
                 )
 
             assert result.inserted == 0
@@ -294,9 +274,6 @@ class TestNegativeExcluded:
     async def test_negative_only_window_skipped(self, session_factory, tmp_path):
         """Windows with only ``(Negative)`` labels are excluded."""
         settings = _settings(tmp_path)
-        audio_folder = tmp_path / "audio"
-        audio_folder.mkdir()
-        _write_fake_audio(audio_folder, "test.wav", mtime_epoch=0.0)
 
         row_store_path = tmp_path / "rows.parquet"
         rows = [_make_row("row-neg", 1.0, 6.0)]
@@ -307,11 +284,9 @@ class TestNegativeExcluded:
             await _setup_detection_job(
                 session,
                 job_id="dj-3",
-                audio_folder=str(audio_folder),
                 row_store_path=row_store_path,
                 rows=rows,
                 labels=[("row-neg", "(Negative)")],
-                audio_file_id="af-3",
             )
 
             seg_model = SegmentationModel(
@@ -325,7 +300,7 @@ class TestNegativeExcluded:
             await session.commit()
 
             output_path = tmp_path / "output.json"
-            with _mock_segmentation_events([]):
+            with _mock_segmentation_events([]), _mock_timeline_audio():
                 result = await run_bootstrap(
                     session,
                     detection_job_ids=["dj-3"],
@@ -333,6 +308,7 @@ class TestNegativeExcluded:
                     dry_run=False,
                     output_path=output_path,
                     storage_root=settings.storage_root,
+                    settings=settings,
                 )
 
             assert result.inserted == 0
@@ -343,9 +319,6 @@ class TestEventsOutsideWindowExcluded:
     async def test_events_outside_window_not_labeled(self, session_factory, tmp_path):
         """Events whose bounds extend beyond the window are not included."""
         settings = _settings(tmp_path)
-        audio_folder = tmp_path / "audio"
-        audio_folder.mkdir()
-        _write_fake_audio(audio_folder, "test.wav", mtime_epoch=0.0)
 
         row_store_path = tmp_path / "rows.parquet"
         rows = [_make_row("row-out", 1.0, 6.0)]
@@ -356,11 +329,9 @@ class TestEventsOutsideWindowExcluded:
             await _setup_detection_job(
                 session,
                 job_id="dj-4",
-                audio_folder=str(audio_folder),
                 row_store_path=row_store_path,
                 rows=rows,
                 labels=[("row-out", "upcall")],
-                audio_file_id="af-4",
             )
 
             seg_model = SegmentationModel(
@@ -373,28 +344,41 @@ class TestEventsOutsideWindowExcluded:
             session.add(seg_model)
             await session.commit()
 
-            # One event inside [1.0, 6.0], one extending past
+            # Window is [1.0, 6.0] → duration 5.0s, context padded to 10s.
+            # Context offset (win_offset) depends on pad = (10-5)/2 = 2.5.
+            # ctx_start = max(0.0, 1.0 - 2.5) = 0.0, so win_offset = 1.0.
+            # e-in: ctx-relative [1.0, 2.0] → win-relative [0.0, 1.0] → inside
+            # e-overlap: ctx-relative [4.0, 6.0] → win-relative [3.0, 5.0] → inside
+            # e-outside: ctx-relative [8.0, 9.5] → win-relative [7.0, 8.5] → fully outside
             mock_events = [
                 Event(
                     "e-in",
                     "r1",
-                    start_sec=2.0,
-                    end_sec=3.0,
-                    center_sec=2.5,
+                    start_sec=1.0,
+                    end_sec=2.0,
+                    center_sec=1.5,
                     segmentation_confidence=0.9,
                 ),
                 Event(
-                    "e-out",
+                    "e-overlap",
                     "r1",
-                    start_sec=5.0,
-                    end_sec=7.0,
-                    center_sec=6.0,
+                    start_sec=4.0,
+                    end_sec=6.0,
+                    center_sec=5.0,
                     segmentation_confidence=0.8,
+                ),
+                Event(
+                    "e-outside",
+                    "r1",
+                    start_sec=8.0,
+                    end_sec=9.5,
+                    center_sec=8.75,
+                    segmentation_confidence=0.7,
                 ),
             ]
 
             output_path = tmp_path / "output.json"
-            with _mock_segmentation_events(mock_events):
+            with _mock_segmentation_events(mock_events), _mock_timeline_audio():
                 result = await run_bootstrap(
                     session,
                     detection_job_ids=["dj-4"],
@@ -402,11 +386,10 @@ class TestEventsOutsideWindowExcluded:
                     dry_run=False,
                     output_path=output_path,
                     storage_root=settings.storage_root,
+                    settings=settings,
                 )
 
-            # Only the event fully inside the window should be included
-            assert result.inserted == 1
+            # e-in and e-overlap are clipped to window; e-outside is excluded
+            assert result.inserted == 2
             samples = json.loads(output_path.read_text())
-            assert len(samples) == 1
-            assert samples[0]["start_sec"] == 2.0
-            assert samples[0]["end_sec"] == 3.0
+            assert len(samples) == 2

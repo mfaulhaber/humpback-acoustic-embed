@@ -79,16 +79,18 @@ def _build_audio_loader(
     audio_files_by_id: dict[str, AudioFile],
     feature_config: SegmentationFeatureConfig,
     storage_root: Path,
+    settings: Settings,
 ) -> Any:
     """Return a callable that fetches ``[crop_start_sec, crop_end_sec]`` audio.
 
+    Handles both audio-file-sourced and hydrophone-sourced samples.
     Audio files are resolved off-disk via ``resolve_audio_path`` + the
-    standard decode/resample helpers; the decoded buffer is sliced to the
-    sample's crop window at the target sample rate. Hydrophone-sourced
-    samples are deferred — the first pass of this worker supports only
-    audio-file samples, and raises ``NotImplementedError`` on the
-    hydrophone path so we fail fast rather than silently mistraining.
+    standard decode/resample helpers. Hydrophone samples are fetched via
+    ``resolve_timeline_audio`` using the sample's hydrophone_id and
+    absolute UTC timestamp bounds.
     """
+    from humpback.processing.timeline_audio import resolve_timeline_audio
+
     target_sr = feature_config.sample_rate
     cache: dict[str, tuple[np.ndarray, int]] = {}
 
@@ -97,12 +99,27 @@ def _build_audio_loader(
         hydrophone_id = getattr(sample, "hydrophone_id", None)
         if audio_file_id is None and hydrophone_id is None:
             raise ValueError(f"sample {getattr(sample, 'id', '?')} has no audio source")
-        if audio_file_id is None:
-            raise NotImplementedError(
-                "hydrophone-sourced segmentation samples are not yet supported "
-                "by the training worker"
+
+        if hydrophone_id is not None and audio_file_id is None:
+            start_ts = float(sample.start_timestamp)
+            end_ts = float(sample.end_timestamp)
+            crop_start = float(sample.crop_start_sec)
+            crop_end = float(sample.crop_end_sec)
+            duration = crop_end - crop_start
+            return resolve_timeline_audio(
+                hydrophone_id=hydrophone_id,
+                local_cache_path=str(settings.s3_cache_path or ""),
+                job_start_timestamp=start_ts,
+                job_end_timestamp=end_ts,
+                start_sec=start_ts + crop_start,
+                duration_sec=duration,
+                target_sr=target_sr,
+                noaa_cache_path=str(settings.noaa_cache_path)
+                if settings.noaa_cache_path
+                else None,
             )
 
+        assert audio_file_id is not None
         audio_file = audio_files_by_id.get(audio_file_id)
         if audio_file is None:
             raise ValueError(
@@ -188,7 +205,7 @@ async def run_segmentation_training_job(
         feature_config = SegmentationFeatureConfig(n_mels=training_config.n_mels)
         decoder_config = SegmentationDecoderConfig()
         audio_loader = _build_audio_loader(
-            audio_files_by_id, feature_config, settings.storage_root
+            audio_files_by_id, feature_config, settings.storage_root, settings
         )
 
         model_dir.mkdir(parents=True, exist_ok=True)

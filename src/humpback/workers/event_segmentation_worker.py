@@ -111,6 +111,35 @@ def _build_file_audio_loader(
     return _load
 
 
+def _build_hydrophone_audio_loader(
+    hydrophone_id: str,
+    job_start_ts: float,
+    job_end_ts: float,
+    feature_config: SegmentationFeatureConfig,
+    settings: Settings,
+):
+    """Fetch region audio from a hydrophone HLS/archive source."""
+    from humpback.processing.timeline_audio import resolve_timeline_audio
+
+    target_sr = feature_config.sample_rate
+
+    def _load(region: Region) -> np.ndarray:
+        return resolve_timeline_audio(
+            hydrophone_id=hydrophone_id,
+            local_cache_path=str(settings.s3_cache_path or ""),
+            job_start_timestamp=job_start_ts,
+            job_end_timestamp=job_end_ts,
+            start_sec=region.padded_start_sec,
+            duration_sec=region.padded_end_sec - region.padded_start_sec,
+            target_sr=target_sr,
+            noaa_cache_path=str(settings.noaa_cache_path)
+            if settings.noaa_cache_path
+            else None,
+        )
+
+    return _load
+
+
 def _run_inference_pipeline(
     *,
     checkpoint_path: Path,
@@ -218,9 +247,12 @@ async def run_event_segmentation_job(
                 audio_file, feature_config, settings.storage_root
             )
         elif upstream_hydrophone_id:
-            raise NotImplementedError(
-                "hydrophone-sourced event segmentation inference is not yet "
-                "supported; see docs/plans/backlog.md"
+            audio_loader = _build_hydrophone_audio_loader(
+                hydrophone_id=upstream_hydrophone_id,
+                job_start_ts=upstream.start_timestamp or 0.0,
+                job_end_ts=upstream.end_timestamp or 0.0,
+                feature_config=feature_config,
+                settings=settings,
             )
         else:
             raise ValueError(
