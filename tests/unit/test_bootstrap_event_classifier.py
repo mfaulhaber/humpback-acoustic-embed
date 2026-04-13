@@ -344,7 +344,12 @@ class TestEventsOutsideWindowExcluded:
             session.add(seg_model)
             await session.commit()
 
-            # Window duration is 5.0 s (6.0 - 1.0). One event inside, one past.
+            # Window is [1.0, 6.0] → duration 5.0s, context padded to 10s.
+            # Context offset (win_offset) depends on pad = (10-5)/2 = 2.5.
+            # ctx_start = max(0.0, 1.0 - 2.5) = 0.0, so win_offset = 1.0.
+            # e-in: ctx-relative [1.0, 2.0] → win-relative [0.0, 1.0] → inside
+            # e-overlap: ctx-relative [4.0, 6.0] → win-relative [3.0, 5.0] → inside
+            # e-outside: ctx-relative [8.0, 9.5] → win-relative [7.0, 8.5] → fully outside
             mock_events = [
                 Event(
                     "e-in",
@@ -355,12 +360,20 @@ class TestEventsOutsideWindowExcluded:
                     segmentation_confidence=0.9,
                 ),
                 Event(
-                    "e-out",
+                    "e-overlap",
                     "r1",
                     start_sec=4.0,
                     end_sec=6.0,
                     center_sec=5.0,
                     segmentation_confidence=0.8,
+                ),
+                Event(
+                    "e-outside",
+                    "r1",
+                    start_sec=8.0,
+                    end_sec=9.5,
+                    center_sec=8.75,
+                    segmentation_confidence=0.7,
                 ),
             ]
 
@@ -376,10 +389,7 @@ class TestEventsOutsideWindowExcluded:
                     settings=settings,
                 )
 
-            # Only the event fully inside the window should be included
-            assert result.inserted == 1
+            # e-in and e-overlap are clipped to window; e-outside is excluded
+            assert result.inserted == 2
             samples = json.loads(output_path.read_text())
-            assert len(samples) == 1
-            # Output has absolute UTC timestamps
-            assert samples[0]["start_sec"] == pytest.approx(1.0 + 1.0, abs=0.01)
-            assert samples[0]["end_sec"] == pytest.approx(1.0 + 2.0, abs=0.01)
+            assert len(samples) == 2

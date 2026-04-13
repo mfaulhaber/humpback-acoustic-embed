@@ -86,7 +86,32 @@ def test_split_by_audio_source_three_sources_no_leakage_and_deterministic() -> N
     assert len(val_a) == 2  # 1 of 3 groups → 2 samples
 
 
-def test_split_by_audio_source_single_source_all_to_train() -> None:
+def test_split_by_audio_source_single_source_temporal_fallback() -> None:
+    samples = [
+        _FakeSample(
+            events_json="[]",
+            crop_start_sec=0.0,
+            crop_end_sec=1.0,
+            hydrophone_id="only",
+            start_timestamp=float(i * 100),
+            end_timestamp=float(i * 100 + 10),
+        )
+        for i in range(10)
+    ]
+    train, val = split_by_audio_source(samples, val_fraction=0.2, seed=0)
+    assert len(train) == 8
+    assert len(val) == 2
+    # Val should be the last two by timestamp
+    assert all(
+        s.start_timestamp is not None and s.start_timestamp >= 800.0 for s in val
+    )
+    # Train should be the first eight
+    assert all(
+        s.start_timestamp is not None and s.start_timestamp < 800.0 for s in train
+    )
+
+
+def test_split_by_audio_source_single_source_val_zero_no_split() -> None:
     samples = [
         _FakeSample(
             events_json="[]",
@@ -96,7 +121,7 @@ def test_split_by_audio_source_single_source_all_to_train() -> None:
         )
         for _ in range(4)
     ]
-    train, val = split_by_audio_source(samples, val_fraction=0.2, seed=0)
+    train, val = split_by_audio_source(samples, val_fraction=0.0, seed=0)
     assert len(train) == 4
     assert val == []
 

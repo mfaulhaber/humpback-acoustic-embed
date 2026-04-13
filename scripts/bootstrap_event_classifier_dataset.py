@@ -294,44 +294,61 @@ async def run_bootstrap(
         for w in job_windows:
             duration = w.end_utc - w.start_utc
 
+            # Fetch wider context so per_region_zscore normalization
+            # has enough frames — the model was trained on 10s crops.
+            context_sec = max(10.0, duration)
+            pad = (context_sec - duration) / 2.0
+            ctx_start = max(dj.start_timestamp, w.start_utc - pad)
+            ctx_end = min(dj.end_timestamp, w.end_utc + pad)
+            ctx_duration = ctx_end - ctx_start
+            win_offset = w.start_utc - ctx_start
+
             audio = await asyncio.to_thread(
                 resolve_timeline_audio,
                 hydrophone_id=dj.hydrophone_id,
                 local_cache_path=str(settings.s3_cache_path or ""),
                 job_start_timestamp=dj.start_timestamp,
                 job_end_timestamp=dj.end_timestamp,
-                start_sec=w.start_utc,
-                duration_sec=duration,
+                start_sec=ctx_start,
+                duration_sec=ctx_duration,
                 target_sr=target_sr,
                 noaa_cache_path=str(settings.noaa_cache_path)
                 if settings.noaa_cache_path
                 else None,
             )
 
-            # Segmentation inference uses buffer-relative coordinates
+            # Run inference on the full context buffer
             events = await asyncio.to_thread(
                 _run_segmentation_on_window,
                 model=crnn,
                 audio=audio,
                 start_sec=0.0,
-                end_sec=duration,
+                end_sec=ctx_duration,
                 target_sr=target_sr,
                 feature_config=feature_config,
                 decoder_config=decoder_config,
             )
 
+            # Clip events to the original window bounds
             for event in events:
-                if event.start_sec >= 0.0 and event.end_sec <= duration:
-                    new_samples.append(
-                        {
-                            "start_sec": round(w.start_utc + event.start_sec, 4),
-                            "end_sec": round(w.start_utc + event.end_sec, 4),
-                            "type_name": w.type_name,
-                            "hydrophone_id": dj.hydrophone_id,
-                            "source_row_id": w.row_id,
-                        }
-                    )
-                    result.inserted += 1
+                ev_start = event.start_sec - win_offset
+                ev_end = event.end_sec - win_offset
+                if ev_end <= 0.0 or ev_start >= duration:
+                    continue
+                ev_start = max(0.0, ev_start)
+                ev_end = min(duration, ev_end)
+                if (ev_end - ev_start) < 0.2:
+                    continue
+                new_samples.append(
+                    {
+                        "start_sec": round(w.start_utc + ev_start, 4),
+                        "end_sec": round(w.start_utc + ev_end, 4),
+                        "type_name": w.type_name,
+                        "hydrophone_id": dj.hydrophone_id,
+                        "source_row_id": w.row_id,
+                    }
+                )
+                result.inserted += 1
 
     if not dry_run:
         all_samples = existing_samples + new_samples

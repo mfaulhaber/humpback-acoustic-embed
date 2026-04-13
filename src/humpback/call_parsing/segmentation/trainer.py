@@ -106,6 +106,14 @@ def _source_key(sample: Any) -> str:
     )
 
 
+def _temporal_sort_key(sample: Any) -> float:
+    """Extract a timestamp for temporal ordering."""
+    ts = getattr(sample, "start_timestamp", None)
+    if ts is not None:
+        return float(ts)
+    return float(getattr(sample, "crop_start_sec", 0.0))
+
+
 def split_by_audio_source(
     samples: Sequence[Any],
     val_fraction: float,
@@ -116,8 +124,9 @@ def split_by_audio_source(
     Samples are grouped by ``audio_file_id`` (or ``hydrophone_id`` as the
     fallback key); groups are shuffled deterministically under ``seed``
     and the first ``~val_fraction`` of groups go to val, the rest to
-    train. If only one group is present it all goes to train so training
-    still has data; the test harness asserts this behavior.
+    train. When only one source group exists, falls back to a temporal
+    split: samples are sorted by timestamp and the last ``val_fraction``
+    go to val, giving temporal separation even within a single hydrophone.
     """
     if not 0.0 <= val_fraction < 1.0:
         raise ValueError(f"val_fraction must be in [0, 1), got {val_fraction}")
@@ -128,6 +137,14 @@ def split_by_audio_source(
         groups.setdefault(key, []).append(sample)
 
     group_keys = sorted(groups.keys())
+
+    if len(group_keys) == 1 and val_fraction > 0.0:
+        all_samples = list(samples)
+        all_samples.sort(key=_temporal_sort_key)
+        n_val = max(1, int(round(val_fraction * len(all_samples))))
+        split_idx = len(all_samples) - n_val
+        return all_samples[:split_idx], all_samples[split_idx:]
+
     rng = random.Random(seed)
     rng.shuffle(group_keys)
 
