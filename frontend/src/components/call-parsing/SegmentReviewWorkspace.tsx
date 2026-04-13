@@ -207,9 +207,11 @@ export function SegmentReviewWorkspace({
     [effectiveEvents, selectedRegionId],
   );
 
-  // Auto-select first event when region changes
+  // Auto-select first event when region changes (not on every regionEvents update)
+  const prevRegionIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedRegionId) return;
+    if (!selectedRegionId || selectedRegionId === prevRegionIdRef.current) return;
+    prevRegionIdRef.current = selectedRegionId;
     const sorted = regionEvents
       .filter((e) => e.correctionType !== "delete")
       .sort((a, b) => a.startSec - b.startSec);
