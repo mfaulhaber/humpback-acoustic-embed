@@ -159,6 +159,29 @@ export function SegmentReviewWorkspace({
       };
     });
 
+    // Add saved "add" corrections (they have no corresponding original event)
+    const originalEventIds = new Set(events.map((e) => e.event_id));
+    for (const corr of savedCorrections) {
+      if (
+        corr.correction_type === "add" &&
+        corr.start_sec != null &&
+        corr.end_sec != null &&
+        !originalEventIds.has(corr.event_id) &&
+        !pendingCorrections.has(corr.event_id)
+      ) {
+        result.push({
+          eventId: corr.event_id,
+          regionId: corr.region_id,
+          startSec: corr.start_sec,
+          endSec: corr.end_sec,
+          originalStartSec: corr.start_sec,
+          originalEndSec: corr.end_sec,
+          confidence: 0,
+          correctionType: "add",
+        });
+      }
+    }
+
     // Add pending "add" corrections (they have no corresponding event)
     for (const [key, corr] of pendingCorrections) {
       if (corr.correction_type === "add" && corr.start_sec != null && corr.end_sec != null) {
