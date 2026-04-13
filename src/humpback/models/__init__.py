@@ -7,6 +7,12 @@ from humpback.models.call_parsing import (
     SegmentationModel,
 )
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
+from humpback.models.feedback_training import (
+    EventBoundaryCorrection,
+    EventClassifierTrainingJob,
+    EventSegmentationTrainingJob,
+    EventTypeCorrection,
+)
 from humpback.models.hyperparameter import (
     HyperparameterManifest,
     HyperparameterSearchJob,
@@ -33,8 +39,12 @@ __all__ = [
     "AudioFile",
     "AudioMetadata",
     "CallParsingRun",
+    "EventBoundaryCorrection",
     "EventClassificationJob",
+    "EventClassifierTrainingJob",
     "EventSegmentationJob",
+    "EventSegmentationTrainingJob",
+    "EventTypeCorrection",
     "HyperparameterManifest",
     "HyperparameterSearchJob",
     "LabelProcessingJob",

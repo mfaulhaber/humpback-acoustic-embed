@@ -25,18 +25,25 @@ from humpback.call_parsing.storage import (
     segmentation_job_dir,
 )
 from humpback.schemas.call_parsing import (
+    BoundaryCorrectionRequest,
+    BoundaryCorrectionResponse,
     CallParsingRunCreate,
     CallParsingRunResponse,
+    ClassifierModelResponse,
+    ClassifierTrainingJobResponse,
+    CreateClassifierTrainingJobRequest,
     CreateEventClassificationJobRequest,
     CreateRegionJobRequest,
+    CreateSegmentationFeedbackTrainingJobRequest,
     CreateSegmentationJobRequest,
-    CreateSegmentationTrainingJobRequest,
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
+    SegmentationFeedbackTrainingJobResponse,
     SegmentationModelResponse,
     SegmentationTrainingDatasetSummary,
-    SegmentationTrainingJobResponse,
+    TypeCorrectionRequest,
+    TypeCorrectionResponse,
 )
 from humpback.services import call_parsing as service
 
@@ -291,58 +298,6 @@ async def list_segmentation_training_datasets(session: SessionDep):
     return [SegmentationTrainingDatasetSummary(**row) for row in rows]
 
 
-@router.post(
-    "/segmentation-training-jobs",
-    status_code=201,
-    response_model=SegmentationTrainingJobResponse,
-)
-async def create_segmentation_training_job(
-    body: CreateSegmentationTrainingJobRequest, session: SessionDep
-):
-    try:
-        job = await service.create_segmentation_training_job(session, body)
-    except service.CallParsingFKError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    await session.commit()
-    await session.refresh(job)
-    return SegmentationTrainingJobResponse.model_validate(job)
-
-
-@router.get(
-    "/segmentation-training-jobs",
-    response_model=list[SegmentationTrainingJobResponse],
-)
-async def list_segmentation_training_jobs(session: SessionDep):
-    jobs = await service.list_segmentation_training_jobs(session)
-    return [SegmentationTrainingJobResponse.model_validate(j) for j in jobs]
-
-
-@router.get(
-    "/segmentation-training-jobs/{job_id}",
-    response_model=SegmentationTrainingJobResponse,
-)
-async def get_segmentation_training_job(job_id: str, session: SessionDep):
-    job = await service.get_segmentation_training_job(session, job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=404, detail="Segmentation training job not found"
-        )
-    return SegmentationTrainingJobResponse.model_validate(job)
-
-
-@router.delete("/segmentation-training-jobs/{job_id}", status_code=204)
-async def delete_segmentation_training_job(job_id: str, session: SessionDep):
-    try:
-        deleted = await service.delete_segmentation_training_job(session, job_id)
-    except service.CallParsingStateError as exc:
-        raise HTTPException(status_code=409, detail=exc.detail) from exc
-    if not deleted:
-        raise HTTPException(
-            status_code=404, detail="Segmentation training job not found"
-        )
-    return None
-
-
 # ---- Pass 2: segmentation models ----------------------------------------
 
 
@@ -467,3 +422,194 @@ async def get_classification_typed_events(
         ],
         key=lambda r: (r["start_sec"], r["type_name"]),
     )
+
+
+# ---- Boundary corrections (Pass 2) ---------------------------------------
+
+
+@router.post("/segmentation-jobs/{job_id}/corrections")
+async def upsert_boundary_corrections(
+    job_id: str, body: BoundaryCorrectionRequest, session: SessionDep
+):
+    try:
+        count = await service.upsert_boundary_corrections(
+            session, job_id, body.corrections
+        )
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    return {"count": count}
+
+
+@router.get(
+    "/segmentation-jobs/{job_id}/corrections",
+    response_model=list[BoundaryCorrectionResponse],
+)
+async def list_boundary_corrections(job_id: str, session: SessionDep):
+    rows = await service.list_boundary_corrections(session, job_id)
+    return [BoundaryCorrectionResponse.model_validate(r) for r in rows]
+
+
+@router.delete("/segmentation-jobs/{job_id}/corrections", status_code=204)
+async def clear_boundary_corrections(job_id: str, session: SessionDep):
+    await service.clear_boundary_corrections(session, job_id)
+    return None
+
+
+# ---- Type corrections (Pass 3) -------------------------------------------
+
+
+@router.post("/classification-jobs/{job_id}/corrections")
+async def upsert_type_corrections(
+    job_id: str, body: TypeCorrectionRequest, session: SessionDep
+):
+    try:
+        count = await service.upsert_type_corrections(session, job_id, body.corrections)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    return {"count": count}
+
+
+@router.get(
+    "/classification-jobs/{job_id}/corrections",
+    response_model=list[TypeCorrectionResponse],
+)
+async def list_type_corrections(job_id: str, session: SessionDep):
+    rows = await service.list_type_corrections(session, job_id)
+    return [TypeCorrectionResponse.model_validate(r) for r in rows]
+
+
+@router.delete("/classification-jobs/{job_id}/corrections", status_code=204)
+async def clear_type_corrections(job_id: str, session: SessionDep):
+    await service.clear_type_corrections(session, job_id)
+    return None
+
+
+# ---- Segmentation feedback training jobs (Pass 2) -------------------------
+
+
+@router.post(
+    "/segmentation-feedback-training-jobs",
+    status_code=201,
+    response_model=SegmentationFeedbackTrainingJobResponse,
+)
+async def create_segmentation_feedback_training_job(
+    body: CreateSegmentationFeedbackTrainingJobRequest, session: SessionDep
+):
+    try:
+        job = await service.create_segmentation_feedback_training_job(session, body)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    await session.commit()
+    return SegmentationFeedbackTrainingJobResponse.model_validate(job)
+
+
+@router.get(
+    "/segmentation-feedback-training-jobs",
+    response_model=list[SegmentationFeedbackTrainingJobResponse],
+)
+async def list_segmentation_feedback_training_jobs(session: SessionDep):
+    jobs = await service.list_segmentation_feedback_training_jobs(session)
+    return [SegmentationFeedbackTrainingJobResponse.model_validate(j) for j in jobs]
+
+
+@router.get(
+    "/segmentation-feedback-training-jobs/{job_id}",
+    response_model=SegmentationFeedbackTrainingJobResponse,
+)
+async def get_segmentation_feedback_training_job(job_id: str, session: SessionDep):
+    job = await service.get_segmentation_feedback_training_job(session, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail="Segmentation feedback training job not found"
+        )
+    return SegmentationFeedbackTrainingJobResponse.model_validate(job)
+
+
+@router.delete("/segmentation-feedback-training-jobs/{job_id}", status_code=204)
+async def delete_segmentation_feedback_training_job(job_id: str, session: SessionDep):
+    deleted = await service.delete_segmentation_feedback_training_job(session, job_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail="Segmentation feedback training job not found"
+        )
+    return None
+
+
+# ---- Classifier feedback training jobs (Pass 3) ---------------------------
+
+
+@router.post(
+    "/classifier-training-jobs",
+    status_code=201,
+    response_model=ClassifierTrainingJobResponse,
+)
+async def create_classifier_training_job(
+    body: CreateClassifierTrainingJobRequest, session: SessionDep
+):
+    try:
+        job = await service.create_classifier_training_job(session, body)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    await session.commit()
+    return ClassifierTrainingJobResponse.model_validate(job)
+
+
+@router.get(
+    "/classifier-training-jobs",
+    response_model=list[ClassifierTrainingJobResponse],
+)
+async def list_classifier_training_jobs(session: SessionDep):
+    jobs = await service.list_classifier_training_jobs(session)
+    return [ClassifierTrainingJobResponse.model_validate(j) for j in jobs]
+
+
+@router.get(
+    "/classifier-training-jobs/{job_id}",
+    response_model=ClassifierTrainingJobResponse,
+)
+async def get_classifier_training_job(job_id: str, session: SessionDep):
+    job = await service.get_classifier_training_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Classifier training job not found")
+    return ClassifierTrainingJobResponse.model_validate(job)
+
+
+@router.delete("/classifier-training-jobs/{job_id}", status_code=204)
+async def delete_classifier_training_job(job_id: str, session: SessionDep):
+    deleted = await service.delete_classifier_training_job(session, job_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Classifier training job not found")
+    return None
+
+
+# ---- Classifier model management (Pass 3) ---------------------------------
+
+
+@router.get(
+    "/classifier-models",
+    response_model=list[ClassifierModelResponse],
+)
+async def list_classifier_models(session: SessionDep):
+    models = await service.list_classifier_models(session)
+    return [ClassifierModelResponse.model_validate(m) for m in models]
+
+
+@router.delete("/classifier-models/{model_id}", status_code=204)
+async def delete_classifier_model(
+    model_id: str, session: SessionDep, settings: SettingsDep
+):
+    try:
+        deleted = await service.delete_classifier_model(session, model_id, settings)
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Classifier model not found")
+    return None

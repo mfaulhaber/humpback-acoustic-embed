@@ -11,12 +11,8 @@ from humpback.models.call_parsing import (
     RegionDetectionJob,
     SegmentationModel,
 )
-from humpback.models.segmentation_training import (
-    SegmentationTrainingDataset,
-)
 from humpback.schemas.call_parsing import (
     CreateSegmentationJobRequest,
-    CreateSegmentationTrainingJobRequest,
     SegmentationDecoderConfig,
     SegmentationTrainingConfig,
 )
@@ -24,7 +20,6 @@ from humpback.services.call_parsing import (
     CallParsingFKError,
     CallParsingStateError,
     create_segmentation_job,
-    create_segmentation_training_job,
 )
 
 
@@ -85,17 +80,6 @@ def test_decoder_config_rejects_negative_durations() -> None:
         SegmentationDecoderConfig(merge_gap_sec=-0.1)
 
 
-def test_create_segmentation_training_job_request_defaults() -> None:
-    req = CreateSegmentationTrainingJobRequest(training_dataset_id="abc")
-    assert req.training_dataset_id == "abc"
-    assert req.config.epochs == 30
-
-
-def test_create_segmentation_training_job_request_missing_id() -> None:
-    with pytest.raises(ValidationError):
-        CreateSegmentationTrainingJobRequest.model_validate({})
-
-
 def test_create_segmentation_job_request_defaults() -> None:
     req = CreateSegmentationJobRequest(
         region_detection_job_id="rd-1",
@@ -119,29 +103,6 @@ def test_create_segmentation_job_request_rejects_malformed_config() -> None:
 
 
 # ---- Service-layer tests ------------------------------------------------
-
-
-async def test_create_segmentation_training_job_happy_path(session) -> None:
-    ds = SegmentationTrainingDataset(id="ds-1", name="bootstrap")
-    session.add(ds)
-    await session.commit()
-
-    req = CreateSegmentationTrainingJobRequest(training_dataset_id="ds-1")
-    job = await create_segmentation_training_job(session, req)
-    await session.commit()
-
-    assert job.training_dataset_id == "ds-1"
-    assert job.status == "queued"
-    loaded = json.loads(job.config_json)
-    assert loaded["epochs"] == 30
-    assert loaded["conv_channels"] == [32, 64, 96, 128]
-
-
-async def test_create_segmentation_training_job_missing_dataset(session) -> None:
-    req = CreateSegmentationTrainingJobRequest(training_dataset_id="does-not-exist")
-    with pytest.raises(CallParsingFKError) as exc:
-        await create_segmentation_training_job(session, req)
-    assert exc.value.field == "training_dataset_id"
 
 
 async def test_create_segmentation_job_happy_path(session) -> None:

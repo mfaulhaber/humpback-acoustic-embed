@@ -18,7 +18,6 @@ from humpback.models.vocalization import (
     VocalizationInferenceJob,
     VocalizationTrainingJob,
 )
-from humpback.schemas.call_parsing import SegmentationFeatureConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +29,16 @@ async def run_vocalization_training_job(
 ) -> None:
     """Execute a multi-label vocalization training job.
 
-    Dispatches on ``job.model_family``:
-    - ``sklearn_perch_embedding`` (or legacy ``None``) — existing sklearn
-      pipeline training on Perch embeddings.
-    - ``pytorch_event_cnn`` — PyTorch CNN training on variable-length
-      event crops from the call parsing pipeline.
+    Only handles ``sklearn_perch_embedding`` (or legacy ``None``) jobs.
+    ``pytorch_event_cnn`` training is handled by feedback training workers.
     """
-    family = job.model_family or "sklearn_perch_embedding"
-    if family == "pytorch_event_cnn":
-        await _run_pytorch_event_cnn_training(session, job, settings)
-        return
     try:
+        family = job.model_family or "sklearn_perch_embedding"
+        if family != "sklearn_perch_embedding":
+            raise ValueError(
+                f"Unsupported model_family {family!r} for vocalization training; "
+                f"use feedback training workers for pytorch_event_cnn"
+            )
         from humpback.classifier.vocalization_trainer import (
             save_model_artifacts,
             train_multilabel_classifiers,
@@ -400,133 +398,3 @@ async def _load_source_embeddings(
 
     else:
         raise ValueError(f"Unknown source type: {job.source_type}")
-
-
-async def _run_pytorch_event_cnn_training(
-    session: AsyncSession,
-    job: VocalizationTrainingJob,
-    settings: Settings,
-) -> None:
-    """Train a ``pytorch_event_cnn`` vocalization model on event crops.
-
-    Training samples are provided in the job's ``parameters`` JSON under
-    a ``"samples"`` key — each entry has ``start_sec``, ``end_sec``,
-    ``type_name``, and ``audio_file_id``.
-    """
-    from dataclasses import dataclass
-
-    from humpback.call_parsing.event_classifier.trainer import (
-        EventClassifierTrainingConfig,
-        EventClassifierTrainingResult,
-        train_event_classifier,
-    )
-    from humpback.ml.device import select_device
-    from humpback.models.audio import AudioFile
-    from humpback.processing.audio_io import decode_audio, resample
-    from humpback.storage import resolve_audio_path
-
-    @dataclass
-    class _EventSample:
-        start_sec: float
-        end_sec: float
-        type_index: int
-        audio_file_id: str
-
-    try:
-        parameters = json.loads(job.parameters) if job.parameters else {}
-        raw_samples = parameters.get("samples", [])
-        if not raw_samples:
-            raise ValueError("pytorch_event_cnn job requires 'samples' in parameters")
-
-        training_params = parameters.get("training_config", {})
-
-        type_names_seen = sorted({s["type_name"] for s in raw_samples})
-        vocabulary = type_names_seen
-        type_to_idx = {name: i for i, name in enumerate(vocabulary)}
-
-        samples = [
-            _EventSample(
-                start_sec=s["start_sec"],
-                end_sec=s["end_sec"],
-                type_index=type_to_idx[s["type_name"]],
-                audio_file_id=s["audio_file_id"],
-            )
-            for s in raw_samples
-        ]
-
-        audio_file_ids = sorted({s.audio_file_id for s in samples})
-        af_result = await session.execute(
-            select(AudioFile).where(AudioFile.id.in_(audio_file_ids))
-        )
-        audio_files_by_id = {af.id: af for af in af_result.scalars().all()}
-
-        target_sr = 16000
-        audio_cache: dict[str, np.ndarray] = {}
-
-        def _load_audio(sample: object) -> np.ndarray:
-            af_id = getattr(sample, "audio_file_id", None)
-            if af_id is None:
-                raise ValueError("sample missing audio_file_id")
-            if af_id not in audio_cache:
-                af = audio_files_by_id.get(af_id)
-                if af is None:
-                    raise ValueError(f"audio file {af_id} not found")
-                path = resolve_audio_path(af, settings.storage_root)
-                raw, sr = decode_audio(path)
-                resampled = resample(raw, sr, target_sr)
-                audio_cache[af_id] = np.asarray(resampled, dtype=np.float32)
-            return audio_cache[af_id]
-
-        config = EventClassifierTrainingConfig(**training_params)
-        model_dir = settings.storage_root / "vocalization_models" / job.id
-        device = select_device()
-
-        result: EventClassifierTrainingResult = await asyncio.to_thread(
-            train_event_classifier,
-            samples=samples,
-            vocabulary=vocabulary,
-            feature_config=SegmentationFeatureConfig(),
-            audio_loader=_load_audio,
-            config=config,
-            model_dir=model_dir,
-            device=device,
-        )
-
-        model = VocalizationClassifierModel(
-            name=f"vocalization-event-{job.id[:8]}",
-            model_dir_path=str(model_dir),
-            vocabulary_snapshot=json.dumps(result.vocabulary),
-            per_class_thresholds=json.dumps(result.per_type_thresholds),
-            per_class_metrics=json.dumps(result.per_type_metrics),
-            training_summary=json.dumps(result.to_summary()),
-            model_family="pytorch_event_cnn",
-            input_mode="segmented_event",
-        )
-        session.add(model)
-        await session.flush()
-
-        await session.execute(
-            update(VocalizationTrainingJob)
-            .where(VocalizationTrainingJob.id == job.id)
-            .values(
-                status="complete",
-                vocalization_model_id=model.id,
-                result_summary=json.dumps(result.to_summary()),
-                updated_at=datetime.now(timezone.utc),
-            )
-        )
-        await session.commit()
-        logger.info("PyTorch event-CNN training job %s complete", job.id)
-
-    except Exception as e:
-        logger.exception("PyTorch event-CNN training job %s failed", job.id)
-        await session.execute(
-            update(VocalizationTrainingJob)
-            .where(VocalizationTrainingJob.id == job.id)
-            .values(
-                status="failed",
-                error_message=str(e),
-                updated_at=datetime.now(timezone.utc),
-            )
-        )
-        await session.commit()

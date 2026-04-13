@@ -219,3 +219,24 @@ Three structural constraints shape the design:
 - On resume (re-queued failed job), the worker reads the existing manifest, verifies each "complete" chunk has a parquet file on disk, resets any without, and continues from the first pending chunk.
 - `_cleanup_partial_artifacts` preserves completed chunk parquets and manifest for resume; only final artifacts (`trace.parquet`, `regions.parquet`) and `.tmp` files are deleted on failure.
 - File-based jobs cannot be paused/resumed. If needed in the future, the file path can be synthetically chunked without affecting the hydrophone path.
+
+## ADR-053: Feedback training architecture — correction tables and bootstrap cleanup
+
+**Date**: 2026-04-12
+**Status**: Accepted
+
+**Context**: The call parsing pipeline (Pass 2 segmentation, Pass 3 classification) shipped with bootstrap-only training paths: CLI scripts that call trainer functions directly to produce initial models. The production workflow needs human-in-the-loop correction → retraining, and the bootstrap training worker + API endpoints created confusion about the intended workflow boundary.
+
+**Decision**: Store human corrections in separate SQL tables rather than amending parquet output. Correction tables (`event_boundary_corrections`, `event_type_corrections`) reference events by `event_id` from the immutable inference parquet. Dedicated feedback training workers assemble training data by merging corrections with uncorrected (implicitly approved) events, then call the same trainer functions as bootstrap. Bootstrap worker (`segmentation_training_worker.py`) and its API endpoints are removed; bootstrap scripts continue to call trainers directly without queueing.
+
+**Alternatives considered**:
+- Amending parquet files in-place: rejected because it loses the original inference output, complicates diffing, and breaks idempotency (re-running inference would overwrite corrections).
+- Storing corrections in a separate parquet: rejected because SQL provides better query semantics for upsert-by-event-id and join with job metadata.
+- Keeping bootstrap training worker alongside feedback workers: rejected because two training paths for the same model type creates ambiguity about which to use and doubles the maintenance surface.
+
+**Consequences**:
+- Migration `046_feedback_training_tables.py` adds four tables: `event_boundary_corrections`, `event_type_corrections`, `event_segmentation_training_jobs`, `event_classifier_training_jobs`.
+- Two new workers (`event_segmentation_feedback_worker.py`, `event_classifier_feedback_worker.py`) join the worker priority order between event classification and manifest generation.
+- `vocalization_worker.py` rejects `pytorch_event_cnn` model family — only handles `sklearn_perch_embedding`.
+- `segmentation_training_worker.py` deleted; its API endpoints (`POST/GET/GET/{id}/DELETE /call-parsing/segmentation-training-jobs`) removed. The `segmentation_training_jobs` table remains for any existing bootstrap rows but is no longer written to by the application.
+- Implicit approval means the training data volume grows with the number of source jobs even if the user only corrects a few events. This is intentional — uncorrected regions provide context and prevent catastrophic forgetting.

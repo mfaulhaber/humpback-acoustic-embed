@@ -310,3 +310,181 @@ class SegmentationTrainingDatasetSummary(BaseModel):
     name: str
     sample_count: int
     created_at: datetime
+
+
+# ---- Feedback training: correction schemas ---------------------------------
+
+
+class BoundaryCorrection(BaseModel):
+    """A single boundary correction for a Pass 2 segmentation event."""
+
+    event_id: str
+    region_id: str
+    correction_type: str = Field(pattern=r"^(adjust|add|delete)$")
+    start_sec: Optional[float] = None
+    end_sec: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _validate_fields(self) -> "BoundaryCorrection":
+        if self.correction_type == "add":
+            if self.start_sec is None or self.end_sec is None:
+                raise ValueError("'add' corrections require start_sec and end_sec")
+        if self.correction_type == "adjust":
+            if self.start_sec is None or self.end_sec is None:
+                raise ValueError("'adjust' corrections require start_sec and end_sec")
+        if self.correction_type == "delete":
+            if self.start_sec is not None or self.end_sec is not None:
+                raise ValueError("'delete' corrections must not set start_sec/end_sec")
+        if (
+            self.start_sec is not None
+            and self.end_sec is not None
+            and self.end_sec <= self.start_sec
+        ):
+            raise ValueError("end_sec must be strictly after start_sec")
+        return self
+
+
+class BoundaryCorrectionRequest(BaseModel):
+    """Batch upsert request for Pass 2 boundary corrections."""
+
+    corrections: list[BoundaryCorrection]
+
+
+class BoundaryCorrectionResponse(BaseModel):
+    """A stored boundary correction row."""
+
+    id: str
+    event_segmentation_job_id: str
+    event_id: str
+    region_id: str
+    correction_type: str
+    start_sec: Optional[float] = None
+    end_sec: Optional[float] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TypeCorrection(BaseModel):
+    """A single type correction for a Pass 3 classification event."""
+
+    event_id: str
+    type_name: Optional[str] = None
+
+
+class TypeCorrectionRequest(BaseModel):
+    """Batch upsert request for Pass 3 type corrections."""
+
+    corrections: list[TypeCorrection]
+
+
+class TypeCorrectionResponse(BaseModel):
+    """A stored type correction row."""
+
+    id: str
+    event_classification_job_id: str
+    event_id: str
+    type_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ---- Feedback training: training job schemas -------------------------------
+
+
+class EventClassifierTrainingConfig(BaseModel):
+    """Hyperparameters for a Pass 3 event classifier feedback training job.
+
+    Defaults match ``event_classifier.trainer.EventClassifierTrainingConfig``.
+    """
+
+    epochs: int = 30
+    batch_size: int = 16
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-4
+    early_stopping_patience: int = 5
+    grad_clip: float = 1.0
+    seed: int = 42
+    val_fraction: float = 0.2
+    min_examples_per_type: int = 10
+
+    @field_validator("val_fraction")
+    @classmethod
+    def _val_fraction_range(cls, v: float) -> float:
+        if not 0.0 <= v < 1.0:
+            raise ValueError("val_fraction must satisfy 0.0 <= val_fraction < 1.0")
+        return v
+
+
+class CreateSegmentationFeedbackTrainingJobRequest(BaseModel):
+    """Request body for ``POST /call-parsing/segmentation-feedback-training-jobs``."""
+
+    source_job_ids: list[str] = Field(min_length=1)
+    config: SegmentationTrainingConfig = Field(
+        default_factory=SegmentationTrainingConfig
+    )
+
+
+class CreateClassifierTrainingJobRequest(BaseModel):
+    """Request body for ``POST /call-parsing/classifier-training-jobs``."""
+
+    source_job_ids: list[str] = Field(min_length=1)
+    config: EventClassifierTrainingConfig = Field(
+        default_factory=EventClassifierTrainingConfig
+    )
+
+
+class SegmentationFeedbackTrainingJobResponse(BaseModel):
+    """Response model for Pass 2 feedback training jobs."""
+
+    id: str
+    status: str
+    source_job_ids: str
+    config_json: Optional[str] = None
+    segmentation_model_id: Optional[str] = None
+    result_summary: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ClassifierTrainingJobResponse(BaseModel):
+    """Response model for Pass 3 feedback training jobs."""
+
+    id: str
+    status: str
+    source_job_ids: str
+    config_json: Optional[str] = None
+    vocalization_model_id: Optional[str] = None
+    result_summary: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ClassifierModelResponse(BaseModel):
+    """Response model for ``GET /call-parsing/classifier-models``."""
+
+    id: str
+    name: str
+    model_family: str
+    input_mode: Optional[str] = None
+    model_dir_path: Optional[str] = None
+    vocabulary_snapshot: Optional[str] = None
+    per_class_thresholds: Optional[str] = None
+    per_class_metrics: Optional[str] = None
+    training_summary: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
