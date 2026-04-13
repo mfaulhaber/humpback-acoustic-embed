@@ -10,9 +10,10 @@ retrieval, and model-family validation.
 
 from __future__ import annotations
 
+import asyncio
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.call_parsing.storage import (
@@ -209,6 +210,211 @@ async def get_region_regions(job_id: str, session: SessionDep, settings: Setting
         }
         for r in rows
     ]
+
+
+@router.get("/region-jobs/{job_id}/tile")
+async def get_region_tile(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    zoom_level: str = Query(
+        ..., description="Zoom level (e.g. 24h, 6h, 1h, 15m, 5m, 1m)"
+    ),
+    tile_index: int = Query(..., ge=0, description="Tile index within the zoom level"),
+) -> Response:
+    """Return a PCEN spectrogram PNG tile for a region detection job."""
+    from humpback.processing.timeline_tiles import ZOOM_LEVELS, tile_count
+
+    job = await service.get_region_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Region detection job not found")
+    if job.status != "complete":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Region detection job status is {job.status!r}, not 'complete'",
+        )
+
+    if zoom_level not in ZOOM_LEVELS:
+        raise HTTPException(
+            400, f"Invalid zoom level: {zoom_level}. Must be one of {ZOOM_LEVELS}"
+        )
+
+    job_start = job.start_timestamp or 0.0
+    job_end = job.end_timestamp or job_start
+    duration = max(0.0, job_end - job_start)
+    max_tiles = tile_count(zoom_level, job_duration_sec=duration)
+    if tile_index >= max_tiles:
+        raise HTTPException(
+            400,
+            f"Tile index {tile_index} out of range (max {max_tiles - 1} for {zoom_level})",
+        )
+
+    tile_bytes = await asyncio.to_thread(
+        _render_region_tile_sync,
+        job=job,
+        zoom_level=zoom_level,
+        tile_index=tile_index,
+        settings=settings,
+    )
+    return Response(content=tile_bytes, media_type="image/png")
+
+
+def _render_region_tile_sync(
+    *,
+    job,
+    zoom_level: str,
+    tile_index: int,
+    settings,
+) -> bytes:
+    """Render a spectrogram tile for a region detection job (CPU-bound)."""
+    from humpback.processing.pcen_rendering import PcenParams
+    from humpback.processing.timeline_audio import resolve_timeline_audio
+    from humpback.processing.timeline_tiles import (
+        generate_timeline_tile,
+        tile_time_range,
+    )
+
+    job_start = job.start_timestamp or 0.0
+
+    start_epoch, end_epoch = tile_time_range(
+        zoom_level, tile_index=tile_index, job_start_timestamp=job_start
+    )
+    duration_sec = end_epoch - start_epoch
+
+    # Compute appropriate sample rate for tile width
+    width_px = settings.timeline_tile_width_px
+    desired_samples = width_px * 4 * 256
+    sr = max(
+        200,
+        min(int(desired_samples / duration_sec) if duration_sec > 0 else 32000, 32000),
+    )
+
+    # PCEN warm-up: borrow lead-in audio so the filter can settle
+    warmup_sec = max(0.0, min(float(settings.pcen_warmup_sec), start_epoch - job_start))
+    fetch_start = start_epoch - warmup_sec
+    fetch_duration = duration_sec + warmup_sec
+
+    audio = resolve_timeline_audio(
+        hydrophone_id=job.hydrophone_id or "",
+        local_cache_path=settings.s3_cache_path or "",
+        job_start_timestamp=job.start_timestamp,
+        job_end_timestamp=job.end_timestamp,
+        start_sec=fetch_start,
+        duration_sec=fetch_duration,
+        target_sr=sr,
+        noaa_cache_path=settings.noaa_cache_path,
+    )
+
+    warmup_samples = int(round(warmup_sec * sr))
+
+    n_fft = min(2048, len(audio))
+    if n_fft < 16:
+        n_fft = 16
+    hop_length = max(1, n_fft // 8)
+
+    pcen_params = PcenParams(
+        time_constant=settings.pcen_time_constant_sec,
+        gain=settings.pcen_gain,
+        bias=settings.pcen_bias,
+        power=settings.pcen_power,
+        eps=settings.pcen_eps,
+    )
+
+    return generate_timeline_tile(
+        audio,
+        sample_rate=sr,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        warmup_samples=warmup_samples,
+        pcen_params=pcen_params,
+        vmin=settings.pcen_vmin,
+        vmax=settings.pcen_vmax,
+        width_px=settings.timeline_tile_width_px,
+        height_px=settings.timeline_tile_height_px,
+    )
+
+
+@router.get("/region-jobs/{job_id}/audio-slice")
+async def get_region_audio_slice(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    start_sec: float = Query(..., description="Start time in seconds (job-relative)"),
+    duration_sec: float = Query(
+        ..., gt=0, le=30, description="Duration in seconds (max 30)"
+    ),
+) -> Response:
+    """Return a WAV audio slice for a region detection job."""
+    job = await service.get_region_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Region detection job not found")
+    if job.status != "complete":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Region detection job status is {job.status!r}, not 'complete'",
+        )
+
+    wav_bytes = await asyncio.to_thread(
+        _render_region_audio_slice_sync,
+        job=job,
+        start_sec=start_sec,
+        duration_sec=duration_sec,
+        settings=settings,
+    )
+    return Response(content=wav_bytes, media_type="audio/wav")
+
+
+def _render_region_audio_slice_sync(
+    *,
+    job,
+    start_sec: float,
+    duration_sec: float,
+    settings,
+) -> bytes:
+    """Fetch and encode an audio slice as WAV (CPU-bound)."""
+    import io
+    import struct
+
+    import numpy as np
+
+    from humpback.processing.timeline_audio import resolve_timeline_audio
+
+    job_start = job.start_timestamp or 0.0
+    start_epoch = job_start + start_sec
+    sr = 16000
+
+    audio = resolve_timeline_audio(
+        hydrophone_id=job.hydrophone_id or "",
+        local_cache_path=settings.s3_cache_path or "",
+        job_start_timestamp=job.start_timestamp,
+        job_end_timestamp=job.end_timestamp,
+        start_sec=start_epoch,
+        duration_sec=duration_sec,
+        target_sr=sr,
+        noaa_cache_path=settings.noaa_cache_path,
+    )
+
+    # Normalize for playback
+    from humpback.processing.audio_encoding import normalize_for_playback
+
+    audio = normalize_for_playback(
+        audio, target_rms_dbfs=settings.playback_target_rms_dbfs
+    )
+
+    # Encode as 16-bit PCM WAV
+    pcm = np.clip(audio * 32767, -32768, 32767).astype(np.int16)
+    buf = io.BytesIO()
+    data_size = len(pcm) * 2
+    # WAV header
+    buf.write(b"RIFF")
+    buf.write(struct.pack("<I", 36 + data_size))
+    buf.write(b"WAVE")
+    buf.write(b"fmt ")
+    buf.write(struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
+    buf.write(b"data")
+    buf.write(struct.pack("<I", data_size))
+    buf.write(pcm.tobytes())
+    return buf.getvalue()
 
 
 # ---- Pass 2: segmentation jobs ------------------------------------------

@@ -98,6 +98,9 @@ import type {
   SegmentationTrainingJob,
   CreateSegmentationTrainingJobRequest,
   SegmentationTrainingDatasetSummary,
+  Region,
+  BoundaryCorrectionRequest,
+  BoundaryCorrectionResponse,
 } from "./types";
 
 class ApiError extends Error {
@@ -871,6 +874,23 @@ export const deleteRegionDetectionJob = (jobId: string) =>
     method: "DELETE",
   });
 
+export const fetchRegionJobRegions = (jobId: string) =>
+  api<Region[]>(`/call-parsing/region-jobs/${jobId}/regions`);
+
+export const regionTileUrl = (
+  jobId: string,
+  zoomLevel: string,
+  tileIndex: number,
+) =>
+  `/call-parsing/region-jobs/${jobId}/tile?zoom_level=${zoomLevel}&tile_index=${tileIndex}`;
+
+export const regionAudioSliceUrl = (
+  jobId: string,
+  startSec: number,
+  durationSec: number,
+) =>
+  `/call-parsing/region-jobs/${jobId}/audio-slice?start_sec=${startSec}&duration_sec=${durationSec}`;
+
 // ---- Call Parsing (Event Segmentation) ----
 
 export const fetchSegmentationJobs = () =>
@@ -886,6 +906,27 @@ export const deleteSegmentationJob = (jobId: string) =>
 
 export const fetchSegmentationJobEvents = (jobId: string) =>
   api<SegmentationEvent[]>(`/call-parsing/segmentation-jobs/${jobId}/events`);
+
+// ---- Call Parsing (Boundary Corrections) ----
+
+export const fetchBoundaryCorrections = (jobId: string) =>
+  api<BoundaryCorrectionResponse[]>(
+    `/call-parsing/segmentation-jobs/${jobId}/corrections`,
+  );
+
+export const saveBoundaryCorrections = (
+  jobId: string,
+  body: BoundaryCorrectionRequest,
+) =>
+  post<{ count: number }>(
+    `/call-parsing/segmentation-jobs/${jobId}/corrections`,
+    body,
+  );
+
+export const clearBoundaryCorrections = (jobId: string) =>
+  api<void>(`/call-parsing/segmentation-jobs/${jobId}/corrections`, {
+    method: "DELETE",
+  });
 
 // ---- Call Parsing (Segmentation Models & Training) ----
 

@@ -719,6 +719,230 @@ async def test_delete_region_job_removes_parquet_dir(
     assert missing.status_code == 404
 
 
+# ---- Region tile endpoint ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_region_tile_404_for_missing_job(client: AsyncClient) -> None:
+    resp = await client.get(
+        f"{BASE}/region-jobs/no-such-id/tile",
+        params={"zoom_level": "5m", "tile_index": 0},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_region_tile_409_for_non_complete_job(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            job = RegionDetectionJob(
+                status="queued",
+                hydrophone_id="test-hydro",
+                start_timestamp=1_000_000.0,
+                end_timestamp=1_000_300.0,
+                config_json="{}",
+            )
+            session.add(job)
+            await session.commit()
+            job_id = job.id
+    finally:
+        await engine.dispose()
+
+    resp = await client.get(
+        f"{BASE}/region-jobs/{job_id}/tile",
+        params={"zoom_level": "5m", "tile_index": 0},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_region_tile_returns_png(
+    client: AsyncClient, app_settings, monkeypatch
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            job = RegionDetectionJob(
+                status="complete",
+                hydrophone_id="test-hydro",
+                start_timestamp=1_000_000.0,
+                end_timestamp=1_000_300.0,
+                config_json="{}",
+            )
+            session.add(job)
+            await session.commit()
+            job_id = job.id
+    finally:
+        await engine.dispose()
+
+    # Mock resolve_timeline_audio to return a sine wave
+    def _fake_resolve(**kwargs):
+        sr = kwargs.get("target_sr", 32000)
+        duration = kwargs.get("duration_sec", 50.0)
+        n = int(sr * duration)
+        t = np.arange(n) / sr
+        return (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+    monkeypatch.setattr(
+        "humpback.processing.timeline_audio.resolve_timeline_audio",
+        _fake_resolve,
+    )
+
+    resp = await client.get(
+        f"{BASE}/region-jobs/{job_id}/tile",
+        params={"zoom_level": "5m", "tile_index": 0},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    # PNG magic bytes
+    assert resp.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.asyncio
+async def test_region_tile_rejects_invalid_zoom(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            job = RegionDetectionJob(
+                status="complete",
+                hydrophone_id="test-hydro",
+                start_timestamp=1_000_000.0,
+                end_timestamp=1_000_300.0,
+                config_json="{}",
+            )
+            session.add(job)
+            await session.commit()
+            job_id = job.id
+    finally:
+        await engine.dispose()
+
+    resp = await client.get(
+        f"{BASE}/region-jobs/{job_id}/tile",
+        params={"zoom_level": "99h", "tile_index": 0},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_region_tile_rejects_out_of_range_index(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            job = RegionDetectionJob(
+                status="complete",
+                hydrophone_id="test-hydro",
+                start_timestamp=1_000_000.0,
+                end_timestamp=1_000_300.0,  # 300s = 6 tiles at 5m (50s/tile)
+                config_json="{}",
+            )
+            session.add(job)
+            await session.commit()
+            job_id = job.id
+    finally:
+        await engine.dispose()
+
+    resp = await client.get(
+        f"{BASE}/region-jobs/{job_id}/tile",
+        params={"zoom_level": "5m", "tile_index": 100},
+    )
+    assert resp.status_code == 400
+
+
+# ---- Region audio slice ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_region_audio_slice_404_for_missing_job(client: AsyncClient) -> None:
+    resp = await client.get(
+        f"{BASE}/region-jobs/no-such-id/audio-slice",
+        params={"start_sec": 0, "duration_sec": 2},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_region_audio_slice_409_for_non_complete_job(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            job = RegionDetectionJob(
+                status="queued",
+                hydrophone_id="test-hydro",
+                start_timestamp=1_000_000.0,
+                end_timestamp=1_000_300.0,
+                config_json="{}",
+            )
+            session.add(job)
+            await session.commit()
+            job_id = job.id
+    finally:
+        await engine.dispose()
+
+    resp = await client.get(
+        f"{BASE}/region-jobs/{job_id}/audio-slice",
+        params={"start_sec": 0, "duration_sec": 2},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_region_audio_slice_returns_wav(
+    client: AsyncClient, app_settings, monkeypatch
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            job = RegionDetectionJob(
+                status="complete",
+                hydrophone_id="test-hydro",
+                start_timestamp=1_000_000.0,
+                end_timestamp=1_000_300.0,
+                config_json="{}",
+            )
+            session.add(job)
+            await session.commit()
+            job_id = job.id
+    finally:
+        await engine.dispose()
+
+    def _fake_resolve(**kwargs):
+        sr = kwargs.get("target_sr", 16000)
+        duration = kwargs.get("duration_sec", 2.0)
+        n = int(sr * duration)
+        t = np.arange(n) / sr
+        return (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+    monkeypatch.setattr(
+        "humpback.processing.timeline_audio.resolve_timeline_audio",
+        _fake_resolve,
+    )
+
+    resp = await client.get(
+        f"{BASE}/region-jobs/{job_id}/audio-slice",
+        params={"start_sec": 10, "duration_sec": 2},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/wav"
+    # WAV RIFF header
+    assert resp.content[:4] == b"RIFF"
+    assert resp.content[8:12] == b"WAVE"
+
+
 # ---- Pass 2 segmentation jobs (creation + events) -----------------------
 
 
