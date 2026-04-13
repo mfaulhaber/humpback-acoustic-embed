@@ -186,14 +186,9 @@ async def _collect_samples(
 
             crop_start = region.padded_start_sec
             crop_end = region.padded_end_sec
-            relative_events = [
-                {
-                    "start_sec": ev["start_sec"] - crop_start,
-                    "end_sec": ev["end_sec"] - crop_start,
-                }
-                for ev in corrected
-            ]
 
+            # Events stay in absolute (job-relative) coordinates —
+            # build_framewise_target subtracts crop_start_sec itself.
             samples.append(
                 _FeedbackSample(
                     hydrophone_id=hydro_id,
@@ -201,7 +196,7 @@ async def _collect_samples(
                     end_timestamp=job_end_ts,
                     crop_start_sec=crop_start,
                     crop_end_sec=crop_end,
-                    events_json=json.dumps(relative_events),
+                    events_json=json.dumps(corrected),
                 )
             )
 
