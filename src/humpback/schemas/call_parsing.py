@@ -134,6 +134,7 @@ class RegionDetectionJobSummary(_JobSummary):
 class EventSegmentationJobSummary(_JobSummary):
     region_detection_job_id: str
     segmentation_model_id: Optional[str] = None
+    config_json: Optional[str] = None
     event_count: Optional[int] = None
 
     model_config = {"from_attributes": True}
@@ -302,3 +303,10 @@ class SegmentationTrainingDatasetResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SegmentationTrainingDatasetSummary(BaseModel):
+    id: str
+    name: str
+    sample_count: int
+    created_at: datetime

@@ -35,6 +35,7 @@ from humpback.schemas.call_parsing import (
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
     SegmentationModelResponse,
+    SegmentationTrainingDatasetSummary,
     SegmentationTrainingJobResponse,
 )
 from humpback.services import call_parsing as service
@@ -278,7 +279,16 @@ async def get_segmentation_events(
     ]
 
 
-# ---- Pass 2: segmentation training jobs ---------------------------------
+# ---- Pass 2: segmentation training datasets / jobs ----------------------
+
+
+@router.get(
+    "/segmentation-training-datasets",
+    response_model=list[SegmentationTrainingDatasetSummary],
+)
+async def list_segmentation_training_datasets(session: SessionDep):
+    rows = await service.list_segmentation_training_datasets(session)
+    return [SegmentationTrainingDatasetSummary(**row) for row in rows]
 
 
 @router.post(

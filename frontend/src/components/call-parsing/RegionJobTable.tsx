@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ interface RegionJobTableProps {
 
 export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps) {
   const deleteMutation = useDeleteRegionJob();
+  const navigate = useNavigate();
 
   // Bulk selection (previous mode only)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -325,9 +327,24 @@ export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps)
               )}
               {mode === "previous" && (
                 <td className="px-3 py-2">
-                  <Button variant="outline" size="sm" disabled>
-                    Timeline
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    {job.status === "complete" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          navigate(
+                            `/app/call-parsing/segment?regionJobId=${job.id}`,
+                          )
+                        }
+                      >
+                        Segment →
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" disabled>
+                      Timeline
+                    </Button>
+                  </div>
                 </td>
               )}
               {mode === "previous" && (

@@ -91,6 +91,13 @@ import type {
   TrainingDatasetExtendRequest,
   RegionDetectionJob,
   CreateRegionJobRequest,
+  EventSegmentationJob,
+  CreateSegmentationJobRequest,
+  SegmentationEvent,
+  SegmentationModel,
+  SegmentationTrainingJob,
+  CreateSegmentationTrainingJobRequest,
+  SegmentationTrainingDatasetSummary,
 } from "./types";
 
 class ApiError extends Error {
@@ -863,3 +870,46 @@ export const deleteRegionDetectionJob = (jobId: string) =>
   api<{ status: string }>(`/call-parsing/region-jobs/${jobId}`, {
     method: "DELETE",
   });
+
+// ---- Call Parsing (Event Segmentation) ----
+
+export const fetchSegmentationJobs = () =>
+  api<EventSegmentationJob[]>("/call-parsing/segmentation-jobs");
+
+export const createSegmentationJob = (body: CreateSegmentationJobRequest) =>
+  post<EventSegmentationJob>("/call-parsing/segmentation-jobs", body);
+
+export const deleteSegmentationJob = (jobId: string) =>
+  api<{ status: string }>(`/call-parsing/segmentation-jobs/${jobId}`, {
+    method: "DELETE",
+  });
+
+export const fetchSegmentationJobEvents = (jobId: string) =>
+  api<SegmentationEvent[]>(`/call-parsing/segmentation-jobs/${jobId}/events`);
+
+// ---- Call Parsing (Segmentation Models & Training) ----
+
+export const fetchSegmentationModels = () =>
+  api<SegmentationModel[]>("/call-parsing/segmentation-models");
+
+export const deleteSegmentationModel = (modelId: string) =>
+  api<{ status: string }>(`/call-parsing/segmentation-models/${modelId}`, {
+    method: "DELETE",
+  });
+
+export const fetchSegmentationTrainingJobs = () =>
+  api<SegmentationTrainingJob[]>("/call-parsing/segmentation-training-jobs");
+
+export const createSegmentationTrainingJob = (
+  body: CreateSegmentationTrainingJobRequest,
+) => post<SegmentationTrainingJob>("/call-parsing/segmentation-training-jobs", body);
+
+export const deleteSegmentationTrainingJob = (jobId: string) =>
+  api<{ status: string }>(`/call-parsing/segmentation-training-jobs/${jobId}`, {
+    method: "DELETE",
+  });
+
+export const fetchSegmentationTrainingDatasets = () =>
+  api<SegmentationTrainingDatasetSummary[]>(
+    "/call-parsing/segmentation-training-datasets",
+  );

@@ -17,6 +17,8 @@ import { VocalizationTrainingTab } from "@/components/vocalization/VocalizationT
 import { VocalizationLabelingTab } from "@/components/vocalization/VocalizationLabelingTab";
 import { TrainingDataView } from "@/components/vocalization/TrainingDataView";
 import { DetectionPage } from "@/components/call-parsing/DetectionPage";
+import { SegmentPage } from "@/components/call-parsing/SegmentPage";
+import { SegmentTrainingPage } from "@/components/call-parsing/SegmentTrainingPage";
 
 export default function App() {
   return (
@@ -41,6 +43,8 @@ export default function App() {
         <Route path="/app/vocalization/training-data" element={<TrainingDataView />} />
         <Route path="/app/call-parsing" element={<Navigate to="/app/call-parsing/detection" replace />} />
         <Route path="/app/call-parsing/detection" element={<DetectionPage />} />
+        <Route path="/app/call-parsing/segment" element={<SegmentPage />} />
+        <Route path="/app/call-parsing/segment-training" element={<SegmentTrainingPage />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />
