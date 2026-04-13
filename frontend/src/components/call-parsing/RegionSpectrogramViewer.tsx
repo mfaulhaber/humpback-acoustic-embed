@@ -1,5 +1,6 @@
 import {
   createContext,
+  type RefObject,
   useCallback,
   useContext,
   useEffect,
@@ -14,14 +15,23 @@ import { formatTime } from "@/utils/format";
 
 /**
  * Zoom level presets for the region spectrogram viewer.
- * Regions shorter than 5 minutes use "1m" zoom for better resolution.
+ * Auto-selected based on region duration via selectZoomLevel().
  */
 const ZOOM_PRESETS = {
-  "5m": { tileDuration: 50, viewportSpan: 300 },
-  "1m": { tileDuration: 10, viewportSpan: 60 },
+  "5m": { tileDuration: 50, viewportSpan: 300, tickInterval: 30 },
+  "1m": { tileDuration: 10, viewportSpan: 60, tickInterval: 30 },
+  "30s": { tileDuration: 5, viewportSpan: 30, tickInterval: 5 },
+  "10s": { tileDuration: 2, viewportSpan: 10, tickInterval: 2 },
 } as const;
 
-const SHORT_REGION_THRESHOLD_SEC = 300;
+type ZoomLevel = keyof typeof ZOOM_PRESETS;
+
+function selectZoomLevel(regionDurationSec: number): ZoomLevel {
+  if (regionDurationSec >= 300) return "5m";
+  if (regionDurationSec >= 30) return "1m";
+  if (regionDurationSec >= 10) return "30s";
+  return "10s";
+}
 
 const FREQ_AXIS_WIDTH = 44;
 const TIME_AXIS_HEIGHT = 24;
@@ -33,6 +43,9 @@ interface RegionSpectrogramViewerProps {
   region: Region;
   children?: ReactNode;
   onViewStartChange?: (viewStart: number) => void;
+  audioRef?: RefObject<HTMLAudioElement | null>;
+  isPlaying?: boolean;
+  playbackOriginSec?: number;
 }
 
 export function RegionSpectrogramViewer({
@@ -40,6 +53,9 @@ export function RegionSpectrogramViewer({
   region,
   children,
   onViewStartChange,
+  audioRef,
+  isPlaying = false,
+  playbackOriginSec = 0,
 }: RegionSpectrogramViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -63,9 +79,12 @@ export function RegionSpectrogramViewer({
   const regionDuration = regionEnd - regionStart;
 
   // Pick zoom level based on region duration
-  const zoomLevel = regionDuration < SHORT_REGION_THRESHOLD_SEC ? "1m" : "5m";
-  const { tileDuration: TILE_DURATION_SEC, viewportSpan: VIEWPORT_SPAN_SEC } =
-    ZOOM_PRESETS[zoomLevel];
+  const zoomLevel = selectZoomLevel(regionDuration);
+  const {
+    tileDuration: TILE_DURATION_SEC,
+    viewportSpan: VIEWPORT_SPAN_SEC,
+    tickInterval: TICK_INTERVAL_SEC,
+  } = ZOOM_PRESETS[zoomLevel];
 
   // Center timestamp drives what's visible
   const initialCenter = regionStart + Math.min(regionDuration, VIEWPORT_SPAN_SEC) / 2;
@@ -74,9 +93,7 @@ export function RegionSpectrogramViewer({
   // Reset center when region changes
   useEffect(() => {
     const dur = region.padded_end_sec - region.padded_start_sec;
-    const span = dur < SHORT_REGION_THRESHOLD_SEC
-      ? ZOOM_PRESETS["1m"].viewportSpan
-      : ZOOM_PRESETS["5m"].viewportSpan;
+    const span = ZOOM_PRESETS[selectZoomLevel(dur)].viewportSpan;
     setCenterTimestamp(region.padded_start_sec + Math.min(dur, span) / 2);
   }, [region.region_id, region.padded_start_sec, region.padded_end_sec]);
 
@@ -171,8 +188,7 @@ export function RegionSpectrogramViewer({
   // Time axis labels
   const timeLabels = useMemo(() => {
     const labels: { sec: number; x: number }[] = [];
-    // Step: every 30 seconds
-    const step = 30;
+    const step = TICK_INTERVAL_SEC;
     const first = Math.ceil(viewStart / step) * step;
     for (let t = first; t < viewStart + VIEWPORT_SPAN_SEC; t += step) {
       const x = (t - viewStart) * pxPerSec;
@@ -181,7 +197,7 @@ export function RegionSpectrogramViewer({
       }
     }
     return labels;
-  }, [viewStart, pxPerSec, canvasWidth]);
+  }, [viewStart, pxPerSec, canvasWidth, TICK_INTERVAL_SEC, VIEWPORT_SPAN_SEC]);
 
   // Coordinate transform for children (overlays)
   const overlayContext = useMemo(
@@ -194,6 +210,27 @@ export function RegionSpectrogramViewer({
     }),
     [viewStart, pxPerSec, canvasWidth, canvasHeight],
   );
+
+  // Playhead: rAF loop that directly manipulates DOM position
+  const playheadRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isPlaying || !audioRef?.current) return;
+    let raf: number;
+    const tick = () => {
+      const audio = audioRef.current;
+      const el = playheadRef.current;
+      if (audio && el && !audio.paused) {
+        const currentSec = playbackOriginSec + audio.currentTime;
+        const x = (currentSec - viewStart) * pxPerSec;
+        el.style.left = `${x}px`;
+        el.style.display = x >= 0 && x <= canvasWidth ? "" : "none";
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, audioRef, playbackOriginSec, viewStart, pxPerSec, canvasWidth]);
 
   return (
     <div ref={containerRef} className="w-full select-none">
@@ -252,6 +289,112 @@ export function RegionSpectrogramViewer({
             );
           })}
 
+          {/* Region boundary indicators */}
+          {(() => {
+            const startX = (region.start_sec - viewStart) * pxPerSec;
+            const endX = (region.end_sec - viewStart) * pxPerSec;
+            return (
+              <>
+                {/* Dimmed overlay before region start */}
+                {startX > 0 && (
+                  <div
+                    data-testid="region-dim-left"
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      width: Math.min(startX, canvasWidth),
+                      height: canvasHeight,
+                      background: "rgba(0,0,0,0.55)",
+                      pointerEvents: "none",
+                      zIndex: 3,
+                    }}
+                  />
+                )}
+                {/* Dimmed overlay after region end */}
+                {endX < canvasWidth && (
+                  <div
+                    data-testid="region-dim-right"
+                    style={{
+                      position: "absolute",
+                      left: Math.max(endX, 0),
+                      top: 0,
+                      width: canvasWidth - Math.max(endX, 0),
+                      height: canvasHeight,
+                      background: "rgba(0,0,0,0.55)",
+                      pointerEvents: "none",
+                      zIndex: 3,
+                    }}
+                  />
+                )}
+                {/* Region start boundary line */}
+                {startX >= 0 && startX <= canvasWidth && (
+                  <div
+                    data-testid="region-boundary-start"
+                    style={{
+                      position: "absolute",
+                      left: startX,
+                      top: 0,
+                      width: 0,
+                      height: canvasHeight,
+                      borderLeft: "2px dashed rgba(251, 191, 36, 0.8)",
+                      pointerEvents: "none",
+                      zIndex: 4,
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        left: 2,
+                        fontSize: 9,
+                        color: "rgba(251, 191, 36, 0.9)",
+                        whiteSpace: "nowrap",
+                        background: "rgba(0,0,0,0.6)",
+                        padding: "1px 3px",
+                        borderRadius: 2,
+                      }}
+                    >
+                      R start
+                    </div>
+                  </div>
+                )}
+                {/* Region end boundary line */}
+                {endX >= 0 && endX <= canvasWidth && (
+                  <div
+                    data-testid="region-boundary-end"
+                    style={{
+                      position: "absolute",
+                      left: endX,
+                      top: 0,
+                      width: 0,
+                      height: canvasHeight,
+                      borderLeft: "2px dashed rgba(251, 191, 36, 0.8)",
+                      pointerEvents: "none",
+                      zIndex: 4,
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        right: 2,
+                        fontSize: 9,
+                        color: "rgba(251, 191, 36, 0.9)",
+                        whiteSpace: "nowrap",
+                        background: "rgba(0,0,0,0.6)",
+                        padding: "1px 3px",
+                        borderRadius: 2,
+                      }}
+                    >
+                      R end
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+
           {/* Overlay children (EventBarOverlay goes here) */}
           {children && (
             <div
@@ -262,6 +405,37 @@ export function RegionSpectrogramViewer({
               <OverlayContext.Provider value={overlayContext}>
                 {children}
               </OverlayContext.Provider>
+            </div>
+          )}
+
+          {/* Playhead */}
+          {isPlaying && (
+            <div
+              ref={playheadRef}
+              data-testid="playhead"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: 0,
+                height: canvasHeight,
+                borderLeft: "1.5px solid #70e0c0",
+                pointerEvents: "none",
+                zIndex: 6,
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: -1,
+                  left: -5,
+                  width: 0,
+                  height: 0,
+                  borderLeft: "5px solid transparent",
+                  borderRight: "5px solid transparent",
+                  borderTop: "6px solid #70e0c0",
+                }}
+              />
             </div>
           )}
         </div>

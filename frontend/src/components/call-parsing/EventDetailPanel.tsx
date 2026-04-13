@@ -1,40 +1,19 @@
-import { useCallback, useRef, useState } from "react";
-import { regionAudioSliceUrl } from "@/api/client";
 import { formatTimeDecimal } from "@/utils/format";
 import type { EffectiveEvent } from "./EventBarOverlay";
 
 interface EventDetailPanelProps {
   event: EffectiveEvent | null;
-  regionJobId: string | null;
   onDelete: (eventId: string) => void;
+  isPlaying: boolean;
+  onPlaySlice: () => void;
 }
 
 export function EventDetailPanel({
   event,
-  regionJobId,
   onDelete,
+  isPlaying,
+  onPlaySlice,
 }: EventDetailPanelProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-
-  const handlePlaySlice = useCallback(() => {
-    if (!event || !regionJobId) return;
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    if (isPlaying) {
-      audio.pause();
-      audio.currentTime = 0;
-      setIsPlaying(false);
-      return;
-    }
-
-    const duration = event.endSec - event.startSec;
-    audio.src = regionAudioSliceUrl(regionJobId, event.startSec, duration);
-    audio.play().catch(() => setIsPlaying(false));
-    setIsPlaying(true);
-  }, [event, regionJobId, isPlaying]);
-
   if (!event) {
     return (
       <div className="border-t px-4 py-3 text-sm text-muted-foreground">
@@ -104,8 +83,7 @@ export function EventDetailPanel({
         <div className="flex shrink-0 gap-2">
           <button
             className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent"
-            onClick={handlePlaySlice}
-            disabled={!regionJobId}
+            onClick={onPlaySlice}
           >
             {isPlaying ? "Stop" : "Play Slice"}
           </button>
@@ -121,12 +99,6 @@ export function EventDetailPanel({
           </button>
         </div>
       </div>
-
-      <audio
-        ref={audioRef}
-        onEnded={() => setIsPlaying(false)}
-        style={{ display: "none" }}
-      />
     </div>
   );
 }

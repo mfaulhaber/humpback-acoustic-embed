@@ -486,19 +486,18 @@ test.describe("EventDetailPanel and ReviewToolbar", () => {
     await setupMocks(page);
   });
 
-  test("selecting an event populates detail panel", async ({ page }) => {
+  test("first event is auto-selected and detail panel is populated", async ({ page }) => {
     await page.goto("/app/call-parsing/segment?tab=review");
     await page.locator("#review-job-select").selectOption(COMPLETE_SEG_JOB.id);
     await expect(page.getByTestId("event-bar-ev-2")).toBeVisible();
-    // Before selecting: detail panel placeholder
-    await expect(page.locator("text=Click an event bar")).toBeVisible();
-    // Click ev-2
-    await page.getByTestId("event-bar-ev-2").click();
-    // Detail panel shows event info
+    // First event is auto-selected — detail panel should already show event info
     await expect(page.getByText("Event", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Play Slice" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Delete Event" })).toBeVisible();
     await expect(page.getByText("Confidence")).toBeVisible();
+    // Clicking a different event updates the panel
+    await page.getByTestId("event-bar-ev-2").click();
+    await expect(page.getByText("Event", { exact: true })).toBeVisible();
   });
 
   test("selecting adjusted event shows original vs adjusted values", async ({
@@ -518,7 +517,7 @@ test.describe("EventDetailPanel and ReviewToolbar", () => {
     // Toolbar should show region time range
     await expect(page.getByText(/Region 1:35/)).toBeVisible();
     // Action buttons
-    await expect(page.locator("button", { hasText: "Play" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
     await expect(page.locator("button", { hasText: "+ Add" })).toBeVisible();
     await expect(page.locator("button", { hasText: "Save" })).toBeVisible();
     await expect(page.locator("button", { hasText: "Cancel" })).toBeVisible();

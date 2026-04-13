@@ -35,6 +35,8 @@ def test_ocean_depth_colormap_midpoint_is_teal():
         ("15m", 150.0),
         ("5m", 50.0),
         ("1m", 10.0),
+        ("30s", 5.0),
+        ("10s", 2.0),
     ],
 )
 def test_tile_duration(zoom_level, expected_duration):
