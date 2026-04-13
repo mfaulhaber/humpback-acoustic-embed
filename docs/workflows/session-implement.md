@@ -42,6 +42,8 @@ Work through the plan tasks sequentially, then commit all changes as a single ba
 - Prefer editing existing files over creating new ones
 - Keep changes focused — don't refactor surrounding code
 - Follow all CLAUDE.md conventions (uv, migrations, file structure)
+- **Import ordering**: when adding new imports, include them in the same edit as the code that uses them. The PostToolUse hook runs `ruff format` after every file edit, which may reorder the import block. Adding import + usage together keeps edits self-contained and avoids unnecessary churn.
+- Do NOT run `ruff check` or `pyright` between individual tasks — only at the end (step 5). Intermediate `ruff check --fix` runs will strip imports that are needed by later edits.
 
 ## Does NOT
 
