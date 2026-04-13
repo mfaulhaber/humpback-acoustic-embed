@@ -936,48 +936,6 @@ async def test_list_segmentation_training_datasets_zero_samples(
     assert match["sample_count"] == 0
 
 
-# ---- Pass 2 segmentation training jobs ----------------------------------
-
-
-@pytest.mark.asyncio
-async def test_post_segmentation_training_job_happy_path(
-    client: AsyncClient, app_settings
-) -> None:
-    ds_id = await _seed_segmentation_training_dataset(app_settings)
-    resp = await client.post(
-        f"{BASE}/segmentation-training-jobs",
-        json={"training_dataset_id": ds_id},
-    )
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["status"] == "queued"
-    assert data["training_dataset_id"] == ds_id
-    assert data["config_json"] is not None
-
-
-@pytest.mark.asyncio
-async def test_post_segmentation_training_job_404_on_missing_dataset(
-    client: AsyncClient,
-) -> None:
-    resp = await client.post(
-        f"{BASE}/segmentation-training-jobs",
-        json={"training_dataset_id": "does-not-exist"},
-    )
-    assert resp.status_code == 404
-    assert "training_dataset_id" in resp.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_post_segmentation_training_job_422_on_malformed(
-    client: AsyncClient,
-) -> None:
-    resp = await client.post(
-        f"{BASE}/segmentation-training-jobs",
-        json={},
-    )
-    assert resp.status_code == 422
-
-
 # ---- Pass 2 segmentation models -----------------------------------------
 
 
@@ -1280,3 +1238,352 @@ async def test_segmentation_and_classification_lists_empty(
     c = await client.get(f"{BASE}/classification-jobs")
     assert s.status_code == 200 and s.json() == []
     assert c.status_code == 200 and c.json() == []
+
+
+# ---- Boundary corrections (Task 5) ----------------------------------------
+
+
+async def _seed_complete_segmentation_job(app_settings) -> str:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.commit()
+        es_id = es.id
+    await engine.dispose()
+    return es_id
+
+
+async def _seed_complete_classification_job(app_settings) -> str:
+    from humpback.models.call_parsing import EventClassificationJob
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        ec = EventClassificationJob(event_segmentation_job_id=es.id, status="complete")
+        session.add(ec)
+        await session.commit()
+        ec_id = ec.id
+    await engine.dispose()
+    return ec_id
+
+
+@pytest.mark.asyncio
+async def test_boundary_corrections_post_happy(
+    client: AsyncClient, app_settings
+) -> None:
+    es_id = await _seed_complete_segmentation_job(app_settings)
+    resp = await client.post(
+        f"{BASE}/segmentation-jobs/{es_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "event_id": "e1",
+                    "region_id": "r1",
+                    "correction_type": "adjust",
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_boundary_corrections_post_404(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"{BASE}/segmentation-jobs/nonexistent/corrections",
+        json={
+            "corrections": [
+                {
+                    "event_id": "e1",
+                    "region_id": "r1",
+                    "correction_type": "delete",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_boundary_corrections_get_and_delete(
+    client: AsyncClient, app_settings
+) -> None:
+    es_id = await _seed_complete_segmentation_job(app_settings)
+    await client.post(
+        f"{BASE}/segmentation-jobs/{es_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "event_id": "e1",
+                    "region_id": "r1",
+                    "correction_type": "add",
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                }
+            ]
+        },
+    )
+
+    get_resp = await client.get(f"{BASE}/segmentation-jobs/{es_id}/corrections")
+    assert get_resp.status_code == 200
+    assert len(get_resp.json()) == 1
+
+    del_resp = await client.delete(f"{BASE}/segmentation-jobs/{es_id}/corrections")
+    assert del_resp.status_code == 204
+
+    get_resp2 = await client.get(f"{BASE}/segmentation-jobs/{es_id}/corrections")
+    assert get_resp2.json() == []
+
+
+# ---- Type corrections (Task 5) --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_type_corrections_post_happy(client: AsyncClient, app_settings) -> None:
+    ec_id = await _seed_complete_classification_job(app_settings)
+    resp = await client.post(
+        f"{BASE}/classification-jobs/{ec_id}/corrections",
+        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_type_corrections_post_404(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"{BASE}/classification-jobs/nonexistent/corrections",
+        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_type_corrections_overwrite_on_repeat(
+    client: AsyncClient, app_settings
+) -> None:
+    ec_id = await _seed_complete_classification_job(app_settings)
+    await client.post(
+        f"{BASE}/classification-jobs/{ec_id}/corrections",
+        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+    )
+    await client.post(
+        f"{BASE}/classification-jobs/{ec_id}/corrections",
+        json={"corrections": [{"event_id": "e1", "type_name": "moan"}]},
+    )
+    get_resp = await client.get(f"{BASE}/classification-jobs/{ec_id}/corrections")
+    data = get_resp.json()
+    assert len(data) == 1
+    assert data[0]["type_name"] == "moan"
+
+
+@pytest.mark.asyncio
+async def test_type_corrections_delete(client: AsyncClient, app_settings) -> None:
+    ec_id = await _seed_complete_classification_job(app_settings)
+    await client.post(
+        f"{BASE}/classification-jobs/{ec_id}/corrections",
+        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+    )
+    del_resp = await client.delete(f"{BASE}/classification-jobs/{ec_id}/corrections")
+    assert del_resp.status_code == 204
+
+
+# ---- Segmentation feedback training jobs (Task 6) --------------------------
+
+
+@pytest.mark.asyncio
+async def test_segmentation_feedback_training_crud(
+    client: AsyncClient, app_settings
+) -> None:
+    es_id = await _seed_complete_segmentation_job(app_settings)
+
+    post_resp = await client.post(
+        f"{BASE}/segmentation-feedback-training-jobs",
+        json={"source_job_ids": [es_id]},
+    )
+    assert post_resp.status_code == 201
+    job_id = post_resp.json()["id"]
+    assert post_resp.json()["status"] == "queued"
+
+    list_resp = await client.get(f"{BASE}/segmentation-feedback-training-jobs")
+    assert list_resp.status_code == 200
+    assert any(j["id"] == job_id for j in list_resp.json())
+
+    get_resp = await client.get(f"{BASE}/segmentation-feedback-training-jobs/{job_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["id"] == job_id
+
+    del_resp = await client.delete(
+        f"{BASE}/segmentation-feedback-training-jobs/{job_id}"
+    )
+    assert del_resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_segmentation_feedback_training_404_missing_source(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post(
+        f"{BASE}/segmentation-feedback-training-jobs",
+        json={"source_job_ids": ["nonexistent"]},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_segmentation_feedback_training_409_not_complete(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="running")
+        session.add(es)
+        await session.commit()
+        es_id = es.id
+    await engine.dispose()
+
+    resp = await client.post(
+        f"{BASE}/segmentation-feedback-training-jobs",
+        json={"source_job_ids": [es_id]},
+    )
+    assert resp.status_code == 409
+
+
+# ---- Classifier feedback training jobs (Task 6) ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_classifier_training_crud(client: AsyncClient, app_settings) -> None:
+    ec_id = await _seed_complete_classification_job(app_settings)
+
+    post_resp = await client.post(
+        f"{BASE}/classifier-training-jobs",
+        json={"source_job_ids": [ec_id]},
+    )
+    assert post_resp.status_code == 201
+    job_id = post_resp.json()["id"]
+    assert post_resp.json()["status"] == "queued"
+
+    list_resp = await client.get(f"{BASE}/classifier-training-jobs")
+    assert list_resp.status_code == 200
+    assert any(j["id"] == job_id for j in list_resp.json())
+
+    get_resp = await client.get(f"{BASE}/classifier-training-jobs/{job_id}")
+    assert get_resp.status_code == 200
+
+    del_resp = await client.delete(f"{BASE}/classifier-training-jobs/{job_id}")
+    assert del_resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_classifier_training_404_missing_source(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post(
+        f"{BASE}/classifier-training-jobs",
+        json={"source_job_ids": ["nonexistent"]},
+    )
+    assert resp.status_code == 404
+
+
+# ---- Classifier model management (Task 6) ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_classifier_models_list(client: AsyncClient, app_settings) -> None:
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        session.add(
+            VocalizationClassifierModel(
+                name="event-cnn",
+                model_dir_path="/tmp/event",
+                vocabulary_snapshot="[]",
+                per_class_thresholds="{}",
+                model_family="pytorch_event_cnn",
+                input_mode="segmented_event",
+            )
+        )
+        session.add(
+            VocalizationClassifierModel(
+                name="sklearn-model",
+                model_dir_path="/tmp/sklearn",
+                vocabulary_snapshot="[]",
+                per_class_thresholds="{}",
+                model_family="sklearn_perch_embedding",
+            )
+        )
+        await session.commit()
+    await engine.dispose()
+
+    resp = await client.get(f"{BASE}/classifier-models")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert all(m["model_family"] == "pytorch_event_cnn" for m in data)
+    assert len(data) >= 1
+
+
+@pytest.mark.asyncio
+async def test_classifier_model_delete_404(client: AsyncClient) -> None:
+    resp = await client.delete(f"{BASE}/classifier-models/nonexistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_classifier_model_delete_409_in_flight(
+    client: AsyncClient, app_settings
+) -> None:
+    from humpback.models.call_parsing import EventClassificationJob
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        vm = VocalizationClassifierModel(
+            name="event-cnn",
+            model_dir_path="/tmp/event",
+            vocabulary_snapshot="[]",
+            per_class_thresholds="{}",
+            model_family="pytorch_event_cnn",
+            input_mode="segmented_event",
+        )
+        session.add(vm)
+        await session.flush()
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        ec = EventClassificationJob(
+            event_segmentation_job_id=es.id,
+            vocalization_model_id=vm.id,
+            status="running",
+        )
+        session.add(ec)
+        await session.commit()
+        vm_id = vm.id
+    await engine.dispose()
+
+    resp = await client.delete(f"{BASE}/classifier-models/{vm_id}")
+    assert resp.status_code == 409

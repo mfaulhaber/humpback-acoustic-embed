@@ -378,39 +378,6 @@ async def delete_event_classification_job(
 # ---- Pass 2: segmentation training + inference jobs --------------------
 
 
-async def create_segmentation_training_job(session, request):
-    """Create a queued Pass 2 training job.
-
-    Validates that ``training_dataset_id`` resolves; raises
-    ``CallParsingFKError`` on miss. The caller owns the transaction
-    boundary; this function only flushes so the generated ``job.id`` is
-    visible.
-    """
-    from humpback.models.segmentation_training import (
-        SegmentationTrainingDataset,
-        SegmentationTrainingJob,
-    )
-    from humpback.schemas.call_parsing import CreateSegmentationTrainingJobRequest
-
-    assert isinstance(request, CreateSegmentationTrainingJobRequest)
-    ds_result = await session.execute(
-        select(SegmentationTrainingDataset.id).where(
-            SegmentationTrainingDataset.id == request.training_dataset_id
-        )
-    )
-    if ds_result.scalar_one_or_none() is None:
-        raise CallParsingFKError("training_dataset_id", request.training_dataset_id)
-
-    job = SegmentationTrainingJob(
-        status="queued",
-        training_dataset_id=request.training_dataset_id,
-        config_json=request.config.model_dump_json(),
-    )
-    session.add(job)
-    await session.flush()
-    return job
-
-
 class CallParsingStateError(Exception):
     """Raised when a create/delete request conflicts with current job state.
 
@@ -518,58 +485,6 @@ async def list_segmentation_training_datasets(session: AsyncSession):
     return [row._asdict() for row in result.all()]
 
 
-async def list_segmentation_training_jobs(session):
-    from humpback.models.segmentation_training import SegmentationTrainingJob
-
-    result = await session.execute(
-        select(SegmentationTrainingJob).order_by(
-            SegmentationTrainingJob.created_at.desc()
-        )
-    )
-    return list(result.scalars().all())
-
-
-async def get_segmentation_training_job(session, job_id: str):
-    from humpback.models.segmentation_training import SegmentationTrainingJob
-
-    return await session.get(SegmentationTrainingJob, job_id)
-
-
-async def delete_segmentation_training_job(session, job_id: str) -> bool:
-    """Delete a training job. Returns True if a row was removed.
-
-    Raises ``CallParsingStateError`` (409) when the linked
-    ``segmentation_models`` row is still referenced by an in-flight
-    ``event_segmentation_jobs`` row.
-    """
-    from humpback.models.call_parsing import (
-        EventSegmentationJob as _EventSegmentationJob,
-    )
-    from humpback.models.segmentation_training import SegmentationTrainingJob
-
-    job = await session.get(SegmentationTrainingJob, job_id)
-    if job is None:
-        return False
-
-    if job.segmentation_model_id:
-        in_flight = await session.execute(
-            select(_EventSegmentationJob.id).where(
-                _EventSegmentationJob.segmentation_model_id
-                == job.segmentation_model_id,
-                _EventSegmentationJob.status.in_(["queued", "running"]),
-            )
-        )
-        if in_flight.scalar_one_or_none() is not None:
-            raise CallParsingStateError(
-                "Segmentation training job's model is referenced by an "
-                "in-flight event segmentation job"
-            )
-
-    await session.delete(job)
-    await session.commit()
-    return True
-
-
 async def list_segmentation_models(session):
     from humpback.models.call_parsing import SegmentationModel
 
@@ -620,6 +535,373 @@ async def delete_segmentation_model(session, model_id: str, settings: Settings) 
         if checkpoint_path.exists() and checkpoint_path.is_file():
             checkpoint_dir = checkpoint_path.parent
             _remove_dir(checkpoint_dir)
+
+    await session.delete(model)
+    await session.commit()
+    return True
+
+
+# ---- Feedback training: boundary corrections (Pass 2) --------------------
+
+
+async def upsert_boundary_corrections(
+    session: AsyncSession,
+    job_id: str,
+    corrections: list,
+) -> int:
+    """Batch upsert boundary corrections for a segmentation job.
+
+    Validates the job exists and is complete. For each correction,
+    inserts a new row or updates an existing one keyed by
+    ``(event_segmentation_job_id, event_id)``.
+    """
+    from humpback.models.feedback_training import EventBoundaryCorrection
+
+    es = await session.get(EventSegmentationJob, job_id)
+    if es is None:
+        raise CallParsingFKError("event_segmentation_job_id", job_id)
+    if es.status != "complete":
+        raise CallParsingStateError(
+            f"Segmentation job status is {es.status!r}, not 'complete'"
+        )
+
+    count = 0
+    for c in corrections:
+        existing = await session.execute(
+            select(EventBoundaryCorrection).where(
+                EventBoundaryCorrection.event_segmentation_job_id == job_id,
+                EventBoundaryCorrection.event_id == c.event_id,
+            )
+        )
+        row = existing.scalar_one_or_none()
+        if row is not None:
+            row.region_id = c.region_id
+            row.correction_type = c.correction_type
+            row.start_sec = c.start_sec
+            row.end_sec = c.end_sec
+        else:
+            session.add(
+                EventBoundaryCorrection(
+                    event_segmentation_job_id=job_id,
+                    event_id=c.event_id,
+                    region_id=c.region_id,
+                    correction_type=c.correction_type,
+                    start_sec=c.start_sec,
+                    end_sec=c.end_sec,
+                )
+            )
+        count += 1
+
+    await session.commit()
+    return count
+
+
+async def list_boundary_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> list:
+    """List all boundary corrections for a segmentation job."""
+    from humpback.models.feedback_training import EventBoundaryCorrection
+
+    result = await session.execute(
+        select(EventBoundaryCorrection)
+        .where(EventBoundaryCorrection.event_segmentation_job_id == job_id)
+        .order_by(EventBoundaryCorrection.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def clear_boundary_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> None:
+    """Delete all boundary corrections for a segmentation job."""
+    from humpback.models.feedback_training import EventBoundaryCorrection
+
+    from sqlalchemy import delete as _delete
+
+    await session.execute(
+        _delete(EventBoundaryCorrection).where(
+            EventBoundaryCorrection.event_segmentation_job_id == job_id
+        )
+    )
+    await session.commit()
+
+
+# ---- Feedback training: type corrections (Pass 3) ------------------------
+
+
+async def upsert_type_corrections(
+    session: AsyncSession,
+    job_id: str,
+    corrections: list,
+) -> int:
+    """Batch upsert type corrections for a classification job.
+
+    Validates the job exists and is complete. Upserts by
+    ``(event_classification_job_id, event_id)`` — repeated calls
+    overwrite the previous correction for the same event.
+    """
+    from humpback.models.feedback_training import EventTypeCorrection
+
+    ec = await session.get(EventClassificationJob, job_id)
+    if ec is None:
+        raise CallParsingFKError("event_classification_job_id", job_id)
+    if ec.status != "complete":
+        raise CallParsingStateError(
+            f"Classification job status is {ec.status!r}, not 'complete'"
+        )
+
+    count = 0
+    for c in corrections:
+        existing = await session.execute(
+            select(EventTypeCorrection).where(
+                EventTypeCorrection.event_classification_job_id == job_id,
+                EventTypeCorrection.event_id == c.event_id,
+            )
+        )
+        row = existing.scalar_one_or_none()
+        if row is not None:
+            row.type_name = c.type_name
+        else:
+            session.add(
+                EventTypeCorrection(
+                    event_classification_job_id=job_id,
+                    event_id=c.event_id,
+                    type_name=c.type_name,
+                )
+            )
+        count += 1
+
+    await session.commit()
+    return count
+
+
+async def list_type_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> list:
+    """List all type corrections for a classification job."""
+    from humpback.models.feedback_training import EventTypeCorrection
+
+    result = await session.execute(
+        select(EventTypeCorrection)
+        .where(EventTypeCorrection.event_classification_job_id == job_id)
+        .order_by(EventTypeCorrection.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def clear_type_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> None:
+    """Delete all type corrections for a classification job."""
+    from humpback.models.feedback_training import EventTypeCorrection
+
+    from sqlalchemy import delete as _delete
+
+    await session.execute(
+        _delete(EventTypeCorrection).where(
+            EventTypeCorrection.event_classification_job_id == job_id
+        )
+    )
+    await session.commit()
+
+
+# ---- Feedback training: segmentation feedback training jobs (Pass 2) -----
+
+
+async def create_segmentation_feedback_training_job(session: AsyncSession, request):
+    """Create a queued Pass 2 feedback training job.
+
+    Validates that every source segmentation job ID exists and is complete.
+    """
+    import json
+
+    from humpback.models.feedback_training import EventSegmentationTrainingJob
+    from humpback.schemas.call_parsing import (
+        CreateSegmentationFeedbackTrainingJobRequest,
+    )
+
+    assert isinstance(request, CreateSegmentationFeedbackTrainingJobRequest)
+
+    for sid in request.source_job_ids:
+        es = await session.get(EventSegmentationJob, sid)
+        if es is None:
+            raise CallParsingFKError("source_job_ids", sid)
+        if es.status != "complete":
+            raise CallParsingStateError(
+                f"Source segmentation job {sid} status is {es.status!r}, not 'complete'"
+            )
+
+    job = EventSegmentationTrainingJob(
+        status="queued",
+        source_job_ids=json.dumps(request.source_job_ids),
+        config_json=request.config.model_dump_json(),
+    )
+    session.add(job)
+    await session.flush()
+    return job
+
+
+async def list_segmentation_feedback_training_jobs(
+    session: AsyncSession,
+) -> list:
+    from humpback.models.feedback_training import EventSegmentationTrainingJob
+
+    result = await session.execute(
+        select(EventSegmentationTrainingJob).order_by(
+            EventSegmentationTrainingJob.created_at.desc()
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_segmentation_feedback_training_job(session: AsyncSession, job_id: str):
+    from humpback.models.feedback_training import EventSegmentationTrainingJob
+
+    return await session.get(EventSegmentationTrainingJob, job_id)
+
+
+async def delete_segmentation_feedback_training_job(
+    session: AsyncSession, job_id: str
+) -> bool:
+    from humpback.models.feedback_training import EventSegmentationTrainingJob
+
+    job = await session.get(EventSegmentationTrainingJob, job_id)
+    if job is None:
+        return False
+    await session.delete(job)
+    await session.commit()
+    return True
+
+
+# ---- Feedback training: classifier feedback training jobs (Pass 3) -------
+
+
+async def create_classifier_training_job(session: AsyncSession, request):
+    """Create a queued Pass 3 feedback training job.
+
+    Validates that every source classification job ID exists and is complete.
+    """
+    import json
+
+    from humpback.models.feedback_training import EventClassifierTrainingJob
+    from humpback.schemas.call_parsing import CreateClassifierTrainingJobRequest
+
+    assert isinstance(request, CreateClassifierTrainingJobRequest)
+
+    for sid in request.source_job_ids:
+        ec = await session.get(EventClassificationJob, sid)
+        if ec is None:
+            raise CallParsingFKError("source_job_ids", sid)
+        if ec.status != "complete":
+            raise CallParsingStateError(
+                f"Source classification job {sid} status is {ec.status!r}, not 'complete'"
+            )
+
+    job = EventClassifierTrainingJob(
+        status="queued",
+        source_job_ids=json.dumps(request.source_job_ids),
+        config_json=request.config.model_dump_json(),
+    )
+    session.add(job)
+    await session.flush()
+    return job
+
+
+async def list_classifier_training_jobs(
+    session: AsyncSession,
+) -> list:
+    from humpback.models.feedback_training import EventClassifierTrainingJob
+
+    result = await session.execute(
+        select(EventClassifierTrainingJob).order_by(
+            EventClassifierTrainingJob.created_at.desc()
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_classifier_training_job(session: AsyncSession, job_id: str):
+    from humpback.models.feedback_training import EventClassifierTrainingJob
+
+    return await session.get(EventClassifierTrainingJob, job_id)
+
+
+async def delete_classifier_training_job(session: AsyncSession, job_id: str) -> bool:
+    from humpback.models.feedback_training import EventClassifierTrainingJob
+
+    job = await session.get(EventClassifierTrainingJob, job_id)
+    if job is None:
+        return False
+    await session.delete(job)
+    await session.commit()
+    return True
+
+
+# ---- Feedback training: classifier model management (Pass 3) -------------
+
+
+async def list_classifier_models(session: AsyncSession) -> list:
+    """List vocalization models filtered to ``model_family='pytorch_event_cnn'``."""
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    result = await session.execute(
+        select(VocalizationClassifierModel)
+        .where(VocalizationClassifierModel.model_family == "pytorch_event_cnn")
+        .order_by(VocalizationClassifierModel.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def delete_classifier_model(
+    session: AsyncSession, model_id: str, settings: Settings
+) -> bool:
+    """Delete a ``pytorch_event_cnn`` model + its checkpoint directory.
+
+    Raises ``CallParsingStateError`` (409) when the model is referenced by
+    an in-flight classification job or feedback training job.
+    """
+    from pathlib import Path as _Path
+
+    from humpback.models.feedback_training import EventClassifierTrainingJob
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    model = await session.get(VocalizationClassifierModel, model_id)
+    if model is None:
+        return False
+
+    if model.model_family != "pytorch_event_cnn":
+        return False
+
+    in_flight_cls = await session.execute(
+        select(EventClassificationJob.id).where(
+            EventClassificationJob.vocalization_model_id == model_id,
+            EventClassificationJob.status.in_(["queued", "running"]),
+        )
+    )
+    if in_flight_cls.scalar_one_or_none() is not None:
+        raise CallParsingStateError(
+            "Classifier model is referenced by an in-flight classification job"
+        )
+
+    in_flight_train = await session.execute(
+        select(EventClassifierTrainingJob.id).where(
+            EventClassifierTrainingJob.vocalization_model_id == model_id,
+            EventClassifierTrainingJob.status.in_(["queued", "running"]),
+        )
+    )
+    if in_flight_train.scalar_one_or_none() is not None:
+        raise CallParsingStateError(
+            "Classifier model is referenced by an in-flight training job"
+        )
+
+    if model.model_dir_path:
+        model_dir = _Path(model.model_dir_path)
+        if model_dir.exists() and model_dir.is_dir():
+            _remove_dir(model_dir)
 
     await session.delete(model)
     await session.commit()

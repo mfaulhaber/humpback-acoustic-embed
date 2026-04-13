@@ -559,9 +559,6 @@ async def test_call_parsing_pass2_smoke(
     from humpback.workers.event_segmentation_worker import (
         run_one_iteration as seg_run_one_iteration,
     )
-    from humpback.workers.segmentation_training_worker import (
-        run_one_iteration as train_run_one_iteration,
-    )
 
     client = e2e_client
     settings = e2e_settings
@@ -698,55 +695,113 @@ async def test_call_parsing_pass2_smoke(
 
         await session.commit()
 
-    # ---- Step 3: Create and run segmentation training job ----
+    # ---- Step 3: Train segmentation model directly via trainer ----
 
-    train_resp = await client.post(
-        "/call-parsing/segmentation-training-jobs",
-        json={
-            "training_dataset_id": dataset_id,
-            "config": {
-                "epochs": 2,
-                "batch_size": 2,
-                "learning_rate": 1e-2,
-                "weight_decay": 0.0,
-                "early_stopping_patience": 100,
-                "grad_clip": 1.0,
-                "seed": 0,
-                "val_fraction": 0.25,
-                "conv_channels": [8],
-                "gru_hidden": 8,
-                "gru_layers": 1,
-            },
-        },
+    import asyncio
+    import uuid
+
+    from humpback.call_parsing.segmentation.trainer import train_model
+    from humpback.ml.device import select_device
+    from humpback.models.call_parsing import SegmentationModel
+    from humpback.processing.audio_io import decode_audio, resample
+    from humpback.schemas.call_parsing import (
+        SegmentationDecoderConfig,
+        SegmentationFeatureConfig,
+        SegmentationTrainingConfig,
     )
-    assert train_resp.status_code == 201
-    train_job_id = train_resp.json()["id"]
-    assert train_resp.json()["status"] == "queued"
+    from humpback.storage import resolve_audio_path
 
     async with session_factory() as session:
-        claimed = await train_run_one_iteration(session, settings)
-    assert claimed is not None
-    assert claimed.id == train_job_id
+        from sqlalchemy import select as sa_select
 
-    # ---- Step 4: Verify training completed and model persisted ----
+        sample_result = await session.execute(
+            sa_select(SegmentationTrainingSample).where(
+                SegmentationTrainingSample.training_dataset_id == dataset_id
+            )
+        )
+        samples = list(sample_result.scalars().all())
 
-    train_detail = await client.get(
-        f"/call-parsing/segmentation-training-jobs/{train_job_id}"
+        af_ids = sorted({s.audio_file_id for s in samples if s.audio_file_id})
+        af_result = await session.execute(
+            sa_select(AudioFile).where(AudioFile.id.in_(af_ids))
+        )
+        audio_files_by_id = {af.id: af for af in af_result.scalars().all()}
+
+    feature_config = SegmentationFeatureConfig()
+    target_sr = feature_config.sample_rate
+    audio_cache: dict[str, "np.ndarray"] = {}
+
+    def _audio_loader(sample):
+        import numpy as np
+
+        af = audio_files_by_id[sample.audio_file_id]
+        if sample.audio_file_id not in audio_cache:
+            path = resolve_audio_path(af, settings.storage_root)
+            raw, sr = decode_audio(path)
+            resampled = resample(raw, sr, target_sr)
+            audio_cache[sample.audio_file_id] = np.asarray(resampled, dtype=np.float32)
+        audio = audio_cache[sample.audio_file_id]
+        start = max(0, int(round(float(sample.crop_start_sec) * target_sr)))
+        end = max(start, int(round(float(sample.crop_end_sec) * target_sr)))
+        return audio[start:end].copy()
+
+    training_config = SegmentationTrainingConfig(
+        epochs=2,
+        batch_size=2,
+        learning_rate=1e-2,
+        weight_decay=0.0,
+        early_stopping_patience=100,
+        grad_clip=1.0,
+        seed=0,
+        val_fraction=0.25,
+        conv_channels=[8],
+        gru_hidden=8,
+        gru_layers=1,
     )
-    assert train_detail.status_code == 200
-    assert train_detail.json()["status"] == "complete"
-    assert train_detail.json()["segmentation_model_id"] is not None
-    assert train_detail.json()["result_summary"] is not None
-    seg_model_id = train_detail.json()["segmentation_model_id"]
+    decoder_config = SegmentationDecoderConfig()
+    seg_model_id = uuid.uuid4().hex
+    model_dir = settings.storage_root / "segmentation_models" / seg_model_id
+    model_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = model_dir / "checkpoint.pt"
+    device = select_device()
+
+    await asyncio.to_thread(
+        train_model,
+        samples=samples,
+        feature_config=feature_config,
+        decoder_config=decoder_config,
+        audio_loader=_audio_loader,
+        config=training_config,
+        checkpoint_path=checkpoint_path,
+        device=device,
+    )
+
+    async with session_factory() as session:
+        seg_model = SegmentationModel(
+            id=seg_model_id,
+            name="segmentation-smoke",
+            model_family="pytorch_crnn",
+            model_path=str(checkpoint_path),
+            config_json=json.dumps(
+                {
+                    "model_type": "SegmentationCRNN",
+                    "n_mels": training_config.n_mels,
+                    "conv_channels": list(training_config.conv_channels),
+                    "gru_hidden": training_config.gru_hidden,
+                    "gru_layers": training_config.gru_layers,
+                    "feature_config": feature_config.model_dump(),
+                }
+            ),
+        )
+        session.add(seg_model)
+        await session.commit()
+
+    # ---- Step 4: Verify model persisted ----
 
     models_resp = await client.get("/call-parsing/segmentation-models")
     assert models_resp.status_code == 200
     model_ids = [m["id"] for m in models_resp.json()]
     assert seg_model_id in model_ids
-
-    model_detail = await client.get(f"/call-parsing/segmentation-models/{seg_model_id}")
-    assert model_detail.status_code == 200
-    assert model_detail.json()["model_family"] == "pytorch_crnn"
 
     # ---- Step 5: Run Pass 2 event segmentation against the trained model ----
 
