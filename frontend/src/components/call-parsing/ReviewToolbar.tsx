@@ -1,11 +1,9 @@
-import { useCallback, useRef, useState } from "react";
-import { regionAudioSliceUrl } from "@/api/client";
+import { useCallback } from "react";
 import type { Region } from "@/api/types";
 import { formatTime } from "@/utils/format";
 
 interface ReviewToolbarProps {
   region: Region | null;
-  regionJobId: string | null;
   eventCount: number;
   pendingChangeCount: number;
   isDirty: boolean;
@@ -13,13 +11,12 @@ interface ReviewToolbarProps {
   onToggleAddMode: () => void;
   onSave: () => void;
   onCancel: () => void;
-  /** Current viewport start time in seconds (for Play from pan position). */
-  viewStart?: number;
+  isPlaying: boolean;
+  onPlay: () => void;
 }
 
 export function ReviewToolbar({
   region,
-  regionJobId,
   eventCount,
   pendingChangeCount,
   isDirty,
@@ -27,30 +24,9 @@ export function ReviewToolbar({
   onToggleAddMode,
   onSave,
   onCancel,
-  viewStart,
+  isPlaying,
+  onPlay,
 }: ReviewToolbarProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-
-  const handlePlay = useCallback(() => {
-    if (!region || !regionJobId) return;
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    if (isPlaying) {
-      audio.pause();
-      audio.currentTime = 0;
-      setIsPlaying(false);
-      return;
-    }
-
-    const playStart = viewStart ?? region.padded_start_sec;
-    const duration = Math.min(region.padded_end_sec - playStart, 30);
-    audio.src = regionAudioSliceUrl(regionJobId, playStart, duration);
-    audio.play().catch(() => setIsPlaying(false));
-    setIsPlaying(true);
-  }, [region, regionJobId, isPlaying, viewStart]);
-
   const handleCancel = useCallback(() => {
     if (isDirty) {
       const ok = window.confirm(
@@ -77,8 +53,7 @@ export function ReviewToolbar({
       <div className="flex items-center gap-2">
         <button
           className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent"
-          onClick={handlePlay}
-          disabled={!regionJobId}
+          onClick={onPlay}
         >
           {isPlaying ? "Stop" : "Play"}
         </button>
@@ -122,13 +97,6 @@ export function ReviewToolbar({
           Retrain
         </button>
       </div>
-
-      <audio
-        ref={audioRef}
-        onEnded={() => setIsPlaying(false)}
-        style={{ display: "none" }}
-      />
     </div>
   );
 }
-

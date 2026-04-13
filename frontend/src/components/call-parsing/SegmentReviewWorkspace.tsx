@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useSegmentationJobs,
   useSegmentationJobEvents,
@@ -8,6 +8,7 @@ import {
   useSaveBoundaryCorrections,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
+import { regionAudioSliceUrl } from "@/api/client";
 import type {
   EventSegmentationJob,
   BoundaryCorrection,
@@ -54,6 +55,34 @@ export function SegmentReviewWorkspace({
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
+
+  // Shared audio playback state
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackOriginSec, setPlaybackOriginSec] = useState(0);
+
+  const startPlayback = useCallback(
+    (startSec: number, duration: number) => {
+      const audio = audioRef.current;
+      if (!audio || !regionDetectionJobId) return;
+      // Stop any current playback first
+      audio.pause();
+      audio.currentTime = 0;
+      setPlaybackOriginSec(startSec);
+      audio.src = regionAudioSliceUrl(regionDetectionJobId, startSec, duration);
+      audio.play().catch(() => setIsPlaying(false));
+      setIsPlaying(true);
+    },
+    [regionDetectionJobId],
+  );
+
+  const stopPlayback = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    setIsPlaying(false);
+  }, []);
 
   // Pending corrections: Map<eventId, BoundaryCorrection>
   const [pendingCorrections, setPendingCorrections] = useState<
@@ -155,6 +184,15 @@ export function SegmentReviewWorkspace({
     [effectiveEvents, selectedRegionId],
   );
 
+  // Auto-select first event when region changes
+  useEffect(() => {
+    if (!selectedRegionId) return;
+    const sorted = regionEvents
+      .filter((e) => e.correctionType !== "delete")
+      .sort((a, b) => a.startSec - b.startSec);
+    setSelectedEventId(sorted.length > 0 ? sorted[0].eventId : null);
+  }, [selectedRegionId, regionEvents]);
+
   // Callbacks for overlay
   const handleAdjust = useCallback(
     (eventId: string, startSec: number, endSec: number) => {
@@ -248,7 +286,6 @@ export function SegmentReviewWorkspace({
 
   // Switch region — edits accumulate across regions within the job
   const handleSelectRegion = useCallback((regionId: string) => {
-    setSelectedEventId(null);
     setAddMode(false);
     setSelectedRegionId(regionId);
   }, []);
@@ -318,7 +355,6 @@ export function SegmentReviewWorkspace({
           <div className="flex-1 rounded-md border">
             <ReviewToolbar
               region={selectedRegion}
-              regionJobId={regionDetectionJobId}
               eventCount={regionEvents.length}
               pendingChangeCount={pendingChangeCount}
               isDirty={isDirty}
@@ -326,7 +362,17 @@ export function SegmentReviewWorkspace({
               onToggleAddMode={handleToggleAddMode}
               onSave={handleSave}
               onCancel={handleCancel}
-              viewStart={viewStart}
+              isPlaying={isPlaying}
+              onPlay={() => {
+                if (isPlaying) {
+                  stopPlayback();
+                  return;
+                }
+                if (!selectedRegion) return;
+                const playStart = viewStart ?? selectedRegion.padded_start_sec;
+                const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
+                startPlayback(playStart, duration);
+              }}
             />
             {selectedRegion ? (
               <>
@@ -334,6 +380,9 @@ export function SegmentReviewWorkspace({
                   regionJobId={regionDetectionJobId!}
                   region={selectedRegion}
                   onViewStartChange={setViewStart}
+                  audioRef={audioRef}
+                  isPlaying={isPlaying}
+                  playbackOriginSec={playbackOriginSec}
                 >
                   <EventBarOverlay
                     events={regionEvents}
@@ -347,8 +396,17 @@ export function SegmentReviewWorkspace({
                 </RegionSpectrogramViewer>
                 <EventDetailPanel
                   event={selectedEvent}
-                  regionJobId={regionDetectionJobId}
                   onDelete={handleDelete}
+                  isPlaying={isPlaying}
+                  onPlaySlice={() => {
+                    if (isPlaying) {
+                      stopPlayback();
+                      return;
+                    }
+                    if (!selectedEvent) return;
+                    const duration = selectedEvent.endSec - selectedEvent.startSec;
+                    startPlayback(selectedEvent.startSec, duration);
+                  }}
                 />
               </>
             ) : (
@@ -364,6 +422,11 @@ export function SegmentReviewWorkspace({
           boundaries.
         </div>
       )}
+      <audio
+        ref={audioRef}
+        onEnded={() => setIsPlaying(false)}
+        style={{ display: "none" }}
+      />
     </div>
   );
 }
