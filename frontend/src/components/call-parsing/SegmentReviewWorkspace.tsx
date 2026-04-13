@@ -6,6 +6,10 @@ import {
   useRegionJobRegions,
   useBoundaryCorrections,
   useSaveBoundaryCorrections,
+  useSegmentationFeedbackTrainingJobs,
+  useCreateSegmentationFeedbackTrainingJob,
+  useCreateSegmentationJob,
+  useSegmentationModels,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { regionAudioSliceUrl } from "@/api/client";
@@ -13,10 +17,11 @@ import type {
   EventSegmentationJob,
   BoundaryCorrection,
 } from "@/api/types";
+import { toast } from "@/components/ui/use-toast";
 import { EventDetailPanel } from "./EventDetailPanel";
 import { RegionSidebar } from "./RegionSidebar";
 import { RegionSpectrogramViewer } from "./RegionSpectrogramViewer";
-import { ReviewToolbar } from "./ReviewToolbar";
+import { ReviewToolbar, type RetrainStatus } from "./ReviewToolbar";
 import { EventBarOverlay, type EffectiveEvent } from "./EventBarOverlay";
 
 export function SegmentReviewWorkspace({
@@ -27,6 +32,7 @@ export function SegmentReviewWorkspace({
   const { data: segJobs = [] } = useSegmentationJobs();
   const { data: regionJobs = [] } = useRegionDetectionJobs();
   const { data: hydrophones = [] } = useHydrophones();
+  const { data: segModels = [] } = useSegmentationModels();
 
   const completeJobs = useMemo(
     () => segJobs.filter((j) => j.status === "complete"),
@@ -340,6 +346,114 @@ export function SegmentReviewWorkspace({
     return rj.audio_file_id?.slice(0, 8) ?? "unknown";
   }, [selectedJob, regionJobs, hydrophones]);
 
+  // ---- Retrain / Re-segment ----
+
+  const hasCorrections = savedCorrections.length > 0;
+
+  // Poll feedback training jobs — only poll at 3s when a job is in progress
+  const { data: feedbackJobs = [] } = useSegmentationFeedbackTrainingJobs();
+
+  // Find the most recent feedback training job for this segmentation job
+  const latestFeedbackJob = useMemo(() => {
+    if (!selectedJobId) return null;
+    const matching = feedbackJobs.filter((j) => {
+      try {
+        const ids = JSON.parse(j.source_job_ids) as string[];
+        return ids.includes(selectedJobId);
+      } catch {
+        return false;
+      }
+    });
+    if (matching.length === 0) return null;
+    // Most recent by created_at
+    return matching.sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )[0];
+  }, [selectedJobId, feedbackJobs]);
+
+  const feedbackJobActive =
+    latestFeedbackJob?.status === "queued" ||
+    latestFeedbackJob?.status === "running";
+
+  // Re-fetch feedback jobs at 3s interval when a job is active
+  useSegmentationFeedbackTrainingJobs(feedbackJobActive ? 3000 : undefined);
+
+  const retrainStatus: RetrainStatus | null = useMemo(() => {
+    if (!latestFeedbackJob) return null;
+    const modelId = latestFeedbackJob.segmentation_model_id ?? undefined;
+    const model = modelId
+      ? segModels.find((m) => m.id === modelId)
+      : undefined;
+    return {
+      status: latestFeedbackJob.status,
+      modelId,
+      modelName: model?.name,
+      error: latestFeedbackJob.error_message ?? undefined,
+    };
+  }, [latestFeedbackJob, segModels]);
+
+  const createFeedbackJob = useCreateSegmentationFeedbackTrainingJob();
+  const createSegJob = useCreateSegmentationJob();
+
+  const handleRetrain = useCallback(() => {
+    if (!selectedJobId) return;
+    const ok = window.confirm(
+      "Train a new segmentation model from corrections on this job?",
+    );
+    if (!ok) return;
+    createFeedbackJob.mutate(
+      { source_job_ids: [selectedJobId] },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Training job started",
+            description:
+              "The model will train in the background. Status will update here.",
+          });
+        },
+        onError: (err) => {
+          toast({
+            title: "Failed to start training",
+            description: (err as Error).message,
+            variant: "destructive",
+          });
+        },
+      },
+    );
+  }, [selectedJobId, createFeedbackJob]);
+
+  const handleResegment = useCallback(() => {
+    if (!retrainStatus?.modelId || !regionDetectionJobId) return;
+    const modelName = retrainStatus.modelName ?? retrainStatus.modelId.slice(0, 8);
+    const ok = window.confirm(
+      `Create a new segmentation job using model "${modelName}" on the same regions?`,
+    );
+    if (!ok) return;
+    createSegJob.mutate(
+      {
+        region_detection_job_id: regionDetectionJobId,
+        segmentation_model_id: retrainStatus.modelId,
+      },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Segmentation job created",
+            description:
+              "It will appear in the job selector when complete.",
+          });
+        },
+        onError: (err) => {
+          toast({
+            title: "Failed to create segmentation job",
+            description: (err as Error).message,
+            variant: "destructive",
+          });
+        },
+      },
+    );
+  }, [retrainStatus, regionDetectionJobId, createSegJob]);
+
   return (
     <div className="space-y-4">
       {/* Job selector */}
@@ -405,6 +519,10 @@ export function SegmentReviewWorkspace({
                 const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
                 startPlayback(playStart, duration);
               }}
+              hasCorrections={hasCorrections}
+              onRetrain={handleRetrain}
+              retrainStatus={retrainStatus}
+              onResegment={handleResegment}
             />
             {selectedRegion ? (
               <>

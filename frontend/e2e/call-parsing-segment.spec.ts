@@ -137,22 +137,15 @@ const BOUNDARY_CORRECTIONS = [
   },
 ];
 
-const TRAINING_DATASET = {
-  id: "ds-1",
-  name: "bootstrap-orcasound-v1",
-  sample_count: 243,
-  created_at: "2026-04-10T00:00:00Z",
-};
-
-const TRAINING_JOB = {
-  id: "stj-1",
+const FEEDBACK_TRAINING_JOB = {
+  id: "fbtj-1",
   status: "complete",
-  training_dataset_id: TRAINING_DATASET.id,
+  source_job_ids: JSON.stringify([COMPLETE_SEG_JOB.id]),
   config_json: JSON.stringify({ epochs: 30, learning_rate: 0.001 }),
   segmentation_model_id: SEG_MODEL.id,
   result_summary: JSON.stringify({
-    framewise_f1: 0.81,
-    event_f1_iou_0_3: 0.73,
+    framewise: { precision: 0.85, recall: 0.78, f1: 0.81 },
+    event: { precision: 0.80, recall: 0.67, f1: 0.73, iou_threshold: 0.3 },
   }),
   error_message: null,
   created_at: "2026-04-11T00:00:00Z",
@@ -231,19 +224,14 @@ async function setupMocks(page: Page) {
       body: TINY_PNG,
     }),
   );
-  await page.route("**/call-parsing/segmentation-training-datasets", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([TRAINING_DATASET]),
-    }),
-  );
-  await page.route("**/call-parsing/segmentation-training-jobs", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([TRAINING_JOB]),
-    }),
+  await page.route(
+    "**/call-parsing/segmentation-feedback-training-jobs",
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([FEEDBACK_TRAINING_JOB]),
+      }),
   );
   // Catch other classifier/admin routes the hooks may call
   await page.route("**/classifier/models", (route) =>
@@ -532,12 +520,15 @@ test.describe("EventDetailPanel and ReviewToolbar", () => {
     await expect(saveBtn).toBeDisabled();
   });
 
-  test("Retrain button is disabled (placeholder)", async ({ page }) => {
+  test("Retrain button is enabled when corrections exist and not dirty", async ({
+    page,
+  }) => {
     await page.goto("/app/call-parsing/segment?tab=review");
     await page.locator("#review-job-select").selectOption(COMPLETE_SEG_JOB.id);
     await expect(page.locator("text=Regions (2)")).toBeVisible();
     const retrainBtn = page.locator("button", { hasText: "Retrain" });
-    await expect(retrainBtn).toBeDisabled();
+    // Corrections are mocked — button should become enabled once data loads
+    await expect(retrainBtn).toBeEnabled();
   });
 });
 
@@ -656,10 +647,12 @@ test.describe("Call Parsing Segment Training page", () => {
     await setupMocks(page);
   });
 
-  test("page loads with models and training sections", async ({ page }) => {
+  test("page loads with models and feedback training sections", async ({
+    page,
+  }) => {
     await page.goto("/app/call-parsing/segment-training");
     await expect(page.locator("text=Segmentation Models")).toBeVisible();
-    await expect(page.locator("text=Training Jobs")).toBeVisible();
+    await expect(page.locator("text=Feedback Training Jobs")).toBeVisible();
   });
 
   test("models table shows model with metrics", async ({ page }) => {
@@ -672,23 +665,11 @@ test.describe("Call Parsing Segment Training page", () => {
     await expect(row).toContainText("0.73");
   });
 
-  test("training form shows dataset picker with sample count", async ({
+  test("feedback training jobs table shows completed job with config", async ({
     page,
   }) => {
     await page.goto("/app/call-parsing/segment-training");
-    const datasetSelect = page.locator("select").first();
-    const options = datasetSelect.locator("option");
-    await expect(options.nth(1)).toContainText("bootstrap-orcasound-v1");
-    await expect(options.nth(1)).toContainText("243 samples");
-  });
-
-  test("training jobs table shows completed job with metrics", async ({
-    page,
-  }) => {
-    await page.goto("/app/call-parsing/segment-training");
-    const row = page
-      .locator("tr")
-      .filter({ hasText: "30 ep" });
+    const row = page.locator("tr").filter({ hasText: "30 ep" });
     await expect(row).toBeVisible();
     await expect(row).toContainText("lr=0.001");
   });
