@@ -53,6 +53,8 @@ const navItems: NavItem[] = [
     icon: Activity,
     children: [
       { label: "Detection", to: "/app/call-parsing/detection" },
+      { label: "Segment", to: "/app/call-parsing/segment" },
+      { label: "Segment Training", to: "/app/call-parsing/segment-training" },
     ],
   },
   { label: "Search", icon: Search, to: "/app/search" },

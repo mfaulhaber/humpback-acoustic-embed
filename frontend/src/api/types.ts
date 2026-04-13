@@ -1239,3 +1239,91 @@ export interface RegionDetectionJob {
   started_at: string | null;
   completed_at: string | null;
 }
+
+// ---- Call Parsing (Event Segmentation) ----
+
+export interface SegmentationDecoderConfig {
+  high_threshold: number;
+  low_threshold: number;
+  min_event_sec: number;
+  merge_gap_sec: number;
+}
+
+export interface CreateSegmentationJobRequest {
+  region_detection_job_id: string;
+  segmentation_model_id: string;
+  parent_run_id?: string;
+  config?: Partial<SegmentationDecoderConfig>;
+}
+
+export interface EventSegmentationJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  region_detection_job_id: string;
+  segmentation_model_id: string | null;
+  config_json: string | null;
+  parent_run_id: string | null;
+  event_count: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface SegmentationEvent {
+  event_id: string;
+  region_id: string;
+  start_sec: number;
+  end_sec: number;
+  center_sec: number;
+  segmentation_confidence: number;
+}
+
+// ---- Call Parsing (Segmentation Models & Training) ----
+
+export interface SegmentationModel {
+  id: string;
+  name: string;
+  model_family: string;
+  model_path: string;
+  config_json: string | null;
+  training_job_id: string | null;
+  created_at: string;
+}
+
+export interface SegmentationTrainingConfig {
+  epochs: number;
+  batch_size: number;
+  learning_rate: number;
+  weight_decay: number;
+  early_stopping_patience: number;
+  grad_clip: number;
+  seed: number;
+}
+
+export interface CreateSegmentationTrainingJobRequest {
+  training_dataset_id: string;
+  config?: Partial<SegmentationTrainingConfig>;
+}
+
+export interface SegmentationTrainingJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  training_dataset_id: string;
+  config_json: string;
+  segmentation_model_id: string | null;
+  result_summary: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface SegmentationTrainingDatasetSummary {
+  id: string;
+  name: string;
+  sample_count: number;
+  created_at: string;
+}

@@ -12,7 +12,7 @@ from __future__ import annotations
 import shutil
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.call_parsing.storage import (
@@ -484,6 +484,38 @@ async def create_segmentation_job(session, request):
 
 
 # ---- Segmentation training datasets / jobs / models read-side ----------
+
+
+async def list_segmentation_training_datasets(session: AsyncSession):
+    """List all training datasets with their sample counts."""
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingDataset,
+        SegmentationTrainingSample,
+    )
+
+    count_subq = (
+        select(
+            SegmentationTrainingSample.training_dataset_id,
+            func.count().label("sample_count"),
+        )
+        .group_by(SegmentationTrainingSample.training_dataset_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            SegmentationTrainingDataset.id,
+            SegmentationTrainingDataset.name,
+            SegmentationTrainingDataset.created_at,
+            func.coalesce(count_subq.c.sample_count, 0).label("sample_count"),
+        )
+        .outerjoin(
+            count_subq,
+            SegmentationTrainingDataset.id == count_subq.c.training_dataset_id,
+        )
+        .order_by(SegmentationTrainingDataset.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    return [row._asdict() for row in result.all()]
 
 
 async def list_segmentation_training_jobs(session):

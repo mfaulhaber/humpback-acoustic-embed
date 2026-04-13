@@ -29,6 +29,7 @@ from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
 from humpback.models.segmentation_training import (
     SegmentationTrainingDataset,
+    SegmentationTrainingSample,
 )
 from humpback.processing.inference import FakeTFLiteModel
 from humpback.schemas.call_parsing import (
@@ -869,6 +870,70 @@ async def test_get_segmentation_events_happy_path_after_worker(
             "segmentation_confidence",
         }
         assert e["start_sec"] <= e["end_sec"]
+
+
+# ---- Pass 2 segmentation training datasets -------------------------------
+
+
+async def _seed_training_samples(app_settings, dataset_id: str, count: int) -> None:
+    """Insert ``count`` dummy training samples for the given dataset."""
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            for _ in range(count):
+                session.add(
+                    SegmentationTrainingSample(
+                        training_dataset_id=dataset_id,
+                        audio_file_id="fake-audio",
+                        crop_start_sec=0.0,
+                        crop_end_sec=10.0,
+                        events_json="[]",
+                        source="test",
+                    )
+                )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_segmentation_training_datasets_empty(
+    client: AsyncClient,
+) -> None:
+    resp = await client.get(f"{BASE}/segmentation-training-datasets")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_segmentation_training_datasets_with_counts(
+    client: AsyncClient, app_settings
+) -> None:
+    ds_id = await _seed_segmentation_training_dataset(app_settings)
+    await _seed_training_samples(app_settings, ds_id, 5)
+
+    resp = await client.get(f"{BASE}/segmentation-training-datasets")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) >= 1
+    match = next(d for d in data if d["id"] == ds_id)
+    assert match["name"] == "router-test-dataset"
+    assert match["sample_count"] == 5
+    assert "created_at" in match
+
+
+@pytest.mark.asyncio
+async def test_list_segmentation_training_datasets_zero_samples(
+    client: AsyncClient, app_settings
+) -> None:
+    ds_id = await _seed_segmentation_training_dataset(app_settings)
+
+    resp = await client.get(f"{BASE}/segmentation-training-datasets")
+    assert resp.status_code == 200
+    data = resp.json()
+    match = next(d for d in data if d["id"] == ds_id)
+    assert match["sample_count"] == 0
 
 
 # ---- Pass 2 segmentation training jobs ----------------------------------
