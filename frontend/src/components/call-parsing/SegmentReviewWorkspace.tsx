@@ -221,11 +221,15 @@ export function SegmentReviewWorkspace({
     (eventId: string, startSec: number, endSec: number) => {
       setPendingCorrections((prev) => {
         const next = new Map(prev);
+        const existing = prev.get(eventId);
+        // Preserve "add" type when adjusting a newly added event
+        const correctionType =
+          existing?.correction_type === "add" ? "add" : "adjust";
         const ev = events.find((e) => e.event_id === eventId);
         next.set(eventId, {
           event_id: eventId,
-          region_id: ev?.region_id ?? selectedRegionId ?? "",
-          correction_type: "adjust",
+          region_id: ev?.region_id ?? existing?.region_id ?? selectedRegionId ?? "",
+          correction_type: correctionType,
           start_sec: startSec,
           end_sec: endSec,
         });
