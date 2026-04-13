@@ -222,13 +222,16 @@ export function SegmentReviewWorkspace({
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         const existing = prev.get(eventId);
-        // Preserve "add" type when adjusting a newly added event
-        const correctionType =
-          existing?.correction_type === "add" ? "add" : "adjust";
+        const saved = savedCorrections.find((c) => c.event_id === eventId);
+        // Preserve "add" type when adjusting an added event (pending or saved)
+        const isAdd =
+          existing?.correction_type === "add" ||
+          saved?.correction_type === "add";
+        const correctionType = isAdd ? "add" : "adjust";
         const ev = events.find((e) => e.event_id === eventId);
         next.set(eventId, {
           event_id: eventId,
-          region_id: ev?.region_id ?? existing?.region_id ?? selectedRegionId ?? "",
+          region_id: ev?.region_id ?? existing?.region_id ?? saved?.region_id ?? selectedRegionId ?? "",
           correction_type: correctionType,
           start_sec: startSec,
           end_sec: endSec,
@@ -236,7 +239,7 @@ export function SegmentReviewWorkspace({
         return next;
       });
     },
-    [events, selectedRegionId],
+    [events, savedCorrections, selectedRegionId],
   );
 
   const handleAdd = useCallback(
