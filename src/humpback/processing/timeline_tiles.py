@@ -41,7 +41,7 @@ def get_ocean_depth_colormap() -> mcolors.LinearSegmentedColormap:
 
 # ---- Zoom Level Grid Math ----
 
-ZOOM_LEVELS = ("24h", "6h", "1h", "15m", "5m", "1m")
+ZOOM_LEVELS = ("24h", "6h", "1h", "15m", "5m", "1m", "30s", "10s")
 
 _TILE_DURATIONS: dict[str, float] = {
     "24h": 86400.0,
@@ -50,6 +50,8 @@ _TILE_DURATIONS: dict[str, float] = {
     "15m": 150.0,
     "5m": 50.0,
     "1m": 10.0,
+    "30s": 5.0,
+    "10s": 2.0,
 }
 
 

@@ -26,7 +26,7 @@ Add two finer zoom presets for short regions:
 Zoom preset is chosen automatically based on region duration (`end_sec - start_sec`). The threshold cascade selects the finest zoom level whose viewport span is >= the region duration, falling through to the coarsest level that fits. The existing `SHORT_REGION_THRESHOLD_SEC` constant is replaced by the cascade.
 
 ### Backend
-The tile endpoint already accepts arbitrary `zoom_level` parameters — no backend changes needed. The tile duration and viewport span are frontend-only concepts used to construct tile requests.
+The tile endpoint validates zoom levels against `ZOOM_LEVELS` in `timeline_tiles.py`. The new "30s" and "10s" levels must be added to `ZOOM_LEVELS` and `_TILE_DURATIONS` so the backend accepts and renders tiles at these zoom levels.
 
 ### Time Axis Labels
 Adjust tick interval per zoom level:
@@ -148,4 +148,4 @@ Follows the same structure as existing Classifier entries:
 | `frontend/src/components/call-parsing/EventDetailPanel.tsx` | Wire shared audio ref and playback origin state |
 | `frontend/src/components/layout/Breadcrumbs.tsx` | Add Call Parsing routes to `staticRoutes` |
 
-No backend changes. No new files. No new dependencies.
+No new files. No new dependencies.
