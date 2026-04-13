@@ -1280,6 +1280,41 @@ export interface SegmentationEvent {
   segmentation_confidence: number;
 }
 
+export interface Region {
+  region_id: string;
+  start_sec: number;
+  end_sec: number;
+  padded_start_sec: number;
+  padded_end_sec: number;
+  max_score: number;
+  mean_score: number;
+  n_windows: number;
+}
+
+export interface BoundaryCorrection {
+  event_id: string;
+  region_id: string;
+  correction_type: "adjust" | "add" | "delete";
+  start_sec: number | null;
+  end_sec: number | null;
+}
+
+export interface BoundaryCorrectionRequest {
+  corrections: BoundaryCorrection[];
+}
+
+export interface BoundaryCorrectionResponse {
+  id: string;
+  event_segmentation_job_id: string;
+  event_id: string;
+  region_id: string;
+  correction_type: "adjust" | "add" | "delete";
+  start_sec: number | null;
+  end_sec: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ---- Call Parsing (Segmentation Models & Training) ----
 
 export interface SegmentationModel {

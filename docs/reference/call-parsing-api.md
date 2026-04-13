@@ -16,6 +16,8 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 - `GET /call-parsing/region-jobs`, `GET /call-parsing/region-jobs/{id}`, `DELETE /call-parsing/region-jobs/{id}` — list / detail / delete
 - `GET /call-parsing/region-jobs/{id}/trace` — stream `trace.parquet` as JSON `{time_sec, score}` rows; 409 while the job is not `complete`, 404 if the parquet file is missing
 - `GET /call-parsing/region-jobs/{id}/regions` — return `regions.parquet` sorted by `start_sec`; same 409/404 guards
+- `GET /call-parsing/region-jobs/{id}/tile?zoom_level=5m&tile_index={n}` — PCEN spectrogram PNG tile for the job's audio source; supports all zoom levels (24h, 6h, 1h, 15m, 5m, 1m); 404 if job not found, 409 if not complete, 400 for invalid zoom/index
+- `GET /call-parsing/region-jobs/{id}/audio-slice?start_sec={s}&duration_sec={d}` — 16-bit PCM WAV audio slice (max 30s); `start_sec` is job-relative; 404 if job not found, 409 if not complete
 
 ## Pass 2 — Event Segmentation
 

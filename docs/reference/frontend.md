@@ -47,7 +47,7 @@ frontend/
     │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
     │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
     │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
-    │   ├── call-parsing/        (DetectionPage, RegionJobForm, RegionJobTable, RegionJobSummary, SegmentPage, SegmentJobForm, SegmentJobTable, SegmentJobDetail, SegmentTrainingPage, SegmentTrainingForm, SegmentTrainingJobTable, SegmentModelTable)
+    │   ├── call-parsing/        (DetectionPage, RegionJobForm, RegionJobTable, RegionJobSummary, SegmentPage, SegmentJobForm, SegmentJobTable, SegmentJobDetail, SegmentReviewWorkspace, RegionSidebar, RegionSpectrogramViewer, EventBarOverlay, EventDetailPanel, ReviewToolbar, SegmentTrainingPage, SegmentTrainingForm, SegmentTrainingJobTable, SegmentModelTable)
     │   ├── classifier/          (TrainingTab, AutoresearchCandidatesSection, HydrophoneTab, LabelingTab, EmbeddingsPage, DetectionTab, BulkDeleteDialog)
     │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, SourceSelector, EmbeddingStatusPanel, InferencePanel, LabelingWorkspace, RetrainFooter, TrainingDataView)
     │   ├── timeline/            (TimelineViewer, SpectrogramViewport, TileCanvas, LabelEditor, LabelToolbar, VocalizationOverlay, VocLabelEditor, VocLabelPopover, VocLabelToolbar, etc.)

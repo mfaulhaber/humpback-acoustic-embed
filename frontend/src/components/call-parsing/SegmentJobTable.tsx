@@ -506,16 +506,24 @@ function SegmentJobRow({
           ) : (
             <div className="flex items-center gap-2">
               {job.status === "complete" && (
-                <button
-                  type="button"
-                  className="p-0.5 rounded hover:bg-muted"
-                  onClick={onToggleExpand}
-                  aria-label="Toggle event details"
-                >
-                  <ChevronDown
-                    className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                  />
-                </button>
+                <>
+                  <Link
+                    to={`/app/call-parsing/segment?tab=review&reviewJobId=${job.id}`}
+                    className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
+                  >
+                    Review
+                  </Link>
+                  <button
+                    type="button"
+                    className="p-0.5 rounded hover:bg-muted"
+                    onClick={onToggleExpand}
+                    aria-label="Toggle event details"
+                  >
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                </>
               )}
               <Button
                 variant="ghost"

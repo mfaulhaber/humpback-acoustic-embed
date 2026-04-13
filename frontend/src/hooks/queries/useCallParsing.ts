@@ -3,10 +3,14 @@ import {
   fetchRegionDetectionJobs,
   createRegionDetectionJob,
   deleteRegionDetectionJob,
+  fetchRegionJobRegions,
   fetchSegmentationJobs,
   createSegmentationJob,
   deleteSegmentationJob,
   fetchSegmentationJobEvents,
+  fetchBoundaryCorrections,
+  saveBoundaryCorrections,
+  clearBoundaryCorrections,
   fetchSegmentationModels,
   deleteSegmentationModel,
   fetchSegmentationTrainingJobs,
@@ -18,6 +22,7 @@ import type {
   CreateRegionJobRequest,
   CreateSegmentationJobRequest,
   CreateSegmentationTrainingJobRequest,
+  BoundaryCorrectionRequest,
   ModelConfig,
 } from "@/api/types";
 
@@ -49,6 +54,14 @@ export function useDeleteRegionJob() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: REGION_JOBS_KEY });
     },
+  });
+}
+
+export function useRegionJobRegions(jobId: string | null) {
+  return useQuery({
+    queryKey: ["region-job-regions", jobId],
+    queryFn: () => fetchRegionJobRegions(jobId!),
+    enabled: !!jobId,
   });
 }
 
@@ -98,6 +111,46 @@ export function useSegmentationJobEvents(jobId: string | null) {
     queryKey: ["segmentation-job-events", jobId],
     queryFn: () => fetchSegmentationJobEvents(jobId!),
     enabled: !!jobId,
+  });
+}
+
+// ---- Boundary Corrections ----
+
+const CORRECTIONS_KEY = "boundary-corrections";
+
+export function useBoundaryCorrections(jobId: string | null) {
+  return useQuery({
+    queryKey: [CORRECTIONS_KEY, jobId],
+    queryFn: () => fetchBoundaryCorrections(jobId!),
+    enabled: !!jobId,
+  });
+}
+
+export function useSaveBoundaryCorrections() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      body,
+    }: {
+      jobId: string;
+      body: BoundaryCorrectionRequest;
+    }) => saveBoundaryCorrections(jobId, body),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({
+        queryKey: [CORRECTIONS_KEY, variables.jobId],
+      });
+    },
+  });
+}
+
+export function useClearBoundaryCorrections() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => clearBoundaryCorrections(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: [CORRECTIONS_KEY, jobId] });
+    },
   });
 }
 
