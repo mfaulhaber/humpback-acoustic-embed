@@ -2,16 +2,13 @@
 
 Exercises the core ``run_bootstrap()`` function with an in-memory
 SQLite DB and synthetic detection row stores. Each test seeds the
-minimum fixtures (AudioFile, DetectionJob, row store parquet,
+minimum fixtures (DetectionJob with hydrophone source, row store parquet,
 VocalizationLabel) and asserts the expected skip/insert behavior.
 """
 
 from __future__ import annotations
 
 import json
-import math
-import struct
-import wave
 from pathlib import Path
 
 import pytest
@@ -19,7 +16,6 @@ from sqlalchemy import select
 
 from humpback.classifier.detection_rows import write_detection_row_store
 from humpback.database import Base, create_engine, create_session_factory
-from humpback.models.audio import AudioFile
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.segmentation_training import (
@@ -35,6 +31,10 @@ from scripts.bootstrap_segmentation_dataset import (
     run_bootstrap,
 )
 
+JOB_START_TS = 1000.0
+JOB_END_TS = 2000.0
+HYDROPHONE_ID = "test_hydrophone"
+
 
 @pytest.fixture
 async def session_factory(tmp_path):
@@ -46,41 +46,20 @@ async def session_factory(tmp_path):
     await engine.dispose()
 
 
-def _write_sine_wav(path: Path, duration_sec: float, sample_rate: int = 16000) -> None:
-    n = int(sample_rate * duration_sec)
-    samples = [
-        int(32767 * 0.7 * math.sin(2 * math.pi * 440 * i / sample_rate))
-        for i in range(n)
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{n}h", *samples))
-
-
 async def _seed_fixture(
     session_factory,
     tmp_path: Path,
     *,
     row_id: str = "row-aaa",
-    start_utc: float = 5.0,
-    end_utc: float = 10.0,
-    audio_duration: float = 30.0,
+    start_utc: float = 1100.0,
+    end_utc: float = 1105.0,
     labels: list[str] | None = None,
+    job_start_ts: float = JOB_START_TS,
+    job_end_ts: float = JOB_END_TS,
+    hydrophone_id: str = HYDROPHONE_ID,
 ) -> dict[str, str]:
-    """Seed DB + disk for one detection row with vocalization labels.
-
-    Returns a dict with ``audio_file_id``, ``detection_job_id``,
-    ``classifier_model_id``.
-    """
+    """Seed DB + disk for one hydrophone detection row with vocalization labels."""
     storage_root = tmp_path / "storage"
-    audio_dir = tmp_path / "audio_src"
-    # Filename with epoch-zero UTC timestamp so _file_base_epoch returns 0.0
-    # and start_utc values in the row store map directly to audio-relative seconds.
-    audio_path = audio_dir / "sample_19700101T000000Z.wav"
-    _write_sine_wav(audio_path, duration_sec=audio_duration)
 
     if labels is None:
         labels = ["upcall"]
@@ -97,19 +76,11 @@ async def _seed_fixture(
         session.add(cm)
         await session.flush()
 
-        af = AudioFile(
-            filename="sample_19700101T000000Z.wav",
-            folder_path="",
-            source_folder=str(audio_dir),
-            checksum_sha256=f"sum-{tmp_path.name}",
-            duration_seconds=audio_duration,
-        )
-        session.add(af)
-        await session.flush()
-
         dj = DetectionJob(
             classifier_model_id=cm.id,
-            audio_folder=str(audio_dir),
+            hydrophone_id=hydrophone_id,
+            start_timestamp=job_start_ts,
+            end_timestamp=job_end_ts,
             status="complete",
         )
         session.add(dj)
@@ -127,12 +98,10 @@ async def _seed_fixture(
 
         await session.commit()
         ids = {
-            "audio_file_id": af.id,
             "detection_job_id": dj.id,
             "classifier_model_id": cm.id,
         }
 
-    # Write detection row store parquet
     rs_path = detection_row_store_path(storage_root, ids["detection_job_id"])
     rs_path.parent.mkdir(parents=True, exist_ok=True)
     row = {
@@ -149,7 +118,7 @@ async def _seed_fixture(
 
 
 async def test_happy_path_inserts_sample(session_factory, tmp_path):
-    ids = await _seed_fixture(session_factory, tmp_path)
+    await _seed_fixture(session_factory, tmp_path)
     storage_root = tmp_path / "storage"
 
     async with session_factory() as session:
@@ -175,22 +144,25 @@ async def test_happy_path_inserts_sample(session_factory, tmp_path):
         assert len(samples) == 1
         sample = samples[0]
         assert sample.training_dataset_id == result.dataset_id
-        assert sample.audio_file_id == ids["audio_file_id"]
+        assert sample.audio_file_id is None
+        assert sample.hydrophone_id == HYDROPHONE_ID
+        assert sample.start_timestamp is not None
+        assert sample.end_timestamp is not None
+        assert sample.crop_start_sec == 0.0
+        crop_duration = sample.end_timestamp - sample.start_timestamp
+        assert sample.crop_end_sec == pytest.approx(crop_duration, abs=0.01)
         assert sample.source == "bootstrap_vocalization_row"
         assert sample.source_ref == "row-aaa"
         events = json.loads(sample.events_json)
         assert len(events) == 1
-        assert events[0]["start_sec"] == pytest.approx(5.0, abs=0.01)
-        assert events[0]["end_sec"] == pytest.approx(10.0, abs=0.01)
-        assert sample.crop_start_sec >= 0.0
-        assert sample.crop_end_sec <= 30.0
+        assert events[0]["start_sec"] >= 0.0
+        assert events[0]["end_sec"] > events[0]["start_sec"]
 
 
 async def test_no_vocalization_label_skips(session_factory, tmp_path):
     await _seed_fixture(session_factory, tmp_path, labels=[])
     storage_root = tmp_path / "storage"
 
-    # Remove the labels that _seed_fixture created (none were created because labels=[])
     async with session_factory() as session:
         result = await run_bootstrap(
             session,
@@ -338,9 +310,10 @@ async def test_crop_too_short_at_boundary(session_factory, tmp_path):
     await _seed_fixture(
         session_factory,
         tmp_path,
-        start_utc=0.5,
-        end_utc=1.0,
-        audio_duration=2.0,
+        start_utc=1001.0,
+        end_utc=1002.0,
+        job_start_ts=1000.0,
+        job_end_ts=1003.0,
     )
     storage_root = tmp_path / "storage"
 
@@ -358,6 +331,41 @@ async def test_crop_too_short_at_boundary(session_factory, tmp_path):
 
     assert result.inserted == 0
     assert result.skipped.get("crop too short at boundary") == 1
+
+
+async def test_crop_clamped_to_job_range(session_factory, tmp_path):
+    """Crop window is clamped to job's [start_timestamp, end_timestamp]."""
+    await _seed_fixture(
+        session_factory,
+        tmp_path,
+        start_utc=1002.0,
+        end_utc=1004.0,
+        job_start_ts=1000.0,
+        job_end_ts=1010.0,
+    )
+    storage_root = tmp_path / "storage"
+
+    async with session_factory() as session:
+        result = await run_bootstrap(
+            session,
+            row_ids=["row-aaa"],
+            dataset_name="test-ds",
+            dataset_id=None,
+            crop_seconds=10.0,
+            allow_multi_label=False,
+            dry_run=False,
+            storage_root=storage_root,
+        )
+
+    assert result.inserted == 1
+
+    async with session_factory() as session:
+        samples = (
+            (await session.execute(select(SegmentationTrainingSample))).scalars().all()
+        )
+        sample = samples[0]
+        assert sample.start_timestamp >= 1000.0
+        assert sample.end_timestamp <= 1010.0
 
 
 def test_parse_args_mutually_exclusive():
@@ -406,19 +414,14 @@ def test_read_row_ids_skips_blanks_and_comments(tmp_path):
 
 async def _seed_discovery_fixture(
     session_factory,
-    tmp_path: Path,
     *,
     rows: list[tuple[str, list[tuple[str, str]]]],
 ) -> str:
-    """Seed a detection job with multiple rows, each having labels.
+    """Seed a hydrophone detection job with multiple rows, each having labels.
 
     ``rows`` is a list of ``(row_id, [(label, source), ...])``.
     Returns the detection job ID.
     """
-    audio_dir = tmp_path / "audio_src"
-    audio_path = audio_dir / "sample_19700101T000000Z.wav"
-    _write_sine_wav(audio_path, duration_sec=30.0)
-
     async with session_factory() as session:
         cm = ClassifierModel(
             name="fake-cm",
@@ -433,7 +436,9 @@ async def _seed_discovery_fixture(
 
         dj = DetectionJob(
             classifier_model_id=cm.id,
-            audio_folder=str(audio_dir),
+            hydrophone_id=HYDROPHONE_ID,
+            start_timestamp=JOB_START_TS,
+            end_timestamp=JOB_END_TS,
             status="complete",
         )
         session.add(dj)
@@ -454,10 +459,9 @@ async def _seed_discovery_fixture(
         return dj.id
 
 
-async def test_discover_single_label_rows(session_factory, tmp_path):
+async def test_discover_single_label_rows(session_factory):
     dj_id = await _seed_discovery_fixture(
         session_factory,
-        tmp_path,
         rows=[
             ("row-single", [("upcall", "manual")]),
             ("row-multi", [("upcall", "manual"), ("downsweep", "manual")]),
@@ -471,10 +475,9 @@ async def test_discover_single_label_rows(session_factory, tmp_path):
     assert row_ids == ["row-single"]
 
 
-async def test_discover_skips_inference_labels(session_factory, tmp_path):
+async def test_discover_skips_inference_labels(session_factory):
     dj_id = await _seed_discovery_fixture(
         session_factory,
-        tmp_path,
         rows=[
             ("row-manual", [("upcall", "manual")]),
             ("row-infer", [("upcall", "inference")]),
@@ -498,9 +501,6 @@ async def test_discover_nonexistent_job_returns_empty(session_factory):
 async def test_inference_labels_skipped_in_row_ids_path(session_factory, tmp_path):
     """Rows with only inference labels are skipped even via --row-ids-file."""
     storage_root = tmp_path / "storage"
-    audio_dir = tmp_path / "audio_src"
-    audio_path = audio_dir / "sample_19700101T000000Z.wav"
-    _write_sine_wav(audio_path, duration_sec=30.0)
 
     async with session_factory() as session:
         cm = ClassifierModel(
@@ -514,19 +514,11 @@ async def test_inference_labels_skipped_in_row_ids_path(session_factory, tmp_pat
         session.add(cm)
         await session.flush()
 
-        af = AudioFile(
-            filename="sample_19700101T000000Z.wav",
-            folder_path="",
-            source_folder=str(audio_dir),
-            checksum_sha256=f"sum-{tmp_path.name}",
-            duration_seconds=30.0,
-        )
-        session.add(af)
-        await session.flush()
-
         dj = DetectionJob(
             classifier_model_id=cm.id,
-            audio_folder=str(audio_dir),
+            hydrophone_id=HYDROPHONE_ID,
+            start_timestamp=JOB_START_TS,
+            end_timestamp=JOB_END_TS,
             status="complete",
         )
         session.add(dj)
@@ -550,8 +542,8 @@ async def test_inference_labels_skipped_in_row_ids_path(session_factory, tmp_pat
         [
             {
                 "row_id": "row-infer",
-                "start_utc": "5.0",
-                "end_utc": "10.0",
+                "start_utc": "1100.0",
+                "end_utc": "1105.0",
                 "avg_confidence": "0.8",
                 "peak_confidence": "0.9",
                 "n_windows": "2",

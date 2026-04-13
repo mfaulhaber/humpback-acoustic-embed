@@ -16,6 +16,7 @@ import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from humpback.config import Settings
@@ -283,6 +284,126 @@ async def test_worker_fails_when_training_dataset_missing(session_factory, tmp_p
         assert refreshed.status == "failed"
         assert refreshed.error_message is not None
         assert "does-not-exist" in refreshed.error_message
+
+
+async def _seed_hydrophone_training_job(
+    session_factory,
+    tmp_path: Path,
+    *,
+    n_sources: int = 4,
+    duration_sec: float = 1.0,
+) -> tuple[str, str]:
+    """Seed a hydrophone-sourced dataset with ``n_sources`` positive+negative pairs.
+
+    Returns ``(dataset_id, job_id)``.
+    """
+    base_ts = 1000.0
+    async with session_factory() as session:
+        dataset = SegmentationTrainingDataset(
+            name="test-hydrophone-dataset",
+            description="synthetic hydrophone samples",
+        )
+        session.add(dataset)
+        await session.flush()
+        dataset_id = dataset.id
+
+        for i in range(n_sources):
+            pos_start = base_ts + i * 100.0
+            neg_start = base_ts + i * 100.0 + 50.0
+
+            session.add(
+                SegmentationTrainingSample(
+                    training_dataset_id=dataset_id,
+                    hydrophone_id="test_hydrophone",
+                    start_timestamp=pos_start,
+                    end_timestamp=pos_start + duration_sec,
+                    crop_start_sec=0.0,
+                    crop_end_sec=duration_sec,
+                    events_json=json.dumps(
+                        [{"start_sec": 0.0, "end_sec": duration_sec}]
+                    ),
+                    source="test",
+                )
+            )
+            session.add(
+                SegmentationTrainingSample(
+                    training_dataset_id=dataset_id,
+                    hydrophone_id="test_hydrophone",
+                    start_timestamp=neg_start,
+                    end_timestamp=neg_start + duration_sec,
+                    crop_start_sec=0.0,
+                    crop_end_sec=duration_sec,
+                    events_json="[]",
+                    source="test",
+                )
+            )
+
+        config = SegmentationTrainingConfig(
+            epochs=2,
+            batch_size=2,
+            learning_rate=1e-2,
+            weight_decay=0.0,
+            early_stopping_patience=100,
+            grad_clip=1.0,
+            seed=0,
+            val_fraction=0.25,
+            conv_channels=[8],
+            gru_hidden=8,
+            gru_layers=1,
+        )
+        job = SegmentationTrainingJob(
+            training_dataset_id=dataset_id,
+            config_json=config.model_dump_json(),
+            status="queued",
+        )
+        session.add(job)
+        await session.commit()
+        return dataset_id, job.id
+
+
+def _fake_resolve_timeline_audio(**kwargs):
+    """Return synthetic audio: sine wave for positive, silence for negative."""
+    duration_sec = kwargs["duration_sec"]
+    target_sr = kwargs["target_sr"]
+    n = int(target_sr * duration_sec)
+    t = np.arange(n, dtype=np.float32) / target_sr
+    return (0.7 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+
+async def test_worker_hydrophone_samples_happy_path(
+    session_factory, tmp_path, monkeypatch
+):
+    _, job_id = await _seed_hydrophone_training_job(session_factory, tmp_path)
+    settings = _make_settings(tmp_path)
+
+    monkeypatch.setattr(
+        "humpback.processing.timeline_audio.resolve_timeline_audio",
+        _fake_resolve_timeline_audio,
+    )
+
+    async with session_factory() as session:
+        claimed = await run_one_iteration(session, settings)
+    assert claimed is not None
+    assert claimed.id == job_id
+
+    async with session_factory() as session:
+        refreshed = await session.get(SegmentationTrainingJob, job_id)
+        assert refreshed is not None
+        assert refreshed.status == "complete"
+        assert refreshed.segmentation_model_id is not None
+        assert refreshed.result_summary is not None
+
+        summary = json.loads(refreshed.result_summary)
+        assert "train_losses" in summary
+        assert "framewise" in summary
+        assert summary["n_train_samples"] > 0
+
+        model = await session.get(SegmentationModel, refreshed.segmentation_model_id)
+        assert model is not None
+        assert model.model_family == "pytorch_crnn"
+
+    checkpoint_path = Path(model.model_path)
+    assert checkpoint_path.exists()
 
 
 async def test_stale_segmentation_training_job_is_recovered(session_factory):
