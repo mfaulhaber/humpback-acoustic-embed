@@ -1,17 +1,19 @@
-import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import {
-  useSegmentationTrainingJobs,
-  useDeleteSegmentationTrainingJob,
+  useSegmentationFeedbackTrainingJobs,
+  useDeleteSegmentationFeedbackTrainingJob,
   useSegmentationModels,
-  useSegmentationTrainingDatasets,
 } from "@/hooks/queries/useCallParsing";
 import { toast } from "@/components/ui/use-toast";
-import type { SegmentationTrainingJob, SegmentationModel } from "@/api/types";
+import type {
+  SegmentationFeedbackTrainingJob,
+  SegmentationModel,
+} from "@/api/types";
 
-function configSummary(job: SegmentationTrainingJob): string {
+function configSummary(job: SegmentationFeedbackTrainingJob): string {
+  if (!job.config_json) return "defaults";
   try {
     const cfg = JSON.parse(job.config_json) as Record<string, unknown>;
     const ep = typeof cfg.epochs === "number" ? cfg.epochs : "?";
@@ -22,20 +24,29 @@ function configSummary(job: SegmentationTrainingJob): string {
   }
 }
 
+function sourceJobsSummary(job: SegmentationFeedbackTrainingJob): string {
+  try {
+    const ids = JSON.parse(job.source_job_ids) as string[];
+    return ids.map((id) => id.slice(0, 8)).join(", ");
+  } catch {
+    return "—";
+  }
+}
+
 interface Metrics {
   framewise_f1: number | null;
   event_f1: number | null;
 }
 
-function parseMetrics(job: SegmentationTrainingJob): Metrics {
+function parseMetrics(job: SegmentationFeedbackTrainingJob): Metrics {
   if (!job.result_summary) return { framewise_f1: null, event_f1: null };
   try {
     const rs = JSON.parse(job.result_summary) as Record<string, unknown>;
+    const fw = rs.framewise as Record<string, unknown> | undefined;
+    const ev = rs.event as Record<string, unknown> | undefined;
     return {
-      framewise_f1:
-        typeof rs.framewise_f1 === "number" ? rs.framewise_f1 : null,
-      event_f1:
-        typeof rs.event_f1_iou_0_3 === "number" ? rs.event_f1_iou_0_3 : null,
+      framewise_f1: typeof fw?.f1 === "number" ? fw.f1 : null,
+      event_f1: typeof ev?.f1 === "number" ? ev.f1 : null,
     };
   } catch {
     return { framewise_f1: null, event_f1: null };
@@ -51,19 +62,10 @@ function modelNameById(
   return m ? m.name : modelId.slice(0, 8);
 }
 
-function datasetNameById(
-  datasetId: string,
-  datasets: { id: string; name: string }[],
-): string {
-  const d = datasets.find((ds) => ds.id === datasetId);
-  return d ? d.name : datasetId.slice(0, 8);
-}
-
-export function SegmentTrainingJobTable() {
-  const { data: jobs = [] } = useSegmentationTrainingJobs(3000);
+export function FeedbackTrainingJobTable() {
+  const { data: jobs = [] } = useSegmentationFeedbackTrainingJobs(3000);
   const { data: models = [] } = useSegmentationModels();
-  const { data: datasets = [] } = useSegmentationTrainingDatasets();
-  const deleteMutation = useDeleteSegmentationTrainingJob();
+  const deleteMutation = useDeleteSegmentationFeedbackTrainingJob();
 
   const handleDelete = (jobId: string) => {
     if (!confirm("Delete this training job?")) return;
@@ -82,14 +84,15 @@ export function SegmentTrainingJobTable() {
     <div className="border rounded-md">
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold">Training Jobs</h3>
+          <h3 className="text-sm font-semibold">Feedback Training Jobs</h3>
           <Badge variant="secondary">{jobs.length}</Badge>
         </div>
       </div>
 
       {jobs.length === 0 ? (
         <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-          No training jobs yet.
+          No training jobs yet. Use the Retrain button in Segment Review to
+          start a feedback training job.
         </div>
       ) : (
         <table className="w-full text-sm">
@@ -97,7 +100,7 @@ export function SegmentTrainingJobTable() {
             <tr className="border-b bg-muted/50">
               <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-left font-medium">Created</th>
-              <th className="px-3 py-2 text-left font-medium">Dataset</th>
+              <th className="px-3 py-2 text-left font-medium">Source Jobs</th>
               <th className="px-3 py-2 text-left font-medium">Config</th>
               <th className="px-3 py-2 text-left font-medium">Model</th>
               <th className="px-3 py-2 text-left font-medium">Metrics</th>
@@ -119,20 +122,15 @@ export function SegmentTrainingJobTable() {
                   <td className="px-3 py-2 text-xs whitespace-nowrap">
                     {new Date(job.created_at).toLocaleString()}
                   </td>
-                  <td className="px-3 py-2 text-xs">
-                    {datasetNameById(job.training_dataset_id, datasets)}
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {sourceJobsSummary(job)}
                   </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">
                     {configSummary(job)}
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {mName ? (
-                      <Link
-                        to="/app/call-parsing/segment-training"
-                        className="text-blue-600 underline"
-                      >
-                        {mName}
-                      </Link>
+                      <span className="text-blue-600">{mName}</span>
                     ) : (
                       "—"
                     )}
@@ -141,10 +139,10 @@ export function SegmentTrainingJobTable() {
                     {metrics.framewise_f1 != null || metrics.event_f1 != null
                       ? [
                           metrics.framewise_f1 != null
-                            ? `F1ᶠ=${metrics.framewise_f1.toFixed(2)}`
+                            ? `F1\u1DA0=${metrics.framewise_f1.toFixed(2)}`
                             : null,
                           metrics.event_f1 != null
-                            ? `F1ᵉ=${metrics.event_f1.toFixed(2)}`
+                            ? `F1\u1D49=${metrics.event_f1.toFixed(2)}`
                             : null,
                         ]
                           .filter(Boolean)

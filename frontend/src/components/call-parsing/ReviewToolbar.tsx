@@ -2,6 +2,13 @@ import { useCallback } from "react";
 import type { Region } from "@/api/types";
 import { formatTime } from "@/utils/format";
 
+export interface RetrainStatus {
+  status: "queued" | "running" | "complete" | "failed";
+  modelId?: string;
+  modelName?: string;
+  error?: string;
+}
+
 interface ReviewToolbarProps {
   region: Region | null;
   eventCount: number;
@@ -13,6 +20,10 @@ interface ReviewToolbarProps {
   onCancel: () => void;
   isPlaying: boolean;
   onPlay: () => void;
+  hasCorrections: boolean;
+  onRetrain: () => void;
+  retrainStatus: RetrainStatus | null;
+  onResegment: () => void;
 }
 
 export function ReviewToolbar({
@@ -26,6 +37,10 @@ export function ReviewToolbar({
   onCancel,
   isPlaying,
   onPlay,
+  hasCorrections,
+  onRetrain,
+  retrainStatus,
+  onResegment,
 }: ReviewToolbarProps) {
   const handleCancel = useCallback(() => {
     if (isDirty) {
@@ -38,6 +53,13 @@ export function ReviewToolbar({
   }, [isDirty, pendingChangeCount, onCancel]);
 
   if (!region) return null;
+
+  const isTraining =
+    retrainStatus?.status === "queued" ||
+    retrainStatus?.status === "running";
+  const trainingComplete = retrainStatus?.status === "complete";
+  const trainingFailed = retrainStatus?.status === "failed";
+  const canRetrain = hasCorrections && !isDirty && !isTraining;
 
   return (
     <div className="flex items-center justify-between border-b px-4 py-2">
@@ -89,13 +111,54 @@ export function ReviewToolbar({
           Cancel
         </button>
 
-        <button
-          className="rounded-md border px-3 py-1.5 text-xs opacity-40"
-          disabled
-          title="Retrain model (coming soon)"
-        >
-          Retrain
-        </button>
+        <div className="mx-1 h-5 w-px bg-border" />
+
+        {/* Training status indicators */}
+        {isTraining && (
+          <span className="flex items-center gap-1.5 text-xs text-yellow-500">
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent" />
+            Training...
+          </span>
+        )}
+
+        {trainingComplete && (
+          <>
+            <span className="text-xs text-green-500">Model ready</span>
+            <button
+              className="rounded-md border border-green-500 bg-green-500/15 px-3 py-1.5 text-xs text-green-400 hover:bg-green-500/25"
+              onClick={onResegment}
+            >
+              Re-segment
+            </button>
+          </>
+        )}
+
+        {trainingFailed && (
+          <span
+            className="text-xs text-red-500"
+            title={retrainStatus?.error ?? "Training failed"}
+          >
+            Training failed
+          </span>
+        )}
+
+        {/* Retrain button — hidden while training is in progress */}
+        {!isTraining && (
+          <button
+            className="rounded-md border border-blue-500 bg-blue-500/15 px-3 py-1.5 text-xs text-blue-400 hover:bg-blue-500/25 disabled:border-border disabled:bg-transparent disabled:text-muted-foreground disabled:opacity-40"
+            disabled={!canRetrain}
+            onClick={onRetrain}
+            title={
+              !hasCorrections
+                ? "Save boundary corrections first"
+                : isDirty
+                  ? "Save pending changes first"
+                  : "Train a new model from corrections"
+            }
+          >
+            Retrain
+          </button>
+        )}
       </div>
     </div>
   );

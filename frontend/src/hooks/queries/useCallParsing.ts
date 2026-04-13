@@ -13,15 +13,14 @@ import {
   clearBoundaryCorrections,
   fetchSegmentationModels,
   deleteSegmentationModel,
-  fetchSegmentationTrainingJobs,
-  createSegmentationTrainingJob,
-  deleteSegmentationTrainingJob,
-  fetchSegmentationTrainingDatasets,
+  fetchSegmentationFeedbackTrainingJobs,
+  createSegmentationFeedbackTrainingJob,
+  deleteSegmentationFeedbackTrainingJob,
 } from "@/api/client";
 import type {
   CreateRegionJobRequest,
   CreateSegmentationJobRequest,
-  CreateSegmentationTrainingJobRequest,
+  CreateSegmentationFeedbackTrainingJobRequest,
   BoundaryCorrectionRequest,
   ModelConfig,
 } from "@/api/types";
@@ -175,45 +174,39 @@ export function useDeleteSegmentationModel() {
   });
 }
 
-// ---- Segmentation Training Jobs ----
+// ---- Segmentation Feedback Training Jobs ----
 
-const SEG_TRAINING_JOBS_KEY = ["segmentation-training-jobs"];
+const SEG_FEEDBACK_JOBS_KEY = ["segmentation-feedback-training-jobs"];
 
-export function useSegmentationTrainingJobs(refetchInterval = 3000) {
+export function useSegmentationFeedbackTrainingJobs(
+  refetchInterval?: number,
+) {
   return useQuery({
-    queryKey: SEG_TRAINING_JOBS_KEY,
-    queryFn: fetchSegmentationTrainingJobs,
+    queryKey: SEG_FEEDBACK_JOBS_KEY,
+    queryFn: fetchSegmentationFeedbackTrainingJobs,
     refetchInterval,
   });
 }
 
-export function useCreateSegmentationTrainingJob() {
+export function useCreateSegmentationFeedbackTrainingJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreateSegmentationTrainingJobRequest) =>
-      createSegmentationTrainingJob(body),
+    mutationFn: (body: CreateSegmentationFeedbackTrainingJobRequest) =>
+      createSegmentationFeedbackTrainingJob(body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SEG_TRAINING_JOBS_KEY });
+      qc.invalidateQueries({ queryKey: SEG_FEEDBACK_JOBS_KEY });
       qc.invalidateQueries({ queryKey: SEG_MODELS_KEY });
     },
   });
 }
 
-export function useDeleteSegmentationTrainingJob() {
+export function useDeleteSegmentationFeedbackTrainingJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => deleteSegmentationTrainingJob(jobId),
+    mutationFn: (jobId: string) =>
+      deleteSegmentationFeedbackTrainingJob(jobId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SEG_TRAINING_JOBS_KEY });
+      qc.invalidateQueries({ queryKey: SEG_FEEDBACK_JOBS_KEY });
     },
-  });
-}
-
-// ---- Segmentation Training Datasets ----
-
-export function useSegmentationTrainingDatasets() {
-  return useQuery({
-    queryKey: ["segmentation-training-datasets"],
-    queryFn: fetchSegmentationTrainingDatasets,
   });
 }

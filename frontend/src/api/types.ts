@@ -1337,16 +1337,11 @@ export interface SegmentationTrainingConfig {
   seed: number;
 }
 
-export interface CreateSegmentationTrainingJobRequest {
-  training_dataset_id: string;
-  config?: Partial<SegmentationTrainingConfig>;
-}
-
-export interface SegmentationTrainingJob {
+export interface SegmentationFeedbackTrainingJob {
   id: string;
   status: "queued" | "running" | "complete" | "failed";
-  training_dataset_id: string;
-  config_json: string;
+  source_job_ids: string;
+  config_json: string | null;
   segmentation_model_id: string | null;
   result_summary: string | null;
   error_message: string | null;
@@ -1356,9 +1351,7 @@ export interface SegmentationTrainingJob {
   completed_at: string | null;
 }
 
-export interface SegmentationTrainingDatasetSummary {
-  id: string;
-  name: string;
-  sample_count: number;
-  created_at: string;
+export interface CreateSegmentationFeedbackTrainingJobRequest {
+  source_job_ids: string[];
+  config?: Partial<SegmentationTrainingConfig>;
 }

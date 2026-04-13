@@ -95,9 +95,8 @@ import type {
   CreateSegmentationJobRequest,
   SegmentationEvent,
   SegmentationModel,
-  SegmentationTrainingJob,
-  CreateSegmentationTrainingJobRequest,
-  SegmentationTrainingDatasetSummary,
+  SegmentationFeedbackTrainingJob,
+  CreateSegmentationFeedbackTrainingJobRequest,
   Region,
   BoundaryCorrectionRequest,
   BoundaryCorrectionResponse,
@@ -938,19 +937,21 @@ export const deleteSegmentationModel = (modelId: string) =>
     method: "DELETE",
   });
 
-export const fetchSegmentationTrainingJobs = () =>
-  api<SegmentationTrainingJob[]>("/call-parsing/segmentation-training-jobs");
+export const fetchSegmentationFeedbackTrainingJobs = () =>
+  api<SegmentationFeedbackTrainingJob[]>(
+    "/call-parsing/segmentation-feedback-training-jobs",
+  );
 
-export const createSegmentationTrainingJob = (
-  body: CreateSegmentationTrainingJobRequest,
-) => post<SegmentationTrainingJob>("/call-parsing/segmentation-training-jobs", body);
+export const createSegmentationFeedbackTrainingJob = (
+  body: CreateSegmentationFeedbackTrainingJobRequest,
+) =>
+  post<SegmentationFeedbackTrainingJob>(
+    "/call-parsing/segmentation-feedback-training-jobs",
+    body,
+  );
 
-export const deleteSegmentationTrainingJob = (jobId: string) =>
-  api<{ status: string }>(`/call-parsing/segmentation-training-jobs/${jobId}`, {
-    method: "DELETE",
-  });
-
-export const fetchSegmentationTrainingDatasets = () =>
-  api<SegmentationTrainingDatasetSummary[]>(
-    "/call-parsing/segmentation-training-datasets",
+export const deleteSegmentationFeedbackTrainingJob = (jobId: string) =>
+  api<{ status: string }>(
+    `/call-parsing/segmentation-feedback-training-jobs/${jobId}`,
+    { method: "DELETE" },
   );

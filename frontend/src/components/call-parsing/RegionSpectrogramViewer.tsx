@@ -25,6 +25,7 @@ const ZOOM_PRESETS = {
 } as const;
 
 type ZoomLevel = keyof typeof ZOOM_PRESETS;
+const ZOOM_LEVELS: ZoomLevel[] = ["10s", "30s", "1m", "5m"];
 
 function selectZoomLevel(regionDurationSec: number): ZoomLevel {
   if (regionDurationSec >= 300) return "5m";
@@ -78,8 +79,10 @@ export function RegionSpectrogramViewer({
   const regionEnd = region.padded_end_sec;
   const regionDuration = regionEnd - regionStart;
 
-  // Pick zoom level based on region duration
-  const zoomLevel = selectZoomLevel(regionDuration);
+  // Zoom level as state — auto-selected initially, user can override
+  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>(() =>
+    selectZoomLevel(regionDuration),
+  );
   const {
     tileDuration: TILE_DURATION_SEC,
     viewportSpan: VIEWPORT_SPAN_SEC,
@@ -90,10 +93,12 @@ export function RegionSpectrogramViewer({
   const initialCenter = regionStart + Math.min(regionDuration, VIEWPORT_SPAN_SEC) / 2;
   const [centerTimestamp, setCenterTimestamp] = useState(initialCenter);
 
-  // Reset center when region changes
+  // Reset zoom and center when region changes
   useEffect(() => {
     const dur = region.padded_end_sec - region.padded_start_sec;
-    const span = ZOOM_PRESETS[selectZoomLevel(dur)].viewportSpan;
+    const autoZoom = selectZoomLevel(dur);
+    setZoomLevel(autoZoom);
+    const span = ZOOM_PRESETS[autoZoom].viewportSpan;
     setCenterTimestamp(region.padded_start_sec + Math.min(dur, span) / 2);
   }, [region.region_id, region.padded_start_sec, region.padded_end_sec]);
 
@@ -458,6 +463,27 @@ export function RegionSpectrogramViewer({
           >
             {formatTime(l.sec)}
           </div>
+        ))}
+      </div>
+
+      {/* Zoom bar */}
+      <div
+        className="flex items-center gap-1 border-t border-border px-2 py-1.5"
+        style={{ marginLeft: FREQ_AXIS_WIDTH }}
+      >
+        <span className="mr-1 text-[10px] text-muted-foreground">Zoom</span>
+        {ZOOM_LEVELS.map((level) => (
+          <button
+            key={level}
+            className={
+              level === zoomLevel
+                ? "rounded border border-blue-500 bg-blue-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-blue-400"
+                : "rounded border border-border px-2.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent"
+            }
+            onClick={() => setZoomLevel(level)}
+          >
+            {level}
+          </button>
         ))}
       </div>
     </div>
