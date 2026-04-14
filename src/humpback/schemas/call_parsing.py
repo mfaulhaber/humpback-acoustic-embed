@@ -312,6 +312,23 @@ class SegmentationTrainingDatasetSummary(BaseModel):
     created_at: datetime
 
 
+class CreateDatasetFromCorrectionsRequest(BaseModel):
+    """Request body for creating a training dataset from boundary corrections."""
+
+    segmentation_job_id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class CreateDatasetFromCorrectionsResponse(BaseModel):
+    """Response for dataset-from-corrections creation."""
+
+    id: str
+    name: str
+    sample_count: int
+    created_at: datetime
+
+
 # ---- Feedback training: correction schemas ---------------------------------
 
 

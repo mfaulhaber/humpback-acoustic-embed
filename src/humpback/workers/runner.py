@@ -318,6 +318,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then dataset-based segmentation training jobs (Pass 2 from-scratch)
+        stjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_segmentation_training_job
+
+            stjob = await claim_segmentation_training_job(session)
+        if stjob:
+            logger.info(f"Segmentation training job {stjob.id}")
+            from humpback.workers.segmentation_training_worker import (
+                run_segmentation_training,
+            )
+
+            async with session_factory() as session:
+                await run_segmentation_training(session, stjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # Then segmentation feedback training jobs (Pass 2 retrain)
         sftjob = None
         async with session_factory() as session:

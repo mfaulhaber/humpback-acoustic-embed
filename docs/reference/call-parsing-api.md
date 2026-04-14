@@ -27,7 +27,8 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 
 ## Pass 2 — Segmentation Training Datasets
 
-- `GET /call-parsing/segmentation-training-datasets` — list training datasets with sample counts (used for bootstrap dataset inspection; bootstrap scripts call trainers directly)
+- `GET /call-parsing/segmentation-training-datasets` — list training datasets with sample counts
+- `POST /call-parsing/segmentation-training-datasets/from-corrections` — extract human boundary corrections from a completed segmentation job into a new training dataset; accepts `segmentation_job_id`, optional `name` and `description`; returns dataset ID and sample count
 
 ## Pass 2 — Segmentation Models
 

@@ -33,6 +33,8 @@ from humpback.schemas.call_parsing import (
     ClassifierModelResponse,
     ClassifierTrainingJobResponse,
     CreateClassifierTrainingJobRequest,
+    CreateDatasetFromCorrectionsRequest,
+    CreateDatasetFromCorrectionsResponse,
     CreateEventClassificationJobRequest,
     CreateRegionJobRequest,
     CreateSegmentationFeedbackTrainingJobRequest,
@@ -502,6 +504,37 @@ async def get_segmentation_events(
 async def list_segmentation_training_datasets(session: SessionDep):
     rows = await service.list_segmentation_training_datasets(session)
     return [SegmentationTrainingDatasetSummary(**row) for row in rows]
+
+
+@router.post(
+    "/segmentation-training-datasets/from-corrections",
+    response_model=CreateDatasetFromCorrectionsResponse,
+    status_code=201,
+)
+async def create_dataset_from_corrections(
+    request: CreateDatasetFromCorrectionsRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    try:
+        dataset, sample_count = await service.create_dataset_from_corrections(
+            session,
+            segmentation_job_id=request.segmentation_job_id,
+            settings=settings,
+            name=request.name,
+            description=request.description,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+    return CreateDatasetFromCorrectionsResponse(
+        id=dataset.id,
+        name=dataset.name,
+        sample_count=sample_count,
+        created_at=dataset.created_at,
+    )
 
 
 # ---- Pass 2: segmentation models ----------------------------------------
