@@ -8,6 +8,7 @@ focuses on model + data + loss only.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -27,6 +28,7 @@ class TrainingResult:
     train_losses: list[float] = field(default_factory=list)
     val_losses: list[float] = field(default_factory=list)
     callback_outputs: dict[str, Any] = field(default_factory=dict)
+    best_model_state: dict[str, Any] | None = field(default=None, repr=False)
 
 
 class Callback(Protocol):
@@ -110,6 +112,7 @@ def fit(
 
     result = TrainingResult()
     should_stop = [False]
+    best_val_loss = float("inf")
 
     for epoch in range(epochs):
         train_loss = _run_epoch(
@@ -122,6 +125,9 @@ def fit(
                 model, val_loader, device, loss_fn=loss_fn, optimizer=None
             )
             result.val_losses.append(val_loss)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                result.best_model_state = copy.deepcopy(model.state_dict())
 
         if scheduler is not None:
             scheduler.step()

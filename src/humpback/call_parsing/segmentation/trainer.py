@@ -33,7 +33,7 @@ from humpback.call_parsing.segmentation.dataset import (
 from humpback.call_parsing.segmentation.decoder import decode_events
 from humpback.call_parsing.segmentation.model import SegmentationCRNN
 from humpback.call_parsing.types import Event
-from humpback.ml.checkpointing import save_checkpoint
+from humpback.ml.checkpointing import load_checkpoint, save_checkpoint
 from humpback.ml.training_loop import Callback, TrainingResult, fit
 from humpback.schemas.call_parsing import (
     SegmentationDecoderConfig,
@@ -323,6 +323,10 @@ def _make_val_f1_callback(
     val_loader: DataLoader[Any] | None,
     device: torch.device,
 ) -> Callback:
+    import copy
+
+    best_f1: list[float] = [0.0]
+
     def cb(epoch: int, result: TrainingResult, should_stop: list[bool]) -> None:
         if val_loader is None:
             return
@@ -332,6 +336,11 @@ def _make_val_f1_callback(
         history = result.callback_outputs.setdefault("val_framewise_f1", [])
         assert isinstance(history, list)
         history.append(f1)
+        if f1 > best_f1[0]:
+            best_f1[0] = f1
+            result.callback_outputs["best_f1_model_state"] = copy.deepcopy(
+                model.state_dict()
+            )
 
     return cb
 
@@ -500,6 +509,7 @@ def train_model(
     config: SegmentationTrainingConfig,
     checkpoint_path: Path,
     device: torch.device | None = None,
+    pretrained_checkpoint: Path | None = None,
 ) -> SegmentationTrainingResult:
     """Train a ``SegmentationCRNN`` on ``samples`` and save a checkpoint.
 
@@ -509,6 +519,9 @@ def train_model(
     framewise F1 as a callback, applies early stopping on val loss,
     runs the full decoder + event-matching final eval, and writes the
     checkpoint atomically.
+
+    When ``pretrained_checkpoint`` is provided, model weights are
+    initialized from that checkpoint before training (fine-tuning).
     """
     _seed_everything(config.seed)
 
@@ -561,8 +574,16 @@ def train_model(
         gru_hidden=config.gru_hidden,
         gru_layers=config.gru_layers,
     )
+    if pretrained_checkpoint is not None:
+        load_checkpoint(pretrained_checkpoint, model)
+        logger.info(
+            "Initialized model from pretrained checkpoint %s", pretrained_checkpoint
+        )
+        for param in model.conv.parameters():
+            param.requires_grad = False
+        logger.info("Froze conv layers for fine-tuning")
     optimizer = torch.optim.Adam(
-        model.parameters(),
+        filter(lambda p: p.requires_grad, model.parameters()),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
@@ -587,6 +608,12 @@ def train_model(
         callbacks=callbacks,
         device=resolved_device,
     )
+
+    best_f1_state = fit_result.callback_outputs.get("best_f1_model_state")
+    if best_f1_state is not None:
+        model.load_state_dict(best_f1_state)
+    elif fit_result.best_model_state is not None:
+        model.load_state_dict(fit_result.best_model_state)
 
     framewise_metrics = (0.0, 0.0, 0.0)
     event_metrics = (0.0, 0.0, 0.0)

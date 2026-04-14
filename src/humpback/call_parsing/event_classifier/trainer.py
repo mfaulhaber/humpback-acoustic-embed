@@ -371,6 +371,9 @@ def train_event_classifier(
         device=resolved_device,
     )
 
+    if fit_result.best_model_state is not None:
+        model.load_state_dict(fit_result.best_model_state)
+
     thresholds: dict[str, float] = {t: 0.5 for t in filtered_vocab}
     per_type_metrics: dict[str, dict[str, float]] = {
         t: {"precision": 0.0, "recall": 0.0, "f1": 0.0} for t in filtered_vocab
