@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from humpback.models.segmentation_training import SegmentationTrainingDataset
+    from humpback.schemas.call_parsing import SegmentationTrainingConfig
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -283,6 +284,74 @@ async def list_event_segmentation_jobs(
     return list(result.scalars().all())
 
 
+async def list_segmentation_jobs_with_correction_counts(
+    session: AsyncSession,
+) -> list[dict]:
+    """Return completed segmentation jobs with correction counts and hydrophone info.
+
+    Uses a LEFT JOIN subquery so there is no N+1 overhead.
+    """
+    from humpback.models.feedback_training import EventBoundaryCorrection
+
+    correction_counts = (
+        select(
+            EventBoundaryCorrection.event_segmentation_job_id.label("job_id"),
+            func.count(EventBoundaryCorrection.id).label("correction_count"),
+        )
+        .group_by(EventBoundaryCorrection.event_segmentation_job_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            EventSegmentationJob,
+            func.coalesce(correction_counts.c.correction_count, 0).label(
+                "correction_count"
+            ),
+            RegionDetectionJob.hydrophone_id,
+            RegionDetectionJob.start_timestamp,
+            RegionDetectionJob.end_timestamp,
+        )
+        .join(
+            RegionDetectionJob,
+            RegionDetectionJob.id == EventSegmentationJob.region_detection_job_id,
+        )
+        .outerjoin(
+            correction_counts,
+            correction_counts.c.job_id == EventSegmentationJob.id,
+        )
+        .where(EventSegmentationJob.status == "complete")
+        .order_by(EventSegmentationJob.created_at.desc())
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    out: list[dict] = []
+    for row in rows:
+        job = row[0]
+        d = {
+            "id": job.id,
+            "status": job.status,
+            "parent_run_id": job.parent_run_id,
+            "error_message": job.error_message,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "started_at": job.started_at,
+            "completed_at": job.completed_at,
+            "region_detection_job_id": job.region_detection_job_id,
+            "segmentation_model_id": job.segmentation_model_id,
+            "config_json": job.config_json,
+            "event_count": job.event_count,
+            "correction_count": row[1],
+            "hydrophone_id": row[2],
+            "start_timestamp": row[3],
+            "end_timestamp": row[4],
+        }
+        out.append(d)
+    return out
+
+
 async def get_event_segmentation_job(
     session: AsyncSession, job_id: str
 ) -> Optional[EventSegmentationJob]:
@@ -467,6 +536,9 @@ async def list_segmentation_training_datasets(session: AsyncSession):
         select(
             SegmentationTrainingSample.training_dataset_id,
             func.count().label("sample_count"),
+            func.count(SegmentationTrainingSample.source_ref.distinct()).label(
+                "source_job_count"
+            ),
         )
         .group_by(SegmentationTrainingSample.training_dataset_id)
         .subquery()
@@ -477,6 +549,7 @@ async def list_segmentation_training_datasets(session: AsyncSession):
             SegmentationTrainingDataset.name,
             SegmentationTrainingDataset.created_at,
             func.coalesce(count_subq.c.sample_count, 0).label("sample_count"),
+            func.coalesce(count_subq.c.source_job_count, 0).label("source_job_count"),
         )
         .outerjoin(
             count_subq,
@@ -712,74 +785,6 @@ async def clear_type_corrections(
     await session.commit()
 
 
-# ---- Feedback training: segmentation feedback training jobs (Pass 2) -----
-
-
-async def create_segmentation_feedback_training_job(session: AsyncSession, request):
-    """Create a queued Pass 2 feedback training job.
-
-    Validates that every source segmentation job ID exists and is complete.
-    """
-    import json
-
-    from humpback.models.feedback_training import EventSegmentationTrainingJob
-    from humpback.schemas.call_parsing import (
-        CreateSegmentationFeedbackTrainingJobRequest,
-    )
-
-    assert isinstance(request, CreateSegmentationFeedbackTrainingJobRequest)
-
-    for sid in request.source_job_ids:
-        es = await session.get(EventSegmentationJob, sid)
-        if es is None:
-            raise CallParsingFKError("source_job_ids", sid)
-        if es.status != "complete":
-            raise CallParsingStateError(
-                f"Source segmentation job {sid} status is {es.status!r}, not 'complete'"
-            )
-
-    job = EventSegmentationTrainingJob(
-        status="queued",
-        source_job_ids=json.dumps(request.source_job_ids),
-        config_json=request.config.model_dump_json(),
-    )
-    session.add(job)
-    await session.flush()
-    return job
-
-
-async def list_segmentation_feedback_training_jobs(
-    session: AsyncSession,
-) -> list:
-    from humpback.models.feedback_training import EventSegmentationTrainingJob
-
-    result = await session.execute(
-        select(EventSegmentationTrainingJob).order_by(
-            EventSegmentationTrainingJob.created_at.desc()
-        )
-    )
-    return list(result.scalars().all())
-
-
-async def get_segmentation_feedback_training_job(session: AsyncSession, job_id: str):
-    from humpback.models.feedback_training import EventSegmentationTrainingJob
-
-    return await session.get(EventSegmentationTrainingJob, job_id)
-
-
-async def delete_segmentation_feedback_training_job(
-    session: AsyncSession, job_id: str
-) -> bool:
-    from humpback.models.feedback_training import EventSegmentationTrainingJob
-
-    job = await session.get(EventSegmentationTrainingJob, job_id)
-    if job is None:
-        return False
-    await session.delete(job)
-    await session.commit()
-    return True
-
-
 # ---- Feedback training: classifier feedback training jobs (Pass 3) -------
 
 
@@ -916,19 +921,21 @@ async def delete_classifier_model(
 
 async def create_dataset_from_corrections(
     session: AsyncSession,
-    segmentation_job_id: str,
+    segmentation_job_ids: list[str],
     settings: Settings,
     name: Optional[str] = None,
     description: Optional[str] = None,
 ) -> tuple["SegmentationTrainingDataset", int]:
-    """Extract corrections into a new training dataset.
+    """Extract corrections from one or more segmentation jobs into a new dataset.
 
     Returns ``(dataset, sample_count)``.
 
-    Raises ``ValueError`` if the segmentation job is not found, not
-    complete, or has no corrected regions.
+    Each job is validated as existing and complete.  Jobs with zero
+    corrections are silently skipped.  Raises ``ValueError`` if no
+    samples are collected across all provided jobs.
     """
     from humpback.call_parsing.segmentation.extraction import (
+        CorrectedSample,
         collect_corrected_samples,
     )
     from humpback.models.segmentation_training import (
@@ -936,35 +943,52 @@ async def create_dataset_from_corrections(
         SegmentationTrainingSample,
     )
 
-    seg_job = await session.get(EventSegmentationJob, segmentation_job_id)
-    if seg_job is None:
-        raise ValueError(f"Segmentation job {segmentation_job_id} not found")
-    if seg_job.status != "complete":
+    all_samples: list[tuple[str, CorrectedSample]] = []
+
+    for seg_job_id in segmentation_job_ids:
+        seg_job = await session.get(EventSegmentationJob, seg_job_id)
+        if seg_job is None:
+            raise ValueError(f"Segmentation job {seg_job_id} not found")
+        if seg_job.status != "complete":
+            raise ValueError(
+                f"Segmentation job {seg_job_id} is not complete "
+                f"(status={seg_job.status})"
+            )
+
+        upstream = await session.get(
+            RegionDetectionJob, seg_job.region_detection_job_id
+        )
+        if upstream is None:
+            raise ValueError(
+                f"Upstream region detection job "
+                f"{seg_job.region_detection_job_id} not found"
+            )
+
+        job_samples = await collect_corrected_samples(
+            session, seg_job_id, settings.storage_root
+        )
+        for s in job_samples:
+            all_samples.append((seg_job_id, s))
+
+    if not all_samples:
         raise ValueError(
-            f"Segmentation job {segmentation_job_id} is not complete "
-            f"(status={seg_job.status})"
+            "No corrected regions found across the provided segmentation jobs"
         )
 
-    upstream = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
-    if upstream is None:
-        raise ValueError(
-            f"Upstream region detection job {seg_job.region_detection_job_id} not found"
-        )
+    n_jobs = len(segmentation_job_ids)
+    first_id = segmentation_job_ids[0]
+    if name:
+        dataset_name = name
+    elif n_jobs == 1:
+        dataset_name = f"corrections-{first_id[:8]}"
+    else:
+        dataset_name = f"corrections-{n_jobs}jobs-{first_id[:8]}"
 
-    samples = await collect_corrected_samples(
-        session, segmentation_job_id, settings.storage_root
-    )
-    if not samples:
-        raise ValueError(
-            f"No corrected regions found for segmentation job {segmentation_job_id}"
-        )
-
-    dataset_name = name or f"corrections-{segmentation_job_id[:8]}"
     dataset = SegmentationTrainingDataset(name=dataset_name, description=description)
     session.add(dataset)
     await session.flush()
 
-    for s in samples:
+    for job_id, s in all_samples:
         session.add(
             SegmentationTrainingSample(
                 training_dataset_id=dataset.id,
@@ -975,9 +999,69 @@ async def create_dataset_from_corrections(
                 crop_end_sec=s.crop_end_sec,
                 events_json=s.events_json,
                 source="boundary_correction",
-                source_ref=segmentation_job_id,
+                source_ref=job_id,
             )
         )
 
     await session.commit()
-    return dataset, len(samples)
+    return dataset, len(all_samples)
+
+
+async def create_segmentation_training_job(
+    session: AsyncSession,
+    training_dataset_id: str,
+    config: "SegmentationTrainingConfig | None" = None,  # noqa: F821
+):
+    """Queue a segmentation training job for an existing dataset."""
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingDataset,
+        SegmentationTrainingJob,
+    )
+    from humpback.schemas.call_parsing import SegmentationTrainingConfig
+
+    dataset = await session.get(SegmentationTrainingDataset, training_dataset_id)
+    if dataset is None:
+        raise ValueError(f"Training dataset {training_dataset_id!r} not found")
+
+    cfg = (
+        config
+        if isinstance(config, SegmentationTrainingConfig)
+        else SegmentationTrainingConfig()
+    )
+    job = SegmentationTrainingJob(
+        training_dataset_id=training_dataset_id,
+        config_json=cfg.model_dump_json(),
+    )
+    session.add(job)
+    await session.commit()
+    return job
+
+
+async def create_dataset_and_train(
+    session: AsyncSession,
+    segmentation_job_id: str,
+    settings: Settings,
+) -> tuple[str, str, int]:
+    """Create a single-job dataset and queue a training job in one call.
+
+    Convenience wrapper for the SegmentReviewWorkspace quick-retrain flow.
+    Returns ``(dataset_id, training_job_id, sample_count)``.
+    """
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+    from humpback.schemas.call_parsing import SegmentationTrainingConfig
+
+    dataset, sample_count = await create_dataset_from_corrections(
+        session,
+        segmentation_job_ids=[segmentation_job_id],
+        settings=settings,
+    )
+
+    config = SegmentationTrainingConfig()
+    job = SegmentationTrainingJob(
+        training_dataset_id=dataset.id,
+        config_json=config.model_dump_json(),
+    )
+    session.add(job)
+    await session.commit()
+
+    return dataset.id, job.id, sample_count

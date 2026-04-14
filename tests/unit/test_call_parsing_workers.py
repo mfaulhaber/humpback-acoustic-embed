@@ -26,17 +26,13 @@ from humpback.models.call_parsing import (
 )
 from humpback.workers.event_classification_worker import run_one_iteration as ec_run
 from humpback.workers.event_segmentation_worker import run_one_iteration as es_run
-from humpback.models.feedback_training import (
-    EventClassifierTrainingJob,
-    EventSegmentationTrainingJob,
-)
+from humpback.models.feedback_training import EventClassifierTrainingJob
 from humpback.workers.queue import (
     STALE_JOB_TIMEOUT,
     claim_classifier_feedback_training_job,
     claim_event_classification_job,
     claim_event_segmentation_job,
     claim_region_detection_job,
-    claim_segmentation_feedback_training_job,
     recover_stale_jobs,
 )
 from humpback.workers.region_detection_worker import run_one_iteration as rd_run
@@ -254,29 +250,6 @@ async def test_priority_order_region_before_segmentation_before_classification(
 # ---- Feedback training claim tests ----
 
 
-async def test_claim_segmentation_feedback_training_job(session_factory):
-    async with session_factory() as session:
-        job = EventSegmentationTrainingJob(source_job_ids='["seg-1"]', status="queued")
-        session.add(job)
-        await session.commit()
-        job_id = job.id
-
-    async with session_factory() as session:
-        claimed = await claim_segmentation_feedback_training_job(session)
-
-    assert claimed is not None
-    assert claimed.id == job_id
-    assert claimed.status == "running"
-
-
-async def test_claim_segmentation_feedback_training_returns_none_when_empty(
-    session_factory,
-):
-    async with session_factory() as session:
-        claimed = await claim_segmentation_feedback_training_job(session)
-    assert claimed is None
-
-
 async def test_claim_classifier_feedback_training_job(session_factory):
     async with session_factory() as session:
         job = EventClassifierTrainingJob(source_job_ids='["cls-1"]', status="queued")
@@ -301,30 +274,6 @@ async def test_claim_classifier_feedback_training_returns_none_when_empty(
 
 
 # ---- Stale recovery tests ----
-
-
-async def test_stale_segmentation_feedback_training_job_is_recovered(session_factory):
-    from datetime import timedelta
-
-    stale_time = datetime.now(timezone.utc) - STALE_JOB_TIMEOUT - timedelta(minutes=1)
-    async with session_factory() as session:
-        job = EventSegmentationTrainingJob(
-            source_job_ids='["seg-1"]',
-            status="running",
-            updated_at=stale_time,
-        )
-        session.add(job)
-        await session.commit()
-        job_id = job.id
-
-    async with session_factory() as session:
-        count = await recover_stale_jobs(session)
-    assert count >= 1
-
-    async with session_factory() as session:
-        refreshed = await session.get(EventSegmentationTrainingJob, job_id)
-        assert refreshed is not None
-        assert refreshed.status == "queued"
 
 
 async def test_stale_classifier_feedback_training_job_is_recovered(session_factory):

@@ -314,27 +314,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count_stj:
         logger.warning(f"Recovered {count_stj} stale segmentation training job(s)")
 
-    from humpback.models.feedback_training import (
-        EventClassifierTrainingJob,
-        EventSegmentationTrainingJob,
-    )
-
-    result16 = await session.execute(
-        update(EventSegmentationTrainingJob)
-        .where(
-            EventSegmentationTrainingJob.status == "running",
-            EventSegmentationTrainingJob.updated_at < cutoff,
-        )
-        .values(
-            status="queued",
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    count16 = _rowcount(result16)
-    if count16:
-        logger.warning(
-            f"Recovered {count16} stale segmentation feedback training job(s)"
-        )
+    from humpback.models.feedback_training import EventClassifierTrainingJob
 
     result17 = await session.execute(
         update(EventClassifierTrainingJob)
@@ -367,7 +347,6 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count13
         + count15
         + count_stj
-        + count16
         + count17
     )
     if total:
@@ -836,23 +815,6 @@ async def claim_segmentation_training_job(session: AsyncSession):
             queued_value="queued",
             running_value="running",
             order_attr=SegmentationTrainingJob.created_at,
-        )
-        if job is not None:
-            return job
-    return None
-
-
-async def claim_segmentation_feedback_training_job(session: AsyncSession):
-    from humpback.models.feedback_training import EventSegmentationTrainingJob
-
-    for _ in range(3):
-        job = await _claim_next_job(
-            session,
-            EventSegmentationTrainingJob,
-            status_attr=EventSegmentationTrainingJob.status,
-            queued_value="queued",
-            running_value="running",
-            order_attr=EventSegmentationTrainingJob.created_at,
         )
         if job is not None:
             return job

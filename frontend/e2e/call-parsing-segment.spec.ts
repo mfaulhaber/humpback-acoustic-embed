@@ -137,23 +137,6 @@ const BOUNDARY_CORRECTIONS = [
   },
 ];
 
-const FEEDBACK_TRAINING_JOB = {
-  id: "fbtj-1",
-  status: "complete",
-  source_job_ids: JSON.stringify([COMPLETE_SEG_JOB.id]),
-  config_json: JSON.stringify({ epochs: 30, learning_rate: 0.001 }),
-  segmentation_model_id: SEG_MODEL.id,
-  result_summary: JSON.stringify({
-    framewise: { precision: 0.85, recall: 0.78, f1: 0.81 },
-    event: { precision: 0.80, recall: 0.67, f1: 0.73, iou_threshold: 0.3 },
-  }),
-  error_message: null,
-  created_at: "2026-04-11T00:00:00Z",
-  updated_at: "2026-04-11T01:00:00Z",
-  started_at: "2026-04-11T00:00:01Z",
-  completed_at: "2026-04-11T01:00:00Z",
-};
-
 async function setupMocks(page: Page) {
   await page.route("**/classifier/hydrophones", (route) =>
     route.fulfill({
@@ -223,15 +206,6 @@ async function setupMocks(page: Page) {
       contentType: "image/png",
       body: TINY_PNG,
     }),
-  );
-  await page.route(
-    "**/call-parsing/segmentation-feedback-training-jobs",
-    (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([FEEDBACK_TRAINING_JOB]),
-      }),
   );
   // Catch other classifier/admin routes the hooks may call
   await page.route("**/classifier/models", (route) =>
@@ -647,31 +621,18 @@ test.describe("Call Parsing Segment Training page", () => {
     await setupMocks(page);
   });
 
-  test("page loads with models and feedback training sections", async ({
-    page,
-  }) => {
+  test("page loads with models section", async ({ page }) => {
     await page.goto("/app/call-parsing/segment-training");
     await expect(page.locator("text=Segmentation Models")).toBeVisible();
-    await expect(page.locator("text=Feedback Training Jobs")).toBeVisible();
   });
 
   test("models table shows model with metrics", async ({ page }) => {
     await page.goto("/app/call-parsing/segment-training");
-    // pytorch_crnn only appears in the models table, not in training jobs
     const row = page.locator("tr").filter({ hasText: "pytorch_crnn" });
     await expect(row).toBeVisible();
     await expect(row).toContainText("crnn-bootstrap-v1");
     await expect(row).toContainText("0.81");
     await expect(row).toContainText("0.73");
-  });
-
-  test("feedback training jobs table shows completed job with config", async ({
-    page,
-  }) => {
-    await page.goto("/app/call-parsing/segment-training");
-    const row = page.locator("tr").filter({ hasText: "30 ep" });
-    await expect(row).toBeVisible();
-    await expect(row).toContainText("lr=0.001");
   });
 });
 

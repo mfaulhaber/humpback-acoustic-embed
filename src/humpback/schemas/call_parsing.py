@@ -140,6 +140,15 @@ class EventSegmentationJobSummary(_JobSummary):
     model_config = {"from_attributes": True}
 
 
+class SegmentationJobWithCorrectionCount(EventSegmentationJobSummary):
+    """Segmentation job summary plus hydrophone info and correction count."""
+
+    correction_count: int = 0
+    hydrophone_id: Optional[str] = None
+    start_timestamp: Optional[float] = None
+    end_timestamp: Optional[float] = None
+
+
 class EventClassificationJobSummary(_JobSummary):
     event_segmentation_job_id: str
     vocalization_model_id: Optional[str] = None
@@ -309,13 +318,14 @@ class SegmentationTrainingDatasetSummary(BaseModel):
     id: str
     name: str
     sample_count: int
+    source_job_count: int
     created_at: datetime
 
 
 class CreateDatasetFromCorrectionsRequest(BaseModel):
     """Request body for creating a training dataset from boundary corrections."""
 
-    segmentation_job_id: str
+    segmentation_job_ids: list[str] = Field(min_length=1)
     name: Optional[str] = None
     description: Optional[str] = None
 
@@ -327,6 +337,20 @@ class CreateDatasetFromCorrectionsResponse(BaseModel):
     name: str
     sample_count: int
     created_at: datetime
+
+
+class QuickRetrainRequest(BaseModel):
+    """Request body for ``POST /call-parsing/segmentation-training/quick-retrain``."""
+
+    segmentation_job_id: str
+
+
+class QuickRetrainResponse(BaseModel):
+    """Response for quick-retrain: dataset + training job created in one call."""
+
+    dataset_id: str
+    training_job_id: str
+    sample_count: int
 
 
 # ---- Feedback training: correction schemas ---------------------------------
@@ -436,15 +460,6 @@ class EventClassifierTrainingConfig(BaseModel):
         return v
 
 
-class CreateSegmentationFeedbackTrainingJobRequest(BaseModel):
-    """Request body for ``POST /call-parsing/segmentation-feedback-training-jobs``."""
-
-    source_job_ids: list[str] = Field(min_length=1)
-    config: SegmentationTrainingConfig = Field(
-        default_factory=SegmentationTrainingConfig
-    )
-
-
 class CreateClassifierTrainingJobRequest(BaseModel):
     """Request body for ``POST /call-parsing/classifier-training-jobs``."""
 
@@ -452,24 +467,6 @@ class CreateClassifierTrainingJobRequest(BaseModel):
     config: EventClassifierTrainingConfig = Field(
         default_factory=EventClassifierTrainingConfig
     )
-
-
-class SegmentationFeedbackTrainingJobResponse(BaseModel):
-    """Response model for Pass 2 feedback training jobs."""
-
-    id: str
-    status: str
-    source_job_ids: str
-    config_json: Optional[str] = None
-    segmentation_model_id: Optional[str] = None
-    result_summary: Optional[str] = None
-    error_message: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-
-    model_config = {"from_attributes": True}
 
 
 class ClassifierTrainingJobResponse(BaseModel):

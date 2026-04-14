@@ -6,10 +6,9 @@ import {
   useRegionJobRegions,
   useBoundaryCorrections,
   useSaveBoundaryCorrections,
-  useSegmentationFeedbackTrainingJobs,
-  useCreateSegmentationFeedbackTrainingJob,
   useCreateSegmentationJob,
   useSegmentationModels,
+  useQuickRetrain,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { regionAudioSliceUrl } from "@/api/client";
@@ -32,7 +31,8 @@ export function SegmentReviewWorkspace({
   const { data: segJobs = [] } = useSegmentationJobs();
   const { data: regionJobs = [] } = useRegionDetectionJobs();
   const { data: hydrophones = [] } = useHydrophones();
-  const { data: segModels = [] } = useSegmentationModels();
+  const { data: segModels = [], refetch: refetchModels } =
+    useSegmentationModels();
 
   const completeJobs = useMemo(
     () => segJobs.filter((j) => j.status === "complete"),
@@ -103,6 +103,8 @@ export function SegmentReviewWorkspace({
     setPendingCorrections(new Map());
     setSelectedEventId(null);
     setAddMode(false);
+    setActiveTrainingJobId(null);
+    setRetrainError(null);
   }, [selectedJobId]);
 
   // Auto-select first region when regions load or job changes
@@ -375,50 +377,37 @@ export function SegmentReviewWorkspace({
 
   const hasCorrections = savedCorrections.length > 0;
 
-  // Poll feedback training jobs — only poll at 3s when a job is in progress
-  const { data: feedbackJobs = [] } = useSegmentationFeedbackTrainingJobs();
+  const [activeTrainingJobId, setActiveTrainingJobId] = useState<string | null>(
+    null,
+  );
+  const [retrainError, setRetrainError] = useState<string | null>(null);
 
-  // Find the most recent feedback training job for this segmentation job
-  const latestFeedbackJob = useMemo(() => {
-    if (!selectedJobId) return null;
-    const matching = feedbackJobs.filter((j) => {
-      try {
-        const ids = JSON.parse(j.source_job_ids) as string[];
-        return ids.includes(selectedJobId);
-      } catch {
-        return false;
-      }
-    });
-    if (matching.length === 0) return null;
-    // Most recent by created_at
-    return matching.sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-    )[0];
-  }, [selectedJobId, feedbackJobs]);
-
-  const feedbackJobActive =
-    latestFeedbackJob?.status === "queued" ||
-    latestFeedbackJob?.status === "running";
-
-  // Re-fetch feedback jobs at 3s interval when a job is active
-  useSegmentationFeedbackTrainingJobs(feedbackJobActive ? 3000 : undefined);
+  const isPolling = activeTrainingJobId !== null && retrainError === null;
 
   const retrainStatus: RetrainStatus | null = useMemo(() => {
-    if (!latestFeedbackJob) return null;
-    const modelId = latestFeedbackJob.segmentation_model_id ?? undefined;
-    const model = modelId
-      ? segModels.find((m) => m.id === modelId)
-      : undefined;
-    return {
-      status: latestFeedbackJob.status,
-      modelId,
-      modelName: model?.name,
-      error: latestFeedbackJob.error_message ?? undefined,
-    };
-  }, [latestFeedbackJob, segModels]);
+    if (retrainError) {
+      return { status: "failed", error: retrainError };
+    }
+    if (!activeTrainingJobId) return null;
+    const model = segModels.find(
+      (m) => m.training_job_id === activeTrainingJobId,
+    );
+    if (model) {
+      return { status: "complete", modelId: model.id, modelName: model.name };
+    }
+    return { status: "running" };
+  }, [activeTrainingJobId, retrainError, segModels]);
 
-  const createFeedbackJob = useCreateSegmentationFeedbackTrainingJob();
+  // Poll models at 3s while training is in progress
+  useEffect(() => {
+    if (!isPolling) return;
+    const interval = setInterval(() => {
+      void refetchModels();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isPolling, refetchModels]);
+
+  const quickRetrain = useQuickRetrain();
   const createSegJob = useCreateSegmentationJob();
 
   const handleRetrain = useCallback(() => {
@@ -427,17 +416,19 @@ export function SegmentReviewWorkspace({
       "Train a new segmentation model from corrections on this job?",
     );
     if (!ok) return;
-    createFeedbackJob.mutate(
-      { source_job_ids: [selectedJobId] },
+    setRetrainError(null);
+    quickRetrain.mutate(
+      { segmentation_job_id: selectedJobId },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
+          setActiveTrainingJobId(data.training_job_id);
           toast({
             title: "Training job started",
-            description:
-              "The model will train in the background. Status will update here.",
+            description: `${data.sample_count} samples. The model will train in the background.`,
           });
         },
         onError: (err) => {
+          setRetrainError((err as Error).message);
           toast({
             title: "Failed to start training",
             description: (err as Error).message,
@@ -446,7 +437,7 @@ export function SegmentReviewWorkspace({
         },
       },
     );
-  }, [selectedJobId, createFeedbackJob]);
+  }, [selectedJobId, quickRetrain]);
 
   const handleResegment = useCallback(() => {
     if (!retrainStatus?.modelId || !regionDetectionJobId) return;

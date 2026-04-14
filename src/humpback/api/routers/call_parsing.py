@@ -37,12 +37,15 @@ from humpback.schemas.call_parsing import (
     CreateDatasetFromCorrectionsResponse,
     CreateEventClassificationJobRequest,
     CreateRegionJobRequest,
-    CreateSegmentationFeedbackTrainingJobRequest,
     CreateSegmentationJobRequest,
+    CreateSegmentationTrainingJobRequest,
+    QuickRetrainRequest,
+    QuickRetrainResponse,
+    SegmentationTrainingJobResponse,
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
-    SegmentationFeedbackTrainingJobResponse,
+    SegmentationJobWithCorrectionCount,
     SegmentationModelResponse,
     SegmentationTrainingDatasetSummary,
     TypeCorrectionRequest,
@@ -447,6 +450,15 @@ async def list_segmentation_jobs(session: SessionDep):
     return [EventSegmentationJobSummary.model_validate(j) for j in jobs]
 
 
+@router.get(
+    "/segmentation-jobs/with-correction-counts",
+    response_model=list[SegmentationJobWithCorrectionCount],
+)
+async def list_segmentation_jobs_with_correction_counts(session: SessionDep):
+    rows = await service.list_segmentation_jobs_with_correction_counts(session)
+    return [SegmentationJobWithCorrectionCount(**row) for row in rows]
+
+
 @router.get("/segmentation-jobs/{job_id}", response_model=EventSegmentationJobSummary)
 async def get_segmentation_job(job_id: str, session: SessionDep):
     job = await service.get_event_segmentation_job(session, job_id)
@@ -519,7 +531,7 @@ async def create_dataset_from_corrections(
     try:
         dataset, sample_count = await service.create_dataset_from_corrections(
             session,
-            segmentation_job_id=request.segmentation_job_id,
+            segmentation_job_ids=request.segmentation_job_ids,
             settings=settings,
             name=request.name,
             description=request.description,
@@ -534,6 +546,58 @@ async def create_dataset_from_corrections(
         name=dataset.name,
         sample_count=sample_count,
         created_at=dataset.created_at,
+    )
+
+
+@router.post(
+    "/segmentation-training-jobs",
+    response_model=SegmentationTrainingJobResponse,
+    status_code=201,
+)
+async def create_segmentation_training_job(
+    request: CreateSegmentationTrainingJobRequest,
+    session: SessionDep,
+):
+    try:
+        job = await service.create_segmentation_training_job(
+            session,
+            training_dataset_id=request.training_dataset_id,
+            config=request.config,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SegmentationTrainingJobResponse.model_validate(job)
+
+
+@router.post(
+    "/segmentation-training/quick-retrain",
+    response_model=QuickRetrainResponse,
+    status_code=201,
+)
+async def quick_retrain(
+    request: QuickRetrainRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    try:
+        (
+            dataset_id,
+            training_job_id,
+            sample_count,
+        ) = await service.create_dataset_and_train(
+            session,
+            segmentation_job_id=request.segmentation_job_id,
+            settings=settings,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+    return QuickRetrainResponse(
+        dataset_id=dataset_id,
+        training_job_id=training_job_id,
+        sample_count=sample_count,
     )
 
 
@@ -724,59 +788,6 @@ async def list_type_corrections(job_id: str, session: SessionDep):
 @router.delete("/classification-jobs/{job_id}/corrections", status_code=204)
 async def clear_type_corrections(job_id: str, session: SessionDep):
     await service.clear_type_corrections(session, job_id)
-    return None
-
-
-# ---- Segmentation feedback training jobs (Pass 2) -------------------------
-
-
-@router.post(
-    "/segmentation-feedback-training-jobs",
-    status_code=201,
-    response_model=SegmentationFeedbackTrainingJobResponse,
-)
-async def create_segmentation_feedback_training_job(
-    body: CreateSegmentationFeedbackTrainingJobRequest, session: SessionDep
-):
-    try:
-        job = await service.create_segmentation_feedback_training_job(session, body)
-    except service.CallParsingFKError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except service.CallParsingStateError as exc:
-        raise HTTPException(status_code=409, detail=exc.detail) from exc
-    await session.commit()
-    return SegmentationFeedbackTrainingJobResponse.model_validate(job)
-
-
-@router.get(
-    "/segmentation-feedback-training-jobs",
-    response_model=list[SegmentationFeedbackTrainingJobResponse],
-)
-async def list_segmentation_feedback_training_jobs(session: SessionDep):
-    jobs = await service.list_segmentation_feedback_training_jobs(session)
-    return [SegmentationFeedbackTrainingJobResponse.model_validate(j) for j in jobs]
-
-
-@router.get(
-    "/segmentation-feedback-training-jobs/{job_id}",
-    response_model=SegmentationFeedbackTrainingJobResponse,
-)
-async def get_segmentation_feedback_training_job(job_id: str, session: SessionDep):
-    job = await service.get_segmentation_feedback_training_job(session, job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=404, detail="Segmentation feedback training job not found"
-        )
-    return SegmentationFeedbackTrainingJobResponse.model_validate(job)
-
-
-@router.delete("/segmentation-feedback-training-jobs/{job_id}", status_code=204)
-async def delete_segmentation_feedback_training_job(job_id: str, session: SessionDep):
-    deleted = await service.delete_segmentation_feedback_training_job(session, job_id)
-    if not deleted:
-        raise HTTPException(
-            status_code=404, detail="Segmentation feedback training job not found"
-        )
     return None
 
 

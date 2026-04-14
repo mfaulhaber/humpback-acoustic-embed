@@ -27,8 +27,11 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 
 ## Pass 2 — Segmentation Training Datasets
 
-- `GET /call-parsing/segmentation-training-datasets` — list training datasets with sample counts
-- `POST /call-parsing/segmentation-training-datasets/from-corrections` — extract human boundary corrections from a completed segmentation job into a new training dataset; accepts `segmentation_job_id`, optional `name` and `description`; returns dataset ID and sample count
+- `GET /call-parsing/segmentation-training-datasets` — list training datasets with sample count and source job count
+- `POST /call-parsing/segmentation-training-datasets/from-corrections` — create a training dataset from boundary corrections across one or more completed segmentation jobs; accepts `segmentation_job_ids` (list), optional `name` and `description`; returns dataset ID, name, sample count, and created timestamp
+- `GET /call-parsing/segmentation-jobs/with-correction-counts` — list completed segmentation jobs with correction count, hydrophone ID, and time range
+- `POST /call-parsing/segmentation-training-jobs` — queue a segmentation training job for an existing dataset; accepts `training_dataset_id` and optional `config`; 404 if dataset not found
+- `POST /call-parsing/segmentation-training/quick-retrain` — convenience endpoint: creates a single-job dataset from corrections and queues a training job in one call; accepts `segmentation_job_id`; returns dataset ID, training job ID, and sample count
 
 ## Pass 2 — Segmentation Models
 
@@ -54,12 +57,6 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 - `GET /call-parsing/classification-jobs/{id}/corrections` — list all corrections for a classification job
 - `DELETE /call-parsing/classification-jobs/{id}/corrections` — clear all corrections; 204
 
-## Pass 2 — Segmentation Feedback Training
-
-- `POST /call-parsing/segmentation-feedback-training-jobs` — create queued job; validates all source segmentation job IDs exist and are complete (404/409); 201
-- `GET /call-parsing/segmentation-feedback-training-jobs` — list jobs
-- `GET /call-parsing/segmentation-feedback-training-jobs/{id}` — detail; 404 if not found
-- `DELETE /call-parsing/segmentation-feedback-training-jobs/{id}` — deletes job row; produced models managed via segmentation model endpoints; 204; 404 if not found
 
 ## Pass 3 — Classifier Feedback Training
 
