@@ -129,7 +129,7 @@ def _build_hydrophone_audio_loader(
             local_cache_path=str(settings.s3_cache_path or ""),
             job_start_timestamp=job_start_ts,
             job_end_timestamp=job_end_ts,
-            start_sec=region.padded_start_sec,
+            start_sec=job_start_ts + region.padded_start_sec,
             duration_sec=region.padded_end_sec - region.padded_start_sec,
             target_sr=target_sr,
             noaa_cache_path=str(settings.noaa_cache_path)
