@@ -41,6 +41,7 @@ from humpback.schemas.call_parsing import (
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
+    SegmentationJobWithCorrectionCount,
     SegmentationModelResponse,
     SegmentationTrainingDatasetSummary,
     TypeCorrectionRequest,
@@ -443,6 +444,15 @@ async def create_segmentation_job(
 async def list_segmentation_jobs(session: SessionDep):
     jobs = await service.list_event_segmentation_jobs(session)
     return [EventSegmentationJobSummary.model_validate(j) for j in jobs]
+
+
+@router.get(
+    "/segmentation-jobs/with-correction-counts",
+    response_model=list[SegmentationJobWithCorrectionCount],
+)
+async def list_segmentation_jobs_with_correction_counts(session: SessionDep):
+    rows = await service.list_segmentation_jobs_with_correction_counts(session)
+    return [SegmentationJobWithCorrectionCount(**row) for row in rows]
 
 
 @router.get("/segmentation-jobs/{job_id}", response_model=EventSegmentationJobSummary)

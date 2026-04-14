@@ -140,6 +140,15 @@ class EventSegmentationJobSummary(_JobSummary):
     model_config = {"from_attributes": True}
 
 
+class SegmentationJobWithCorrectionCount(EventSegmentationJobSummary):
+    """Segmentation job summary plus hydrophone info and correction count."""
+
+    correction_count: int = 0
+    hydrophone_id: Optional[str] = None
+    start_timestamp: Optional[float] = None
+    end_timestamp: Optional[float] = None
+
+
 class EventClassificationJobSummary(_JobSummary):
     event_segmentation_job_id: str
     vocalization_model_id: Optional[str] = None

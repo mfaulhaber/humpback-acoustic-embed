@@ -80,10 +80,10 @@
 - Modify: `src/humpback/api/routers/call_parsing.py` — add `GET /segmentation-jobs/with-correction-counts` endpoint
 
 **Acceptance criteria:**
-- [ ] Returns all completed segmentation jobs with their correction count
-- [ ] Jobs with zero corrections return `correction_count: 0`
-- [ ] Uses a single query with LEFT JOIN or subquery (no N+1)
-- [ ] Response includes all fields from `EventSegmentationJobSummary` plus `correction_count`
+- [x] Returns all completed segmentation jobs with their correction count
+- [x] Jobs with zero corrections return `correction_count: 0`
+- [x] Uses a single query with LEFT JOIN subquery (no N+1)
+- [x] Response includes all fields from `EventSegmentationJobSummary` plus `correction_count`, `hydrophone_id`, `start_timestamp`, `end_timestamp`
 
 **Tests needed:**
 - Unit test: service function returns correct counts for jobs with/without corrections

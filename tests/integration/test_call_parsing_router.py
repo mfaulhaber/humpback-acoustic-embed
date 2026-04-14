@@ -1160,6 +1160,89 @@ async def test_list_segmentation_training_datasets_zero_samples(
     assert match["sample_count"] == 0
 
 
+# ---- Segmentation jobs with correction counts ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_segmentation_jobs_with_correction_counts(
+    client: AsyncClient, app_settings
+) -> None:
+    """Jobs with and without corrections both appear, with correct counts."""
+    from humpback.models.feedback_training import EventBoundaryCorrection
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(
+            hydrophone_id="orcasound_lab",
+            start_timestamp=1000.0,
+            end_timestamp=2000.0,
+            status="complete",
+            config_json="{}",
+        )
+        session.add(rd)
+        await session.flush()
+
+        es1 = EventSegmentationJob(
+            region_detection_job_id=rd.id, status="complete", event_count=5
+        )
+        es2 = EventSegmentationJob(
+            region_detection_job_id=rd.id, status="complete", event_count=3
+        )
+        session.add_all([es1, es2])
+        await session.flush()
+
+        # Add corrections only for es1
+        for i in range(3):
+            session.add(
+                EventBoundaryCorrection(
+                    event_segmentation_job_id=es1.id,
+                    event_id=f"e{i}",
+                    region_id="r1",
+                    correction_type="adjust",
+                    start_sec=float(i),
+                    end_sec=float(i + 1),
+                )
+            )
+        await session.commit()
+        es1_id, es2_id = es1.id, es2.id
+    await engine.dispose()
+
+    resp = await client.get(f"{BASE}/segmentation-jobs/with-correction-counts")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    job_map = {j["id"]: j for j in data}
+    assert es1_id in job_map
+    assert es2_id in job_map
+    assert job_map[es1_id]["correction_count"] == 3
+    assert job_map[es2_id]["correction_count"] == 0
+    assert job_map[es1_id]["hydrophone_id"] == "orcasound_lab"
+    assert job_map[es1_id]["start_timestamp"] == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_segmentation_jobs_with_correction_counts_excludes_incomplete(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="running")
+        session.add(es)
+        await session.commit()
+        es_id = es.id
+    await engine.dispose()
+
+    resp = await client.get(f"{BASE}/segmentation-jobs/with-correction-counts")
+    assert resp.status_code == 200
+    job_ids = [j["id"] for j in resp.json()]
+    assert es_id not in job_ids
+
+
 # ---- Pass 2 segmentation models -----------------------------------------
 
 

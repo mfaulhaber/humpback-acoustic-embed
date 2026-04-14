@@ -283,6 +283,74 @@ async def list_event_segmentation_jobs(
     return list(result.scalars().all())
 
 
+async def list_segmentation_jobs_with_correction_counts(
+    session: AsyncSession,
+) -> list[dict]:
+    """Return completed segmentation jobs with correction counts and hydrophone info.
+
+    Uses a LEFT JOIN subquery so there is no N+1 overhead.
+    """
+    from humpback.models.feedback_training import EventBoundaryCorrection
+
+    correction_counts = (
+        select(
+            EventBoundaryCorrection.event_segmentation_job_id.label("job_id"),
+            func.count(EventBoundaryCorrection.id).label("correction_count"),
+        )
+        .group_by(EventBoundaryCorrection.event_segmentation_job_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            EventSegmentationJob,
+            func.coalesce(correction_counts.c.correction_count, 0).label(
+                "correction_count"
+            ),
+            RegionDetectionJob.hydrophone_id,
+            RegionDetectionJob.start_timestamp,
+            RegionDetectionJob.end_timestamp,
+        )
+        .join(
+            RegionDetectionJob,
+            RegionDetectionJob.id == EventSegmentationJob.region_detection_job_id,
+        )
+        .outerjoin(
+            correction_counts,
+            correction_counts.c.job_id == EventSegmentationJob.id,
+        )
+        .where(EventSegmentationJob.status == "complete")
+        .order_by(EventSegmentationJob.created_at.desc())
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    out: list[dict] = []
+    for row in rows:
+        job = row[0]
+        d = {
+            "id": job.id,
+            "status": job.status,
+            "parent_run_id": job.parent_run_id,
+            "error_message": job.error_message,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "started_at": job.started_at,
+            "completed_at": job.completed_at,
+            "region_detection_job_id": job.region_detection_job_id,
+            "segmentation_model_id": job.segmentation_model_id,
+            "config_json": job.config_json,
+            "event_count": job.event_count,
+            "correction_count": row[1],
+            "hydrophone_id": row[2],
+            "start_timestamp": row[3],
+            "end_timestamp": row[4],
+        }
+        out.append(d)
+    return out
+
+
 async def get_event_segmentation_job(
     session: AsyncSession, job_id: str
 ) -> Optional[EventSegmentationJob]:
