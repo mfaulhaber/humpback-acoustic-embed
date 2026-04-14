@@ -47,13 +47,14 @@ function sourceLabel(
   regionJobs: RegionDetectionJob[],
   hydrophones: HydrophoneInfo[],
 ): string {
+  const shortId = job.id.slice(0, 8);
   const rj = regionJobs.find((r) => r.id === job.region_detection_job_id);
-  if (!rj) return job.region_detection_job_id.slice(0, 8);
+  if (!rj) return shortId;
   const name = hydrophoneName(rj.hydrophone_id, hydrophones);
   if (rj.start_timestamp != null && rj.end_timestamp != null) {
-    return `${name} · ${formatUtcShort(rj.start_timestamp)}–${formatUtcShort(rj.end_timestamp)}`;
+    return `${name} · ${formatUtcShort(rj.start_timestamp)}–${formatUtcShort(rj.end_timestamp)} - ${shortId}`;
   }
-  return name;
+  return `${name} - ${shortId}`;
 }
 
 function modelName(

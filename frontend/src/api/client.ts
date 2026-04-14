@@ -118,6 +118,8 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await res.text().catch(() => res.statusText);
     throw new ApiError(res.status, text);
   }
+  // 204 No Content — DELETE endpoints return empty body; callers should use api<void>()
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 

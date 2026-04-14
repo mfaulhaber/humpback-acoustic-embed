@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Region } from "@/api/types";
 import { formatTime } from "@/utils/format";
 
@@ -24,6 +25,10 @@ interface ReviewToolbarProps {
   onRetrain: () => void;
   retrainStatus: RetrainStatus | null;
   onResegment: () => void;
+  regions: Region[];
+  selectedRegionId: string | null;
+  onPrevRegion: () => void;
+  onNextRegion: () => void;
 }
 
 export function ReviewToolbar({
@@ -41,6 +46,10 @@ export function ReviewToolbar({
   onRetrain,
   retrainStatus,
   onResegment,
+  regions,
+  selectedRegionId,
+  onPrevRegion,
+  onNextRegion,
 }: ReviewToolbarProps) {
   const handleCancel = useCallback(() => {
     if (isDirty) {
@@ -54,6 +63,10 @@ export function ReviewToolbar({
 
   if (!region) return null;
 
+  const regionIdx = regions.findIndex((r) => r.region_id === selectedRegionId);
+  const hasPrev = regionIdx > 0;
+  const hasNext = regionIdx >= 0 && regionIdx < regions.length - 1;
+
   const isTraining =
     retrainStatus?.status === "queued" ||
     retrainStatus?.status === "running";
@@ -63,9 +76,25 @@ export function ReviewToolbar({
 
   return (
     <div className="flex items-center justify-between border-b px-4 py-2">
-      <div className="flex items-center gap-3 text-sm">
-        <span className="text-muted-foreground">
-          Region {formatTime(region.start_sec)} – {formatTime(region.end_sec)}
+      <div className="flex items-center gap-2 text-sm">
+        <button
+          className="rounded-md border p-1 hover:bg-accent disabled:opacity-30"
+          disabled={!hasPrev}
+          onClick={onPrevRegion}
+          title="Previous region"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button
+          className="rounded-md border p-1 hover:bg-accent disabled:opacity-30"
+          disabled={!hasNext}
+          onClick={onNextRegion}
+          title="Next region"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        <span className="text-muted-foreground ml-1">
+          Region {regionIdx >= 0 ? regionIdx + 1 : "?"}/{regions.length} · {formatTime(region.start_sec)} – {formatTime(region.end_sec)}
         </span>
         <span className="text-xs text-muted-foreground">
           {eventCount} event{eventCount !== 1 ? "s" : ""}

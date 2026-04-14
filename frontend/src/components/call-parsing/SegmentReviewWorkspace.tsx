@@ -19,7 +19,7 @@ import type {
 } from "@/api/types";
 import { toast } from "@/components/ui/use-toast";
 import { EventDetailPanel } from "./EventDetailPanel";
-import { RegionSidebar } from "./RegionSidebar";
+import { RegionTable } from "./RegionTable";
 import { RegionSpectrogramViewer } from "./RegionSpectrogramViewer";
 import { ReviewToolbar, type RetrainStatus } from "./ReviewToolbar";
 import { EventBarOverlay, type EffectiveEvent } from "./EventBarOverlay";
@@ -332,6 +332,31 @@ export function SegmentReviewWorkspace({
   const selectedEvent =
     effectiveEvents.find((e) => e.eventId === selectedEventId) ?? null;
 
+  // Spacebar toggles playback on selected event
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const el = e.target as HTMLElement;
+      const tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      // Avoid double-action: space on a focused button fires both click and this handler
+      if (tag === "BUTTON" || el.closest("button")) return;
+      e.preventDefault();
+      if (isPlaying) {
+        stopPlayback();
+      } else if (selectedEvent) {
+        const duration = selectedEvent.endSec - selectedEvent.startSec;
+        startPlayback(selectedEvent.startSec, duration);
+      } else if (selectedRegion) {
+        const playStart = viewStart ?? selectedRegion.padded_start_sec;
+        const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
+        startPlayback(playStart, duration);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPlaying, selectedEvent, selectedRegion, viewStart, startPlayback, stopPlayback]);
+
   // Resolve source label for the selected job
   const sourceLabel = useMemo(() => {
     if (!selectedJob) return "";
@@ -490,81 +515,89 @@ export function SegmentReviewWorkspace({
 
       {/* Workspace body */}
       {selectedJob ? (
-        <div className="flex gap-4">
-          <RegionSidebar
+        <div className="rounded-md border">
+          <ReviewToolbar
+            region={selectedRegion}
+            eventCount={regionEvents.length}
+            pendingChangeCount={pendingChangeCount}
+            isDirty={isDirty}
+            addMode={addMode}
+            onToggleAddMode={handleToggleAddMode}
+            onSave={handleSave}
+            onCancel={handleCancel}
+            isPlaying={isPlaying}
+            onPlay={() => {
+              if (isPlaying) {
+                stopPlayback();
+                return;
+              }
+              if (!selectedRegion) return;
+              const playStart = viewStart ?? selectedRegion.padded_start_sec;
+              const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
+              startPlayback(playStart, duration);
+            }}
+            hasCorrections={hasCorrections}
+            onRetrain={handleRetrain}
+            retrainStatus={retrainStatus}
+            onResegment={handleResegment}
+            regions={regions}
+            selectedRegionId={selectedRegionId}
+            onPrevRegion={() => {
+              const idx = regions.findIndex((r) => r.region_id === selectedRegionId);
+              if (idx > 0) handleSelectRegion(regions[idx - 1].region_id);
+            }}
+            onNextRegion={() => {
+              const idx = regions.findIndex((r) => r.region_id === selectedRegionId);
+              if (idx >= 0 && idx < regions.length - 1) handleSelectRegion(regions[idx + 1].region_id);
+            }}
+          />
+          {selectedRegion ? (
+            <>
+              <RegionSpectrogramViewer
+                regionJobId={regionDetectionJobId!}
+                region={selectedRegion}
+                onViewStartChange={setViewStart}
+                audioRef={audioRef}
+                isPlaying={isPlaying}
+                playbackOriginSec={playbackOriginSec}
+              >
+                <EventBarOverlay
+                  events={regionEvents}
+                  selectedEventId={selectedEventId}
+                  onSelectEvent={setSelectedEventId}
+                  onAdjust={handleAdjust}
+                  onAdd={handleAdd}
+                  addMode={addMode}
+                  activeRegionId={selectedRegionId!}
+                />
+              </RegionSpectrogramViewer>
+              <EventDetailPanel
+                event={selectedEvent}
+                onDelete={handleDelete}
+                isPlaying={isPlaying}
+                onPlaySlice={() => {
+                  if (isPlaying) {
+                    stopPlayback();
+                    return;
+                  }
+                  if (!selectedEvent) return;
+                  const duration = selectedEvent.endSec - selectedEvent.startSec;
+                  startPlayback(selectedEvent.startSec, duration);
+                }}
+              />
+            </>
+          ) : (
+            <div className="p-4 text-center text-sm text-muted-foreground">
+              Select a region to view its spectrogram
+            </div>
+          )}
+          <RegionTable
             regions={regions}
             events={events}
             corrections={savedCorrections}
             selectedRegionId={selectedRegionId}
             onSelectRegion={handleSelectRegion}
           />
-          <div className="flex-1 rounded-md border">
-            <ReviewToolbar
-              region={selectedRegion}
-              eventCount={regionEvents.length}
-              pendingChangeCount={pendingChangeCount}
-              isDirty={isDirty}
-              addMode={addMode}
-              onToggleAddMode={handleToggleAddMode}
-              onSave={handleSave}
-              onCancel={handleCancel}
-              isPlaying={isPlaying}
-              onPlay={() => {
-                if (isPlaying) {
-                  stopPlayback();
-                  return;
-                }
-                if (!selectedRegion) return;
-                const playStart = viewStart ?? selectedRegion.padded_start_sec;
-                const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
-                startPlayback(playStart, duration);
-              }}
-              hasCorrections={hasCorrections}
-              onRetrain={handleRetrain}
-              retrainStatus={retrainStatus}
-              onResegment={handleResegment}
-            />
-            {selectedRegion ? (
-              <>
-                <RegionSpectrogramViewer
-                  regionJobId={regionDetectionJobId!}
-                  region={selectedRegion}
-                  onViewStartChange={setViewStart}
-                  audioRef={audioRef}
-                  isPlaying={isPlaying}
-                  playbackOriginSec={playbackOriginSec}
-                >
-                  <EventBarOverlay
-                    events={regionEvents}
-                    selectedEventId={selectedEventId}
-                    onSelectEvent={setSelectedEventId}
-                    onAdjust={handleAdjust}
-                    onAdd={handleAdd}
-                    addMode={addMode}
-                    activeRegionId={selectedRegionId!}
-                  />
-                </RegionSpectrogramViewer>
-                <EventDetailPanel
-                  event={selectedEvent}
-                  onDelete={handleDelete}
-                  isPlaying={isPlaying}
-                  onPlaySlice={() => {
-                    if (isPlaying) {
-                      stopPlayback();
-                      return;
-                    }
-                    if (!selectedEvent) return;
-                    const duration = selectedEvent.endSec - selectedEvent.startSec;
-                    startPlayback(selectedEvent.startSec, duration);
-                  }}
-                />
-              </>
-            ) : (
-              <div className="p-4 text-center text-sm text-muted-foreground">
-                Select a region to view its spectrogram
-              </div>
-            )}
-          </div>
         </div>
       ) : (
         <div className="py-8 text-center text-muted-foreground">
@@ -590,10 +623,14 @@ function jobLabel(
   }[],
   hydrophones: { id: string; name: string }[],
 ): string {
+  const shortId = job.id.slice(0, 8);
   const rj = regionJobs.find((r) => r.id === job.region_detection_job_id);
   if (rj?.hydrophone_id) {
     const h = hydrophones.find((hp) => hp.id === rj.hydrophone_id);
-    return h?.name ?? rj.hydrophone_id;
+    const name = h?.name ?? rj.hydrophone_id;
+    return `${name} - ${shortId}`;
   }
-  return rj?.audio_file_id?.slice(0, 8) ?? job.id.slice(0, 8);
+  const source = rj?.audio_file_id?.slice(0, 8) ?? shortId;
+  if (source === shortId) return shortId;
+  return `${source} - ${shortId}`;
 }
