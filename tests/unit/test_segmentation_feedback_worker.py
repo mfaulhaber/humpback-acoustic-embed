@@ -15,6 +15,7 @@ from humpback.call_parsing.segmentation.dataset import (
 from humpback.schemas.call_parsing import SegmentationFeatureConfig
 from humpback.workers.event_segmentation_feedback_worker import (
     _apply_corrections,
+    _subdivide_region,
 )
 from humpback.call_parsing.types import Event
 
@@ -97,6 +98,72 @@ def test_apply_corrections_delete() -> None:
     ]
     result = _apply_corrections(original, corr)  # type: ignore[arg-type]
     assert len(result) == 0
+
+
+def test_subdivide_short_region_returns_single_sample() -> None:
+    events = [{"start_sec": 5.0, "end_sec": 7.0}]
+    samples = _subdivide_region(
+        crop_start=0.0,
+        crop_end=20.0,
+        corrected_events=events,
+        hydrophone_id="h1",
+        start_timestamp=0.0,
+        end_timestamp=100.0,
+        max_crop_sec=30.0,
+    )
+    assert len(samples) == 1
+    assert samples[0].crop_start_sec == 0.0
+    assert samples[0].crop_end_sec == 20.0
+
+
+def test_subdivide_long_region_creates_multiple_crops() -> None:
+    events = [
+        {"start_sec": 10.0, "end_sec": 12.0},
+        {"start_sec": 40.0, "end_sec": 42.0},
+        {"start_sec": 70.0, "end_sec": 72.0},
+    ]
+    samples = _subdivide_region(
+        crop_start=0.0,
+        crop_end=90.0,
+        corrected_events=events,
+        hydrophone_id="h1",
+        start_timestamp=0.0,
+        end_timestamp=100.0,
+        max_crop_sec=30.0,
+        crop_hop_sec=15.0,
+    )
+    # 90s with 30s windows hopping by 15s → multiple crops
+    assert len(samples) > 1
+    # Each crop should be <= 30s
+    for s in samples:
+        assert s.crop_end_sec - s.crop_start_sec <= 30.0 + 0.01
+    # All crops should cover the region
+    assert samples[0].crop_start_sec == 0.0
+    assert samples[-1].crop_end_sec == 90.0
+
+
+def test_subdivide_filters_events_to_window() -> None:
+    events = [
+        {"start_sec": 5.0, "end_sec": 7.0},
+        {"start_sec": 50.0, "end_sec": 52.0},
+    ]
+    samples = _subdivide_region(
+        crop_start=0.0,
+        crop_end=60.0,
+        corrected_events=events,
+        hydrophone_id="h1",
+        start_timestamp=0.0,
+        end_timestamp=100.0,
+        max_crop_sec=30.0,
+        crop_hop_sec=30.0,
+    )
+    # First crop [0,30] should have event at 5-7, not 50-52
+    first_events = json.loads(samples[0].events_json)
+    assert len(first_events) == 1
+    assert first_events[0]["start_sec"] == 5.0
+    # Last crop should have event at 50-52
+    last_events = json.loads(samples[-1].events_json)
+    assert any(e["start_sec"] == 50.0 for e in last_events)
 
 
 def test_feedback_sample_events_not_double_subtracted() -> None:

@@ -107,6 +107,69 @@ def _apply_corrections(
     return list(events_by_id.values())
 
 
+# Maximum crop duration in seconds. Regions longer than this are subdivided
+# into overlapping crops so the GRU sees manageable sequence lengths and the
+# effective training set grows.
+_MAX_CROP_SEC: float = 30.0
+_CROP_HOP_SEC: float = 15.0
+
+
+def _subdivide_region(
+    crop_start: float,
+    crop_end: float,
+    corrected_events: list[dict[str, float]],
+    hydrophone_id: str,
+    start_timestamp: float,
+    end_timestamp: float,
+    max_crop_sec: float = _MAX_CROP_SEC,
+    crop_hop_sec: float = _CROP_HOP_SEC,
+) -> list[_FeedbackSample]:
+    """Split a long region into shorter crops, each with its own event subset."""
+    region_dur = crop_end - crop_start
+    if region_dur <= max_crop_sec:
+        return [
+            _FeedbackSample(
+                hydrophone_id=hydrophone_id,
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
+                crop_start_sec=crop_start,
+                crop_end_sec=crop_end,
+                events_json=json.dumps(corrected_events),
+            )
+        ]
+
+    samples: list[_FeedbackSample] = []
+    window_start = crop_start
+    while window_start < crop_end:
+        window_end = min(window_start + max_crop_sec, crop_end)
+        if crop_end - window_start < max_crop_sec * 0.5:
+            window_start = max(crop_start, crop_end - max_crop_sec)
+            window_end = crop_end
+
+        window_events = [
+            e
+            for e in corrected_events
+            if e["end_sec"] > window_start and e["start_sec"] < window_end
+        ]
+
+        samples.append(
+            _FeedbackSample(
+                hydrophone_id=hydrophone_id,
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
+                crop_start_sec=window_start,
+                crop_end_sec=window_end,
+                events_json=json.dumps(window_events),
+            )
+        )
+
+        if window_end >= crop_end:
+            break
+        window_start += crop_hop_sec
+
+    return samples
+
+
 async def _collect_samples(
     session: AsyncSession,
     source_job_ids: list[str],
@@ -180,8 +243,10 @@ async def _collect_samples(
             corrections_by_region[c.region_id].append(c)
 
         for region_id, region in regions_by_id.items():
-            region_events = events_by_region.get(region_id, [])
             region_corrections = corrections_by_region.get(region_id, [])
+            if not region_corrections:
+                continue
+            region_events = events_by_region.get(region_id, [])
             corrected = _apply_corrections(region_events, region_corrections)
 
             crop_start = region.padded_start_sec
@@ -189,14 +254,16 @@ async def _collect_samples(
 
             # Events stay in absolute (job-relative) coordinates —
             # build_framewise_target subtracts crop_start_sec itself.
-            samples.append(
-                _FeedbackSample(
+            # Long regions are subdivided into shorter crops so the GRU
+            # sees manageable sequences and the effective dataset grows.
+            samples.extend(
+                _subdivide_region(
+                    crop_start=crop_start,
+                    crop_end=crop_end,
+                    corrected_events=corrected,
                     hydrophone_id=hydro_id,
                     start_timestamp=job_start_ts,
                     end_timestamp=job_end_ts,
-                    crop_start_sec=crop_start,
-                    crop_end_sec=crop_end,
-                    events_json=json.dumps(corrected),
                 )
             )
 
@@ -270,6 +337,23 @@ async def run_event_segmentation_feedback_training(
         if not samples:
             raise ValueError("No training samples collected from source jobs")
 
+        # Resolve the source model checkpoint for fine-tuning.
+        pretrained_checkpoint: Path | None = None
+        first_seg_job = await session.get(EventSegmentationJob, source_job_ids[0])
+        if first_seg_job and first_seg_job.segmentation_model_id:
+            source_model = await session.get(
+                SegmentationModel, first_seg_job.segmentation_model_id
+            )
+            if source_model and source_model.model_path:
+                candidate = Path(source_model.model_path)
+                if candidate.exists():
+                    pretrained_checkpoint = candidate
+                    logger.info(
+                        "Will fine-tune from source model %s (%s)",
+                        source_model.name,
+                        candidate,
+                    )
+
         job.started_at = datetime.now(timezone.utc)
         await session.commit()
 
@@ -289,6 +373,7 @@ async def run_event_segmentation_feedback_training(
             config=training_config,
             checkpoint_path=checkpoint_path,
             device=device,
+            pretrained_checkpoint=pretrained_checkpoint,
         )
 
         model_config_payload = {

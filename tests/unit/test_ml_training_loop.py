@@ -6,6 +6,7 @@ a short canned loader to exercise the callback / early-stop path.
 
 from __future__ import annotations
 
+import pytest
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -100,6 +101,89 @@ def test_callback_early_stop_terminates_training() -> None:
     )
 
     assert len(result.train_losses) == 2
+
+
+def test_fit_tracks_best_model_state_on_val_loss() -> None:
+    """fit() snapshots model weights at the epoch with lowest val loss."""
+    torch.manual_seed(0)
+    model = _MLP()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
+    loss_fn = nn.MSELoss()
+    loader = _xor_loader()
+
+    result = fit(
+        model=model,
+        optimizer=optimizer,
+        loss_fn=loss_fn,
+        train_loader=loader,
+        epochs=5,
+        val_loader=loader,
+        device=torch.device("cpu"),
+    )
+
+    assert result.best_model_state is not None
+    # Restoring best state should give a loadable state dict
+    model.load_state_dict(result.best_model_state)
+    model.eval()
+    # The snapshot is a separate copy, not the same object as model's state
+    for key in result.best_model_state:
+        assert result.best_model_state[key] is not model.state_dict()[key]
+
+
+def test_fit_best_model_state_is_none_without_val_loader() -> None:
+    """Without a val_loader, best_model_state stays None."""
+    torch.manual_seed(0)
+    model = _MLP()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
+    loss_fn = nn.MSELoss()
+    loader = _xor_loader()
+
+    result = fit(
+        model=model,
+        optimizer=optimizer,
+        loss_fn=loss_fn,
+        train_loader=loader,
+        epochs=3,
+        device=torch.device("cpu"),
+    )
+
+    assert result.best_model_state is None
+
+
+def test_fit_restoring_best_state_gives_lower_loss_than_final() -> None:
+    """When training overfits, restoring best state yields lower val loss."""
+    torch.manual_seed(42)
+    model = _MLP()
+    # High LR to encourage overfitting/oscillation
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
+    loss_fn = nn.MSELoss()
+    loader = _xor_loader()
+
+    result = fit(
+        model=model,
+        optimizer=optimizer,
+        loss_fn=loss_fn,
+        train_loader=loader,
+        epochs=50,
+        val_loader=loader,
+        device=torch.device("cpu"),
+    )
+
+    assert result.best_model_state is not None
+    best_val = min(result.val_losses)
+
+    # Restore best state and verify it gives the best val loss
+    model.load_state_dict(result.best_model_state)
+    model.eval()
+    total = 0.0
+    n = 0
+    with torch.no_grad():
+        for batch in loader:
+            pred = model(batch[0])
+            total += float(loss_fn(pred, batch[1]).item())
+            n += 1
+    restored_loss = total / n
+    assert restored_loss == pytest.approx(best_val, rel=1e-5)
 
 
 def test_callback_can_populate_callback_outputs() -> None:

@@ -37,6 +37,80 @@ vs. hydrophone range) into bytes.
 """
 
 
+# Maximum audio duration for a single forward pass. Regions longer than
+# this are processed with overlapping windows and the per-frame
+# probabilities are averaged over the overlap zone. This keeps inference
+# consistent with the 30-second crops used during feedback training.
+_MAX_WINDOW_SEC: float = 30.0
+_WINDOW_HOP_SEC: float = 15.0
+
+
+def _infer_single(
+    model: nn.Module,
+    audio: np.ndarray,
+    feature_config: SegmentationFeatureConfig,
+) -> np.ndarray:
+    """Forward pass on one audio chunk, return frame probabilities (1-D)."""
+    logmel = normalize_per_region_zscore(extract_logmel(audio, feature_config))
+    features_t = torch.from_numpy(logmel).unsqueeze(0).unsqueeze(0).float()
+    with torch.no_grad():
+        logits = model(features_t)
+        probs_t = torch.sigmoid(logits).squeeze(0)
+    return probs_t.detach().cpu().numpy().astype(np.float32)
+
+
+def _infer_windowed(
+    model: nn.Module,
+    audio: np.ndarray,
+    feature_config: SegmentationFeatureConfig,
+    max_window_sec: float = _MAX_WINDOW_SEC,
+    window_hop_sec: float = _WINDOW_HOP_SEC,
+) -> np.ndarray:
+    """Sliding-window inference with averaged overlaps."""
+    sr = feature_config.sample_rate
+    hop_length = feature_config.hop_length
+    total_samples = len(audio)
+    total_duration = total_samples / sr
+
+    if total_duration <= max_window_sec:
+        return _infer_single(model, audio, feature_config)
+
+    # Estimate total output frames from a full-length pass so the
+    # accumulator has the right size.
+    total_frames = int(np.ceil(total_samples / hop_length))
+    prob_sum = np.zeros(total_frames, dtype=np.float64)
+    weight = np.zeros(total_frames, dtype=np.float64)
+
+    window_samples = int(max_window_sec * sr)
+    hop_samples = int(window_hop_sec * sr)
+
+    offset = 0
+    while offset < total_samples:
+        end = min(offset + window_samples, total_samples)
+        # If the remaining tail is too short, extend the window backwards
+        if total_samples - offset < window_samples // 2 and offset > 0:
+            offset = max(0, total_samples - window_samples)
+            end = total_samples
+
+        chunk = audio[offset:end]
+        chunk_probs = _infer_single(model, chunk, feature_config)
+
+        frame_offset = int(np.round(offset / hop_length))
+        n_frames = len(chunk_probs)
+        frame_end = min(frame_offset + n_frames, total_frames)
+        usable = frame_end - frame_offset
+        prob_sum[frame_offset:frame_end] += chunk_probs[:usable]
+        weight[frame_offset:frame_end] += 1.0
+
+        if end >= total_samples:
+            break
+        offset += hop_samples
+
+    # Avoid division by zero for any unvisited frames.
+    weight = np.maximum(weight, 1.0)
+    return (prob_sum / weight).astype(np.float32)
+
+
 def run_inference(
     model: nn.Module,
     region: Any,
@@ -49,16 +123,15 @@ def run_inference(
     ``region`` must expose ``region_id`` and ``padded_start_sec``; the
     decoder uses the padded start as the absolute-time anchor so every
     ``Event``'s timestamps land on the source audio's timeline.
+
+    Regions longer than 30 seconds are processed with overlapping
+    sliding windows so the CRNN sees the same sequence lengths it was
+    trained on.
     """
     audio = audio_loader(region)
-    logmel = normalize_per_region_zscore(extract_logmel(audio, feature_config))
-    features_t = torch.from_numpy(logmel).unsqueeze(0).unsqueeze(0).float()
 
     model.eval()
-    with torch.no_grad():
-        logits = model(features_t)
-        probs_t = torch.sigmoid(logits).squeeze(0)
-    probs = probs_t.detach().cpu().numpy().astype(np.float32)
+    probs = _infer_windowed(model, audio, feature_config)
 
     hop_sec = float(feature_config.hop_length) / float(feature_config.sample_rate)
     return decode_events(

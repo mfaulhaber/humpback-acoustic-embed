@@ -333,6 +333,122 @@ def test_train_model_smoke_converges(tmp_path: Path) -> None:
     assert cfg_meta["model_type"] == "SegmentationCRNN"
 
 
+def test_train_model_finetune_from_pretrained(tmp_path: Path) -> None:
+    """train_model with pretrained_checkpoint initializes from existing weights."""
+    os.environ["HUMPBACK_FORCE_CPU"] = "1"
+    torch.manual_seed(0)
+
+    cfg = SegmentationFeatureConfig()
+    sample_rate = cfg.sample_rate
+    duration = 1.0
+
+    samples: list[_FakeSample] = []
+    audio_by_id: dict[str, np.ndarray] = {}
+    for i in range(4):
+        pos_id = f"pos-{i}"
+        neg_id = f"neg-{i}"
+        audio_by_id[pos_id] = _sine_audio(440.0, duration, sample_rate)
+        audio_by_id[neg_id] = _noise_audio(duration, sample_rate, seed=100 + i)
+        samples.append(
+            _FakeSample(
+                events_json=json.dumps([{"start_sec": 0.0, "end_sec": duration}]),
+                crop_start_sec=0.0,
+                crop_end_sec=duration,
+                audio_file_id=pos_id,
+            )
+        )
+        samples.append(
+            _FakeSample(
+                events_json="[]",
+                crop_start_sec=0.0,
+                crop_end_sec=duration,
+                audio_file_id=neg_id,
+            )
+        )
+
+    def audio_loader(sample: _FakeSample) -> np.ndarray:
+        assert sample.audio_file_id is not None
+        return audio_by_id[sample.audio_file_id]
+
+    small_config = SegmentationTrainingConfig(
+        epochs=3,
+        batch_size=2,
+        learning_rate=1e-2,
+        weight_decay=0.0,
+        early_stopping_patience=100,
+        grad_clip=1.0,
+        seed=0,
+        val_fraction=0.25,
+        n_mels=cfg.n_mels,
+        conv_channels=[8],
+        gru_hidden=8,
+        gru_layers=1,
+    )
+
+    # Train an initial model.
+    pretrained_path = tmp_path / "pretrained" / "checkpoint.pt"
+    train_model(
+        samples=samples,
+        feature_config=cfg,
+        decoder_config=SegmentationDecoderConfig(),
+        audio_loader=audio_loader,
+        config=small_config,
+        checkpoint_path=pretrained_path,
+        device=torch.device("cpu"),
+    )
+    assert pretrained_path.exists()
+
+    # Fine-tune from the pretrained checkpoint with a fresh seed.
+    finetuned_path = tmp_path / "finetuned" / "checkpoint.pt"
+    torch.manual_seed(99)
+    ft_result = train_model(
+        samples=samples,
+        feature_config=cfg,
+        decoder_config=SegmentationDecoderConfig(),
+        audio_loader=audio_loader,
+        config=small_config,
+        checkpoint_path=finetuned_path,
+        device=torch.device("cpu"),
+        pretrained_checkpoint=pretrained_path,
+    )
+
+    assert finetuned_path.exists()
+    # Fine-tuned model should start with a lower initial loss than
+    # training from scratch, since it begins from learned weights.
+    torch.manual_seed(99)
+    scratch_path = tmp_path / "scratch" / "checkpoint.pt"
+    scratch_result = train_model(
+        samples=samples,
+        feature_config=cfg,
+        decoder_config=SegmentationDecoderConfig(),
+        audio_loader=audio_loader,
+        config=small_config,
+        checkpoint_path=scratch_path,
+        device=torch.device("cpu"),
+    )
+    assert ft_result.train_losses[0] < scratch_result.train_losses[0]
+
+    # Conv layers should be frozen during fine-tuning: the saved
+    # checkpoint's conv weights must match the pretrained ones exactly.
+    pretrained_model = SegmentationCRNN(
+        n_mels=small_config.n_mels,
+        conv_channels=small_config.conv_channels,
+        gru_hidden=small_config.gru_hidden,
+        gru_layers=small_config.gru_layers,
+    )
+    load_checkpoint(pretrained_path, pretrained_model)
+    finetuned_model = SegmentationCRNN(
+        n_mels=small_config.n_mels,
+        conv_channels=small_config.conv_channels,
+        gru_hidden=small_config.gru_hidden,
+        gru_layers=small_config.gru_layers,
+    )
+    load_checkpoint(finetuned_path, finetuned_model)
+    for name, param in finetuned_model.conv.named_parameters():
+        pretrained_param = dict(pretrained_model.conv.named_parameters())[name]
+        assert torch.equal(param, pretrained_param), f"conv param {name} changed"
+
+
 # ---- run_inference ------------------------------------------------------
 
 
@@ -372,3 +488,45 @@ def test_run_inference_deterministic_under_fixed_seed() -> None:
         hop_sec = feature_cfg.hop_length / feature_cfg.sample_rate
         assert a.start_sec >= 10.0
         assert a.end_sec <= 12.0 + 2 * hop_sec
+
+
+def test_run_inference_windowed_on_long_region() -> None:
+    """Regions longer than 30s use windowed inference."""
+    os.environ["HUMPBACK_FORCE_CPU"] = "1"
+    torch.manual_seed(7)
+    model = SegmentationCRNN(
+        n_mels=64,
+        conv_channels=[8],
+        gru_hidden=8,
+        gru_layers=1,
+    )
+    model.eval()
+
+    feature_cfg = SegmentationFeatureConfig()
+    decoder_cfg = SegmentationDecoderConfig(
+        high_threshold=0.5, low_threshold=0.3, min_event_sec=0.0, merge_gap_sec=0.0
+    )
+    # 60s region triggers windowed inference (>30s)
+    region = _FakeRegion(
+        region_id="reg-long", padded_start_sec=0.0, padded_end_sec=60.0
+    )
+    audio = _sine_audio(440.0, 60.0, feature_cfg.sample_rate)
+
+    def loader(_r: _FakeRegion) -> np.ndarray:
+        return audio
+
+    events = run_inference(model, region, loader, feature_cfg, decoder_cfg)
+    # Windowed inference should produce events (exact count depends on
+    # model weights) and all events should fall within region bounds.
+    hop_sec = feature_cfg.hop_length / feature_cfg.sample_rate
+    for e in events:
+        assert e.start_sec >= 0.0
+        assert e.end_sec <= 60.0 + 2 * hop_sec
+        assert e.region_id == "reg-long"
+
+    # Deterministic: second run should match.
+    events2 = run_inference(model, region, loader, feature_cfg, decoder_cfg)
+    assert len(events) == len(events2)
+    for a, b in zip(events, events2):
+        assert a.start_sec == pytest.approx(b.start_sec)
+        assert a.end_sec == pytest.approx(b.end_sec)
