@@ -11,10 +11,10 @@
 - Create: `alembic/versions/047_drop_event_segmentation_training_jobs.py`
 
 **Acceptance criteria:**
-- [ ] Migration drops `event_segmentation_training_jobs` table
-- [ ] Uses `op.batch_alter_table()` pattern for SQLite compatibility
-- [ ] Downgrade recreates the table with original schema
-- [ ] `uv run alembic upgrade head` succeeds against the production DB
+- [x] Migration drops `event_segmentation_training_jobs` table
+- [x] Uses `op.drop_table()` (batch not needed for full table drop)
+- [x] Downgrade recreates the table with original schema
+- [x] `uv run alembic upgrade head` succeeds against the production DB
 
 **Tests needed:**
 - Migration unit test verifying upgrade drops table and downgrade recreates it
