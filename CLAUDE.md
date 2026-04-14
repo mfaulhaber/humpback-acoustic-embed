@@ -247,7 +247,7 @@ See [docs/reference/call-parsing-api.md](docs/reference/call-parsing-api.md) for
 - Vocalization labeling workspace, multi-label vocalization classifier, training dataset review, label processing
 - Timeline viewer with PCEN spectrograms, interactive labeling, gapless playback, static export
 - Four-pass call parsing pipeline (Passes 1–3 functional, Pass 4 deferred): region detection, event segmentation, event classification, human feedback training loop
-- Web UI: Audio, Processing, Clustering, Classifier, Vocalization, Call Parsing, Search, Label Processing, Admin
+- Web UI: Audio, Processing, Clustering, Classifier, Vocalization, Call Parsing (Detection, Segment, Segment Training, Classify, Classify Training), Search, Label Processing, Admin
 
 ### 9.2 Database Schema
 

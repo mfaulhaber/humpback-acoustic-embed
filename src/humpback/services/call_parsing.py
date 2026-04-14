@@ -447,6 +447,78 @@ async def delete_event_classification_job(
     return True
 
 
+async def list_classification_jobs_with_correction_counts(
+    session: AsyncSession,
+) -> list[dict]:
+    """Return completed classification jobs with correction counts and hydrophone info.
+
+    Traces through segmentation job → region detection job for hydrophone metadata.
+    Uses a LEFT JOIN subquery so there is no N+1 overhead.
+    """
+    from humpback.models.feedback_training import EventTypeCorrection
+
+    correction_counts = (
+        select(
+            EventTypeCorrection.event_classification_job_id.label("job_id"),
+            func.count(EventTypeCorrection.id).label("correction_count"),
+        )
+        .group_by(EventTypeCorrection.event_classification_job_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            EventClassificationJob,
+            func.coalesce(correction_counts.c.correction_count, 0).label(
+                "correction_count"
+            ),
+            RegionDetectionJob.hydrophone_id,
+            RegionDetectionJob.start_timestamp,
+            RegionDetectionJob.end_timestamp,
+        )
+        .join(
+            EventSegmentationJob,
+            EventSegmentationJob.id == EventClassificationJob.event_segmentation_job_id,
+        )
+        .join(
+            RegionDetectionJob,
+            RegionDetectionJob.id == EventSegmentationJob.region_detection_job_id,
+        )
+        .outerjoin(
+            correction_counts,
+            correction_counts.c.job_id == EventClassificationJob.id,
+        )
+        .where(EventClassificationJob.status == "complete")
+        .order_by(EventClassificationJob.created_at.desc())
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    out: list[dict] = []
+    for row in rows:
+        job = row[0]
+        d = {
+            "id": job.id,
+            "status": job.status,
+            "parent_run_id": job.parent_run_id,
+            "error_message": job.error_message,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "started_at": job.started_at,
+            "completed_at": job.completed_at,
+            "event_segmentation_job_id": job.event_segmentation_job_id,
+            "vocalization_model_id": job.vocalization_model_id,
+            "typed_event_count": job.typed_event_count,
+            "correction_count": row[1],
+            "hydrophone_id": row[2],
+            "start_timestamp": row[3],
+            "end_timestamp": row[4],
+        }
+        out.append(d)
+    return out
+
+
 # ---- Pass 2: segmentation training + inference jobs --------------------
 
 

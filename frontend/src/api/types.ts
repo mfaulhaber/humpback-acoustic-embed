@@ -1408,3 +1408,88 @@ export interface QuickRetrainResponse {
   sample_count: number;
 }
 
+// ---- Pass 3: Event Classification ----
+
+export interface EventClassificationJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  event_segmentation_job_id: string;
+  vocalization_model_id: string | null;
+  typed_event_count: number | null;
+  parent_run_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface CreateEventClassificationJobRequest {
+  event_segmentation_job_id: string;
+  vocalization_model_id: string;
+}
+
+export interface TypedEventRow {
+  event_id: string;
+  region_id: string;
+  start_sec: number;
+  end_sec: number;
+  type_name: string;
+  score: number;
+  above_threshold: boolean;
+}
+
+export interface TypeCorrectionItem {
+  event_id: string;
+  type_name: string | null;
+}
+
+export interface TypeCorrectionResponse {
+  id: string;
+  event_classification_job_id: string;
+  event_id: string;
+  type_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClassificationJobWithCorrectionCount
+  extends EventClassificationJob {
+  correction_count: number;
+  hydrophone_id: string | null;
+  start_timestamp: number | null;
+  end_timestamp: number | null;
+}
+
+export interface CreateEventClassifierTrainingJobRequest {
+  source_job_ids: string[];
+  config?: Record<string, unknown>;
+}
+
+export interface EventClassifierTrainingJob {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  source_job_ids: string;
+  config_json: string | null;
+  vocalization_model_id: string | null;
+  result_summary: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface EventClassifierModel {
+  id: string;
+  name: string;
+  model_family: string;
+  input_mode: string | null;
+  model_dir_path: string | null;
+  vocabulary_snapshot: string | null;
+  per_class_thresholds: string | null;
+  per_class_metrics: string | null;
+  training_summary: string | null;
+  created_at: string;
+}
+

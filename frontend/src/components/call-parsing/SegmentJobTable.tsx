@@ -514,6 +514,12 @@ function SegmentJobRow({
                   >
                     Review
                   </Link>
+                  <Link
+                    to={`/app/call-parsing/classify?tab=jobs&segmentJobId=${job.id}`}
+                    className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
+                  >
+                    Classify →
+                  </Link>
                   <button
                     type="button"
                     className="p-0.5 rounded hover:bg-muted"

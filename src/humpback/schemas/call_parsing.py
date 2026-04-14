@@ -157,6 +157,15 @@ class EventClassificationJobSummary(_JobSummary):
     model_config = {"from_attributes": True}
 
 
+class ClassificationJobWithCorrectionCount(EventClassificationJobSummary):
+    """Classification job summary plus hydrophone info and correction count."""
+
+    correction_count: int = 0
+    hydrophone_id: Optional[str] = None
+    start_timestamp: Optional[float] = None
+    end_timestamp: Optional[float] = None
+
+
 class CallParsingRunResponse(BaseModel):
     id: str
     audio_file_id: Optional[str] = None

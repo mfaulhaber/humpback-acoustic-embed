@@ -30,6 +30,7 @@ from humpback.schemas.call_parsing import (
     BoundaryCorrectionResponse,
     CallParsingRunCreate,
     CallParsingRunResponse,
+    ClassificationJobWithCorrectionCount,
     ClassifierModelResponse,
     ClassifierTrainingJobResponse,
     CreateClassifierTrainingJobRequest,
@@ -668,6 +669,15 @@ async def list_classification_jobs(session: SessionDep):
 
 
 @router.get(
+    "/classification-jobs/with-correction-counts",
+    response_model=list[ClassificationJobWithCorrectionCount],
+)
+async def list_classification_jobs_with_correction_counts(session: SessionDep):
+    rows = await service.list_classification_jobs_with_correction_counts(session)
+    return [ClassificationJobWithCorrectionCount(**row) for row in rows]
+
+
+@router.get(
     "/classification-jobs/{job_id}", response_model=EventClassificationJobSummary
 )
 async def get_classification_job(job_id: str, session: SessionDep):
@@ -711,10 +721,23 @@ async def get_classification_typed_events(
     if not typed_path.exists():
         raise HTTPException(status_code=404, detail="typed_events.parquet not found")
     typed_events = read_typed_events(typed_path)
+
+    # Build event_id → region_id lookup from the upstream segmentation job's
+    # events.parquet so the frontend can group events by region.
+    event_region_map: dict[str, str] = {}
+    events_path = (
+        segmentation_job_dir(settings.storage_root, job.event_segmentation_job_id)
+        / "events.parquet"
+    )
+    if events_path.exists():
+        events = read_events(events_path)
+        event_region_map = {e.event_id: e.region_id for e in events}
+
     return sorted(
         [
             {
                 "event_id": te.event_id,
+                "region_id": event_region_map.get(te.event_id, ""),
                 "start_sec": te.start_sec,
                 "end_sec": te.end_sec,
                 "type_name": te.type_name,
