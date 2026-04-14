@@ -99,10 +99,10 @@
 - Modify: `src/humpback/api/routers/call_parsing.py` — add `POST /segmentation-training/quick-retrain` endpoint
 
 **Acceptance criteria:**
-- [ ] Creates a single-job dataset from corrections and queues a `SegmentationTrainingJob` in one call
-- [ ] Returns dataset ID, training job ID, and sample count
-- [ ] Uses `create_dataset_from_corrections()` internally (single-element list)
-- [ ] Raises 400 if job has no corrections, 404 if job not found
+- [x] Creates a single-job dataset from corrections and queues a `SegmentationTrainingJob` in one call
+- [x] Returns dataset ID, training job ID, and sample count
+- [x] Uses `create_dataset_from_corrections()` internally (single-element list)
+- [x] Raises 400 if job has no corrections, 404 if job not found
 
 **Tests needed:**
 - Unit test: convenience function creates both dataset and training job

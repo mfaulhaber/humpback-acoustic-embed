@@ -338,6 +338,20 @@ class CreateDatasetFromCorrectionsResponse(BaseModel):
     created_at: datetime
 
 
+class QuickRetrainRequest(BaseModel):
+    """Request body for ``POST /call-parsing/segmentation-training/quick-retrain``."""
+
+    segmentation_job_id: str
+
+
+class QuickRetrainResponse(BaseModel):
+    """Response for quick-retrain: dataset + training job created in one call."""
+
+    dataset_id: str
+    training_job_id: str
+    sample_count: int
+
+
 # ---- Feedback training: correction schemas ---------------------------------
 
 

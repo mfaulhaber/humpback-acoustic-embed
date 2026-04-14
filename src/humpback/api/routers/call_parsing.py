@@ -38,6 +38,8 @@ from humpback.schemas.call_parsing import (
     CreateEventClassificationJobRequest,
     CreateRegionJobRequest,
     CreateSegmentationJobRequest,
+    QuickRetrainRequest,
+    QuickRetrainResponse,
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
@@ -542,6 +544,38 @@ async def create_dataset_from_corrections(
         name=dataset.name,
         sample_count=sample_count,
         created_at=dataset.created_at,
+    )
+
+
+@router.post(
+    "/segmentation-training/quick-retrain",
+    response_model=QuickRetrainResponse,
+    status_code=201,
+)
+async def quick_retrain(
+    request: QuickRetrainRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    try:
+        (
+            dataset_id,
+            training_job_id,
+            sample_count,
+        ) = await service.create_dataset_and_train(
+            session,
+            segmentation_job_id=request.segmentation_job_id,
+            settings=settings,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+    return QuickRetrainResponse(
+        dataset_id=dataset_id,
+        training_job_id=training_job_id,
+        sample_count=sample_count,
     )
 
 

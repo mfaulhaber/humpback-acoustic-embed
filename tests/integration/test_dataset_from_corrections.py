@@ -406,3 +406,61 @@ async def test_multi_job_all_no_corrections_returns_400(
     )
     assert resp.status_code == 400
     assert "No corrected regions" in resp.json()["detail"]
+
+
+# ---- Quick retrain tests ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_quick_retrain_creates_dataset_and_training_job(
+    client: AsyncClient, app_settings
+):
+    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training/quick-retrain",
+        json={"segmentation_job_id": seg_job_id},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert "dataset_id" in data
+    assert "training_job_id" in data
+    assert data["sample_count"] > 0
+
+    # Verify the training job exists and is queued
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            from humpback.models.segmentation_training import SegmentationTrainingJob
+
+            job = await session.get(SegmentationTrainingJob, data["training_job_id"])
+            assert job is not None
+            assert job.status == "queued"
+            assert job.training_dataset_id == data["dataset_id"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_quick_retrain_no_corrections_returns_400(
+    client: AsyncClient, app_settings
+):
+    seg_job_id, _ = await _seed_job_with_corrections(
+        app_settings, with_corrections=False
+    )
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training/quick-retrain",
+        json={"segmentation_job_id": seg_job_id},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_quick_retrain_missing_job_returns_404(client: AsyncClient, app_settings):
+    resp = await client.post(
+        f"{BASE}/segmentation-training/quick-retrain",
+        json={"segmentation_job_id": "nonexistent"},
+    )
+    assert resp.status_code == 404

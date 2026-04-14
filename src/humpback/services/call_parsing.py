@@ -1000,3 +1000,33 @@ async def create_dataset_from_corrections(
 
     await session.commit()
     return dataset, len(all_samples)
+
+
+async def create_dataset_and_train(
+    session: AsyncSession,
+    segmentation_job_id: str,
+    settings: Settings,
+) -> tuple[str, str, int]:
+    """Create a single-job dataset and queue a training job in one call.
+
+    Convenience wrapper for the SegmentReviewWorkspace quick-retrain flow.
+    Returns ``(dataset_id, training_job_id, sample_count)``.
+    """
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+    from humpback.schemas.call_parsing import SegmentationTrainingConfig
+
+    dataset, sample_count = await create_dataset_from_corrections(
+        session,
+        segmentation_job_ids=[segmentation_job_id],
+        settings=settings,
+    )
+
+    config = SegmentationTrainingConfig()
+    job = SegmentationTrainingJob(
+        training_dataset_id=dataset.id,
+        config_json=config.model_dump_json(),
+    )
+    session.add(job)
+    await session.commit()
+
+    return dataset.id, job.id, sample_count
