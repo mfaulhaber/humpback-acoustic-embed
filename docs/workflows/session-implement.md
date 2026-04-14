@@ -23,12 +23,22 @@ Work through the plan tasks sequentially, then commit all changes as a single ba
    - Implement the change
    - Write tests alongside or after implementation (tests are required, ordering is not)
    - Check off acceptance criteria in the plan as you go
+   - **Per-task testing** — after completing each task:
+     1. Identify source files modified in this task
+     2. Map them to test files using path conventions:
+        - `src/humpback/<module>.py` → `tests/unit/test_<module>*.py`
+        - `src/humpback/<subdir>/<module>.py` → `tests/unit/test_<subdir>_<module>*.py` and `tests/unit/test_<module>*.py`
+        - API routes in `src/humpback/api/` → also include matching `tests/integration/` files
+        - Union all mapped test files into a single `pytest` invocation
+     3. Run the targeted tests inline (skip if no matching test files found)
+     4. Spawn a background sub-agent (`run_in_background: true`) to run the full suite (`uv run pytest tests/ -q`). The agent reports only a summary: pass/fail counts and, on failure, test names with short error descriptions. Only one background test agent at a time — skip spawning if one is already in flight.
+     5. If a background agent reports failures, pause and fix the regression before continuing to the next task
 
 5. **Run verification gates** after all tasks complete:
    - `uv run ruff format --check` on modified Python files
    - `uv run ruff check` on modified Python files
    - `uv run pyright` on modified Python files
-   - `uv run pytest tests/`
+   - `uv run pytest tests/` — **skip if** the last background test agent completed green after the final task finished and no source files were modified since that run; **run fresh** otherwise
    - `cd frontend && npx tsc --noEmit` (if frontend files changed)
 
 6. **Fix any verification failures**
@@ -49,7 +59,7 @@ Work through the plan tasks sequentially, then commit all changes as a single ba
 
 - Commit after each individual task (one batch commit at the end)
 - Enforce test-before-implementation ordering
-- Dispatch subagents
+- Dispatch subagents for implementation work (background test agents are the exception — see step 4)
 - Push to remote (that's `session-end`)
 
 ## Output
