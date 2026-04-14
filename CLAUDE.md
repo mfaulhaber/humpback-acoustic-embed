@@ -134,7 +134,7 @@ Testing is not optional. Every meaningful change must include tests.
 
 See [docs/reference/testing.md](docs/reference/testing.md) for unit test guidelines, E2E smoke test spec, Playwright patterns, and model stub strategy.
 
-During implementation sessions, per-task verification uses targeted inline tests plus a background sub-agent for the full suite. See `docs/workflows/session-implement.md` step 4 for details.
+During implementation sessions, per-task verification uses targeted inline tests plus a background sub-agent for the full suite. See `docs/workflows/session-implement.md` step 4 (Per-task testing) for details.
 
 ---
 

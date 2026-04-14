@@ -31,7 +31,7 @@ Work through the plan tasks sequentially, then commit all changes as a single ba
         - API routes in `src/humpback/api/` → also include matching `tests/integration/` files
         - Union all mapped test files into a single `pytest` invocation
      3. Run the targeted tests inline (skip if no matching test files found)
-     4. Spawn a background sub-agent (`run_in_background: true`) to run the full suite (`uv run pytest tests/ -q`). The agent reports only a summary: pass/fail counts and, on failure, test names with short error descriptions. Only one background test agent at a time — skip spawning if one is already in flight.
+     4. Spawn a background sub-agent (`run_in_background: true`) to run the full suite (`uv run pytest tests/ -q`). The agent reports only a summary: pass/fail counts and, on failure, test names with short error descriptions. Do not include full pytest output in the summary. Only one background test agent at a time — skip spawning if one is already in flight.
      5. If a background agent reports failures, pause and fix the regression before continuing to the next task
 
 5. **Run verification gates** after all tasks complete:
