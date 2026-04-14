@@ -55,13 +55,13 @@
 - Modify: `src/humpback/api/routers/call_parsing.py` — update endpoint to pass new field name
 
 **Acceptance criteria:**
-- [ ] Endpoint accepts `segmentation_job_ids` list
-- [ ] Each job validated as existing and complete
-- [ ] Jobs with zero corrections silently skipped
-- [ ] Raises 400 if no samples collected across all jobs
-- [ ] Each sample's `source_ref` records its originating job ID
-- [ ] Default name is `corrections-{N}jobs-{first_id[:8]}` for multi-job, `corrections-{id[:8]}` for single
-- [ ] Existing single-job usage still works (list of one)
+- [x] Endpoint accepts `segmentation_job_ids` list
+- [x] Each job validated as existing and complete
+- [x] Jobs with zero corrections silently skipped
+- [x] Raises 400 if no samples collected across all jobs
+- [x] Each sample's `source_ref` records its originating job ID
+- [x] Default name is `corrections-{N}jobs-{first_id[:8]}` for multi-job, `corrections-{id[:8]}` for single
+- [x] Existing single-job usage still works (list of one)
 
 **Tests needed:**
 - Unit test: multi-job dataset creation with corrections from 2+ jobs produces samples with correct `source_ref` values

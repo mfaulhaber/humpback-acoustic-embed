@@ -156,7 +156,7 @@ async def test_create_dataset_from_corrections(client: AsyncClient, app_settings
 
     resp = await client.post(
         f"{BASE}/segmentation-training-datasets/from-corrections",
-        json={"segmentation_job_id": seg_job_id},
+        json={"segmentation_job_ids": [seg_job_id]},
     )
     assert resp.status_code == 201, resp.text
     data = resp.json()
@@ -201,7 +201,7 @@ async def test_create_dataset_custom_name(client: AsyncClient, app_settings):
     resp = await client.post(
         f"{BASE}/segmentation-training-datasets/from-corrections",
         json={
-            "segmentation_job_id": seg_job_id,
+            "segmentation_job_ids": [seg_job_id],
             "name": "my-dataset",
             "description": "Test dataset",
         },
@@ -221,7 +221,7 @@ async def test_create_dataset_no_corrections_returns_400(
 
     resp = await client.post(
         f"{BASE}/segmentation-training-datasets/from-corrections",
-        json={"segmentation_job_id": seg_job_id},
+        json={"segmentation_job_ids": [seg_job_id]},
     )
     assert resp.status_code == 400
     assert "No corrected regions" in resp.json()["detail"]
@@ -233,7 +233,7 @@ async def test_create_dataset_missing_job_returns_404(
 ):
     resp = await client.post(
         f"{BASE}/segmentation-training-datasets/from-corrections",
-        json={"segmentation_job_id": "nonexistent-id"},
+        json={"segmentation_job_ids": ["nonexistent-id"]},
     )
     assert resp.status_code == 404
 
@@ -278,7 +278,7 @@ async def test_create_dataset_incomplete_job_returns_400(
 
     resp = await client.post(
         f"{BASE}/segmentation-training-datasets/from-corrections",
-        json={"segmentation_job_id": seg_job_id},
+        json={"segmentation_job_ids": [seg_job_id]},
     )
     assert resp.status_code == 400
     assert "not complete" in resp.json()["detail"]
@@ -291,7 +291,7 @@ async def test_only_corrected_regions_included(client: AsyncClient, app_settings
 
     resp = await client.post(
         f"{BASE}/segmentation-training-datasets/from-corrections",
-        json={"segmentation_job_id": seg_job_id},
+        json={"segmentation_job_ids": [seg_job_id]},
     )
     assert resp.status_code == 201
     data = resp.json()
@@ -318,3 +318,91 @@ async def test_only_corrected_regions_included(client: AsyncClient, app_settings
             assert starts == [105.5, 110.0]
     finally:
         await engine.dispose()
+
+
+# ---- Multi-job dataset tests ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_multi_job_dataset_combines_samples(client: AsyncClient, app_settings):
+    """Two jobs with corrections produce samples with distinct source_ref values."""
+    seg_id_1, _ = await _seed_job_with_corrections(app_settings)
+    seg_id_2, _ = await _seed_job_with_corrections(app_settings)
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-datasets/from-corrections",
+        json={"segmentation_job_ids": [seg_id_1, seg_id_2]},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["sample_count"] >= 2
+    assert data["name"] == f"corrections-2jobs-{seg_id_1[:8]}"
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            from sqlalchemy import select
+
+            samples_result = await session.execute(
+                select(SegmentationTrainingSample).where(
+                    SegmentationTrainingSample.training_dataset_id == data["id"]
+                )
+            )
+            samples = list(samples_result.scalars().all())
+            source_refs = {s.source_ref for s in samples}
+            assert seg_id_1 in source_refs
+            assert seg_id_2 in source_refs
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_multi_job_skips_jobs_without_corrections(
+    client: AsyncClient, app_settings
+):
+    """One job with corrections + one without → only the corrected job contributes."""
+    seg_id_1, _ = await _seed_job_with_corrections(app_settings)
+    seg_id_2, _ = await _seed_job_with_corrections(app_settings, with_corrections=False)
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-datasets/from-corrections",
+        json={"segmentation_job_ids": [seg_id_1, seg_id_2]},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["sample_count"] >= 1
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            from sqlalchemy import select
+
+            samples_result = await session.execute(
+                select(SegmentationTrainingSample).where(
+                    SegmentationTrainingSample.training_dataset_id == data["id"]
+                )
+            )
+            samples = list(samples_result.scalars().all())
+            source_refs = {s.source_ref for s in samples}
+            assert seg_id_1 in source_refs
+            assert seg_id_2 not in source_refs
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_multi_job_all_no_corrections_returns_400(
+    client: AsyncClient, app_settings
+):
+    """All jobs having no corrections raises 400."""
+    seg_id_1, _ = await _seed_job_with_corrections(app_settings, with_corrections=False)
+    seg_id_2, _ = await _seed_job_with_corrections(app_settings, with_corrections=False)
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-datasets/from-corrections",
+        json={"segmentation_job_ids": [seg_id_1, seg_id_2]},
+    )
+    assert resp.status_code == 400
+    assert "No corrected regions" in resp.json()["detail"]

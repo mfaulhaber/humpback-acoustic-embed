@@ -848,19 +848,21 @@ async def delete_classifier_model(
 
 async def create_dataset_from_corrections(
     session: AsyncSession,
-    segmentation_job_id: str,
+    segmentation_job_ids: list[str],
     settings: Settings,
     name: Optional[str] = None,
     description: Optional[str] = None,
 ) -> tuple["SegmentationTrainingDataset", int]:
-    """Extract corrections into a new training dataset.
+    """Extract corrections from one or more segmentation jobs into a new dataset.
 
     Returns ``(dataset, sample_count)``.
 
-    Raises ``ValueError`` if the segmentation job is not found, not
-    complete, or has no corrected regions.
+    Each job is validated as existing and complete.  Jobs with zero
+    corrections are silently skipped.  Raises ``ValueError`` if no
+    samples are collected across all provided jobs.
     """
     from humpback.call_parsing.segmentation.extraction import (
+        CorrectedSample,
         collect_corrected_samples,
     )
     from humpback.models.segmentation_training import (
@@ -868,35 +870,52 @@ async def create_dataset_from_corrections(
         SegmentationTrainingSample,
     )
 
-    seg_job = await session.get(EventSegmentationJob, segmentation_job_id)
-    if seg_job is None:
-        raise ValueError(f"Segmentation job {segmentation_job_id} not found")
-    if seg_job.status != "complete":
+    all_samples: list[tuple[str, CorrectedSample]] = []
+
+    for seg_job_id in segmentation_job_ids:
+        seg_job = await session.get(EventSegmentationJob, seg_job_id)
+        if seg_job is None:
+            raise ValueError(f"Segmentation job {seg_job_id} not found")
+        if seg_job.status != "complete":
+            raise ValueError(
+                f"Segmentation job {seg_job_id} is not complete "
+                f"(status={seg_job.status})"
+            )
+
+        upstream = await session.get(
+            RegionDetectionJob, seg_job.region_detection_job_id
+        )
+        if upstream is None:
+            raise ValueError(
+                f"Upstream region detection job "
+                f"{seg_job.region_detection_job_id} not found"
+            )
+
+        job_samples = await collect_corrected_samples(
+            session, seg_job_id, settings.storage_root
+        )
+        for s in job_samples:
+            all_samples.append((seg_job_id, s))
+
+    if not all_samples:
         raise ValueError(
-            f"Segmentation job {segmentation_job_id} is not complete "
-            f"(status={seg_job.status})"
+            "No corrected regions found across the provided segmentation jobs"
         )
 
-    upstream = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
-    if upstream is None:
-        raise ValueError(
-            f"Upstream region detection job {seg_job.region_detection_job_id} not found"
-        )
+    n_jobs = len(segmentation_job_ids)
+    first_id = segmentation_job_ids[0]
+    if name:
+        dataset_name = name
+    elif n_jobs == 1:
+        dataset_name = f"corrections-{first_id[:8]}"
+    else:
+        dataset_name = f"corrections-{n_jobs}jobs-{first_id[:8]}"
 
-    samples = await collect_corrected_samples(
-        session, segmentation_job_id, settings.storage_root
-    )
-    if not samples:
-        raise ValueError(
-            f"No corrected regions found for segmentation job {segmentation_job_id}"
-        )
-
-    dataset_name = name or f"corrections-{segmentation_job_id[:8]}"
     dataset = SegmentationTrainingDataset(name=dataset_name, description=description)
     session.add(dataset)
     await session.flush()
 
-    for s in samples:
+    for job_id, s in all_samples:
         session.add(
             SegmentationTrainingSample(
                 training_dataset_id=dataset.id,
@@ -907,9 +926,9 @@ async def create_dataset_from_corrections(
                 crop_end_sec=s.crop_end_sec,
                 events_json=s.events_json,
                 source="boundary_correction",
-                source_ref=segmentation_job_id,
+                source_ref=job_id,
             )
         )
 
     await session.commit()
-    return dataset, len(samples)
+    return dataset, len(all_samples)

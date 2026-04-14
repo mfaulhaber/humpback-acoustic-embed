@@ -315,7 +315,7 @@ class SegmentationTrainingDatasetSummary(BaseModel):
 class CreateDatasetFromCorrectionsRequest(BaseModel):
     """Request body for creating a training dataset from boundary corrections."""
 
-    segmentation_job_id: str
+    segmentation_job_ids: list[str] = Field(min_length=1)
     name: Optional[str] = None
     description: Optional[str] = None
 

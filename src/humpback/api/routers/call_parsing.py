@@ -517,7 +517,7 @@ async def create_dataset_from_corrections(
     try:
         dataset, sample_count = await service.create_dataset_from_corrections(
             session,
-            segmentation_job_id=request.segmentation_job_id,
+            segmentation_job_ids=request.segmentation_job_ids,
             settings=settings,
             name=request.name,
             description=request.description,
