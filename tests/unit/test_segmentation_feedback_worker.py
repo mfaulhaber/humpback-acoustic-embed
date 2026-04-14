@@ -30,7 +30,7 @@ class _FakeSample:
     end_timestamp: float = 0.0
 
 
-def testapply_corrections_adjust() -> None:
+def test_apply_corrections_adjust() -> None:
     original = [
         Event(
             event_id="e1",
@@ -58,7 +58,7 @@ def testapply_corrections_adjust() -> None:
     assert result[0]["end_sec"] == 11.5
 
 
-def testapply_corrections_add() -> None:
+def test_apply_corrections_add() -> None:
     original: list[Event] = []
 
     @dataclass
@@ -74,7 +74,7 @@ def testapply_corrections_add() -> None:
     assert result[0]["start_sec"] == 5.0
 
 
-def testapply_corrections_delete() -> None:
+def test_apply_corrections_delete() -> None:
     original = [
         Event(
             event_id="e1",

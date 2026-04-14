@@ -366,6 +366,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count12
         + count13
         + count15
+        + count_stj
         + count16
         + count17
     )
