@@ -75,9 +75,9 @@ def _infer_windowed(
     if total_duration <= max_window_sec:
         return _infer_single(model, audio, feature_config)
 
-    # Estimate total output frames from a full-length pass so the
-    # accumulator has the right size.
-    total_frames = int(np.ceil(total_samples / hop_length))
+    # Match librosa's frame count formula (center=True default):
+    # 1 + floor(n_samples / hop_length).
+    total_frames = 1 + total_samples // hop_length
     prob_sum = np.zeros(total_frames, dtype=np.float64)
     weight = np.zeros(total_frames, dtype=np.float64)
 
