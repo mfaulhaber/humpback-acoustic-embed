@@ -12,11 +12,11 @@ from humpback.call_parsing.segmentation.dataset import (
     compute_pos_weight,
     SegmentationSampleDataset,
 )
-from humpback.schemas.call_parsing import SegmentationFeatureConfig
-from humpback.workers.event_segmentation_feedback_worker import (
-    _apply_corrections,
-    _subdivide_region,
+from humpback.call_parsing.segmentation.extraction import (
+    apply_corrections,
+    subdivide_region,
 )
+from humpback.schemas.call_parsing import SegmentationFeatureConfig
 from humpback.call_parsing.types import Event
 
 
@@ -30,7 +30,7 @@ class _FakeSample:
     end_timestamp: float = 0.0
 
 
-def test_apply_corrections_adjust() -> None:
+def testapply_corrections_adjust() -> None:
     original = [
         Event(
             event_id="e1",
@@ -52,13 +52,13 @@ def test_apply_corrections_adjust() -> None:
     corr = [
         _Corr(event_id="e1", correction_type="adjust", start_sec=10.5, end_sec=11.5)
     ]
-    result = _apply_corrections(original, corr)  # type: ignore[arg-type]
+    result = apply_corrections(original, corr)  # type: ignore[arg-type]
     assert len(result) == 1
     assert result[0]["start_sec"] == 10.5
     assert result[0]["end_sec"] == 11.5
 
 
-def test_apply_corrections_add() -> None:
+def testapply_corrections_add() -> None:
     original: list[Event] = []
 
     @dataclass
@@ -69,12 +69,12 @@ def test_apply_corrections_add() -> None:
         end_sec: float | None
 
     corr = [_Corr(event_id="new1", correction_type="add", start_sec=5.0, end_sec=7.0)]
-    result = _apply_corrections(original, corr)  # type: ignore[arg-type]
+    result = apply_corrections(original, corr)  # type: ignore[arg-type]
     assert len(result) == 1
     assert result[0]["start_sec"] == 5.0
 
 
-def test_apply_corrections_delete() -> None:
+def testapply_corrections_delete() -> None:
     original = [
         Event(
             event_id="e1",
@@ -96,13 +96,13 @@ def test_apply_corrections_delete() -> None:
     corr = [
         _Corr(event_id="e1", correction_type="delete", start_sec=None, end_sec=None)
     ]
-    result = _apply_corrections(original, corr)  # type: ignore[arg-type]
+    result = apply_corrections(original, corr)  # type: ignore[arg-type]
     assert len(result) == 0
 
 
 def test_subdivide_short_region_returns_single_sample() -> None:
     events = [{"start_sec": 5.0, "end_sec": 7.0}]
-    samples = _subdivide_region(
+    samples = subdivide_region(
         crop_start=0.0,
         crop_end=20.0,
         corrected_events=events,
@@ -122,7 +122,7 @@ def test_subdivide_long_region_creates_multiple_crops() -> None:
         {"start_sec": 40.0, "end_sec": 42.0},
         {"start_sec": 70.0, "end_sec": 72.0},
     ]
-    samples = _subdivide_region(
+    samples = subdivide_region(
         crop_start=0.0,
         crop_end=90.0,
         corrected_events=events,
@@ -147,7 +147,7 @@ def test_subdivide_filters_events_to_window() -> None:
         {"start_sec": 5.0, "end_sec": 7.0},
         {"start_sec": 50.0, "end_sec": 52.0},
     ]
-    samples = _subdivide_region(
+    samples = subdivide_region(
         crop_start=0.0,
         crop_end=60.0,
         corrected_events=events,

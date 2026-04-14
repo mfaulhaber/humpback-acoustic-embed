@@ -10,7 +10,10 @@ deletion across the four child tables.
 from __future__ import annotations
 
 import shutil
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from humpback.models.segmentation_training import SegmentationTrainingDataset
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -906,3 +909,75 @@ async def delete_classifier_model(
     await session.delete(model)
     await session.commit()
     return True
+
+
+# ---- Dataset extraction from corrections -----------------------------------
+
+
+async def create_dataset_from_corrections(
+    session: AsyncSession,
+    segmentation_job_id: str,
+    settings: Settings,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+) -> tuple["SegmentationTrainingDataset", int]:
+    """Extract corrections into a new training dataset.
+
+    Returns ``(dataset, sample_count)``.
+
+    Raises ``ValueError`` if the segmentation job is not found, not
+    complete, or has no corrected regions.
+    """
+    from humpback.call_parsing.segmentation.extraction import (
+        collect_corrected_samples,
+    )
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingDataset,
+        SegmentationTrainingSample,
+    )
+
+    seg_job = await session.get(EventSegmentationJob, segmentation_job_id)
+    if seg_job is None:
+        raise ValueError(f"Segmentation job {segmentation_job_id} not found")
+    if seg_job.status != "complete":
+        raise ValueError(
+            f"Segmentation job {segmentation_job_id} is not complete "
+            f"(status={seg_job.status})"
+        )
+
+    upstream = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
+    if upstream is None:
+        raise ValueError(
+            f"Upstream region detection job {seg_job.region_detection_job_id} not found"
+        )
+
+    samples = await collect_corrected_samples(
+        session, segmentation_job_id, settings.storage_root
+    )
+    if not samples:
+        raise ValueError(
+            f"No corrected regions found for segmentation job {segmentation_job_id}"
+        )
+
+    dataset_name = name or f"corrections-{segmentation_job_id[:8]}"
+    dataset = SegmentationTrainingDataset(name=dataset_name, description=description)
+    session.add(dataset)
+    await session.flush()
+
+    for s in samples:
+        session.add(
+            SegmentationTrainingSample(
+                training_dataset_id=dataset.id,
+                hydrophone_id=s.hydrophone_id,
+                start_timestamp=s.start_timestamp,
+                end_timestamp=s.end_timestamp,
+                crop_start_sec=s.crop_start_sec,
+                crop_end_sec=s.crop_end_sec,
+                events_json=s.events_json,
+                source="boundary_correction",
+                source_ref=segmentation_job_id,
+            )
+        )
+
+    await session.commit()
+    return dataset, len(samples)
