@@ -13,14 +13,18 @@ import {
   clearBoundaryCorrections,
   fetchSegmentationModels,
   deleteSegmentationModel,
-  fetchSegmentationFeedbackTrainingJobs,
-  createSegmentationFeedbackTrainingJob,
-  deleteSegmentationFeedbackTrainingJob,
+  fetchSegmentationJobsWithCorrectionCounts,
+  fetchSegmentationTrainingDatasets,
+  createDatasetFromCorrections,
+  createSegmentationTrainingJob,
+  quickRetrain,
 } from "@/api/client";
 import type {
   CreateRegionJobRequest,
   CreateSegmentationJobRequest,
-  CreateSegmentationFeedbackTrainingJobRequest,
+  CreateDatasetFromCorrectionsRequest,
+  CreateSegmentationTrainingJobRequest,
+  QuickRetrainRequest,
   BoundaryCorrectionRequest,
   ModelConfig,
 } from "@/api/types";
@@ -174,39 +178,58 @@ export function useDeleteSegmentationModel() {
   });
 }
 
-// ---- Segmentation Feedback Training Jobs ----
+// ---- Multi-job segmentation training ----
 
-const SEG_FEEDBACK_JOBS_KEY = ["segmentation-feedback-training-jobs"];
+const SEG_CORRECTION_COUNTS_KEY = ["segmentation-jobs-correction-counts"];
+const SEG_TRAINING_DATASETS_KEY = ["segmentation-training-datasets"];
+const SEG_TRAINING_JOBS_KEY = ["segmentation-training-jobs"];
 
-export function useSegmentationFeedbackTrainingJobs(
-  refetchInterval?: number,
-) {
+export function useSegmentationJobsWithCorrectionCounts() {
   return useQuery({
-    queryKey: SEG_FEEDBACK_JOBS_KEY,
-    queryFn: fetchSegmentationFeedbackTrainingJobs,
-    refetchInterval,
+    queryKey: SEG_CORRECTION_COUNTS_KEY,
+    queryFn: fetchSegmentationJobsWithCorrectionCounts,
   });
 }
 
-export function useCreateSegmentationFeedbackTrainingJob() {
+export function useCreateSegmentationTrainingDataset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreateSegmentationFeedbackTrainingJobRequest) =>
-      createSegmentationFeedbackTrainingJob(body),
+    mutationFn: (body: CreateDatasetFromCorrectionsRequest) =>
+      createDatasetFromCorrections(body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SEG_FEEDBACK_JOBS_KEY });
+      qc.invalidateQueries({ queryKey: SEG_TRAINING_DATASETS_KEY });
+    },
+  });
+}
+
+export function useSegmentationTrainingDatasets() {
+  return useQuery({
+    queryKey: SEG_TRAINING_DATASETS_KEY,
+    queryFn: fetchSegmentationTrainingDatasets,
+  });
+}
+
+export function useCreateSegmentationTrainingJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateSegmentationTrainingJobRequest) =>
+      createSegmentationTrainingJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: SEG_TRAINING_JOBS_KEY });
       qc.invalidateQueries({ queryKey: SEG_MODELS_KEY });
     },
   });
 }
 
-export function useDeleteSegmentationFeedbackTrainingJob() {
+export function useQuickRetrain() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) =>
-      deleteSegmentationFeedbackTrainingJob(jobId),
+    mutationFn: (body: QuickRetrainRequest) => quickRetrain(body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SEG_FEEDBACK_JOBS_KEY });
+      qc.invalidateQueries({ queryKey: SEG_TRAINING_DATASETS_KEY });
+      qc.invalidateQueries({ queryKey: SEG_TRAINING_JOBS_KEY });
+      qc.invalidateQueries({ queryKey: SEG_MODELS_KEY });
     },
   });
 }
+

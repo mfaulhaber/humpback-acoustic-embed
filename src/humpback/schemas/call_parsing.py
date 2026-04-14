@@ -318,6 +318,7 @@ class SegmentationTrainingDatasetSummary(BaseModel):
     id: str
     name: str
     sample_count: int
+    source_job_count: int
     created_at: datetime
 
 

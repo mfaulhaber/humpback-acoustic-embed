@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from humpback.models.segmentation_training import SegmentationTrainingDataset
+    from humpback.schemas.call_parsing import SegmentationTrainingConfig
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -535,6 +536,9 @@ async def list_segmentation_training_datasets(session: AsyncSession):
         select(
             SegmentationTrainingSample.training_dataset_id,
             func.count().label("sample_count"),
+            func.count(SegmentationTrainingSample.source_ref.distinct()).label(
+                "source_job_count"
+            ),
         )
         .group_by(SegmentationTrainingSample.training_dataset_id)
         .subquery()
@@ -545,6 +549,7 @@ async def list_segmentation_training_datasets(session: AsyncSession):
             SegmentationTrainingDataset.name,
             SegmentationTrainingDataset.created_at,
             func.coalesce(count_subq.c.sample_count, 0).label("sample_count"),
+            func.coalesce(count_subq.c.source_job_count, 0).label("source_job_count"),
         )
         .outerjoin(
             count_subq,
@@ -1000,6 +1005,36 @@ async def create_dataset_from_corrections(
 
     await session.commit()
     return dataset, len(all_samples)
+
+
+async def create_segmentation_training_job(
+    session: AsyncSession,
+    training_dataset_id: str,
+    config: "SegmentationTrainingConfig | None" = None,  # noqa: F821
+):
+    """Queue a segmentation training job for an existing dataset."""
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingDataset,
+        SegmentationTrainingJob,
+    )
+    from humpback.schemas.call_parsing import SegmentationTrainingConfig
+
+    dataset = await session.get(SegmentationTrainingDataset, training_dataset_id)
+    if dataset is None:
+        raise ValueError(f"Training dataset {training_dataset_id!r} not found")
+
+    cfg = (
+        config
+        if isinstance(config, SegmentationTrainingConfig)
+        else SegmentationTrainingConfig()
+    )
+    job = SegmentationTrainingJob(
+        training_dataset_id=training_dataset_id,
+        config_json=cfg.model_dump_json(),
+    )
+    session.add(job)
+    await session.commit()
+    return job
 
 
 async def create_dataset_and_train(

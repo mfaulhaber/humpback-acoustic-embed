@@ -1,11 +1,13 @@
+import { SegmentationJobPicker } from "./SegmentationJobPicker";
+import { TrainingDatasetTable } from "./TrainingDatasetTable";
 import { SegmentModelTable } from "./SegmentModelTable";
-import { FeedbackTrainingJobTable } from "./FeedbackTrainingJobTable";
 
 export function SegmentTrainingPage() {
   return (
     <div className="space-y-6">
+      <SegmentationJobPicker />
+      <TrainingDatasetTable />
       <SegmentModelTable />
-      <FeedbackTrainingJobTable />
     </div>
   );
 }

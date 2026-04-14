@@ -38,8 +38,10 @@ from humpback.schemas.call_parsing import (
     CreateEventClassificationJobRequest,
     CreateRegionJobRequest,
     CreateSegmentationJobRequest,
+    CreateSegmentationTrainingJobRequest,
     QuickRetrainRequest,
     QuickRetrainResponse,
+    SegmentationTrainingJobResponse,
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
     RegionDetectionJobSummary,
@@ -545,6 +547,26 @@ async def create_dataset_from_corrections(
         sample_count=sample_count,
         created_at=dataset.created_at,
     )
+
+
+@router.post(
+    "/segmentation-training-jobs",
+    response_model=SegmentationTrainingJobResponse,
+    status_code=201,
+)
+async def create_segmentation_training_job(
+    request: CreateSegmentationTrainingJobRequest,
+    session: SessionDep,
+):
+    try:
+        job = await service.create_segmentation_training_job(
+            session,
+            training_dataset_id=request.training_dataset_id,
+            config=request.config,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SegmentationTrainingJobResponse.model_validate(job)
 
 
 @router.post(

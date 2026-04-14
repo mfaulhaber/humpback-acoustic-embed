@@ -1337,11 +1337,58 @@ export interface SegmentationTrainingConfig {
   seed: number;
 }
 
-export interface SegmentationFeedbackTrainingJob {
+// ---- Multi-job segmentation training ----
+
+export interface SegmentationJobWithCorrectionCount {
   id: string;
-  status: "queued" | "running" | "complete" | "failed";
-  source_job_ids: string;
+  status: string;
+  region_detection_job_id: string;
+  segmentation_model_id: string | null;
   config_json: string | null;
+  parent_run_id: string | null;
+  event_count: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  correction_count: number;
+  hydrophone_id: string | null;
+  start_timestamp: number | null;
+  end_timestamp: number | null;
+}
+
+export interface CreateDatasetFromCorrectionsRequest {
+  segmentation_job_ids: string[];
+  name?: string;
+  description?: string;
+}
+
+export interface CreateDatasetFromCorrectionsResponse {
+  id: string;
+  name: string;
+  sample_count: number;
+  created_at: string;
+}
+
+export interface SegmentationTrainingDatasetSummary {
+  id: string;
+  name: string;
+  sample_count: number;
+  source_job_count: number;
+  created_at: string;
+}
+
+export interface CreateSegmentationTrainingJobRequest {
+  training_dataset_id: string;
+  config?: Partial<SegmentationTrainingConfig>;
+}
+
+export interface SegmentationTrainingJob {
+  id: string;
+  status: string;
+  training_dataset_id: string;
+  config_json: string;
   segmentation_model_id: string | null;
   result_summary: string | null;
   error_message: string | null;
@@ -1351,7 +1398,13 @@ export interface SegmentationFeedbackTrainingJob {
   completed_at: string | null;
 }
 
-export interface CreateSegmentationFeedbackTrainingJobRequest {
-  source_job_ids: string[];
-  config?: Partial<SegmentationTrainingConfig>;
+export interface QuickRetrainRequest {
+  segmentation_job_id: string;
 }
+
+export interface QuickRetrainResponse {
+  dataset_id: string;
+  training_job_id: string;
+  sample_count: number;
+}
+

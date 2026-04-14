@@ -95,11 +95,17 @@ import type {
   CreateSegmentationJobRequest,
   SegmentationEvent,
   SegmentationModel,
-  SegmentationFeedbackTrainingJob,
-  CreateSegmentationFeedbackTrainingJobRequest,
   Region,
   BoundaryCorrectionRequest,
   BoundaryCorrectionResponse,
+  SegmentationJobWithCorrectionCount,
+  CreateDatasetFromCorrectionsRequest,
+  CreateDatasetFromCorrectionsResponse,
+  SegmentationTrainingDatasetSummary,
+  CreateSegmentationTrainingJobRequest,
+  SegmentationTrainingJob,
+  QuickRetrainRequest,
+  QuickRetrainResponse,
 } from "./types";
 
 class ApiError extends Error {
@@ -939,21 +945,35 @@ export const deleteSegmentationModel = (modelId: string) =>
     method: "DELETE",
   });
 
-export const fetchSegmentationFeedbackTrainingJobs = () =>
-  api<SegmentationFeedbackTrainingJob[]>(
-    "/call-parsing/segmentation-feedback-training-jobs",
+export const fetchSegmentationJobsWithCorrectionCounts = () =>
+  api<SegmentationJobWithCorrectionCount[]>(
+    "/call-parsing/segmentation-jobs/with-correction-counts",
   );
 
-export const createSegmentationFeedbackTrainingJob = (
-  body: CreateSegmentationFeedbackTrainingJobRequest,
+export const fetchSegmentationTrainingDatasets = () =>
+  api<SegmentationTrainingDatasetSummary[]>(
+    "/call-parsing/segmentation-training-datasets",
+  );
+
+export const createDatasetFromCorrections = (
+  body: CreateDatasetFromCorrectionsRequest,
 ) =>
-  post<SegmentationFeedbackTrainingJob>(
-    "/call-parsing/segmentation-feedback-training-jobs",
+  post<CreateDatasetFromCorrectionsResponse>(
+    "/call-parsing/segmentation-training-datasets/from-corrections",
     body,
   );
 
-export const deleteSegmentationFeedbackTrainingJob = (jobId: string) =>
-  api<{ status: string }>(
-    `/call-parsing/segmentation-feedback-training-jobs/${jobId}`,
-    { method: "DELETE" },
+export const createSegmentationTrainingJob = (
+  body: CreateSegmentationTrainingJobRequest,
+) =>
+  post<SegmentationTrainingJob>(
+    "/call-parsing/segmentation-training-jobs",
+    body,
   );
+
+export const quickRetrain = (body: QuickRetrainRequest) =>
+  post<QuickRetrainResponse>(
+    "/call-parsing/segmentation-training/quick-retrain",
+    body,
+  );
+

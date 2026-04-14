@@ -464,3 +464,42 @@ async def test_quick_retrain_missing_job_returns_404(client: AsyncClient, app_se
         json={"segmentation_job_id": "nonexistent"},
     )
     assert resp.status_code == 404
+
+
+# ---- Segmentation training job from existing dataset ----------------------
+
+
+@pytest.mark.asyncio
+async def test_create_training_job_from_dataset(client: AsyncClient, app_settings):
+    """POST /segmentation-training-jobs creates a queued job for an existing dataset."""
+    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+
+    # Create a dataset first
+    ds_resp = await client.post(
+        f"{BASE}/segmentation-training-datasets/from-corrections",
+        json={"segmentation_job_ids": [seg_job_id]},
+    )
+    assert ds_resp.status_code == 201
+    dataset_id = ds_resp.json()["id"]
+
+    # Create a training job from the dataset
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={"training_dataset_id": dataset_id},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["training_dataset_id"] == dataset_id
+    assert data["status"] == "queued"
+    assert "id" in data
+
+
+@pytest.mark.asyncio
+async def test_create_training_job_missing_dataset_returns_404(
+    client: AsyncClient, app_settings
+):
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={"training_dataset_id": "nonexistent"},
+    )
+    assert resp.status_code == 404
