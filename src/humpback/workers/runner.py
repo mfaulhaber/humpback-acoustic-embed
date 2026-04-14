@@ -337,29 +337,6 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
-        # Then segmentation feedback training jobs (Pass 2 retrain)
-        sftjob = None
-        async with session_factory() as session:
-            from humpback.workers.queue import (
-                claim_segmentation_feedback_training_job,
-            )
-
-            sftjob = await claim_segmentation_feedback_training_job(session)
-        if sftjob:
-            logger.info(f"Segmentation feedback training job {sftjob.id}")
-            from humpback.workers.event_segmentation_feedback_worker import (
-                run_event_segmentation_feedback_training,
-            )
-
-            async with session_factory() as session:
-                await run_event_segmentation_feedback_training(
-                    session, sftjob, settings
-                )
-            claimed = True
-
-        if claimed:
-            continue
-
         # Then classifier feedback training jobs (Pass 3 retrain)
         cftjob = None
         async with session_factory() as session:

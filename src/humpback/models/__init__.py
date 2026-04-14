@@ -10,7 +10,6 @@ from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.feedback_training import (
     EventBoundaryCorrection,
     EventClassifierTrainingJob,
-    EventSegmentationTrainingJob,
     EventTypeCorrection,
 )
 from humpback.models.hyperparameter import (
@@ -43,7 +42,6 @@ __all__ = [
     "EventClassificationJob",
     "EventClassifierTrainingJob",
     "EventSegmentationJob",
-    "EventSegmentationTrainingJob",
     "EventTypeCorrection",
     "HyperparameterManifest",
     "HyperparameterSearchJob",

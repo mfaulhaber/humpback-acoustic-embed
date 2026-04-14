@@ -20,7 +20,6 @@ from humpback.models.vocalization import VocalizationClassifierModel
 from humpback.schemas.call_parsing import (
     BoundaryCorrection,
     CreateClassifierTrainingJobRequest,
-    CreateSegmentationFeedbackTrainingJobRequest,
     TypeCorrection,
 )
 from humpback.services.call_parsing import (
@@ -29,10 +28,8 @@ from humpback.services.call_parsing import (
     clear_boundary_corrections,
     clear_type_corrections,
     create_classifier_training_job,
-    create_segmentation_feedback_training_job,
     delete_classifier_model,
     delete_classifier_training_job,
-    delete_segmentation_feedback_training_job,
     list_boundary_corrections,
     list_classifier_models,
     list_type_corrections,
@@ -121,11 +118,6 @@ def test_type_correction_accepts_null_type_name():
 def test_type_correction_accepts_string_type_name():
     c = TypeCorrection(event_id="e1", type_name="upcall")
     assert c.type_name == "upcall"
-
-
-def test_create_segmentation_feedback_request_rejects_empty_ids():
-    with pytest.raises(ValidationError):
-        CreateSegmentationFeedbackTrainingJobRequest(source_job_ids=[])
 
 
 def test_create_classifier_request_rejects_empty_ids():
@@ -363,57 +355,6 @@ async def test_clear_type_removes_all(session):
 
 
 # ---- Task 4: Service layer — training jobs + model management --------------
-
-
-async def test_create_segmentation_feedback_training_job_happy(session):
-    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
-    session.add(rd)
-    await session.flush()
-    es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
-    session.add(es)
-    await session.commit()
-
-    req = CreateSegmentationFeedbackTrainingJobRequest(source_job_ids=[es.id])
-    job = await create_segmentation_feedback_training_job(session, req)
-    await session.commit()
-
-    assert job.status == "queued"
-    assert json.loads(job.source_job_ids) == [es.id]
-
-
-async def test_create_segmentation_feedback_training_404_missing(session):
-    req = CreateSegmentationFeedbackTrainingJobRequest(source_job_ids=["nonexistent"])
-    with pytest.raises(CallParsingFKError):
-        await create_segmentation_feedback_training_job(session, req)
-
-
-async def test_create_segmentation_feedback_training_409_not_complete(session):
-    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
-    session.add(rd)
-    await session.flush()
-    es = EventSegmentationJob(region_detection_job_id=rd.id, status="running")
-    session.add(es)
-    await session.commit()
-
-    req = CreateSegmentationFeedbackTrainingJobRequest(source_job_ids=[es.id])
-    with pytest.raises(CallParsingStateError):
-        await create_segmentation_feedback_training_job(session, req)
-
-
-async def test_delete_segmentation_feedback_training_job(session):
-    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
-    session.add(rd)
-    await session.flush()
-    es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
-    session.add(es)
-    await session.commit()
-
-    req = CreateSegmentationFeedbackTrainingJobRequest(source_job_ids=[es.id])
-    job = await create_segmentation_feedback_training_job(session, req)
-    await session.commit()
-
-    assert await delete_segmentation_feedback_training_job(session, job.id) is True
-    assert await delete_segmentation_feedback_training_job(session, job.id) is False
 
 
 async def test_create_classifier_training_job_happy(session):

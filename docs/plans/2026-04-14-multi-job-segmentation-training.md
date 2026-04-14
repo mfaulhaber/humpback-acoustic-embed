@@ -34,12 +34,12 @@
 - Modify: `src/humpback/schemas/call_parsing.py` — remove `CreateSegmentationFeedbackTrainingJobRequest`, `SegmentationFeedbackTrainingJobResponse`
 
 **Acceptance criteria:**
-- [ ] No references to `EventSegmentationTrainingJob` remain in `src/humpback/` (except the migration files)
-- [ ] No references to `event_segmentation_feedback_worker` remain
-- [ ] No references to `segmentation-feedback-training-jobs` endpoints remain
-- [ ] `EventBoundaryCorrection` and `EventClassifierTrainingJob` in `feedback_training.py` are untouched
-- [ ] Pyright passes on all modified files
-- [ ] Existing tests updated — remove or adapt tests in `tests/unit/test_segmentation_feedback_worker.py` and any feedback training references in `tests/unit/test_feedback_training_schemas_service.py`, `tests/integration/test_call_parsing_router.py`
+- [x] No references to `EventSegmentationTrainingJob` remain in `src/humpback/` (except the migration files)
+- [x] No references to `event_segmentation_feedback_worker` remain
+- [x] No references to `segmentation-feedback-training-jobs` endpoints remain
+- [x] `EventBoundaryCorrection` and `EventClassifierTrainingJob` in `feedback_training.py` are untouched
+- [x] Pyright passes on all modified files
+- [x] Existing tests updated — removed segmentation feedback tests from `test_feedback_training_schemas_service.py`, `test_call_parsing_router.py`, `test_call_parsing_workers.py`
 
 **Tests needed:**
 - Verify removed endpoints return 404/405 (or just remove the tests that call them)
