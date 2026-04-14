@@ -297,6 +297,23 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count15:
         logger.warning(f"Recovered {count15} stale event segmentation job(s)")
 
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    result_stj = await session.execute(
+        update(SegmentationTrainingJob)
+        .where(
+            SegmentationTrainingJob.status == "running",
+            SegmentationTrainingJob.updated_at < cutoff,
+        )
+        .values(
+            status="queued",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_stj = _rowcount(result_stj)
+    if count_stj:
+        logger.warning(f"Recovered {count_stj} stale segmentation training job(s)")
+
     from humpback.models.feedback_training import (
         EventClassifierTrainingJob,
         EventSegmentationTrainingJob,
@@ -801,6 +818,23 @@ async def claim_event_classification_job(session: AsyncSession):
             queued_value="queued",
             running_value="running",
             order_attr=EventClassificationJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_segmentation_training_job(session: AsyncSession):
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            SegmentationTrainingJob,
+            status_attr=SegmentationTrainingJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=SegmentationTrainingJob.created_at,
         )
         if job is not None:
             return job
