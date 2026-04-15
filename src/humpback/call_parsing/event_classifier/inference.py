@@ -28,7 +28,16 @@ from humpback.schemas.call_parsing import SegmentationFeatureConfig
 
 logger = logging.getLogger(__name__)
 
-EventAudioLoader = Callable[[Event], np.ndarray]
+EventAudioLoader = Callable[[Event], tuple[np.ndarray, float]]
+"""Callable returning ``(audio, audio_start_sec)`` for one event.
+
+``audio`` is a 1-D float array at the feature config's sample rate.
+``audio_start_sec`` is the time offset of the first sample in the
+source's coordinate system.  For file-based sources this is ``0.0``;
+for hydrophone sources it is the start of the loaded audio chunk.
+``_extract_event_features`` subtracts this offset so that
+``event.start_sec`` maps to the correct sample index.
+"""
 
 
 def load_event_classifier(
@@ -71,11 +80,12 @@ def _extract_event_features(
     event: Event,
     audio: np.ndarray,
     feature_config: SegmentationFeatureConfig,
+    audio_start_sec: float = 0.0,
 ) -> torch.Tensor:
     """Crop audio at event bounds, extract log-mel, return ``(1, n_mels, T)``."""
     sr = feature_config.sample_rate
-    start_sample = max(0, int(round(event.start_sec * sr)))
-    end_sample = min(len(audio), int(round(event.end_sec * sr)))
+    start_sample = max(0, int(round((event.start_sec - audio_start_sec) * sr)))
+    end_sample = min(len(audio), int(round((event.end_sec - audio_start_sec) * sr)))
     if end_sample <= start_sample:
         end_sample = min(len(audio), start_sample + sr)
 
@@ -110,8 +120,8 @@ def classify_events(
 
     feature_list: list[torch.Tensor] = []
     for event in events:
-        audio = audio_loader(event)
-        feat = _extract_event_features(event, audio, feature_config)
+        audio, audio_start = audio_loader(event)
+        feat = _extract_event_features(event, audio, feature_config, audio_start)
         feature_list.append(feat)
 
     all_scores: list[np.ndarray] = []

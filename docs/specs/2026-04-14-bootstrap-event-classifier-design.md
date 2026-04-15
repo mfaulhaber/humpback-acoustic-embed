@@ -42,17 +42,15 @@ Feedback training → real model
 
 1. **Read DB** — query `SegmentationTrainingSample` rows for the given dataset ID, plus all `VocalizationType` names from the `vocalization_types` table.
 
-2. **Flatten events** — parse each sample's `events_json` to extract individual events with `(start_sec, end_sec)`. Each event inherits its parent sample's `hydrophone_id`, `start_timestamp`, and `end_timestamp`.
+2. **Flatten events** — parse each sample's `events_json` to extract individual events with `(start_sec, end_sec)`. Event times are already job-relative (offsets from `start_timestamp`), the same coordinate system as `crop_start_sec` — no offset adjustment needed. Each event inherits its parent sample's `hydrophone_id`, `start_timestamp`, and `end_timestamp`.
 
-3. **Coordinate offset** — event times in `events_json` are relative to the crop. Convert to region-relative times by adding the sample's `crop_start_sec`: `event.start_sec + sample.crop_start_sec`.
+3. **Assign random types** — for each event, assign a random vocalization type. Use round-robin assignment first to guarantee every type has at least `min_examples_per_type` (default 10) events, then assign remaining events uniformly at random. This prevents types from being filtered out during training.
 
-4. **Assign random types** — for each event, assign a random vocalization type. Use round-robin assignment first to guarantee every type has at least `min_examples_per_type` (default 10) events, then assign remaining events uniformly at random. This prevents types from being filtered out during training.
+4. **Build `_ClassifierSample` objects** — each sample exposes `.start_sec`, `.end_sec`, `.type_index`, `.hydrophone_id`, `.start_timestamp`, `.end_timestamp`, matching the interface expected by `train_event_classifier()`.
 
-5. **Build `_ClassifierSample` objects** — each sample exposes `.start_sec`, `.end_sec`, `.type_index`, `.hydrophone_id`, `.start_timestamp`, `.end_timestamp`, matching the interface expected by `train_event_classifier()`.
+5. **Train** — call `train_event_classifier()` from `humpback.call_parsing.event_classifier.trainer` with default `EventClassifierTrainingConfig` and the full vocabulary.
 
-6. **Train** — call `train_event_classifier()` from `humpback.call_parsing.event_classifier.trainer` with default `EventClassifierTrainingConfig` and the full vocabulary.
-
-7. **Register model** — insert a `VocalizationClassifierModel` row with:
+6. **Register model** — insert a `VocalizationClassifierModel` row with:
    - `model_family='pytorch_event_cnn'`
    - `input_mode='segmented_event'`
    - `vocabulary_snapshot` — JSON array of type names

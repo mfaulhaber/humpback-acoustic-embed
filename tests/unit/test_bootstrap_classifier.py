@@ -51,7 +51,8 @@ class _FakeVocType:
 
 
 class TestFlattenEvents:
-    def test_basic_offset(self):
+    def test_events_already_job_relative(self):
+        """Event times in events_json are already job-relative, no offset needed."""
         sample = _FakeSample(
             hydrophone_id="hydro-1",
             start_timestamp=1000.0,
@@ -59,17 +60,16 @@ class TestFlattenEvents:
             crop_start_sec=5.0,
             events_json=json.dumps(
                 [
-                    {"start_sec": 1.0, "end_sec": 2.5},
-                    {"start_sec": 3.0, "end_sec": 4.0},
+                    {"start_sec": 6.0, "end_sec": 7.5},
+                    {"start_sec": 8.0, "end_sec": 9.0},
                 ]
             ),
         )
         events = flatten_events([sample])  # type: ignore[arg-type]
 
         assert len(events) == 2
-        # First event: 1.0 + 5.0 = 6.0, 2.5 + 5.0 = 7.5
+        # Times pass through unchanged — already in job-relative coords
         assert events[0] == (6.0, 7.5, "hydro-1", 1000.0, 2000.0)
-        # Second event: 3.0 + 5.0 = 8.0, 4.0 + 5.0 = 9.0
         assert events[1] == (8.0, 9.0, "hydro-1", 1000.0, 2000.0)
 
     def test_multiple_samples(self):
@@ -91,7 +91,8 @@ class TestFlattenEvents:
 
         assert len(events) == 2
         assert events[0][2] == "h1"
-        assert events[1] == (10.5, 11.5, "h2", 300.0, 400.0)
+        # Event times pass through unchanged (already job-relative)
+        assert events[1] == (0.5, 1.5, "h2", 300.0, 400.0)
 
     def test_empty_events_json(self):
         sample = _FakeSample(

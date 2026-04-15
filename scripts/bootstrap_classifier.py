@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import random
+import uuid
 from dataclasses import dataclass
 import numpy as np
 from dotenv import load_dotenv
@@ -67,7 +68,11 @@ class _BootstrapSample:
 def flatten_events(
     samples: list[SegmentationTrainingSample],
 ) -> list[tuple[float, float, str, float, float]]:
-    """Parse events_json from training samples and offset to region-relative times.
+    """Parse events_json from training samples into flat event tuples.
+
+    Event times in ``events_json`` are already job-relative (offsets from
+    ``start_timestamp``), the same coordinate system as ``crop_start_sec``.
+    No offset adjustment is needed.
 
     Returns list of (start_sec, end_sec, hydrophone_id, start_timestamp, end_timestamp).
     """
@@ -81,12 +86,10 @@ def flatten_events(
             continue
         parsed = json.loads(sample.events_json)
         for ev in parsed:
-            start = ev["start_sec"] + sample.crop_start_sec
-            end = ev["end_sec"] + sample.crop_start_sec
             events.append(
                 (
-                    start,
-                    end,
+                    ev["start_sec"],
+                    ev["end_sec"],
                     sample.hydrophone_id,
                     sample.start_timestamp,
                     sample.end_timestamp,
@@ -228,8 +231,6 @@ async def run_bootstrap(
     ]
 
     # Prepare model directory
-    import uuid
-
     model_id = str(uuid.uuid4())
     model_dir = settings.storage_root / "vocalization_models" / model_id
     model_dir.mkdir(parents=True, exist_ok=True)

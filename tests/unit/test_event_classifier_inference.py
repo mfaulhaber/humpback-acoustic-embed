@@ -111,8 +111,8 @@ class TestClassifyEvents:
 
         audio = _make_audio(5.0)
 
-        def _load(_e: object) -> np.ndarray:
-            return audio
+        def _load(_e: object) -> tuple[np.ndarray, float]:
+            return audio, 0.0
 
         events = [
             _make_event("ev1", 0.5, 2.0),
@@ -139,8 +139,8 @@ class TestClassifyEvents:
 
         audio = _make_audio(5.0)
 
-        def _load(_e: object) -> np.ndarray:
-            return audio
+        def _load(_e: object) -> tuple[np.ndarray, float]:
+            return audio, 0.0
 
         events = [_make_event("ev1", 1.0, 2.5)]
         typed = classify_events(
@@ -162,8 +162,8 @@ class TestClassifyEvents:
 
         audio = _make_audio(5.0)
 
-        def _load(_e: object) -> np.ndarray:
-            return audio
+        def _load(_e: object) -> tuple[np.ndarray, float]:
+            return audio, 0.0
 
         events = [_make_event("ev1", 0.5, 1.5)]
         typed = classify_events(
@@ -184,8 +184,8 @@ class TestClassifyEvents:
 
         audio = _make_audio(5.0)
 
-        def _load(_e: object) -> np.ndarray:
-            return audio
+        def _load(_e: object) -> tuple[np.ndarray, float]:
+            return audio, 0.0
 
         events = [_make_event("ev1", 0.5, 2.0)]
         typed = classify_events(
@@ -209,7 +209,7 @@ class TestClassifyEvents:
         typed = classify_events(
             model=model,
             events=[],
-            audio_loader=lambda _e: _make_audio(),
+            audio_loader=lambda _e: (_make_audio(), 0.0),
             feature_config=feat_config,
             vocabulary=vocab,
             thresholds=thresholds,
@@ -223,8 +223,8 @@ class TestClassifyEvents:
 
         audio = _make_audio(5.0)
 
-        def _load(_e: object) -> np.ndarray:
-            return audio
+        def _load(_e: object) -> tuple[np.ndarray, float]:
+            return audio, 0.0
 
         very_high_thresholds = {t: 1.0 for t in vocab}
 

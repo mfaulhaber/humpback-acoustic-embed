@@ -73,8 +73,44 @@ def _build_audio_loader(
     raw, sr = decode_audio(path)
     audio = np.asarray(resample(raw, sr, target_sr), dtype=np.float32)
 
-    def _load(_event: Event) -> np.ndarray:
-        return audio
+    def _load(_event: Event) -> tuple[np.ndarray, float]:
+        return audio, 0.0
+
+    return _load
+
+
+def _build_hydrophone_audio_loader(
+    hydrophone_id: str,
+    job_start_ts: float,
+    job_end_ts: float,
+    events: list[Event],
+    target_sr: int,
+    settings: Settings,
+) -> EventAudioLoader:
+    """Pre-load the audio span covering all events and serve from cache."""
+    from humpback.processing.timeline_audio import resolve_timeline_audio
+
+    context = 10.0
+    min_start = min(e.start_sec for e in events)
+    max_end = max(e.end_sec for e in events)
+    load_start = max(0.0, min_start - context)
+    load_end = min(job_end_ts - job_start_ts, max_end + context)
+
+    audio = resolve_timeline_audio(
+        hydrophone_id=hydrophone_id,
+        local_cache_path=str(settings.s3_cache_path or ""),
+        job_start_timestamp=job_start_ts,
+        job_end_timestamp=job_end_ts,
+        start_sec=job_start_ts + load_start,
+        duration_sec=load_end - load_start,
+        target_sr=target_sr,
+        noaa_cache_path=str(settings.noaa_cache_path)
+        if settings.noaa_cache_path
+        else None,
+    )
+
+    def _load(_event: Event) -> tuple[np.ndarray, float]:
+        return audio, load_start
 
     return _load
 
@@ -166,8 +202,14 @@ async def run_event_classification_job(
                 raise ValueError(f"AudioFile {audio_file_id} not found")
             audio_loader = _build_audio_loader(audio_file, 16000, settings.storage_root)
         elif hydrophone_id:
-            raise NotImplementedError(
-                "hydrophone-sourced event classification is not yet supported"
+            audio_loader = await asyncio.to_thread(
+                _build_hydrophone_audio_loader,
+                hydrophone_id=hydrophone_id,
+                job_start_ts=upstream_region.start_timestamp or 0.0,
+                job_end_ts=upstream_region.end_timestamp or 0.0,
+                events=events,
+                target_sr=16000,
+                settings=settings,
             )
         else:
             raise ValueError(

@@ -71,6 +71,13 @@ def _const_loader(audio: np.ndarray):  # noqa: ANN202
     return _load
 
 
+def _const_event_loader(audio: np.ndarray):  # noqa: ANN202
+    def _load(_obj: object) -> tuple[np.ndarray, float]:
+        return audio, 0.0
+
+    return _load
+
+
 def _write_wav(path: Path, duration_sec: float = 5.0) -> None:
     sr = 16000
     n = int(duration_sec * sr)
@@ -133,7 +140,7 @@ class TestTrainAndInfer:
         typed_events = classify_events(
             model=model,
             events=events,
-            audio_loader=_const_loader(audio),
+            audio_loader=_const_event_loader(audio),
             feature_config=feature_config,
             vocabulary=vocabulary,
             thresholds=thresholds,
@@ -158,7 +165,7 @@ class TestTrainAndInfer:
         typed_events = classify_events(
             model=model,
             events=events,
-            audio_loader=_const_loader(audio),
+            audio_loader=_const_event_loader(audio),
             feature_config=feature_config,
             vocabulary=vocabulary,
             thresholds=thresholds,
