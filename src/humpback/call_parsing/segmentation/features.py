@@ -13,10 +13,14 @@ features stay siloed in the Pass 2 subpackage.
 
 from __future__ import annotations
 
+import logging
+
 import librosa
 import numpy as np
 
 from humpback.schemas.call_parsing import SegmentationFeatureConfig
+
+logger = logging.getLogger(__name__)
 
 
 def extract_logmel(audio: np.ndarray, config: SegmentationFeatureConfig) -> np.ndarray:
@@ -56,6 +60,13 @@ def normalize_per_region_zscore(logmel: np.ndarray) -> np.ndarray:
     mean = float(logmel.mean())
     std = float(logmel.std())
     eps = 1e-6
+    if std < eps:
+        logger.warning(
+            "Constant spectrogram detected (mean=%.4f, std=%.2e) — "
+            "likely silent or degenerate audio input",
+            mean,
+            std,
+        )
     normalized = (logmel - mean) / (std + eps)
     return normalized.astype(np.float32, copy=False)
 

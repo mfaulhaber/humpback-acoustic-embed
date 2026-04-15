@@ -210,16 +210,20 @@ def _build_audio_loader(settings: Settings) -> Any:
 
     target_sr = 16000
 
-    def _load(sample: Any) -> np.ndarray:
+    def _load(sample: Any) -> tuple[np.ndarray, float]:
         hydro_id = sample.hydrophone_id
         start_ts = float(sample.start_timestamp)
         end_ts = float(sample.end_timestamp)
-        duration = sample.end_sec - sample.start_sec
+        # Event start_sec/end_sec are relative offsets from job start.
+        # Convert to absolute epoch timestamps for resolve_timeline_audio.
+        abs_start = start_ts + sample.start_sec
+        abs_end = start_ts + sample.end_sec
+        duration = abs_end - abs_start
         context_sec = max(10.0, duration)
         pad = (context_sec - duration) / 2.0
-        ctx_start = max(start_ts, start_ts + sample.start_sec - pad)
-        ctx_end = min(end_ts, start_ts + sample.end_sec + pad)
-        ctx_duration = ctx_end - ctx_start
+        ctx_start = max(start_ts, abs_start - pad)
+        ctx_end = min(end_ts, abs_end + pad)
+        ctx_duration = max(0.0, ctx_end - ctx_start)
 
         audio = resolve_timeline_audio(
             hydrophone_id=hydro_id,
@@ -233,7 +237,11 @@ def _build_audio_loader(settings: Settings) -> Any:
             if settings.noaa_cache_path
             else None,
         )
-        return audio
+        # Return audio_start as the relative offset from job start so
+        # the dataset's subtraction (sample.start_sec - audio_start)
+        # yields the correct position within the loaded audio buffer.
+        audio_start_rel = ctx_start - start_ts
+        return audio, audio_start_rel
 
     return _load
 

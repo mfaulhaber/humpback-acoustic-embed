@@ -374,6 +374,7 @@ def train_event_classifier(
         val_loader=val_loader,
         callbacks=callbacks,
         device=resolved_device,
+        grad_clip=config.grad_clip,
     )
 
     if fit_result.best_model_state is not None:

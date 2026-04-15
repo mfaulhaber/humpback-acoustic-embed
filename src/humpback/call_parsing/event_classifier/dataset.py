@@ -10,6 +10,7 @@ batch.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -23,11 +24,18 @@ from humpback.call_parsing.segmentation.features import (
 )
 from humpback.schemas.call_parsing import SegmentationFeatureConfig
 
-AudioLoader = Callable[[Any], np.ndarray]
-"""Callable that fetches the full audio for one training sample.
+logger = logging.getLogger(__name__)
 
-Returns a 1-D float array already resampled to the feature config's
-sample rate.  The dataset crops the event window from this array.
+AudioLoader = Callable[[Any], tuple[np.ndarray, float]]
+"""Callable returning ``(audio, audio_start_sec)`` for one training sample.
+
+``audio`` is a 1-D float array at the feature config's sample rate.
+``audio_start_sec`` is the time offset of the first audio sample,
+expressed in the same coordinate system as ``sample.start_sec``.
+For file-based sources this is ``0.0``; for hydrophone sources it is
+the job-relative offset of the loaded context window's start.
+The dataset computes ``sample.start_sec - audio_start_sec`` to find
+the correct sample index within the audio buffer.
 """
 
 
@@ -58,15 +66,32 @@ class EventCropDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         sample = self.samples[idx]
-        audio = self.audio_loader(sample)
+        audio, ctx_start = self.audio_loader(sample)
         sr = self.feature_config.sample_rate
 
-        start_sample = max(0, int(round(sample.start_sec * sr)))
-        end_sample = min(len(audio), int(round(sample.end_sec * sr)))
+        rel_start = sample.start_sec - ctx_start
+        rel_end = sample.end_sec - ctx_start
+        start_sample = max(0, int(round(rel_start * sr)))
+        end_sample = min(len(audio), int(round(rel_end * sr)))
         if end_sample <= start_sample:
             end_sample = min(len(audio), start_sample + sr)
 
         crop = audio[start_sample:end_sample]
+        min_samples = self.feature_config.n_fft
+        if len(crop) < min_samples:
+            logger.warning(
+                "Event crop too short (%d samples, need %d): "
+                "start_sec=%.2f end_sec=%.2f",
+                len(crop),
+                min_samples,
+                sample.start_sec,
+                sample.end_sec,
+            )
+            features = torch.zeros(1, self.feature_config.n_mels, 1)
+            label = torch.zeros(self.n_types, dtype=torch.float32)
+            label[sample.type_index] = 1.0
+            return features, label
+
         logmel = extract_logmel(crop, self.feature_config)
         logmel = normalize_per_region_zscore(logmel)
 

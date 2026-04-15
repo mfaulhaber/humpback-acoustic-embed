@@ -33,8 +33,8 @@ def _make_audio(duration_sec: float, sr: int = 16000) -> np.ndarray:
 
 
 def _const_loader(audio: np.ndarray):  # noqa: ANN202
-    def _load(_sample: object) -> np.ndarray:
-        return audio
+    def _load(_sample: object) -> tuple[np.ndarray, float]:
+        return audio, 0.0
 
     return _load
 
