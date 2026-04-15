@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from humpback.call_parsing.event_classifier.trainer import (
+    EventClassifierTrainingConfig as TrainerConfig,
+)
+from humpback.schemas.call_parsing import EventClassifierTrainingConfig as SchemaConfig
 from humpback.workers.event_classifier_feedback_worker import _resolve_event_labels
 
 
@@ -60,3 +64,13 @@ def test_negative_correction_sets_none():
     corrections: dict[str, str | None] = {"e1": None}
     labels = _resolve_event_labels(typed, corrections, corrections_only=True)
     assert labels["e1"] is None
+
+
+def test_pydantic_schema_corrections_only_default():
+    config = SchemaConfig()
+    assert config.corrections_only is True
+
+
+def test_trainer_dataclass_corrections_only_default():
+    config = TrainerConfig()
+    assert config.corrections_only is True
