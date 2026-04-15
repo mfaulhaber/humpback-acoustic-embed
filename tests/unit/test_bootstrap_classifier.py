@@ -313,7 +313,7 @@ class TestRunBootstrap:
             ) as mock_train,
             patch("scripts.bootstrap_classifier.select_device"),
             patch(
-                "scripts.bootstrap_classifier._build_audio_loader",
+                "scripts.bootstrap_classifier.build_multi_source_event_audio_loader",
                 return_value=lambda s: None,
             ),
         ):

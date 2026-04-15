@@ -18,10 +18,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.audio_loader import build_multi_source_event_audio_loader
 from humpback.call_parsing.event_classifier.trainer import (
     EventClassifierTrainingConfig,
     EventClassifierTrainingResult,
@@ -204,48 +204,6 @@ async def _collect_samples(
     return samples, vocabulary
 
 
-def _build_audio_loader(settings: Settings) -> Any:
-    """Return a callable that fetches full-range audio for a sample via hydrophone."""
-    from humpback.processing.timeline_audio import resolve_timeline_audio
-
-    target_sr = 16000
-
-    def _load(sample: Any) -> tuple[np.ndarray, float]:
-        hydro_id = sample.hydrophone_id
-        start_ts = float(sample.start_timestamp)
-        end_ts = float(sample.end_timestamp)
-        # Event start_sec/end_sec are relative offsets from job start.
-        # Convert to absolute epoch timestamps for resolve_timeline_audio.
-        abs_start = start_ts + sample.start_sec
-        abs_end = start_ts + sample.end_sec
-        duration = abs_end - abs_start
-        context_sec = max(10.0, duration)
-        pad = (context_sec - duration) / 2.0
-        ctx_start = max(start_ts, abs_start - pad)
-        ctx_end = min(end_ts, abs_end + pad)
-        ctx_duration = max(0.0, ctx_end - ctx_start)
-
-        audio = resolve_timeline_audio(
-            hydrophone_id=hydro_id,
-            local_cache_path=str(settings.s3_cache_path or ""),
-            job_start_timestamp=start_ts,
-            job_end_timestamp=end_ts,
-            start_sec=ctx_start,
-            duration_sec=ctx_duration,
-            target_sr=target_sr,
-            noaa_cache_path=str(settings.noaa_cache_path)
-            if settings.noaa_cache_path
-            else None,
-        )
-        # Return audio_start as the relative offset from job start so
-        # the dataset's subtraction (sample.start_sec - audio_start)
-        # yields the correct position within the loaded audio buffer.
-        audio_start_rel = ctx_start - start_ts
-        return audio, audio_start_rel
-
-    return _load
-
-
 async def run_event_classifier_feedback_training(
     session: AsyncSession,
     job: EventClassifierTrainingJob,
@@ -275,7 +233,11 @@ async def run_event_classifier_feedback_training(
         await session.commit()
 
         feature_config = SegmentationFeatureConfig()
-        audio_loader = _build_audio_loader(settings)
+        audio_loader = build_multi_source_event_audio_loader(
+            target_sr=16000,
+            settings=settings,
+            samples=samples,
+        )
         device = select_device()
 
         result: EventClassifierTrainingResult = await asyncio.to_thread(

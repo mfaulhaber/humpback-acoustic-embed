@@ -18,10 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.audio_loader import build_region_audio_loader
 from humpback.call_parsing.segmentation.inference import run_inference
 from humpback.call_parsing.segmentation.model import SegmentationCRNN
 from humpback.call_parsing.storage import (
@@ -39,12 +39,11 @@ from humpback.models.call_parsing import (
     RegionDetectionJob,
     SegmentationModel,
 )
-from humpback.processing.audio_io import decode_audio, resample
 from humpback.schemas.call_parsing import (
     SegmentationDecoderConfig,
     SegmentationFeatureConfig,
 )
-from humpback.storage import ensure_dir, resolve_audio_path
+from humpback.storage import ensure_dir
 from humpback.workers.queue import claim_event_segmentation_job
 
 logger = logging.getLogger(__name__)
@@ -88,56 +87,6 @@ def _feature_config_from(model_config: dict[str, Any]) -> SegmentationFeatureCon
     if not isinstance(raw, dict):
         raise ValueError("checkpoint feature_config must be a dict")
     return SegmentationFeatureConfig(**raw)
-
-
-def _build_file_audio_loader(
-    audio_file: AudioFile,
-    feature_config: SegmentationFeatureConfig,
-    storage_root: Path,
-):
-    """Decode the upstream audio file once and slice per region on access."""
-    target_sr = feature_config.sample_rate
-    path = resolve_audio_path(audio_file, storage_root)
-    raw, sr = decode_audio(path)
-    audio = np.asarray(resample(raw, sr, target_sr), dtype=np.float32)
-
-    def _load(region: Region) -> np.ndarray:
-        start = int(round(float(region.padded_start_sec) * target_sr))
-        end = int(round(float(region.padded_end_sec) * target_sr))
-        start = max(0, min(start, audio.shape[0]))
-        end = max(start, min(end, audio.shape[0]))
-        return audio[start:end].copy()
-
-    return _load
-
-
-def _build_hydrophone_audio_loader(
-    hydrophone_id: str,
-    job_start_ts: float,
-    job_end_ts: float,
-    feature_config: SegmentationFeatureConfig,
-    settings: Settings,
-):
-    """Fetch region audio from a hydrophone HLS/archive source."""
-    from humpback.processing.timeline_audio import resolve_timeline_audio
-
-    target_sr = feature_config.sample_rate
-
-    def _load(region: Region) -> np.ndarray:
-        return resolve_timeline_audio(
-            hydrophone_id=hydrophone_id,
-            local_cache_path=str(settings.s3_cache_path or ""),
-            job_start_timestamp=job_start_ts,
-            job_end_timestamp=job_end_ts,
-            start_sec=job_start_ts + region.padded_start_sec,
-            duration_sec=region.padded_end_sec - region.padded_start_sec,
-            target_sr=target_sr,
-            noaa_cache_path=str(settings.noaa_cache_path)
-            if settings.noaa_cache_path
-            else None,
-        )
-
-    return _load
 
 
 def _run_inference_pipeline(
@@ -243,16 +192,19 @@ async def run_event_segmentation_job(
                     f"AudioFile {upstream_audio_file_id} referenced by upstream "
                     f"RegionDetectionJob {upstream_id} not found"
                 )
-            audio_loader = _build_file_audio_loader(
-                audio_file, feature_config, settings.storage_root
+            audio_loader = build_region_audio_loader(
+                target_sr=feature_config.sample_rate,
+                settings=settings,
+                audio_file=audio_file,
+                storage_root=settings.storage_root,
             )
         elif upstream_hydrophone_id:
-            audio_loader = _build_hydrophone_audio_loader(
+            audio_loader = build_region_audio_loader(
+                target_sr=feature_config.sample_rate,
+                settings=settings,
                 hydrophone_id=upstream_hydrophone_id,
                 job_start_ts=upstream.start_timestamp or 0.0,
                 job_end_ts=upstream.end_timestamp or 0.0,
-                feature_config=feature_config,
-                settings=settings,
             )
         else:
             raise ValueError(
