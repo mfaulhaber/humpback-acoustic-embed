@@ -30,11 +30,12 @@ AudioLoader = Callable[[Any], tuple[np.ndarray, float]]
 """Callable returning ``(audio, audio_start_sec)`` for one training sample.
 
 ``audio`` is a 1-D float array at the feature config's sample rate.
-``audio_start_sec`` is the absolute time of the first sample in the
-source's coordinate system.  For file-based sources this is ``0.0``;
-for hydrophone sources it is the start of the loaded context window.
-The dataset subtracts this offset so that ``sample.start_sec`` maps to
-the correct sample index.
+``audio_start_sec`` is the time offset of the first audio sample,
+expressed in the same coordinate system as ``sample.start_sec``.
+For file-based sources this is ``0.0``; for hydrophone sources it is
+the job-relative offset of the loaded context window's start.
+The dataset computes ``sample.start_sec - audio_start_sec`` to find
+the correct sample index within the audio buffer.
 """
 
 

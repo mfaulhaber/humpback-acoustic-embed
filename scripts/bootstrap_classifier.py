@@ -139,12 +139,16 @@ def _build_audio_loader(settings: Settings):
     target_sr = 16000
 
     def _load(sample: _BootstrapSample) -> tuple[np.ndarray, float]:
-        duration = sample.end_sec - sample.start_sec
+        # Event start_sec/end_sec are relative offsets from job start.
+        # Convert to absolute epoch timestamps for resolve_timeline_audio.
+        abs_start = sample.start_timestamp + sample.start_sec
+        abs_end = sample.start_timestamp + sample.end_sec
+        duration = abs_end - abs_start
         context_sec = max(10.0, duration)
         pad = (context_sec - duration) / 2.0
-        ctx_start = max(sample.start_timestamp, sample.start_sec - pad)
-        ctx_end = min(sample.end_timestamp, sample.end_sec + pad)
-        ctx_duration = ctx_end - ctx_start
+        ctx_start = max(sample.start_timestamp, abs_start - pad)
+        ctx_end = min(sample.end_timestamp, abs_end + pad)
+        ctx_duration = max(0.0, ctx_end - ctx_start)
 
         audio = resolve_timeline_audio(
             hydrophone_id=sample.hydrophone_id,
@@ -158,7 +162,8 @@ def _build_audio_loader(settings: Settings):
             if settings.noaa_cache_path
             else None,
         )
-        return audio, ctx_start
+        audio_start_rel = ctx_start - sample.start_timestamp
+        return audio, audio_start_rel
 
     return _load
 
