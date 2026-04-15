@@ -16,10 +16,10 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.audio_loader import build_event_audio_loader
 from humpback.call_parsing.event_classifier.inference import (
     EventAudioLoader,
     classify_events,
@@ -39,8 +39,7 @@ from humpback.models.call_parsing import (
     RegionDetectionJob,
 )
 from humpback.models.vocalization import VocalizationClassifierModel
-from humpback.processing.audio_io import decode_audio, resample
-from humpback.storage import ensure_dir, resolve_audio_path
+from humpback.storage import ensure_dir
 from humpback.workers.queue import claim_event_classification_job
 
 logger = logging.getLogger(__name__)
@@ -61,57 +60,6 @@ def _cleanup_partial_artifacts(job_dir: Path) -> None:
             tmp.unlink()
         except OSError:
             logger.warning("Failed to delete %s", tmp, exc_info=True)
-
-
-def _build_audio_loader(
-    audio_file: AudioFile,
-    target_sr: int,
-    storage_root: Path,
-) -> EventAudioLoader:
-    path = resolve_audio_path(audio_file, storage_root)
-    raw, sr = decode_audio(path)
-    audio = np.asarray(resample(raw, sr, target_sr), dtype=np.float32)
-
-    def _load(_event: Event) -> tuple[np.ndarray, float]:
-        return audio, 0.0
-
-    return _load
-
-
-def _build_hydrophone_audio_loader(
-    hydrophone_id: str,
-    job_start_ts: float,
-    job_end_ts: float,
-    events: list[Event],
-    target_sr: int,
-    settings: Settings,
-) -> EventAudioLoader:
-    """Pre-load the audio span covering all events and serve from cache."""
-    from humpback.processing.timeline_audio import resolve_timeline_audio
-
-    context = 10.0
-    min_start = min(e.start_sec for e in events)
-    max_end = max(e.end_sec for e in events)
-    load_start = max(0.0, min_start - context)
-    load_end = min(job_end_ts - job_start_ts, max_end + context)
-
-    audio = resolve_timeline_audio(
-        hydrophone_id=hydrophone_id,
-        local_cache_path=str(settings.s3_cache_path or ""),
-        job_start_timestamp=job_start_ts,
-        job_end_timestamp=job_end_ts,
-        start_sec=job_start_ts + load_start,
-        duration_sec=load_end - load_start,
-        target_sr=target_sr,
-        noaa_cache_path=str(settings.noaa_cache_path)
-        if settings.noaa_cache_path
-        else None,
-    )
-
-    def _load(_event: Event) -> tuple[np.ndarray, float]:
-        return audio, load_start
-
-    return _load
 
 
 def _run_classification_pipeline(
@@ -197,16 +145,21 @@ async def run_event_classification_job(
             audio_file = af_result.scalar_one_or_none()
             if audio_file is None:
                 raise ValueError(f"AudioFile {audio_file_id} not found")
-            audio_loader = _build_audio_loader(audio_file, 16000, settings.storage_root)
+            audio_loader = build_event_audio_loader(
+                target_sr=16000,
+                settings=settings,
+                audio_file=audio_file,
+                storage_root=settings.storage_root,
+            )
         elif hydrophone_id:
             audio_loader = await asyncio.to_thread(
-                _build_hydrophone_audio_loader,
+                build_event_audio_loader,
+                target_sr=16000,
+                settings=settings,
                 hydrophone_id=hydrophone_id,
                 job_start_ts=upstream_region.start_timestamp or 0.0,
                 job_end_ts=upstream_region.end_timestamp or 0.0,
-                events=events,
-                target_sr=16000,
-                settings=settings,
+                preload_events=events,
             )
         else:
             raise ValueError(

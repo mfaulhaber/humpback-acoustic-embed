@@ -16,10 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.audio_loader import build_training_audio_loader
 from humpback.call_parsing.segmentation.trainer import (
     SegmentationTrainingResult,
     train_model,
@@ -47,38 +47,6 @@ def _segmentation_model_dir(storage_root: Path, model_id: str) -> Path:
 def _cleanup_model_dir(model_dir: Path) -> None:
     if model_dir.exists():
         shutil.rmtree(model_dir, ignore_errors=True)
-
-
-def _build_audio_loader(
-    feature_config: SegmentationFeatureConfig,
-    settings: Settings,
-) -> Any:
-    """Return a callable that resolves audio for a training sample."""
-    from humpback.processing.timeline_audio import resolve_timeline_audio
-
-    target_sr = feature_config.sample_rate
-
-    def _load(sample: Any) -> np.ndarray:
-        hydro_id = sample.hydrophone_id
-        start_ts = float(sample.start_timestamp)
-        end_ts = float(sample.end_timestamp)
-        crop_start = float(sample.crop_start_sec)
-        crop_end = float(sample.crop_end_sec)
-        duration = crop_end - crop_start
-        return resolve_timeline_audio(
-            hydrophone_id=hydro_id,
-            local_cache_path=str(settings.s3_cache_path or ""),
-            job_start_timestamp=start_ts,
-            job_end_timestamp=end_ts,
-            start_sec=start_ts + crop_start,
-            duration_sec=duration,
-            target_sr=target_sr,
-            noaa_cache_path=str(settings.noaa_cache_path)
-            if settings.noaa_cache_path
-            else None,
-        )
-
-    return _load
 
 
 def _summary_for_model(result: SegmentationTrainingResult) -> dict[str, Any]:
@@ -132,7 +100,11 @@ async def run_segmentation_training(
 
         feature_config = SegmentationFeatureConfig(n_mels=training_config.n_mels)
         decoder_config = SegmentationDecoderConfig()
-        audio_loader = _build_audio_loader(feature_config, settings)
+        audio_loader = build_training_audio_loader(
+            target_sr=feature_config.sample_rate,
+            settings=settings,
+            samples=samples,
+        )
 
         model_dir.mkdir(parents=True, exist_ok=True)
         device = select_device()
