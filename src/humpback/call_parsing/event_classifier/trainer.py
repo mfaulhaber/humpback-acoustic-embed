@@ -124,6 +124,8 @@ class _RemappedSample:
     type_index: int
     audio_file_id: str | None = None
     hydrophone_id: str | None = None
+    start_timestamp: float = 0.0
+    end_timestamp: float = 0.0
 
 
 def _remap_sample(sample: Any, new_index: int) -> _RemappedSample:
@@ -133,6 +135,8 @@ def _remap_sample(sample: Any, new_index: int) -> _RemappedSample:
         type_index=new_index,
         audio_file_id=getattr(sample, "audio_file_id", None),
         hydrophone_id=getattr(sample, "hydrophone_id", None),
+        start_timestamp=getattr(sample, "start_timestamp", 0.0),
+        end_timestamp=getattr(sample, "end_timestamp", 0.0),
     )
 
 
