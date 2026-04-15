@@ -196,13 +196,35 @@ export function ClassifyReviewWorkspace({
     return map;
   }, [savedCorrections, pendingCorrections]);
 
-  // Aggregated events
+  // Aggregated events (full list, including deleted — needed for ghost rendering)
   const events = useMemo(
     () => aggregateEvents(typedEventRows, mergedCorrections),
     [typedEventRows, mergedCorrections],
   );
 
-  const currentEvent = events[currentEventIndex] ?? null;
+  // Navigable events: exclude events with saved boundary-deletion corrections
+  // so the user only steps through active events with contiguous numbering.
+  const navigableEvents = useMemo(() => {
+    const deletedIds = new Set(
+      savedBoundaryCorrections
+        .filter((c) => c.correction_type === "delete")
+        .map((c) => c.event_id),
+    );
+    if (deletedIds.size === 0) return events;
+    return events.filter((e) => !deletedIds.has(e.eventId));
+  }, [events, savedBoundaryCorrections]);
+
+  // Clamp index when navigable list shrinks (e.g., after saving deletes)
+  useEffect(() => {
+    if (
+      navigableEvents.length > 0 &&
+      currentEventIndex >= navigableEvents.length
+    ) {
+      setCurrentEventIndex(navigableEvents.length - 1);
+    }
+  }, [navigableEvents.length, currentEventIndex]);
+
+  const currentEvent = navigableEvents[currentEventIndex] ?? null;
 
   // Derive the palette highlight from the current event's effective type
   const currentEventType: string | null = useMemo(() => {
@@ -434,8 +456,8 @@ export function ClassifyReviewWorkspace({
     setCurrentEventIndex((i) => Math.max(0, i - 1));
   }, []);
   const goNext = useCallback(() => {
-    setCurrentEventIndex((i) => Math.min(events.length - 1, i + 1));
-  }, [events.length]);
+    setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
+  }, [navigableEvents.length]);
 
   // Mark as negative (type correction)
   const markNegative = useCallback(() => {
@@ -468,8 +490,8 @@ export function ClassifyReviewWorkspace({
       return next;
     });
     // Advance to next event (clamp if already at end)
-    setCurrentEventIndex((i) => Math.min(events.length - 1, i + 1));
-  }, [currentEvent, events.length]);
+    setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
+  }, [currentEvent, navigableEvents.length]);
 
   // Add event via right-click
   const [contextMenu, setContextMenu] = useState<{
@@ -809,15 +831,16 @@ export function ClassifyReviewWorkspace({
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="text-xs text-muted-foreground tabular-nums min-w-[80px] text-center">
-                Event {events.length > 0 ? currentEventIndex + 1 : 0} of{" "}
-                {events.length}
+                Event{" "}
+                {navigableEvents.length > 0 ? currentEventIndex + 1 : 0} of{" "}
+                {navigableEvents.length}
               </span>
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-7"
                 onClick={goNext}
-                disabled={currentEventIndex >= events.length - 1}
+                disabled={currentEventIndex >= navigableEvents.length - 1}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -926,7 +949,9 @@ export function ClassifyReviewWorkspace({
                   selectedEventId={currentEvent?.eventId ?? null}
                   onSelectEvent={(eventId) => {
                     if (!eventId) return;
-                    const idx = events.findIndex((e) => e.eventId === eventId);
+                    const idx = navigableEvents.findIndex(
+                      (e) => e.eventId === eventId,
+                    );
                     if (idx >= 0) setCurrentEventIndex(idx);
                   }}
                   onAdjust={handleAdjust}
