@@ -289,36 +289,59 @@ async def list_segmentation_jobs_with_correction_counts(
 ) -> list[dict]:
     """Return completed segmentation jobs with correction counts and hydrophone info.
 
-    Uses a LEFT JOIN subquery so there is no N+1 overhead.
+    Uses a LEFT JOIN subquery so there is no N+1 overhead.  Also computes
+    ``has_new_corrections`` by comparing the latest correction timestamp
+    against the latest training dataset that consumed samples from the job.
     """
     from humpback.models.feedback_training import EventBoundaryCorrection
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingSample,
+    )
 
-    correction_counts = (
+    correction_stats = (
         select(
             EventBoundaryCorrection.event_segmentation_job_id.label("job_id"),
             func.count(EventBoundaryCorrection.id).label("correction_count"),
+            func.max(EventBoundaryCorrection.updated_at).label("latest_correction_at"),
         )
         .group_by(EventBoundaryCorrection.event_segmentation_job_id)
+        .subquery()
+    )
+
+    # Latest dataset creation time per source job
+    latest_dataset = (
+        select(
+            SegmentationTrainingSample.source_ref.label("job_id"),
+            func.max(SegmentationTrainingSample.created_at).label("latest_dataset_at"),
+        )
+        .where(SegmentationTrainingSample.source == "boundary_correction")
+        .group_by(SegmentationTrainingSample.source_ref)
         .subquery()
     )
 
     stmt = (
         select(
             EventSegmentationJob,
-            func.coalesce(correction_counts.c.correction_count, 0).label(
+            func.coalesce(correction_stats.c.correction_count, 0).label(
                 "correction_count"
             ),
             RegionDetectionJob.hydrophone_id,
             RegionDetectionJob.start_timestamp,
             RegionDetectionJob.end_timestamp,
+            correction_stats.c.latest_correction_at,
+            latest_dataset.c.latest_dataset_at,
         )
         .join(
             RegionDetectionJob,
             RegionDetectionJob.id == EventSegmentationJob.region_detection_job_id,
         )
         .outerjoin(
-            correction_counts,
-            correction_counts.c.job_id == EventSegmentationJob.id,
+            correction_stats,
+            correction_stats.c.job_id == EventSegmentationJob.id,
+        )
+        .outerjoin(
+            latest_dataset,
+            latest_dataset.c.job_id == EventSegmentationJob.id,
         )
         .where(EventSegmentationJob.status == "complete")
         .order_by(EventSegmentationJob.created_at.desc())
@@ -330,6 +353,23 @@ async def list_segmentation_jobs_with_correction_counts(
     out: list[dict] = []
     for row in rows:
         job = row[0]
+        correction_count = row[1]
+        latest_correction_at = row[5]
+        latest_dataset_at = row[6]
+
+        # New corrections exist if: corrections exist AND (no dataset yet OR
+        # corrections are newer than the latest dataset).
+        has_new = bool(
+            correction_count > 0
+            and (
+                latest_dataset_at is None
+                or (
+                    latest_correction_at is not None
+                    and latest_correction_at > latest_dataset_at
+                )
+            )
+        )
+
         d = {
             "id": job.id,
             "status": job.status,
@@ -343,10 +383,12 @@ async def list_segmentation_jobs_with_correction_counts(
             "segmentation_model_id": job.segmentation_model_id,
             "config_json": job.config_json,
             "event_count": job.event_count,
-            "correction_count": row[1],
+            "correction_count": correction_count,
             "hydrophone_id": row[2],
             "start_timestamp": row[3],
             "end_timestamp": row[4],
+            "has_new_corrections": has_new,
+            "latest_correction_at": latest_correction_at,
         }
         out.append(d)
     return out

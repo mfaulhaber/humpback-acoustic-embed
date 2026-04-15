@@ -25,10 +25,9 @@ from humpback.call_parsing.event_classifier.inference import (
     classify_events,
     load_event_classifier,
 )
+from humpback.call_parsing.segmentation.extraction import load_corrected_events
 from humpback.call_parsing.storage import (
     classification_job_dir,
-    read_events,
-    segmentation_job_dir,
     write_typed_events,
 )
 from humpback.call_parsing.types import Event, TypedEvent
@@ -176,11 +175,9 @@ async def run_event_classification_job(
         if not (model_dir / "model.pt").exists():
             raise ValueError(f"model checkpoint missing at {model_dir / 'model.pt'}")
 
-        seg_job_dir = segmentation_job_dir(settings.storage_root, upstream_seg_id)
-        events_path = seg_job_dir / "events.parquet"
-        if not events_path.exists():
-            raise ValueError(f"upstream events.parquet not found at {events_path}")
-        events = read_events(events_path)
+        events = await load_corrected_events(
+            session, upstream_seg_id, settings.storage_root
+        )
 
         upstream_region_id = upstream_seg.region_detection_job_id
         if not upstream_region_id:

@@ -1356,6 +1356,8 @@ export interface SegmentationJobWithCorrectionCount {
   hydrophone_id: string | null;
   start_timestamp: number | null;
   end_timestamp: number | null;
+  has_new_corrections: boolean;
+  latest_correction_at: string | null;
 }
 
 export interface CreateDatasetFromCorrectionsRequest {
