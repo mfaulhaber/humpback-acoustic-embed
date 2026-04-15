@@ -466,8 +466,8 @@ export function ClassifyReviewWorkspace({
       }
       return next;
     });
-    // Advance to next event
-    setCurrentEventIndex((i) => Math.min(events.length - 1, Math.max(0, i)));
+    // Advance to next event (clamp if already at end)
+    setCurrentEventIndex((i) => Math.min(events.length - 1, i + 1));
   }, [currentEvent, events.length]);
 
   // Add event via right-click
@@ -602,6 +602,13 @@ export function ClassifyReviewWorkspace({
             typeOk = true;
             checkDone();
           },
+          onError: (err) => {
+            toast({
+              title: "Failed to save type corrections",
+              description: (err as Error).message,
+              variant: "destructive",
+            });
+          },
         },
       );
     }
@@ -615,6 +622,13 @@ export function ClassifyReviewWorkspace({
             setPendingBoundaryCorrections(new Map());
             boundaryOk = true;
             checkDone();
+          },
+          onError: (err) => {
+            toast({
+              title: "Failed to save boundary corrections",
+              description: (err as Error).message,
+              variant: "destructive",
+            });
           },
         },
       );
