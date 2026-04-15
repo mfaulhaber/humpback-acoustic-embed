@@ -12,9 +12,9 @@
 - Modify: `src/humpback/call_parsing/event_classifier/trainer.py`
 
 **Acceptance criteria:**
-- [ ] `EventClassifierTrainingConfig` Pydantic model in `schemas/call_parsing.py` gains `corrections_only: bool = True`
-- [ ] `EventClassifierTrainingConfig` dataclass in `trainer.py` gains `corrections_only: bool = True`
-- [ ] Both default to `True`
+- [x] `EventClassifierTrainingConfig` Pydantic model in `schemas/call_parsing.py` gains `corrections_only: bool = True`
+- [x] `EventClassifierTrainingConfig` dataclass in `trainer.py` gains `corrections_only: bool = True`
+- [x] Both default to `True`
 
 **Tests needed:**
 - Unit test: verify the Pydantic schema accepts `corrections_only` and defaults to `True`
@@ -28,11 +28,11 @@
 - Modify: `src/humpback/workers/event_classifier_feedback_worker.py`
 
 **Acceptance criteria:**
-- [ ] `_resolve_event_labels` accepts a `corrections_only: bool` parameter
-- [ ] When `corrections_only=True`, uncorrected events get `labels[event_id] = None` (skip inference fallback)
-- [ ] When `corrections_only=False`, existing behavior is preserved (inference fallback for uncorrected events)
-- [ ] `_collect_samples` accepts and forwards `corrections_only` from the config
-- [ ] `run_event_classifier_feedback_training` passes `config.corrections_only` through to `_collect_samples`
+- [x] `_resolve_event_labels` accepts a `corrections_only: bool` parameter
+- [x] When `corrections_only=True`, uncorrected events get `labels[event_id] = None` (skip inference fallback)
+- [x] When `corrections_only=False`, existing behavior is preserved (inference fallback for uncorrected events)
+- [x] `_collect_samples` accepts and forwards `corrections_only` from the config
+- [x] `run_event_classifier_feedback_training` passes `config.corrections_only` through to `_collect_samples`
 
 **Tests needed:**
 - Unit test: `_resolve_event_labels` with `corrections_only=True` returns only corrected events
@@ -46,9 +46,9 @@
 - Modify: `frontend/src/components/call-parsing/ClassifyReviewWorkspace.tsx`
 
 **Acceptance criteria:**
-- [ ] A "Corrected events only" checkbox appears near the Retrain button, default checked
-- [ ] `handleRetrain` passes `{ corrections_only: correctionsOnly }` in the `config` field of the mutation payload
-- [ ] Unchecking the box sends `corrections_only: false`
+- [x] A "Corrected events only" checkbox appears near the Retrain button, default checked
+- [x] `handleRetrain` passes `{ corrections_only: correctionsOnly }` in the `config` field of the mutation payload
+- [x] Unchecking the box sends `corrections_only: false`
 
 **Tests needed:**
 - Playwright test: verify checkbox renders and is checked by default
@@ -61,8 +61,8 @@
 - Modify: `frontend/src/components/call-parsing/ClassificationJobPicker.tsx`
 
 **Acceptance criteria:**
-- [ ] A "Corrected events only" checkbox appears near the Train Model button, default checked
-- [ ] `handleTrain` passes `{ corrections_only: correctionsOnly }` in the `config` field of the mutation payload
+- [x] A "Corrected events only" checkbox appears near the Train Model button, default checked
+- [x] `handleTrain` passes `{ corrections_only: correctionsOnly }` in the `config` field of the mutation payload
 
 **Tests needed:**
 - Playwright test: verify checkbox renders and is checked by default

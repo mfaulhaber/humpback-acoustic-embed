@@ -22,6 +22,7 @@ import type {
 } from "@/api/types";
 import { toast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChevronLeft,
   ChevronRight,
@@ -666,6 +667,7 @@ export function ClassifyReviewWorkspace({
   );
   const [trainingStartedAt, setTrainingStartedAt] = useState<Date | null>(null);
   const [retrainError, setRetrainError] = useState<string | null>(null);
+  const [correctionsOnly, setCorrectionsOnly] = useState(true);
 
   const createTraining = useCreateClassifierTrainingJob();
   const createClassifyJob = useCreateClassificationJob();
@@ -678,7 +680,10 @@ export function ClassifyReviewWorkspace({
     if (!ok) return;
     setRetrainError(null);
     createTraining.mutate(
-      { source_job_ids: [selectedJobId] },
+      {
+        source_job_ids: [selectedJobId],
+        config: { corrections_only: correctionsOnly },
+      },
       {
         onSuccess: (data) => {
           setActiveTrainingJobId(data.id);
@@ -698,7 +703,7 @@ export function ClassifyReviewWorkspace({
         },
       },
     );
-  }, [selectedJobId, createTraining]);
+  }, [selectedJobId, correctionsOnly, createTraining]);
 
   // Poll models while training
   const isPolling = activeTrainingJobId !== null && retrainError === null;
@@ -835,16 +840,25 @@ export function ClassifyReviewWorkspace({
 
             <div className="flex items-center gap-2">
               {hasCorrections && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={handleRetrain}
-                  disabled={createTraining.isPending || isPolling}
-                >
-                  <RotateCcw className="h-3 w-3 mr-1" />
-                  {isPolling ? "Training…" : "Retrain"}
-                </Button>
+                <>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Checkbox
+                      checked={correctionsOnly}
+                      onCheckedChange={(v) => setCorrectionsOnly(v === true)}
+                    />
+                    Corrected only
+                  </label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={handleRetrain}
+                    disabled={createTraining.isPending || isPolling}
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    {isPolling ? "Training…" : "Retrain"}
+                  </Button>
+                </>
               )}
 
               <div className="w-px h-5 bg-border" />

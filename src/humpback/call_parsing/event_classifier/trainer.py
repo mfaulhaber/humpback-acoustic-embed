@@ -47,6 +47,7 @@ class EventClassifierTrainingConfig:
     seed: int = 42
     val_fraction: float = 0.2
     min_examples_per_type: int = 10
+    corrections_only: bool = True
     conv_channels: tuple[int, ...] = (32, 64, 128, 256)
 
 

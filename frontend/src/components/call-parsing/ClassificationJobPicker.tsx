@@ -26,6 +26,7 @@ export function ClassificationJobPicker() {
   const { data: hydrophones = [] } = useHydrophones();
   const createTraining = useCreateClassifierTrainingJob();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [correctionsOnly, setCorrectionsOnly] = useState(true);
 
   const jobsWithCorrections = jobs.filter((j) => j.correction_count > 0);
 
@@ -47,7 +48,10 @@ export function ClassificationJobPicker() {
   const handleTrain = () => {
     if (selected.size === 0) return;
     createTraining.mutate(
-      { source_job_ids: Array.from(selected) },
+      {
+        source_job_ids: Array.from(selected),
+        config: { corrections_only: correctionsOnly },
+      },
       {
         onSuccess: () => {
           setSelected(new Set());
@@ -73,15 +77,24 @@ export function ClassificationJobPicker() {
         <h3 className="text-sm font-semibold">
           Train from Corrections
         </h3>
-        <Button
-          size="sm"
-          onClick={handleTrain}
-          disabled={selected.size === 0 || createTraining.isPending}
-        >
-          {createTraining.isPending
-            ? "Creating…"
-            : `Train Model${selected.size > 0 ? ` (${selected.size})` : ""}`}
-        </Button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Checkbox
+              checked={correctionsOnly}
+              onCheckedChange={(v) => setCorrectionsOnly(v === true)}
+            />
+            Corrected only
+          </label>
+          <Button
+            size="sm"
+            onClick={handleTrain}
+            disabled={selected.size === 0 || createTraining.isPending}
+          >
+            {createTraining.isPending
+              ? "Creating…"
+              : `Train Model${selected.size > 0 ? ` (${selected.size})` : ""}`}
+          </Button>
+        </div>
       </div>
 
       {jobsWithCorrections.length === 0 ? (

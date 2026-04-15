@@ -462,6 +462,7 @@ class EventClassifierTrainingConfig(BaseModel):
     seed: int = 42
     val_fraction: float = 0.2
     min_examples_per_type: int = 10
+    corrections_only: bool = True
 
     @field_validator("val_fraction")
     @classmethod
