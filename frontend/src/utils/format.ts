@@ -30,3 +30,13 @@ export function audioDisplayName(filename: string, folderPath?: string): string 
   if (folderPath) return `${folderPath}/${filename}`;
   return filename;
 }
+
+/** Format a UTC epoch (seconds) as a short month+day string, e.g. "Apr 14". */
+export function formatUtcShort(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  const months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}

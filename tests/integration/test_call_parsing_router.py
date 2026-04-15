@@ -21,6 +21,7 @@ from humpback.database import create_engine, create_session_factory
 from humpback.ml.checkpointing import save_checkpoint
 from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import (
+    EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
     SegmentationModel,
@@ -1463,8 +1464,25 @@ async def test_get_typed_events_on_complete_job_returns_sorted(
         )
         session.add(ec)
         await session.commit()
-        ec_id = ec.id
+        ec_id, es_id = ec.id, es.id
     await engine.dispose()
+
+    # Write events.parquet for the segmentation job (region_id lookup source)
+    from humpback.call_parsing.storage import (
+        segmentation_job_dir,
+        write_events,
+    )
+    from humpback.call_parsing.types import Event
+
+    seg_dir = segmentation_job_dir(app_settings.storage_root, es_id)
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    write_events(
+        seg_dir / "events.parquet",
+        [
+            Event("e1", "r1", 1.0, 3.0, 2.0, 0.9),
+            Event("e2", "r2", 5.0, 7.0, 6.0, 0.8),
+        ],
+    )
 
     # Write typed_events.parquet (out of order to test sorting)
     job_dir = classification_job_dir(app_settings.storage_root, ec_id)
@@ -1485,6 +1503,11 @@ async def test_get_typed_events_on_complete_job_returns_sorted(
     assert rows[0]["start_sec"] <= rows[1]["start_sec"] <= rows[2]["start_sec"]
     assert all(0.0 <= r["score"] <= 1.0 for r in rows)
     assert all("type_name" in r for r in rows)
+    # Verify region_id is populated from events.parquet
+    assert all("region_id" in r for r in rows)
+    region_map = {r["event_id"]: r["region_id"] for r in rows}
+    assert region_map["e1"] == "r1"
+    assert region_map["e2"] == "r2"
 
 
 @pytest.mark.asyncio
@@ -1829,3 +1852,91 @@ async def test_classifier_model_delete_409_in_flight(
 
     resp = await client.delete(f"{BASE}/classifier-models/{vm_id}")
     assert resp.status_code == 409
+
+
+# ---- Classification jobs with correction counts ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_classification_jobs_with_correction_counts(
+    client: AsyncClient, app_settings
+) -> None:
+    """Jobs with and without corrections both appear, with correct counts."""
+    from humpback.models.feedback_training import EventTypeCorrection
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(
+            hydrophone_id="orcasound_lab",
+            start_timestamp=1000.0,
+            end_timestamp=2000.0,
+            status="complete",
+        )
+        session.add(rd)
+        await session.flush()
+
+        es = EventSegmentationJob(
+            region_detection_job_id=rd.id, status="complete", event_count=5
+        )
+        session.add(es)
+        await session.flush()
+
+        ec1 = EventClassificationJob(
+            event_segmentation_job_id=es.id, status="complete", typed_event_count=10
+        )
+        ec2 = EventClassificationJob(
+            event_segmentation_job_id=es.id, status="complete", typed_event_count=8
+        )
+        session.add_all([ec1, ec2])
+        await session.flush()
+
+        # Add corrections only for ec1
+        for i in range(4):
+            session.add(
+                EventTypeCorrection(
+                    event_classification_job_id=ec1.id,
+                    event_id=f"e{i}",
+                    type_name="whup",
+                )
+            )
+        await session.commit()
+        ec1_id, ec2_id = ec1.id, ec2.id
+    await engine.dispose()
+
+    resp = await client.get(f"{BASE}/classification-jobs/with-correction-counts")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    job_map = {j["id"]: j for j in data}
+    assert ec1_id in job_map
+    assert ec2_id in job_map
+    assert job_map[ec1_id]["correction_count"] == 4
+    assert job_map[ec2_id]["correction_count"] == 0
+    assert job_map[ec1_id]["hydrophone_id"] == "orcasound_lab"
+    assert job_map[ec1_id]["start_timestamp"] == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_classification_jobs_with_correction_counts_excludes_incomplete(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        ec = EventClassificationJob(event_segmentation_job_id=es.id, status="running")
+        session.add(ec)
+        await session.commit()
+        ec_id = ec.id
+    await engine.dispose()
+
+    resp = await client.get(f"{BASE}/classification-jobs/with-correction-counts")
+    assert resp.status_code == 200
+    job_ids = [j["id"] for j in resp.json()]
+    assert ec_id not in job_ids

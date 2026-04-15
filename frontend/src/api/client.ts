@@ -106,6 +106,15 @@ import type {
   SegmentationTrainingJob,
   QuickRetrainRequest,
   QuickRetrainResponse,
+  EventClassificationJob,
+  CreateEventClassificationJobRequest,
+  TypedEventRow,
+  TypeCorrectionItem,
+  TypeCorrectionResponse,
+  ClassificationJobWithCorrectionCount,
+  CreateEventClassifierTrainingJobRequest,
+  EventClassifierTrainingJob,
+  EventClassifierModel,
 } from "./types";
 
 class ApiError extends Error {
@@ -976,4 +985,72 @@ export const quickRetrain = (body: QuickRetrainRequest) =>
     "/call-parsing/segmentation-training/quick-retrain",
     body,
   );
+
+// ---- Call Parsing (Event Classification) ----
+
+export const fetchClassificationJobs = () =>
+  api<EventClassificationJob[]>("/call-parsing/classification-jobs");
+
+export const createClassificationJob = (
+  body: CreateEventClassificationJobRequest,
+) => post<EventClassificationJob>("/call-parsing/classification-jobs", body);
+
+export const deleteClassificationJob = (jobId: string) =>
+  api<{ status: string }>(`/call-parsing/classification-jobs/${jobId}`, {
+    method: "DELETE",
+  });
+
+export const fetchTypedEvents = (jobId: string) =>
+  api<TypedEventRow[]>(
+    `/call-parsing/classification-jobs/${jobId}/typed-events`,
+  );
+
+export const fetchTypeCorrections = (jobId: string) =>
+  api<TypeCorrectionResponse[]>(
+    `/call-parsing/classification-jobs/${jobId}/corrections`,
+  );
+
+export const saveTypeCorrections = (
+  jobId: string,
+  corrections: TypeCorrectionItem[],
+) =>
+  post<{ count: number }>(
+    `/call-parsing/classification-jobs/${jobId}/corrections`,
+    { corrections },
+  );
+
+export const clearTypeCorrections = (jobId: string) =>
+  api<{ status: string }>(
+    `/call-parsing/classification-jobs/${jobId}/corrections`,
+    { method: "DELETE" },
+  );
+
+export const fetchClassificationJobsWithCorrectionCounts = () =>
+  api<ClassificationJobWithCorrectionCount[]>(
+    "/call-parsing/classification-jobs/with-correction-counts",
+  );
+
+export const fetchClassifierTrainingJobs = () =>
+  api<EventClassifierTrainingJob[]>("/call-parsing/classifier-training-jobs");
+
+export const createClassifierTrainingJob = (
+  body: CreateEventClassifierTrainingJobRequest,
+) =>
+  post<EventClassifierTrainingJob>(
+    "/call-parsing/classifier-training-jobs",
+    body,
+  );
+
+export const deleteClassifierTrainingJob = (jobId: string) =>
+  api<{ status: string }>(`/call-parsing/classifier-training-jobs/${jobId}`, {
+    method: "DELETE",
+  });
+
+export const fetchEventClassifierModels = () =>
+  api<EventClassifierModel[]>("/call-parsing/classifier-models");
+
+export const deleteEventClassifierModel = (modelId: string) =>
+  api<{ status: string }>(`/call-parsing/classifier-models/${modelId}`, {
+    method: "DELETE",
+  });
 
