@@ -86,6 +86,87 @@ def apply_corrections(
     return list(events_by_id.values())
 
 
+async def load_corrected_events(
+    session: AsyncSession,
+    segmentation_job_id: str,
+    storage_root: Path,
+) -> list[Event]:
+    """Load events for a segmentation job with boundary corrections applied.
+
+    Reads ``events.parquet``, queries ``event_boundary_corrections`` for the
+    job, merges via :func:`apply_corrections`, and returns full ``Event``
+    objects.  When no corrections exist the original events are returned
+    unchanged.
+    """
+    seg_dir = segmentation_job_dir(storage_root, segmentation_job_id)
+    events_path = seg_dir / "events.parquet"
+    if not events_path.exists():
+        raise ValueError(
+            f"events.parquet not found for segmentation job {segmentation_job_id}"
+        )
+
+    original_events = read_events(events_path)
+
+    corr_result = await session.execute(
+        select(EventBoundaryCorrection).where(
+            EventBoundaryCorrection.event_segmentation_job_id == segmentation_job_id
+        )
+    )
+    corrections = list(corr_result.scalars().all())
+
+    if not corrections:
+        return original_events
+
+    # Build lookup for original event metadata (region_id, confidence)
+    originals_by_id: dict[str, Event] = {e.event_id: e for e in original_events}
+
+    # apply_corrections returns dicts keyed by event_id
+    events_by_id: dict[str, dict[str, float]] = {
+        e.event_id: {"start_sec": e.start_sec, "end_sec": e.end_sec}
+        for e in original_events
+    }
+    for c in corrections:
+        if c.correction_type == "delete":
+            events_by_id.pop(c.event_id, None)
+        elif c.correction_type == "adjust":
+            if (
+                c.event_id in events_by_id
+                and c.start_sec is not None
+                and c.end_sec is not None
+            ):
+                events_by_id[c.event_id] = {
+                    "start_sec": c.start_sec,
+                    "end_sec": c.end_sec,
+                }
+        elif c.correction_type == "add":
+            if c.start_sec is not None and c.end_sec is not None:
+                events_by_id[c.event_id] = {
+                    "start_sec": c.start_sec,
+                    "end_sec": c.end_sec,
+                }
+
+    # Rebuild Event objects — preserve original metadata where available,
+    # synthesize for added events.
+    corr_region_lookup: dict[str, str] = {c.event_id: c.region_id for c in corrections}
+    result: list[Event] = []
+    for eid, bounds in events_by_id.items():
+        start = bounds["start_sec"]
+        end = bounds["end_sec"]
+        orig = originals_by_id.get(eid)
+        result.append(
+            Event(
+                event_id=eid,
+                region_id=orig.region_id if orig else corr_region_lookup.get(eid, ""),
+                start_sec=start,
+                end_sec=end,
+                center_sec=(start + end) / 2.0,
+                segmentation_confidence=orig.segmentation_confidence if orig else 0.0,
+            )
+        )
+
+    return result
+
+
 def subdivide_region(
     crop_start: float,
     crop_end: float,

@@ -147,6 +147,8 @@ class SegmentationJobWithCorrectionCount(EventSegmentationJobSummary):
     hydrophone_id: Optional[str] = None
     start_timestamp: Optional[float] = None
     end_timestamp: Optional[float] = None
+    has_new_corrections: bool = False
+    latest_correction_at: Optional[datetime] = None
 
 
 class EventClassificationJobSummary(_JobSummary):

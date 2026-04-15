@@ -503,3 +503,145 @@ async def test_create_training_job_missing_dataset_returns_404(
         json={"training_dataset_id": "nonexistent"},
     )
     assert resp.status_code == 404
+
+
+# ---- load_corrected_events tests -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_load_corrected_events_no_corrections(client: AsyncClient, app_settings):
+    """No corrections → original events returned unchanged."""
+    from humpback.call_parsing.segmentation.extraction import load_corrected_events
+
+    seg_job_id, _ = await _seed_job_with_corrections(
+        app_settings, with_corrections=False
+    )
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            events = await load_corrected_events(
+                session, seg_job_id, app_settings.storage_root
+            )
+            assert len(events) == 2
+            ids = {e.event_id for e in events}
+            assert ids == {"e1", "e2"}
+            # Original boundaries preserved
+            e1 = next(e for e in events if e.event_id == "e1")
+            assert e1.start_sec == 105.0
+            assert e1.end_sec == 107.0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_load_corrected_events_with_corrections(
+    client: AsyncClient, app_settings
+):
+    """Corrections applied: adjust e1, add new1, e2 unchanged."""
+    from humpback.call_parsing.segmentation.extraction import load_corrected_events
+
+    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            events = await load_corrected_events(
+                session, seg_job_id, app_settings.storage_root
+            )
+            ids = {e.event_id for e in events}
+            assert ids == {"e1", "e2", "new1"}
+
+            # e1 adjusted
+            e1 = next(e for e in events if e.event_id == "e1")
+            assert e1.start_sec == 105.5
+            assert e1.end_sec == 107.5
+            assert e1.region_id == "r1"
+            assert e1.center_sec == pytest.approx((105.5 + 107.5) / 2.0)
+
+            # e2 unchanged
+            e2 = next(e for e in events if e.event_id == "e2")
+            assert e2.start_sec == 203.0
+            assert e2.end_sec == 205.0
+
+            # new1 added
+            new1 = next(e for e in events if e.event_id == "new1")
+            assert new1.start_sec == 110.0
+            assert new1.end_sec == 112.0
+            assert new1.region_id == "r1"
+            assert new1.segmentation_confidence == 0.0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_load_corrected_events_delete(client: AsyncClient, app_settings):
+    """Delete correction removes the event from the result."""
+    from humpback.call_parsing.segmentation.extraction import load_corrected_events
+
+    storage_root = app_settings.storage_root
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            rd = RegionDetectionJob(
+                hydrophone_id="h1",
+                start_timestamp=0.0,
+                end_timestamp=100.0,
+                status="complete",
+                config_json="{}",
+            )
+            session.add(rd)
+            await session.flush()
+
+            sm = SegmentationModel(
+                name="test-model",
+                model_family="pytorch_crnn",
+                model_path="/fake",
+                config_json="{}",
+            )
+            session.add(sm)
+            await session.flush()
+
+            seg_job = EventSegmentationJob(
+                region_detection_job_id=rd.id,
+                segmentation_model_id=sm.id,
+                status="complete",
+                event_count=1,
+            )
+            session.add(seg_job)
+            await session.flush()
+
+            seg_dir = ensure_dir(segmentation_job_dir(storage_root, seg_job.id))
+            write_events(
+                seg_dir / "events.parquet",
+                [
+                    Event(
+                        event_id="e1",
+                        region_id="r1",
+                        start_sec=10.0,
+                        end_sec=12.0,
+                        center_sec=11.0,
+                        segmentation_confidence=0.9,
+                    ),
+                ],
+            )
+
+            session.add(
+                EventBoundaryCorrection(
+                    event_segmentation_job_id=seg_job.id,
+                    event_id="e1",
+                    region_id="r1",
+                    correction_type="delete",
+                    start_sec=None,
+                    end_sec=None,
+                )
+            )
+            await session.commit()
+
+            events = await load_corrected_events(session, seg_job.id, storage_root)
+            assert len(events) == 0
+    finally:
+        await engine.dispose()

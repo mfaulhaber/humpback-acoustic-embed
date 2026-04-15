@@ -240,3 +240,22 @@ Three structural constraints shape the design:
 - `vocalization_worker.py` rejects `pytorch_event_cnn` model family — only handles `sklearn_perch_embedding`.
 - `segmentation_training_worker.py` deleted; its API endpoints (`POST/GET/GET/{id}/DELETE /call-parsing/segmentation-training-jobs`) removed. The `segmentation_training_jobs` table remains for any existing bootstrap rows but is no longer written to by the application.
 - Implicit approval means the training data volume grows with the number of source jobs even if the user only corrects a few events. This is intentional — uncorrected regions provide context and prevent catastrophic forgetting.
+
+## ADR-054: Read-time correction overlay for downstream consumers
+
+**Date**: 2026-04-14
+**Status**: Accepted
+
+**Context**: ADR-053 established that human boundary corrections are stored in SQL correction tables while parquet artifacts remain immutable. However, downstream consumers (Pass 3 classification inference, Pass 3 classifier feedback training) read `events.parquet` directly without applying corrections. This means corrected boundaries only benefited segmentation retraining, not classification inference or classifier feedback training.
+
+**Decision**: Introduce a shared `load_corrected_events()` utility in `call_parsing/segmentation/extraction.py` that reads `events.parquet`, queries `event_boundary_corrections` for the job, and merges them via the existing `apply_corrections()` function, returning `list[Event]`. All downstream consumers — classification inference worker and classifier feedback training worker — must use this utility instead of reading parquet directly. Parquet files remain immutable inference snapshots; corrections are applied as read-time overlays.
+
+**Alternatives considered**:
+- Materializing corrected events into a new parquet file: rejected because it introduces mutable state, risks stale files, and breaks the immutability contract from ADR-053.
+- Having each consumer independently query and apply corrections: rejected because it duplicates logic across consumers and increases the risk of inconsistency.
+
+**Consequences**:
+- `event_classification_worker.py` calls `load_corrected_events()` instead of `read_events()` during inference. Added events are classified; deleted events are excluded; adjusted events use corrected boundaries for audio cropping.
+- `event_classifier_feedback_worker.py` calls `load_corrected_events()` to get corrected boundaries when assembling training data. Boundary-deleted events are excluded before type resolution; added events need a type correction to be included in training.
+- The classify review UI allows boundary editing (adjust, add, delete) with corrections stored against the upstream segmentation job via existing correction endpoints.
+- The `with-correction-counts` endpoint now includes `has_new_corrections` to surface when corrections exist that haven't been consumed by a training dataset.

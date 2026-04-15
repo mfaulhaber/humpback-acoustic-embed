@@ -27,6 +27,7 @@ from humpback.call_parsing.event_classifier.trainer import (
     EventClassifierTrainingResult,
     train_event_classifier,
 )
+from humpback.call_parsing.segmentation.extraction import load_corrected_events
 from humpback.call_parsing.storage import (
     classification_job_dir,
     read_typed_events,
@@ -145,10 +146,15 @@ async def _collect_samples(
         for te in typed_events:
             typed_by_event[te.event_id].append(te)
 
-        event_bounds: dict[str, tuple[float, float]] = {}
-        for te in typed_events:
-            if te.event_id not in event_bounds:
-                event_bounds[te.event_id] = (te.start_sec, te.end_sec)
+        # Use corrected boundaries from the upstream segmentation job so
+        # that human boundary edits (adjust/add/delete) are reflected in
+        # the audio crops used for classifier training.
+        corrected_events = await load_corrected_events(
+            session, cls_job.event_segmentation_job_id, settings.storage_root
+        )
+        event_bounds: dict[str, tuple[float, float]] = {
+            e.event_id: (e.start_sec, e.end_sec) for e in corrected_events
+        }
 
         corr_result = await session.execute(
             select(EventTypeCorrection).where(

@@ -3,12 +3,18 @@ import { Button } from "@/components/ui/button";
 import {
   useSegmentationTrainingDatasets,
   useCreateSegmentationTrainingJob,
+  useSegmentationJobsWithCorrectionCounts,
 } from "@/hooks/queries/useCallParsing";
 import { toast } from "@/components/ui/use-toast";
 
 export function TrainingDatasetTable() {
   const { data: datasets = [] } = useSegmentationTrainingDatasets();
   const trainMutation = useCreateSegmentationTrainingJob();
+  const { data: correctionJobs = [] } =
+    useSegmentationJobsWithCorrectionCounts();
+  const jobsWithNewCorrections = correctionJobs.filter(
+    (j) => j.has_new_corrections,
+  );
 
   const handleTrain = (datasetId: string, datasetName: string) => {
     if (
@@ -46,6 +52,15 @@ export function TrainingDatasetTable() {
           <Badge variant="secondary">{datasets.length}</Badge>
         </div>
       </div>
+
+      {jobsWithNewCorrections.length > 0 && (
+        <div className="px-4 py-2 bg-amber-50 dark:bg-amber-950/30 border-b text-sm text-amber-700 dark:text-amber-400">
+          New corrections available from{" "}
+          {jobsWithNewCorrections.length} segmentation job
+          {jobsWithNewCorrections.length !== 1 ? "s" : ""}. Create a
+          new dataset above to include them.
+        </div>
+      )}
 
       {datasets.length === 0 ? (
         <div className="px-4 py-6 text-center text-sm text-muted-foreground">
