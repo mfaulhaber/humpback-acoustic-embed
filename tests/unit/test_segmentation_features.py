@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 
@@ -94,3 +96,15 @@ def test_extract_logmel_pure_function() -> None:
 def test_normalize_handles_empty() -> None:
     out = normalize_per_region_zscore(np.zeros((0, 0), dtype=np.float32))
     assert out.size == 0
+
+
+def test_normalize_zscore_constant_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """All-zeros input should log a constant-spectrogram warning."""
+    x = np.zeros((64, 100), dtype=np.float32)
+    with caplog.at_level(
+        logging.WARNING, logger="humpback.call_parsing.segmentation.features"
+    ):
+        out = normalize_per_region_zscore(x)
+    assert out.shape == x.shape
+    assert np.all(np.isfinite(out))
+    assert "Constant spectrogram detected" in caplog.text

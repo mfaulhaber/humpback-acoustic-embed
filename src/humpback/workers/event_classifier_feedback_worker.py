@@ -210,15 +210,15 @@ def _build_audio_loader(settings: Settings) -> Any:
 
     target_sr = 16000
 
-    def _load(sample: Any) -> np.ndarray:
+    def _load(sample: Any) -> tuple[np.ndarray, float]:
         hydro_id = sample.hydrophone_id
         start_ts = float(sample.start_timestamp)
         end_ts = float(sample.end_timestamp)
         duration = sample.end_sec - sample.start_sec
         context_sec = max(10.0, duration)
         pad = (context_sec - duration) / 2.0
-        ctx_start = max(start_ts, start_ts + sample.start_sec - pad)
-        ctx_end = min(end_ts, start_ts + sample.end_sec + pad)
+        ctx_start = max(start_ts, sample.start_sec - pad)
+        ctx_end = min(end_ts, sample.end_sec + pad)
         ctx_duration = ctx_end - ctx_start
 
         audio = resolve_timeline_audio(
@@ -233,7 +233,7 @@ def _build_audio_loader(settings: Settings) -> Any:
             if settings.noaa_cache_path
             else None,
         )
-        return audio
+        return audio, ctx_start
 
     return _load
 

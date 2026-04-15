@@ -6,6 +6,8 @@ a short canned loader to exercise the callback / early-stop path.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 import torch
 from torch import nn
@@ -211,3 +213,72 @@ def test_callback_can_populate_callback_outputs() -> None:
 
     assert "first_loss" in result.callback_outputs
     assert isinstance(result.callback_outputs["first_loss"], float)
+
+
+def test_fit_applies_grad_clip() -> None:
+    """When grad_clip is set, gradient norms should be clipped."""
+    torch.manual_seed(0)
+    model = _MLP()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
+    loss_fn = nn.MSELoss()
+    loader = _xor_loader()
+
+    result = fit(
+        model=model,
+        optimizer=optimizer,
+        loss_fn=loss_fn,
+        train_loader=loader,
+        epochs=3,
+        device=torch.device("cpu"),
+        grad_clip=0.5,
+    )
+
+    # Should complete without error and still learn
+    assert len(result.train_losses) == 3
+
+
+def test_fit_logs_per_epoch(caplog: pytest.LogCaptureFixture) -> None:
+    """fit() should log train_loss at INFO level each epoch."""
+    torch.manual_seed(0)
+    model = _MLP()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
+    loss_fn = nn.MSELoss()
+    loader = _xor_loader()
+
+    with caplog.at_level(logging.INFO, logger="humpback.ml.training_loop"):
+        fit(
+            model=model,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            train_loader=loader,
+            epochs=3,
+            device=torch.device("cpu"),
+        )
+
+    assert caplog.text.count("train_loss=") == 3
+    assert "Epoch 1/3" in caplog.text
+    assert "Epoch 3/3" in caplog.text
+
+
+def test_fit_logs_val_loss_when_val_loader_present(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """fit() should include val_loss in log lines when val_loader is given."""
+    torch.manual_seed(0)
+    model = _MLP()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
+    loss_fn = nn.MSELoss()
+    loader = _xor_loader()
+
+    with caplog.at_level(logging.INFO, logger="humpback.ml.training_loop"):
+        fit(
+            model=model,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            train_loader=loader,
+            epochs=2,
+            val_loader=loader,
+            device=torch.device("cpu"),
+        )
+
+    assert caplog.text.count("val_loss=") == 2

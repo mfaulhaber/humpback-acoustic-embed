@@ -9,6 +9,7 @@ focuses on model + data + loss only.
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -19,6 +20,8 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 
 from humpback.ml.device import select_device
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,6 +56,7 @@ def _run_epoch(
     device: torch.device,
     loss_fn: nn.Module | None,
     optimizer: Optimizer | None,
+    grad_clip: float | None = None,
 ) -> float:
     """Run one pass over ``loader``. Training if ``optimizer`` is given."""
     is_train = optimizer is not None
@@ -79,6 +83,8 @@ def _run_epoch(
             if optimizer is not None:
                 optimizer.zero_grad()
                 loss.backward()
+                if grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()
 
             total_loss += float(loss.detach().item())
@@ -99,6 +105,7 @@ def fit(
     scheduler: LRScheduler | None = None,
     callbacks: list[Callback] | None = None,
     device: torch.device | None = None,
+    grad_clip: float | None = None,
 ) -> TrainingResult:
     """Train ``model`` for up to ``epochs`` epochs.
 
@@ -116,7 +123,12 @@ def fit(
 
     for epoch in range(epochs):
         train_loss = _run_epoch(
-            model, train_loader, device, loss_fn=loss_fn, optimizer=optimizer
+            model,
+            train_loader,
+            device,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            grad_clip=grad_clip,
         )
         result.train_losses.append(train_loss)
 
@@ -128,6 +140,22 @@ def fit(
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 result.best_model_state = copy.deepcopy(model.state_dict())
+
+        if val_loader is not None:
+            logger.info(
+                "Epoch %d/%d — train_loss=%.4f, val_loss=%.4f",
+                epoch + 1,
+                epochs,
+                train_loss,
+                result.val_losses[-1],
+            )
+        else:
+            logger.info(
+                "Epoch %d/%d — train_loss=%.4f",
+                epoch + 1,
+                epochs,
+                train_loss,
+            )
 
         if scheduler is not None:
             scheduler.step()

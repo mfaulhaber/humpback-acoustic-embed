@@ -49,8 +49,8 @@ def _train_and_save(tmp_path: Path) -> Path:
     """Train a tiny model and return the model directory."""
     audio = _make_audio(5.0)
 
-    def _load(_s: object) -> np.ndarray:
-        return audio
+    def _load(_s: object) -> tuple[np.ndarray, float]:
+        return audio, 0.0
 
     samples = [
         FakeTrainSample(0.0, 1.5, type_index=0, audio_file_id="f1"),

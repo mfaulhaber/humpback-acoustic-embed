@@ -138,16 +138,12 @@ def _build_audio_loader(settings: Settings):
     """Return a callable that fetches audio for a _BootstrapSample."""
     target_sr = 16000
 
-    def _load(sample: _BootstrapSample) -> np.ndarray:
+    def _load(sample: _BootstrapSample) -> tuple[np.ndarray, float]:
         duration = sample.end_sec - sample.start_sec
         context_sec = max(10.0, duration)
         pad = (context_sec - duration) / 2.0
-        ctx_start = max(
-            sample.start_timestamp, sample.start_timestamp + sample.start_sec - pad
-        )
-        ctx_end = min(
-            sample.end_timestamp, sample.start_timestamp + sample.end_sec + pad
-        )
+        ctx_start = max(sample.start_timestamp, sample.start_sec - pad)
+        ctx_end = min(sample.end_timestamp, sample.end_sec + pad)
         ctx_duration = ctx_end - ctx_start
 
         audio = resolve_timeline_audio(
@@ -162,7 +158,7 @@ def _build_audio_loader(settings: Settings):
             if settings.noaa_cache_path
             else None,
         )
-        return audio
+        return audio, ctx_start
 
     return _load
 
