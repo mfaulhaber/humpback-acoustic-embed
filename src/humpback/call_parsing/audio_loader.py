@@ -173,27 +173,40 @@ class CachedAudioSource:
         return audio
 
 
+def _event_context(
+    start: float, end: float, job_duration: float
+) -> tuple[float, float]:
+    """Compute context-padded range for a single event.
+
+    Returns ``(ctx_start_rel, ctx_duration)`` — both relative to job start.
+    Padding: ``max(10.0, event_duration)`` total context, symmetric,
+    clamped to ``[0.0, job_duration]``.
+    """
+    duration = max(0.0, end - start)
+    context_sec = max(10.0, duration)
+    pad = (context_sec - duration) / 2.0
+    ctx_start = max(0.0, start - pad)
+    ctx_end = min(job_duration, end + pad) if job_duration > 0 else end + pad
+    return ctx_start, max(0.0, ctx_end - ctx_start)
+
+
 def _compute_preload_span(
     events: Sequence[Any],
     job_duration: float,
 ) -> tuple[float, float]:
     """Compute a bounding span with context padding for pre-loading.
 
-    Uses ``start_sec`` / ``end_sec`` attributes on each event.  Context
-    padding strategy: ``max(10.0, event_duration)`` per event, symmetric,
-    clamped to ``[0.0, job_duration]``.
+    Uses ``start_sec`` / ``end_sec`` attributes on each event.
     """
     padded_starts: list[float] = []
     padded_ends: list[float] = []
 
     for ev in events:
-        start = float(ev.start_sec)
-        end = float(ev.end_sec)
-        duration = max(0.0, end - start)
-        context_sec = max(10.0, duration)
-        pad = (context_sec - duration) / 2.0
-        padded_starts.append(max(0.0, start - pad))
-        padded_ends.append(min(job_duration, end + pad))
+        ctx_start, ctx_dur = _event_context(
+            float(ev.start_sec), float(ev.end_sec), job_duration
+        )
+        padded_starts.append(ctx_start)
+        padded_ends.append(ctx_start + ctx_dur)
 
     return min(padded_starts), max(padded_ends)
 
@@ -240,15 +253,9 @@ def build_event_audio_loader(
     def _load(event: Any) -> tuple[np.ndarray, float]:
         if is_preloaded or source._kind == "file":
             return source.get_audio(float(event.start_sec), 0.0)
-        # Per-request: compute context padding around the event.
-        start = float(event.start_sec)
-        end = float(event.end_sec)
-        duration = max(0.0, end - start)
-        context_sec = max(10.0, duration)
-        pad = (context_sec - duration) / 2.0
-        ctx_start = max(0.0, start - pad)
-        ctx_end = min(_job_dur, end + pad) if _job_dur > 0 else end + pad
-        ctx_duration = max(0.0, ctx_end - ctx_start)
+        ctx_start, ctx_duration = _event_context(
+            float(event.start_sec), float(event.end_sec), _job_dur
+        )
         return source.get_audio(ctx_start, ctx_duration)
 
     return _load
@@ -408,16 +415,9 @@ def build_multi_source_event_audio_loader(
         if source._audio is not None:
             return source.get_audio(float(sample.start_sec), 0.0)
 
-        # Per-request: compute context padding.
-        start = float(sample.start_sec)
-        end = float(sample.end_sec)
-        duration = max(0.0, end - start)
-        context_sec = max(10.0, duration)
-        pad = (context_sec - duration) / 2.0
-        job_dur = key[2] - key[1]
-        ctx_start = max(0.0, start - pad)
-        ctx_end = min(job_dur, end + pad) if job_dur > 0 else end + pad
-        ctx_duration = max(0.0, ctx_end - ctx_start)
+        ctx_start, ctx_duration = _event_context(
+            float(sample.start_sec), float(sample.end_sec), key[2] - key[1]
+        )
         return source.get_audio(ctx_start, ctx_duration)
 
     return _load

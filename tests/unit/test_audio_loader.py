@@ -21,7 +21,9 @@ import pytest
 from humpback.call_parsing.audio_loader import (
     CachedAudioSource,
     _compute_preload_span,
+    _event_context,
     build_event_audio_loader,
+    build_multi_source_event_audio_loader,
     build_region_audio_loader,
     build_training_audio_loader,
 )
@@ -49,6 +51,17 @@ class _FakeRegion:
 class _FakeTrainingSample:
     crop_start_sec: float
     crop_end_sec: float
+    hydrophone_id: str
+    start_timestamp: float
+    end_timestamp: float
+
+
+@dataclass
+class _FakeEventSample:
+    """Sample for multi-source event classification (feedback/bootstrap)."""
+
+    start_sec: float
+    end_sec: float
     hydrophone_id: str
     start_timestamp: float
     end_timestamp: float
@@ -97,9 +110,6 @@ def _mock_resolve(returned_audio: np.ndarray | None = None):
         "humpback.processing.timeline_audio.resolve_timeline_audio",
         side_effect=_side_effect,
     )
-
-
-RESOLVE_PATH = "humpback.call_parsing.audio_loader.resolve_timeline_audio"
 
 
 # ===================================================================
@@ -540,3 +550,203 @@ class TestTrainingAudioLoader:
 
         assert isinstance(result, np.ndarray)
         assert not isinstance(result, tuple)
+
+
+# ===================================================================
+# Multi-source event audio loader
+# ===================================================================
+
+
+class TestMultiSourceEventAudioLoader:
+    def test_returns_tuple(self, tmp_path: Path) -> None:
+        """Multi-source event loader returns tuple[ndarray, float], not bare ndarray."""
+        settings = _make_settings(tmp_path)
+        sample = _FakeEventSample(
+            start_sec=5.0,
+            end_sec=8.0,
+            hydrophone_id="h1",
+            start_timestamp=1000.0,
+            end_timestamp=1100.0,
+        )
+
+        with _mock_resolve():
+            loader = build_multi_source_event_audio_loader(
+                target_sr=16000,
+                settings=settings,
+            )
+            result = loader(sample)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert isinstance(result[0], np.ndarray)
+        assert isinstance(result[1], float)
+
+    def test_multi_source_dispatch(self, tmp_path: Path) -> None:
+        """Samples from different hydrophones use different sources."""
+        settings = _make_settings(tmp_path)
+        samples = [
+            _FakeEventSample(
+                start_sec=5.0,
+                end_sec=8.0,
+                hydrophone_id="h1",
+                start_timestamp=1000.0,
+                end_timestamp=1100.0,
+            ),
+            _FakeEventSample(
+                start_sec=5.0,
+                end_sec=8.0,
+                hydrophone_id="h2",
+                start_timestamp=2000.0,
+                end_timestamp=2100.0,
+            ),
+        ]
+
+        with _mock_resolve() as mock_rta:
+            loader = build_multi_source_event_audio_loader(
+                target_sr=16000,
+                settings=settings,
+                samples=samples,
+            )
+            # 2 groups → 2 preload calls at construction
+            assert mock_rta.call_count == 2
+
+            r1 = loader(samples[0])
+            r2 = loader(samples[1])
+            # No additional calls — both served from cache
+            assert mock_rta.call_count == 2
+
+        assert isinstance(r1, tuple)
+        assert isinstance(r2, tuple)
+
+    def test_preloads_per_group(self, tmp_path: Path) -> None:
+        """Samples sharing the same source are grouped and pre-loaded once."""
+        settings = _make_settings(tmp_path)
+        samples = [
+            _FakeEventSample(
+                start_sec=1.0,
+                end_sec=3.0,
+                hydrophone_id="h1",
+                start_timestamp=1000.0,
+                end_timestamp=1100.0,
+            ),
+            _FakeEventSample(
+                start_sec=20.0,
+                end_sec=25.0,
+                hydrophone_id="h1",
+                start_timestamp=1000.0,
+                end_timestamp=1100.0,
+            ),
+        ]
+
+        with _mock_resolve() as mock_rta:
+            loader = build_multi_source_event_audio_loader(
+                target_sr=16000,
+                settings=settings,
+                samples=samples,
+            )
+            # 1 group → 1 preload call
+            assert mock_rta.call_count == 1
+
+            loader(samples[0])
+            loader(samples[1])
+            # Still 1 call
+            assert mock_rta.call_count == 1
+
+    def test_per_request_fallback(self, tmp_path: Path) -> None:
+        """Unknown source triggers per-request resolve with context padding."""
+        settings = _make_settings(tmp_path)
+        known = _FakeEventSample(
+            start_sec=5.0,
+            end_sec=8.0,
+            hydrophone_id="h1",
+            start_timestamp=1000.0,
+            end_timestamp=1100.0,
+        )
+        unknown = _FakeEventSample(
+            start_sec=5.0,
+            end_sec=8.0,
+            hydrophone_id="h_new",
+            start_timestamp=3000.0,
+            end_timestamp=3100.0,
+        )
+
+        with _mock_resolve() as mock_rta:
+            loader = build_multi_source_event_audio_loader(
+                target_sr=16000,
+                settings=settings,
+                samples=[known],
+            )
+            # 1 preload call for known
+            assert mock_rta.call_count == 1
+
+            # Load unknown → triggers per-request resolve
+            result = loader(unknown)
+            assert mock_rta.call_count == 2
+
+        assert isinstance(result, tuple)
+        # Verify context padding was applied (start_sec used in call)
+        call_kwargs = mock_rta.call_args_list[1].kwargs
+        # Event is 3s (5-8), context = max(10, 3) = 10, pad = 3.5
+        # ctx_start = max(0, 5-3.5) = 1.5 → abs = 3000 + 1.5 = 3001.5
+        assert call_kwargs["start_sec"] == pytest.approx(3001.5)
+
+    def test_preloaded_returns_same_buffer_for_group(self, tmp_path: Path) -> None:
+        """Pre-loaded samples from same group share buffer reference."""
+        settings = _make_settings(tmp_path)
+        s1 = _FakeEventSample(
+            start_sec=1.0,
+            end_sec=3.0,
+            hydrophone_id="h1",
+            start_timestamp=1000.0,
+            end_timestamp=1100.0,
+        )
+        s2 = _FakeEventSample(
+            start_sec=50.0,
+            end_sec=55.0,
+            hydrophone_id="h1",
+            start_timestamp=1000.0,
+            end_timestamp=1100.0,
+        )
+
+        with _mock_resolve():
+            loader = build_multi_source_event_audio_loader(
+                target_sr=16000,
+                settings=settings,
+                samples=[s1, s2],
+            )
+            audio1, _ = loader(s1)
+            audio2, _ = loader(s2)
+
+        # Same pre-loaded buffer
+        assert audio1 is audio2
+
+
+# ===================================================================
+# _event_context helper
+# ===================================================================
+
+
+class TestEventContext:
+    def test_short_event_symmetric(self) -> None:
+        """Short event gets symmetric 10s context."""
+        ctx_start, ctx_dur = _event_context(50.0, 52.0, 200.0)
+        assert ctx_start == pytest.approx(46.0)
+        assert ctx_dur == pytest.approx(10.0)
+
+    def test_long_event_no_extra(self) -> None:
+        """Event >= 10s gets no extra padding."""
+        ctx_start, ctx_dur = _event_context(50.0, 65.0, 200.0)
+        assert ctx_start == pytest.approx(50.0)
+        assert ctx_dur == pytest.approx(15.0)
+
+    def test_clamped_to_bounds(self) -> None:
+        """Context clamped to [0, job_duration]."""
+        ctx_start, ctx_dur = _event_context(1.0, 2.0, 5.0)
+        assert ctx_start >= 0.0
+        assert ctx_start + ctx_dur <= 5.0
+
+    def test_zero_job_duration(self) -> None:
+        """Zero job_duration doesn't crash."""
+        ctx_start, ctx_dur = _event_context(5.0, 8.0, 0.0)
+        assert ctx_start >= 0.0
+        assert ctx_dur >= 0.0
