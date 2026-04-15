@@ -40,7 +40,7 @@ export function ClassifyDetailPanel({ event }: ClassifyDetailPanelProps) {
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Type:</span>
           {isNegative ? (
-            <Badge variant="outline" className="text-xs">
+            <Badge variant="outline" className="text-xs text-red-500 border-red-400">
               (Negative)
             </Badge>
           ) : displayType ? (

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useVocalizationTypes } from "@/hooks/queries/useVocalization";
@@ -48,8 +47,8 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
       <button
         className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
           activeType === ""
-            ? "border-slate-900 bg-slate-100 ring-2 ring-slate-300"
-            : "border-slate-300 hover:border-slate-400"
+            ? "border-red-500 bg-red-50 text-red-600 ring-2 ring-red-300"
+            : "border-red-300 text-red-500 hover:border-red-400"
         }`}
         onClick={() => onSelectType(activeType === "" ? null : "")}
       >
