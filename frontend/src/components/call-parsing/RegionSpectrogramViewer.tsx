@@ -324,7 +324,7 @@ export function RegionSpectrogramViewer({
                       top: 0,
                       width: Math.min(startX, canvasWidth),
                       height: canvasHeight,
-                      background: "rgba(0,0,0,0.55)",
+                      background: "rgba(0,0,0,0.3)",
                       pointerEvents: "none",
                       zIndex: 3,
                     }}
@@ -340,7 +340,7 @@ export function RegionSpectrogramViewer({
                       top: 0,
                       width: canvasWidth - Math.max(endX, 0),
                       height: canvasHeight,
-                      background: "rgba(0,0,0,0.55)",
+                      background: "rgba(0,0,0,0.3)",
                       pointerEvents: "none",
                       zIndex: 3,
                     }}

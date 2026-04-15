@@ -227,8 +227,18 @@ export function EventBarOverlay({
   const barTop = ctx.canvasHeight * (1 - BAR_HEIGHT_FRAC);
   const barHeight = ctx.canvasHeight * BAR_HEIGHT_FRAC;
 
-  // Deleted events (shown separately with strikethrough)
-  const deletedEvents = events.filter((e) => e.correctionType === "delete");
+  // Deleted events (shown separately with strikethrough), excluding any
+  // whose time range is fully covered by an active event (e.g., the user
+  // merged two events by extending one and deleting the other).
+  const deletedEvents = useMemo(() => {
+    const deleted = events.filter((e) => e.correctionType === "delete");
+    return deleted.filter(
+      (d) =>
+        !sortedEvents.some(
+          (a) => a.startSec <= d.startSec && a.endSec >= d.endSec,
+        ),
+    );
+  }, [events, sortedEvents]);
 
   return (
     <div

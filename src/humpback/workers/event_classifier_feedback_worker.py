@@ -64,12 +64,15 @@ class _ClassifierSample:
 def _resolve_event_labels(
     typed_events_by_event: dict[str, list[Any]],
     corrections: dict[str, str | None],
+    *,
+    corrections_only: bool = True,
 ) -> dict[str, str | None]:
     """For each event, resolve the final single type label.
 
     Returns ``{event_id: type_name}`` where type_name is None for negatives.
-    Corrected events use the correction; uncorrected events use the
-    highest-scoring above-threshold type from the inference output.
+    Corrected events use the correction; when *corrections_only* is False,
+    uncorrected events fall back to the highest-scoring above-threshold type
+    from inference output.  When True, uncorrected events are excluded.
     """
     labels: dict[str, str | None] = {}
 
@@ -78,6 +81,8 @@ def _resolve_event_labels(
     for event_id in all_event_ids:
         if event_id in corrections:
             labels[event_id] = corrections[event_id]
+        elif corrections_only:
+            labels[event_id] = None
         else:
             rows = typed_events_by_event.get(event_id, [])
             above = [r for r in rows if r.above_threshold]
@@ -94,6 +99,8 @@ async def _collect_samples(
     session: AsyncSession,
     source_job_ids: list[str],
     settings: Settings,
+    *,
+    corrections_only: bool = True,
 ) -> tuple[list[_ClassifierSample], list[str]]:
     """Collect training samples from source classification jobs.
 
@@ -164,7 +171,9 @@ async def _collect_samples(
         corrections_raw = list(corr_result.scalars().all())
         corrections = {c.event_id: c.type_name for c in corrections_raw}
 
-        labels = _resolve_event_labels(typed_by_event, corrections)
+        labels = _resolve_event_labels(
+            typed_by_event, corrections, corrections_only=corrections_only
+        )
 
         for event_id, type_name in labels.items():
             if type_name is None:
@@ -245,7 +254,12 @@ async def run_event_classifier_feedback_training(
         training_params = json.loads(config_json) if config_json else {}
         config = EventClassifierTrainingConfig(**training_params)
 
-        samples, vocabulary = await _collect_samples(session, source_job_ids, settings)
+        samples, vocabulary = await _collect_samples(
+            session,
+            source_job_ids,
+            settings,
+            corrections_only=config.corrections_only,
+        )
         if not samples:
             raise ValueError("No training samples collected from source jobs")
 
