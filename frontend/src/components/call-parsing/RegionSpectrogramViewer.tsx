@@ -44,6 +44,9 @@ interface RegionSpectrogramViewerProps {
   region: Region;
   children?: ReactNode;
   onViewStartChange?: (viewStart: number) => void;
+  onViewSpanChange?: (span: number) => void;
+  /** When changed, scrolls so this timestamp is the viewport center. */
+  scrollToCenter?: number;
   audioRef?: RefObject<HTMLAudioElement | null>;
   isPlaying?: boolean;
   playbackOriginSec?: number;
@@ -54,6 +57,8 @@ export function RegionSpectrogramViewer({
   region,
   children,
   onViewStartChange,
+  onViewSpanChange,
+  scrollToCenter,
   audioRef,
   isPlaying = false,
   playbackOriginSec = 0,
@@ -93,14 +98,20 @@ export function RegionSpectrogramViewer({
   const initialCenter = regionStart + Math.min(regionDuration, VIEWPORT_SPAN_SEC) / 2;
   const [centerTimestamp, setCenterTimestamp] = useState(initialCenter);
 
-  // Reset zoom and center when region changes
+  // Re-center when region changes but keep current zoom level
   useEffect(() => {
     const dur = region.padded_end_sec - region.padded_start_sec;
-    const autoZoom = selectZoomLevel(dur);
-    setZoomLevel(autoZoom);
-    const span = ZOOM_PRESETS[autoZoom].viewportSpan;
+    const span = ZOOM_PRESETS[zoomLevel].viewportSpan;
     setCenterTimestamp(region.padded_start_sec + Math.min(dur, span) / 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- zoomLevel intentionally excluded
   }, [region.region_id, region.padded_start_sec, region.padded_end_sec]);
+
+  // External scroll request
+  useEffect(() => {
+    if (scrollToCenter !== undefined) {
+      setCenterTimestamp(scrollToCenter);
+    }
+  }, [scrollToCenter]);
 
   const pxPerSec = canvasWidth > 0 ? canvasWidth / VIEWPORT_SPAN_SEC : 1;
 
@@ -156,6 +167,9 @@ export function RegionSpectrogramViewer({
   useEffect(() => {
     onViewStartChange?.(viewStart);
   }, [viewStart, onViewStartChange]);
+  useEffect(() => {
+    onViewSpanChange?.(VIEWPORT_SPAN_SEC);
+  }, [VIEWPORT_SPAN_SEC, onViewSpanChange]);
   // Job start for tile indexing — use the job's start_timestamp (approximated
   // from the region detection job's time range). Tiles are indexed from time 0
   // of the job, but we receive region-relative padded bounds. Since the tile

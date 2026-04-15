@@ -144,9 +144,12 @@ export function ClassifyReviewWorkspace({
   const [pendingCorrections, setPendingCorrections] = useState<
     Map<string, string | null>
   >(new Map());
-  const [activeType, setActiveType] = useState<string | null>(null);
   const [currentEventIndex, setCurrentEventIndex] = useState(0);
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
+  const [viewSpan, setViewSpan] = useState(30);
+  const [scrollToCenter, setScrollToCenter] = useState<number | undefined>(
+    undefined,
+  );
 
   // Audio playback
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -159,7 +162,6 @@ export function ClassifyReviewWorkspace({
   useEffect(() => {
     setPendingCorrections(new Map());
     setCurrentEventIndex(0);
-    setActiveType(null);
     setActiveTrainingJobId(null);
     setTrainingStartedAt(null);
     setRetrainError(null);
@@ -184,6 +186,30 @@ export function ClassifyReviewWorkspace({
   );
 
   const currentEvent = events[currentEventIndex] ?? null;
+
+  // Derive the palette highlight from the current event's effective type
+  const currentEventType: string | null = useMemo(() => {
+    if (!currentEvent) return null;
+    if (currentEvent.correctedType !== undefined) {
+      // null correction = negative → "" in palette convention
+      return currentEvent.correctedType === null ? "" : currentEvent.correctedType;
+    }
+    return currentEvent.predictedType;
+  }, [currentEvent]);
+
+  // Clicking a type in the palette applies it to the current event
+  const handleSelectType = useCallback(
+    (typeName: string | null) => {
+      if (!currentEvent || typeName === null) return;
+      const correctionValue = typeName === "" ? null : typeName;
+      setPendingCorrections((prev) => {
+        const next = new Map(prev);
+        next.set(currentEvent.eventId, correctionValue);
+        return next;
+      });
+    },
+    [currentEvent],
+  );
 
   // Current region for spectrogram
   const currentRegion = useMemo(
@@ -212,13 +238,19 @@ export function ClassifyReviewWorkspace({
       }));
   }, [events, currentRegion]);
 
-  // Center spectrogram on current event
+  // Scroll spectrogram only when the current event is not fully visible
   useEffect(() => {
-    if (!currentEvent || !currentRegion) return;
-    const eventCenter =
-      (currentEvent.startSec + currentEvent.endSec) / 2;
-    setViewStart(Math.max(currentRegion.padded_start_sec, eventCenter - 5));
-  }, [currentEvent, currentRegion]);
+    if (!currentEvent || viewStart === undefined) return;
+    const viewEnd = viewStart + viewSpan;
+    const pad = viewSpan * 0.1; // 10% padding
+    const fullyVisible =
+      currentEvent.startSec >= viewStart + pad &&
+      currentEvent.endSec <= viewEnd - pad;
+    if (!fullyVisible) {
+      // Place event end near the right edge with padding
+      setScrollToCenter(currentEvent.endSec + pad - viewSpan / 2);
+    }
+  }, [currentEvent, viewStart, viewSpan]);
 
   // Navigation
   const goPrev = useCallback(() => {
@@ -227,17 +259,6 @@ export function ClassifyReviewWorkspace({
   const goNext = useCallback(() => {
     setCurrentEventIndex((i) => Math.min(events.length - 1, i + 1));
   }, [events.length]);
-
-  // Stamp active type onto current event
-  const stampType = useCallback(() => {
-    if (activeType === null || !currentEvent) return;
-    const typeName = activeType === "" ? null : activeType;
-    setPendingCorrections((prev) => {
-      const next = new Map(prev);
-      next.set(currentEvent.eventId, typeName);
-      return next;
-    });
-  }, [activeType, currentEvent]);
 
   // Mark as negative
   const markNegative = useCallback(() => {
@@ -287,24 +308,19 @@ export function ClassifyReviewWorkspace({
       const el = e.target as HTMLElement;
       const tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (tag === "BUTTON" || el.closest("button")) {
-        if (e.code === "Space") return; // Let button handle it
-      }
 
       switch (e.code) {
         case "ArrowLeft":
         case "BracketLeft":
+        case "KeyA":
           e.preventDefault();
           goPrev();
           break;
         case "ArrowRight":
         case "BracketRight":
+        case "KeyD":
           e.preventDefault();
           goNext();
-          break;
-        case "Enter":
-          e.preventDefault();
-          stampType();
           break;
         case "Space":
           e.preventDefault();
@@ -315,15 +331,11 @@ export function ClassifyReviewWorkspace({
           e.preventDefault();
           markNegative();
           break;
-        case "Escape":
-          e.preventDefault();
-          setActiveType(null);
-          break;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goPrev, goNext, stampType, togglePlayback, markNegative]);
+  }, [goPrev, goNext, togglePlayback, markNegative]);
 
   // Save
   const saveMutation = useUpsertTypeCorrections();
@@ -580,6 +592,8 @@ export function ClassifyReviewWorkspace({
               regionJobId={regionDetectionJobId}
               region={currentRegion}
               onViewStartChange={setViewStart}
+              onViewSpanChange={setViewSpan}
+              scrollToCenter={scrollToCenter}
               audioRef={audioRef}
               isPlaying={isPlaying}
               playbackOriginSec={playbackOriginSec}
@@ -588,6 +602,7 @@ export function ClassifyReviewWorkspace({
                 events={regionEffectiveEvents}
                 selectedEventId={currentEvent?.eventId ?? null}
                 onSelectEvent={(eventId) => {
+                  if (!eventId) return;
                   const idx = events.findIndex((e) => e.eventId === eventId);
                   if (idx >= 0) setCurrentEventIndex(idx);
                 }}
@@ -604,7 +619,7 @@ export function ClassifyReviewWorkspace({
           )}
 
           {/* Type palette */}
-          <TypePalette activeType={activeType} onSelectType={setActiveType} />
+          <TypePalette activeType={currentEventType} onSelectType={handleSelectType} />
 
           {/* Detail panel */}
           <ClassifyDetailPanel event={currentEvent} />
