@@ -17,6 +17,7 @@ import type {
   EventClassifierModel,
   TypedEventRow,
 } from "@/api/types";
+import { formatUtcShort } from "@/utils/format";
 
 function hydrophoneName(
   hydrophoneId: string | null,
@@ -25,15 +26,6 @@ function hydrophoneName(
   if (!hydrophoneId) return "—";
   const h = hydrophones.find((hp) => hp.id === hydrophoneId);
   return h ? h.name : hydrophoneId;
-}
-
-function formatUtcShort(epoch: number): string {
-  const d = new Date(epoch * 1000);
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
 function sourceLabel(

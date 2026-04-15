@@ -8,15 +8,7 @@ import {
 import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { toast } from "@/components/ui/use-toast";
 import type { ClassificationJobWithCorrectionCount } from "@/api/types";
-
-function formatUtcShort(epoch: number): string {
-  const d = new Date(epoch * 1000);
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
+import { formatUtcShort } from "@/utils/format";
 
 function sourceLabel(
   job: ClassificationJobWithCorrectionCount,

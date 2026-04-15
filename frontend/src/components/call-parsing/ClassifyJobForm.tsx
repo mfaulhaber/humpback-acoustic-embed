@@ -14,15 +14,7 @@ import type {
 } from "@/api/types";
 import { useRegionDetectionJobs } from "@/hooks/queries/useCallParsing";
 import type { RegionDetectionJob } from "@/api/types";
-
-function formatUtcShort(epoch: number): string {
-  const d = new Date(epoch * 1000);
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
+import { formatUtcShort } from "@/utils/format";
 
 function segJobLabel(
   job: EventSegmentationJob,
@@ -67,7 +59,7 @@ interface ClassifyJobFormProps {
 }
 
 export function ClassifyJobForm({ initialSegmentJobId }: ClassifyJobFormProps) {
-  const { data: segJobs = [] } = useSegmentationJobs(3000);
+  const { data: segJobs = [] } = useSegmentationJobs(0);
   const { data: regionJobs = [] } = useRegionDetectionJobs();
   const { data: hydrophones = [] } = useHydrophones();
   const { data: models = [] } = useEventClassifierModels();

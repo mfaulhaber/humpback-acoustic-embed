@@ -99,7 +99,7 @@ export function ClassifyReviewWorkspace({
 }: {
   initialJobId?: string;
 }) {
-  const { data: classifyJobs = [] } = useClassificationJobs();
+  const { data: classifyJobs = [] } = useClassificationJobs(0);
   const { data: segJobs = [] } = useSegmentationJobs();
   const { data: regionJobs = [] } = useRegionDetectionJobs();
   const { data: hydrophones = [] } = useHydrophones();
@@ -161,6 +161,7 @@ export function ClassifyReviewWorkspace({
     setCurrentEventIndex(0);
     setActiveType(null);
     setActiveTrainingJobId(null);
+    setTrainingStartedAt(null);
     setRetrainError(null);
   }, [selectedJobId]);
 
@@ -351,10 +352,22 @@ export function ClassifyReviewWorkspace({
     setPendingCorrections(new Map());
   }, [isDirty]);
 
+  // Warn before navigating away with unsaved corrections
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
   // ---- Retrain ----
   const [activeTrainingJobId, setActiveTrainingJobId] = useState<string | null>(
     null,
   );
+  const [trainingStartedAt, setTrainingStartedAt] = useState<Date | null>(null);
   const [retrainError, setRetrainError] = useState<string | null>(null);
 
   const createTraining = useCreateClassifierTrainingJob();
@@ -372,6 +385,7 @@ export function ClassifyReviewWorkspace({
       {
         onSuccess: (data) => {
           setActiveTrainingJobId(data.id);
+          setTrainingStartedAt(new Date());
           toast({
             title: "Training job started",
             description: "The model will train in the background.",
@@ -398,15 +412,14 @@ export function ClassifyReviewWorkspace({
   }, [isPolling, refetchModels]);
 
   const newModelReady = useMemo(() => {
-    if (!activeTrainingJobId) return null;
-    // Check if any model was created after the training started
+    if (!activeTrainingJobId || !trainingStartedAt) return null;
+    // Find a model created after we started training
     return (
       classifierModels.find((m) => {
-        // Models don't have training_job_id, so check by creation time
-        return new Date(m.created_at) > new Date();
+        return new Date(m.created_at) > trainingStartedAt;
       }) ?? null
     );
-  }, [activeTrainingJobId, classifierModels]);
+  }, [activeTrainingJobId, trainingStartedAt, classifierModels]);
 
   const handleReclassify = useCallback(() => {
     if (!segJob || !newModelReady) return;

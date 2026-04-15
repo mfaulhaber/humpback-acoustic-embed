@@ -1019,16 +1019,11 @@ export const saveTypeCorrections = (
     { corrections },
   );
 
-export const clearTypeCorrections = async (jobId: string) => {
-  const res = await fetch(
+export const clearTypeCorrections = (jobId: string) =>
+  api<{ status: string }>(
     `/call-parsing/classification-jobs/${jobId}/corrections`,
     { method: "DELETE" },
   );
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text);
-  }
-};
 
 export const fetchClassificationJobsWithCorrectionCounts = () =>
   api<ClassificationJobWithCorrectionCount[]>(
@@ -1046,26 +1041,16 @@ export const createClassifierTrainingJob = (
     body,
   );
 
-export const deleteClassifierTrainingJob = async (jobId: string) => {
-  const res = await fetch(`/call-parsing/classifier-training-jobs/${jobId}`, {
+export const deleteClassifierTrainingJob = (jobId: string) =>
+  api<{ status: string }>(`/call-parsing/classifier-training-jobs/${jobId}`, {
     method: "DELETE",
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text);
-  }
-};
 
 export const fetchEventClassifierModels = () =>
   api<EventClassifierModel[]>("/call-parsing/classifier-models");
 
-export const deleteEventClassifierModel = async (modelId: string) => {
-  const res = await fetch(`/call-parsing/classifier-models/${modelId}`, {
+export const deleteEventClassifierModel = (modelId: string) =>
+  api<{ status: string }>(`/call-parsing/classifier-models/${modelId}`, {
     method: "DELETE",
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text);
-  }
-};
 
