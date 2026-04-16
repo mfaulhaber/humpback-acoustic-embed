@@ -59,6 +59,13 @@ Visual style: disabled-looking chip — muted foreground color, dashed muted bor
 
 No new props. `activeType` already flows in from the workspace.
 
+**Palette click semantics.** Clicking a palette button (including `(Negative)`) always passes the associated type name to `onSelectType`; the previous "click the active button to toggle off to `null`" behavior is removed. Two consequences:
+
+- Clicking the button that matches the current inference prediction promotes the inference label to a human correction (`typeSource` flips from `"inference"` to `"correction"`, and the workspace becomes dirty).
+- Clicking the button that matches an existing correction is a no-op — `handleSelectType` compares against `correctedType` and skips the state update so Save does not relight.
+
+To clear a correction back to "None", the user must click `(Negative)` (which writes `correctedType === null`) or use the existing clear/reset affordances — there is no longer a single-click path from a labeled event back to the unlabeled state via the matching type button.
+
 ### 3. Frontend — two-letter type badge on event bars
 
 In `frontend/src/components/call-parsing/EventBarOverlay.tsx` and `ClassifyReviewWorkspace.tsx`:
@@ -81,7 +88,7 @@ Added events without an above-threshold prediction simply have `typeSource = nul
 
 Style by `typeSource`:
 
-- `"inference"` — transparent/dark background, 1px `typeColor` border, `typeColor` text.
+- `"inference"` — white background, 1px `typeColor` border, `typeColor` text. (White rather than transparent so the outlined 2-letter code stays legible against the purple event-bar fill.)
 - `"correction"` — solid `typeColor` background, white text, 1px `typeColor` border.
 - `"negative"` — solid `hsl(0, 70%, 50%)` background, white text, label `—` (em dash).
 - `null` — badge is not rendered.

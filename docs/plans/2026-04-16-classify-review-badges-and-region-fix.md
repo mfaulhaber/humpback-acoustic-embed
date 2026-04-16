@@ -34,11 +34,16 @@
 - [ ] The chip is present in the DOM in all states; when `activeType !== null`, it is styled `visibility: hidden` so it continues to occupy layout space (no reflow of other palette elements).
 - [ ] The chip has no `onClick`, no hover state, no focus ring, and no pointer cursor. Disabled-looking style: muted foreground text, dashed muted border.
 - [ ] A stable DOM attribute (`data-testid="palette-none-indicator"`) is present so Playwright can query it.
+- [ ] Palette buttons (type buttons and `(Negative)`) always pass the type name to `onSelectType` — the previous "click the active button to toggle to `null`" behavior is removed.
+- [ ] `handleSelectType` in `ClassifyReviewWorkspace.tsx` compares the clicked value against `currentEvent.correctedType` and skips `setPendingCorrections` when they match, so re-clicking an existing correction is idempotent (Save does not relight).
+- [ ] Clicking the palette button that matches the current inference prediction promotes the prediction to a human correction (`typeSource` flips from `"inference"` to `"correction"`, workspace becomes dirty).
 
 **Tests needed:**
 - Playwright: on an event with `activeType === null`, assert the None chip is visible (computed `visibility` not `hidden`).
 - Playwright: click a type button; assert the None chip's computed `visibility` is `hidden` but its bounding box still occupies space.
 - Playwright: capture the `(Negative)` chip's bounding `left` with and without the None chip visible and assert the values are identical (layout-stability assertion).
+- Playwright: click the palette button matching an inference-only event's predicted type; assert its badge's `data-source` flips from `inference` to `correction` and the dirty indicator ("N unsaved change(s)") appears.
+- Playwright: click the same matching button a second time; assert the unsaved-change count stays at 1 (idempotent re-click).
 
 ---
 
@@ -72,7 +77,7 @@
 - [ ] Each non-deleted active bar renders a badge at `left: 0; top: 0` inside the bar, sized ~20×14 px, when `typeSource !== null`.
 - [ ] Badge label is the first two characters of `effectiveType`, uppercased, for `"inference"` and `"correction"` sources.
 - [ ] For `typeSource === "negative"`, badge label is `—` (em dash) on a solid red background (`hsl(0, 70%, 50%)`) with white text.
-- [ ] For `typeSource === "inference"`, badge is a colored outline only: transparent/dark background, 1px `typeColor(effectiveType)` border, `typeColor(effectiveType)` text.
+- [ ] For `typeSource === "inference"`, badge is a colored outline on a white background: `background: #fff`, 1px `typeColor(effectiveType)` border, `typeColor(effectiveType)` text. (White background keeps the outlined code legible against the purple bar fill.)
 - [ ] For `typeSource === "correction"`, badge is solid: `typeColor(effectiveType)` background, white text, 1px `typeColor(effectiveType)` border.
 - [ ] For `typeSource === null`, no badge is rendered.
 - [ ] Badge is `pointer-events: none; overflow: visible` so it does not block drag/click handlers on the bar and can extend past a narrow bar's right edge.
