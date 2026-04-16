@@ -216,9 +216,16 @@ async def run_event_classification_job(
                 fallback_reason,
             )
 
-        job.started_at = datetime.now(timezone.utc)
-        job.compute_device = device.type
-        job.gpu_fallback_reason = fallback_reason
+        # The ``job`` parameter is detached: the runner claims it in one
+        # session and runs the worker in another. Mutating ``job`` here
+        # would silently drop on commit. Re-fetch into the active session
+        # before stamping ``started_at`` and the chosen device.
+        attached = await session.get(EventClassificationJob, job_id)
+        if attached is None:
+            raise ValueError(f"EventClassificationJob {job_id} disappeared")
+        attached.started_at = datetime.now(timezone.utc)
+        attached.compute_device = device.type
+        attached.gpu_fallback_reason = fallback_reason
         await session.commit()
 
         typed_events = await asyncio.to_thread(

@@ -44,8 +44,14 @@ from humpback.schemas.call_parsing import (
     SegmentationFeatureConfig,
 )
 from humpback.storage import ensure_dir
-from humpback.workers.event_segmentation_worker import run_one_iteration
-from humpback.workers.queue import recover_stale_jobs
+from humpback.workers.event_segmentation_worker import (
+    run_event_segmentation_job,
+    run_one_iteration,
+)
+from humpback.workers.queue import (
+    claim_event_segmentation_job,
+    recover_stale_jobs,
+)
 
 
 @pytest.fixture
@@ -268,6 +274,36 @@ async def test_worker_happy_path_writes_events_and_completes_row(
             assert event.start_sec <= event.end_sec
             assert event.end_sec <= 4.0 + hop_tolerance
         assert 0.0 <= event.segmentation_confidence <= 1.0
+
+
+async def test_worker_persists_device_when_claim_and_run_use_separate_sessions(
+    session_factory, tmp_path, monkeypatch
+):
+    """Regression for the runner pattern: claim happens in one session, the
+    job is then handed to a fresh session for execution. The worker must
+    re-attach the row before stamping ``started_at`` / ``compute_device``,
+    otherwise the writes silently drop on commit (production observed
+    NULL ``compute_device`` and ``started_at`` even on completed rows).
+    """
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    _, _, pass2_job_id, _ = await _seed_fixture(session_factory, tmp_path)
+    settings = _make_settings(tmp_path)
+
+    async with session_factory() as session:
+        claimed = await claim_event_segmentation_job(session)
+    assert claimed is not None
+    assert claimed.id == pass2_job_id
+
+    async with session_factory() as session:
+        await run_event_segmentation_job(session, claimed, settings)
+
+    async with session_factory() as session:
+        refreshed = await session.get(EventSegmentationJob, pass2_job_id)
+        assert refreshed is not None
+        assert refreshed.status == "complete"
+        assert refreshed.started_at is not None
+        assert refreshed.compute_device == "cpu"
+        assert refreshed.gpu_fallback_reason is None
 
 
 async def test_worker_failure_path_cleans_up_and_marks_failed(
