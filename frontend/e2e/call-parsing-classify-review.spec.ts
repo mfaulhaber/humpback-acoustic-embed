@@ -360,6 +360,50 @@ test.describe("Classify Review — event badges", () => {
     await expect(badge).toHaveText("CR");
   });
 
+  test("inference badge has a white background, correction badge has the palette color", async ({
+    page,
+  }) => {
+    await openReview(page);
+    const inference = page.getByTestId("event-badge-ev-inference");
+    await expect(inference).toHaveAttribute("data-source", "inference");
+    await expect(inference).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+
+    // Promote the inference label to a correction by clicking the highlighted
+    // palette button — the background should swap from white to the palette
+    // color.
+    await goToEventByIndex(page, 1);
+    await page.getByRole("button", { name: "Moan" }).click();
+    await expect(inference).toHaveAttribute("data-source", "correction");
+    await expect(inference).not.toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+  });
+
+  test("clicking the already-highlighted inference type promotes it to a correction", async ({
+    page,
+  }) => {
+    await openReview(page);
+    // Event 1 is inference-only for "Moan".
+    await goToEventByIndex(page, 1);
+    const badge = page.getByTestId("event-badge-ev-inference");
+    await expect(badge).toHaveAttribute("data-source", "inference");
+
+    // Clicking the highlighted "Moan" palette button should promote the
+    // prediction to a human correction and flag the workspace as dirty.
+    await page.getByRole("button", { name: "Moan" }).click();
+    await expect(badge).toHaveAttribute("data-source", "correction");
+    await expect(page.getByText(/unsaved change/)).toBeVisible();
+
+    // Clicking "Moan" again is idempotent — it must not add another pending
+    // correction (count stays at 1).
+    await page.getByRole("button", { name: "Moan" }).click();
+    await expect(page.getByText("1 unsaved change")).toBeVisible();
+  });
+
   test("clicking (Negative) sets solid red badge with em dash", async ({
     page,
   }) => {

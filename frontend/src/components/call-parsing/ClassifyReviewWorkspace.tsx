@@ -311,11 +311,17 @@ export function ClassifyReviewWorkspace({
     return currentEvent.predictedType;
   }, [currentEvent]);
 
-  // Clicking a type in the palette applies it to the current event
+  // Clicking a type in the palette applies it to the current event.
+  // Clicking the type that already represents the event's effective label is
+  // meaningful only when the label came from inference — it promotes the
+  // prediction to a human correction. When the event is already corrected to
+  // that same value, the click is idempotent and we skip the state update so
+  // Save does not light up.
   const handleSelectType = useCallback(
     (typeName: string | null) => {
       if (!currentEvent || typeName === null) return;
       const correctionValue = typeName === "" ? null : typeName;
+      if (currentEvent.correctedType === correctionValue) return;
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         next.set(currentEvent.eventId, correctionValue);

@@ -404,8 +404,9 @@ function EventTypeBadge({
       background = tc;
       color = "#fff";
     } else {
-      // inference: colored border, text-color matches, transparent bg
-      background = "transparent";
+      // inference: colored border + colored text on a white background so
+      // the label stays legible against the purple bar underneath.
+      background = "#fff";
       color = tc;
     }
   }

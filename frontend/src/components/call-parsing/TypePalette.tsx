@@ -61,7 +61,7 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
             ? "border-red-500 bg-red-50 text-red-600 ring-2 ring-red-300"
             : "border-red-300 text-red-500 hover:border-red-400"
         }`}
-        onClick={() => onSelectType(activeType === "" ? null : "")}
+        onClick={() => onSelectType("")}
       >
         (Negative)
       </button>
@@ -82,9 +82,7 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
               activeType === vt.name ? typeColor(vt.name) : "transparent",
             ["--tw-ring-color" as string]: typeColor(vt.name),
           }}
-          onClick={() =>
-            onSelectType(activeType === vt.name ? null : vt.name)
-          }
+          onClick={() => onSelectType(vt.name)}
         >
           {vt.name}
         </button>
