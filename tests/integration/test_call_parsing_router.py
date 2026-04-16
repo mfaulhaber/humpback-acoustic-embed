@@ -1078,7 +1078,11 @@ async def test_get_segmentation_events_happy_path_after_worker(
 
     detail_resp = await client.get(f"{BASE}/segmentation-jobs/{job_id}")
     assert detail_resp.status_code == 200
-    assert detail_resp.json()["status"] == "complete"
+    detail_payload = detail_resp.json()
+    assert detail_payload["status"] == "complete"
+    assert "compute_device" in detail_payload
+    assert "gpu_fallback_reason" in detail_payload
+    assert detail_payload["gpu_fallback_reason"] is None
 
     events_resp = await client.get(f"{BASE}/segmentation-jobs/{job_id}/events")
     assert events_resp.status_code == 200
@@ -1435,6 +1439,10 @@ async def test_post_classification_jobs_valid_returns_200(
     assert data["status"] == "queued"
     assert data["event_segmentation_job_id"] == es_id
     assert data["vocalization_model_id"] == vm_id
+    assert "compute_device" in data
+    assert data["compute_device"] is None
+    assert "gpu_fallback_reason" in data
+    assert data["gpu_fallback_reason"] is None
 
 
 @pytest.mark.asyncio

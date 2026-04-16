@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+import torch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,7 @@ from humpback.call_parsing.event_classifier.inference import (
     classify_events,
     load_event_classifier,
 )
+from humpback.call_parsing.event_classifier.model import EventClassifierCNN
 from humpback.call_parsing.segmentation.extraction import load_corrected_events
 from humpback.call_parsing.storage import (
     classification_job_dir,
@@ -32,6 +34,7 @@ from humpback.call_parsing.storage import (
 )
 from humpback.call_parsing.types import Event, TypedEvent
 from humpback.config import Settings
+from humpback.ml.device import select_and_validate_device
 from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import (
     EventClassificationJob,
@@ -39,10 +42,16 @@ from humpback.models.call_parsing import (
     RegionDetectionJob,
 )
 from humpback.models.vocalization import VocalizationClassifierModel
+from humpback.schemas.call_parsing import SegmentationFeatureConfig
 from humpback.storage import ensure_dir
 from humpback.workers.queue import claim_event_classification_job
 
 logger = logging.getLogger(__name__)
+
+# Sample input length for the load-time device validation. The event
+# classifier operates on per-event crops; ~150 frames matches a ~1.5s
+# event at the default hop and is small enough to validate cheaply.
+_VALIDATION_FRAMES: int = 150
 
 
 def _cleanup_partial_artifacts(job_dir: Path) -> None:
@@ -62,14 +71,36 @@ def _cleanup_partial_artifacts(job_dir: Path) -> None:
             logger.warning("Failed to delete %s", tmp, exc_info=True)
 
 
-def _run_classification_pipeline(
+def _load_and_validate_model(
     *,
     model_dir: Path,
+) -> tuple[
+    EventClassifierCNN,
+    list[str],
+    dict[str, float],
+    SegmentationFeatureConfig,
+    torch.device,
+    str | None,
+]:
+    """Load the classifier and pick a device via load-time validation."""
+    model, vocabulary, thresholds, feature_config = load_event_classifier(model_dir)
+    model.eval()
+    sample_input = torch.zeros(1, 1, feature_config.n_mels, _VALIDATION_FRAMES)
+    device, fallback_reason = select_and_validate_device(model, sample_input)
+    return model, vocabulary, thresholds, feature_config, device, fallback_reason
+
+
+def _run_classification_pipeline(
+    *,
+    model: EventClassifierCNN,
+    vocabulary: list[str],
+    thresholds: dict[str, float],
+    feature_config: SegmentationFeatureConfig,
+    device: torch.device,
     events: list[Event],
     audio_loader: EventAudioLoader,
     out_path: Path,
 ) -> list[TypedEvent]:
-    model, vocabulary, thresholds, feature_config = load_event_classifier(model_dir)
     typed_events = classify_events(
         model=model,
         events=events,
@@ -77,6 +108,7 @@ def _run_classification_pipeline(
         feature_config=feature_config,
         vocabulary=vocabulary,
         thresholds=thresholds,
+        device=device,
     )
     write_typed_events(out_path, typed_events)
     return typed_events
@@ -123,6 +155,46 @@ async def run_event_classification_job(
         if not (model_dir / "model.pt").exists():
             raise ValueError(f"model checkpoint missing at {model_dir / 'model.pt'}")
 
+        # Load and validate the device before any slow I/O (corrections
+        # read, hydrophone audio preload) so the ``compute_device`` stamp
+        # lands on the row as early as possible — the UI's MPS/CUDA badge
+        # is driven by this column and operators want to see it
+        # immediately, not only once the job completes.
+        (
+            model,
+            vocabulary,
+            thresholds,
+            feature_config,
+            device,
+            fallback_reason,
+        ) = await asyncio.to_thread(
+            _load_and_validate_model,
+            model_dir=model_dir,
+        )
+        if fallback_reason is not None:
+            logger.warning(
+                "Pass 3 job %s falling back to CPU (reason=%s)",
+                job_id,
+                fallback_reason,
+            )
+
+        # The ``job`` parameter is detached: the runner claims it in one
+        # session and runs the worker in another. Mutating ``job`` here
+        # would silently drop on commit. Re-fetch into the active session
+        # before stamping ``started_at`` and the chosen device.
+        attached = await session.get(EventClassificationJob, job_id)
+        if attached is None:
+            raise ValueError(f"EventClassificationJob {job_id} disappeared")
+        attached.started_at = datetime.now(timezone.utc)
+        attached.compute_device = device.type
+        attached.gpu_fallback_reason = fallback_reason
+        await session.commit()
+        logger.info(
+            "Pass 3 job %s: device selected (device=%s)",
+            job_id,
+            device.type,
+        )
+
         events = await load_corrected_events(
             session, upstream_seg_id, settings.storage_root
         )
@@ -166,15 +238,27 @@ async def run_event_classification_job(
                 f"upstream RegionDetectionJob {upstream_region_id} has no audio source"
             )
 
-        job.started_at = datetime.now(timezone.utc)
-        await session.commit()
-
+        logger.info(
+            "Pass 3 job %s: starting inference on %d events (device=%s)",
+            job_id,
+            len(events),
+            device.type,
+        )
         typed_events = await asyncio.to_thread(
             _run_classification_pipeline,
-            model_dir=model_dir,
+            model=model,
+            vocabulary=vocabulary,
+            thresholds=thresholds,
+            feature_config=feature_config,
+            device=device,
             events=events,
             audio_loader=audio_loader,
             out_path=job_dir / "typed_events.parquet",
+        )
+        logger.info(
+            "Pass 3 job %s: inference done (%d typed events)",
+            job_id,
+            len(typed_events),
         )
 
         now = datetime.now(timezone.utc)

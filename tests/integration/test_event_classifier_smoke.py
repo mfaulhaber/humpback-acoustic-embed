@@ -184,9 +184,10 @@ class TestTrainAndInfer:
 
 class TestWorkerEndToEnd:
     async def test_worker_completes_classification_job(
-        self, session_factory, trained_model_dir: Path, tmp_path: Path
+        self, session_factory, trained_model_dir: Path, tmp_path: Path, monkeypatch
     ):
         """Full worker path: queued job -> run_event_classification_job -> complete."""
+        monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
         storage_root = tmp_path / "storage"
         storage_root.mkdir()
         settings = Settings(
@@ -264,6 +265,8 @@ class TestWorkerEndToEnd:
             assert refreshed.status == "complete"
             assert refreshed.typed_event_count is not None
             assert refreshed.typed_event_count >= 2
+            assert refreshed.compute_device == "cpu"
+            assert refreshed.gpu_fallback_reason is None
 
             out_parquet = (
                 storage_root
@@ -278,3 +281,102 @@ class TestWorkerEndToEnd:
             for te in typed_events:
                 assert te.type_name in VOCABULARY
                 assert 0.0 <= te.score <= 1.0
+
+    async def test_worker_persists_device_with_separate_sessions(
+        self, session_factory, trained_model_dir: Path, tmp_path: Path, monkeypatch
+    ):
+        """Regression for the runner pattern: claim and run use separate
+        sessions, so the worker must re-attach the row before stamping
+        ``started_at`` / ``compute_device`` / ``gpu_fallback_reason``.
+        Without re-attachment the writes drop on commit (we observed
+        NULL ``compute_device`` on completed production rows).
+        """
+        monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+        storage_root = tmp_path / "storage"
+        storage_root.mkdir()
+        settings = Settings(
+            storage_root=storage_root,
+            database_url=f"sqlite+aiosqlite:///{tmp_path}/test.db",
+        )
+
+        audio_dir = tmp_path / "audio_src"
+        audio_dir.mkdir()
+        _write_wav(audio_dir / "test.wav", duration_sec=5.0)
+
+        seg_job_id = "seg-job-detached"
+        seg_dir = segmentation_job_dir(storage_root, seg_job_id)
+        seg_dir.mkdir(parents=True)
+        write_events(
+            seg_dir / "events.parquet",
+            [
+                Event("ev-d1", "r1", 0.5, 2.0, 1.25, 0.9),
+                Event("ev-d2", "r1", 2.5, 4.0, 3.25, 0.8),
+            ],
+        )
+
+        async with session_factory() as session:
+            session.add(
+                AudioFile(
+                    id="af-detached",
+                    filename="test.wav",
+                    source_folder=str(audio_dir),
+                    checksum_sha256="fake-sha256-detached",
+                    duration_seconds=5.0,
+                )
+            )
+            session.add(
+                RegionDetectionJob(
+                    id="rj-detached",
+                    status="complete",
+                    audio_file_id="af-detached",
+                    classifier_model_id="fake-model",
+                )
+            )
+            session.add(
+                EventSegmentationJob(
+                    id=seg_job_id,
+                    status="complete",
+                    region_detection_job_id="rj-detached",
+                    segmentation_model_id="fake-seg-model",
+                    event_count=2,
+                )
+            )
+            session.add(
+                VocalizationClassifierModel(
+                    id="vm-detached",
+                    name="detached-test-model",
+                    model_dir_path=str(trained_model_dir),
+                    vocabulary_snapshot=json.dumps(VOCABULARY),
+                    per_class_thresholds=json.dumps({"upcall": 0.5, "moan": 0.5}),
+                    model_family="pytorch_event_cnn",
+                    input_mode="segmented_event",
+                )
+            )
+            session.add(
+                EventClassificationJob(
+                    id="ec-detached",
+                    status="queued",
+                    event_segmentation_job_id=seg_job_id,
+                    vocalization_model_id="vm-detached",
+                )
+            )
+            await session.commit()
+
+        # Mirror the runner: claim in one session, run in another.
+        from humpback.workers.queue import claim_event_classification_job
+
+        async with session_factory() as session:
+            claimed = await claim_event_classification_job(session)
+        assert claimed is not None
+        assert claimed.id == "ec-detached"
+
+        async with session_factory() as session:
+            await run_event_classification_job(session, claimed, settings)
+
+        async with session_factory() as session:
+            refreshed = await session.get(EventClassificationJob, "ec-detached")
+            assert refreshed is not None
+            assert refreshed.status == "complete"
+            assert refreshed.started_at is not None
+            assert refreshed.compute_device == "cpu"
+            assert refreshed.gpu_fallback_reason is None

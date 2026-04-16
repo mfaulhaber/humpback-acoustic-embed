@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import torch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +34,7 @@ from humpback.call_parsing.storage import (
 from humpback.call_parsing.types import Event, Region
 from humpback.config import Settings
 from humpback.ml.checkpointing import load_checkpoint
+from humpback.ml.device import select_and_validate_device
 from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import (
     EventSegmentationJob,
@@ -47,6 +49,11 @@ from humpback.storage import ensure_dir
 from humpback.workers.queue import claim_event_segmentation_job
 
 logger = logging.getLogger(__name__)
+
+# Sample input length for the load-time device validation. The CRNN
+# trains on 30-second crops; ~500 frames of log-mel matches that order
+# of magnitude and is small enough to be cheap on either device.
+_VALIDATION_FRAMES: int = 500
 
 
 def _cleanup_partial_artifacts(job_dir: Path) -> None:
@@ -89,26 +96,46 @@ def _feature_config_from(model_config: dict[str, Any]) -> SegmentationFeatureCon
     return SegmentationFeatureConfig(**raw)
 
 
-def _run_inference_pipeline(
+def _load_and_validate_model(
     *,
     checkpoint_path: Path,
     model_config: dict[str, Any],
+    feature_config: SegmentationFeatureConfig,
+) -> tuple[SegmentationCRNN, torch.device, str | None]:
+    """Load the checkpoint and pick a device via load-time validation.
+
+    Runs under ``asyncio.to_thread``: building the model, loading
+    weights, and the two validation forward passes all hit torch and
+    must stay off the event loop. Returns the model (left on the
+    chosen device), the chosen ``torch.device``, and a fallback reason
+    (``None`` on success or when no GPU was attempted).
+    """
+    model = _instantiate_model(model_config)
+    load_checkpoint(checkpoint_path, model)
+    model.eval()
+    sample_input = torch.zeros(1, 1, feature_config.n_mels, _VALIDATION_FRAMES)
+    device, fallback_reason = select_and_validate_device(model, sample_input)
+    return model, device, fallback_reason
+
+
+def _run_inference_pipeline(
+    *,
+    model: SegmentationCRNN,
+    device: torch.device,
     feature_config: SegmentationFeatureConfig,
     decoder_config: SegmentationDecoderConfig,
     regions: list[Region],
     audio_loader,
     out_events_path: Path,
 ) -> int:
-    """Blocking work: load the model, decode each region, write parquet.
+    """Blocking work: decode each region with the prepared model, write parquet.
 
-    Runs under ``asyncio.to_thread`` so torch, librosa, and parquet I/O
-    never block the worker event loop. Returns the decoded event count
-    for the caller to stamp onto the row.
+    The model has already been loaded and moved to ``device`` by
+    ``_load_and_validate_model``. Runs under ``asyncio.to_thread`` so
+    torch, librosa, and parquet I/O never block the worker event loop.
+    Returns the decoded event count for the caller to stamp onto the
+    row.
     """
-    model = _instantiate_model(model_config)
-    load_checkpoint(checkpoint_path, model)
-    model.eval()
-
     all_events: list[Event] = []
     for region in regions:
         events = run_inference(
@@ -117,6 +144,7 @@ def _run_inference_pipeline(
             audio_loader=audio_loader,
             feature_config=feature_config,
             decoder_config=decoder_config,
+            device=device,
         )
         all_events.extend(events)
 
@@ -173,6 +201,40 @@ async def run_event_segmentation_job(
             )
         feature_config = _feature_config_from(model_config_raw)
 
+        # Load and validate the device before any slow I/O so the
+        # ``compute_device`` stamp lands on the row as early as possible
+        # — the UI's MPS/CUDA badge is driven by this column and
+        # operators want to see it immediately, not only at completion.
+        model, device, fallback_reason = await asyncio.to_thread(
+            _load_and_validate_model,
+            checkpoint_path=checkpoint_path,
+            model_config=model_config_raw,
+            feature_config=feature_config,
+        )
+        if fallback_reason is not None:
+            logger.warning(
+                "Pass 2 job %s falling back to CPU (reason=%s)",
+                job_id,
+                fallback_reason,
+            )
+
+        # The ``job`` parameter is detached: the runner claims it in one
+        # session and runs the worker in another. Mutating ``job`` here
+        # would silently drop on commit. Re-fetch into the active session
+        # before stamping ``started_at`` and the chosen device.
+        attached = await session.get(EventSegmentationJob, job_id)
+        if attached is None:
+            raise ValueError(f"EventSegmentationJob {job_id} disappeared")
+        attached.started_at = datetime.now(timezone.utc)
+        attached.compute_device = device.type
+        attached.gpu_fallback_reason = fallback_reason
+        await session.commit()
+        logger.info(
+            "Pass 2 job %s: device selected (device=%s)",
+            job_id,
+            device.type,
+        )
+
         regions_path = (
             region_job_dir(settings.storage_root, upstream_id) / "regions.parquet"
         )
@@ -211,18 +273,26 @@ async def run_event_segmentation_job(
                 f"upstream RegionDetectionJob {upstream_id} has no audio source"
             )
 
-        job.started_at = datetime.now(timezone.utc)
-        await session.commit()
-
+        logger.info(
+            "Pass 2 job %s: starting inference on %d regions (device=%s)",
+            job_id,
+            len(regions),
+            device.type,
+        )
         event_count = await asyncio.to_thread(
             _run_inference_pipeline,
-            checkpoint_path=checkpoint_path,
-            model_config=model_config_raw,
+            model=model,
+            device=device,
             feature_config=feature_config,
             decoder_config=decoder_config,
             regions=regions,
             audio_loader=audio_loader,
             out_events_path=job_dir / "events.parquet",
+        )
+        logger.info(
+            "Pass 2 job %s: inference done (%d events decoded)",
+            job_id,
+            event_count,
         )
 
         now = datetime.now(timezone.utc)
