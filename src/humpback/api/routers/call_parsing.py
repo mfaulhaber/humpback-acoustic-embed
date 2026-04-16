@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.call_parsing.segmentation.extraction import load_corrected_events
 from humpback.call_parsing.storage import (
     classification_job_dir,
     read_events,
@@ -723,15 +724,20 @@ async def get_classification_typed_events(
     typed_events = read_typed_events(typed_path)
 
     # Build event_id → region_id lookup from the upstream segmentation job's
-    # events.parquet so the frontend can group events by region.
+    # corrected event list so the frontend can group events by region. Using
+    # load_corrected_events (rather than reading events.parquet directly)
+    # ensures user-added events from event_boundary_corrections get their
+    # synthesized region_id, matching the read-time correction overlay used
+    # by downstream consumers (ADR-054).
     event_region_map: dict[str, str] = {}
-    events_path = (
-        segmentation_job_dir(settings.storage_root, job.event_segmentation_job_id)
-        / "events.parquet"
-    )
-    if events_path.exists():
-        events = read_events(events_path)
-        event_region_map = {e.event_id: e.region_id for e in events}
+    try:
+        corrected_events = await load_corrected_events(
+            session, job.event_segmentation_job_id, settings.storage_root
+        )
+    except ValueError:
+        # events.parquet missing — leave map empty, typed events fall back to "".
+        corrected_events = []
+    event_region_map = {e.event_id: e.region_id for e in corrected_events}
 
     return sorted(
         [

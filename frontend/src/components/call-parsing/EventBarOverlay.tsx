@@ -2,6 +2,11 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useOverlayContext } from "./RegionSpectrogramViewer";
 import { cn } from "@/lib/utils";
 import type { BoundaryCorrection } from "@/api/types";
+import { typeColor } from "./TypePalette";
+
+const BADGE_WIDTH_PX = 22;
+const BADGE_HEIGHT_PX = 14;
+const NEGATIVE_COLOR = "hsl(0, 70%, 50%)";
 
 const SNAP = 0.1;
 const EDGE_HIT_PX = 8;
@@ -22,6 +27,11 @@ export interface EffectiveEvent {
   originalEndSec: number;
   confidence: number;
   correctionType: "adjust" | "add" | "delete" | null;
+  /** The type name that drives the label badge, or null when the event is
+   *  unlabeled (no above-threshold prediction, no correction). */
+  effectiveType: string | null;
+  /** Which classification path set `effectiveType`. `null` when unlabeled. */
+  typeSource: "inference" | "correction" | "negative" | null;
 }
 
 interface EventBarOverlayProps {
@@ -295,7 +305,13 @@ export function EventBarOverlay({
             }}
             data-testid={`event-bar-${ev.eventId}`}
             data-correction={ev.correctionType ?? "none"}
-          />
+          >
+            <EventTypeBadge
+              eventId={ev.eventId}
+              effectiveType={ev.effectiveType}
+              typeSource={ev.typeSource}
+            />
+          </div>
         );
       })}
 
@@ -350,6 +366,76 @@ export function EventBarOverlay({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** Small solid/bordered badge rendered at the top-left of an event bar,
+ *  showing the first two characters of the effective type. Hidden when the
+ *  event is unlabeled. Pointer-events disabled so it doesn't block bar
+ *  click/drag handlers. */
+function EventTypeBadge({
+  eventId,
+  effectiveType,
+  typeSource,
+}: {
+  eventId: string;
+  effectiveType: EffectiveEvent["effectiveType"];
+  typeSource: EffectiveEvent["typeSource"];
+}) {
+  if (typeSource === null) return null;
+
+  let label: string;
+  let background: string;
+  let color: string;
+  let borderColor: string;
+
+  if (typeSource === "negative") {
+    label = "—";
+    background = NEGATIVE_COLOR;
+    color = "#fff";
+    borderColor = NEGATIVE_COLOR;
+  } else {
+    const type = effectiveType ?? "";
+    label = type.slice(0, 2).toUpperCase();
+    const tc = typeColor(type);
+    borderColor = tc;
+    if (typeSource === "correction") {
+      background = tc;
+      color = "#fff";
+    } else {
+      // inference: colored border, text-color matches, transparent bg
+      background = "transparent";
+      color = tc;
+    }
+  }
+
+  return (
+    <div
+      data-testid={`event-badge-${eventId}`}
+      data-source={typeSource}
+      style={{
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: BADGE_WIDTH_PX,
+        height: BADGE_HEIGHT_PX,
+        lineHeight: `${BADGE_HEIGHT_PX - 2}px`,
+        textAlign: "center",
+        fontFamily:
+          "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: "0.02em",
+        background,
+        color,
+        border: `1px solid ${borderColor}`,
+        borderRadius: 2,
+        pointerEvents: "none",
+        overflow: "visible",
+      }}
+    >
+      {label}
     </div>
   );
 }

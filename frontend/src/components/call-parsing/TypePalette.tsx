@@ -43,6 +43,17 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-4 py-2 border-t">
+      {/* None status indicator — non-interactive; reserves layout space
+          even when hidden so the palette does not reflow between events. */}
+      <span
+        data-testid="palette-none-indicator"
+        aria-hidden={activeType !== null}
+        className="px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-muted-foreground/40 text-muted-foreground select-none cursor-default"
+        style={{ visibility: activeType === null ? "visible" : "hidden" }}
+      >
+        None
+      </span>
+
       {/* Negative option */}
       <button
         className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
