@@ -1511,6 +1511,85 @@ async def test_get_typed_events_on_complete_job_returns_sorted(
 
 
 @pytest.mark.asyncio
+async def test_get_typed_events_fills_region_id_for_add_corrections(
+    client: AsyncClient, app_settings
+) -> None:
+    """Added events from event_boundary_corrections receive the correction's region_id
+    in the typed-events response, so the frontend can locate the region for the
+    spectrogram."""
+    from humpback.call_parsing.storage import (
+        classification_job_dir,
+        segmentation_job_dir,
+        write_events,
+        write_typed_events,
+    )
+    from humpback.call_parsing.types import Event, TypedEvent
+    from humpback.models.call_parsing import EventClassificationJob
+    from humpback.models.feedback_training import EventBoundaryCorrection
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="a1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        ec = EventClassificationJob(
+            event_segmentation_job_id=es.id,
+            vocalization_model_id="vm-fake",
+            status="complete",
+            typed_event_count=2,
+        )
+        session.add(ec)
+        # Add-type boundary correction introduces a new event_id not present
+        # in events.parquet.
+        session.add(
+            EventBoundaryCorrection(
+                event_segmentation_job_id=es.id,
+                event_id="add-new-1",
+                region_id="r-added",
+                correction_type="add",
+                start_sec=10.0,
+                end_sec=11.0,
+            )
+        )
+        await session.commit()
+        ec_id, es_id = ec.id, es.id
+    await engine.dispose()
+
+    # events.parquet only contains the original event.
+    seg_dir = segmentation_job_dir(app_settings.storage_root, es_id)
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    write_events(
+        seg_dir / "events.parquet",
+        [Event("e-orig", "r-orig", 1.0, 3.0, 2.0, 0.9)],
+    )
+
+    # typed_events.parquet includes both the original and the added event,
+    # matching the state produced by a classify worker run that applied the
+    # read-time correction overlay.
+    job_dir = classification_job_dir(app_settings.storage_root, ec_id)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        job_dir / "typed_events.parquet",
+        [
+            TypedEvent("e-orig", 1.0, 3.0, "moan", 0.8, True),
+            TypedEvent("add-new-1", 10.0, 11.0, "buzz", 0.6, True),
+        ],
+    )
+
+    resp = await client.get(f"{BASE}/classification-jobs/{ec_id}/typed-events")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 2
+    region_map = {r["event_id"]: r["region_id"] for r in rows}
+    assert region_map["e-orig"] == "r-orig"
+    assert region_map["add-new-1"] == "r-added"
+
+
+@pytest.mark.asyncio
 async def test_sequence_endpoint_returns_501_naming_pass4(
     client: AsyncClient, app_settings
 ) -> None:

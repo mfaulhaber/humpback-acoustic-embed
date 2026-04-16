@@ -129,6 +129,9 @@ export function SegmentReviewWorkspace({
       const pending = pendingCorrections.get(ev.event_id);
       const saved = savedMap.get(ev.event_id);
 
+      // Segmentation review does not surface classification type info.
+      const noType = { effectiveType: null, typeSource: null } as const;
+
       if (pending) {
         return {
           eventId: ev.event_id,
@@ -139,6 +142,7 @@ export function SegmentReviewWorkspace({
           originalEndSec: ev.end_sec,
           confidence: ev.segmentation_confidence,
           correctionType: pending.correction_type,
+          ...noType,
         };
       }
 
@@ -152,6 +156,7 @@ export function SegmentReviewWorkspace({
           originalEndSec: ev.end_sec,
           confidence: ev.segmentation_confidence,
           correctionType: saved.correction_type as EffectiveEvent["correctionType"],
+          ...noType,
         };
       }
 
@@ -164,6 +169,7 @@ export function SegmentReviewWorkspace({
         originalEndSec: ev.end_sec,
         confidence: ev.segmentation_confidence,
         correctionType: null,
+        ...noType,
       };
     });
 
@@ -186,6 +192,8 @@ export function SegmentReviewWorkspace({
           originalEndSec: corr.end_sec,
           confidence: 0,
           correctionType: "add",
+          effectiveType: null,
+          typeSource: null,
         });
       }
     }
@@ -202,6 +210,8 @@ export function SegmentReviewWorkspace({
           originalEndSec: corr.end_sec,
           confidence: 0,
           correctionType: "add",
+          effectiveType: null,
+          typeSource: null,
         });
       }
     }

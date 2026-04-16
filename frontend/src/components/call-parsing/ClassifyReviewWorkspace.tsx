@@ -40,6 +40,28 @@ import {
   type AggregatedEvent,
 } from "./ClassifyDetailPanel";
 
+/** Resolve the effective type + source for a single event given its
+ *  predicted (inference) and corrected (human) types. Correction overrides
+ *  prediction; a null correction means the human marked the event negative. */
+function resolveEventType(
+  predictedType: string | null,
+  correctedType: string | null | undefined,
+): {
+  effectiveType: string | null;
+  typeSource: "inference" | "correction" | "negative" | null;
+} {
+  if (correctedType === null) {
+    return { effectiveType: null, typeSource: "negative" };
+  }
+  if (typeof correctedType === "string") {
+    return { effectiveType: correctedType, typeSource: "correction" };
+  }
+  if (typeof predictedType === "string") {
+    return { effectiveType: predictedType, typeSource: "inference" };
+  }
+  return { effectiveType: null, typeSource: null };
+}
+
 /** Aggregate typed event rows by event_id */
 function aggregateEvents(
   rows: TypedEventRow[],
@@ -289,11 +311,17 @@ export function ClassifyReviewWorkspace({
     return currentEvent.predictedType;
   }, [currentEvent]);
 
-  // Clicking a type in the palette applies it to the current event
+  // Clicking a type in the palette applies it to the current event.
+  // Clicking the type that already represents the event's effective label is
+  // meaningful only when the label came from inference — it promotes the
+  // prediction to a human correction. When the event is already corrected to
+  // that same value, the click is idempotent and we skip the state update so
+  // Save does not light up.
   const handleSelectType = useCallback(
     (typeName: string | null) => {
       if (!currentEvent || typeName === null) return;
       const correctionValue = typeName === "" ? null : typeName;
+      if (currentEvent.correctedType === correctionValue) return;
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         next.set(currentEvent.eventId, correctionValue);
@@ -357,6 +385,7 @@ export function ClassifyReviewWorkspace({
       .map((e) => {
         const pending = pendingBoundaryCorrections.get(e.eventId);
         const saved = savedBoundaryMap.get(e.eventId);
+        const types = resolveEventType(e.predictedType, e.correctedType);
 
         if (pending) {
           if (pending.correction_type === "delete") {
@@ -369,6 +398,7 @@ export function ClassifyReviewWorkspace({
               originalEndSec: e.endSec,
               confidence: e.predictedScore ?? 0,
               correctionType: "delete" as const,
+              ...types,
             };
           }
           return {
@@ -380,6 +410,7 @@ export function ClassifyReviewWorkspace({
             originalEndSec: e.endSec,
             confidence: e.predictedScore ?? 0,
             correctionType: pending.correction_type,
+            ...types,
           };
         }
 
@@ -394,6 +425,7 @@ export function ClassifyReviewWorkspace({
               originalEndSec: e.endSec,
               confidence: e.predictedScore ?? 0,
               correctionType: "delete" as const,
+              ...types,
             };
           }
           return {
@@ -405,6 +437,7 @@ export function ClassifyReviewWorkspace({
             originalEndSec: e.endSec,
             confidence: e.predictedScore ?? 0,
             correctionType: saved.correction_type as EffectiveEvent["correctionType"],
+            ...types,
           };
         }
 
@@ -418,10 +451,14 @@ export function ClassifyReviewWorkspace({
           confidence: e.predictedScore ?? 0,
           correctionType:
             e.correctedType !== undefined ? ("adjust" as const) : null,
+          ...types,
         };
       });
 
-    // Include saved "add" boundary corrections (no original event)
+    // Include saved "add" boundary corrections (no original event). These
+    // events aren't in the aggregated list, so their only type signal is the
+    // merged human correction (if any) — pure inference has nowhere to come
+    // from here.
     const originalEventIds = new Set(events.map((e) => e.eventId));
     for (const corr of savedBoundaryCorrections) {
       if (
@@ -432,6 +469,10 @@ export function ClassifyReviewWorkspace({
         !originalEventIds.has(corr.event_id) &&
         !pendingBoundaryCorrections.has(corr.event_id)
       ) {
+        const correctedType = mergedCorrections.has(corr.event_id)
+          ? mergedCorrections.get(corr.event_id) ?? null
+          : undefined;
+        const types = resolveEventType(null, correctedType);
         result.push({
           eventId: corr.event_id,
           regionId: corr.region_id,
@@ -441,6 +482,7 @@ export function ClassifyReviewWorkspace({
           originalEndSec: corr.end_sec,
           confidence: 0,
           correctionType: "add",
+          ...types,
         });
       }
     }
@@ -454,6 +496,10 @@ export function ClassifyReviewWorkspace({
         corr.region_id === currentRegion.region_id &&
         !originalEventIds.has(key)
       ) {
+        const correctedType = mergedCorrections.has(key)
+          ? mergedCorrections.get(key) ?? null
+          : undefined;
+        const types = resolveEventType(null, correctedType);
         result.push({
           eventId: key,
           regionId: corr.region_id,
@@ -463,6 +509,7 @@ export function ClassifyReviewWorkspace({
           originalEndSec: corr.end_sec,
           confidence: 0,
           correctionType: "add",
+          ...types,
         });
       }
     }
@@ -473,6 +520,7 @@ export function ClassifyReviewWorkspace({
     currentRegion,
     savedBoundaryCorrections,
     pendingBoundaryCorrections,
+    mergedCorrections,
   ]);
 
   // Display event: same as currentEvent but with corrected boundaries applied

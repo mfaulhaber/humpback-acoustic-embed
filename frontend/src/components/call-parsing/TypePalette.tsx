@@ -43,6 +43,17 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-4 py-2 border-t">
+      {/* None status indicator — non-interactive; reserves layout space
+          even when hidden so the palette does not reflow between events. */}
+      <span
+        data-testid="palette-none-indicator"
+        aria-hidden={activeType !== null}
+        className="px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-muted-foreground/40 text-muted-foreground select-none cursor-default"
+        style={{ visibility: activeType === null ? "visible" : "hidden" }}
+      >
+        None
+      </span>
+
       {/* Negative option */}
       <button
         className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
@@ -50,7 +61,7 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
             ? "border-red-500 bg-red-50 text-red-600 ring-2 ring-red-300"
             : "border-red-300 text-red-500 hover:border-red-400"
         }`}
-        onClick={() => onSelectType(activeType === "" ? null : "")}
+        onClick={() => onSelectType("")}
       >
         (Negative)
       </button>
@@ -71,9 +82,7 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
               activeType === vt.name ? typeColor(vt.name) : "transparent",
             ["--tw-ring-color" as string]: typeColor(vt.name),
           }}
-          onClick={() =>
-            onSelectType(activeType === vt.name ? null : vt.name)
-          }
+          onClick={() => onSelectType(vt.name)}
         >
           {vt.name}
         </button>
