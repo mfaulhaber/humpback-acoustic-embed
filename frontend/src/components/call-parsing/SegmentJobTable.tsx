@@ -455,10 +455,12 @@ function SegmentJobRow({
         <td className="px-3 py-2">
           <div className="flex items-center gap-1.5 flex-wrap">
             <StatusBadge status={job.status} />
-            <ComputeDeviceBadge
-              device={job.compute_device}
-              fallbackReason={job.gpu_fallback_reason}
-            />
+            {mode === "active" && (
+              <ComputeDeviceBadge
+                device={job.compute_device}
+                fallbackReason={job.gpu_fallback_reason}
+              />
+            )}
           </div>
         </td>
         <td className="px-3 py-2 text-xs whitespace-nowrap">

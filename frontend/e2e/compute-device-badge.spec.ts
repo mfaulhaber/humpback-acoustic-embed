@@ -47,19 +47,23 @@ function makeSegJob(
 ) {
   return {
     id,
-    status: "complete",
+    // The compute-device badge only renders for active (queued/running)
+    // jobs — once a job completes, the device that ran it is no longer
+    // operationally interesting, so the badge is hidden in the
+    // "Previous Jobs" table.
+    status: "running",
     region_detection_job_id: REGION_JOB.id,
     segmentation_model_id: SEG_MODEL.id,
     config_json: JSON.stringify({ high_threshold: 0.5, low_threshold: 0.3 }),
     parent_run_id: null,
-    event_count: 3,
+    event_count: null,
     compute_device,
     gpu_fallback_reason,
     error_message: null,
     created_at: "2026-04-16T04:00:00Z",
     updated_at: "2026-04-16T04:05:00Z",
     started_at: "2026-04-16T04:00:01Z",
-    completed_at: "2026-04-16T04:05:00Z",
+    completed_at: null,
   };
 }
 
@@ -70,10 +74,10 @@ function makeClassifyJob(
 ) {
   return {
     id,
-    status: "complete",
+    status: "running",
     event_segmentation_job_id: "sj-cpu",
     vocalization_model_id: "vm-1",
-    typed_event_count: 3,
+    typed_event_count: null,
     compute_device,
     gpu_fallback_reason,
     parent_run_id: null,
@@ -81,7 +85,7 @@ function makeClassifyJob(
     created_at: "2026-04-16T05:00:00Z",
     updated_at: "2026-04-16T05:05:00Z",
     started_at: "2026-04-16T05:00:01Z",
-    completed_at: "2026-04-16T05:05:00Z",
+    completed_at: null,
   };
 }
 
@@ -163,7 +167,7 @@ test.describe("ComputeDeviceBadge", () => {
     );
 
     await page.goto("/app/call-parsing/segment");
-    await expect(page.locator("text=Previous Jobs")).toBeVisible();
+    await expect(page.locator("text=Active Jobs")).toBeVisible();
 
     const cpuRow = page.locator("tr").filter({ hasText: "sj-cpu" }).first();
     await expect(cpuRow).toBeVisible();
@@ -198,7 +202,7 @@ test.describe("ComputeDeviceBadge", () => {
     );
 
     await page.goto("/app/call-parsing/classify");
-    await expect(page.locator("text=Previous Jobs")).toBeVisible();
+    await expect(page.locator("text=Active Jobs")).toBeVisible();
 
     const cpuRow = page.locator("tr").filter({ hasText: "cj-cpu" }).first();
     await expect(cpuRow).toBeVisible();

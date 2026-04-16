@@ -155,6 +155,46 @@ async def run_event_classification_job(
         if not (model_dir / "model.pt").exists():
             raise ValueError(f"model checkpoint missing at {model_dir / 'model.pt'}")
 
+        # Load and validate the device before any slow I/O (corrections
+        # read, hydrophone audio preload) so the ``compute_device`` stamp
+        # lands on the row as early as possible — the UI's MPS/CUDA badge
+        # is driven by this column and operators want to see it
+        # immediately, not only once the job completes.
+        (
+            model,
+            vocabulary,
+            thresholds,
+            feature_config,
+            device,
+            fallback_reason,
+        ) = await asyncio.to_thread(
+            _load_and_validate_model,
+            model_dir=model_dir,
+        )
+        if fallback_reason is not None:
+            logger.warning(
+                "Pass 3 job %s falling back to CPU (reason=%s)",
+                job_id,
+                fallback_reason,
+            )
+
+        # The ``job`` parameter is detached: the runner claims it in one
+        # session and runs the worker in another. Mutating ``job`` here
+        # would silently drop on commit. Re-fetch into the active session
+        # before stamping ``started_at`` and the chosen device.
+        attached = await session.get(EventClassificationJob, job_id)
+        if attached is None:
+            raise ValueError(f"EventClassificationJob {job_id} disappeared")
+        attached.started_at = datetime.now(timezone.utc)
+        attached.compute_device = device.type
+        attached.gpu_fallback_reason = fallback_reason
+        await session.commit()
+        logger.info(
+            "Pass 3 job %s: device selected (device=%s)",
+            job_id,
+            device.type,
+        )
+
         events = await load_corrected_events(
             session, upstream_seg_id, settings.storage_root
         )
@@ -198,36 +238,12 @@ async def run_event_classification_job(
                 f"upstream RegionDetectionJob {upstream_region_id} has no audio source"
             )
 
-        (
-            model,
-            vocabulary,
-            thresholds,
-            feature_config,
-            device,
-            fallback_reason,
-        ) = await asyncio.to_thread(
-            _load_and_validate_model,
-            model_dir=model_dir,
+        logger.info(
+            "Pass 3 job %s: starting inference on %d events (device=%s)",
+            job_id,
+            len(events),
+            device.type,
         )
-        if fallback_reason is not None:
-            logger.warning(
-                "Pass 3 job %s falling back to CPU (reason=%s)",
-                job_id,
-                fallback_reason,
-            )
-
-        # The ``job`` parameter is detached: the runner claims it in one
-        # session and runs the worker in another. Mutating ``job`` here
-        # would silently drop on commit. Re-fetch into the active session
-        # before stamping ``started_at`` and the chosen device.
-        attached = await session.get(EventClassificationJob, job_id)
-        if attached is None:
-            raise ValueError(f"EventClassificationJob {job_id} disappeared")
-        attached.started_at = datetime.now(timezone.utc)
-        attached.compute_device = device.type
-        attached.gpu_fallback_reason = fallback_reason
-        await session.commit()
-
         typed_events = await asyncio.to_thread(
             _run_classification_pipeline,
             model=model,
@@ -238,6 +254,11 @@ async def run_event_classification_job(
             events=events,
             audio_loader=audio_loader,
             out_path=job_dir / "typed_events.parquet",
+        )
+        logger.info(
+            "Pass 3 job %s: inference done (%d typed events)",
+            job_id,
+            len(typed_events),
         )
 
         now = datetime.now(timezone.utc)
