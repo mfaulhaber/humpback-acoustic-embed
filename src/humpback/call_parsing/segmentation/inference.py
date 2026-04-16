@@ -49,10 +49,15 @@ def _infer_single(
     model: nn.Module,
     audio: np.ndarray,
     feature_config: SegmentationFeatureConfig,
+    device: torch.device,
 ) -> np.ndarray:
-    """Forward pass on one audio chunk, return frame probabilities (1-D)."""
+    """Forward pass on one audio chunk, return frame probabilities (1-D).
+
+    Caller is responsible for placing ``model`` on ``device`` first
+    (the worker does this once per job via ``select_and_validate_device``).
+    """
     logmel = normalize_per_region_zscore(extract_logmel(audio, feature_config))
-    features_t = torch.from_numpy(logmel).unsqueeze(0).unsqueeze(0).float()
+    features_t = torch.from_numpy(logmel).unsqueeze(0).unsqueeze(0).float().to(device)
     with torch.no_grad():
         logits = model(features_t)
         probs_t = torch.sigmoid(logits).squeeze(0)
@@ -63,6 +68,7 @@ def _infer_windowed(
     model: nn.Module,
     audio: np.ndarray,
     feature_config: SegmentationFeatureConfig,
+    device: torch.device,
     max_window_sec: float = _MAX_WINDOW_SEC,
     window_hop_sec: float = _WINDOW_HOP_SEC,
 ) -> np.ndarray:
@@ -73,7 +79,7 @@ def _infer_windowed(
     total_duration = total_samples / sr
 
     if total_duration <= max_window_sec:
-        return _infer_single(model, audio, feature_config)
+        return _infer_single(model, audio, feature_config, device)
 
     # Match librosa's frame count formula (center=True default):
     # 1 + floor(n_samples / hop_length).
@@ -93,7 +99,7 @@ def _infer_windowed(
             end = total_samples
 
         chunk = audio[offset:end]
-        chunk_probs = _infer_single(model, chunk, feature_config)
+        chunk_probs = _infer_single(model, chunk, feature_config, device)
 
         frame_offset = int(np.round(offset / hop_length))
         n_frames = len(chunk_probs)
@@ -117,6 +123,7 @@ def run_inference(
     audio_loader: RegionAudioLoader,
     feature_config: SegmentationFeatureConfig,
     decoder_config: SegmentationDecoderConfig,
+    device: torch.device,
 ) -> list[Event]:
     """Run the CRNN on one region and return decoded ``Event`` rows.
 
@@ -127,11 +134,15 @@ def run_inference(
     Regions longer than 30 seconds are processed with overlapping
     sliding windows so the CRNN sees the same sequence lengths it was
     trained on.
+
+    ``device`` controls where the feature tensor is placed before each
+    forward pass; the worker selects and validates it once per job and
+    moves the model to the same device prior to calling this function.
     """
     audio = audio_loader(region)
 
     model.eval()
-    probs = _infer_windowed(model, audio, feature_config)
+    probs = _infer_windowed(model, audio, feature_config, device)
 
     hop_sec = float(feature_config.hop_length) / float(feature_config.sample_rate)
     return decode_events(

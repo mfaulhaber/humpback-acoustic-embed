@@ -24,6 +24,7 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 - `POST /call-parsing/segmentation-jobs` — create a queued Pass 2 job; validates `region_detection_job_id` (404) and `segmentation_model_id` (404); 409 if upstream Pass 1 job is not `complete`
 - `GET /call-parsing/segmentation-jobs`, `GET /call-parsing/segmentation-jobs/{id}`, `DELETE /call-parsing/segmentation-jobs/{id}` — list / detail / delete
 - `GET /call-parsing/segmentation-jobs/{id}/events` — return `events.parquet` as JSON; 409 while job is not `complete`, 404 if parquet file is missing
+- Job response payloads include `compute_device` (`"mps"` / `"cuda"` / `"cpu"`, NULL on pre-migration rows) and `gpu_fallback_reason` (non-NULL only when GPU was attempted and rejected at load-time validation, e.g. `"mps_output_mismatch"`, `"cuda_load_error"`).
 
 ## Pass 2 — Segmentation Training Datasets
 
@@ -50,6 +51,7 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 - `POST /call-parsing/classification-jobs` — create a queued Pass 3 job; validates `vocalization_model_id` exists (404) and has `model_family='pytorch_event_cnn'` + `input_mode='segmented_event'` (422); validates `event_segmentation_job_id` exists (404) and is `complete` (409)
 - `GET /call-parsing/classification-jobs`, `GET /call-parsing/classification-jobs/{id}`, `DELETE /call-parsing/classification-jobs/{id}` — list / detail / delete
 - `GET /call-parsing/classification-jobs/{id}/typed-events` — return `typed_events.parquet` as JSON sorted by `start_sec`; 409 while job is not `complete`, 404 if parquet file is missing
+- Job response payloads include `compute_device` and `gpu_fallback_reason` with the same conventions as Pass 2 segmentation jobs.
 
 ## Pass 3 — Type Corrections
 

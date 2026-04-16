@@ -222,8 +222,9 @@ async def _seed_fixture(
 
 
 async def test_worker_happy_path_writes_events_and_completes_row(
-    session_factory, tmp_path
+    session_factory, tmp_path, monkeypatch
 ):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
     _, _, pass2_job_id, storage_root = await _seed_fixture(session_factory, tmp_path)
     settings = _make_settings(tmp_path)
 
@@ -241,6 +242,8 @@ async def test_worker_happy_path_writes_events_and_completes_row(
         assert refreshed.event_count >= 1
         assert refreshed.started_at is not None
         assert refreshed.completed_at is not None
+        assert refreshed.compute_device == "cpu"
+        assert refreshed.gpu_fallback_reason is None
 
     events_path = segmentation_job_dir(storage_root, pass2_job_id) / "events.parquet"
     assert events_path.exists()

@@ -109,6 +109,8 @@ def _run_segmentation_on_window(
     decoder_config: SegmentationDecoderConfig,
 ) -> list[Event]:
     """Run segmentation on a window's audio slice, return events."""
+    import torch
+
     region = _SyntheticRegion(
         region_id="bootstrap",
         padded_start_sec=start_sec,
@@ -126,6 +128,7 @@ def _run_segmentation_on_window(
         audio_loader=_load_region_audio,
         feature_config=feature_config,
         decoder_config=decoder_config,
+        device=torch.device("cpu"),
     )
 
 

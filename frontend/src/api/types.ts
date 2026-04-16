@@ -1264,6 +1264,8 @@ export interface EventSegmentationJob {
   config_json: string | null;
   parent_run_id: string | null;
   event_count: number | null;
+  compute_device: string | null;
+  gpu_fallback_reason: string | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;
@@ -1418,6 +1420,8 @@ export interface EventClassificationJob {
   event_segmentation_job_id: string;
   vocalization_model_id: string | null;
   typed_event_count: number | null;
+  compute_device: string | null;
+  gpu_fallback_reason: string | null;
   parent_run_id: string | null;
   error_message: string | null;
   created_at: string;

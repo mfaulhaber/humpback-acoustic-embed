@@ -136,6 +136,8 @@ class EventSegmentationJobSummary(_JobSummary):
     segmentation_model_id: Optional[str] = None
     config_json: Optional[str] = None
     event_count: Optional[int] = None
+    compute_device: Optional[str] = None
+    gpu_fallback_reason: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -155,6 +157,8 @@ class EventClassificationJobSummary(_JobSummary):
     event_segmentation_job_id: str
     vocalization_model_id: Optional[str] = None
     typed_event_count: Optional[int] = None
+    compute_device: Optional[str] = None
+    gpu_fallback_reason: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

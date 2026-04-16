@@ -184,9 +184,10 @@ class TestTrainAndInfer:
 
 class TestWorkerEndToEnd:
     async def test_worker_completes_classification_job(
-        self, session_factory, trained_model_dir: Path, tmp_path: Path
+        self, session_factory, trained_model_dir: Path, tmp_path: Path, monkeypatch
     ):
         """Full worker path: queued job -> run_event_classification_job -> complete."""
+        monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
         storage_root = tmp_path / "storage"
         storage_root.mkdir()
         settings = Settings(
@@ -264,6 +265,8 @@ class TestWorkerEndToEnd:
             assert refreshed.status == "complete"
             assert refreshed.typed_event_count is not None
             assert refreshed.typed_event_count >= 2
+            assert refreshed.compute_device == "cpu"
+            assert refreshed.gpu_fallback_reason is None
 
             out_parquet = (
                 storage_root

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { ComputeDeviceBadge } from "@/components/shared/ComputeDeviceBadge";
 import { BulkDeleteDialog } from "@/components/classifier/BulkDeleteDialog";
 import { useDeleteSegmentationJob } from "@/hooks/queries/useCallParsing";
 import type {
@@ -452,7 +453,13 @@ function SegmentJobRow({
           </td>
         )}
         <td className="px-3 py-2">
-          <StatusBadge status={job.status} />
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <StatusBadge status={job.status} />
+            <ComputeDeviceBadge
+              device={job.compute_device}
+              fallbackReason={job.gpu_fallback_reason}
+            />
+          </div>
         </td>
         <td className="px-3 py-2 text-xs whitespace-nowrap">
           {new Date(job.created_at).toLocaleString()}

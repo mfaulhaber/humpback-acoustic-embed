@@ -473,8 +473,9 @@ def test_run_inference_deterministic_under_fixed_seed() -> None:
     def loader(_r: _FakeRegion) -> np.ndarray:
         return audio
 
-    events_a = run_inference(model, region, loader, feature_cfg, decoder_cfg)
-    events_b = run_inference(model, region, loader, feature_cfg, decoder_cfg)
+    cpu = torch.device("cpu")
+    events_a = run_inference(model, region, loader, feature_cfg, decoder_cfg, cpu)
+    events_b = run_inference(model, region, loader, feature_cfg, decoder_cfg, cpu)
     assert len(events_a) == len(events_b)
     for a, b in zip(events_a, events_b):
         assert a.start_sec == pytest.approx(b.start_sec)
@@ -515,7 +516,8 @@ def test_run_inference_windowed_on_long_region() -> None:
     def loader(_r: _FakeRegion) -> np.ndarray:
         return audio
 
-    events = run_inference(model, region, loader, feature_cfg, decoder_cfg)
+    cpu = torch.device("cpu")
+    events = run_inference(model, region, loader, feature_cfg, decoder_cfg, cpu)
     # Windowed inference should produce events (exact count depends on
     # model weights) and all events should fall within region bounds.
     hop_sec = feature_cfg.hop_length / feature_cfg.sample_rate
@@ -525,7 +527,7 @@ def test_run_inference_windowed_on_long_region() -> None:
         assert e.region_id == "reg-long"
 
     # Deterministic: second run should match.
-    events2 = run_inference(model, region, loader, feature_cfg, decoder_cfg)
+    events2 = run_inference(model, region, loader, feature_cfg, decoder_cfg, cpu)
     assert len(events) == len(events2)
     for a, b in zip(events, events2):
         assert a.start_sec == pytest.approx(b.start_sec)
