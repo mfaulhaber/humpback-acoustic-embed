@@ -202,17 +202,70 @@ export function ClassifyReviewWorkspace({
     [typedEventRows, mergedCorrections],
   );
 
-  // Navigable events: exclude events with saved boundary-deletion corrections
-  // so the user only steps through active events with contiguous numbering.
+  // Navigable events: exclude deleted events and include added boundary events
+  // so the user can step through, select, and label all active events.
   const navigableEvents = useMemo(() => {
     const deletedIds = new Set(
       savedBoundaryCorrections
         .filter((c) => c.correction_type === "delete")
         .map((c) => c.event_id),
     );
-    if (deletedIds.size === 0) return events;
-    return events.filter((e) => !deletedIds.has(e.eventId));
-  }, [events, savedBoundaryCorrections]);
+    const filtered =
+      deletedIds.size === 0
+        ? [...events]
+        : events.filter((e) => !deletedIds.has(e.eventId));
+
+    // Include saved "add" boundary corrections as navigable events
+    const existingIds = new Set(events.map((e) => e.eventId));
+    for (const corr of savedBoundaryCorrections) {
+      if (
+        corr.correction_type === "add" &&
+        corr.start_sec != null &&
+        corr.end_sec != null &&
+        !existingIds.has(corr.event_id)
+      ) {
+        const correctedType = mergedCorrections.has(corr.event_id)
+          ? mergedCorrections.get(corr.event_id) ?? null
+          : undefined;
+        filtered.push({
+          eventId: corr.event_id,
+          regionId: corr.region_id,
+          startSec: corr.start_sec,
+          endSec: corr.end_sec,
+          predictedType: null,
+          predictedScore: null,
+          correctedType,
+          allScores: [],
+        });
+      }
+    }
+
+    // Include pending "add" boundary corrections as navigable events
+    for (const [key, corr] of pendingBoundaryCorrections) {
+      if (
+        corr.correction_type === "add" &&
+        corr.start_sec != null &&
+        corr.end_sec != null &&
+        !existingIds.has(key)
+      ) {
+        const correctedType = mergedCorrections.has(key)
+          ? mergedCorrections.get(key) ?? null
+          : undefined;
+        filtered.push({
+          eventId: key,
+          regionId: corr.region_id,
+          startSec: corr.start_sec,
+          endSec: corr.end_sec,
+          predictedType: null,
+          predictedScore: null,
+          correctedType,
+          allScores: [],
+        });
+      }
+    }
+
+    return filtered.sort((a, b) => a.startSec - b.startSec);
+  }, [events, savedBoundaryCorrections, pendingBoundaryCorrections, mergedCorrections]);
 
   // Clamp index when navigable list shrinks (e.g., after saving deletes)
   useEffect(() => {
