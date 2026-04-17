@@ -103,6 +103,119 @@ async def create_training_job(
     return job
 
 
+async def create_training_job_from_detection_manifest(
+    session: AsyncSession,
+    name: str,
+    detection_job_ids: list[str],
+    embedding_model_version: str,
+    storage_root: Path,
+    parameters: Optional[dict[str, Any]] = None,
+) -> ClassifierTrainingJob:
+    """Create a training job that sources embeddings from labeled detection jobs.
+
+    Validates that each detection job exists, has its embeddings available for
+    the requested ``embedding_model_version``, and contains at least one
+    positive and one negative binary-labeled row across the selection. Persists
+    ``source_mode="detection_manifest"`` and the detection job IDs on the job
+    row.
+    """
+    from humpback.classifier.detection_rows import read_detection_row_store
+    from humpback.models.classifier import DetectionJob
+    from humpback.models.model_registry import ModelConfig
+    from humpback.storage import (
+        detection_embeddings_path,
+        detection_row_store_path,
+    )
+
+    if not detection_job_ids:
+        raise ValueError("At least one detection_job_id is required")
+    if not embedding_model_version:
+        raise ValueError("embedding_model_version is required")
+
+    # Resolve the embedding model for its window params (falls back to the
+    # detection jobs' source classifier if the registry row doesn't carry them).
+    mc_result = await session.execute(
+        select(ModelConfig).where(ModelConfig.name == embedding_model_version)
+    )
+    mc = mc_result.scalar_one_or_none()
+    if mc is None:
+        raise ValueError(
+            f"Embedding model {embedding_model_version!r} is not registered"
+        )
+
+    # Validate each detection job: exists, complete, and has embeddings at the
+    # requested model-versioned path.
+    dj_result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id.in_(detection_job_ids))
+    )
+    dj_rows = list(dj_result.scalars().all())
+    if len(dj_rows) != len(set(detection_job_ids)):
+        found = {dj.id for dj in dj_rows}
+        missing = set(detection_job_ids) - found
+        raise ValueError(f"Detection jobs not found: {sorted(missing)}")
+
+    window_sizes: set[float] = set()
+    sample_rates: set[int] = set()
+    total_pos = 0
+    total_neg = 0
+    for dj in dj_rows:
+        emb_path = detection_embeddings_path(
+            storage_root, dj.id, embedding_model_version
+        )
+        if not emb_path.exists():
+            raise ValueError(
+                f"Detection job {dj.id} has no embeddings for "
+                f"{embedding_model_version!r} — re-embed first"
+            )
+        rs_path = detection_row_store_path(storage_root, dj.id)
+        if not rs_path.exists():
+            raise ValueError(f"Detection job {dj.id} has no row store")
+        _, rows = read_detection_row_store(rs_path)
+        for row in rows:
+            if row.get("humpback") == "1" or row.get("orca") == "1":
+                total_pos += 1
+            elif row.get("ship") == "1" or row.get("background") == "1":
+                total_neg += 1
+
+        # Pull window params from the source classifier for fidelity.
+        cm_result = await session.execute(
+            select(ClassifierModel).where(ClassifierModel.id == dj.classifier_model_id)
+        )
+        cm = cm_result.scalar_one_or_none()
+        if cm is not None:
+            window_sizes.add(cm.window_size_seconds)
+            sample_rates.add(cm.target_sample_rate)
+
+    if total_pos < 1 or total_neg < 1:
+        raise ValueError(
+            "Selected detection jobs must include at least one positive and "
+            f"one negative binary label (pos={total_pos}, neg={total_neg})"
+        )
+
+    if not window_sizes or not sample_rates:
+        raise ValueError(
+            "Could not resolve window_size/target_sample_rate from detection jobs"
+        )
+    window_size = next(iter(window_sizes))
+    sample_rate = next(iter(sample_rates))
+
+    job = ClassifierTrainingJob(
+        name=name,
+        positive_embedding_set_ids=json.dumps([]),
+        negative_embedding_set_ids=json.dumps([]),
+        model_version=embedding_model_version,
+        window_size_seconds=window_size,
+        target_sample_rate=sample_rate,
+        feature_config=None,
+        parameters=json.dumps(parameters) if parameters else None,
+        source_mode="detection_manifest",
+        source_detection_job_ids=json.dumps(list(detection_job_ids)),
+    )
+    session.add(job)
+    await session.commit()
+    return job
+
+
 async def list_training_jobs(session: AsyncSession) -> list[ClassifierTrainingJob]:
     result = await session.execute(
         select(ClassifierTrainingJob).order_by(ClassifierTrainingJob.created_at.desc())

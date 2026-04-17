@@ -345,8 +345,10 @@ export interface RefinementReport {
 
 export interface ClassifierTrainingJobCreate {
   name: string;
-  positive_embedding_set_ids: string[];
-  negative_embedding_set_ids: string[];
+  positive_embedding_set_ids?: string[];
+  negative_embedding_set_ids?: string[];
+  detection_job_ids?: string[];
+  embedding_model_version?: string;
   parameters?: Record<string, unknown> | null;
 }
 
@@ -427,9 +429,10 @@ export interface ClassifierTrainingJob {
   parameters: Record<string, unknown> | null;
   classifier_model_id: string | null;
   error_message: string | null;
-  source_mode: "embedding_sets" | "autoresearch_candidate";
+  source_mode: "embedding_sets" | "autoresearch_candidate" | "detection_manifest";
   source_candidate_id: string | null;
   source_model_id: string | null;
+  source_detection_job_ids: string[] | null;
   manifest_path: string | null;
   training_split_name: string | null;
   promoted_config: Record<string, unknown> | null;
@@ -449,7 +452,7 @@ export interface ClassifierModelInfo {
   feature_config: Record<string, unknown> | null;
   training_summary: Record<string, unknown> | null;
   training_job_id: string | null;
-  training_source_mode: "embedding_sets" | "autoresearch_candidate";
+  training_source_mode: "embedding_sets" | "autoresearch_candidate" | "detection_manifest";
   source_candidate_id: string | null;
   source_model_id: string | null;
   promotion_provenance: Record<string, unknown> | null;
@@ -991,9 +994,12 @@ export interface DetectionEmbeddingJob {
   id: string;
   status: string;
   detection_job_id: string;
+  model_version: string;
   mode: string | null;
   progress_current: number | null;
   progress_total: number | null;
+  rows_processed: number;
+  rows_total: number | null;
   error_message: string | null;
   result_summary: string | null;
   created_at: string;
@@ -1003,6 +1009,17 @@ export interface DetectionEmbeddingJob {
 export interface EmbeddingJobListItem extends DetectionEmbeddingJob {
   hydrophone_name: string | null;
   audio_folder: string | null;
+}
+
+export interface DetectionEmbeddingJobStatus {
+  detection_job_id: string;
+  model_version: string;
+  status: string;
+  rows_processed: number;
+  rows_total: number | null;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface VocalizationTrainingSource {
@@ -1118,6 +1135,7 @@ export interface LabelEditRequest {
 
 export interface ManifestCreateRequest {
   name: string;
+  embedding_model_version: string;
   training_job_ids?: string[];
   detection_job_ids?: string[];
   split_ratio?: number[];
@@ -1130,6 +1148,7 @@ export interface HyperparameterManifestSummary {
   status: string;
   training_job_ids: string[];
   detection_job_ids: string[];
+  embedding_model_version: string;
   split_ratio: number[];
   seed: number;
   example_count: number | null;

@@ -25,53 +25,83 @@ from humpback.schemas.hyperparameter import (
 
 class TestManifestCreate:
     def test_valid_with_training_jobs(self) -> None:
-        m = ManifestCreate(name="test", training_job_ids=["t1"])
+        m = ManifestCreate(
+            name="test", training_job_ids=["t1"], embedding_model_version="tf2"
+        )
         assert m.training_job_ids == ["t1"]
         assert m.detection_job_ids == []
         assert m.split_ratio == [70, 15, 15]
         assert m.seed == 42
 
     def test_valid_with_detection_jobs(self) -> None:
-        m = ManifestCreate(name="test", detection_job_ids=["d1", "d2"])
+        m = ManifestCreate(
+            name="test", detection_job_ids=["d1", "d2"], embedding_model_version="tf2"
+        )
         assert m.detection_job_ids == ["d1", "d2"]
 
     def test_valid_with_both(self) -> None:
         m = ManifestCreate(
-            name="test", training_job_ids=["t1"], detection_job_ids=["d1"]
+            name="test",
+            training_job_ids=["t1"],
+            detection_job_ids=["d1"],
+            embedding_model_version="tf2",
         )
         assert m.training_job_ids == ["t1"]
         assert m.detection_job_ids == ["d1"]
 
     def test_rejects_no_sources(self) -> None:
         with pytest.raises(ValidationError, match="At least one"):
-            ManifestCreate(name="test")
+            ManifestCreate(name="test", embedding_model_version="tf2")
 
     def test_rejects_empty_sources(self) -> None:
         with pytest.raises(ValidationError, match="At least one"):
-            ManifestCreate(name="test", training_job_ids=[], detection_job_ids=[])
+            ManifestCreate(
+                name="test",
+                training_job_ids=[],
+                detection_job_ids=[],
+                embedding_model_version="tf2",
+            )
 
     def test_rejects_wrong_split_ratio_length(self) -> None:
         with pytest.raises(ValidationError, match="exactly 3"):
-            ManifestCreate(name="test", training_job_ids=["t1"], split_ratio=[80, 20])
+            ManifestCreate(
+                name="test",
+                training_job_ids=["t1"],
+                split_ratio=[80, 20],
+                embedding_model_version="tf2",
+            )
 
     def test_rejects_negative_split_ratio(self) -> None:
         with pytest.raises(ValidationError, match="non-negative"):
             ManifestCreate(
-                name="test", training_job_ids=["t1"], split_ratio=[70, -5, 15]
+                name="test",
+                training_job_ids=["t1"],
+                split_ratio=[70, -5, 15],
+                embedding_model_version="tf2",
             )
 
     def test_rejects_zero_sum_split_ratio(self) -> None:
         with pytest.raises(ValidationError, match="positive number"):
-            ManifestCreate(name="test", training_job_ids=["t1"], split_ratio=[0, 0, 0])
+            ManifestCreate(
+                name="test",
+                training_job_ids=["t1"],
+                split_ratio=[0, 0, 0],
+                embedding_model_version="tf2",
+            )
 
     def test_custom_split_ratio(self) -> None:
         m = ManifestCreate(
-            name="test", training_job_ids=["t1"], split_ratio=[80, 10, 10]
+            name="test",
+            training_job_ids=["t1"],
+            split_ratio=[80, 10, 10],
+            embedding_model_version="tf2",
         )
         assert m.split_ratio == [80, 10, 10]
 
     def test_custom_seed(self) -> None:
-        m = ManifestCreate(name="test", training_job_ids=["t1"], seed=99)
+        m = ManifestCreate(
+            name="test", training_job_ids=["t1"], seed=99, embedding_model_version="tf2"
+        )
         assert m.seed == 99
 
 
@@ -135,6 +165,7 @@ class TestManifestSummary:
             status="complete",
             training_job_ids=["t1"],
             detection_job_ids=[],
+            embedding_model_version="tf2",
             split_ratio=[70, 15, 15],
             seed=42,
             example_count=100,
@@ -154,6 +185,7 @@ class TestManifestDetail:
             status="complete",
             training_job_ids=[],
             detection_job_ids=["d1"],
+            embedding_model_version="tf2",
             split_ratio=[70, 15, 15],
             seed=42,
             created_at=now,

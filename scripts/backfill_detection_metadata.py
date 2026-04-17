@@ -113,7 +113,17 @@ def main():
 
         emb_hash_to_rid: dict[str, dict[bytes, str]] = {}
         for djid in det_job_ids:
-            emb_path = detection_embeddings_path(Path(settings.storage_root), djid)
+            mv_row = conn.execute(
+                "SELECT cm.model_version FROM detection_jobs dj "
+                "JOIN classifier_models cm ON cm.id = dj.classifier_model_id "
+                "WHERE dj.id = ?",
+                (djid,),
+            ).fetchone()
+            if mv_row is None or not mv_row[0]:
+                continue
+            emb_path = detection_embeddings_path(
+                Path(settings.storage_root), djid, str(mv_row[0])
+            )
             if not emb_path.exists():
                 continue
             emb_table = pq.read_table(str(emb_path), columns=["row_id", "embedding"])

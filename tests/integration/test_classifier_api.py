@@ -2171,6 +2171,251 @@ async def test_orca_label_round_trip(client, app_settings):
     await engine.dispose()
 
 
+# ---- Detection-Manifest Training ----
+
+
+async def _seed_detection_manifest_fixtures(app_settings):
+    """Seed DB + disk for a detection-manifest training job test.
+
+    Returns (detection_job_id, model_version).
+    """
+    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+    from humpback.models.model_registry import ModelConfig
+    from humpback.storage import detection_embeddings_path, detection_row_store_path
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    model_version = "perch_v2"
+    cm_id = str(uuid.uuid4())
+    dj_id = str(uuid.uuid4())
+
+    async with sf() as session:
+        session.add(
+            ModelConfig(
+                name=model_version,
+                display_name="Perch v2 (TFLite)",
+                path="models/perch_v2.tflite",
+                model_type="tflite",
+                input_format="waveform",
+                vector_dim=1536,
+                is_default=False,
+            )
+        )
+        session.add(
+            ClassifierModel(
+                id=cm_id,
+                name="source-classifier",
+                model_path="/tmp/fake.joblib",
+                model_version=model_version,
+                vector_dim=1536,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        session.add(
+            DetectionJob(
+                id=dj_id,
+                status="complete",
+                classifier_model_id=cm_id,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                detection_mode="windowed",
+            )
+        )
+        await session.commit()
+
+    # Write row store with one positive + one negative row.
+    rs_path = detection_row_store_path(app_settings.storage_root, dj_id)
+    rs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_detection_row_store(
+        rs_path,
+        [
+            {
+                "start_utc": str(BASE_EPOCH),
+                "end_utc": str(BASE_EPOCH + 5.0),
+                "avg_confidence": "0.9",
+                "peak_confidence": "0.95",
+                "n_windows": "1",
+                "humpback": "1",
+            },
+            {
+                "start_utc": str(BASE_EPOCH + 5.0),
+                "end_utc": str(BASE_EPOCH + 10.0),
+                "avg_confidence": "0.3",
+                "peak_confidence": "0.4",
+                "n_windows": "1",
+                "background": "1",
+            },
+        ],
+    )
+
+    # Write embeddings parquet at the model-versioned path.
+    emb_path = detection_embeddings_path(
+        app_settings.storage_root, dj_id, model_version
+    )
+    emb_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_detection_embeddings_parquet(
+        emb_path,
+        row_ids=["r1", "r2"],
+        rows=[[0.1] * 4, [0.2] * 4],
+    )
+
+    await engine.dispose()
+    return dj_id, model_version
+
+
+async def test_create_training_job_detection_manifest_success(client, app_settings):
+    """POST /training-jobs with detection_job_ids creates a detection_manifest job."""
+    dj_id, model_version = await _seed_detection_manifest_fixtures(app_settings)
+
+    resp = await client.post(
+        "/classifier/training-jobs",
+        json={
+            "name": "perch-v2-test",
+            "detection_job_ids": [dj_id],
+            "embedding_model_version": model_version,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["source_mode"] == "detection_manifest"
+    assert data["model_version"] == model_version
+    assert data["source_detection_job_ids"] == [dj_id]
+    assert data["status"] == "queued"
+    assert data["window_size_seconds"] == 5.0
+    assert data["target_sample_rate"] == 32000
+
+
+async def test_create_training_job_mixed_sources_rejected(client):
+    """POST /training-jobs with both embedding sets and detection jobs -> 422."""
+    resp = await client.post(
+        "/classifier/training-jobs",
+        json={
+            "name": "mixed",
+            "positive_embedding_set_ids": ["es-1"],
+            "negative_embedding_set_ids": ["es-2"],
+            "detection_job_ids": ["dj-1"],
+            "embedding_model_version": "perch_v2",
+        },
+    )
+    assert resp.status_code == 422
+    assert "Cannot mix" in resp.text
+
+
+async def test_create_training_job_detection_manifest_missing_embeddings(
+    client, app_settings
+):
+    """POST /training-jobs with detection_job_ids but no embeddings -> 400."""
+    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+    from humpback.models.model_registry import ModelConfig
+    from humpback.storage import detection_row_store_path
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    cm_id = str(uuid.uuid4())
+    dj_id = str(uuid.uuid4())
+
+    async with sf() as session:
+        session.add(
+            ModelConfig(
+                name="perch_v2_missing",
+                display_name="Perch v2",
+                path="models/perch_v2.tflite",
+                model_type="tflite",
+                input_format="waveform",
+                vector_dim=1536,
+                is_default=False,
+            )
+        )
+        session.add(
+            ClassifierModel(
+                id=cm_id,
+                name="no-emb-classifier",
+                model_path="/tmp/fake.joblib",
+                model_version="perch_v2_missing",
+                vector_dim=1536,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        session.add(
+            DetectionJob(
+                id=dj_id,
+                status="complete",
+                classifier_model_id=cm_id,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                detection_mode="windowed",
+            )
+        )
+        await session.commit()
+
+    # Write a row store but NO embeddings.
+    rs_path = detection_row_store_path(app_settings.storage_root, dj_id)
+    rs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_detection_row_store(
+        rs_path,
+        [
+            {
+                "start_utc": str(BASE_EPOCH),
+                "end_utc": str(BASE_EPOCH + 5.0),
+                "avg_confidence": "0.9",
+                "peak_confidence": "0.95",
+                "n_windows": "1",
+                "humpback": "1",
+            },
+        ],
+    )
+
+    resp = await client.post(
+        "/classifier/training-jobs",
+        json={
+            "name": "no-embeddings",
+            "detection_job_ids": [dj_id],
+            "embedding_model_version": "perch_v2_missing",
+        },
+    )
+    assert resp.status_code == 400
+    assert "no embeddings" in resp.json()["detail"].lower()
+
+    await engine.dispose()
+
+
+async def test_create_training_job_detection_manifest_roundtrip(client, app_settings):
+    """Detection-manifest job is visible via GET list and detail endpoints."""
+    dj_id, model_version = await _seed_detection_manifest_fixtures(app_settings)
+
+    create_resp = await client.post(
+        "/classifier/training-jobs",
+        json={
+            "name": "roundtrip-test",
+            "detection_job_ids": [dj_id],
+            "embedding_model_version": model_version,
+        },
+    )
+    assert create_resp.status_code == 201
+    job_id = create_resp.json()["id"]
+
+    # GET detail
+    detail_resp = await client.get(f"/classifier/training-jobs/{job_id}")
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["source_mode"] == "detection_manifest"
+    assert detail["source_detection_job_ids"] == [dj_id]
+
+    # GET list
+    list_resp = await client.get("/classifier/training-jobs")
+    assert list_resp.status_code == 200
+    ids = [j["id"] for j in list_resp.json()]
+    assert job_id in ids
+
+
 # ---- Detection Embedding Endpoint ----
 
 
@@ -2280,6 +2525,8 @@ async def test_detection_embedding_returns_vector(client, app_settings):
 
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
+    emb_dir = ddir / "embeddings" / "perch_v1"
+    emb_dir.mkdir(parents=True)
 
     test_row_id = "emb-test-row-1"
     embedding_records = [
@@ -2289,7 +2536,7 @@ async def test_detection_embedding_returns_vector(client, app_settings):
             "confidence": 0.85,
         }
     ]
-    emb_path = ddir / "detection_embeddings.parquet"
+    emb_path = emb_dir / "detection_embeddings.parquet"
     write_detection_embeddings(embedding_records, emb_path)
 
     async with sf() as session:
@@ -2351,8 +2598,10 @@ async def test_detection_embedding_hydrophone_job_row_id(client, app_settings):
 
     ddir = Path(app_settings.storage_root) / "detections" / job_id
     ddir.mkdir(parents=True)
+    emb_dir = ddir / "embeddings" / "perch_v1"
+    emb_dir.mkdir(parents=True)
 
-    emb_path = ddir / "detection_embeddings.parquet"
+    emb_path = emb_dir / "detection_embeddings.parquet"
     write_detection_embeddings(
         [
             {

@@ -31,12 +31,14 @@ from humpback.services.classifier_service.models import (
     delete_classifier_model,
     get_classifier_model,
     list_classifier_models,
+    resolve_detection_job_model_version,
 )
 from humpback.services.classifier_service.training import (
     bulk_delete_training_jobs,
     collect_embedding_sets_for_folders,
     create_retrain_workflow,
     create_training_job,
+    create_training_job_from_detection_manifest,
     delete_training_job,
     get_retrain_info,
     get_training_data_summary,
@@ -72,11 +74,13 @@ __all__ = [
     "delete_classifier_model",
     "get_classifier_model",
     "list_classifier_models",
+    "resolve_detection_job_model_version",
     # training
     "bulk_delete_training_jobs",
     "collect_embedding_sets_for_folders",
     "create_retrain_workflow",
     "create_training_job",
+    "create_training_job_from_detection_manifest",
     "delete_training_job",
     "get_retrain_info",
     "get_training_data_summary",

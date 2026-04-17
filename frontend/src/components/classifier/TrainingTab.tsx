@@ -44,6 +44,11 @@ import {
 } from "@/hooks/queries/useClassifier";
 import { Separator } from "@/components/ui/separator";
 import { BulkDeleteDialog } from "./BulkDeleteDialog";
+import {
+  DetectionSourcePicker,
+  type DetectionSourcePickerValue,
+} from "./DetectionSourcePicker";
+import { ActiveEmbeddingBanner } from "./ActiveEmbeddingBanner";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
@@ -66,6 +71,13 @@ export function TrainingTab() {
   const { data: retrainWorkflows = [] } = useRetrainWorkflows(3000);
 
   const [name, setName] = useState("");
+  const [sourceMode, setSourceMode] = useState<"embedding_sets" | "detection_jobs">("embedding_sets");
+  const [detectionSource, setDetectionSource] =
+    useState<DetectionSourcePickerValue>({
+      selectedDetectionJobIds: [],
+      embeddingModelVersion: "",
+      isReady: false,
+    });
   const [modelFilter, setModelFilter] = useState("__all__");
   const [posSelected, setPosSelected] = useState<Set<string>>(new Set());
   const [posCollapsed, setPosCollapsed] = useState<Set<string> | null>(null);
@@ -145,7 +157,7 @@ export function TrainingTab() {
   const modelMismatch = selectedModels.size > 1;
 
   const handleSubmit = () => {
-    if (!name || posSelected.size === 0 || negSelected.size === 0) return;
+    if (!name) return;
     const parameters: Record<string, unknown> = {
       classifier_type: classifierType,
       l2_normalize: l2Normalize,
@@ -154,21 +166,49 @@ export function TrainingTab() {
     if (classifierType === "logistic_regression") {
       parameters.C = regularizationC;
     }
-    createMutation.mutate(
-      {
-        name,
-        positive_embedding_set_ids: [...posSelected],
-        negative_embedding_set_ids: [...negSelected],
-        parameters,
-      },
-      {
-        onSuccess: () => {
-          setName("");
-          setPosSelected(new Set());
-          setNegSelected(new Set());
+
+    if (sourceMode === "detection_jobs") {
+      if (
+        detectionSource.selectedDetectionJobIds.length === 0 ||
+        !detectionSource.isReady
+      )
+        return;
+      createMutation.mutate(
+        {
+          name,
+          detection_job_ids: detectionSource.selectedDetectionJobIds,
+          embedding_model_version: detectionSource.embeddingModelVersion,
+          parameters,
         },
-      },
-    );
+        {
+          onSuccess: () => {
+            setName("");
+            setDetectionSource({
+              selectedDetectionJobIds: [],
+              embeddingModelVersion: "",
+              isReady: false,
+            });
+          },
+        },
+      );
+    } else {
+      if (posSelected.size === 0 || negSelected.size === 0) return;
+      createMutation.mutate(
+        {
+          name,
+          positive_embedding_set_ids: [...posSelected],
+          negative_embedding_set_ids: [...negSelected],
+          parameters,
+        },
+        {
+          onSuccess: () => {
+            setName("");
+            setPosSelected(new Set());
+            setNegSelected(new Set());
+          },
+        },
+      );
+    }
   };
 
   // Job table helpers
@@ -223,6 +263,8 @@ export function TrainingTab() {
 
   return (
     <div className="space-y-4">
+      <ActiveEmbeddingBanner />
+
       {/* Training Form */}
       <Card>
         <CardHeader className="pb-3">
@@ -238,35 +280,69 @@ export function TrainingTab() {
             />
           </div>
 
-          <ModelFilter items={embeddingSets} value={modelFilter} onChange={setModelFilter} />
+          {/* Source Mode Radio */}
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium">Source</label>
+            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="sourceMode"
+                checked={sourceMode === "embedding_sets"}
+                onChange={() => setSourceMode("embedding_sets")}
+                className="accent-primary"
+              />
+              Embedding sets
+            </label>
+            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="sourceMode"
+                checked={sourceMode === "detection_jobs"}
+                onChange={() => setSourceMode("detection_jobs")}
+                className="accent-primary"
+              />
+              Detection jobs
+            </label>
+          </div>
 
-          {/* Positive Embedding Sets */}
-          <EmbeddingSetPanel
-            label="Positive Embedding Sets"
-            selected={posSelected}
-            collapsed={posCollapsed ?? allParentKeys}
-            folderTree={folderTree}
-            embeddingSets={filteredSets}
-            onToggleChild={togglePosChild}
-            onToggleParent={togglePosParent}
-            onToggleAll={togglePosAll}
-            onToggleCollapse={togglePosCollapse}
-            displayName={displayName}
-          />
+          {sourceMode === "embedding_sets" ? (
+            <>
+              <ModelFilter items={embeddingSets} value={modelFilter} onChange={setModelFilter} />
 
-          {/* Negative Embedding Sets */}
-          <EmbeddingSetPanel
-            label="Negative Embedding Sets"
-            selected={negSelected}
-            collapsed={negCollapsed ?? allParentKeys}
-            folderTree={folderTree}
-            embeddingSets={filteredSets}
-            onToggleChild={toggleNegChild}
-            onToggleParent={toggleNegParent}
-            onToggleAll={toggleNegAll}
-            onToggleCollapse={toggleNegCollapse}
-            displayName={displayName}
-          />
+              {/* Positive Embedding Sets */}
+              <EmbeddingSetPanel
+                label="Positive Embedding Sets"
+                selected={posSelected}
+                collapsed={posCollapsed ?? allParentKeys}
+                folderTree={folderTree}
+                embeddingSets={filteredSets}
+                onToggleChild={togglePosChild}
+                onToggleParent={togglePosParent}
+                onToggleAll={togglePosAll}
+                onToggleCollapse={togglePosCollapse}
+                displayName={displayName}
+              />
+
+              {/* Negative Embedding Sets */}
+              <EmbeddingSetPanel
+                label="Negative Embedding Sets"
+                selected={negSelected}
+                collapsed={negCollapsed ?? allParentKeys}
+                folderTree={folderTree}
+                embeddingSets={filteredSets}
+                onToggleChild={toggleNegChild}
+                onToggleParent={toggleNegParent}
+                onToggleAll={toggleNegAll}
+                onToggleCollapse={toggleNegCollapse}
+                displayName={displayName}
+              />
+            </>
+          ) : (
+            <DetectionSourcePicker
+              value={detectionSource}
+              onChange={setDetectionSource}
+            />
+          )}
 
           {/* Advanced Options */}
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -329,7 +405,7 @@ export function TrainingTab() {
             </CollapsibleContent>
           </Collapsible>
 
-          {modelMismatch && (
+          {sourceMode === "embedding_sets" && modelMismatch && (
             <div className="flex items-center gap-2 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               Cannot train with embedding sets from different models: {[...selectedModels].join(", ")}
@@ -340,10 +416,12 @@ export function TrainingTab() {
             onClick={handleSubmit}
             disabled={
               !name ||
-              posSelected.size === 0 ||
-              negSelected.size === 0 ||
-              modelMismatch ||
-              createMutation.isPending
+              createMutation.isPending ||
+              (sourceMode === "embedding_sets"
+                ? posSelected.size === 0 ||
+                  negSelected.size === 0 ||
+                  modelMismatch
+                : !detectionSource.isReady)
             }
           >
             {createMutation.isPending ? "Creating…" : "Train Classifier"}
@@ -556,6 +634,11 @@ function TrainingJobTableRow({
               candidate
             </Badge>
           )}
+          {job.source_mode === "detection_manifest" && (
+            <Badge variant="outline" className="text-[10px]">
+              detection
+            </Badge>
+          )}
         </div>
       </td>
       <td className="px-3 py-2 text-muted-foreground">
@@ -566,6 +649,8 @@ function TrainingJobTableRow({
               <div className="text-[10px] text-muted-foreground">{candidateName}</div>
             )}
           </div>
+        ) : job.source_mode === "detection_manifest" ? (
+          `${(job.source_detection_job_ids ?? []).length} detection job(s)`
         ) : (
           `${job.positive_embedding_set_ids.length} set(s)`
         )}

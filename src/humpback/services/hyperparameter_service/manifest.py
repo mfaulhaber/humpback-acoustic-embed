@@ -65,6 +65,41 @@ def _query_job_embedding_sets(
     return positive_ids, negative_ids
 
 
+def _verify_training_jobs_model_version(
+    db_url: str,
+    training_job_ids: list[int | str],
+    embedding_model_version: str,
+) -> None:
+    """Fail if any training job's ``model_version`` differs from the manifest's."""
+    engine = create_engine(db_url)
+    mismatches: list[str] = []
+    try:
+        with engine.connect() as conn:
+            for job_id in training_job_ids:
+                row = conn.execute(
+                    text(
+                        "SELECT model_version FROM classifier_training_jobs "
+                        "WHERE id = :id"
+                    ),
+                    {"id": str(job_id)},
+                ).fetchone()
+                if row is None:
+                    msg = f"Training job {job_id} not found"
+                    raise ValueError(msg)
+                if not row[0] or row[0] != embedding_model_version:
+                    mismatches.append(f"{job_id}: {row[0] or 'NULL'}")
+    finally:
+        engine.dispose()
+
+    if mismatches:
+        msg = (
+            "Training job(s) have model_version that does not match the manifest's "
+            f"embedding_model_version={embedding_model_version!r}: "
+            f"{'; '.join(mismatches)}"
+        )
+        raise ValueError(msg)
+
+
 def _query_embedding_sets(db_url: str, es_ids: list[str]) -> list[dict[str, Any]]:
     """Query embedding set metadata."""
     engine = create_engine(db_url)
@@ -90,6 +125,34 @@ def _query_embedding_sets(db_url: str, es_ids: list[str]) -> list[dict[str, Any]
 
     engine.dispose()
     return results
+
+
+def _resolve_model_version_for_detection_jobs(
+    db_url: str, detection_job_ids: list[str]
+) -> str:
+    """Look up the source classifier model_version for the first detection job."""
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            for job_id in detection_job_ids:
+                row = conn.execute(
+                    text(
+                        "SELECT cm.model_version "
+                        "FROM detection_jobs dj "
+                        "JOIN classifier_models cm ON cm.id = dj.classifier_model_id "
+                        "WHERE dj.id = :id"
+                    ),
+                    {"id": str(job_id)},
+                ).fetchone()
+                if row is not None and row[0]:
+                    return str(row[0])
+    finally:
+        engine.dispose()
+    msg = (
+        "Could not resolve embedding_model_version from detection jobs: "
+        f"{detection_job_ids}"
+    )
+    raise ValueError(msg)
 
 
 def _query_detection_jobs(
@@ -343,6 +406,7 @@ def _read_detection_row_store_rows(
 def _collect_detection_examples(
     detection_jobs: list[dict[str, Any]],
     settings: Settings,
+    embedding_model_version: str,
     vocalization_labels_by_job: dict[str, dict[str, set[str]]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Build manifest examples from detection job data (human-annotated only)."""
@@ -359,7 +423,9 @@ def _collect_detection_examples(
         summaries[job_id] = summary
 
         # Resolve paths
-        emb_path = detection_embeddings_path(settings.storage_root, job_id)
+        emb_path = detection_embeddings_path(
+            settings.storage_root, job_id, embedding_model_version
+        )
         row_store_path = detection_row_store_path(settings.storage_root, job_id)
 
         if not emb_path.exists():
@@ -558,10 +624,16 @@ def generate_manifest(
     split_ratio: tuple[int, int, int] = (70, 15, 15),
     seed: int = 42,
     db_url: str | None = None,
+    embedding_model_version: str | None = None,
 ) -> dict[str, Any]:
     """Generate a data manifest from training jobs and/or detection jobs.
 
-    Only human-annotated labels are included. No unlabeled score-band negatives.
+    ``embedding_model_version`` is required — every source must match it.
+    Training-job sources with a different ``model_version`` are rejected. For
+    detection-job sources, embeddings are read from the model-versioned path and
+    missing artifacts raise ``FileNotFoundError``. Only human-annotated labels
+    are included. For ``perch_v2``, only binary row-store labels are used; the
+    ``vocalization_labels`` join is skipped.
     """
     if not training_job_ids and not detection_job_ids:
         msg = "At least one of training_job_ids or detection_job_ids must be provided"
@@ -571,12 +643,19 @@ def generate_manifest(
     if db_url is None:
         db_url = _get_sync_db_url(settings)
 
+    if embedding_model_version is None or not embedding_model_version.strip():
+        msg = "embedding_model_version is required for manifest generation"
+        raise ValueError(msg)
+
     examples: list[dict[str, Any]] = []
     positive_ids: list[str] = []
     negative_ids: list[str] = []
 
     # Embedding set sources
     if training_job_ids:
+        _verify_training_jobs_model_version(
+            db_url, training_job_ids, embedding_model_version
+        )
         positive_ids, negative_ids = _query_job_embedding_sets(db_url, training_job_ids)
         pos_sets = _query_embedding_sets(db_url, positive_ids)
         neg_sets = _query_embedding_sets(db_url, negative_ids)
@@ -619,10 +698,20 @@ def generate_manifest(
     if detection_job_ids:
         detection_jobs = _query_detection_jobs(db_url, detection_job_ids)
         det_job_id_list = [dj["id"] for dj in detection_jobs]
-        vocalization_labels_by_job = _query_vocalization_labels(db_url, det_job_id_list)
+        # perch_v2 sources carry only binary row-store labels — vocalization
+        # labels are a TF2-side concern (see spec §4 / ADR-055).
+        if embedding_model_version == "perch_v2":
+            vocalization_labels_by_job: dict[str, dict[str, set[str]]] = {
+                job_id: {} for job_id in det_job_id_list
+            }
+        else:
+            vocalization_labels_by_job = _query_vocalization_labels(
+                db_url, det_job_id_list
+            )
         det_examples, detection_job_summaries = _collect_detection_examples(
             detection_jobs,
             settings,
+            embedding_model_version=embedding_model_version,
             vocalization_labels_by_job=vocalization_labels_by_job,
         )
         examples.extend(det_examples)
@@ -636,6 +725,7 @@ def generate_manifest(
     manifest = {
         "metadata": {
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "embedding_model_version": embedding_model_version,
             "source_training_job_ids": (
                 [str(j) for j in training_job_ids] if training_job_ids else []
             ),

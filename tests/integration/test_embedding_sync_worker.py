@@ -140,7 +140,9 @@ async def test_sync_adds_missing_and_removes_orphans(app_settings):
     # Set up initial state: row store and embeddings with drift
     ensure_dir(detection_dir(app_settings.storage_root, job_id))
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
-    emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+    emb_path = detection_embeddings_path(
+        app_settings.storage_root, job_id, "fake_tflite"
+    )
 
     # Row store: row at 0-5 (matched) + row at 5-10 (missing — manually added)
     rows = [
@@ -160,6 +162,7 @@ async def test_sync_adds_missing_and_removes_orphans(app_settings):
     async with sf() as session:
         sync_job = DetectionEmbeddingJob(
             detection_job_id=job_id,
+            model_version="fake_tflite",
             mode="sync",
         )
         session.add(sync_job)
@@ -218,14 +221,18 @@ async def test_sync_already_in_sync(app_settings):
 
     ensure_dir(detection_dir(app_settings.storage_root, job_id))
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
-    emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+    emb_path = detection_embeddings_path(
+        app_settings.storage_root, job_id, "fake_tflite"
+    )
 
     rows = [_make_row(_BASE_EPOCH + 0, _BASE_EPOCH + 5, row_id="sync-1")]
     write_detection_row_store(rs_path, rows)
     write_detection_embeddings([_make_emb("sync-1", dim=8)], emb_path)
 
     async with sf() as session:
-        sync_job = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
+        sync_job = DetectionEmbeddingJob(
+            detection_job_id=job_id, model_version="fake_tflite", mode="sync"
+        )
         session.add(sync_job)
         await session.commit()
         sync_job_id = sync_job.id
@@ -270,7 +277,9 @@ async def test_sync_skips_when_audio_unavailable(app_settings):
 
     ensure_dir(detection_dir(app_settings.storage_root, job_id))
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
-    emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+    emb_path = detection_embeddings_path(
+        app_settings.storage_root, job_id, "fake_tflite"
+    )
 
     # Row at an impossible time (1 hour later — no audio file covers it)
     rows = [
@@ -281,7 +290,9 @@ async def test_sync_skips_when_audio_unavailable(app_settings):
     write_detection_embeddings([_make_emb("ok-1", dim=8)], emb_path)
 
     async with sf() as session:
-        sync_job = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
+        sync_job = DetectionEmbeddingJob(
+            detection_job_id=job_id, model_version="fake_tflite", mode="sync"
+        )
         session.add(sync_job)
         await session.commit()
         sync_job_id = sync_job.id
@@ -332,7 +343,9 @@ async def test_sync_fractional_second_timestamps(app_settings):
 
     ensure_dir(detection_dir(app_settings.storage_root, job_id))
     rs_path = detection_row_store_path(app_settings.storage_root, job_id)
-    emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+    emb_path = detection_embeddings_path(
+        app_settings.storage_root, job_id, "fake_tflite"
+    )
 
     # Row store: one integer-second row (matched) + one .5-second row (missing)
     rows = [
@@ -347,7 +360,9 @@ async def test_sync_fractional_second_timestamps(app_settings):
 
     # --- First sync: should add the .5-second row ---
     async with sf() as session:
-        sync_job = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
+        sync_job = DetectionEmbeddingJob(
+            detection_job_id=job_id, model_version="fake_tflite", mode="sync"
+        )
         session.add(sync_job)
         await session.commit()
         sync_job_id = sync_job.id
@@ -386,7 +401,9 @@ async def test_sync_fractional_second_timestamps(app_settings):
 
     # --- Second sync: should be a no-op ---
     async with sf() as session:
-        sync_job2 = DetectionEmbeddingJob(detection_job_id=job_id, mode="sync")
+        sync_job2 = DetectionEmbeddingJob(
+            detection_job_id=job_id, model_version="fake_tflite", mode="sync"
+        )
         session.add(sync_job2)
         await session.commit()
         sync_job2_id = sync_job2.id

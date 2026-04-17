@@ -25,9 +25,39 @@ class LabelEditRequest(BaseModel):
 
 class ClassifierTrainingJobCreate(BaseModel):
     name: str
-    positive_embedding_set_ids: list[str]
-    negative_embedding_set_ids: list[str]
+    positive_embedding_set_ids: list[str] = Field(default_factory=list)
+    negative_embedding_set_ids: list[str] = Field(default_factory=list)
+    detection_job_ids: list[str] = Field(default_factory=list)
+    embedding_model_version: Optional[str] = None
     parameters: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _validate_source_mode(self):
+        has_embedding_sets = bool(
+            self.positive_embedding_set_ids or self.negative_embedding_set_ids
+        )
+        has_detection_jobs = bool(self.detection_job_ids)
+
+        if has_embedding_sets and has_detection_jobs:
+            raise ValueError(
+                "Cannot mix embedding_set sources with detection_job sources"
+            )
+        if not has_embedding_sets and not has_detection_jobs:
+            raise ValueError(
+                "Must provide either embedding set IDs or detection_job_ids"
+            )
+        if has_embedding_sets:
+            if not self.positive_embedding_set_ids:
+                raise ValueError("At least one positive embedding set is required")
+            if not self.negative_embedding_set_ids:
+                raise ValueError("At least one negative embedding set is required")
+        else:
+            if not self.embedding_model_version:
+                raise ValueError(
+                    "embedding_model_version is required when submitting "
+                    "detection_job_ids"
+                )
+        return self
 
 
 class ClassifierTrainingJobOut(BaseModel):
@@ -43,9 +73,12 @@ class ClassifierTrainingJobOut(BaseModel):
     parameters: Optional[dict[str, Any]] = None
     classifier_model_id: Optional[str] = None
     error_message: Optional[str] = None
-    source_mode: Literal["embedding_sets", "autoresearch_candidate"] = "embedding_sets"
+    source_mode: Literal[
+        "embedding_sets", "autoresearch_candidate", "detection_manifest"
+    ] = "embedding_sets"
     source_candidate_id: Optional[str] = None
     source_model_id: Optional[str] = None
+    source_detection_job_ids: Optional[list[str]] = None
     manifest_path: Optional[str] = None
     training_split_name: Optional[str] = None
     promoted_config: Optional[dict[str, Any]] = None
@@ -132,9 +165,9 @@ class ClassifierModelOut(BaseModel):
     feature_config: Optional[dict[str, Any]] = None
     training_summary: Optional[dict[str, Any]] = None
     training_job_id: Optional[str] = None
-    training_source_mode: Literal["embedding_sets", "autoresearch_candidate"] = (
-        "embedding_sets"
-    )
+    training_source_mode: Literal[
+        "embedding_sets", "autoresearch_candidate", "detection_manifest"
+    ] = "embedding_sets"
     source_candidate_id: Optional[str] = None
     source_model_id: Optional[str] = None
     promotion_provenance: Optional[dict[str, Any]] = None
@@ -337,13 +370,32 @@ class EmbeddingStatusResponse(BaseModel):
     sync_needed: bool | None = None
 
 
+class DetectionEmbeddingJobStatus(BaseModel):
+    """Status row for a ``(detection_job_id, model_version)`` pair.
+
+    ``status == "not_started"`` indicates no row exists yet.
+    """
+
+    detection_job_id: str
+    model_version: str
+    status: str
+    rows_processed: int = 0
+    rows_total: int | None = None
+    error_message: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class DetectionEmbeddingJobOut(BaseModel):
     id: str
     status: str
     detection_job_id: str
+    model_version: str
     mode: str | None = None
     progress_current: int | None = None
     progress_total: int | None = None
+    rows_processed: int = 0
+    rows_total: int | None = None
     error_message: str | None = None
     result_summary: str | None = None
     created_at: datetime
@@ -356,9 +408,12 @@ class EmbeddingJobListItem(BaseModel):
     id: str
     status: str
     detection_job_id: str
+    model_version: str
     mode: str | None = None
     progress_current: int | None = None
     progress_total: int | None = None
+    rows_processed: int = 0
+    rows_total: int | None = None
     error_message: str | None = None
     result_summary: str | None = None
     created_at: datetime

@@ -1498,3 +1498,178 @@ async def test_run_training_job_candidate_replay_linear_svm_verified(
     probs = loaded_pipeline.predict_proba(test_input)
     assert probs.shape == (5, 2)
     assert np.all(probs >= 0) and np.all(probs <= 1)
+
+
+# ---- Detection-manifest training path ----
+
+
+async def test_run_training_job_detection_manifest(
+    session,
+    settings,
+    monkeypatch,
+) -> None:
+    """Detection-manifest training builds a manifest, trains, and produces a model."""
+    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.config import Settings
+    from humpback.models.model_registry import ModelConfig
+    from humpback.storage import detection_embeddings_path, detection_row_store_path
+
+    # Patch Settings.from_repo_env so generate_manifest finds the test storage.
+    monkeypatch.setattr(
+        Settings,
+        "from_repo_env",
+        classmethod(lambda cls: settings),
+    )
+
+    model_version = "perch_v2"
+    dim = 4
+
+    # Seed model config (needed by generate_manifest's detection path).
+    session.add(
+        ModelConfig(
+            name=model_version,
+            display_name="Perch v2",
+            path="models/perch_v2.tflite",
+            model_type="tflite",
+            input_format="waveform",
+            vector_dim=dim,
+            is_default=False,
+        )
+    )
+    cm = ClassifierModel(
+        name="source-classifier",
+        model_path="/tmp/fake.joblib",
+        model_version=model_version,
+        vector_dim=dim,
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+    )
+    session.add(cm)
+    await session.flush()
+
+    dj = DetectionJob(
+        status="complete",
+        classifier_model_id=cm.id,
+        audio_folder="/tmp/fake",
+        confidence_threshold=0.5,
+        detection_mode="windowed",
+        has_positive_labels=True,
+    )
+    session.add(dj)
+    await session.flush()
+
+    # Write row store with labeled rows.
+    rs_path = detection_row_store_path(settings.storage_root, dj.id)
+    rs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_detection_row_store(
+        rs_path,
+        [
+            {
+                "row_id": "r1",
+                "start_utc": "1000.0",
+                "end_utc": "1005.0",
+                "avg_confidence": "0.9",
+                "peak_confidence": "0.95",
+                "n_windows": "1",
+                "humpback": "1",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            },
+            {
+                "row_id": "r2",
+                "start_utc": "1005.0",
+                "end_utc": "1010.0",
+                "avg_confidence": "0.9",
+                "peak_confidence": "0.95",
+                "n_windows": "1",
+                "humpback": "1",
+                "orca": "",
+                "ship": "",
+                "background": "",
+            },
+            {
+                "row_id": "r3",
+                "start_utc": "2000.0",
+                "end_utc": "2005.0",
+                "avg_confidence": "0.3",
+                "peak_confidence": "0.4",
+                "n_windows": "1",
+                "humpback": "",
+                "orca": "",
+                "ship": "",
+                "background": "1",
+            },
+            {
+                "row_id": "r4",
+                "start_utc": "2005.0",
+                "end_utc": "2010.0",
+                "avg_confidence": "0.2",
+                "peak_confidence": "0.3",
+                "n_windows": "1",
+                "humpback": "",
+                "orca": "",
+                "ship": "1",
+                "background": "",
+            },
+        ],
+    )
+
+    # Write detection embeddings at the model-versioned path.
+    emb_path = detection_embeddings_path(settings.storage_root, dj.id, model_version)
+    _write_detection_embeddings_parquet(
+        emb_path,
+        row_ids=["r1", "r2", "r3", "r4"],
+        rows=[
+            [1.0, 1.0, 0.0, 0.0],
+            [0.9, 1.1, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 1.0],
+            [0.0, 0.0, 0.9, 1.1],
+        ],
+    )
+
+    # Create a detection_manifest training job.
+    job = ClassifierTrainingJob(
+        status="running",
+        name="detection-manifest-test",
+        positive_embedding_set_ids=json.dumps([]),
+        negative_embedding_set_ids=json.dumps([]),
+        model_version=model_version,
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+        source_mode="detection_manifest",
+        source_detection_job_ids=json.dumps([dj.id]),
+    )
+    session.add(job)
+    await session.commit()
+
+    await run_training_job(session, job, settings)
+
+    await session.refresh(job)
+    assert job.status == "complete"
+    assert job.classifier_model_id is not None
+    assert job.manifest_path is not None
+
+    model = await session.get(ClassifierModel, job.classifier_model_id)
+    assert model is not None
+    assert model.model_version == model_version
+    assert model.vector_dim == dim
+    assert model.training_source_mode == "detection_manifest"
+    assert model.window_size_seconds == 5.0
+    assert model.target_sample_rate == 32000
+
+    # Verify training summary describes the detection source.
+    summary = json.loads(model.training_summary or "{}")
+    assert summary["training_source_mode"] == "detection_manifest"
+    assert dj.id in summary["detection_job_ids"]
+    assert "manifest_path" in summary
+
+    # Verify the model artifact is loadable and can predict.
+    import joblib
+    import numpy as np
+
+    loaded_pipeline = joblib.load(model.model_path)
+    probs = loaded_pipeline.predict_proba(
+        np.array([[1.0, 1.0, 0.0, 0.0]], dtype=np.float32)
+    )
+    assert probs.shape == (1, 2)

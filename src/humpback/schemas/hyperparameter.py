@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class ManifestCreate(BaseModel):
     name: str
+    embedding_model_version: str
     training_job_ids: list[str] = Field(default_factory=list)
     detection_job_ids: list[str] = Field(default_factory=list)
     split_ratio: list[int] = Field(default=[70, 15, 15])
@@ -20,6 +21,8 @@ class ManifestCreate(BaseModel):
             raise ValueError(
                 "At least one of training_job_ids or detection_job_ids is required"
             )
+        if not self.embedding_model_version.strip():
+            raise ValueError("embedding_model_version is required")
         if len(self.split_ratio) != 3:
             raise ValueError("split_ratio must be exactly 3 integers")
         if any(v < 0 for v in self.split_ratio):
@@ -35,6 +38,7 @@ class ManifestSummary(BaseModel):
     status: str
     training_job_ids: list[str]
     detection_job_ids: list[str]
+    embedding_model_version: str
     split_ratio: list[int]
     seed: int
     example_count: Optional[int] = None

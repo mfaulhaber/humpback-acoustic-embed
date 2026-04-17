@@ -22,7 +22,7 @@ Highlights:
 - Async, restart-safe job workflows with idempotent encoding
 - Multi-model support for TFLite spectrogram models and TF2 waveform models
 - Clustering, evaluation, and optional metric-learning refinement workflows
-- Binary classifier training plus hydrophone/archive detection
+- Binary classifier training plus hydrophone/archive detection; perch_v2 classifier support with detection-manifest training and model-versioned re-embedding
 - Autoresearch candidate import, review, and exact-replay promotion into classifier training
 - Multi-label vocalization type classifier with managed vocabulary, per-type thresholds, and inference scoring
 - Four-pass call parsing pipeline (Phase 0 scaffold — region detect → event segment → event classify → sequence export; pass logic ships incrementally)

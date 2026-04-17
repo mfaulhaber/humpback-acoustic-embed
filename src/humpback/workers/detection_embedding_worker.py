@@ -1,28 +1,33 @@
-"""Worker for post-hoc detection embedding generation."""
+"""Worker for post-hoc detection embedding generation.
+
+Embeds detection windows using the embedding model specified by
+``DetectionEmbeddingJob.model_version``. The source classifier's
+``window_size_seconds`` and ``target_sample_rate`` are used for audio framing,
+but the embedding model itself comes from the registry entry named
+``job.model_version`` — not the classifier's.
+"""
 
 import asyncio
 import json
 import logging
 from pathlib import Path
 
-import joblib
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.classifier.detector import (
     _build_file_timeline,
     diff_row_store_vs_embeddings,
-    match_embedding_records_to_row_store,
     resolve_audio_for_window,
     resolve_audio_for_window_hydrophone,
-    run_detection,
-    write_detection_embeddings,
 )
 from humpback.config import Settings
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
+from humpback.processing.inference import EmbeddingModel
 from humpback.storage import (
     detection_dir,
     detection_embeddings_path,
@@ -37,43 +42,51 @@ from humpback.workers.queue import (
 
 logger = logging.getLogger(__name__)
 
+_PROGRESS_FLUSH_EVERY = 5
+
 
 async def run_detection_embedding_job(
     session: AsyncSession,
     job: DetectionEmbeddingJob,
     settings: Settings,
 ) -> None:
-    """Generate detection embeddings for an existing detection job."""
+    """Generate or sync detection embeddings for an existing detection job.
+
+    Both modes iterate over the detection row store and (re-)embed windows
+    using the embedding model resolved from ``job.model_version``.
+    """
+    job_id = job.id
     try:
         if job.mode == "sync":
             await _run_sync_mode(session, job, settings)
         else:
             await _run_full_mode(session, job, settings)
     except Exception as e:
-        logger.exception("Detection embedding job %s failed", job.id)
+        logger.exception("Detection embedding job %s failed", job_id)
         try:
             await session.rollback()
         except Exception:
             pass
         try:
-            await fail_detection_embedding_job(session, job.id, str(e))
+            await fail_detection_embedding_job(session, job_id, str(e))
         except Exception:
             logger.exception("Failed to mark detection embedding job as failed")
 
 
-async def _run_full_mode(
+async def _load_context(
     session: AsyncSession,
     job: DetectionEmbeddingJob,
     settings: Settings,
-) -> None:
-    """Full embedding generation — re-runs detection to collect embeddings."""
-    from sqlalchemy import select
+) -> tuple[DetectionJob, ClassifierModel, EmbeddingModel, str, dict | None]:
+    """Resolve the detection job, its source classifier, and the target model.
 
-    # Load the detection job
-    result = await session.execute(
+    The embedding model is resolved via ``job.model_version`` — the classifier's
+    ``model_version`` is ignored for this purpose.
+    """
+    det_result = await session.execute(
         select(DetectionJob).where(DetectionJob.id == job.detection_job_id)
     )
-    det_job = result.scalar_one_or_none()
+    det_job = det_result.scalar_one_or_none()
     if det_job is None:
         raise ValueError(f"Detection job {job.detection_job_id} not found")
     if det_job.status != "complete":
@@ -81,96 +94,234 @@ async def _run_full_mode(
             f"Detection job {job.detection_job_id} status is {det_job.status}, "
             "expected complete"
         )
-    if not det_job.audio_folder:
-        raise ValueError(
-            f"Detection job {job.detection_job_id} has no audio_folder "
-            "(hydrophone jobs already generate embeddings during detection)"
-        )
 
-    # Load classifier model and embedding model
     cm_result = await session.execute(
         select(ClassifierModel).where(ClassifierModel.id == det_job.classifier_model_id)
     )
-    cm = cm_result.scalar_one()
-    pipeline = joblib.load(cm.model_path)
-    model, input_format = await get_model_by_version(
-        session, cm.model_version, settings
+    cm = cm_result.scalar_one_or_none()
+    if cm is None:
+        raise ValueError(
+            f"Source classifier {det_job.classifier_model_id} not found for "
+            f"detection job {det_job.id}"
+        )
+
+    emb_model, input_format = await get_model_by_version(
+        session, job.model_version, settings
     )
     feature_config = json.loads(cm.feature_config) if cm.feature_config else None
+    return det_job, cm, emb_model, input_format, feature_config
 
-    audio_folder = Path(det_job.audio_folder)
 
-    # Count audio files for progress tracking
-    audio_extensions = {".wav", ".flac", ".mp3", ".aif", ".aiff"}
-    audio_files = sorted(
-        p for p in audio_folder.rglob("*") if p.suffix.lower() in audio_extensions
+def _embed_window(
+    audio: np.ndarray,
+    emb_model: EmbeddingModel,
+    input_format: str,
+    target_sample_rate: int,
+    normalization: str,
+) -> list[float]:
+    from humpback.processing.features import extract_logmel_batch
+
+    if input_format == "waveform":
+        batch = np.expand_dims(audio, 0)
+    else:
+        specs = extract_logmel_batch(
+            [audio],
+            target_sample_rate,
+            n_mels=128,
+            hop_length=1252,
+            target_frames=128,
+            normalization=normalization,
+        )
+        batch = np.stack(specs)
+    embedding = emb_model.embed(batch)
+    return embedding[0].tolist()
+
+
+async def _embed_rows(
+    rows: list[dict],
+    det_job: DetectionJob,
+    cm: ClassifierModel,
+    emb_model: EmbeddingModel,
+    input_format: str,
+    feature_config: dict | None,
+    settings: Settings,
+    *,
+    session: AsyncSession,
+    job_id: str,
+    progress_start: int = 0,
+) -> tuple[list[dict], list[str]]:
+    """Embed each row in ``rows`` using the selected model.
+
+    Returns ``(records, skipped_reasons)``. ``records`` are dicts with keys
+    ``row_id``, ``embedding``, ``confidence``. Updates ``rows_processed``
+    periodically.
+    """
+    from humpback.classifier.providers import build_archive_detection_provider
+
+    normalization = (feature_config or {}).get("normalization", "per_window_max")
+    target_sample_rate = cm.target_sample_rate
+
+    is_hydrophone = bool(det_job.hydrophone_id) and not det_job.audio_folder
+    provider = None
+    file_timeline = None
+
+    if is_hydrophone:
+        assert det_job.hydrophone_id is not None
+        provider = build_archive_detection_provider(
+            det_job.hydrophone_id,
+            local_cache_path=det_job.local_cache_path,
+            s3_cache_path=settings.s3_cache_path,
+            noaa_cache_path=settings.noaa_cache_path,
+            force_refresh=False,
+        )
+    elif det_job.audio_folder:
+        file_timeline = await asyncio.to_thread(
+            _build_file_timeline, Path(det_job.audio_folder), target_sample_rate
+        )
+
+    records: list[dict] = []
+    skipped_reasons: list[str] = []
+    audio_cache: dict[str, np.ndarray] = {}
+    processed = progress_start
+
+    for row in rows:
+        start_utc = float(row["start_utc"])
+        end_utc = float(row["end_utc"])
+
+        if is_hydrophone and provider is not None:
+            audio, reason = await asyncio.to_thread(
+                resolve_audio_for_window_hydrophone,
+                start_utc,
+                end_utc,
+                provider,
+                target_sample_rate,
+            )
+        elif det_job.audio_folder:
+            audio, reason = await asyncio.to_thread(
+                resolve_audio_for_window,
+                start_utc,
+                end_utc,
+                Path(det_job.audio_folder),
+                target_sample_rate,
+                _file_timeline=file_timeline,
+                _audio_cache=audio_cache,
+            )
+        else:
+            audio = None
+            reason = "no audio source (no audio_folder or hydrophone_id)"
+
+        processed += 1
+
+        if audio is None:
+            skipped_reasons.append(f"[{start_utc:.1f}, {end_utc:.1f}]: {reason}")
+        else:
+            try:
+                emb_vec = await asyncio.to_thread(
+                    _embed_window,
+                    audio,
+                    emb_model,
+                    input_format,
+                    target_sample_rate,
+                    normalization,
+                )
+                records.append(
+                    {
+                        "row_id": row.get("row_id", ""),
+                        "embedding": emb_vec,
+                        "confidence": None,
+                    }
+                )
+            except Exception as exc:
+                skipped_reasons.append(
+                    f"[{start_utc:.1f}, {end_utc:.1f}]: embedding failed: {exc}"
+                )
+
+        if processed % _PROGRESS_FLUSH_EVERY == 0 or processed == len(rows):
+            await session.execute(
+                update(DetectionEmbeddingJob)
+                .where(DetectionEmbeddingJob.id == job_id)
+                .values(rows_processed=processed, progress_current=processed)
+            )
+            await session.commit()
+
+    return records, skipped_reasons
+
+
+async def _run_full_mode(
+    session: AsyncSession,
+    job: DetectionEmbeddingJob,
+    settings: Settings,
+) -> None:
+    """Re-embed every row in the detection job's row store under ``job.model_version``."""
+    from humpback.classifier.detection_rows import read_detection_row_store
+
+    det_job, cm, emb_model, input_format, feature_config = await _load_context(
+        session, job, settings
     )
-    files_total = len(audio_files)
+
+    rs_path = detection_row_store_path(settings.storage_root, det_job.id)
+    if not rs_path.exists():
+        raise ValueError(f"Row store not found for detection job {det_job.id}")
+
+    _, rows = await asyncio.to_thread(read_detection_row_store, rs_path)
+    total = len(rows)
+
+    ensure_dir(detection_dir(settings.storage_root, det_job.id))
+    emb_path = detection_embeddings_path(
+        settings.storage_root, det_job.id, job.model_version
+    )
+    ensure_dir(emb_path.parent)
 
     await session.execute(
         update(DetectionEmbeddingJob)
         .where(DetectionEmbeddingJob.id == job.id)
-        .values(progress_total=files_total, progress_current=0)
+        .values(
+            rows_total=total,
+            rows_processed=0,
+            progress_total=total,
+            progress_current=0,
+        )
     )
     await session.commit()
 
-    def on_file_complete(_detections: list[dict], files_done: int, total: int) -> None:
-        pass  # Progress updated after run_detection completes
-
-    # Re-run detection to collect embeddings (reuses existing infrastructure)
-    (
-        _detections,
-        _summary,
-        _diagnostics,
-        detection_embeddings,
-    ) = await asyncio.to_thread(
-        run_detection,
-        audio_folder,
-        pipeline,
-        model,
-        cm.window_size_seconds,
-        cm.target_sample_rate,
-        det_job.confidence_threshold,
+    records, skipped_reasons = await _embed_rows(
+        rows,
+        det_job,
+        cm,
+        emb_model,
         input_format,
         feature_config,
-        False,  # emit_diagnostics — not needed
-        det_job.hop_seconds,
-        det_job.high_threshold,
-        det_job.low_threshold,
-        on_file_complete,
-        det_job.detection_mode,
-        True,  # emit_embeddings
+        settings,
+        session=session,
+        job_id=job.id,
     )
 
-    # Cross-reference embeddings with row store to assign row_ids.
-    ddir = ensure_dir(detection_dir(settings.storage_root, det_job.id))
-    emb_path = ddir / "detection_embeddings.parquet"
-    if detection_embeddings:
-        rs_path = detection_row_store_path(settings.storage_root, det_job.id)
-        if rs_path.exists():
-            from humpback.classifier.detection_rows import read_detection_row_store
+    await asyncio.to_thread(_write_embeddings_parquet, emb_path, records)
 
-            _, rs_rows = read_detection_row_store(rs_path)
-            detection_embeddings = match_embedding_records_to_row_store(
-                detection_embeddings, rs_rows
-            )
-
-        write_detection_embeddings(detection_embeddings, emb_path)
-
-    count = len(detection_embeddings) if detection_embeddings else 0
-    result_summary = json.dumps({"total": count})
+    result_summary = json.dumps(
+        {
+            "total": len(records),
+            "skipped": len(skipped_reasons),
+            "skipped_reasons": skipped_reasons,
+        }
+    )
     await session.execute(
         update(DetectionEmbeddingJob)
         .where(DetectionEmbeddingJob.id == job.id)
-        .values(progress_current=files_total, result_summary=result_summary)
+        .values(
+            rows_processed=total,
+            progress_current=total,
+            result_summary=result_summary,
+        )
     )
     await session.commit()
 
     logger.info(
-        "Detection embedding job %s complete: %d embeddings for detection %s",
+        "Detection embedding job %s complete: %d embeddings for detection %s (model=%s)",
         job.id,
-        count,
+        len(records),
         job.detection_job_id,
+        job.model_version,
     )
     await complete_detection_embedding_job(session, job.id)
 
@@ -180,48 +331,23 @@ async def _run_sync_mode(
     job: DetectionEmbeddingJob,
     settings: Settings,
 ) -> None:
-    """Sync mode — diff row store vs embeddings, patch the delta."""
-    from humpback.classifier.providers import build_archive_detection_provider
-    from humpback.processing.features import extract_logmel_batch
-    from sqlalchemy import select
-
-    # Load the detection job
-    result = await session.execute(
-        select(DetectionJob).where(DetectionJob.id == job.detection_job_id)
+    """Diff row store against existing embeddings; patch the delta."""
+    det_job, cm, emb_model, input_format, feature_config = await _load_context(
+        session, job, settings
     )
-    det_job = result.scalar_one_or_none()
-    if det_job is None:
-        raise ValueError(f"Detection job {job.detection_job_id} not found")
-    if det_job.status != "complete":
-        raise ValueError(
-            f"Detection job {job.detection_job_id} status is {det_job.status}, "
-            "expected complete"
-        )
 
-    # Paths
     rs_path = detection_row_store_path(settings.storage_root, det_job.id)
-    emb_path = detection_embeddings_path(settings.storage_root, det_job.id)
+    emb_path = detection_embeddings_path(
+        settings.storage_root, det_job.id, job.model_version
+    )
     if not rs_path.exists():
         raise ValueError("Row store not found")
     if not emb_path.exists():
         raise ValueError("Embeddings parquet not found — run full generation first")
 
-    # Load classifier model and embedding model
-    cm_result = await session.execute(
-        select(ClassifierModel).where(ClassifierModel.id == det_job.classifier_model_id)
-    )
-    cm = cm_result.scalar_one()
-    emb_model, input_format = await get_model_by_version(
-        session, cm.model_version, settings
-    )
-    feature_config = json.loads(cm.feature_config) if cm.feature_config else None
-    normalization = (feature_config or {}).get("normalization", "per_window_max")
-
-    # Run diff
     diff = await asyncio.to_thread(diff_row_store_vs_embeddings, rs_path, emb_path)
 
     if not diff.missing and not diff.orphaned_indices:
-        # Nothing to do — already in sync.
         summary = json.dumps(
             {
                 "added": 0,
@@ -235,6 +361,8 @@ async def _run_sync_mode(
             update(DetectionEmbeddingJob)
             .where(DetectionEmbeddingJob.id == job.id)
             .values(
+                rows_total=0,
+                rows_processed=0,
                 progress_total=0,
                 progress_current=0,
                 result_summary=summary,
@@ -247,114 +375,31 @@ async def _run_sync_mode(
         await complete_detection_embedding_job(session, job.id)
         return
 
-    # Set progress to number of missing rows to generate
+    total = len(diff.missing)
     await session.execute(
         update(DetectionEmbeddingJob)
         .where(DetectionEmbeddingJob.id == job.id)
-        .values(progress_total=len(diff.missing), progress_current=0)
+        .values(
+            rows_total=total,
+            rows_processed=0,
+            progress_total=total,
+            progress_current=0,
+        )
     )
     await session.commit()
 
-    # Prepare audio resolution
-    is_hydrophone = bool(det_job.hydrophone_id) and not det_job.audio_folder
-    provider = None
-    file_timeline = None
+    new_records, skipped_reasons = await _embed_rows(
+        list(diff.missing),
+        det_job,
+        cm,
+        emb_model,
+        input_format,
+        feature_config,
+        settings,
+        session=session,
+        job_id=job.id,
+    )
 
-    if is_hydrophone:
-        assert det_job.hydrophone_id is not None
-        provider = build_archive_detection_provider(
-            det_job.hydrophone_id,
-            local_cache_path=det_job.local_cache_path,
-            s3_cache_path=settings.s3_cache_path,
-            noaa_cache_path=settings.noaa_cache_path,
-        )
-    elif det_job.audio_folder:
-        file_timeline = await asyncio.to_thread(
-            _build_file_timeline, Path(det_job.audio_folder), cm.target_sample_rate
-        )
-
-    # Generate embeddings for missing rows
-    new_records: list[dict] = []
-    skipped_reasons: list[str] = []
-    progress = 0
-    audio_cache: dict[str, np.ndarray] = {}
-
-    for row in diff.missing:
-        start_utc = float(row["start_utc"])
-        end_utc = float(row["end_utc"])
-
-        # Resolve audio
-        if is_hydrophone and provider is not None:
-            audio, reason = await asyncio.to_thread(
-                resolve_audio_for_window_hydrophone,
-                start_utc,
-                end_utc,
-                provider,
-                cm.target_sample_rate,
-            )
-        elif det_job.audio_folder:
-            audio, reason = await asyncio.to_thread(
-                resolve_audio_for_window,
-                start_utc,
-                end_utc,
-                Path(det_job.audio_folder),
-                cm.target_sample_rate,
-                _file_timeline=file_timeline,
-                _audio_cache=audio_cache,
-            )
-        else:
-            audio = None
-            reason = "no audio source (no audio_folder or hydrophone_id)"
-
-        if audio is None:
-            skipped_reasons.append(f"[{start_utc:.1f}, {end_utc:.1f}]: {reason}")
-            progress += 1
-            continue
-
-        # Extract features and embed
-        def _embed_window(audio_data: np.ndarray) -> list[float]:
-            if input_format == "waveform":
-                batch = np.expand_dims(audio_data, 0)
-            else:
-                specs = extract_logmel_batch(
-                    [audio_data],
-                    cm.target_sample_rate,
-                    n_mels=128,
-                    hop_length=1252,
-                    target_frames=128,
-                    normalization=normalization,
-                )
-                batch = np.stack(specs)
-            embedding = emb_model.embed(batch)
-            return embedding[0].tolist()
-
-        try:
-            emb_vec = await asyncio.to_thread(_embed_window, audio)
-        except Exception as exc:
-            skipped_reasons.append(
-                f"[{start_utc:.1f}, {end_utc:.1f}]: embedding failed: {exc}"
-            )
-            progress += 1
-            continue
-
-        new_records.append(
-            {
-                "row_id": row.get("row_id", ""),
-                "embedding": emb_vec,
-                "confidence": None,
-            }
-        )
-
-        progress += 1
-        if progress % 5 == 0 or progress == len(diff.missing):
-            await session.execute(
-                update(DetectionEmbeddingJob)
-                .where(DetectionEmbeddingJob.id == job.id)
-                .values(progress_current=progress)
-            )
-            await session.commit()
-
-    # Rewrite embeddings parquet: keep matched, drop orphaned, add new
     await asyncio.to_thread(
         _rewrite_embeddings, emb_path, diff.orphaned_indices, new_records
     )
@@ -372,22 +417,60 @@ async def _run_sync_mode(
         update(DetectionEmbeddingJob)
         .where(DetectionEmbeddingJob.id == job.id)
         .values(
-            progress_current=len(diff.missing),
+            rows_processed=total,
+            progress_current=total,
             result_summary=summary,
         )
     )
     await session.commit()
 
     logger.info(
-        "Sync job %s complete: +%d -%d =%d skip=%d for detection %s",
+        "Sync job %s complete: +%d -%d =%d skip=%d for detection %s (model=%s)",
         job.id,
         len(new_records),
         len(diff.orphaned_indices),
         diff.matched_count,
         len(skipped_reasons),
         job.detection_job_id,
+        job.model_version,
     )
     await complete_detection_embedding_job(session, job.id)
+
+
+def _write_embeddings_parquet(emb_path: Path, records: list[dict]) -> None:
+    """Write a fresh embeddings parquet keyed by row_id."""
+    if not records:
+        # Still write an empty table so downstream code can rely on the file.
+        schema = pa.schema(
+            [
+                ("row_id", pa.string()),
+                ("embedding", pa.list_(pa.float32())),
+                ("confidence", pa.float32()),
+            ]
+        )
+        pq.write_table(
+            pa.table({"row_id": [], "embedding": [], "confidence": []}, schema=schema),
+            str(emb_path),
+        )
+        return
+
+    vector_dim = len(records[0]["embedding"])
+    schema = pa.schema(
+        [
+            ("row_id", pa.string()),
+            ("embedding", pa.list_(pa.float32(), vector_dim)),
+            ("confidence", pa.float32()),
+        ]
+    )
+    table = pa.table(
+        {
+            "row_id": [r["row_id"] for r in records],
+            "embedding": [r["embedding"] for r in records],
+            "confidence": [r.get("confidence") for r in records],
+        },
+        schema=schema,
+    )
+    pq.write_table(table, str(emb_path))
 
 
 def _rewrite_embeddings(
@@ -396,11 +479,8 @@ def _rewrite_embeddings(
     new_records: list[dict],
 ) -> None:
     """Rewrite the embeddings parquet, removing orphans and appending new records."""
-    import pyarrow as pa
-
     table = pq.read_table(str(emb_path))
 
-    # Remove orphaned rows
     if orphaned_indices:
         keep_mask = [True] * table.num_rows
         for idx in orphaned_indices:
@@ -411,7 +491,6 @@ def _rewrite_embeddings(
     # drop those columns and keep only row_id/embedding/confidence.
     col_names = set(table.column_names)
     if "filename" in col_names and "row_id" not in col_names:
-        # Legacy schema — cannot merge with new records; drop entire old table.
         table = pa.table(
             {"row_id": [], "embedding": [], "confidence": []},
         )

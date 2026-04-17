@@ -62,9 +62,14 @@ def label_processing_dir(storage_root: Path, job_id: str) -> Path:
     return storage_root / "label_processing" / job_id
 
 
-def detection_embeddings_path(storage_root: Path, detection_job_id: str) -> Path:
+def detection_embeddings_path(
+    storage_root: Path, detection_job_id: str, model_version: str
+) -> Path:
     return (
-        detection_dir(storage_root, detection_job_id) / "detection_embeddings.parquet"
+        detection_dir(storage_root, detection_job_id)
+        / "embeddings"
+        / model_version
+        / "detection_embeddings.parquet"
     )
 
 

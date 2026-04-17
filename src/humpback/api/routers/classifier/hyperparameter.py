@@ -82,6 +82,7 @@ def _manifest_to_summary(m: HyperparameterManifest) -> ManifestSummary:
         status=m.status,
         training_job_ids=json.loads(m.training_job_ids),
         detection_job_ids=json.loads(m.detection_job_ids),
+        embedding_model_version=m.embedding_model_version,
         split_ratio=json.loads(m.split_ratio),
         seed=m.seed,
         example_count=m.example_count,
@@ -101,6 +102,7 @@ def _manifest_to_detail(m: HyperparameterManifest) -> ManifestDetail:
         status=m.status,
         training_job_ids=json.loads(m.training_job_ids),
         detection_job_ids=json.loads(m.detection_job_ids),
+        embedding_model_version=m.embedding_model_version,
         split_ratio=json.loads(m.split_ratio),
         seed=m.seed,
         example_count=m.example_count,
@@ -179,6 +181,7 @@ async def create_manifest(
         status="queued",
         training_job_ids=json.dumps(body.training_job_ids),
         detection_job_ids=json.dumps(body.detection_job_ids),
+        embedding_model_version=body.embedding_model_version,
         split_ratio=json.dumps(body.split_ratio),
         seed=body.seed,
     )

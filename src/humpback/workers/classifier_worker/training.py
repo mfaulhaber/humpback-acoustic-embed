@@ -140,6 +140,62 @@ async def run_training_job(
                 # Also store in source_comparison_context for API access
                 if promotion_provenance is not None:
                     promotion_provenance["replay_verification"] = replay_verification
+        elif job.source_mode == "detection_manifest":
+            from humpback.classifier.trainer import (
+                load_manifest_split_embeddings,
+                train_binary_classifier,
+            )
+            from humpback.services.hyperparameter_service.manifest import (
+                generate_manifest,
+            )
+
+            det_job_ids = json.loads(job.source_detection_job_ids or "[]")
+            if not det_job_ids:
+                raise ValueError(
+                    "detection_manifest job has no source_detection_job_ids"
+                )
+
+            # Build and persist the manifest.
+            manifest = await asyncio.to_thread(
+                generate_manifest,
+                detection_job_ids=det_job_ids,
+                embedding_model_version=job.model_version,
+            )
+            cdir_manifest = ensure_dir(classifier_dir(settings.storage_root, job.id))
+            manifest_path = cdir_manifest / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+
+            # Update the job row with the manifest path.
+            await session.execute(
+                update(ClassifierTrainingJob)
+                .where(ClassifierTrainingJob.id == job.id)
+                .values(manifest_path=str(manifest_path))
+            )
+
+            # Load training split embeddings.
+            (
+                positive_embeddings,
+                negative_embeddings,
+                source_summary,
+            ) = await asyncio.to_thread(
+                load_manifest_split_embeddings,
+                manifest_path,
+                split="train",
+            )
+            vector_dim = int(source_summary["vector_dim"])
+
+            # Train classifier (CPU-bound).
+            pipeline, train_summary = await asyncio.to_thread(
+                train_binary_classifier,
+                positive_embeddings,
+                negative_embeddings,
+                parameters,
+            )
+            summary = cast(dict[str, Any], train_summary)
+            summary["training_source_mode"] = job.source_mode
+            summary["training_data_source"] = source_summary
+            summary["detection_job_ids"] = det_job_ids
+            summary["manifest_path"] = str(manifest_path)
         else:
             from humpback.classifier.trainer import train_binary_classifier
 

@@ -10,6 +10,7 @@ from humpback.api.deps import SessionDep, SettingsDep
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
 from humpback.schemas.classifier import (
     DetectionEmbeddingJobOut,
+    DetectionEmbeddingJobStatus,
     EmbeddingJobListItem,
     EmbeddingStatusResponse,
 )
@@ -33,14 +34,6 @@ async def get_detection_embedding(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    emb_path = detection_embeddings_path(settings.storage_root, job.id)
-    if not emb_path.exists():
-        raise HTTPException(404, "No stored embeddings for this detection job")
-
-    embedding = read_detection_embedding(emb_path, row_id)
-    if embedding is None:
-        raise HTTPException(404, "Embedding not found for specified detection row")
-
     # Resolve model_version from the classifier model
     from sqlalchemy import select as sa_select
 
@@ -51,6 +44,14 @@ async def get_detection_embedding(
     )
     cm = cm_result.scalar_one_or_none()
     model_version = cm.model_version if cm else "unknown"
+
+    emb_path = detection_embeddings_path(settings.storage_root, job.id, model_version)
+    if not emb_path.exists():
+        raise HTTPException(404, "No stored embeddings for this detection job")
+
+    embedding = read_detection_embedding(emb_path, row_id)
+    if embedding is None:
+        raise HTTPException(404, "Embedding not found for specified detection row")
 
     return {
         "vector": embedding,
@@ -76,7 +77,12 @@ async def get_embedding_status(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    emb_path = detection_embeddings_path(settings.storage_root, job.id)
+    from humpback.services.classifier_service.models import (
+        resolve_detection_job_model_version,
+    )
+
+    model_version = await resolve_detection_job_model_version(session, job.id)
+    emb_path = detection_embeddings_path(settings.storage_root, job.id, model_version)
     if not emb_path.exists():
         return EmbeddingStatusResponse(has_embeddings=False)
 
@@ -112,22 +118,31 @@ async def generate_embeddings(
     session: SessionDep,
     settings: SettingsDep,
     mode: str = Query("full", pattern="^(full|sync)$"),
+    model_version: str | None = Query(None),
 ):
     """Queue post-hoc embedding generation for a detection job.
 
     mode=full: re-run detection to collect embeddings (rejects if embeddings exist).
     mode=sync: diff row store vs embeddings, generate missing, remove orphans
                (requires embeddings to already exist).
-    """
-    from sqlalchemy import select as sa_select
 
+    model_version: target embedding model. When omitted, falls back to the
+    detection job's source classifier model version.
+    """
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
     if job.status != "complete":
         raise HTTPException(400, "Detection job is not complete")
 
-    emb_path = detection_embeddings_path(settings.storage_root, job.id)
+    if model_version is None:
+        from humpback.services.classifier_service.models import (
+            resolve_detection_job_model_version,
+        )
+
+        model_version = await resolve_detection_job_model_version(session, job.id)
+
+    emb_path = detection_embeddings_path(settings.storage_root, job.id, model_version)
 
     if mode == "full":
         if emb_path.exists():
@@ -136,21 +151,14 @@ async def generate_embeddings(
         if not emb_path.exists():
             raise HTTPException(400, "No embeddings exist — run full generation first")
 
-    # Check if generation already in progress
-    existing = await session.execute(
-        sa_select(DetectionEmbeddingJob).where(
-            DetectionEmbeddingJob.detection_job_id == job_id,
-            DetectionEmbeddingJob.status.in_(["queued", "running"]),
-        )
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(409, "Embedding generation already in progress")
+    from humpback.services.detection_embedding_service import create_reembedding_job
 
-    emb_job = DetectionEmbeddingJob(detection_job_id=job_id, mode=mode)
-    session.add(emb_job)
-    await session.commit()
-    await session.refresh(emb_job)
-    return emb_job
+    job = await create_reembedding_job(session, job_id, model_version, mode=mode)
+    # If the returned job is still actively running (not reset), tell the
+    # caller that generation is already in progress.
+    if job.status == "running":
+        raise HTTPException(409, "Embedding generation already in progress")
+    return job
 
 
 @router.get(
@@ -171,6 +179,50 @@ async def get_embedding_generation_status(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+@router.get(
+    "/detection-embedding-jobs",
+    response_model=list[DetectionEmbeddingJobStatus],
+)
+async def list_detection_embedding_jobs(
+    session: SessionDep,
+    detection_job_ids: list[str] = Query(..., min_length=1),
+    model_version: str = Query(..., min_length=1),
+):
+    """Return status rows for each ``(detection_job_id, model_version)`` pair.
+
+    Pairs with no existing row are returned with ``status="not_started"`` so the
+    caller always gets one entry per requested detection job id.
+    """
+    from humpback.services.detection_embedding_service import list_reembedding_jobs
+
+    jobs = await list_reembedding_jobs(session, detection_job_ids, model_version)
+    out: list[DetectionEmbeddingJobStatus] = []
+    for det_job_id in detection_job_ids:
+        j = jobs.get(det_job_id)
+        if j is None:
+            out.append(
+                DetectionEmbeddingJobStatus(
+                    detection_job_id=det_job_id,
+                    model_version=model_version,
+                    status="not_started",
+                )
+            )
+        else:
+            out.append(
+                DetectionEmbeddingJobStatus(
+                    detection_job_id=j.detection_job_id,
+                    model_version=j.model_version,
+                    status=j.status,
+                    rows_processed=j.rows_processed,
+                    rows_total=j.rows_total,
+                    error_message=j.error_message,
+                    created_at=j.created_at,
+                    updated_at=j.updated_at,
+                )
+            )
+    return out
 
 
 @router.get(
@@ -216,9 +268,12 @@ async def list_embedding_jobs(
                 id=j.id,
                 status=j.status,
                 detection_job_id=j.detection_job_id,
+                model_version=j.model_version,
                 mode=j.mode,
                 progress_current=j.progress_current,
                 progress_total=j.progress_total,
+                rows_processed=j.rows_processed,
+                rows_total=j.rows_total,
                 error_message=j.error_message,
                 result_summary=j.result_summary,
                 created_at=j.created_at,

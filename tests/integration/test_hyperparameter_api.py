@@ -22,6 +22,7 @@ async def test_create_manifest(client: AsyncClient) -> None:
         json={
             "name": "test-manifest",
             "training_job_ids": ["tj-1"],
+            "embedding_model_version": "tf2",
             "detection_job_ids": [],
             "split_ratio": [70, 15, 15],
             "seed": 42,
@@ -40,11 +41,19 @@ async def test_list_manifests(client: AsyncClient) -> None:
     # Create two manifests
     await client.post(
         f"{BASE}/manifests",
-        json={"name": "m1", "training_job_ids": ["t1"]},
+        json={
+            "name": "m1",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     await client.post(
         f"{BASE}/manifests",
-        json={"name": "m2", "detection_job_ids": ["d1"]},
+        json={
+            "name": "m2",
+            "detection_job_ids": ["d1"],
+            "embedding_model_version": "tf2",
+        },
     )
     resp = await client.get(f"{BASE}/manifests")
     assert resp.status_code == 200
@@ -59,7 +68,11 @@ async def test_list_manifests(client: AsyncClient) -> None:
 async def test_get_manifest_detail(client: AsyncClient) -> None:
     create_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "detail-test", "training_job_ids": ["t1"]},
+        json={
+            "name": "detail-test",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = create_resp.json()["id"]
     resp = await client.get(f"{BASE}/manifests/{manifest_id}")
@@ -82,7 +95,11 @@ async def test_get_manifest_not_found(client: AsyncClient) -> None:
 async def test_delete_manifest(client: AsyncClient) -> None:
     create_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "to-delete", "training_job_ids": ["t1"]},
+        json={
+            "name": "to-delete",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = create_resp.json()["id"]
     resp = await client.delete(f"{BASE}/manifests/{manifest_id}")
@@ -97,7 +114,11 @@ async def test_delete_manifest(client: AsyncClient) -> None:
 async def test_delete_manifest_blocked_by_search(client: AsyncClient) -> None:
     create_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "referenced", "training_job_ids": ["t1"]},
+        json={
+            "name": "referenced",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = create_resp.json()["id"]
     # Create a search referencing the manifest
@@ -119,7 +140,11 @@ async def test_delete_manifest_blocked_by_search(client: AsyncClient) -> None:
 async def test_create_search(client: AsyncClient) -> None:
     m_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "m-for-search", "training_job_ids": ["t1"]},
+        json={
+            "name": "m-for-search",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = m_resp.json()["id"]
     resp = await client.post(
@@ -156,7 +181,11 @@ async def test_create_search_uses_default_search_space(
 ) -> None:
     m_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "m-defaults", "training_job_ids": ["t1"]},
+        json={
+            "name": "m-defaults",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = m_resp.json()["id"]
     s_resp = await client.post(
@@ -176,7 +205,11 @@ async def test_create_search_uses_default_search_space(
 async def test_list_searches(client: AsyncClient) -> None:
     m_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "m-list", "training_job_ids": ["t1"]},
+        json={
+            "name": "m-list",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = m_resp.json()["id"]
     await client.post(
@@ -194,7 +227,11 @@ async def test_list_searches(client: AsyncClient) -> None:
 async def test_get_search_detail(client: AsyncClient) -> None:
     m_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "m-detail", "training_job_ids": ["t1"]},
+        json={
+            "name": "m-detail",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = m_resp.json()["id"]
     s_resp = await client.post(
@@ -220,7 +257,11 @@ async def test_get_search_not_found(client: AsyncClient) -> None:
 async def test_delete_search(client: AsyncClient) -> None:
     m_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "m-del-search", "training_job_ids": ["t1"]},
+        json={
+            "name": "m-del-search",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = m_resp.json()["id"]
     s_resp = await client.post(
@@ -239,7 +280,11 @@ async def test_delete_search(client: AsyncClient) -> None:
 async def test_search_history_not_available(client: AsyncClient) -> None:
     m_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "m-hist", "training_job_ids": ["t1"]},
+        json={
+            "name": "m-hist",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = m_resp.json()["id"]
     s_resp = await client.post(
@@ -282,7 +327,11 @@ async def test_import_candidate_requires_complete_search(
 ) -> None:
     m_resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "m-import", "training_job_ids": ["t1"]},
+        json={
+            "name": "m-import",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     manifest_id = m_resp.json()["id"]
     s_resp = await client.post(
@@ -350,7 +399,11 @@ async def test_manifest_summary_has_null_counts_when_queued(
 ) -> None:
     resp = await client.post(
         f"{BASE}/manifests",
-        json={"name": "counts-test", "training_job_ids": ["t1"]},
+        json={
+            "name": "counts-test",
+            "training_job_ids": ["t1"],
+            "embedding_model_version": "tf2",
+        },
     )
     assert resp.status_code == 201
     data = resp.json()
@@ -378,7 +431,11 @@ async def test_manifest_summary_has_counts_when_complete(
         # Create a manifest
         resp = await ac.post(
             f"{BASE}/manifests",
-            json={"name": "counts-complete", "training_job_ids": ["t1"]},
+            json={
+                "name": "counts-complete",
+                "training_job_ids": ["t1"],
+                "embedding_model_version": "tf2",
+            },
         )
         manifest_id = resp.json()["id"]
 

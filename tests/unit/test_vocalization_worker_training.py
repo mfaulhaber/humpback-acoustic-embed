@@ -69,9 +69,10 @@ def _make_detection_embeddings(
     det_job_id: str,
     row_ids: list[str],
     embeddings: list[list[float]],
+    model_version: str = "v1",
 ) -> None:
-    det_dir = storage_root / "detections" / det_job_id
-    det_dir.mkdir(parents=True, exist_ok=True)
+    emb_dir = storage_root / "detections" / det_job_id / "embeddings" / model_version
+    emb_dir.mkdir(parents=True, exist_ok=True)
     n = len(row_ids)
     table = pa.table(
         {
@@ -80,7 +81,7 @@ def _make_detection_embeddings(
             "confidence": pa.array([0.9] * n, type=pa.float32()),
         }
     )
-    pq.write_table(table, str(det_dir / "detection_embeddings.parquet"))
+    pq.write_table(table, str(emb_dir / "detection_embeddings.parquet"))
 
 
 @pytest.mark.asyncio
@@ -106,6 +107,8 @@ async def test_training_with_source_config_creates_dataset(session_factory, tmp_
     )
 
     async with session_factory() as session:
+        from humpback.models.classifier import ClassifierModel, DetectionJob
+
         af = AudioFile(
             id="af1",
             filename="a.wav",
@@ -113,6 +116,24 @@ async def test_training_with_source_config_creates_dataset(session_factory, tmp_
             checksum_sha256="a1",
         )
         session.add(af)
+        session.add(
+            ClassifierModel(
+                id="cm1",
+                name="cm",
+                model_path="/tmp/m",
+                model_version="v1",
+                vector_dim=DIM,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        session.add(
+            DetectionJob(
+                id="dj1",
+                status="complete",
+                classifier_model_id="cm1",
+            )
+        )
         es = EmbeddingSet(
             id="es1",
             audio_file_id="af1",

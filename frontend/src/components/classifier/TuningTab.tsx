@@ -56,6 +56,11 @@ import type {
   HyperparameterManifestSummary,
 } from "@/api/types";
 import { AutoresearchCandidatesSection } from "./AutoresearchCandidatesSection";
+import {
+  DetectionSourcePicker,
+  type DetectionSourcePickerValue,
+} from "./DetectionSourcePicker";
+import { ActiveEmbeddingBanner } from "./ActiveEmbeddingBanner";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -195,9 +200,12 @@ function ManifestsSection() {
   const [selectedTrainingJobIds, setSelectedTrainingJobIds] = useState<
     Set<string>
   >(new Set());
-  const [selectedDetectionJobIds, setSelectedDetectionJobIds] = useState<
-    Set<string>
-  >(new Set());
+  const [detectionSource, setDetectionSource] =
+    useState<DetectionSourcePickerValue>({
+      selectedDetectionJobIds: [],
+      embeddingModelVersion: "",
+      isReady: false,
+    });
   const [splitRatio, setSplitRatio] = useState("70,15,15");
   const [seed, setSeed] = useState("42");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -206,20 +214,11 @@ function ManifestsSection() {
     () => trainingJobs.filter((j) => j.status === "complete"),
     [trainingJobs],
   );
-  const labeledDetectionJobs = useMemo(
-    () =>
-      detectionJobs
-        .filter(
-          (j) =>
-            j.status === "complete" && j.has_positive_labels === true,
-        )
-        .sort(
-          (a, b) =>
-            new Date(b.created_at).getTime() -
-            new Date(a.created_at).getTime(),
-        ),
-    [detectionJobs],
-  );
+
+  const hasDetectionJobs = detectionSource.selectedDetectionJobIds.length > 0;
+  const hasSources = selectedTrainingJobIds.size > 0 || hasDetectionJobs;
+  const hasEmbeddingModel = detectionSource.embeddingModelVersion !== "";
+  const detectionReady = !hasDetectionJobs || detectionSource.isReady;
 
   const handleCreate = () => {
     const ratio = splitRatio
@@ -236,8 +235,9 @@ function ManifestsSection() {
     createMutation.mutate(
       {
         name: name.trim() || "Untitled manifest",
+        embedding_model_version: detectionSource.embeddingModelVersion,
         training_job_ids: Array.from(selectedTrainingJobIds),
-        detection_job_ids: Array.from(selectedDetectionJobIds),
+        detection_job_ids: detectionSource.selectedDetectionJobIds,
         split_ratio: ratio,
         seed: parseInt(seed, 10) || 42,
       },
@@ -246,7 +246,11 @@ function ManifestsSection() {
           setShowDialog(false);
           setName("");
           setSelectedTrainingJobIds(new Set());
-          setSelectedDetectionJobIds(new Set());
+          setDetectionSource({
+            selectedDetectionJobIds: [],
+            embeddingModelVersion: "",
+            isReady: false,
+          });
           setSplitRatio("70,15,15");
           setSeed("42");
         },
@@ -392,55 +396,11 @@ function ManifestsSection() {
                 </div>
               </div>
 
-              {/* Detection jobs multi-select */}
-              <div className="space-y-1">
-                <label className="text-xs font-medium">
-                  Detection Jobs ({selectedDetectionJobIds.size} selected)
-                </label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      className="w-full justify-between text-sm font-normal"
-                    >
-                      <span className="truncate">
-                        {selectedDetectionJobIds.size === 0
-                          ? "Select detection jobs…"
-                          : `${selectedDetectionJobIds.size} detection job${selectedDetectionJobIds.size > 1 ? "s" : ""} selected`}
-                      </span>
-                      <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                    <div className="max-h-64 overflow-y-auto p-2 space-y-1">
-                      {labeledDetectionJobs.length === 0 ? (
-                        <p className="text-xs text-muted-foreground px-1 py-1.5">
-                          No labeled detection jobs
-                        </p>
-                      ) : (
-                        labeledDetectionJobs.map((j) => (
-                          <label
-                            key={j.id}
-                            className="flex items-center gap-2 text-xs cursor-pointer rounded px-1 py-1 hover:bg-muted"
-                          >
-                            <Checkbox
-                              checked={selectedDetectionJobIds.has(j.id)}
-                              onCheckedChange={(checked) => {
-                                const next = new Set(selectedDetectionJobIds);
-                                if (checked) next.add(j.id);
-                                else next.delete(j.id);
-                                setSelectedDetectionJobIds(next);
-                              }}
-                            />
-                            {fmtDetectionJobLabel(j)}
-                          </label>
-                        ))
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
+              {/* Detection jobs + embedding model picker */}
+              <DetectionSourcePicker
+                value={detectionSource}
+                onChange={setDetectionSource}
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
@@ -478,8 +438,9 @@ function ManifestsSection() {
                 onClick={handleCreate}
                 disabled={
                   createMutation.isPending ||
-                  (selectedTrainingJobIds.size === 0 &&
-                    selectedDetectionJobIds.size === 0)
+                  !hasSources ||
+                  !hasEmbeddingModel ||
+                  !detectionReady
                 }
               >
                 {createMutation.isPending && (
@@ -926,6 +887,7 @@ function SearchesSection() {
 export function TuningTab() {
   return (
     <div className="space-y-4 p-4">
+      <ActiveEmbeddingBanner />
       <h2 className="text-lg font-semibold">Hyperparameter Tuning</h2>
 
       <Collapsible defaultOpen={true}>

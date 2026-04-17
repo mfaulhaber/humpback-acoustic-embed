@@ -14,6 +14,7 @@ class HyperparameterManifest(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(default="queued")
     training_job_ids: Mapped[str] = mapped_column(Text)  # JSON array
     detection_job_ids: Mapped[str] = mapped_column(Text)  # JSON array
+    embedding_model_version: Mapped[str]
     split_ratio: Mapped[str] = mapped_column(Text)  # JSON array e.g. [70, 15, 15]
     seed: Mapped[int] = mapped_column(Integer, default=42)
     manifest_path: Mapped[Optional[str]] = mapped_column(default=None)

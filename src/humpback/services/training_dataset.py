@@ -271,8 +271,21 @@ async def _collect_from_sources(
             next_idx += 1
 
     # Source 2: Detection job vocalization labels
+    from humpback.services.classifier_service.models import (
+        resolve_detection_job_model_version,
+    )
+
     for det_job_id in detection_job_ids:
-        emb_path = detection_embeddings_path(storage_root, det_job_id)
+        try:
+            model_version = await resolve_detection_job_model_version(
+                session, det_job_id
+            )
+        except ValueError:
+            logger.warning(
+                "No classifier/model_version for detection job %s, skipping", det_job_id
+            )
+            continue
+        emb_path = detection_embeddings_path(storage_root, det_job_id, model_version)
         if not emb_path.exists():
             logger.warning("No embeddings for detection job %s, skipping", det_job_id)
             continue
