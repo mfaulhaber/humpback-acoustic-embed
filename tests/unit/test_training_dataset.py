@@ -53,11 +53,12 @@ def _make_detection_embeddings_parquet(
     det_job_id: str,
     row_ids: list[str],
     dim: int = 8,
+    model_version: str = "v1",
 ) -> None:
     """Write a detection_embeddings.parquet for a detection job."""
     n = len(row_ids)
-    det_dir = storage_root / "detections" / det_job_id
-    det_dir.mkdir(parents=True, exist_ok=True)
+    emb_dir = storage_root / "detections" / det_job_id / "embeddings" / model_version
+    emb_dir.mkdir(parents=True, exist_ok=True)
     table = pa.table(
         {
             "row_id": pa.array(row_ids, type=pa.string()),
@@ -73,7 +74,7 @@ def _make_detection_embeddings_parquet(
             ),
         }
     )
-    pq.write_table(table, str(det_dir / "detection_embeddings.parquet"))
+    pq.write_table(table, str(emb_dir / "detection_embeddings.parquet"))
 
 
 # ---- Snapshot tests ----
@@ -140,6 +141,8 @@ async def test_snapshot_from_embedding_set(session_factory, tmp_path):
 @pytest.mark.asyncio
 async def test_snapshot_from_detection_job(session_factory, tmp_path):
     """Detection job source matches labels by row_id and excludes unlabeled rows."""
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+
     storage_root = tmp_path / "storage"
     row_ids = ["dj1-row-1", "dj1-row-2", "dj1-row-3"]
     _make_detection_embeddings_parquet(
@@ -149,6 +152,23 @@ async def test_snapshot_from_detection_job(session_factory, tmp_path):
     )
 
     async with session_factory() as session:
+        cm = ClassifierModel(
+            id="cm1",
+            name="cm",
+            model_path="/tmp/m",
+            model_version="v1",
+            vector_dim=8,
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+        )
+        session.add(cm)
+        session.add(
+            DetectionJob(
+                id="dj1",
+                status="complete",
+                classifier_model_id="cm1",
+            )
+        )
         # Label only the first two rows; third is unlabeled
         session.add(
             VocalizationLabel(

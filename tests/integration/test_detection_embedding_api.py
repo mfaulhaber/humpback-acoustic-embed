@@ -43,7 +43,8 @@ async def _create_detection_job(sf, settings, *, with_embeddings: bool = False):
     if with_embeddings:
         ddir = detection_dir(settings.storage_root, job_id)
         ddir.mkdir(parents=True, exist_ok=True)
-        emb_path = detection_embeddings_path(settings.storage_root, job_id)
+        emb_path = detection_embeddings_path(settings.storage_root, job_id, "test_v1")
+        emb_path.parent.mkdir(parents=True, exist_ok=True)
         table = pa.table(
             {
                 "filename": ["test.wav", "test.wav"],

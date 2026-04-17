@@ -259,3 +259,31 @@ Three structural constraints shape the design:
 - `event_classifier_feedback_worker.py` calls `load_corrected_events()` to get corrected boundaries when assembling training data. Boundary-deleted events are excluded before type resolution; added events need a type correction to be included in training.
 - The classify review UI allows boundary editing (adjust, add, delete) with corrections stored against the upstream segmentation job via existing correction endpoints.
 - The `with-correction-counts` endpoint now includes `has_new_corrections` to surface when corrections exist that haven't been consumed by a training dataset.
+
+## ADR-055: Perch v2 as first-class classifier family (Approach A — surgical extension)
+
+**Date**: 2026-04-17
+**Status**: Accepted
+
+**Context**: The `perch_v2.tflite` model produces 1536-d waveform-input embeddings that are incompatible with the existing perch_v1 (TF2 spectrogram, 1280-d) pipeline. We need to support training classifiers against detection rows embedded with perch_v2, running hyperparameter tuning, and re-embedding detection jobs with an arbitrary model version — all without breaking existing TF2 workflows.
+
+**Decision**: Extend the existing tables and workers surgically (Approach A) rather than introducing a new unified labeled-manifest artifact (Approach B) or a model-agnostic embedding pipeline (Approach C).
+
+Key changes:
+- `detection_embedding_jobs` gains `model_version` (composite unique with `detection_job_id`) and progress fields (`rows_processed`, `rows_total`).
+- `hyperparameter_manifests` gains `embedding_model_version` — manifest generation now requires an explicit model version and validates all sources against it.
+- Storage paths for detection embeddings become model-versioned: `detections/{job_id}/embeddings/{model_version}/`.
+- Training jobs accept a new `detection_manifest` source mode with `detection_job_ids` + `embedding_model_version` as an alternative to embedding-set IDs.
+- The training worker builds a manifest at execution time via the existing manifest builder, then trains a standard binary classifier.
+- For perch_v2 detection sources, only binary row-store labels (`humpback`, `background`, `ship`, `orca`) are used — the vocalization_labels join is skipped since those are a TF2-era concern.
+- A `perch_v2` ModelConfig seed row is added via migration 051.
+
+**Alternatives considered**:
+- **Approach B (unified labeled-manifest artifact)**: Introduces a new `labeled_manifests` table to unify all training data sources. Rejected because it adds a new abstraction layer and migration complexity without near-term payoff.
+- **Approach C (model-agnostic embedding pipeline)**: Refactors the entire embedding pipeline to be model-version-parametric. Rejected because the scope is too large for the current goal and TF2 paths must remain untouched.
+
+**Consequences**:
+- Perch v2 is a registered embedding model family with its own ModelConfig row.
+- Detection embedding parquet files now live under a model-version subdirectory; migration 049 relocates existing files.
+- The TuningTab and TrainingTab in the frontend gain a DetectionSourcePicker component with inline re-embedding status.
+- Future work: the hardcoded spectrogram feature parameters in `detector.py` should eventually be resolved from the ModelConfig rather than assumed.

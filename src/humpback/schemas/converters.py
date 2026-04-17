@@ -139,6 +139,11 @@ def classifier_training_job_to_out(job) -> ClassifierTrainingJobOut:
         source_mode=job.source_mode,
         source_candidate_id=job.source_candidate_id,
         source_model_id=job.source_model_id,
+        source_detection_job_ids=(
+            json.loads(job.source_detection_job_ids)
+            if job.source_detection_job_ids
+            else None
+        ),
         manifest_path=job.manifest_path,
         training_split_name=job.training_split_name,
         promoted_config=json.loads(job.promoted_config)

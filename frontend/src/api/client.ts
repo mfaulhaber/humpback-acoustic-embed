@@ -82,6 +82,7 @@ import type {
   VocClassifierPredictionRow,
   EmbeddingStatus,
   DetectionEmbeddingJob,
+  DetectionEmbeddingJobStatus,
   EmbeddingJobListItem,
   VocalizationTrainingSource,
   FolderEmbeddingSetResponse,
@@ -749,6 +750,27 @@ export const fetchEmbeddingGenerationStatus = (jobId: string) =>
 
 export const fetchEmbeddingJobs = (offset = 0, limit = 50) =>
   api<EmbeddingJobListItem[]>(`/classifier/embedding-jobs?offset=${offset}&limit=${limit}`);
+
+export function fetchReembeddingStatus(
+  detectionJobIds: string[],
+  modelVersion: string,
+): Promise<DetectionEmbeddingJobStatus[]> {
+  const params = new URLSearchParams();
+  for (const id of detectionJobIds) params.append("detection_job_ids", id);
+  params.set("model_version", modelVersion);
+  return api<DetectionEmbeddingJobStatus[]>(
+    `/classifier/detection-embedding-jobs?${params.toString()}`,
+  );
+}
+
+export const enqueueReembedding = (
+  detectionJobId: string,
+  mode: "full" | "sync" = "full",
+) =>
+  post<DetectionEmbeddingJob>(
+    `/classifier/detection-jobs/${detectionJobId}/generate-embeddings?mode=${mode}`,
+    {},
+  );
 
 // ---- Vocalization Training Source ----
 

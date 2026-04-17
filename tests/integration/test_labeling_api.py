@@ -105,7 +105,7 @@ async def _seed_detection_job(app_settings, tmp_path):
     write_detection_row_store(row_store, rows)
 
     # Write detection embeddings with row_id schema
-    emb_path = detection_embeddings_path(storage_root, job_id)
+    emb_path = detection_embeddings_path(storage_root, job_id, "test_v1")
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     schema = pa.schema(
         [
@@ -190,7 +190,7 @@ async def _seed_hydrophone_detection_job(app_settings):
     write_detection_row_store(row_store, rows)
 
     # Embedding file with row_id schema
-    emb_path = detection_embeddings_path(storage_root, job_id)
+    emb_path = detection_embeddings_path(storage_root, job_id, "test_v1")
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     schema = pa.schema(
         [
@@ -619,7 +619,9 @@ async def test_training_assembly_skips_unlabeled_windows(
                 labels_by_row_id[vl.row_id] = set()
             labels_by_row_id[vl.row_id].add(vl.label)
 
-        emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+        emb_path = detection_embeddings_path(
+            app_settings.storage_root, job_id, "test_v1"
+        )
         table = pq.read_table(str(emb_path))
         row_ids = table.column("row_id").to_pylist()
 
@@ -678,7 +680,9 @@ async def test_training_assembly_negative_becomes_empty_set(
                 labels_by_row_id[vl.row_id] = set()
             labels_by_row_id[vl.row_id].add(vl.label)
 
-        emb_path = detection_embeddings_path(app_settings.storage_root, job_id)
+        emb_path = detection_embeddings_path(
+            app_settings.storage_root, job_id, "test_v1"
+        )
         table = pq.read_table(str(emb_path))
         row_ids = table.column("row_id").to_pylist()
 

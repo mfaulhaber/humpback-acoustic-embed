@@ -44,6 +44,7 @@ async def run_manifest_job(
             detection_job_ids=detection_job_ids or None,
             split_ratio=split_ratio,
             seed=job.seed,
+            embedding_model_version=job.embedding_model_version,
         )
 
         # Write manifest JSON to disk

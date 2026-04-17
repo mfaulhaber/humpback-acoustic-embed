@@ -33,16 +33,27 @@ class BulkDeleteRequest(BaseModel):
 
 @router.post("/training-jobs", status_code=201)
 async def create_training_job(
-    body: ClassifierTrainingJobCreate, session: SessionDep
+    body: ClassifierTrainingJobCreate, session: SessionDep, settings: SettingsDep
 ) -> ClassifierTrainingJobOut:
     try:
-        job = await classifier_service.create_training_job(
-            session,
-            body.name,
-            body.positive_embedding_set_ids,
-            body.negative_embedding_set_ids,
-            body.parameters,
-        )
+        if body.detection_job_ids:
+            assert body.embedding_model_version is not None  # schema-enforced
+            job = await classifier_service.create_training_job_from_detection_manifest(
+                session,
+                body.name,
+                body.detection_job_ids,
+                body.embedding_model_version,
+                settings.storage_root,
+                body.parameters,
+            )
+        else:
+            job = await classifier_service.create_training_job(
+                session,
+                body.name,
+                body.positive_embedding_set_ids,
+                body.negative_embedding_set_ids,
+                body.parameters,
+            )
     except ValueError as e:
         raise HTTPException(400, str(e))
     return _training_job_to_out(job)

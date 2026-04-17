@@ -291,9 +291,17 @@ async def _load_source_embeddings(
     new schema; filenames/start_secs/end_secs populated for embedding_set sources.
     """
     if job.source_type == "detection_job":
+        from humpback.services.classifier_service.models import (
+            resolve_detection_job_model_version,
+        )
         from humpback.storage import detection_embeddings_path
 
-        emb_path = detection_embeddings_path(settings.storage_root, job.source_id)
+        model_version = await resolve_detection_job_model_version(
+            session, job.source_id
+        )
+        emb_path = detection_embeddings_path(
+            settings.storage_root, job.source_id, model_version
+        )
         if not emb_path.exists():
             raise FileNotFoundError(f"No embeddings for detection job {job.source_id}")
 

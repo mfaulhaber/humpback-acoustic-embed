@@ -34,6 +34,16 @@ Relocated under `/classifier/hyperparameter/candidates/*`; old `/classifier/auto
 
 Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model. After candidate-backed training completes, the training job's `source_comparison_context` and the model's `training_summary` include a `replay_verification` dict with status (`"verified"`/`"mismatch"`), per-split metric comparisons, and effective config. The candidate detail endpoint (`GET /classifier/autoresearch-candidates/{id}`) also exposes `replay_verification` when the linked model exists.
 
+## Detection-Manifest Training (ADR-055)
+
+`POST /classifier/training-jobs` now accepts an alternative source mode with `detection_job_ids` + `embedding_model_version` instead of embedding set IDs. The two source shapes are mutually exclusive (422 if mixed). The service validates that embeddings exist at the model-versioned path for each detection job and that the selection includes at least one positive and one negative binary label.
+
+## Detection Embedding Jobs
+
+- `GET /classifier/detection-embedding-jobs?detection_job_ids=...&model_version=...` — returns a status row for each `(detection_job_id, model_version)` pair including rows that don't yet exist (`status="not_started"`). Response includes `rows_processed`, `rows_total`, `error_message`.
+- `POST /classifier/detection-jobs/{id}/generate-embeddings?mode=full|sync` — enqueue re-embedding for a detection job
+- `GET /classifier/detection-jobs/{id}/embedding-generation-status` — most recent embedding generation job
+
 ## Legacy Retrain Workflow
 
 - `GET /classifier/models/{id}/retrain-info`

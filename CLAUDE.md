@@ -242,7 +242,7 @@ See [docs/reference/call-parsing-api.md](docs/reference/call-parsing-api.md) for
 ### 9.1 Implemented Capabilities
 
 - Audio upload/import, processing (TFLite + TF2), embedding search, clustering (HDBSCAN/K-Means/Agglomerative)
-- Binary classifier training (LogisticRegression/MLP), hyperparameter tuning, autoresearch candidate promotion, retrain workflow
+- Binary classifier training (LogisticRegression/MLP), hyperparameter tuning, autoresearch candidate promotion, retrain workflow; perch_v2 registered as first-class embedding model family with detection-manifest training and model-versioned re-embedding (ADR-055)
 - Hydrophone streaming (Orcasound HLS + NOAA), detection with configurable window selection (NMS/prominence/tiling)
 - Vocalization labeling workspace, multi-label vocalization classifier, training dataset review, label processing
 - Timeline viewer with PCEN spectrograms, interactive labeling, gapless playback, static export
@@ -254,7 +254,7 @@ See [docs/reference/call-parsing-api.md](docs/reference/call-parsing-api.md) for
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `048_job_compute_device.py`
+- **Latest migration**: `051_perch_v2_model_config_seed.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models, segmentation_training_datasets, segmentation_training_samples, segmentation_training_jobs, event_boundary_corrections, event_type_corrections, event_segmentation_training_jobs, event_classifier_training_jobs
 
 ### 9.3 Sensitive Components

@@ -449,14 +449,6 @@ async def get_detection_neighbors(
     if job is None:
         raise HTTPException(404, "Detection job not found")
 
-    emb_path = detection_embeddings_path(settings.storage_root, job.id)
-    if not emb_path.exists():
-        raise HTTPException(404, "No stored embeddings for this detection job")
-
-    embedding = read_detection_embedding(emb_path, body.row_id)
-    if embedding is None:
-        raise HTTPException(404, "Embedding not found for specified detection row")
-
     # Resolve model_version from the classifier model
     cm_result = await session.execute(
         select(ClassifierModel).where(ClassifierModel.id == job.classifier_model_id)
@@ -464,6 +456,16 @@ async def get_detection_neighbors(
     cm = cm_result.scalar_one_or_none()
     if cm is None:
         raise HTTPException(404, "Classifier model not found for detection job")
+
+    emb_path = detection_embeddings_path(
+        settings.storage_root, job.id, cm.model_version
+    )
+    if not emb_path.exists():
+        raise HTTPException(404, "No stored embeddings for this detection job")
+
+    embedding = read_detection_embedding(emb_path, body.row_id)
+    if embedding is None:
+        raise HTTPException(404, "Embedding not found for specified detection row")
 
     search_request = VectorSearchRequest(
         vector=embedding,

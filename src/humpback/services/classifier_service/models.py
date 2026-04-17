@@ -7,7 +7,23 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.models.classifier import ClassifierModel
+from humpback.models.classifier import ClassifierModel, DetectionJob
+
+
+async def resolve_detection_job_model_version(
+    session: AsyncSession, detection_job_id: str
+) -> str:
+    """Resolve the embedding `model_version` of a detection job's source classifier."""
+    result = await session.execute(
+        select(ClassifierModel.model_version)
+        .join(DetectionJob, DetectionJob.classifier_model_id == ClassifierModel.id)
+        .where(DetectionJob.id == detection_job_id)
+    )
+    version = result.scalar_one_or_none()
+    if version is None:
+        msg = f"Could not resolve model_version for detection job {detection_job_id}"
+        raise ValueError(msg)
+    return version
 
 
 async def list_classifier_models(session: AsyncSession) -> list[ClassifierModel]:
