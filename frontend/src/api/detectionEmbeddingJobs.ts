@@ -25,12 +25,15 @@ export function useEnqueueReembedding() {
     mutationFn: ({
       detectionJobId,
       mode,
+      modelVersion,
     }: {
       detectionJobId: string;
       mode?: "full" | "sync";
-    }) => enqueueReembedding(detectionJobId, mode),
+      modelVersion?: string;
+    }) => enqueueReembedding(detectionJobId, mode, modelVersion),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["reembeddingStatus"] });
+      qc.invalidateQueries({ queryKey: ["embedding-jobs"] });
     },
     onError: (err: Error) => {
       toast({

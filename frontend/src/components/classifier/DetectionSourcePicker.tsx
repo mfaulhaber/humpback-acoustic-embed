@@ -195,7 +195,10 @@ export function DetectionSourcePicker({
           rows={statuses}
           detectionJobs={allDetectionJobs}
           onReembed={(detJobId) =>
-            enqueueMutation.mutate({ detectionJobId: detJobId })
+            enqueueMutation.mutate({
+              detectionJobId: detJobId,
+              modelVersion: modelVersion,
+            })
           }
           isReembedding={enqueueMutation.isPending}
         />

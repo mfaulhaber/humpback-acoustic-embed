@@ -48,6 +48,7 @@ import {
   DetectionSourcePicker,
   type DetectionSourcePickerValue,
 } from "./DetectionSourcePicker";
+import { ActiveEmbeddingBanner } from "./ActiveEmbeddingBanner";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
@@ -262,6 +263,8 @@ export function TrainingTab() {
 
   return (
     <div className="space-y-4">
+      <ActiveEmbeddingBanner />
+
       {/* Training Form */}
       <Card>
         <CardHeader className="pb-3">

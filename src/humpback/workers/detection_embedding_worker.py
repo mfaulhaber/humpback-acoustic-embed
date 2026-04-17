@@ -172,6 +172,7 @@ async def _embed_rows(
             local_cache_path=det_job.local_cache_path,
             s3_cache_path=settings.s3_cache_path,
             noaa_cache_path=settings.noaa_cache_path,
+            force_refresh=False,
         )
     elif det_job.audio_folder:
         file_timeline = await asyncio.to_thread(

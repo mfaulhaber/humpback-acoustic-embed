@@ -118,26 +118,30 @@ async def generate_embeddings(
     session: SessionDep,
     settings: SettingsDep,
     mode: str = Query("full", pattern="^(full|sync)$"),
+    model_version: str | None = Query(None),
 ):
     """Queue post-hoc embedding generation for a detection job.
 
     mode=full: re-run detection to collect embeddings (rejects if embeddings exist).
     mode=sync: diff row store vs embeddings, generate missing, remove orphans
                (requires embeddings to already exist).
-    """
-    from sqlalchemy import select as sa_select
 
+    model_version: target embedding model. When omitted, falls back to the
+    detection job's source classifier model version.
+    """
     job = await classifier_service.get_detection_job(session, job_id)
     if job is None:
         raise HTTPException(404, "Detection job not found")
     if job.status != "complete":
         raise HTTPException(400, "Detection job is not complete")
 
-    from humpback.services.classifier_service.models import (
-        resolve_detection_job_model_version,
-    )
+    if model_version is None:
+        from humpback.services.classifier_service.models import (
+            resolve_detection_job_model_version,
+        )
 
-    model_version = await resolve_detection_job_model_version(session, job.id)
+        model_version = await resolve_detection_job_model_version(session, job.id)
+
     emb_path = detection_embeddings_path(settings.storage_root, job.id, model_version)
 
     if mode == "full":
@@ -147,20 +151,14 @@ async def generate_embeddings(
         if not emb_path.exists():
             raise HTTPException(400, "No embeddings exist — run full generation first")
 
-    # Check if generation already in progress
-    existing = await session.execute(
-        sa_select(DetectionEmbeddingJob).where(
-            DetectionEmbeddingJob.detection_job_id == job_id,
-            DetectionEmbeddingJob.model_version == model_version,
-            DetectionEmbeddingJob.status.in_(["queued", "running"]),
-        )
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(409, "Embedding generation already in progress")
-
     from humpback.services.detection_embedding_service import create_reembedding_job
 
-    return await create_reembedding_job(session, job_id, model_version, mode=mode)
+    job = await create_reembedding_job(session, job_id, model_version, mode=mode)
+    # If the returned job is still actively running (not reset), tell the
+    # caller that generation is already in progress.
+    if job.status == "running":
+        raise HTTPException(409, "Embedding generation already in progress")
+    return job
 
 
 @router.get(

@@ -66,9 +66,24 @@ async def create_reembedding_job(
     """
     existing = await get_reembedding_job(session, detection_job_id, model_version)
     if existing is not None:
-        if existing.status in ("queued", "running", "complete"):
+        if existing.status in ("queued", "complete"):
             return existing
-        # failed or other terminal-but-retryable state → reset.
+        if existing.status == "running":
+            # Check if the job is stale (no update in STALE_JOB_TIMEOUT).
+            # This handles worker restarts: a previously-running job that
+            # hasn't been updated recently is assumed orphaned and can be
+            # safely re-queued.
+            from humpback.workers.queue import STALE_JOB_TIMEOUT
+
+            cutoff = datetime.now(timezone.utc) - STALE_JOB_TIMEOUT
+            updated = existing.updated_at
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            if updated >= cutoff:
+                # Actively running — don't interfere.
+                return existing
+            # Fall through to the reset below.
+        # failed or stale-running → reset to queued.
         existing.status = "queued"
         existing.error_message = None
         existing.mode = mode

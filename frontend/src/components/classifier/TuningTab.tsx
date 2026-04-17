@@ -60,6 +60,7 @@ import {
   DetectionSourcePicker,
   type DetectionSourcePickerValue,
 } from "./DetectionSourcePicker";
+import { ActiveEmbeddingBanner } from "./ActiveEmbeddingBanner";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -216,6 +217,7 @@ function ManifestsSection() {
 
   const hasDetectionJobs = detectionSource.selectedDetectionJobIds.length > 0;
   const hasSources = selectedTrainingJobIds.size > 0 || hasDetectionJobs;
+  const hasEmbeddingModel = detectionSource.embeddingModelVersion !== "";
   const detectionReady = !hasDetectionJobs || detectionSource.isReady;
 
   const handleCreate = () => {
@@ -229,11 +231,6 @@ function ManifestsSection() {
         variant: "destructive",
       });
       return;
-    }
-    if (!detectionSource.embeddingModelVersion && !hasDetectionJobs) {
-      // For training-job-only manifests we still need a model version from
-      // the first training job — the backend resolves it. But if detection
-      // jobs are selected, embedding_model_version is mandatory.
     }
     createMutation.mutate(
       {
@@ -442,6 +439,7 @@ function ManifestsSection() {
                 disabled={
                   createMutation.isPending ||
                   !hasSources ||
+                  !hasEmbeddingModel ||
                   !detectionReady
                 }
               >
@@ -889,6 +887,7 @@ function SearchesSection() {
 export function TuningTab() {
   return (
     <div className="space-y-4 p-4">
+      <ActiveEmbeddingBanner />
       <h2 className="text-lg font-semibold">Hyperparameter Tuning</h2>
 
       <Collapsible defaultOpen={true}>

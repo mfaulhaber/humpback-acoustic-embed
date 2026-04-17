@@ -111,6 +111,25 @@ async def test_generate_embeddings_queues_job(client, app_settings):
     data = resp.json()
     assert data["status"] == "queued"
     assert data["detection_job_id"] == job_id
+    # Falls back to classifier's model_version when not specified
+    assert data["model_version"] == "test_v1"
+
+
+@pytest.mark.asyncio
+async def test_generate_embeddings_explicit_model_version(client, app_settings):
+    """POST generate-embeddings with model_version uses the caller's choice."""
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings)
+
+    resp = await client.post(
+        f"/classifier/detection-jobs/{job_id}/generate-embeddings?model_version=perch_v2.tflite"
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["model_version"] == "perch_v2.tflite"
 
 
 @pytest.mark.asyncio
@@ -126,8 +145,8 @@ async def test_generate_embeddings_conflict_exists(client, app_settings):
 
 
 @pytest.mark.asyncio
-async def test_generate_embeddings_conflict_in_progress(client, app_settings):
-    """POST generate-embeddings returns 409 when generation already queued."""
+async def test_generate_embeddings_idempotent_when_queued(client, app_settings):
+    """POST generate-embeddings is idempotent — returns existing queued job."""
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
@@ -138,12 +157,14 @@ async def test_generate_embeddings_conflict_in_progress(client, app_settings):
         f"/classifier/detection-jobs/{job_id}/generate-embeddings"
     )
     assert resp1.status_code == 202
+    job1_id = resp1.json()["id"]
 
-    # Second request is 409
+    # Second request returns the same job (idempotent)
     resp2 = await client.post(
         f"/classifier/detection-jobs/{job_id}/generate-embeddings"
     )
-    assert resp2.status_code == 409
+    assert resp2.status_code == 202
+    assert resp2.json()["id"] == job1_id
 
 
 @pytest.mark.asyncio
@@ -306,3 +327,82 @@ async def test_list_embedding_jobs_pagination(client, app_settings):
     resp2 = await client.get("/classifier/embedding-jobs?offset=100")
     assert resp2.status_code == 200
     assert len(resp2.json()) == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_embeddings_resets_stale_running(client, app_settings):
+    """POST generate-embeddings resets a stale running job back to queued."""
+    from datetime import datetime, timedelta, timezone
+
+    from humpback.models.detection_embedding_job import DetectionEmbeddingJob
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings)
+
+    # Create a running job with a stale updated_at
+    async with sf() as session:
+        from humpback.services.classifier_service.models import (
+            resolve_detection_job_model_version,
+        )
+
+        model_version = await resolve_detection_job_model_version(session, job_id)
+        emb_job = DetectionEmbeddingJob(
+            detection_job_id=job_id,
+            model_version=model_version,
+            mode="full",
+            status="running",
+            rows_processed=65,
+            rows_total=625,
+            progress_current=65,
+            progress_total=625,
+            updated_at=datetime.now(timezone.utc) - timedelta(minutes=15),
+        )
+        session.add(emb_job)
+        await session.commit()
+        stale_job_id = emb_job.id
+
+    # POST should reset the stale job, not 409
+    resp = await client.post(f"/classifier/detection-jobs/{job_id}/generate-embeddings")
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["id"] == stale_job_id
+    assert data["status"] == "queued"
+    assert data["rows_processed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_embeddings_409_active_running(client, app_settings):
+    """POST generate-embeddings returns 409 for a recently-active running job."""
+    from datetime import datetime, timezone
+
+    from humpback.models.detection_embedding_job import DetectionEmbeddingJob
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    job_id = await _create_detection_job(sf, app_settings)
+
+    # Create a running job with a recent updated_at
+    async with sf() as session:
+        from humpback.services.classifier_service.models import (
+            resolve_detection_job_model_version,
+        )
+
+        model_version = await resolve_detection_job_model_version(session, job_id)
+        emb_job = DetectionEmbeddingJob(
+            detection_job_id=job_id,
+            model_version=model_version,
+            mode="full",
+            status="running",
+            rows_processed=65,
+            rows_total=625,
+            updated_at=datetime.now(timezone.utc),
+        )
+        session.add(emb_job)
+        await session.commit()
+
+    # POST should return 409 since the job is actively running
+    resp = await client.post(f"/classifier/detection-jobs/{job_id}/generate-embeddings")
+    assert resp.status_code == 409

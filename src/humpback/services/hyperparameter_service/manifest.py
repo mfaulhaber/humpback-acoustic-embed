@@ -86,8 +86,8 @@ def _verify_training_jobs_model_version(
                 if row is None:
                     msg = f"Training job {job_id} not found"
                     raise ValueError(msg)
-                if row[0] and row[0] != embedding_model_version:
-                    mismatches.append(f"{job_id}: {row[0]}")
+                if not row[0] or row[0] != embedding_model_version:
+                    mismatches.append(f"{job_id}: {row[0] or 'NULL'}")
     finally:
         engine.dispose()
 

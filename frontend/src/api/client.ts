@@ -766,11 +766,15 @@ export function fetchReembeddingStatus(
 export const enqueueReembedding = (
   detectionJobId: string,
   mode: "full" | "sync" = "full",
-) =>
-  post<DetectionEmbeddingJob>(
-    `/classifier/detection-jobs/${detectionJobId}/generate-embeddings?mode=${mode}`,
+  modelVersion?: string,
+) => {
+  const params = new URLSearchParams({ mode });
+  if (modelVersion) params.set("model_version", modelVersion);
+  return post<DetectionEmbeddingJob>(
+    `/classifier/detection-jobs/${detectionJobId}/generate-embeddings?${params.toString()}`,
     {},
   );
+};
 
 // ---- Vocalization Training Source ----
 

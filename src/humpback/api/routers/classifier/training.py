@@ -37,7 +37,10 @@ async def create_training_job(
 ) -> ClassifierTrainingJobOut:
     try:
         if body.detection_job_ids:
-            assert body.embedding_model_version is not None  # schema-enforced
+            if body.embedding_model_version is None:
+                raise HTTPException(
+                    400, "embedding_model_version is required for detection-job sources"
+                )
             job = await classifier_service.create_training_job_from_detection_manifest(
                 session,
                 body.name,
