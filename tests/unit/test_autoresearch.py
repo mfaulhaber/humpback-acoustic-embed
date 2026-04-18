@@ -942,3 +942,32 @@ class TestMixedSourceTrainEval:
         m = result["metrics"]
         assert "high_conf_fp_rate" in m
         assert m["tp"] + m["fn"] + m["fp"] + m["tn"] > 0
+
+
+# ---------------------------------------------------------------------------
+# _extract_detection_job_id_from_parquet_path
+# ---------------------------------------------------------------------------
+
+
+class TestExtractDetectionJobIdFromParquetPath:
+    """Cover both legacy flat and model-versioned nested detection paths."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self) -> None:
+        from humpback.services.classifier_service.autoresearch import (
+            _extract_detection_job_id_from_parquet_path,
+        )
+
+        self.extract = _extract_detection_job_id_from_parquet_path
+
+    def test_legacy_flat_path(self) -> None:
+        path = "/data/detections/abc-123/detection_embeddings.parquet"
+        assert self.extract(path) == "abc-123"
+
+    def test_model_versioned_nested_path(self) -> None:
+        path = "/data/detections/abc-123/embeddings/perch_v2.tflite/detection_embeddings.parquet"
+        assert self.extract(path) == "abc-123"
+
+    def test_no_match(self) -> None:
+        path = "/data/embeddings/abc-123/other.parquet"
+        assert self.extract(path) is None

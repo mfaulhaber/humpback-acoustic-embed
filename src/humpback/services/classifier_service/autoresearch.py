@@ -320,14 +320,14 @@ def _load_candidate_manifest(candidate: AutoresearchCandidate) -> dict[str, Any]
 
 
 def _extract_detection_job_id_from_parquet_path(parquet_path: str) -> str | None:
+    # Handles both legacy (detections/{id}/detection_embeddings.parquet) and
+    # model-versioned (detections/{id}/embeddings/{model}/detection_embeddings.parquet)
     parts = Path(parquet_path).parts
     for idx, part in enumerate(parts):
-        if (
-            part == "detections"
-            and idx + 2 < len(parts)
-            and parts[idx + 2] == "detection_embeddings.parquet"
-        ):
-            return parts[idx + 1]
+        if part == "detections" and idx + 1 < len(parts):
+            rest = parts[idx + 2 :]
+            if "detection_embeddings.parquet" in rest:
+                return parts[idx + 1]
     return None
 
 
