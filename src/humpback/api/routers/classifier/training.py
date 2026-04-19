@@ -9,6 +9,7 @@ from humpback.api.deps import SessionDep, SettingsDep
 from humpback.schemas.classifier import (
     ClassifierTrainingJobCreate,
     ClassifierTrainingJobOut,
+    DetectionSourceInfo,
     RetrainFolderInfo,
     RetrainWorkflowCreate,
     RetrainWorkflowOut,
@@ -113,6 +114,12 @@ async def get_training_summary(
     if summary is None:
         raise HTTPException(404, "Model or training job not found")
 
+    detection_sources = None
+    if summary.get("detection_sources"):
+        detection_sources = [
+            DetectionSourceInfo(**ds) for ds in summary["detection_sources"]
+        ]
+
     return TrainingDataSummaryResponse(
         model_id=summary["model_id"],
         model_name=summary["model_name"],
@@ -124,6 +131,7 @@ async def get_training_summary(
         window_size_seconds=summary["window_size_seconds"],
         positive_duration_sec=summary["positive_duration_sec"],
         negative_duration_sec=summary["negative_duration_sec"],
+        detection_sources=detection_sources,
     )
 
 

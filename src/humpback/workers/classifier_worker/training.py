@@ -23,6 +23,59 @@ from humpback.storage import classifier_dir, ensure_dir
 logger = logging.getLogger(__name__)
 
 
+def _merge_candidate_standard_metrics(
+    summary: dict[str, Any],
+    promotion_provenance: dict[str, Any] | None,
+) -> None:
+    """Merge standard metric fields into an autoresearch-candidate summary.
+
+    Reads from training_data_source (sample counts), split_metrics (test-split
+    precision/recall/confusion), and trainer_parameters (classifier config).
+    """
+    tds = summary.get("training_data_source", {})
+    n_pos = int(tds.get("positive_count") or 0)
+    n_neg = int(tds.get("negative_count") or 0)
+    summary["n_positive"] = n_pos
+    summary["n_negative"] = n_neg
+    summary["balance_ratio"] = round(n_pos / n_neg, 4) if n_neg > 0 else 0.0
+
+    if promotion_provenance is None:
+        return
+
+    split_metrics = promotion_provenance.get("split_metrics") or {}
+    ar_metrics: dict[str, Any] = {}
+    for _split_name, split_data in split_metrics.items():
+        if isinstance(split_data, dict) and "autoresearch" in split_data:
+            ar_metrics = split_data["autoresearch"]
+            break
+
+    if ar_metrics:
+        precision = float(ar_metrics.get("precision", 0))
+        recall = float(ar_metrics.get("recall", 0))
+        summary["cv_precision"] = precision
+        summary["cv_recall"] = recall
+        denom = precision + recall
+        summary["cv_f1"] = (
+            round(2 * precision * recall / denom, 6) if denom > 0 else 0.0
+        )
+
+        tp = int(ar_metrics.get("tp", 0))
+        fp = int(ar_metrics.get("fp", 0))
+        fn = int(ar_metrics.get("fn", 0))
+        tn = int(ar_metrics.get("tn", 0))
+        total = tp + fp + fn + tn
+        summary["cv_accuracy"] = round((tp + tn) / total, 6) if total > 0 else 0.0
+        summary["train_confusion"] = {"tp": tp, "fp": fp, "fn": fn, "tn": tn}
+
+    trainer_params = promotion_provenance.get("trainer_parameters") or {}
+    if "classifier_type" in trainer_params:
+        summary["classifier_type"] = trainer_params["classifier_type"]
+    class_weight = trainer_params.get("class_weight")
+    if class_weight:
+        summary["effective_class_weights"] = class_weight
+        summary["class_weight_strategy"] = "custom"
+
+
 async def run_training_job(
     session: AsyncSession,
     job: ClassifierTrainingJob,
@@ -140,6 +193,8 @@ async def run_training_job(
                 # Also store in source_comparison_context for API access
                 if promotion_provenance is not None:
                     promotion_provenance["replay_verification"] = replay_verification
+
+            _merge_candidate_standard_metrics(summary, promotion_provenance)
         elif job.source_mode == "detection_manifest":
             from humpback.classifier.trainer import (
                 load_manifest_split_embeddings,

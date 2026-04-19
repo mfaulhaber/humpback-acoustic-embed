@@ -345,6 +345,15 @@ class TrainingSourceInfo(BaseModel):
     duration_represented_sec: Optional[float] = None
 
 
+class DetectionSourceInfo(BaseModel):
+    detection_job_id: str
+    hydrophone_name: Optional[str] = None
+    start_timestamp: Optional[float] = None
+    end_timestamp: Optional[float] = None
+    positive_count: Optional[int] = None
+    negative_count: Optional[int] = None
+
+
 class TrainingDataSummaryResponse(BaseModel):
     model_id: str
     model_name: str
@@ -356,6 +365,7 @@ class TrainingDataSummaryResponse(BaseModel):
     window_size_seconds: float
     positive_duration_sec: Optional[float] = None
     negative_duration_sec: Optional[float] = None
+    detection_sources: Optional[list[DetectionSourceInfo]] = None
 
 
 # ---- Retrain Workflows ----

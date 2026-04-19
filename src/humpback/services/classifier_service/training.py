@@ -12,6 +12,7 @@ from humpback.models.audio import AudioFile
 from humpback.models.classifier import (
     ClassifierModel,
     ClassifierTrainingJob,
+    DetectionJob,
 )
 from humpback.models.processing import EmbeddingSet
 from humpback.models.retrain import RetrainWorkflow
@@ -311,6 +312,61 @@ async def get_training_data_summary(
             "negative_duration_sec": total_neg * cm.window_size_seconds
             if total_neg
             else None,
+        }
+
+    if tj.source_mode == "detection_manifest":
+        training_summary = (
+            json.loads(cm.training_summary) if cm.training_summary else {}
+        )
+        total_pos = int(training_summary.get("n_positive") or 0)
+        total_neg = int(training_summary.get("n_negative") or 0)
+        balance = total_pos / total_neg if total_neg > 0 else float("inf")
+
+        det_job_ids = training_summary.get("detection_job_ids", [])
+        detection_sources: list[dict[str, Any]] = []
+
+        if det_job_ids:
+            det_result = await session.execute(
+                select(DetectionJob).where(DetectionJob.id.in_(det_job_ids))
+            )
+            det_jobs = {dj.id: dj for dj in det_result.scalars().all()}
+
+            tds = training_summary.get("training_data_source", {})
+            per_job_counts = {
+                entry["detection_job_id"]: entry
+                for entry in tds.get("per_job_counts", [])
+            }
+
+            for job_id in det_job_ids:
+                dj = det_jobs.get(job_id)
+                counts = per_job_counts.get(job_id, {})
+                detection_sources.append(
+                    {
+                        "detection_job_id": job_id,
+                        "hydrophone_name": dj.hydrophone_name if dj else None,
+                        "start_timestamp": dj.start_timestamp if dj else None,
+                        "end_timestamp": dj.end_timestamp if dj else None,
+                        "positive_count": counts.get("positive_count"),
+                        "negative_count": counts.get("negative_count"),
+                    }
+                )
+
+        return {
+            "model_id": cm.id,
+            "model_name": cm.name,
+            "positive_sources": [],
+            "negative_sources": [],
+            "total_positive": total_pos,
+            "total_negative": total_neg,
+            "balance_ratio": balance,
+            "window_size_seconds": cm.window_size_seconds,
+            "positive_duration_sec": total_pos * cm.window_size_seconds
+            if total_pos
+            else None,
+            "negative_duration_sec": total_neg * cm.window_size_seconds
+            if total_neg
+            else None,
+            "detection_sources": detection_sources,
         }
 
     pos_ids = json.loads(tj.positive_embedding_set_ids)

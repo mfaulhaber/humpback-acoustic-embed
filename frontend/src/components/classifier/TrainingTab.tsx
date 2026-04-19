@@ -52,6 +52,7 @@ import { ActiveEmbeddingBanner } from "./ActiveEmbeddingBanner";
 import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
+  DetectionSourceInfo,
   EmbeddingSet,
   TrainingSourceInfo,
   RetrainWorkflow as RetrainWorkflowType,
@@ -1017,7 +1018,9 @@ function ModelTableRow({
                     <span className="font-medium">
                       {model.training_source_mode === "autoresearch_candidate"
                         ? `Candidate${promotedCandidateName ? `: ${promotedCandidateName}` : ""}`
-                        : "Embedding Sets"}
+                        : model.training_source_mode === "detection_manifest"
+                          ? "Detection Jobs"
+                          : "Embedding Sets"}
                     </span>
                   </div>
                   {model.training_source_mode === "autoresearch_candidate" && (
@@ -1144,6 +1147,38 @@ function ModelTableRow({
                       </div>
                     </div>
                   </div>
+                ) : model.training_source_mode === "detection_manifest" ? (
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <div className="font-medium">
+                        Positive{" "}
+                        <span className="text-muted-foreground font-normal">
+                          ({dataSummary.total_positive.toLocaleString()} vectors)
+                        </span>
+                      </div>
+                      <div className="font-medium mt-1">
+                        Negative{" "}
+                        <span className="text-muted-foreground font-normal">
+                          ({dataSummary.total_negative.toLocaleString()} vectors)
+                        </span>
+                      </div>
+                      {dataSummary.balance_ratio != null && (
+                        <div className="text-muted-foreground mt-1">
+                          Balance: {dataSummary.balance_ratio.toFixed(2)}:1
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <div className="font-medium mb-1">Detection Jobs</div>
+                      <div className="text-muted-foreground space-y-0.5">
+                        {dataSummary.detection_sources?.map((ds) => (
+                          <DetectionSourceRow key={ds.detection_job_id} source={ds} />
+                        )) ?? (
+                          <div>No detection job details available</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-4 text-xs">
                     <SourceList
@@ -1174,6 +1209,24 @@ function ModelTableRow({
         </tr>
       )}
     </>
+  );
+}
+
+function formatUtcDate(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+function DetectionSourceRow({ source }: { source: DetectionSourceInfo }) {
+  const name = source.hydrophone_name ?? "Unknown";
+  const range =
+    source.start_timestamp != null && source.end_timestamp != null
+      ? `${formatUtcDate(source.start_timestamp)} to ${formatUtcDate(source.end_timestamp)} UTC`
+      : "";
+  return (
+    <div className="truncate">
+      {name}{range ? ` — ${range}` : ""}
+    </div>
   );
 }
 

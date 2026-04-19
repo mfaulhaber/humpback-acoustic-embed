@@ -608,3 +608,58 @@ def test_load_manifest_split_data_returns_full_context(tmp_path: Path) -> None:
     assert data.source_summary["positive_count"] == 2
     assert data.source_summary["negative_count"] == 2
     assert data.source_summary["vector_dim"] == 2
+
+
+# ---------------------------------------------------------------------------
+# _compute_per_job_counts
+# ---------------------------------------------------------------------------
+
+
+class TestComputePerJobCounts:
+    def test_groups_by_detection_job_id(self):
+        from humpback.classifier.trainer import _compute_per_job_counts
+
+        job_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        job_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        examples = [
+            {
+                "source_type": "detection_job",
+                "parquet_path": f"/data/detections/{job_a}/embeddings/perch_v2/emb.parquet",
+                "label": 1,
+            },
+            {
+                "source_type": "detection_job",
+                "parquet_path": f"/data/detections/{job_a}/embeddings/perch_v2/emb.parquet",
+                "label": 0,
+            },
+            {
+                "source_type": "detection_job",
+                "parquet_path": f"/data/detections/{job_b}/embeddings/perch_v2/emb.parquet",
+                "label": 1,
+            },
+        ]
+        result = _compute_per_job_counts(examples)
+        by_id = {r["detection_job_id"]: r for r in result}
+        assert len(by_id) == 2
+        assert by_id[job_a]["positive_count"] == 1
+        assert by_id[job_a]["negative_count"] == 1
+        assert by_id[job_b]["positive_count"] == 1
+        assert by_id[job_b]["negative_count"] == 0
+
+    def test_skips_non_detection_examples(self):
+        from humpback.classifier.trainer import _compute_per_job_counts
+
+        examples = [
+            {
+                "source_type": "embedding_set",
+                "parquet_path": "/data/embeddings/set1.parquet",
+                "label": 1,
+            },
+        ]
+        result = _compute_per_job_counts(examples)
+        assert result == []
+
+    def test_empty_examples(self):
+        from humpback.classifier.trainer import _compute_per_job_counts
+
+        assert _compute_per_job_counts([]) == []
