@@ -349,7 +349,7 @@ function ManifestsSection() {
 
         {/* New Manifest Dialog */}
         <Dialog open={showDialog} onOpenChange={setShowDialog}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent className="sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>New Manifest</DialogTitle>
             </DialogHeader>
