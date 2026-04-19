@@ -299,6 +299,57 @@ test.describe("Training job API", () => {
   });
 });
 
+test.describe("Detection job source mode table", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/app/classifier/training");
+  });
+
+  test("switching to detection jobs mode renders table with Pos, Neg, and Embedding columns", async ({
+    page,
+  }) => {
+    const detectionRadio = page.locator("label", { hasText: "Detection jobs" });
+    await detectionRadio.click();
+
+    const table = page.locator("table").first();
+    const hasTable = await table
+      .waitFor({ timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!hasTable) {
+      test.skip(true, "No labeled detection jobs — table not rendered");
+      return;
+    }
+
+    await expect(table.locator("th", { hasText: "Pos" })).toBeVisible();
+    await expect(table.locator("th", { hasText: "Neg" })).toBeVisible();
+    await expect(table.locator("th", { hasText: "Embedding" })).toBeVisible();
+  });
+
+  test("embedding column shows dash when no model is selected", async ({
+    page,
+  }) => {
+    const detectionRadio = page.locator("label", { hasText: "Detection jobs" });
+    await detectionRadio.click();
+
+    const table = page.locator("table").first();
+    const hasTable = await table
+      .waitFor({ timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!hasTable) {
+      test.skip(true, "No labeled detection jobs — table not rendered");
+      return;
+    }
+
+    // With no model selected, the embedding column cells should show "—"
+    const firstRow = table.locator("tbody tr").first();
+    const embeddingCell = firstRow.locator("td").nth(4);
+    await expect(embeddingCell).toContainText("—");
+  });
+});
+
 function buildCandidateSummary(overrides: Record<string, unknown>) {
   return {
     id: "candidate-base",

@@ -333,6 +333,15 @@ class DiagnosticsSummaryResponse(BaseModel):
     per_file: list[PerFileDiagnosticSummary]
 
 
+# ---- Detection Job Label Counts ----
+
+
+class DetectionJobLabelCount(BaseModel):
+    detection_job_id: str
+    positive: int
+    negative: int
+
+
 # ---- Training Data Summary ----
 
 

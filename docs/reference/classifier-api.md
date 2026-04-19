@@ -36,11 +36,15 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 
 ## Detection-Manifest Training (ADR-055)
 
-`POST /classifier/training-jobs` now accepts an alternative source mode with `detection_job_ids` + `embedding_model_version` instead of embedding set IDs. The two source shapes are mutually exclusive (422 if mixed). The service validates that embeddings exist at the model-versioned path for each detection job and that the selection includes at least one positive and one negative binary label.
+`POST /classifier/training-jobs` now accepts an alternative source mode with `detection_job_ids` + `embedding_model_version` instead of embedding set IDs. The two source shapes are mutually exclusive (422 if mixed). The service validates that embeddings exist at the model-versioned path for each detection job and that the selection includes at least one positive and one negative binary label. If the model-versioned path is missing but legacy-path embeddings exist and the source classifier model matches, they are automatically copied to the model-versioned path.
+
+## Detection Job Label Counts
+
+- `GET /classifier/detection-jobs/label-counts?detection_job_ids=...` — returns per-job positive/negative label counts by reading row stores. Positive = humpback or orca; negative = ship or background. Returns `0/0` for missing row stores.
 
 ## Detection Embedding Jobs
 
-- `GET /classifier/detection-embedding-jobs?detection_job_ids=...&model_version=...` — returns a status row for each `(detection_job_id, model_version)` pair including rows that don't yet exist (`status="not_started"`). Response includes `rows_processed`, `rows_total`, `error_message`.
+- `GET /classifier/detection-embedding-jobs?detection_job_ids=...&model_version=...` — returns a status row for each `(detection_job_id, model_version)` pair including rows that don't yet exist (`status="not_started"`). Also recognizes legacy-path embeddings (written inline by the hydrophone worker) when the detection job's source classifier model matches the requested model version. Response includes `rows_processed`, `rows_total`, `error_message`.
 - `POST /classifier/detection-jobs/{id}/generate-embeddings?mode=full|sync` — enqueue re-embedding for a detection job
 - `GET /classifier/detection-jobs/{id}/embedding-generation-status` — most recent embedding generation job
 

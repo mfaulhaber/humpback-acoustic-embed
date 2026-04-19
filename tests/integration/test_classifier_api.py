@@ -2649,3 +2649,276 @@ async def test_detection_embedding_hydrophone_job_row_id(client, app_settings):
     assert len(data["vector"]) == 4
 
     await engine.dispose()
+
+
+# ---- Detection Job Label Counts ----
+
+
+async def test_label_counts_returns_positive_and_negative(client, app_settings):
+    """GET /detection-jobs/label-counts returns correct pos/neg counts."""
+    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+    from humpback.storage import detection_row_store_path
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    cm_id = str(uuid.uuid4())
+    dj_id = str(uuid.uuid4())
+
+    async with sf() as session:
+        session.add(
+            ClassifierModel(
+                id=cm_id,
+                name="lc-classifier",
+                model_path="/tmp/fake.joblib",
+                model_version="perch_v1",
+                vector_dim=4,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        session.add(
+            DetectionJob(
+                id=dj_id,
+                status="complete",
+                classifier_model_id=cm_id,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                detection_mode="windowed",
+            )
+        )
+        await session.commit()
+
+    rs_path = detection_row_store_path(app_settings.storage_root, dj_id)
+    rs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_detection_row_store(
+        rs_path,
+        [
+            {
+                "start_utc": str(BASE_EPOCH),
+                "end_utc": str(BASE_EPOCH + 5),
+                "humpback": "1",
+            },
+            {
+                "start_utc": str(BASE_EPOCH + 5),
+                "end_utc": str(BASE_EPOCH + 10),
+                "orca": "1",
+            },
+            {
+                "start_utc": str(BASE_EPOCH + 10),
+                "end_utc": str(BASE_EPOCH + 15),
+                "background": "1",
+            },
+            {
+                "start_utc": str(BASE_EPOCH + 15),
+                "end_utc": str(BASE_EPOCH + 20),
+                "ship": "1",
+            },
+            {
+                "start_utc": str(BASE_EPOCH + 20),
+                "end_utc": str(BASE_EPOCH + 25),
+                "background": "1",
+            },
+        ],
+    )
+
+    resp = await client.get(
+        "/classifier/detection-jobs/label-counts",
+        params={"detection_job_ids": [dj_id]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["detection_job_id"] == dj_id
+    assert data[0]["positive"] == 2
+    assert data[0]["negative"] == 3
+
+    await engine.dispose()
+
+
+async def test_label_counts_missing_row_store(client, app_settings):
+    """GET /detection-jobs/label-counts returns 0/0 for missing row store."""
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(
+        "/classifier/detection-jobs/label-counts",
+        params={"detection_job_ids": [fake_id]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["positive"] == 0
+    assert data[0]["negative"] == 0
+
+
+async def test_label_counts_empty_ids(client):
+    """GET /detection-jobs/label-counts with no IDs returns empty list."""
+    resp = await client.get(
+        "/classifier/detection-jobs/label-counts",
+        params={"detection_job_ids": []},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# ---- Legacy Embedding Path Resolution ----
+
+
+async def _seed_legacy_embedding_fixtures(
+    app_settings, *, model_version="surfperch_tf2"
+):
+    """Create a detection job with legacy-path embeddings (no model-versioned path).
+
+    Returns (detection_job_id, model_version).
+    """
+    from humpback.classifier.detection_rows import write_detection_row_store
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+    from humpback.models.model_registry import ModelConfig
+    from humpback.storage import detection_dir, detection_row_store_path
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    cm_id = str(uuid.uuid4())
+    dj_id = str(uuid.uuid4())
+
+    async with sf() as session:
+        session.add(
+            ModelConfig(
+                name=model_version,
+                display_name="SurfPerch TF2",
+                path="models/surfperch_tf2",
+                model_type="tf2_saved_model",
+                input_format="logmel",
+                vector_dim=1280,
+                is_default=False,
+            )
+        )
+        session.add(
+            ClassifierModel(
+                id=cm_id,
+                name="legacy-classifier",
+                model_path="/tmp/fake.joblib",
+                model_version=model_version,
+                vector_dim=1280,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+            )
+        )
+        session.add(
+            DetectionJob(
+                id=dj_id,
+                status="complete",
+                classifier_model_id=cm_id,
+                audio_folder="/tmp/fake",
+                confidence_threshold=0.5,
+                detection_mode="windowed",
+                has_positive_labels=True,
+            )
+        )
+        await session.commit()
+
+    # Write row store with one positive + one negative row.
+    rs_path = detection_row_store_path(app_settings.storage_root, dj_id)
+    rs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_detection_row_store(
+        rs_path,
+        [
+            {
+                "start_utc": str(BASE_EPOCH),
+                "end_utc": str(BASE_EPOCH + 5.0),
+                "avg_confidence": "0.9",
+                "peak_confidence": "0.95",
+                "n_windows": "1",
+                "humpback": "1",
+            },
+            {
+                "start_utc": str(BASE_EPOCH + 5.0),
+                "end_utc": str(BASE_EPOCH + 10.0),
+                "avg_confidence": "0.3",
+                "peak_confidence": "0.4",
+                "n_windows": "1",
+                "background": "1",
+            },
+        ],
+    )
+
+    # Write embeddings at the LEGACY path (not model-versioned).
+    legacy_emb_path = (
+        detection_dir(app_settings.storage_root, dj_id) / "detection_embeddings.parquet"
+    )
+    _write_detection_embeddings_parquet(
+        legacy_emb_path,
+        row_ids=["r1", "r2"],
+        rows=[[0.1] * 4, [0.2] * 4],
+    )
+
+    await engine.dispose()
+    return dj_id, model_version
+
+
+async def test_embedding_status_recognizes_legacy_path(client, app_settings):
+    """GET /detection-embedding-jobs returns complete for legacy-path embeddings
+    when source model matches."""
+    dj_id, model_version = await _seed_legacy_embedding_fixtures(app_settings)
+
+    resp = await client.get(
+        "/classifier/detection-embedding-jobs",
+        params={"detection_job_ids": [dj_id], "model_version": model_version},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["detection_job_id"] == dj_id
+    assert data[0]["status"] == "complete"
+    assert data[0]["rows_total"] == 2
+
+
+async def test_embedding_status_legacy_path_different_model(client, app_settings):
+    """GET /detection-embedding-jobs returns not_started when legacy embeddings
+    exist but the requested model differs from the source classifier."""
+    dj_id, _ = await _seed_legacy_embedding_fixtures(
+        app_settings, model_version="surfperch_tf2_other"
+    )
+
+    resp = await client.get(
+        "/classifier/detection-embedding-jobs",
+        params={"detection_job_ids": [dj_id], "model_version": "perch_v2"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["status"] == "not_started"
+
+
+async def test_training_job_copies_legacy_embeddings(client, app_settings):
+    """POST /training-jobs with legacy-path embeddings copies them and succeeds."""
+    from humpback.storage import detection_embeddings_path
+
+    dj_id, model_version = await _seed_legacy_embedding_fixtures(
+        app_settings, model_version="surfperch_tf2_copy"
+    )
+
+    # Model-versioned path should not exist yet.
+    versioned_path = detection_embeddings_path(
+        app_settings.storage_root, dj_id, model_version
+    )
+    assert not versioned_path.exists()
+
+    resp = await client.post(
+        "/classifier/training-jobs",
+        json={
+            "name": "legacy-test",
+            "detection_job_ids": [dj_id],
+            "embedding_model_version": model_version,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["source_mode"] == "detection_manifest"
+    assert data["source_detection_job_ids"] == [dj_id]
+
+    # Model-versioned path should now exist (copied from legacy).
+    assert versioned_path.exists()

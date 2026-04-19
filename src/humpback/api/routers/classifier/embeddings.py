@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
@@ -187,29 +188,31 @@ async def get_embedding_generation_status(
 )
 async def list_detection_embedding_jobs(
     session: SessionDep,
+    settings: SettingsDep,
     detection_job_ids: list[str] = Query(..., min_length=1),
     model_version: str = Query(..., min_length=1),
 ):
     """Return status rows for each ``(detection_job_id, model_version)`` pair.
 
     Pairs with no existing row are returned with ``status="not_started"`` so the
-    caller always gets one entry per requested detection job id.
+    caller always gets one entry per requested detection job id.  If the
+    detection job's source classifier matches ``model_version`` and a legacy
+    embedding file exists, the pair is reported as ``"complete"`` even without a
+    DB row.
     """
     from humpback.services.detection_embedding_service import list_reembedding_jobs
 
     jobs = await list_reembedding_jobs(session, detection_job_ids, model_version)
+
+    not_started_ids = [did for did in detection_job_ids if did not in jobs]
+    legacy_complete = await _resolve_legacy_embeddings(
+        session, not_started_ids, model_version, settings.storage_root
+    )
+
     out: list[DetectionEmbeddingJobStatus] = []
     for det_job_id in detection_job_ids:
         j = jobs.get(det_job_id)
-        if j is None:
-            out.append(
-                DetectionEmbeddingJobStatus(
-                    detection_job_id=det_job_id,
-                    model_version=model_version,
-                    status="not_started",
-                )
-            )
-        else:
+        if j is not None:
             out.append(
                 DetectionEmbeddingJobStatus(
                     detection_job_id=j.detection_job_id,
@@ -222,7 +225,66 @@ async def list_detection_embedding_jobs(
                     updated_at=j.updated_at,
                 )
             )
+        elif det_job_id in legacy_complete:
+            out.append(
+                DetectionEmbeddingJobStatus(
+                    detection_job_id=det_job_id,
+                    model_version=model_version,
+                    status="complete",
+                    rows_processed=legacy_complete[det_job_id],
+                    rows_total=legacy_complete[det_job_id],
+                )
+            )
+        else:
+            out.append(
+                DetectionEmbeddingJobStatus(
+                    detection_job_id=det_job_id,
+                    model_version=model_version,
+                    status="not_started",
+                )
+            )
     return out
+
+
+async def _resolve_legacy_embeddings(
+    session: AsyncSession,
+    detection_job_ids: list[str],
+    model_version: str,
+    storage_root: Path,
+) -> dict[str, int]:
+    """Return ``{det_job_id: row_count}`` for jobs with legacy-path embeddings
+    whose source classifier model matches ``model_version``."""
+    if not detection_job_ids:
+        return {}
+
+    import pyarrow.parquet as pq
+    from sqlalchemy import select
+
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+    from humpback.storage import detection_dir
+
+    result = await session.execute(
+        select(DetectionJob.id, ClassifierModel.model_version)
+        .join(ClassifierModel, DetectionJob.classifier_model_id == ClassifierModel.id)
+        .where(DetectionJob.id.in_(detection_job_ids))
+    )
+    model_versions = {row[0]: row[1] for row in result.all()}
+
+    legacy_complete: dict[str, int] = {}
+    for det_job_id in detection_job_ids:
+        source_mv = model_versions.get(det_job_id)
+        if source_mv != model_version:
+            continue
+        legacy_path = (
+            detection_dir(storage_root, det_job_id) / "detection_embeddings.parquet"
+        )
+        if legacy_path.exists():
+            try:
+                meta = pq.read_metadata(str(legacy_path))
+                legacy_complete[det_job_id] = meta.num_rows
+            except Exception:
+                legacy_complete[det_job_id] = 0
+    return legacy_complete
 
 
 @router.get(

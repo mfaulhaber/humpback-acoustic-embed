@@ -104,6 +104,31 @@ async def create_training_job(
     return job
 
 
+def _promote_legacy_embeddings(
+    detection_job_id: str,
+    cm: "ClassifierModel | None",
+    embedding_model_version: str,
+    storage_root: "Path",
+    dest_path: "Path",
+) -> bool:
+    """Copy legacy-path embeddings to the model-versioned path if the source
+    classifier model matches.  Returns True on success."""
+    import shutil
+
+    from humpback.storage import detection_dir
+
+    if cm is None or cm.model_version != embedding_model_version:
+        return False
+    legacy_path = (
+        detection_dir(storage_root, detection_job_id) / "detection_embeddings.parquet"
+    )
+    if not legacy_path.exists():
+        return False
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(legacy_path), str(dest_path))
+    return True
+
+
 async def create_training_job_from_detection_manifest(
     session: AsyncSession,
     name: str,
@@ -160,14 +185,27 @@ async def create_training_job_from_detection_manifest(
     total_pos = 0
     total_neg = 0
     for dj in dj_rows:
+        # Resolve source classifier first — needed for window params and
+        # legacy embedding path fallback.
+        cm_result = await session.execute(
+            select(ClassifierModel).where(ClassifierModel.id == dj.classifier_model_id)
+        )
+        cm = cm_result.scalar_one_or_none()
+        if cm is not None:
+            window_sizes.add(cm.window_size_seconds)
+            sample_rates.add(cm.target_sample_rate)
+
         emb_path = detection_embeddings_path(
             storage_root, dj.id, embedding_model_version
         )
         if not emb_path.exists():
-            raise ValueError(
-                f"Detection job {dj.id} has no embeddings for "
-                f"{embedding_model_version!r} — re-embed first"
-            )
+            if not _promote_legacy_embeddings(
+                dj.id, cm, embedding_model_version, storage_root, emb_path
+            ):
+                raise ValueError(
+                    f"Detection job {dj.id} has no embeddings for "
+                    f"{embedding_model_version!r} — re-embed first"
+                )
         rs_path = detection_row_store_path(storage_root, dj.id)
         if not rs_path.exists():
             raise ValueError(f"Detection job {dj.id} has no row store")
@@ -177,15 +215,6 @@ async def create_training_job_from_detection_manifest(
                 total_pos += 1
             elif row.get("ship") == "1" or row.get("background") == "1":
                 total_neg += 1
-
-        # Pull window params from the source classifier for fidelity.
-        cm_result = await session.execute(
-            select(ClassifierModel).where(ClassifierModel.id == dj.classifier_model_id)
-        )
-        cm = cm_result.scalar_one_or_none()
-        if cm is not None:
-            window_sizes.add(cm.window_size_seconds)
-            sample_rates.add(cm.target_sample_rate)
 
     if total_pos < 1 or total_neg < 1:
         raise ValueError(

@@ -83,6 +83,7 @@ import type {
   EmbeddingStatus,
   DetectionEmbeddingJob,
   DetectionEmbeddingJobStatus,
+  DetectionJobLabelCount,
   EmbeddingJobListItem,
   VocalizationTrainingSource,
   FolderEmbeddingSetResponse,
@@ -775,6 +776,18 @@ export const enqueueReembedding = (
     {},
   );
 };
+
+// ---- Detection Job Label Counts ----
+
+export function fetchDetectionJobLabelCounts(
+  detectionJobIds: string[],
+): Promise<DetectionJobLabelCount[]> {
+  const params = new URLSearchParams();
+  for (const id of detectionJobIds) params.append("detection_job_ids", id);
+  return api<DetectionJobLabelCount[]>(
+    `/classifier/detection-jobs/label-counts?${params.toString()}`,
+  );
+}
 
 // ---- Vocalization Training Source ----
 
