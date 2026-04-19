@@ -31,6 +31,7 @@ from humpback.models.classifier import (  # noqa: E402
 from humpback.models.labeling import VocalizationLabel  # noqa: E402
 from humpback.services.hyperparameter_service.manifest import generate_manifest  # noqa: E402
 from humpback.storage import (  # noqa: E402
+    detection_dir,
     detection_embeddings_path,
     detection_row_store_path,
 )
@@ -204,6 +205,67 @@ def test_rejects_missing_detection_embeddings(tmp_path, sync_db_url, monkeypatch
         model_version="perch_v2",
         row_store_path=rs_path,
     )
+
+    with pytest.raises(FileNotFoundError, match="Detection embeddings not found"):
+        generate_manifest(
+            detection_job_ids=[dj_id],
+            db_url=sync_db_url,
+            embedding_model_version="perch_v2",
+        )
+
+
+def test_promotes_legacy_detection_embeddings(tmp_path, sync_db_url, monkeypatch):
+    """Legacy-path embeddings are copied to the model-versioned path when the
+    source classifier model version matches."""
+    _patch_settings(monkeypatch, tmp_path)
+    dj_id = str(uuid.uuid4())
+    cm_id = str(uuid.uuid4())
+    rs_path = detection_row_store_path(tmp_path, dj_id)
+    rows = [
+        _make_row("r-pos", 1000.0, "humpback"),
+        _make_row("r-neg", 2000.0, "background"),
+    ]
+    _write_row_store(rs_path, rows)
+    _add_classifier_and_detection_job(
+        sync_db_url,
+        cm_id=cm_id,
+        dj_id=dj_id,
+        model_version="surfperch-tensorflow2",
+        row_store_path=rs_path,
+    )
+
+    legacy_path = detection_dir(tmp_path, dj_id) / "detection_embeddings.parquet"
+    _write_embeddings(legacy_path, ["r-pos", "r-neg"])
+
+    manifest = generate_manifest(
+        detection_job_ids=[dj_id],
+        db_url=sync_db_url,
+        embedding_model_version="surfperch-tensorflow2",
+    )
+    assert len(manifest["examples"]) == 2
+
+    promoted_path = detection_embeddings_path(tmp_path, dj_id, "surfperch-tensorflow2")
+    assert promoted_path.exists()
+
+
+def test_legacy_promotion_skipped_on_model_mismatch(tmp_path, sync_db_url, monkeypatch):
+    """Legacy-path embeddings are NOT promoted when the source classifier model
+    version differs from the requested embedding model version."""
+    _patch_settings(monkeypatch, tmp_path)
+    dj_id = str(uuid.uuid4())
+    cm_id = str(uuid.uuid4())
+    rs_path = detection_row_store_path(tmp_path, dj_id)
+    _write_row_store(rs_path, [_make_row("r1", 1000.0, "humpback")])
+    _add_classifier_and_detection_job(
+        sync_db_url,
+        cm_id=cm_id,
+        dj_id=dj_id,
+        model_version="surfperch-tensorflow2",
+        row_store_path=rs_path,
+    )
+
+    legacy_path = detection_dir(tmp_path, dj_id) / "detection_embeddings.parquet"
+    _write_embeddings(legacy_path, ["r1"])
 
     with pytest.raises(FileNotFoundError, match="Detection embeddings not found"):
         generate_manifest(

@@ -166,8 +166,12 @@ def _query_detection_jobs(
         for job_id in detection_job_ids:
             row = conn.execute(
                 text(
-                    "SELECT id, has_positive_labels, output_row_store_path "
-                    "FROM detection_jobs WHERE id = :id"
+                    "SELECT d.id, d.has_positive_labels,"
+                    " d.output_row_store_path, cm.model_version"
+                    " FROM detection_jobs d"
+                    " JOIN classifier_models cm"
+                    "   ON d.classifier_model_id = cm.id"
+                    " WHERE d.id = :id"
                 ),
                 {"id": str(job_id)},
             ).fetchone()
@@ -184,6 +188,7 @@ def _query_detection_jobs(
                 {
                     "id": row[0],
                     "row_store_path": row[2],
+                    "source_model_version": row[3],
                 }
             )
 
@@ -410,7 +415,11 @@ def _collect_detection_examples(
     vocalization_labels_by_job: dict[str, dict[str, set[str]]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Build manifest examples from detection job data (human-annotated only)."""
-    from humpback.storage import detection_embeddings_path, detection_row_store_path
+    from humpback.storage import (
+        detection_dir,
+        detection_embeddings_path,
+        detection_row_store_path,
+    )
 
     examples: list[dict[str, Any]] = []
     summaries: dict[str, dict[str, Any]] = {}
@@ -429,11 +438,23 @@ def _collect_detection_examples(
         row_store_path = detection_row_store_path(settings.storage_root, job_id)
 
         if not emb_path.exists():
-            msg = (
-                f"Detection embeddings not found for job {job_id} "
-                f"at {emb_path} — run a detection embedding job first"
-            )
-            raise FileNotFoundError(msg)
+            source_mv = dj.get("source_model_version")
+            if source_mv == embedding_model_version:
+                legacy_path = (
+                    detection_dir(settings.storage_root, job_id)
+                    / "detection_embeddings.parquet"
+                )
+                if legacy_path.exists():
+                    import shutil
+
+                    emb_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(legacy_path), str(emb_path))
+            if not emb_path.exists():
+                msg = (
+                    f"Detection embeddings not found for job {job_id} "
+                    f"at {emb_path} — run a detection embedding job first"
+                )
+                raise FileNotFoundError(msg)
 
         if not row_store_path.exists():
             msg = f"Detection row store not found for job {job_id} at {row_store_path}"

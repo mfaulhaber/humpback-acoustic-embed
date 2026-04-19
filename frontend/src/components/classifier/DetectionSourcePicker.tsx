@@ -251,7 +251,7 @@ export function DetectionSourcePicker({
       console.log("[DetectionSourcePicker] pushing isReady=%s", allComplete);
       onChange({ ...value, isReady: allComplete });
     }
-  }, [allComplete]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allComplete, value.isReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enqueueMutation = useEnqueueReembedding();
 
