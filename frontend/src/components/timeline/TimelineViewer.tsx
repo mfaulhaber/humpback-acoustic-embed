@@ -22,6 +22,14 @@ import { ExtractDialog } from "../classifier/ExtractDialog";
 import { ZOOM_LEVELS, VIEWPORT_SPAN, COLORS, AUDIO_PREFETCH_SEC, AUDIO_FORMAT } from "./constants";
 import type { LabelType } from "./constants";
 
+const LABEL_KEYS: Record<string, LabelType | null> = {
+  u: null,
+  h: "humpback",
+  o: "orca",
+  s: "ship",
+  b: "background",
+};
+
 export function TimelineViewer() {
   const { jobId } = useParams<{ jobId: string }>();
   const location = useLocation();
@@ -62,7 +70,7 @@ export function TimelineViewer() {
   const [labelMode, setLabelMode] = useState(false);
   const [labelEditMode, setLabelEditMode] = useState<"detection" | "vocalization" | null>(null);
   const [labelSubMode, setLabelSubMode] = useState<"select" | "add">("select");
-  const [selectedLabel, setSelectedLabel] = useState<LabelType | null>(null);
+  const [selectedLabel, setSelectedLabel] = useState<LabelType | null>("humpback");
 
   // Embedding sync state
   const { data: embeddingStatus } = useEmbeddingStatus(jobId ?? null);
@@ -334,7 +342,6 @@ export function TimelineViewer() {
       if (zoomLevel !== "5m" && zoomLevel !== "1m") return false;
       if (overlayMode !== "detection") return false;
 
-      setIsPlaying(false);
       setLabelMode(true);
       setLabelEditMode("detection");
       setLabelSubMode("select");
@@ -380,14 +387,6 @@ export function TimelineViewer() {
 
   // Keyboard shortcuts
   useEffect(() => {
-    const LABEL_KEYS: Record<string, LabelType | null> = {
-      u: null,
-      h: "humpback",
-      o: "orca",
-      s: "ship",
-      b: "background",
-    };
-
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;

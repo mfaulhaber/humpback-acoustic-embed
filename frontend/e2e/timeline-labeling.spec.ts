@@ -176,7 +176,7 @@ async function navigateToTimeline(page: Page) {
 
 /** Zoom into 5m level (enables label mode). */
 async function zoomTo5m(page: Page) {
-  const btn5m = page.locator("button", { hasText: "5m" });
+  const btn5m = page.getByRole("button", { name: "5m", exact: true });
   await expect(btn5m).toBeVisible();
   await btn5m.click();
   // Verify the zoom changed (5m now has accent color)
@@ -185,7 +185,7 @@ async function zoomTo5m(page: Page) {
 
 /** Zoom into 1m level (also enables label mode). */
 async function zoomTo1m(page: Page) {
-  const btn1m = page.locator("button", { hasText: "1m" });
+  const btn1m = page.getByRole("button", { name: "1m", exact: true });
   await expect(btn1m).toBeVisible();
   await btn1m.click();
   await expect(btn1m).toHaveCSS("color", "rgb(112, 224, 192)");
@@ -197,12 +197,12 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
 
     // Default zoom is "1h" — Label button should be disabled
-    const labelBtn = page.locator("button", { hasText: "Label" });
+    const labelBtn = page.getByRole("button", { name: "Label", exact: true });
     await expect(labelBtn).toBeVisible();
     await expect(labelBtn).toBeDisabled();
 
     // Also verify at 15m — still too wide for label mode
-    const btn15m = page.locator("button", { hasText: "15m" });
+    const btn15m = page.getByRole("button", { name: "15m", exact: true });
     await btn15m.click();
     await expect(labelBtn).toBeDisabled();
   });
@@ -211,7 +211,7 @@ test.describe("Timeline Labeling", () => {
     await setupMocks(page);
     await navigateToTimeline(page);
 
-    const labelBtn = page.locator("button", { hasText: "Label" });
+    const labelBtn = page.getByRole("button", { name: "Label", exact: true });
     await expect(labelBtn).toBeDisabled();
 
     await zoomTo5m(page);
@@ -223,7 +223,7 @@ test.describe("Timeline Labeling", () => {
     await setupMocks(page);
     await navigateToTimeline(page);
 
-    const labelBtn = page.locator("button", { hasText: "Label" });
+    const labelBtn = page.getByRole("button", { name: "Label", exact: true });
     await expect(labelBtn).toBeDisabled();
 
     await zoomTo1m(page);
@@ -239,7 +239,7 @@ test.describe("Timeline Labeling", () => {
     // LabelToolbar should not be visible yet
     await expect(page.locator("button", { hasText: "Select" })).not.toBeVisible();
 
-    const labelBtn = page.locator("button", { hasText: "Label" });
+    const labelBtn = page.getByRole("button", { name: "Label", exact: true });
     await labelBtn.click();
 
     // Toolbar should now appear: Select/Add mode buttons
@@ -247,10 +247,10 @@ test.describe("Timeline Labeling", () => {
     await expect(page.locator("button", { hasText: "Add" })).toBeVisible();
 
     // Label radio options visible
-    await expect(page.locator("text=humpback")).toBeVisible();
-    await expect(page.locator("text=orca")).toBeVisible();
-    await expect(page.locator("text=ship")).toBeVisible();
-    await expect(page.locator("text=background")).toBeVisible();
+    await expect(page.getByText("humpback", { exact: true })).toBeVisible();
+    await expect(page.getByText("orca", { exact: true })).toBeVisible();
+    await expect(page.getByText("ship", { exact: true })).toBeVisible();
+    await expect(page.getByText("background", { exact: true })).toBeVisible();
 
     // Action buttons visible
     await expect(page.locator("button", { hasText: "Save" })).toBeVisible();
@@ -262,7 +262,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo5m(page);
 
-    const labelBtn = page.locator("button", { hasText: "Label" });
+    const labelBtn = page.getByRole("button", { name: "Label", exact: true });
     await labelBtn.click();
 
     // Confirm toolbar is visible
@@ -281,7 +281,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
 
     // Save button should be disabled — no edits yet
     const saveBtn = page.locator("button", { hasText: "Save" });
@@ -294,7 +294,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
 
     // Initially Select mode is active — it has the accent background color
     const selectBtn = page.locator("button", { hasText: "Select" });
@@ -320,7 +320,7 @@ test.describe("Timeline Labeling", () => {
     // Before entering label mode — editor not in DOM
     await expect(page.locator('[data-testid="label-editor"]')).not.toBeVisible();
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
 
     // After entering label mode — editor overlay is in DOM and visible
     await expect(page.locator('[data-testid="label-editor"]')).toBeVisible();
@@ -331,7 +331,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
     await page.locator("button", { hasText: "Add" }).click();
 
     // Confirm we're in add mode (cursor changes but hard to assert — check active bg)
@@ -359,7 +359,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
     await page.locator("button", { hasText: "Add" }).click();
 
     const editor = page.locator('[data-testid="label-editor"]');
@@ -382,7 +382,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
     await page.locator("button", { hasText: "Add" }).click();
 
     const editor = page.locator('[data-testid="label-editor"]');
@@ -407,7 +407,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
     await page.locator("button", { hasText: "Add" }).click();
 
     // Add a label to create dirty state
@@ -447,7 +447,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
     await page.locator("button", { hasText: "Add" }).click();
 
     // Add a label to create dirty state
@@ -477,7 +477,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo5m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
 
     // The humpback radio input should be checked by default
     const humpbackRadio = page.locator('input[type="radio"][value="humpback"]');
@@ -494,7 +494,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo5m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
 
     // humpback is default
     const humpbackRadio = page.locator('input[type="radio"][value="humpback"]');
@@ -514,11 +514,108 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
     await zoomTo1m(page);
 
-    await page.locator("button", { hasText: "Label" }).click();
+    await page.getByRole("button", { name: "Label", exact: true }).click();
 
     // No bar selected yet — Delete should be disabled
     const deleteBtn = page.locator("button", { hasText: "Delete" });
     await expect(deleteBtn).toBeVisible();
     await expect(deleteBtn).toBeDisabled();
+  });
+
+  test("unlabeled radio button is clickable and selectable", async ({ page }) => {
+    await setupMocks(page);
+    await navigateToTimeline(page);
+    await zoomTo5m(page);
+
+    await page.getByRole("button", { name: "Label", exact: true }).click();
+
+    // humpback is default
+    const humpbackRadio = page.locator('input[type="radio"][value="humpback"]');
+    await expect(humpbackRadio).toBeChecked();
+
+    // Click unlabeled label (radio with empty value)
+    await page.locator("label", { hasText: /^unlabeled$/ }).click();
+
+    // Unlabeled radio should now be checked, humpback unchecked
+    const unlabeledRadio = page.locator('input[type="radio"][value=""]');
+    await expect(unlabeledRadio).toBeChecked();
+    await expect(humpbackRadio).not.toBeChecked();
+  });
+
+  test("keyboard shortcut h selects humpback label", async ({ page }) => {
+    await setupMocks(page);
+    await navigateToTimeline(page);
+    await zoomTo5m(page);
+
+    await page.getByRole("button", { name: "Label", exact: true }).click();
+
+    // Switch to orca first
+    await page.locator("label", { hasText: /^orca$/ }).click();
+    const orcaRadio = page.locator('input[type="radio"][value="orca"]');
+    await expect(orcaRadio).toBeChecked();
+
+    // Press 'h' to switch to humpback
+    await page.keyboard.press("h");
+
+    const humpbackRadio = page.locator('input[type="radio"][value="humpback"]');
+    await expect(humpbackRadio).toBeChecked();
+    await expect(orcaRadio).not.toBeChecked();
+  });
+
+  test("keyboard shortcut u selects unlabeled", async ({ page }) => {
+    await setupMocks(page);
+    await navigateToTimeline(page);
+    await zoomTo5m(page);
+
+    await page.getByRole("button", { name: "Label", exact: true }).click();
+
+    // humpback is default
+    const humpbackRadio = page.locator('input[type="radio"][value="humpback"]');
+    await expect(humpbackRadio).toBeChecked();
+
+    // Press 'u' to switch to unlabeled
+    await page.keyboard.press("u");
+
+    const unlabeledRadio = page.locator('input[type="radio"][value=""]');
+    await expect(unlabeledRadio).toBeChecked();
+    await expect(humpbackRadio).not.toBeChecked();
+  });
+
+  test("keyboard shortcuts do not fire outside label mode", async ({ page }) => {
+    await setupMocks(page);
+    await navigateToTimeline(page);
+    await zoomTo5m(page);
+
+    // Not in label mode — press 'o' should have no effect
+    await page.keyboard.press("o");
+
+    // Now enter label mode and verify humpback is still default
+    await page.getByRole("button", { name: "Label", exact: true }).click();
+    const humpbackRadio = page.locator('input[type="radio"][value="humpback"]');
+    await expect(humpbackRadio).toBeChecked();
+  });
+
+  test("clicking detection bar enters label mode at 5m zoom", async ({ page }) => {
+    await setupMocks(page, { withDetections: true });
+    await navigateToTimeline(page);
+
+    // Toggle detection overlay on so DetectionOverlay renders
+    await page.getByRole("button", { name: "Labels", exact: true }).click();
+
+    await zoomTo5m(page);
+
+    // Label toolbar should not be visible yet
+    await expect(page.locator("button", { hasText: "Select" })).not.toBeVisible();
+
+    // Click on a detection bar inside the overlay
+    const overlay = page.locator('[data-testid="detection-overlay"]');
+    await expect(overlay).toBeVisible();
+    // Detection bars are direct children of the overlay container with pointer-events: auto
+    const bar = overlay.locator(":scope > div").first();
+    await expect(bar).toBeVisible({ timeout: 3_000 });
+    await bar.click();
+
+    // Label toolbar should now be visible (label mode entered)
+    await expect(page.locator("button", { hasText: "Select" })).toBeVisible({ timeout: 3_000 });
   });
 });

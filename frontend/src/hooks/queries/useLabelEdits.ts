@@ -125,18 +125,20 @@ function reducer(state: State, action: Action): State {
     }
 
     case "change_type": {
-      // Collapse with existing add or change_type for the same row
+      // Collapse with existing add, change_type, or clear_label for the same row
       const existingIdx = state.edits.findIndex(
         (e) =>
           (e.action === "add" && e.id === action.row_id) ||
-          (e.action === "change_type" && e.row_id === action.row_id),
+          (e.action === "change_type" && e.row_id === action.row_id) ||
+          (e.action === "clear_label" && e.row_id === action.row_id),
       );
 
       if (existingIdx !== -1) {
-        const updated: LabelEdit = {
-          ...state.edits[existingIdx],
-          label: action.label,
-        };
+        const existing = state.edits[existingIdx];
+        const updated: LabelEdit =
+          existing.action === "clear_label"
+            ? { action: "change_type", row_id: action.row_id, label: action.label }
+            : { ...existing, label: action.label };
         const edits = [...state.edits];
         edits[existingIdx] = updated;
         return { ...state, edits };
