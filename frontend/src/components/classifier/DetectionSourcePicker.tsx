@@ -245,7 +245,10 @@ export function DetectionSourcePicker({
   }, [hasSelection, selectedIds, statusMap]);
 
   useEffect(() => {
+    console.log("[DetectionSourcePicker] allComplete=%s, value.isReady=%s, selectedIds=%d, statusMap.size=%d",
+      allComplete, value.isReady, selectedIds.length, statusMap.size);
     if (value.isReady !== allComplete) {
+      console.log("[DetectionSourcePicker] pushing isReady=%s", allComplete);
       onChange({ ...value, isReady: allComplete });
     }
   }, [allComplete]); // eslint-disable-line react-hooks/exhaustive-deps
