@@ -1120,7 +1120,7 @@ export interface ZoomProgress {
 export type PrepareStatusResponse = Record<string, ZoomProgress>;
 
 export interface LabelEditItem {
-  action: "add" | "move" | "delete" | "change_type";
+  action: "add" | "move" | "delete" | "change_type" | "clear_label";
   row_id?: string;
   start_utc?: number;
   end_utc?: number;

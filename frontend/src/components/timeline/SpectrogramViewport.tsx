@@ -41,6 +41,8 @@ export interface SpectrogramViewportProps {
   overlayMode?: "detection" | "vocalization";
   /** Vocalization labels for the overlay. */
   vocalizationLabels?: TimelineVocalizationLabel[];
+  /** Called when a detection bar is clicked in view mode. Return true to suppress popover. */
+  onDetectionBarClick?: (row: DetectionRow) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +174,7 @@ export function SpectrogramViewport({
   renderVocLabelEditor,
   overlayMode = "detection",
   vocalizationLabels,
+  onDetectionBarClick,
 }: SpectrogramViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -412,6 +415,7 @@ export function SpectrogramViewport({
               height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
               visible={showLabels}
               onDetectionClick={(row, x, y) => {
+                if (onDetectionBarClick?.(row)) return;
                 setSelectedRow(row);
                 setPopoverPos({ x, y });
               }}

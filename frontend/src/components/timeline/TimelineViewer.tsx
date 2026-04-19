@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import type { ZoomLevel } from "@/api/types";
+import type { DetectionRow, ZoomLevel } from "@/api/types";
 import { useTimelineConfidence, useTimelineDetections, usePrepareStatus, useSaveLabels } from "@/hooks/queries/useTimeline";
 import { useHydrophoneDetectionJobs, useExtractLabeledSamples } from "@/hooks/queries/useClassifier";
 import { useVocalizationOverlay } from "@/hooks/queries/useVocalizationOverlay";
@@ -327,6 +327,30 @@ export function TimelineViewer() {
     }
   }, [labelMode, labelEditMode, isDirty, vocIsDirty, labelDispatch, vocLabelDispatch, overlayMode]);
 
+  // Click detection bar to enter label mode (preconditions: stopped, zoomed in, overlay visible, not in label mode)
+  const handleDetectionBarClick = useCallback(
+    (row: DetectionRow): boolean => {
+      if (isPlaying || labelMode) return false;
+      if (zoomLevel !== "5m" && zoomLevel !== "1m") return false;
+      if (overlayMode !== "detection") return false;
+
+      setIsPlaying(false);
+      setLabelMode(true);
+      setLabelEditMode("detection");
+      setLabelSubMode("select");
+      labelDispatch({ type: "select", id: row.row_id });
+      const label: LabelType | null =
+        row.humpback === 1 ? "humpback" :
+        row.orca === 1 ? "orca" :
+        row.ship === 1 ? "ship" :
+        row.background === 1 ? "background" :
+        null;
+      setSelectedLabel(label);
+      return true;
+    },
+    [isPlaying, labelMode, zoomLevel, overlayMode, labelDispatch],
+  );
+
   // Play/pause — exits label mode if active
   const togglePlay = useCallback(() => {
     if (labelMode) {
@@ -356,7 +380,18 @@ export function TimelineViewer() {
 
   // Keyboard shortcuts
   useEffect(() => {
+    const LABEL_KEYS: Record<string, LabelType | null> = {
+      u: null,
+      h: "humpback",
+      o: "orca",
+      s: "ship",
+      b: "background",
+    };
+
     const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
       if (e.key === " ") { e.preventDefault(); togglePlay(); }
       if (e.key === "+" || e.key === "=") zoomIn();
       if (e.key === "-") zoomOut();
@@ -372,10 +407,23 @@ export function TimelineViewer() {
           return Math.min(job?.end_timestamp ?? prev, prev + span / 10);
         });
       }
+
+      if (labelMode && labelEditMode === "detection" && e.key in LABEL_KEYS) {
+        e.preventDefault();
+        const label = LABEL_KEYS[e.key];
+        setSelectedLabel(label);
+        if (labelSubMode === "select" && selectedId) {
+          if (label === null) {
+            labelDispatch({ type: "clear_label", row_id: selectedId });
+          } else {
+            labelDispatch({ type: "change_type", row_id: selectedId, label });
+          }
+        }
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [togglePlay, zoomIn, zoomOut, zoomLevel, job]);
+  }, [togglePlay, zoomIn, zoomOut, zoomLevel, job, labelMode, labelEditMode, labelSubMode, selectedId, labelDispatch]);
 
   // Warn before navigating away with unsaved label edits
   useEffect(() => {
@@ -440,6 +488,7 @@ export function TimelineViewer() {
           labelEditMode={labelEditMode}
           overlayMode={overlayMode === "vocalization" ? "vocalization" : "detection"}
           vocalizationLabels={vocalizationLabels}
+          onDetectionBarClick={handleDetectionBarClick}
           renderLabelEditor={(w, h) => (
             <LabelEditor
               mergedRows={mergedRows}
@@ -489,11 +538,15 @@ export function TimelineViewer() {
             onLabelChange={(label) => {
               setSelectedLabel(label);
               if (labelSubMode === "select" && selectedId) {
-                labelDispatch({
-                  type: "change_type",
-                  row_id: selectedId,
-                  label,
-                });
+                if (label === null) {
+                  labelDispatch({ type: "clear_label", row_id: selectedId });
+                } else {
+                  labelDispatch({
+                    type: "change_type",
+                    row_id: selectedId,
+                    label,
+                  });
+                }
               }
             }}
             onDelete={() => {

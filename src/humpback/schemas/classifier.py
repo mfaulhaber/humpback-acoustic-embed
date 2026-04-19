@@ -12,7 +12,7 @@ DETECTION_MODE_CREATE_ERROR = (
 
 
 class LabelEditItem(BaseModel):
-    action: Literal["add", "move", "delete", "change_type"]
+    action: Literal["add", "move", "delete", "change_type", "clear_label"]
     row_id: Optional[str] = None
     start_utc: Optional[float] = None
     end_utc: Optional[float] = None
