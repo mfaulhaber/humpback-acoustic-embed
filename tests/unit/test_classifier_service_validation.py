@@ -366,3 +366,170 @@ class TestCreateTrainingJobFromDetectionManifest:
         )
         assert job.parameters is not None
         assert json.loads(job.parameters) == params
+
+
+# ---------------------------------------------------------------------------
+# Training data summary — detection_manifest source mode
+# ---------------------------------------------------------------------------
+
+
+class TestGetTrainingDataSummaryDetectionManifest:
+    """Tests for get_training_data_summary with detection_manifest models."""
+
+    async def test_detection_manifest_with_per_job_counts(self, session):
+        from humpback.services.classifier_service.training import (
+            get_training_data_summary,
+        )
+
+        cm_source = _seed_classifier_model(session.add)
+        await session.flush()
+
+        dj1 = DetectionJob(
+            status="complete",
+            classifier_model_id=cm_source.id,
+            hydrophone_name="Orcasound Lab",
+            start_timestamp=1635638400.0,
+            end_timestamp=1635724800.0,
+        )
+        dj2 = DetectionJob(
+            status="complete",
+            classifier_model_id=cm_source.id,
+            hydrophone_name="Bush Point",
+            start_timestamp=1637366400.0,
+            end_timestamp=1637452800.0,
+        )
+        session.add_all([dj1, dj2])
+        await session.flush()
+
+        training_summary = json.dumps(
+            {
+                "n_positive": 500,
+                "n_negative": 300,
+                "detection_job_ids": [dj1.id, dj2.id],
+                "training_data_source": {
+                    "per_job_counts": [
+                        {
+                            "detection_job_id": dj1.id,
+                            "positive_count": 300,
+                            "negative_count": 200,
+                        },
+                        {
+                            "detection_job_id": dj2.id,
+                            "positive_count": 200,
+                            "negative_count": 100,
+                        },
+                    ],
+                },
+            }
+        )
+
+        tj = ClassifierTrainingJob(
+            name="det-manifest-job",
+            status="complete",
+            source_mode="detection_manifest",
+            positive_embedding_set_ids="[]",
+            negative_embedding_set_ids="[]",
+            model_version="perch_v2",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+        )
+        session.add(tj)
+        await session.flush()
+
+        cm = ClassifierModel(
+            name="det-manifest-model",
+            model_path="/tmp/fake.joblib",
+            model_version="perch_v2",
+            vector_dim=1536,
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            training_summary=training_summary,
+            training_job_id=tj.id,
+            training_source_mode="detection_manifest",
+        )
+        session.add(cm)
+        await session.flush()
+
+        result = await get_training_data_summary(session, cm.id)
+
+        assert result is not None
+        assert result["total_positive"] == 500
+        assert result["total_negative"] == 300
+        assert result["positive_sources"] == []
+        assert result["negative_sources"] == []
+        assert len(result["detection_sources"]) == 2
+
+        src1 = result["detection_sources"][0]
+        assert src1["detection_job_id"] == dj1.id
+        assert src1["hydrophone_name"] == "Orcasound Lab"
+        assert src1["start_timestamp"] == 1635638400.0
+        assert src1["positive_count"] == 300
+        assert src1["negative_count"] == 200
+
+        src2 = result["detection_sources"][1]
+        assert src2["hydrophone_name"] == "Bush Point"
+
+    async def test_detection_manifest_without_per_job_counts(self, session):
+        from humpback.services.classifier_service.training import (
+            get_training_data_summary,
+        )
+
+        cm_source = _seed_classifier_model(session.add)
+        await session.flush()
+
+        dj = DetectionJob(
+            status="complete",
+            classifier_model_id=cm_source.id,
+            hydrophone_name="Orcasound Lab",
+            start_timestamp=1635638400.0,
+            end_timestamp=1635724800.0,
+        )
+        session.add(dj)
+        await session.flush()
+
+        training_summary = json.dumps(
+            {
+                "n_positive": 100,
+                "n_negative": 80,
+                "detection_job_ids": [dj.id],
+                "training_data_source": {
+                    "manifest_path": "/tmp/fake/manifest.json",
+                },
+            }
+        )
+
+        tj = ClassifierTrainingJob(
+            name="det-job",
+            status="complete",
+            source_mode="detection_manifest",
+            positive_embedding_set_ids="[]",
+            negative_embedding_set_ids="[]",
+            model_version="perch_v2",
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+        )
+        session.add(tj)
+        await session.flush()
+
+        cm = ClassifierModel(
+            name="det-model",
+            model_path="/tmp/fake.joblib",
+            model_version="perch_v2",
+            vector_dim=1536,
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+            training_summary=training_summary,
+            training_job_id=tj.id,
+            training_source_mode="detection_manifest",
+        )
+        session.add(cm)
+        await session.flush()
+
+        result = await get_training_data_summary(session, cm.id)
+
+        assert result is not None
+        assert len(result["detection_sources"]) == 1
+        src = result["detection_sources"][0]
+        assert src["hydrophone_name"] == "Orcasound Lab"
+        assert src["positive_count"] is None
+        assert src["negative_count"] is None

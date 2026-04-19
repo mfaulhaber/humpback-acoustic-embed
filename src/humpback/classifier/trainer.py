@@ -211,6 +211,33 @@ def _load_manifest_parquet_cache(
     return cache
 
 
+def _compute_per_job_counts(
+    examples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Group detection-job examples by job ID and count positives/negatives."""
+    import re
+
+    job_counts: dict[str, dict[str, int]] = {}
+    pattern = re.compile(r"/detections/([0-9a-f-]{36})/")
+
+    for ex in examples:
+        if ex.get("source_type") != "detection_job":
+            continue
+        parquet_path = str(ex.get("parquet_path", ""))
+        match = pattern.search(parquet_path)
+        if not match:
+            continue
+        job_id = match.group(1)
+        if job_id not in job_counts:
+            job_counts[job_id] = {"positive_count": 0, "negative_count": 0}
+        if int(ex.get("label", 0)) == 1:
+            job_counts[job_id]["positive_count"] += 1
+        else:
+            job_counts[job_id]["negative_count"] += 1
+
+    return [{"detection_job_id": jid, **counts} for jid, counts in job_counts.items()]
+
+
 def load_manifest_split_embeddings(
     manifest_path: Path | str,
     *,
@@ -278,7 +305,7 @@ def load_manifest_split_embeddings(
 
     positive_embeddings = np.array(positive, dtype=np.float32)
     negative_embeddings = np.array(negative, dtype=np.float32)
-    source_summary = {
+    source_summary: dict[str, Any] = {
         "manifest_path": str(Path(manifest_path)),
         "split": split,
         "example_count": len(split_examples),
@@ -290,6 +317,11 @@ def load_manifest_split_embeddings(
             else negative_embeddings.shape[1]
         ),
     }
+
+    per_job = _compute_per_job_counts(split_examples)
+    if per_job:
+        source_summary["per_job_counts"] = per_job
+
     return positive_embeddings, negative_embeddings, source_summary
 
 

@@ -1673,3 +1673,91 @@ async def test_run_training_job_detection_manifest(
         np.array([[1.0, 1.0, 0.0, 0.0]], dtype=np.float32)
     )
     assert probs.shape == (1, 2)
+
+
+# ---------------------------------------------------------------------------
+# _merge_candidate_standard_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestMergeCandidateStandardMetrics:
+    def test_merges_sample_counts(self):
+        from humpback.workers.classifier_worker.training import (
+            _merge_candidate_standard_metrics,
+        )
+
+        summary: dict = {
+            "training_data_source": {"positive_count": 248, "negative_count": 216},
+        }
+        _merge_candidate_standard_metrics(summary, None)
+        assert summary["n_positive"] == 248
+        assert summary["n_negative"] == 216
+        assert summary["balance_ratio"] == round(248 / 216, 4)
+
+    def test_merges_metrics_from_split_metrics(self):
+        from humpback.workers.classifier_worker.training import (
+            _merge_candidate_standard_metrics,
+        )
+
+        summary: dict = {
+            "training_data_source": {"positive_count": 100, "negative_count": 50},
+        }
+        provenance = {
+            "split_metrics": {
+                "test": {
+                    "autoresearch": {
+                        "precision": 0.95,
+                        "recall": 0.90,
+                        "tp": 90,
+                        "fp": 5,
+                        "fn": 10,
+                        "tn": 45,
+                    },
+                },
+            },
+            "trainer_parameters": {
+                "classifier_type": "logistic_regression",
+                "class_weight": {"0": 1.0, "1": 3.0},
+            },
+        }
+        _merge_candidate_standard_metrics(summary, provenance)
+
+        assert summary["cv_precision"] == 0.95
+        assert summary["cv_recall"] == 0.90
+        expected_f1 = round(2 * 0.95 * 0.90 / (0.95 + 0.90), 6)
+        assert summary["cv_f1"] == expected_f1
+        expected_acc = round((90 + 45) / (90 + 5 + 10 + 45), 6)
+        assert summary["cv_accuracy"] == expected_acc
+        assert summary["train_confusion"] == {"tp": 90, "fp": 5, "fn": 10, "tn": 45}
+        assert summary["classifier_type"] == "logistic_regression"
+        assert summary["effective_class_weights"] == {"0": 1.0, "1": 3.0}
+
+    def test_no_std_or_roc_fields(self):
+        from humpback.workers.classifier_worker.training import (
+            _merge_candidate_standard_metrics,
+        )
+
+        summary: dict = {
+            "training_data_source": {"positive_count": 10, "negative_count": 10},
+        }
+        provenance = {
+            "split_metrics": {
+                "test": {
+                    "autoresearch": {
+                        "precision": 0.8,
+                        "recall": 0.7,
+                        "tp": 7,
+                        "fp": 2,
+                        "fn": 3,
+                        "tn": 8,
+                    }
+                },
+            },
+            "trainer_parameters": {},
+        }
+        _merge_candidate_standard_metrics(summary, provenance)
+
+        assert "cv_roc_auc" not in summary
+        assert "cv_accuracy_std" not in summary
+        assert "score_separation" not in summary
+        assert "n_cv_folds" not in summary

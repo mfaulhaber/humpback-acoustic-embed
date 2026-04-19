@@ -618,6 +618,15 @@ export interface TrainingSourceInfo {
   duration_represented_sec: number | null;
 }
 
+export interface DetectionSourceInfo {
+  detection_job_id: string;
+  hydrophone_name: string | null;
+  start_timestamp: number | null;
+  end_timestamp: number | null;
+  positive_count: number | null;
+  negative_count: number | null;
+}
+
 export interface TrainingDataSummaryResponse {
   model_id: string;
   model_name: string;
@@ -629,6 +638,7 @@ export interface TrainingDataSummaryResponse {
   window_size_seconds: number;
   positive_duration_sec: number | null;
   negative_duration_sec: number | null;
+  detection_sources: DetectionSourceInfo[] | null;
 }
 
 // ---- Retrain Workflows ----
