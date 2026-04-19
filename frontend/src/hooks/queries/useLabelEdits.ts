@@ -6,7 +6,7 @@ import type { LabelType } from "@/components/timeline/constants";
 export type { LabelType };
 
 export interface LabelEdit {
-  action: "add" | "move" | "delete" | "change_type";
+  action: "add" | "move" | "delete" | "change_type" | "clear_label";
   id?: string;
   row_id?: string;
   start_utc?: number;
@@ -25,6 +25,7 @@ export type Action =
   | { type: "delete"; row_id: string }
   | { type: "delete_by_id"; id: string }
   | { type: "change_type"; row_id: string; label: LabelType }
+  | { type: "clear_label"; row_id: string }
   | { type: "select"; id: string | null }
   | { type: "clear" };
 
@@ -124,18 +125,20 @@ function reducer(state: State, action: Action): State {
     }
 
     case "change_type": {
-      // Collapse with existing add or change_type for the same row
+      // Collapse with existing add, change_type, or clear_label for the same row
       const existingIdx = state.edits.findIndex(
         (e) =>
           (e.action === "add" && e.id === action.row_id) ||
-          (e.action === "change_type" && e.row_id === action.row_id),
+          (e.action === "change_type" && e.row_id === action.row_id) ||
+          (e.action === "clear_label" && e.row_id === action.row_id),
       );
 
       if (existingIdx !== -1) {
-        const updated: LabelEdit = {
-          ...state.edits[existingIdx],
-          label: action.label,
-        };
+        const existing = state.edits[existingIdx];
+        const updated: LabelEdit =
+          existing.action === "clear_label"
+            ? { action: "change_type", row_id: action.row_id, label: action.label }
+            : { ...existing, label: action.label };
         const edits = [...state.edits];
         edits[existingIdx] = updated;
         return { ...state, edits };
@@ -146,6 +149,46 @@ function reducer(state: State, action: Action): State {
         action: "change_type",
         row_id: action.row_id,
         label: action.label,
+      };
+      return { ...state, edits: [...state.edits, newEdit] };
+    }
+
+    case "clear_label": {
+      // Collapse with existing add or change_type for the same row
+      const existingIdx = state.edits.findIndex(
+        (e) =>
+          (e.action === "add" && e.id === action.row_id) ||
+          (e.action === "change_type" && e.row_id === action.row_id),
+      );
+
+      if (existingIdx !== -1) {
+        const existing = state.edits[existingIdx];
+        if (existing.action === "add") {
+          // Clear label on an add edit — remove the label field
+          const updated: LabelEdit = { ...existing, label: undefined };
+          const edits = [...state.edits];
+          edits[existingIdx] = updated;
+          return { ...state, edits };
+        }
+        // Collapse change_type → clear_label
+        const updated: LabelEdit = {
+          action: "clear_label",
+          row_id: action.row_id,
+        };
+        const edits = [...state.edits];
+        edits[existingIdx] = updated;
+        return { ...state, edits };
+      }
+
+      // Also collapse with an existing clear_label (idempotent)
+      const clearIdx = state.edits.findIndex(
+        (e) => e.action === "clear_label" && e.row_id === action.row_id,
+      );
+      if (clearIdx !== -1) return state;
+
+      const newEdit: LabelEdit = {
+        action: "clear_label",
+        row_id: action.row_id,
       };
       return { ...state, edits: [...state.edits, newEdit] };
     }
@@ -203,6 +246,15 @@ export function useLabelEdits(originalRows: DetectionRow[]) {
           row.orca = edit.label === "orca" ? 1 : null;
           row.ship = edit.label === "ship" ? 1 : null;
           row.background = edit.label === "background" ? 1 : null;
+        }
+      }
+      if (edit.action === "clear_label" && edit.row_id != null) {
+        const row = rows.find((r) => r.row_id === edit.row_id);
+        if (row) {
+          row.humpback = null;
+          row.orca = null;
+          row.ship = null;
+          row.background = null;
         }
       }
     }

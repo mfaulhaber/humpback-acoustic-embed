@@ -476,6 +476,14 @@ def apply_label_edits(
             # Don't add to touched_keys — change_type doesn't move rows,
             # so existing overlap between detection windows is acceptable.
 
+        elif action == "clear_label":
+            key = str(edit.get("row_id", ""))
+            target = row_index.get(key)
+            if target is None:
+                raise ValueError(f"Row with row_id {key!r} not found")
+            for lf in LABEL_FIELDNAMES:
+                target[lf] = ""
+
         else:
             raise ValueError(f"Unknown edit action: {action!r}")
 

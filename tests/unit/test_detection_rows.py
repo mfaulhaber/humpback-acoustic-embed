@@ -176,6 +176,32 @@ def test_apply_label_edits_change_type() -> None:
     assert result[0]["orca"] == "1"
 
 
+def test_apply_label_edits_clear_label() -> None:
+    """apply_label_edits clear_label sets all label fields to empty."""
+    rows: list[dict[str, str]] = [
+        {f: "" for f in ROW_STORE_FIELDNAMES}
+        | {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0", "humpback": "1"}
+    ]
+    edits = [{"action": "clear_label", "row_id": "r1"}]
+    result = apply_label_edits(rows, edits, job_duration=2000.0)
+    assert result[0]["humpback"] == ""
+    assert result[0]["orca"] == ""
+    assert result[0]["ship"] == ""
+    assert result[0]["background"] == ""
+
+
+def test_apply_label_edits_clear_label_already_unlabeled() -> None:
+    """clear_label on an already-unlabeled row is a no-op."""
+    rows: list[dict[str, str]] = [
+        {f: "" for f in ROW_STORE_FIELDNAMES}
+        | {"row_id": "r1", "start_utc": "1000.0", "end_utc": "1005.0"}
+    ]
+    edits = [{"action": "clear_label", "row_id": "r1"}]
+    result = apply_label_edits(rows, edits, job_duration=2000.0)
+    assert result[0]["humpback"] == ""
+    assert result[0]["orca"] == ""
+
+
 def test_apply_label_edits_unknown_row_id() -> None:
     """apply_label_edits raises ValueError for unknown row_id."""
     import pytest

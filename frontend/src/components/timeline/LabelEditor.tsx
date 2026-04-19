@@ -172,12 +172,14 @@ export function LabelEditor({
         return;
       }
 
-      // Ghost tracking in add mode
-      if (mode === "add") {
+      // Ghost tracking in add mode (suppress when unlabeled is selected)
+      if (mode === "add" && selectedLabel !== null) {
         setGhostUtc(utc);
+      } else if (mode === "add") {
+        setGhostUtc(null);
       }
     },
-    [getMouseUtc, mode, clampDrag],
+    [getMouseUtc, mode, selectedLabel, clampDrag],
   );
 
   const handleContainerMouseUp = useCallback(() => {
@@ -357,7 +359,7 @@ export function LabelEditor({
         pointerEvents: containerInteractive ? "auto" : "none",
         zIndex: 10,
         overflow: "hidden",
-        cursor: mode === "add" ? "crosshair" : isDragging ? "grabbing" : "default",
+        cursor: mode === "add" && selectedLabel ? "crosshair" : isDragging ? "grabbing" : "default",
       }}
       onMouseMove={containerInteractive ? handleContainerMouseMove : undefined}
       onMouseUp={containerInteractive ? handleContainerMouseUp : undefined}
