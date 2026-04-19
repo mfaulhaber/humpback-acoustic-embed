@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
@@ -246,7 +247,7 @@ async def list_detection_embedding_jobs(
 
 
 async def _resolve_legacy_embeddings(
-    session: SessionDep,
+    session: AsyncSession,
     detection_job_ids: list[str],
     model_version: str,
     storage_root: Path,
