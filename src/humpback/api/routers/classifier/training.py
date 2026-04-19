@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.schemas.classifier import (
     ClassifierTrainingJobCreate,
     ClassifierTrainingJobOut,
+    DetectionJobLabelCount,
     DetectionSourceInfo,
     RetrainFolderInfo,
     RetrainWorkflowCreate,
@@ -99,6 +100,39 @@ async def bulk_delete_training_jobs(
         session, body.ids, settings.storage_root
     )
     return {"status": "deleted", "count": count}
+
+
+# ---- Detection Job Label Counts ----
+
+
+@router.get("/detection-jobs/label-counts")
+async def get_detection_job_label_counts(
+    settings: SettingsDep,
+    detection_job_ids: list[str] = Query(default_factory=list),
+) -> list[DetectionJobLabelCount]:
+    from humpback.classifier.detection_rows import read_detection_row_store
+    from humpback.storage import detection_row_store_path
+
+    results: list[DetectionJobLabelCount] = []
+    for job_id in detection_job_ids:
+        rs_path = detection_row_store_path(settings.storage_root, job_id)
+        if not rs_path.exists():
+            results.append(
+                DetectionJobLabelCount(detection_job_id=job_id, positive=0, negative=0)
+            )
+            continue
+        _, rows = read_detection_row_store(rs_path)
+        pos = 0
+        neg = 0
+        for row in rows:
+            if row.get("humpback") == "1" or row.get("orca") == "1":
+                pos += 1
+            elif row.get("ship") == "1" or row.get("background") == "1":
+                neg += 1
+        results.append(
+            DetectionJobLabelCount(detection_job_id=job_id, positive=pos, negative=neg)
+        )
+    return results
 
 
 # ---- Training Data Summary ----

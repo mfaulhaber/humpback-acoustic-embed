@@ -1021,6 +1021,12 @@ export interface EmbeddingJobListItem extends DetectionEmbeddingJob {
   audio_folder: string | null;
 }
 
+export interface DetectionJobLabelCount {
+  detection_job_id: string;
+  positive: number;
+  negative: number;
+}
+
 export interface DetectionEmbeddingJobStatus {
   detection_job_id: string;
   model_version: string;

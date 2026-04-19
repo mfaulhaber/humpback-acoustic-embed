@@ -39,6 +39,7 @@ import {
   getSearchSpaceDefaults,
   importCandidateFromSearch,
   deleteCandidate,
+  fetchDetectionJobLabelCounts,
 } from "@/api/client";
 import { toast } from "@/components/ui/use-toast";
 import type {
@@ -524,5 +525,13 @@ export function useDeleteCandidate() {
         duration: 8000,
       });
     },
+  });
+}
+
+export function useDetectionJobLabelCounts(detectionJobIds: string[]) {
+  return useQuery({
+    queryKey: ["detectionJobLabelCounts", detectionJobIds],
+    queryFn: () => fetchDetectionJobLabelCounts(detectionJobIds),
+    enabled: detectionJobIds.length > 0,
   });
 }
