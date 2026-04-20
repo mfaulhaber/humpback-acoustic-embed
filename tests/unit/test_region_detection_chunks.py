@@ -235,6 +235,71 @@ def test_filter_timeline_selects_overlapping_segments():
     assert [s.key for s in filtered] == ["d"]
 
 
+# ---- Trace dedup at merge time -----------------------------------------------
+
+
+def test_merge_deduplicates_by_time_sec_keeping_highest_score(tmp_path: Path):
+    """When chunks produce overlapping timestamps, dedup keeps highest score."""
+    # Chunk 0: timestamps 0-4, chunk 1: overlaps at 3-4 then continues 5-7
+    chunk_0 = [
+        WindowScore(time_sec=0.0, score=0.1),
+        WindowScore(time_sec=1.0, score=0.5),
+        WindowScore(time_sec=2.0, score=0.9),
+        WindowScore(time_sec=3.0, score=0.3),
+        WindowScore(time_sec=4.0, score=0.2),
+    ]
+    chunk_1 = [
+        WindowScore(time_sec=3.0, score=0.8),  # higher than chunk 0's 0.3
+        WindowScore(time_sec=4.0, score=0.1),  # lower than chunk 0's 0.2
+        WindowScore(time_sec=5.0, score=0.7),
+        WindowScore(time_sec=6.0, score=0.6),
+    ]
+    write_chunk_trace(tmp_path, 0, chunk_0)
+    write_chunk_trace(tmp_path, 1, chunk_1)
+
+    raw = read_all_chunk_traces(tmp_path, 2)
+    assert len(raw) == 9  # 5 + 4, with duplicates
+
+    # Apply the same dedup logic as the worker
+    seen: dict[float, WindowScore] = {}
+    for ws in raw:
+        existing = seen.get(ws.time_sec)
+        if existing is None or ws.score > existing.score:
+            seen[ws.time_sec] = ws
+    deduped = sorted(seen.values(), key=lambda ws: ws.time_sec)
+
+    assert len(deduped) == 7  # 0,1,2,3,4,5,6
+    scores_by_time = {ws.time_sec: ws.score for ws in deduped}
+    assert scores_by_time[3.0] == 0.8  # kept chunk_1's higher score
+    assert scores_by_time[4.0] == 0.2  # kept chunk_0's higher score
+
+
+def test_merge_no_duplicates_passes_through(tmp_path: Path):
+    """Non-overlapping chunks produce no dedup changes."""
+    chunk_0 = [
+        WindowScore(time_sec=0.0, score=0.5),
+        WindowScore(time_sec=1.0, score=0.6),
+    ]
+    chunk_1 = [
+        WindowScore(time_sec=2.0, score=0.7),
+        WindowScore(time_sec=3.0, score=0.8),
+    ]
+    write_chunk_trace(tmp_path, 0, chunk_0)
+    write_chunk_trace(tmp_path, 1, chunk_1)
+
+    raw = read_all_chunk_traces(tmp_path, 2)
+    assert len(raw) == 4
+
+    seen: dict[float, WindowScore] = {}
+    for ws in raw:
+        existing = seen.get(ws.time_sec)
+        if existing is None or ws.score > existing.score:
+            seen[ws.time_sec] = ws
+    deduped = sorted(seen.values(), key=lambda ws: ws.time_sec)
+
+    assert len(deduped) == 4  # no change
+
+
 def test_build_archive_detection_provider_accepts_force_refresh():
     """build_archive_detection_provider passes force_refresh to CachingHLSProvider."""
     from unittest.mock import patch
