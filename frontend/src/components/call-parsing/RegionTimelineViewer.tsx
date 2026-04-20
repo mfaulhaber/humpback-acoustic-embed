@@ -1,14 +1,17 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { ZoomLevel } from "@/api/types";
+import type { ZoomLevel, RegionCorrection } from "@/api/types";
 import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
 import {
   useRegionDetectionJobs,
   useRegionJobRegions,
   useRegionJobConfidence,
+  useRegionCorrections,
+  useSaveRegionCorrections,
 } from "@/hooks/queries/useCallParsing";
+import { RegionEditOverlay } from "./RegionEditOverlay";
 import { SpectrogramViewport } from "@/components/timeline/SpectrogramViewport";
 import { ZoomSelector } from "@/components/timeline/ZoomSelector";
 import { PlaybackControls } from "@/components/timeline/PlaybackControls";
@@ -48,11 +51,76 @@ export function RegionTimelineViewer() {
   const job = jobs?.find((j) => j.id === jobId);
   const { data: regions } = useRegionJobRegions(jobId ?? null);
   const { data: confidence } = useRegionJobConfidence(jobId ?? null);
+  const { data: savedCorrections } = useRegionCorrections(jobId ?? null);
+  const saveCorrections = useSaveRegionCorrections();
 
   const [centerTimestamp, setCenterTimestamp] = useState<number>(0);
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>("1h");
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [editMode, setEditMode] = useState(false);
+  const [pendingCorrections, setPendingCorrections] = useState<
+    Map<string, RegionCorrection>
+  >(new Map());
+
+  // Load saved corrections into pending state when entering edit mode
+  useEffect(() => {
+    if (editMode && savedCorrections) {
+      const map = new Map<string, RegionCorrection>();
+      for (const c of savedCorrections) {
+        map.set(c.region_id, {
+          region_id: c.region_id,
+          correction_type: c.correction_type,
+          start_sec: c.start_sec,
+          end_sec: c.end_sec,
+        });
+      }
+      setPendingCorrections(map);
+    }
+  }, [editMode, savedCorrections]);
+
+  const handleCorrection = useCallback((correction: RegionCorrection) => {
+    setPendingCorrections((prev) => {
+      const next = new Map(prev);
+      next.set(correction.region_id, correction);
+      return next;
+    });
+  }, []);
+
+  const handleSaveCorrections = useCallback(() => {
+    if (!jobId) return;
+    const corrections = Array.from(pendingCorrections.values());
+    saveCorrections.mutate(
+      { jobId, corrections },
+      {
+        onSuccess: () => {
+          setEditMode(false);
+          setPendingCorrections(new Map());
+        },
+      },
+    );
+  }, [jobId, pendingCorrections, saveCorrections]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditMode(false);
+    setPendingCorrections(new Map());
+  }, []);
+
+  // Track viewport dimensions for the edit overlay
+  const viewportContainerRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+
+  useEffect(() => {
+    const el = viewportContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setViewportWidth(entry.contentRect.width);
+      setViewportHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const jobStart = job?.start_timestamp ?? 0;
   const jobEnd = job?.end_timestamp ?? 0;
@@ -248,10 +316,45 @@ export function RegionTimelineViewer() {
         <span style={{ color: COLORS.accent }}>
           {regionCount} region{regionCount !== 1 ? "s" : ""}
         </span>
+        <div className="ml-auto flex items-center gap-2">
+          {editMode ? (
+            <>
+              <span style={{ color: COLORS.textMuted }}>
+                {pendingCorrections.size} correction{pendingCorrections.size !== 1 ? "s" : ""}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCancelEdit}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSaveCorrections}
+                disabled={pendingCorrections.size === 0 || saveCorrections.isPending}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {saveCorrections.isPending ? "Saving..." : "Save"}
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditMode(true)}
+              disabled={job.status !== "complete"}
+            >
+              <Pencil className="h-3.5 w-3.5 mr-1" />
+              Edit Regions
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Spectrogram viewport */}
       <div
+        ref={viewportContainerRef}
         className="flex-1 flex flex-col mx-4 my-2 rounded relative overflow-hidden min-h-0"
         style={{ background: COLORS.bgDark }}
       >
@@ -268,13 +371,25 @@ export function RegionTimelineViewer() {
           showLabels={true}
           detections={[]}
           onCenterChange={setCenterTimestamp}
-          onPan={handlePan}
+          onPan={editMode ? NOOP : handlePan}
           labelMode={false}
           labelEditMode={null}
-          overlayMode="region"
-          regions={regions}
+          overlayMode={editMode ? undefined : "region"}
+          regions={editMode ? undefined : regions}
           tileUrlBuilder={tileUrlBuilder}
         />
+        {editMode && regions && (
+          <RegionEditOverlay
+            regions={regions}
+            corrections={pendingCorrections}
+            jobStart={jobStart}
+            centerTimestamp={centerTimestamp}
+            zoomLevel={zoomLevel}
+            width={viewportWidth}
+            height={viewportHeight}
+            onCorrection={handleCorrection}
+          />
+        )}
       </div>
 
       {/* Hidden audio elements */}

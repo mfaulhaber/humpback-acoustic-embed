@@ -368,6 +368,57 @@ class QuickRetrainResponse(BaseModel):
     sample_count: int
 
 
+# ---- Pass 1: region boundary corrections ------------------------------------
+
+
+class RegionCorrection(BaseModel):
+    """A single boundary correction for a Pass 1 region."""
+
+    region_id: str
+    correction_type: str = Field(pattern=r"^(adjust|add|delete)$")
+    start_sec: Optional[float] = None
+    end_sec: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _validate_fields(self) -> "RegionCorrection":
+        if self.correction_type in ("add", "adjust"):
+            if self.start_sec is None or self.end_sec is None:
+                raise ValueError(
+                    f"'{self.correction_type}' corrections require start_sec and end_sec"
+                )
+        if self.correction_type == "delete":
+            if self.start_sec is not None or self.end_sec is not None:
+                raise ValueError("'delete' corrections must not set start_sec/end_sec")
+        if (
+            self.start_sec is not None
+            and self.end_sec is not None
+            and self.end_sec <= self.start_sec
+        ):
+            raise ValueError("end_sec must be strictly after start_sec")
+        return self
+
+
+class RegionCorrectionCreate(BaseModel):
+    """Batch upsert request for Pass 1 region corrections."""
+
+    corrections: list[RegionCorrection]
+
+
+class RegionCorrectionResponse(BaseModel):
+    """A stored region boundary correction row."""
+
+    id: str
+    region_detection_job_id: str
+    region_id: str
+    correction_type: str
+    start_sec: Optional[float] = None
+    end_sec: Optional[float] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ---- Feedback training: correction schemas ---------------------------------
 
 

@@ -2027,3 +2027,159 @@ async def test_classification_jobs_with_correction_counts_excludes_incomplete(
     assert resp.status_code == 200
     job_ids = [j["id"] for j in resp.json()]
     assert ec_id not in job_ids
+
+
+# ---- Region boundary corrections (Pass 1) ---------------------------------
+
+
+async def _seed_complete_region_detection_job(app_settings) -> str:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.commit()
+        rd_id = rd.id
+    await engine.dispose()
+    return rd_id
+
+
+@pytest.mark.asyncio
+async def test_region_corrections_post_happy(client: AsyncClient, app_settings) -> None:
+    rd_id = await _seed_complete_region_detection_job(app_settings)
+    resp = await client.post(
+        f"{BASE}/region-detection-jobs/{rd_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "region_id": "r1",
+                    "correction_type": "adjust",
+                    "start_sec": 1.0,
+                    "end_sec": 5.0,
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["region_id"] == "r1"
+    assert data[0]["correction_type"] == "adjust"
+    assert data[0]["start_sec"] == 1.0
+    assert data[0]["end_sec"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_region_corrections_upsert_semantics(
+    client: AsyncClient, app_settings
+) -> None:
+    rd_id = await _seed_complete_region_detection_job(app_settings)
+    await client.post(
+        f"{BASE}/region-detection-jobs/{rd_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "region_id": "r1",
+                    "correction_type": "adjust",
+                    "start_sec": 1.0,
+                    "end_sec": 5.0,
+                }
+            ]
+        },
+    )
+    resp = await client.post(
+        f"{BASE}/region-detection-jobs/{rd_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "region_id": "r1",
+                    "correction_type": "adjust",
+                    "start_sec": 2.0,
+                    "end_sec": 6.0,
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["start_sec"] == 2.0
+    assert data[0]["end_sec"] == 6.0
+
+
+@pytest.mark.asyncio
+async def test_region_corrections_post_404(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"{BASE}/region-detection-jobs/nonexistent/corrections",
+        json={
+            "corrections": [
+                {
+                    "region_id": "r1",
+                    "correction_type": "delete",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_region_corrections_validation(client: AsyncClient, app_settings) -> None:
+    rd_id = await _seed_complete_region_detection_job(app_settings)
+    # add requires start_sec and end_sec
+    resp = await client.post(
+        f"{BASE}/region-detection-jobs/{rd_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "region_id": "r1",
+                    "correction_type": "add",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 422
+
+    # delete must not have start_sec/end_sec
+    resp2 = await client.post(
+        f"{BASE}/region-detection-jobs/{rd_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "region_id": "r2",
+                    "correction_type": "delete",
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                }
+            ]
+        },
+    )
+    assert resp2.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_region_corrections_get(client: AsyncClient, app_settings) -> None:
+    rd_id = await _seed_complete_region_detection_job(app_settings)
+    await client.post(
+        f"{BASE}/region-detection-jobs/{rd_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "region_id": "r1",
+                    "correction_type": "add",
+                    "start_sec": 10.0,
+                    "end_sec": 15.0,
+                },
+                {
+                    "region_id": "r2",
+                    "correction_type": "delete",
+                },
+            ]
+        },
+    )
+    get_resp = await client.get(f"{BASE}/region-detection-jobs/{rd_id}/corrections")
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert len(data) == 2
+    types = {c["correction_type"] for c in data}
+    assert types == {"add", "delete"}

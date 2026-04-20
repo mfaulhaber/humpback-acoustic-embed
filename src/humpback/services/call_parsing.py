@@ -731,6 +731,74 @@ async def delete_segmentation_model(session, model_id: str, settings: Settings) 
     return True
 
 
+# ---- Pass 1: region boundary corrections ----------------------------------
+
+
+async def upsert_region_corrections(
+    session: AsyncSession,
+    job_id: str,
+    corrections: list,
+) -> int:
+    """Batch upsert region corrections for a region detection job.
+
+    Validates the job exists and is complete. For each correction,
+    inserts a new row or updates an existing one keyed by
+    ``(region_detection_job_id, region_id)``.
+    """
+    from humpback.models.feedback_training import RegionBoundaryCorrection
+
+    rd = await session.get(RegionDetectionJob, job_id)
+    if rd is None:
+        raise CallParsingFKError("region_detection_job_id", job_id)
+    if rd.status != "complete":
+        raise CallParsingStateError(
+            f"Region detection job status is {rd.status!r}, not 'complete'"
+        )
+
+    count = 0
+    for c in corrections:
+        existing = await session.execute(
+            select(RegionBoundaryCorrection).where(
+                RegionBoundaryCorrection.region_detection_job_id == job_id,
+                RegionBoundaryCorrection.region_id == c.region_id,
+            )
+        )
+        row = existing.scalar_one_or_none()
+        if row is not None:
+            row.correction_type = c.correction_type
+            row.start_sec = c.start_sec
+            row.end_sec = c.end_sec
+        else:
+            session.add(
+                RegionBoundaryCorrection(
+                    region_detection_job_id=job_id,
+                    region_id=c.region_id,
+                    correction_type=c.correction_type,
+                    start_sec=c.start_sec,
+                    end_sec=c.end_sec,
+                )
+            )
+        count += 1
+
+    await session.commit()
+    return count
+
+
+async def list_region_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> list:
+    """List all region corrections for a region detection job."""
+    from humpback.models.feedback_training import RegionBoundaryCorrection
+
+    result = await session.execute(
+        select(RegionBoundaryCorrection)
+        .where(RegionBoundaryCorrection.region_detection_job_id == job_id)
+        .order_by(RegionBoundaryCorrection.created_at)
+    )
+    return list(result.scalars().all())
+
+
 # ---- Feedback training: boundary corrections (Pass 2) --------------------
 
 
