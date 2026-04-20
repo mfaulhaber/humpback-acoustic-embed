@@ -46,8 +46,8 @@ interface RegionSpectrogramViewerProps {
   children?: ReactNode;
   onViewStartChange?: (viewStart: number) => void;
   onViewSpanChange?: (span: number) => void;
-  /** When changed, scrolls so this timestamp is the viewport center. */
-  scrollToCenter?: number;
+  /** When changed, scrolls so this timestamp is the viewport center. Use a seq counter to re-trigger for same value. */
+  scrollToCenter?: number | { target: number; seq: number };
   /** Full time extent of the run for unrestricted scrolling. */
   timelineExtent?: { start: number; end: number };
   /** All regions in the run (for region band overlay). */
@@ -119,13 +119,6 @@ export function RegionSpectrogramViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- zoomLevel intentionally excluded
   }, [region.region_id, region.padded_start_sec, region.padded_end_sec]);
 
-  // External scroll request
-  useEffect(() => {
-    if (scrollToCenter !== undefined) {
-      setCenterTimestamp(scrollToCenter);
-    }
-  }, [scrollToCenter]);
-
   const pxPerSec = canvasWidth > 0 ? canvasWidth / VIEWPORT_SPAN_SEC : 1;
 
   // Clamp center — if timelineExtent is given, allow full scrolling across the run
@@ -143,6 +136,24 @@ export function RegionSpectrogramViewer({
     },
     [regionStart, regionEnd, timelineExtent, VIEWPORT_SPAN_SEC],
   );
+
+  // External scroll request (clamped to valid bounds)
+  const scrollTarget =
+    scrollToCenter === undefined
+      ? undefined
+      : typeof scrollToCenter === "number"
+        ? scrollToCenter
+        : scrollToCenter.target;
+  const scrollSeq =
+    scrollToCenter !== undefined && typeof scrollToCenter !== "number"
+      ? scrollToCenter.seq
+      : scrollTarget;
+  useEffect(() => {
+    if (scrollTarget !== undefined) {
+      setCenterTimestamp(clampCenter(scrollTarget));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollSeq drives re-trigger
+  }, [scrollSeq, clampCenter]);
 
   // Drag-to-pan
   const dragRef = useRef<{ startX: number; startCenter: number } | null>(null);

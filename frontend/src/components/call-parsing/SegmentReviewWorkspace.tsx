@@ -69,9 +69,10 @@ export function SegmentReviewWorkspace({
   const [addMode, setAddMode] = useState(false);
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
   const [viewSpan, setViewSpan] = useState(60);
-  const [scrollToCenter, setScrollToCenter] = useState<number | undefined>(
-    undefined,
-  );
+  const scrollSeqRef = useRef(0);
+  const [scrollToCenter, setScrollToCenter] = useState<
+    { target: number; seq: number } | undefined
+  >(undefined);
 
   // Shared audio playback state
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -320,7 +321,8 @@ export function SegmentReviewWorkspace({
       currentNavEvent.endSec <= viewEnd - pad;
     if (!fullyVisible) {
       const mid = (currentNavEvent.startSec + currentNavEvent.endSec) / 2;
-      setScrollToCenter(mid);
+      scrollSeqRef.current += 1;
+      setScrollToCenter({ target: mid, seq: scrollSeqRef.current });
     }
   }, [currentNavEvent, viewStart, viewSpan]);
 
