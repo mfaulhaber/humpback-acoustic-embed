@@ -182,6 +182,7 @@ export function RegionDetectionTimeline() {
                 regions={regions}
                 jobStart={jobStart}
                 visible={true}
+                corrections={savedCorrections}
                 onRegionClick={handleRegionClick}
               />
             )}
