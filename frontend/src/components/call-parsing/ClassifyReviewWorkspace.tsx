@@ -1041,7 +1041,8 @@ export function ClassifyReviewWorkspace({
               onClick={() => setContextMenu(null)}
             >
               <TimelineProvider
-                jobStart={currentRegion.padded_start_sec}
+                key={`${selectedJobId}-${currentRegion.region_id}`}
+                jobStart={0}
                 jobEnd={currentRegion.padded_end_sec}
                 zoomLevels={REVIEW_ZOOM}
                 defaultZoom="30s"

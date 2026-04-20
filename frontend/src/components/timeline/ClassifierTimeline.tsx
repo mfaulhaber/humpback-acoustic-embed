@@ -238,6 +238,7 @@ export function ClassifierTimeline() {
       />
 
       <TimelineProvider
+        key={jobId}
         jobStart={jobStart}
         jobEnd={jobEnd}
         zoomLevels={FULL_ZOOM}

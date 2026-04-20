@@ -589,7 +589,7 @@ export function SegmentReviewWorkspace({
     );
   }, [retrainStatus, regionDetectionJobId, createSegJob]);
 
-  const jobStart = timelineExtent?.start ?? 0;
+  const jobStart = 0;
   const jobEnd = timelineExtent?.end ?? 0;
 
   const audioUrlBuilder = useCallback(
@@ -681,6 +681,7 @@ export function SegmentReviewWorkspace({
             totalEventCount={navigableEvents.length}
           />
           <TimelineProvider
+            key={`${selectedJobId}-${selectedRegionId}`}
             jobStart={jobStart}
             jobEnd={jobEnd}
             zoomLevels={REVIEW_ZOOM}
