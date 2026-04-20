@@ -600,7 +600,7 @@ test.describe("Timeline Labeling", () => {
     await navigateToTimeline(page);
 
     // Toggle detection overlay on so DetectionOverlay renders
-    await page.getByRole("button", { name: "Labels", exact: true }).click();
+    await page.getByRole("button", { name: "Detections", exact: true }).click();
 
     await zoomTo5m(page);
 

@@ -707,6 +707,7 @@ export function SegmentReviewWorkspace({
               addMode={addMode}
               scrollToCenter={scrollToCenter}
               onViewStartChange={setViewStart}
+              onViewSpanChange={setViewSpan}
               tileUrlBuilder={tileUrlBuilder}
             />
           </TimelineProvider>
@@ -774,6 +775,7 @@ interface SegmentViewerBodyProps {
   addMode: boolean;
   scrollToCenter: { target: number; seq: number } | undefined;
   onViewStartChange: (viewStart: number) => void;
+  onViewSpanChange: (viewSpan: number) => void;
   tileUrlBuilder: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
 }
 
@@ -791,6 +793,7 @@ function SegmentViewerBody({
   addMode,
   scrollToCenter,
   onViewStartChange,
+  onViewSpanChange,
   tileUrlBuilder,
 }: SegmentViewerBodyProps) {
   const ctx = useTimelineContext();
@@ -814,10 +817,13 @@ function SegmentViewerBody({
     ctx.seekTo(scrollToCenter.target);
   }, [scrollToCenter, ctx]);
 
-  // Report viewStart to parent for event visibility checks
+  // Report viewStart/viewSpan to parent for event visibility checks
   useEffect(() => {
     onViewStartChange(ctx.viewStart);
   }, [ctx.viewStart, onViewStartChange]);
+  useEffect(() => {
+    onViewSpanChange(ctx.viewportSpan);
+  }, [ctx.viewportSpan, onViewSpanChange]);
 
   // Show region bands at wide zoom (1m or 5m)
   const showBands = ctx.activePreset.key === "5m" || ctx.activePreset.key === "1m";
