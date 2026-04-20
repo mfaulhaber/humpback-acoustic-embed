@@ -5,6 +5,8 @@ import {
   deleteRegionDetectionJob,
   fetchRegionJobRegions,
   fetchRegionJobConfidence,
+  fetchRegionCorrections,
+  saveRegionCorrections,
   fetchSegmentationJobs,
   createSegmentationJob,
   deleteSegmentationJob,
@@ -35,6 +37,7 @@ import {
 } from "@/api/client";
 import type {
   CreateRegionJobRequest,
+  RegionCorrection,
   CreateSegmentationJobRequest,
   CreateDatasetFromCorrectionsRequest,
   CreateSegmentationTrainingJobRequest,
@@ -91,6 +94,38 @@ export function useRegionJobConfidence(jobId: string | null) {
     queryFn: () => fetchRegionJobConfidence(jobId!),
     enabled: !!jobId,
     staleTime: Infinity,
+  });
+}
+
+// ---- Region Boundary Corrections ----
+
+const regionCorrectionsKey = (jobId: string) => [
+  "region-corrections",
+  jobId,
+];
+
+export function useRegionCorrections(jobId: string | null) {
+  return useQuery({
+    queryKey: regionCorrectionsKey(jobId ?? ""),
+    queryFn: () => fetchRegionCorrections(jobId!),
+    enabled: !!jobId,
+  });
+}
+
+export function useSaveRegionCorrections() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      corrections,
+    }: {
+      jobId: string;
+      corrections: RegionCorrection[];
+    }) => saveRegionCorrections(jobId, corrections),
+    onSuccess: (_data, { jobId }) => {
+      qc.invalidateQueries({ queryKey: regionCorrectionsKey(jobId) });
+      qc.invalidateQueries({ queryKey: ["region-job-regions", jobId] });
+    },
   });
 }
 

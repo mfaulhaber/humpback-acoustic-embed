@@ -23,10 +23,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.call_parsing.audio_loader import build_region_audio_loader
+from humpback.call_parsing.regions_overlay import load_corrected_regions
 from humpback.call_parsing.segmentation.inference import run_inference
 from humpback.call_parsing.segmentation.model import SegmentationCRNN
 from humpback.call_parsing.storage import (
-    read_regions,
     region_job_dir,
     segmentation_job_dir,
     write_events,
@@ -240,7 +240,7 @@ async def run_event_segmentation_job(
         )
         if not regions_path.exists():
             raise ValueError(f"upstream regions.parquet not found at {regions_path}")
-        regions = read_regions(regions_path)
+        regions = await load_corrected_regions(session, upstream_id, regions_path)
 
         upstream_audio_file_id = upstream.audio_file_id
         upstream_hydrophone_id = upstream.hydrophone_id

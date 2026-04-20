@@ -98,6 +98,8 @@ import type {
   SegmentationEvent,
   SegmentationModel,
   Region,
+  RegionCorrection,
+  RegionCorrectionResponse,
   BoundaryCorrectionRequest,
   BoundaryCorrectionResponse,
   SegmentationJobWithCorrectionCount,
@@ -949,6 +951,22 @@ export const regionAudioSliceUrl = (
 export const fetchRegionJobConfidence = (jobId: string) =>
   api<TimelineConfidenceResponse>(
     `/call-parsing/region-jobs/${jobId}/confidence`,
+  );
+
+// ---- Call Parsing (Region Corrections) ----
+
+export const fetchRegionCorrections = (jobId: string) =>
+  api<RegionCorrectionResponse[]>(
+    `/call-parsing/region-detection-jobs/${jobId}/corrections`,
+  );
+
+export const saveRegionCorrections = (
+  jobId: string,
+  corrections: RegionCorrection[],
+) =>
+  post<RegionCorrectionResponse[]>(
+    `/call-parsing/region-detection-jobs/${jobId}/corrections`,
+    { corrections },
   );
 
 // ---- Call Parsing (Event Segmentation) ----

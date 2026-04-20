@@ -1,5 +1,5 @@
 // frontend/src/components/timeline/PlaybackControls.tsx
-import { Play, Pause, SkipBack, SkipForward, Plus, Minus, Tag, AudioLines } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Plus, Minus, Tag, AudioLines, Pencil } from "lucide-react";
 import { COLORS } from "./constants";
 
 interface PlaybackControlsProps {
@@ -20,6 +20,15 @@ interface PlaybackControlsProps {
   onToggleVocalization: () => void;
   hasVocalizationData: boolean;
   freqRange: [number, number];
+  regionEditMode?: boolean;
+  regionEditEnabled?: boolean;
+  onRegionEditToggle?: () => void;
+  showRegionOverlay?: boolean;
+  onToggleRegionOverlay?: () => void;
+  pendingCorrectionCount?: number;
+  onSaveCorrections?: () => void;
+  onCancelCorrections?: () => void;
+  isSavingCorrections?: boolean;
 }
 
 const SPEEDS = [0.5, 1, 2];
@@ -42,6 +51,15 @@ export function PlaybackControls({
   onToggleVocalization,
   hasVocalizationData,
   freqRange,
+  regionEditMode,
+  regionEditEnabled,
+  onRegionEditToggle,
+  showRegionOverlay,
+  onToggleRegionOverlay,
+  pendingCorrectionCount,
+  onSaveCorrections,
+  onCancelCorrections,
+  isSavingCorrections,
 }: PlaybackControlsProps) {
   const timeStr = new Date(centerTimestamp * 1000).toISOString().slice(11, 19) + " UTC";
 
@@ -93,47 +111,80 @@ export function PlaybackControls({
             <Plus size={14} />
           </button>
         </div>
-        <button
-          className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium ml-4 pointer-events-auto"
-          style={{
-            background: labelModeActive ? COLORS.accentDim : "transparent",
-            color: (labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.textMuted,
-            opacity: (labelModeEnabled || labelModeActive) ? 1 : 0.3,
-            border: `1px solid ${(labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.border}`,
-          }}
-          onClick={onLabelMode}
-          disabled={!labelModeEnabled && !labelModeActive}
-          title={labelModeActive ? "Exit label mode" : labelModeEnabled ? "Enter label mode" : "Zoom to 5m or closer to edit labels"}
-        >
-          <Tag size={12} /> Label
-        </button>
+        {onRegionEditToggle ? (
+          <button
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium ml-4 pointer-events-auto"
+            style={{
+              background: regionEditMode ? COLORS.accentDim : "transparent",
+              color: regionEditEnabled || regionEditMode ? COLORS.accent : COLORS.textMuted,
+              opacity: regionEditEnabled || regionEditMode ? 1 : 0.3,
+              border: `1px solid ${regionEditEnabled || regionEditMode ? COLORS.accent : COLORS.border}`,
+            }}
+            onClick={onRegionEditToggle}
+            disabled={!regionEditEnabled && !regionEditMode}
+            title={regionEditMode ? "Exit edit mode" : "Edit region boundaries"}
+          >
+            <Pencil size={12} /> Edit Regions
+          </button>
+        ) : (
+          <button
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium ml-4 pointer-events-auto"
+            style={{
+              background: labelModeActive ? COLORS.accentDim : "transparent",
+              color: (labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.textMuted,
+              opacity: (labelModeEnabled || labelModeActive) ? 1 : 0.3,
+              border: `1px solid ${(labelModeEnabled || labelModeActive) ? COLORS.accent : COLORS.border}`,
+            }}
+            onClick={onLabelMode}
+            disabled={!labelModeEnabled && !labelModeActive}
+            title={labelModeActive ? "Exit label mode" : labelModeEnabled ? "Enter label mode" : "Zoom to 5m or closer to edit labels"}
+          >
+            <Tag size={12} /> Label
+          </button>
+        )}
       </div>
 
-      {/* Right group: Labels/Vocalizations/Freq pushed to far right */}
+      {/* Right group: Labels/Regions/Vocalizations/Freq pushed to far right */}
       <div className="flex items-center gap-2 ml-auto">
-        <button
-          onClick={onToggleDetection}
-          className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
-          style={{
-            background: overlayMode === "detection" ? COLORS.accentDim : COLORS.border,
-            color: COLORS.accent,
-          }}
-        >
-          <Tag size={10} /> Labels
-        </button>
-        <button
-          onClick={hasVocalizationData ? onToggleVocalization : undefined}
-          disabled={!hasVocalizationData}
-          className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
-          style={{
-            background: overlayMode === "vocalization" ? "rgba(168, 130, 220, 0.3)" : COLORS.border,
-            color: hasVocalizationData ? (overlayMode === "vocalization" ? "#c4a8f0" : COLORS.accent) : COLORS.textMuted,
-            opacity: hasVocalizationData ? 1 : 0.4,
-          }}
-          title={hasVocalizationData ? (overlayMode === "vocalization" ? "Hide vocalization types" : "Show vocalization types") : "No vocalization inference for this job"}
-        >
-          <AudioLines size={10} /> Vocalizations
-        </button>
+        {onToggleRegionOverlay ? (
+          <button
+            onClick={onToggleRegionOverlay}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
+            style={{
+              background: showRegionOverlay ? COLORS.accentDim : COLORS.border,
+              color: COLORS.accent,
+            }}
+            title={showRegionOverlay ? "Hide regions" : "Show regions"}
+          >
+            <Tag size={10} /> Regions
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={onToggleDetection}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
+              style={{
+                background: overlayMode === "detection" ? COLORS.accentDim : COLORS.border,
+                color: COLORS.accent,
+              }}
+            >
+              <Tag size={10} /> Labels
+            </button>
+            <button
+              onClick={hasVocalizationData ? onToggleVocalization : undefined}
+              disabled={!hasVocalizationData}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
+              style={{
+                background: overlayMode === "vocalization" ? "rgba(168, 130, 220, 0.3)" : COLORS.border,
+                color: hasVocalizationData ? (overlayMode === "vocalization" ? "#c4a8f0" : COLORS.accent) : COLORS.textMuted,
+                opacity: hasVocalizationData ? 1 : 0.4,
+              }}
+              title={hasVocalizationData ? (overlayMode === "vocalization" ? "Hide vocalization types" : "Show vocalization types") : "No vocalization inference for this job"}
+            >
+              <AudioLines size={10} /> Vocalizations
+            </button>
+          </>
+        )}
         <span
           className="px-2 py-1 rounded text-[10px]"
           style={{ background: COLORS.border, color: COLORS.accent }}

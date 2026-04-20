@@ -44,6 +44,8 @@ from humpback.schemas.call_parsing import (
     CreateSegmentationTrainingJobRequest,
     QuickRetrainRequest,
     QuickRetrainResponse,
+    RegionCorrectionCreate,
+    RegionCorrectionResponse,
     SegmentationTrainingJobResponse,
     EventClassificationJobSummary,
     EventSegmentationJobSummary,
@@ -481,6 +483,42 @@ def _render_region_audio_slice_sync(
     buf.write(struct.pack("<I", data_size))
     buf.write(pcm.tobytes())
     return buf.getvalue()
+
+
+# ---- Pass 1: region boundary corrections ----------------------------------
+
+
+@router.post(
+    "/region-detection-jobs/{job_id}/corrections",
+    status_code=200,
+    response_model=list[RegionCorrectionResponse],
+)
+async def upsert_region_corrections(
+    job_id: str, body: RegionCorrectionCreate, session: SessionDep
+):
+    try:
+        await service.upsert_region_corrections(session, job_id, body.corrections)
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    rows = await service.list_region_corrections(session, job_id)
+    return [RegionCorrectionResponse.model_validate(r) for r in rows]
+
+
+@router.get(
+    "/region-detection-jobs/{job_id}/corrections",
+    response_model=list[RegionCorrectionResponse],
+)
+async def list_region_corrections(job_id: str, session: SessionDep):
+    rows = await service.list_region_corrections(session, job_id)
+    return [RegionCorrectionResponse.model_validate(r) for r in rows]
+
+
+@router.delete("/region-detection-jobs/{job_id}/corrections", status_code=204)
+async def delete_region_corrections(job_id: str, session: SessionDep):
+    await service.clear_region_corrections(session, job_id)
+    return None
 
 
 # ---- Pass 2: segmentation jobs ------------------------------------------

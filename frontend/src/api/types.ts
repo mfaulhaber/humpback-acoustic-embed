@@ -1328,6 +1328,24 @@ export interface Region {
   n_windows: number;
 }
 
+export interface RegionCorrection {
+  region_id: string;
+  correction_type: "adjust" | "add" | "delete";
+  start_sec: number | null;
+  end_sec: number | null;
+}
+
+export interface RegionCorrectionResponse {
+  id: string;
+  region_detection_job_id: string;
+  region_id: string;
+  correction_type: "adjust" | "add" | "delete";
+  start_sec: number | null;
+  end_sec: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BoundaryCorrection {
   event_id: string;
   region_id: string;

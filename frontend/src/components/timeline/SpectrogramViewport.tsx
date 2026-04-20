@@ -49,7 +49,11 @@ export interface SpectrogramViewportProps {
   /** Custom tile URL builder. If omitted, uses default classifier detection URLs. */
   tileUrlBuilder?: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
   /** Regions for the region overlay (call parsing). */
-  regions?: { start_sec: number; end_sec: number; padded_start_sec: number; padded_end_sec: number; max_score: number }[];
+  regions?: { region_id?: string; start_sec: number; end_sec: number; padded_start_sec: number; padded_end_sec: number; max_score: number }[];
+  /** Called when a region bar is clicked in view mode. */
+  onRegionClick?: (regionId: string) => void;
+  /** Disable the built-in pan/grab handler (e.g. when an external edit overlay handles input). */
+  disablePan?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +189,8 @@ export function SpectrogramViewport({
   windowSec: windowSecProp,
   tileUrlBuilder,
   regions,
+  onRegionClick,
+  disablePan,
 }: SpectrogramViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -350,11 +356,13 @@ export function SpectrogramViewport({
   }, [scores, canvasWidth, centerTimestamp, viewportSpan, pxPerSec, jobStart, jobEnd, windowSecProp]);
 
   // Cursor style for pan
-  const cursorStyle = isPlaying
+  const cursorStyle = disablePan
     ? "default"
-    : dragRef.current
-      ? "grabbing"
-      : "grab";
+    : isPlaying
+      ? "default"
+      : dragRef.current
+        ? "grabbing"
+        : "grab";
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col relative select-none min-h-0">
@@ -395,11 +403,11 @@ export function SpectrogramViewport({
         {/* Canvas area + overlays */}
         <div
           className="relative flex-1 min-w-0"
-          style={{ cursor: cursorStyle }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onClick={handleCanvasClick}
+          style={{ cursor: cursorStyle, pointerEvents: disablePan ? "none" : undefined }}
+          onMouseDown={disablePan ? undefined : handleMouseDown}
+          onMouseMove={disablePan ? undefined : handleMouseMove}
+          onMouseUp={disablePan ? undefined : handleMouseUp}
+          onClick={disablePan ? undefined : handleCanvasClick}
         >
           {canvasWidth > 0 && canvasHeight > 0 && (
             <TileCanvas
@@ -451,6 +459,7 @@ export function SpectrogramViewport({
               width={canvasWidth}
               height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
               visible={true}
+              onRegionClick={onRegionClick}
             />
           )}
           {labelMode && labelEditMode === "detection" && renderLabelEditor?.(canvasWidth, canvasHeight + CONFIDENCE_STRIP_HEIGHT)}
