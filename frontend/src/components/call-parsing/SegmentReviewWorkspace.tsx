@@ -57,10 +57,21 @@ export function SegmentReviewWorkspace({
   const { data: events = [] } = useSegmentationJobEvents(selectedJobId);
   const { data: savedCorrections = [] } = useBoundaryCorrections(selectedJobId);
 
+  const timelineExtent = useMemo(() => {
+    if (regions.length === 0) return undefined;
+    const start = Math.min(...regions.map((r) => r.padded_start_sec));
+    const end = Math.max(...regions.map((r) => r.padded_end_sec));
+    return { start, end };
+  }, [regions]);
+
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
+  const [viewSpan, setViewSpan] = useState(60);
+  const [scrollToCenter, setScrollToCenter] = useState<number | undefined>(
+    undefined,
+  );
 
   // Shared audio playback state
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -102,6 +113,7 @@ export function SegmentReviewWorkspace({
   useEffect(() => {
     setPendingCorrections(new Map());
     setSelectedEventId(null);
+    setCurrentEventIndex(0);
     setAddMode(false);
     setActiveTrainingJobId(null);
     setRetrainError(null);
@@ -225,16 +237,92 @@ export function SegmentReviewWorkspace({
     [effectiveEvents, selectedRegionId],
   );
 
-  // Auto-select first event when region changes (not on every regionEvents update)
+  // Flat navigable events across all regions (excludes deleted), sorted by startSec
+  const navigableEvents = useMemo(
+    () =>
+      effectiveEvents
+        .filter((e) => e.correctionType !== "delete")
+        .sort((a, b) => a.startSec - b.startSec),
+    [effectiveEvents],
+  );
+
+  const [currentEventIndex, setCurrentEventIndex] = useState(0);
+
+  // Clamp index when navigable list shrinks
+  useEffect(() => {
+    if (navigableEvents.length > 0 && currentEventIndex >= navigableEvents.length) {
+      setCurrentEventIndex(navigableEvents.length - 1);
+    }
+  }, [navigableEvents.length, currentEventIndex]);
+
+  // Derive selected event from index
+  const currentNavEvent = navigableEvents[currentEventIndex] ?? null;
+
+  // Sync selectedEventId with currentNavEvent (one-way: index drives selection)
+  useEffect(() => {
+    if (currentNavEvent) {
+      setSelectedEventId(currentNavEvent.eventId);
+    }
+  }, [currentNavEvent]);
+
+  // Track whether the region change was caused by event navigation (skip auto-select)
+  const regionChangeFromNavRef = useRef(false);
+
+  // Auto-select first event when region changes via region buttons (not event nav)
   const prevRegionIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedRegionId || selectedRegionId === prevRegionIdRef.current) return;
     prevRegionIdRef.current = selectedRegionId;
-    const sorted = regionEvents
-      .filter((e) => e.correctionType !== "delete")
-      .sort((a, b) => a.startSec - b.startSec);
-    setSelectedEventId(sorted.length > 0 ? sorted[0].eventId : null);
-  }, [selectedRegionId, regionEvents]);
+    if (regionChangeFromNavRef.current) {
+      regionChangeFromNavRef.current = false;
+      return;
+    }
+    // Find the first navigable event in this region and set the index
+    const idx = navigableEvents.findIndex((e) => e.regionId === selectedRegionId);
+    if (idx >= 0) {
+      setCurrentEventIndex(idx);
+    } else {
+      setSelectedEventId(null);
+    }
+  }, [selectedRegionId, navigableEvents]);
+
+  // Navigation callbacks — cross-region navigation switches the active region
+  const goPrevEvent = useCallback(() => {
+    setCurrentEventIndex((prev) => {
+      const next = Math.max(0, prev - 1);
+      const event = navigableEvents[next];
+      if (event && event.regionId !== selectedRegionId) {
+        regionChangeFromNavRef.current = true;
+        setSelectedRegionId(event.regionId);
+      }
+      return next;
+    });
+  }, [navigableEvents, selectedRegionId]);
+  const goNextEvent = useCallback(() => {
+    setCurrentEventIndex((prev) => {
+      const next = Math.min(navigableEvents.length - 1, prev + 1);
+      const event = navigableEvents[next];
+      if (event && event.regionId !== selectedRegionId) {
+        regionChangeFromNavRef.current = true;
+        setSelectedRegionId(event.regionId);
+      }
+      return next;
+    });
+  }, [navigableEvents, selectedRegionId]);
+
+  // Auto-scroll spectrogram when current event is not fully visible
+  useEffect(() => {
+    if (!currentNavEvent || viewStart === undefined) return;
+    const viewEnd = viewStart + viewSpan;
+    const pad = viewSpan * 0.1;
+    const fullyVisible =
+      currentNavEvent.startSec >= viewStart + pad &&
+      currentNavEvent.endSec <= viewEnd - pad;
+    if (!fullyVisible) {
+      const mid = (currentNavEvent.startSec + currentNavEvent.endSec) / 2;
+      setScrollToCenter(mid);
+    }
+  }, [currentNavEvent, viewStart, viewSpan]);
 
   // Callbacks for overlay
   const handleAdjust = useCallback(
@@ -344,30 +432,44 @@ export function SegmentReviewWorkspace({
   const selectedEvent =
     effectiveEvents.find((e) => e.eventId === selectedEventId) ?? null;
 
-  // Spacebar toggles playback on selected event
+  // Keyboard shortcuts
+  const togglePlayback = useCallback(() => {
+    if (isPlaying) {
+      stopPlayback();
+    } else if (selectedEvent) {
+      const duration = selectedEvent.endSec - selectedEvent.startSec;
+      startPlayback(selectedEvent.startSec, duration);
+    } else if (selectedRegion) {
+      const playStart = viewStart ?? selectedRegion.padded_start_sec;
+      const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
+      startPlayback(playStart, duration);
+    }
+  }, [isPlaying, selectedEvent, selectedRegion, viewStart, startPlayback, stopPlayback]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
       const el = e.target as HTMLElement;
       const tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      // Avoid double-action: space on a focused button fires both click and this handler
-      if (tag === "BUTTON" || el.closest("button")) return;
-      e.preventDefault();
-      if (isPlaying) {
-        stopPlayback();
-      } else if (selectedEvent) {
-        const duration = selectedEvent.endSec - selectedEvent.startSec;
-        startPlayback(selectedEvent.startSec, duration);
-      } else if (selectedRegion) {
-        const playStart = viewStart ?? selectedRegion.padded_start_sec;
-        const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
-        startPlayback(playStart, duration);
+
+      switch (e.code) {
+        case "Space":
+          e.preventDefault();
+          togglePlayback();
+          break;
+        case "KeyA":
+          e.preventDefault();
+          goPrevEvent();
+          break;
+        case "KeyS":
+          e.preventDefault();
+          goNextEvent();
+          break;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isPlaying, selectedEvent, selectedRegion, viewStart, startPlayback, stopPlayback]);
+  }, [togglePlayback, goPrevEvent, goNextEvent]);
 
   // Resolve source label for the selected job
   const sourceLabel = useMemo(() => {
@@ -551,6 +653,10 @@ export function SegmentReviewWorkspace({
               const idx = regions.findIndex((r) => r.region_id === selectedRegionId);
               if (idx >= 0 && idx < regions.length - 1) handleSelectRegion(regions[idx + 1].region_id);
             }}
+            onPrevEvent={goPrevEvent}
+            onNextEvent={goNextEvent}
+            currentEventIndex={currentEventIndex}
+            totalEventCount={navigableEvents.length}
           />
           {selectedRegion ? (
             <>
@@ -558,6 +664,12 @@ export function SegmentReviewWorkspace({
                 regionJobId={regionDetectionJobId!}
                 region={selectedRegion}
                 onViewStartChange={setViewStart}
+                onViewSpanChange={setViewSpan}
+                scrollToCenter={scrollToCenter}
+                timelineExtent={timelineExtent}
+                allRegions={regions}
+                activeRegionId={selectedRegionId!}
+                onSelectRegion={handleSelectRegion}
                 audioRef={audioRef}
                 isPlaying={isPlaying}
                 playbackOriginSec={playbackOriginSec}
@@ -565,7 +677,13 @@ export function SegmentReviewWorkspace({
                 <EventBarOverlay
                   events={regionEvents}
                   selectedEventId={selectedEventId}
-                  onSelectEvent={setSelectedEventId}
+                  onSelectEvent={(eventId) => {
+                    setSelectedEventId(eventId);
+                    const idx = navigableEvents.findIndex(
+                      (e) => e.eventId === eventId,
+                    );
+                    if (idx >= 0) setCurrentEventIndex(idx);
+                  }}
                   onAdjust={handleAdjust}
                   onAdd={handleAdd}
                   addMode={addMode}

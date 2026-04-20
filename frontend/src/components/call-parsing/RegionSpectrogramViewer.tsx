@@ -12,6 +12,7 @@ import {
 import { regionTileUrl } from "@/api/client";
 import type { Region } from "@/api/types";
 import { formatTime } from "@/utils/format";
+import { RegionBandOverlay } from "./RegionBandOverlay";
 
 /**
  * Zoom level presets for the region spectrogram viewer.
@@ -47,6 +48,14 @@ interface RegionSpectrogramViewerProps {
   onViewSpanChange?: (span: number) => void;
   /** When changed, scrolls so this timestamp is the viewport center. */
   scrollToCenter?: number;
+  /** Full time extent of the run for unrestricted scrolling. */
+  timelineExtent?: { start: number; end: number };
+  /** All regions in the run (for region band overlay). */
+  allRegions?: Region[];
+  /** Currently active region id (for band highlight). */
+  activeRegionId?: string;
+  /** Called when user clicks an inactive region band. */
+  onSelectRegion?: (regionId: string) => void;
   audioRef?: RefObject<HTMLAudioElement | null>;
   isPlaying?: boolean;
   playbackOriginSec?: number;
@@ -59,6 +68,10 @@ export function RegionSpectrogramViewer({
   onViewStartChange,
   onViewSpanChange,
   scrollToCenter,
+  timelineExtent,
+  allRegions,
+  activeRegionId,
+  onSelectRegion,
   audioRef,
   isPlaying = false,
   playbackOriginSec = 0,
@@ -115,18 +128,20 @@ export function RegionSpectrogramViewer({
 
   const pxPerSec = canvasWidth > 0 ? canvasWidth / VIEWPORT_SPAN_SEC : 1;
 
-  // Clamp center so the viewport doesn't extend far beyond region bounds
+  // Clamp center — if timelineExtent is given, allow full scrolling across the run
   const clampCenter = useCallback(
     (c: number) => {
       const half = VIEWPORT_SPAN_SEC / 2;
-      const minCenter = regionStart + half;
-      const maxCenter = regionEnd - half;
+      const extentStart = timelineExtent ? timelineExtent.start : regionStart;
+      const extentEnd = timelineExtent ? timelineExtent.end : regionEnd;
+      const minCenter = extentStart + half;
+      const maxCenter = extentEnd - half;
       if (maxCenter <= minCenter) {
-        return (regionStart + regionEnd) / 2;
+        return (extentStart + extentEnd) / 2;
       }
       return Math.max(minCenter, Math.min(maxCenter, c));
     },
-    [regionStart, regionEnd, VIEWPORT_SPAN_SEC],
+    [regionStart, regionEnd, timelineExtent, VIEWPORT_SPAN_SEC],
   );
 
   // Drag-to-pan
@@ -414,18 +429,28 @@ export function RegionSpectrogramViewer({
             );
           })()}
 
-          {/* Overlay children (EventBarOverlay goes here) */}
-          {children && (
-            <div
-              className="absolute inset-0"
-              style={{ pointerEvents: "none" }}
-              data-testid="spectrogram-overlay"
-            >
-              <OverlayContext.Provider value={overlayContext}>
-                {children}
-              </OverlayContext.Provider>
-            </div>
-          )}
+          {/* Overlay layers */}
+          <div
+            className="absolute inset-0"
+            style={{ pointerEvents: "none" }}
+            data-testid="spectrogram-overlay"
+          >
+            <OverlayContext.Provider value={overlayContext}>
+              {/* Region bands: shown at wide zoom (1m, 5m) when regions provided */}
+              {allRegions &&
+                allRegions.length > 0 &&
+                activeRegionId &&
+                onSelectRegion &&
+                (zoomLevel === "1m" || zoomLevel === "5m") && (
+                  <RegionBandOverlay
+                    regions={allRegions}
+                    activeRegionId={activeRegionId}
+                    onSelectRegion={onSelectRegion}
+                  />
+                )}
+              {children}
+            </OverlayContext.Provider>
+          </div>
 
           {/* Playhead */}
           {isPlaying && (

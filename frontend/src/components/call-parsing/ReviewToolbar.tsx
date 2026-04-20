@@ -29,6 +29,10 @@ interface ReviewToolbarProps {
   selectedRegionId: string | null;
   onPrevRegion: () => void;
   onNextRegion: () => void;
+  onPrevEvent?: () => void;
+  onNextEvent?: () => void;
+  currentEventIndex?: number;
+  totalEventCount?: number;
 }
 
 export function ReviewToolbar({
@@ -50,6 +54,10 @@ export function ReviewToolbar({
   selectedRegionId,
   onPrevRegion,
   onNextRegion,
+  onPrevEvent,
+  onNextEvent,
+  currentEventIndex = 0,
+  totalEventCount = 0,
 }: ReviewToolbarProps) {
   const handleCancel = useCallback(() => {
     if (isDirty) {
@@ -96,9 +104,31 @@ export function ReviewToolbar({
         <span className="text-muted-foreground ml-1">
           Region {regionIdx >= 0 ? regionIdx + 1 : "?"}/{regions.length} · {formatTime(region.start_sec)} – {formatTime(region.end_sec)}
         </span>
-        <span className="text-xs text-muted-foreground">
-          {eventCount} event{eventCount !== 1 ? "s" : ""}
-        </span>
+
+        {onPrevEvent && onNextEvent && (
+          <>
+            <div className="mx-1 h-4 w-px bg-border" />
+            <button
+              className="rounded-md border px-1.5 py-0.5 text-[10px] hover:bg-accent disabled:opacity-30"
+              disabled={currentEventIndex <= 0}
+              onClick={onPrevEvent}
+              title="Previous event (A)"
+            >
+              <ChevronLeft className="h-3 w-3" />
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Event {totalEventCount > 0 ? currentEventIndex + 1 : 0}/{totalEventCount}
+            </span>
+            <button
+              className="rounded-md border px-1.5 py-0.5 text-[10px] hover:bg-accent disabled:opacity-30"
+              disabled={currentEventIndex >= totalEventCount - 1}
+              onClick={onNextEvent}
+              title="Next event (S)"
+            >
+              <ChevronRight className="h-3 w-3" />
+            </button>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
