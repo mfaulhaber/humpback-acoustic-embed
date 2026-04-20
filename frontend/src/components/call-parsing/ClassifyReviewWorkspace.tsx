@@ -14,10 +14,11 @@ import {
   useCreateClassificationJob,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
-import { regionAudioSliceUrl } from "@/api/client";
+import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
 import type {
   BoundaryCorrection,
   EventClassificationJob,
+  Region,
   TypedEventRow,
 } from "@/api/types";
 import { toast } from "@/components/ui/use-toast";
@@ -32,8 +33,13 @@ import {
   X,
   RotateCcw,
 } from "lucide-react";
-import { RegionSpectrogramViewer } from "./RegionSpectrogramViewer";
-import { EventBarOverlay, type EffectiveEvent } from "./EventBarOverlay";
+import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
+import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
+import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
+import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
+import { EventBarOverlay, type EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
+import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { TypePalette } from "./TypePalette";
 import {
   ClassifyDetailPanel,
@@ -1021,7 +1027,6 @@ export function ClassifyReviewWorkspace({
               className="relative"
               onContextMenu={(e) => {
                 e.preventDefault();
-                // Compute time position from mouse X relative to the spectrogram
                 const rect = e.currentTarget.getBoundingClientRect();
                 setContextMenu({
                   x: e.clientX - rect.left,
@@ -1035,32 +1040,33 @@ export function ClassifyReviewWorkspace({
               }}
               onClick={() => setContextMenu(null)}
             >
-              <RegionSpectrogramViewer
-                regionJobId={regionDetectionJobId}
-                region={currentRegion}
-                onViewStartChange={setViewStart}
-                onViewSpanChange={setViewSpan}
-                scrollToCenter={scrollToCenter}
-                audioRef={audioRef}
-                isPlaying={isPlaying}
-                playbackOriginSec={playbackOriginSec}
+              <TimelineProvider
+                key={`${selectedJobId}-${currentRegion.region_id}`}
+                jobStart={0}
+                jobEnd={currentRegion.padded_end_sec}
+                zoomLevels={REVIEW_ZOOM}
+                defaultZoom="30s"
+                playback="slice"
+                audioUrlBuilder={(startEpoch, durationSec) =>
+                  regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
+                }
               >
-                <EventBarOverlay
-                  events={regionEffectiveEvents}
+                <ClassifyViewerBody
+                  regionDetectionJobId={regionDetectionJobId}
+                  region={currentRegion}
+                  regionEffectiveEvents={regionEffectiveEvents}
                   selectedEventId={currentEvent?.eventId ?? null}
                   onSelectEvent={(eventId) => {
                     if (!eventId) return;
-                    const idx = navigableEvents.findIndex(
-                      (e) => e.eventId === eventId,
-                    );
+                    const idx = navigableEvents.findIndex((e) => e.eventId === eventId);
                     if (idx >= 0) setCurrentEventIndex(idx);
                   }}
                   onAdjust={handleAdjust}
-                  onAdd={() => {}}
-                  addMode={false}
-                  activeRegionId={currentRegion.region_id}
+                  scrollToCenter={scrollToCenter}
+                  onViewStartChange={setViewStart}
+                  onViewSpanChange={setViewSpan}
                 />
-              </RegionSpectrogramViewer>
+              </TimelineProvider>
 
               {/* Context menu */}
               {contextMenu && (
@@ -1103,6 +1109,92 @@ export function ClassifyReviewWorkspace({
         onEnded={() => setIsPlaying(false)}
         style={{ display: "none" }}
       />
+    </div>
+  );
+}
+
+interface ClassifyViewerBodyProps {
+  regionDetectionJobId: string;
+  region: Region;
+  regionEffectiveEvents: EffectiveEvent[];
+  selectedEventId: string | null;
+  onSelectEvent: (eventId: string | null) => void;
+  onAdjust: (eventId: string, startSec: number, endSec: number) => void;
+  scrollToCenter: number | undefined;
+  onViewStartChange: (v: number) => void;
+  onViewSpanChange: (v: number) => void;
+}
+
+function ClassifyViewerBody({
+  regionDetectionJobId,
+  region,
+  regionEffectiveEvents,
+  selectedEventId,
+  onSelectEvent,
+  onAdjust,
+  scrollToCenter,
+  onViewStartChange,
+  onViewSpanChange,
+}: ClassifyViewerBodyProps) {
+  const ctx = useTimelineContext();
+
+  // Re-center when region changes
+  const prevRegionRef = useRef<string>(region.region_id);
+  useEffect(() => {
+    if (region.region_id !== prevRegionRef.current) {
+      prevRegionRef.current = region.region_id;
+      const dur = region.padded_end_sec - region.padded_start_sec;
+      const span = ctx.activePreset.span;
+      ctx.seekTo(region.padded_start_sec + Math.min(dur, span) / 2);
+    }
+  }, [region.region_id, region.padded_start_sec, region.padded_end_sec, ctx]);
+
+  // External scroll-to-center
+  const prevScrollRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (scrollToCenter !== undefined && scrollToCenter !== prevScrollRef.current) {
+      prevScrollRef.current = scrollToCenter;
+      ctx.seekTo(scrollToCenter);
+    }
+  }, [scrollToCenter, ctx]);
+
+  // Report viewStart/viewSpan to parent
+  useEffect(() => {
+    onViewStartChange(ctx.viewStart);
+  }, [ctx.viewStart, onViewStartChange]);
+  useEffect(() => {
+    onViewSpanChange(ctx.viewportSpan);
+  }, [ctx.viewportSpan, onViewSpanChange]);
+
+  const tileUrlBuilder = useCallback(
+    (_jobId: string, zoomLevel: string, tileIndex: number) =>
+      regionTileUrl(regionDetectionJobId, zoomLevel, tileIndex),
+    [regionDetectionJobId],
+  );
+
+  return (
+    <div className="w-full select-none">
+      <div className="flex flex-col" style={{ height: 200 }}>
+        <Spectrogram
+          jobId={regionDetectionJobId}
+          tileUrlBuilder={tileUrlBuilder}
+          freqRange={[0, 3000]}
+        >
+          <RegionBoundaryMarkers startEpoch={region.start_sec} endEpoch={region.end_sec} />
+          <EventBarOverlay
+            events={regionEffectiveEvents}
+            selectedEventId={selectedEventId}
+            onSelectEvent={onSelectEvent}
+            onAdjust={onAdjust}
+            onAdd={() => {}}
+            addMode={false}
+            activeRegionId={region.region_id}
+          />
+        </Spectrogram>
+      </div>
+      <div className="border-t border-border px-2 py-1">
+        <ZoomSelector />
+      </div>
     </div>
   );
 }

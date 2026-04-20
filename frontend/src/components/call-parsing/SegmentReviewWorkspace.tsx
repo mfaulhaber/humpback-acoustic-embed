@@ -11,17 +11,23 @@ import {
   useQuickRetrain,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
-import { regionAudioSliceUrl } from "@/api/client";
+import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
 import type {
   EventSegmentationJob,
   BoundaryCorrection,
 } from "@/api/types";
 import { toast } from "@/components/ui/use-toast";
+import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
+import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
+import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
+import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
+import { RegionBandOverlay } from "@/components/timeline/overlays/RegionBandOverlay";
+import { EventBarOverlay, type EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
+import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { EventDetailPanel } from "./EventDetailPanel";
 import { RegionTable } from "./RegionTable";
-import { RegionSpectrogramViewer } from "./RegionSpectrogramViewer";
 import { ReviewToolbar, type RetrainStatus } from "./ReviewToolbar";
-import { EventBarOverlay, type EffectiveEvent } from "./EventBarOverlay";
 
 export function SegmentReviewWorkspace({
   initialJobId,
@@ -83,7 +89,6 @@ export function SegmentReviewWorkspace({
     (startSec: number, duration: number) => {
       const audio = audioRef.current;
       if (!audio || !regionDetectionJobId) return;
-      // Stop any current playback first
       audio.pause();
       audio.currentTime = 0;
       setPlaybackOriginSec(startSec);
@@ -584,6 +589,21 @@ export function SegmentReviewWorkspace({
     );
   }, [retrainStatus, regionDetectionJobId, createSegJob]);
 
+  const jobStart = 0;
+  const jobEnd = timelineExtent?.end ?? 0;
+
+  const audioUrlBuilder = useCallback(
+    (startEpoch: number, durationSec: number) =>
+      regionAudioSliceUrl(regionDetectionJobId ?? "", startEpoch, durationSec),
+    [regionDetectionJobId],
+  );
+
+  const tileUrlBuilder = useCallback(
+    (_jobId: string, zoomLevel: string, tileIndex: number) =>
+      regionTileUrl(regionDetectionJobId ?? "", zoomLevel, tileIndex),
+    [regionDetectionJobId],
+  );
+
   return (
     <div className="space-y-4">
       {/* Job selector */}
@@ -619,7 +639,7 @@ export function SegmentReviewWorkspace({
       </div>
 
       {/* Workspace body */}
-      {selectedJob ? (
+      {selectedJob && selectedRegion && timelineExtent ? (
         <div className="rounded-md border">
           <ReviewToolbar
             region={selectedRegion}
@@ -660,58 +680,64 @@ export function SegmentReviewWorkspace({
             currentEventIndex={currentEventIndex}
             totalEventCount={navigableEvents.length}
           />
-          {selectedRegion ? (
-            <>
-              <RegionSpectrogramViewer
-                regionJobId={regionDetectionJobId!}
-                region={selectedRegion}
-                onViewStartChange={setViewStart}
-                onViewSpanChange={setViewSpan}
-                scrollToCenter={scrollToCenter}
-                timelineExtent={timelineExtent}
-                allRegions={regions}
-                activeRegionId={selectedRegionId!}
-                onSelectRegion={handleSelectRegion}
-                audioRef={audioRef}
-                isPlaying={isPlaying}
-                playbackOriginSec={playbackOriginSec}
-              >
-                <EventBarOverlay
-                  events={regionEvents}
-                  selectedEventId={selectedEventId}
-                  onSelectEvent={(eventId) => {
-                    setSelectedEventId(eventId);
-                    const idx = navigableEvents.findIndex(
-                      (e) => e.eventId === eventId,
-                    );
-                    if (idx >= 0) setCurrentEventIndex(idx);
-                  }}
-                  onAdjust={handleAdjust}
-                  onAdd={handleAdd}
-                  addMode={addMode}
-                  activeRegionId={selectedRegionId!}
-                />
-              </RegionSpectrogramViewer>
-              <EventDetailPanel
-                event={selectedEvent}
-                onDelete={handleDelete}
-                isPlaying={isPlaying}
-                onPlaySlice={() => {
-                  if (isPlaying) {
-                    stopPlayback();
-                    return;
-                  }
-                  if (!selectedEvent) return;
-                  const duration = selectedEvent.endSec - selectedEvent.startSec;
-                  startPlayback(selectedEvent.startSec, duration);
-                }}
-              />
-            </>
-          ) : (
-            <div className="p-4 text-center text-sm text-muted-foreground">
-              Select a region to view its spectrogram
-            </div>
-          )}
+          <TimelineProvider
+            key={`${selectedJobId}-${selectedRegionId}`}
+            jobStart={jobStart}
+            jobEnd={jobEnd}
+            zoomLevels={REVIEW_ZOOM}
+            defaultZoom="1m"
+            playback="slice"
+            audioUrlBuilder={audioUrlBuilder}
+          >
+            <SegmentViewerBody
+              regionDetectionJobId={regionDetectionJobId!}
+              region={selectedRegion}
+              regions={regions}
+              selectedRegionId={selectedRegionId!}
+              onSelectRegion={handleSelectRegion}
+              regionEvents={regionEvents}
+              selectedEventId={selectedEventId}
+              onSelectEvent={(eventId) => {
+                setSelectedEventId(eventId);
+                const idx = navigableEvents.findIndex((e) => e.eventId === eventId);
+                if (idx >= 0) setCurrentEventIndex(idx);
+              }}
+              onAdjust={handleAdjust}
+              onAdd={handleAdd}
+              addMode={addMode}
+              scrollToCenter={scrollToCenter}
+              onViewStartChange={setViewStart}
+              onViewSpanChange={setViewSpan}
+              tileUrlBuilder={tileUrlBuilder}
+            />
+          </TimelineProvider>
+          <EventDetailPanel
+            event={selectedEvent}
+            onDelete={handleDelete}
+            isPlaying={isPlaying}
+            onPlaySlice={() => {
+              if (isPlaying) {
+                stopPlayback();
+                return;
+              }
+              if (!selectedEvent) return;
+              const duration = selectedEvent.endSec - selectedEvent.startSec;
+              startPlayback(selectedEvent.startSec, duration);
+            }}
+          />
+          <RegionTable
+            regions={regions}
+            events={events}
+            corrections={savedCorrections}
+            selectedRegionId={selectedRegionId}
+            onSelectRegion={handleSelectRegion}
+          />
+        </div>
+      ) : selectedJob ? (
+        <div className="rounded-md border">
+          <div className="p-4 text-center text-sm text-muted-foreground">
+            Select a region to view its spectrogram
+          </div>
           <RegionTable
             regions={regions}
             events={events}
@@ -731,6 +757,107 @@ export function SegmentReviewWorkspace({
         onEnded={() => setIsPlaying(false)}
         style={{ display: "none" }}
       />
+    </div>
+  );
+}
+
+interface SegmentViewerBodyProps {
+  regionDetectionJobId: string;
+  region: import("@/api/types").Region;
+  regions: import("@/api/types").Region[];
+  selectedRegionId: string;
+  onSelectRegion: (regionId: string) => void;
+  regionEvents: EffectiveEvent[];
+  selectedEventId: string | null;
+  onSelectEvent: (eventId: string | null) => void;
+  onAdjust: (eventId: string, startSec: number, endSec: number) => void;
+  onAdd: (regionId: string, startSec: number, endSec: number) => void;
+  addMode: boolean;
+  scrollToCenter: { target: number; seq: number } | undefined;
+  onViewStartChange: (viewStart: number) => void;
+  onViewSpanChange: (viewSpan: number) => void;
+  tileUrlBuilder: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
+}
+
+function SegmentViewerBody({
+  regionDetectionJobId,
+  region,
+  regions,
+  selectedRegionId,
+  onSelectRegion,
+  regionEvents,
+  selectedEventId,
+  onSelectEvent,
+  onAdjust,
+  onAdd,
+  addMode,
+  scrollToCenter,
+  onViewStartChange,
+  onViewSpanChange,
+  tileUrlBuilder,
+}: SegmentViewerBodyProps) {
+  const ctx = useTimelineContext();
+
+  // Re-center when region changes
+  const prevRegionRef = useRef<string>(region.region_id);
+  useEffect(() => {
+    if (region.region_id !== prevRegionRef.current) {
+      prevRegionRef.current = region.region_id;
+      const dur = region.padded_end_sec - region.padded_start_sec;
+      const span = ctx.activePreset.span;
+      ctx.seekTo(region.padded_start_sec + Math.min(dur, span) / 2);
+    }
+  }, [region.region_id, region.padded_start_sec, region.padded_end_sec, ctx]);
+
+  // External scroll-to-center (for event navigation)
+  const scrollSeqRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!scrollToCenter || scrollToCenter.seq === scrollSeqRef.current) return;
+    scrollSeqRef.current = scrollToCenter.seq;
+    ctx.seekTo(scrollToCenter.target);
+  }, [scrollToCenter, ctx]);
+
+  // Report viewStart/viewSpan to parent for event visibility checks
+  useEffect(() => {
+    onViewStartChange(ctx.viewStart);
+  }, [ctx.viewStart, onViewStartChange]);
+  useEffect(() => {
+    onViewSpanChange(ctx.viewportSpan);
+  }, [ctx.viewportSpan, onViewSpanChange]);
+
+  // Show region bands at wide zoom (1m or 5m)
+  const showBands = ctx.activePreset.key === "5m" || ctx.activePreset.key === "1m";
+
+  return (
+    <div className="w-full select-none">
+      <div className="flex flex-col" style={{ height: 240 }}>
+        <Spectrogram
+          jobId={regionDetectionJobId}
+          tileUrlBuilder={tileUrlBuilder}
+          freqRange={[0, 3000]}
+        >
+          <RegionBoundaryMarkers startEpoch={region.start_sec} endEpoch={region.end_sec} />
+          {showBands && (
+            <RegionBandOverlay
+              regions={regions}
+              activeRegionId={selectedRegionId}
+              onSelectRegion={onSelectRegion}
+            />
+          )}
+          <EventBarOverlay
+            events={regionEvents}
+            selectedEventId={selectedEventId}
+            onSelectEvent={onSelectEvent}
+            onAdjust={onAdjust}
+            onAdd={onAdd}
+            addMode={addMode}
+            activeRegionId={selectedRegionId}
+          />
+        </Spectrogram>
+      </div>
+      <div className="border-t border-border px-2 py-1">
+        <ZoomSelector />
+      </div>
     </div>
   );
 }

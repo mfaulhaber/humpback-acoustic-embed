@@ -1,5 +1,5 @@
 import { formatTimeDecimal } from "@/utils/format";
-import type { EffectiveEvent } from "./EventBarOverlay";
+import type { EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
 
 interface EventDetailPanelProps {
   event: EffectiveEvent | null;

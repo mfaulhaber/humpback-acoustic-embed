@@ -115,7 +115,7 @@ export function Spectrogram({
   const cursor = ctx.isPlaying ? "default" : isDragging ? "grabbing" : "grab";
 
   return (
-    <div ref={containerRef} className="flex-1 flex flex-col relative select-none min-h-0">
+    <div ref={containerRef} className="flex-1 flex flex-col relative select-none min-h-0" data-testid="spectrogram-viewport">
       <div className="flex flex-1 min-h-0">
         <FrequencyAxis freqRange={freqRange} height={canvasHeight} />
 
