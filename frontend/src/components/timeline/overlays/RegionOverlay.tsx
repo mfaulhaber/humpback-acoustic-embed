@@ -1,3 +1,4 @@
+import type { RegionCorrectionResponse } from "@/api/types";
 import { useOverlayContext } from "./OverlayContext";
 
 export interface RegionOverlayProps {
@@ -11,25 +12,68 @@ export interface RegionOverlayProps {
   }[];
   jobStart: number;
   visible: boolean;
+  corrections?: RegionCorrectionResponse[];
   onRegionClick?: (regionId: string) => void;
 }
 
-export function RegionOverlay({ regions, jobStart, visible, onRegionClick }: RegionOverlayProps) {
+interface Bar {
+  x: number;
+  w: number;
+  alpha: number;
+  key: string;
+  regionId?: string;
+  corrected: boolean;
+}
+
+export function RegionOverlay({ regions, jobStart, visible, corrections, onRegionClick }: RegionOverlayProps) {
   const { epochToX, canvasWidth, canvasHeight } = useOverlayContext();
 
   if (!visible || canvasWidth <= 0 || canvasHeight <= 0) return null;
 
   const interactive = !!onRegionClick;
 
-  const bars: { x: number; w: number; alpha: number; key: string; regionId?: string }[] = [];
+  const correctionMap = new Map<string, RegionCorrectionResponse>();
+  if (corrections) {
+    for (const c of corrections) {
+      correctionMap.set(c.region_id, c);
+    }
+  }
+
+  const bars: Bar[] = [];
   for (const r of regions) {
-    const startEpoch = jobStart + r.padded_start_sec;
-    const endEpoch = jobStart + r.padded_end_sec;
+    const c = r.region_id ? correctionMap.get(r.region_id) : undefined;
+
+    if (c?.correction_type === "delete") continue;
+
+    let startSec: number;
+    let endSec: number;
+    if (c?.correction_type === "adjust" && c.start_sec != null && c.end_sec != null) {
+      startSec = c.start_sec;
+      endSec = c.end_sec;
+    } else {
+      startSec = r.padded_start_sec;
+      endSec = r.padded_end_sec;
+    }
+
+    const startEpoch = jobStart + startSec;
+    const endEpoch = jobStart + endSec;
     const x = epochToX(startEpoch);
     const w = Math.max(2, epochToX(endEpoch) - x);
     if (x + w < 0 || x > canvasWidth) continue;
     const alpha = 0.1 + r.max_score * 0.25;
-    bars.push({ x, w, alpha, key: `${r.padded_start_sec}:${r.padded_end_sec}`, regionId: r.region_id });
+    bars.push({ x, w, alpha, key: `${startSec}:${endSec}`, regionId: r.region_id, corrected: !!c });
+  }
+
+  if (correctionMap.size > 0) {
+    correctionMap.forEach((c) => {
+      if (c.correction_type === "add" && c.start_sec != null && c.end_sec != null) {
+        const x = epochToX(jobStart + c.start_sec);
+        const w = Math.max(2, epochToX(jobStart + c.end_sec) - x);
+        if (x + w >= 0 && x <= canvasWidth) {
+          bars.push({ x, w, alpha: 0.2, key: `add:${c.region_id}`, regionId: c.region_id, corrected: true });
+        }
+      }
+    });
   }
 
   return (
@@ -46,7 +90,7 @@ export function RegionOverlay({ regions, jobStart, visible, onRegionClick }: Reg
         overflow: "hidden",
       }}
     >
-      {bars.map(({ x, w, alpha, key, regionId }) => (
+      {bars.map(({ x, w, alpha, key, regionId, corrected }) => (
         <div
           key={key}
           style={{
@@ -55,7 +99,11 @@ export function RegionOverlay({ regions, jobStart, visible, onRegionClick }: Reg
             left: x,
             width: w,
             height: canvasHeight,
-            background: `rgba(64, 224, 192, ${alpha.toFixed(3)})`,
+            background: corrected
+              ? `rgba(255, 200, 64, ${alpha.toFixed(3)})`
+              : `rgba(64, 224, 192, ${alpha.toFixed(3)})`,
+            border: corrected ? "1px dashed rgba(255, 200, 64, 0.7)" : undefined,
+            boxSizing: "border-box",
             cursor: interactive ? "pointer" : undefined,
           }}
           onClick={interactive && regionId ? () => onRegionClick(regionId) : undefined}
