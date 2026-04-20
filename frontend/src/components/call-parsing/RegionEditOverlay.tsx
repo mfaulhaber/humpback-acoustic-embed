@@ -18,6 +18,10 @@ interface RegionEditOverlayProps {
   zoomLevel: ZoomLevel;
   width: number;
   height: number;
+  leftOffset?: number;
+  addMode?: boolean;
+  selectedRegionId: string | null;
+  onSelectRegion: (regionId: string | null) => void;
   onCorrection: (correction: RegionCorrection) => void;
 }
 
@@ -29,6 +33,10 @@ export function RegionEditOverlay({
   zoomLevel,
   width,
   height,
+  leftOffset = 0,
+  addMode = false,
+  selectedRegionId,
+  onSelectRegion,
   onCorrection,
 }: RegionEditOverlayProps) {
   const [dragState, setDragState] = useState<{
@@ -100,9 +108,10 @@ export function RegionEditOverlay({
 
   const handleEdgeDragStart = useCallback(
     (regionId: string, edge: "start" | "end", sec: number, clientX: number) => {
+      onSelectRegion(regionId);
       setDragState({ regionId, edge, initialSec: sec, initialX: clientX });
     },
-    [],
+    [onSelectRegion],
   );
 
   const handleMouseMove = useCallback(
@@ -151,20 +160,32 @@ export function RegionEditOverlay({
           start_sec: lo,
           end_sec: hi,
         });
+        onSelectRegion(id);
       }
     }
     setDragState(null);
     setNewRegionDrag(null);
-  }, [newRegionDrag, xToSec, onCorrection]);
+  }, [newRegionDrag, xToSec, onCorrection, onSelectRegion]);
 
   const handleBackgroundMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
-      if (target.dataset.handle || target.dataset.region) return;
-      setNewRegionDrag({ startX: e.clientX, currentX: e.clientX });
+      if (target.dataset.handle || target.dataset.region || target.dataset.delete) return;
+      onSelectRegion(null);
+      if (addMode) {
+        setNewRegionDrag({ startX: e.clientX, currentX: e.clientX });
+      }
     },
-    [],
+    [onSelectRegion, addMode],
+  );
+
+  const handleRegionClick = useCallback(
+    (e: React.MouseEvent, regionId: string) => {
+      e.stopPropagation();
+      onSelectRegion(regionId);
+    },
+    [onSelectRegion],
   );
 
   const handleDelete = useCallback(
@@ -175,8 +196,9 @@ export function RegionEditOverlay({
         start_sec: null,
         end_sec: null,
       });
+      onSelectRegion(null);
     },
-    [onCorrection],
+    [onCorrection, onSelectRegion],
   );
 
   const newRegionPreview = (() => {
@@ -196,12 +218,12 @@ export function RegionEditOverlay({
       style={{
         position: "absolute",
         top: 0,
-        left: 0,
+        left: leftOffset,
         width,
         height,
         zIndex: 6,
         overflow: "hidden",
-        cursor: newRegionDrag ? "crosshair" : dragState ? "col-resize" : "crosshair",
+        cursor: newRegionDrag ? "crosshair" : dragState ? "col-resize" : addMode ? "crosshair" : "default",
       }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -216,13 +238,18 @@ export function RegionEditOverlay({
 
         if (x + w < 0 || x > width) return null;
 
+        const isSelected = r.region_id === selectedRegionId;
         const isModified = r.correctionType !== null;
-        const bgColor = isModified
-          ? "rgba(255, 200, 64, 0.25)"
-          : "rgba(64, 224, 192, 0.20)";
-        const borderColor = isModified
-          ? "rgba(255, 200, 64, 0.8)"
-          : "rgba(64, 224, 192, 0.6)";
+        const bgColor = isSelected
+          ? "rgba(100, 180, 255, 0.30)"
+          : isModified
+            ? "rgba(255, 200, 64, 0.25)"
+            : "rgba(64, 224, 192, 0.20)";
+        const borderColor = isSelected
+          ? "rgba(100, 180, 255, 1.0)"
+          : isModified
+            ? "rgba(255, 200, 64, 0.8)"
+            : "rgba(64, 224, 192, 0.6)";
 
         return (
           <div
@@ -237,6 +264,12 @@ export function RegionEditOverlay({
               background: bgColor,
               borderLeft: `2px solid ${borderColor}`,
               borderRight: `2px solid ${borderColor}`,
+              boxShadow: isSelected ? `inset 0 0 0 1px ${borderColor}` : undefined,
+              cursor: "pointer",
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              handleRegionClick(e, r.region_id);
             }}
           >
             {/* Start handle */}
@@ -271,32 +304,34 @@ export function RegionEditOverlay({
                 handleEdgeDragStart(r.region_id, "end", r.end_sec, e.clientX);
               }}
             />
-            {/* Delete button */}
-            <button
-              style={{
-                position: "absolute",
-                top: 4,
-                right: 4,
-                width: 16,
-                height: 16,
-                borderRadius: 8,
-                background: "rgba(255, 80, 80, 0.9)",
-                color: "#fff",
-                border: "none",
-                fontSize: 10,
-                lineHeight: "16px",
-                textAlign: "center",
-                cursor: "pointer",
-                zIndex: 2,
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete(r.region_id);
-              }}
-              title="Delete region"
-            >
-              ×
-            </button>
+            {/* Delete button — only on selected region */}
+            {isSelected && (
+              <button
+                data-delete="true"
+                style={{
+                  position: "absolute",
+                  top: 4,
+                  right: 4,
+                  padding: "2px 6px",
+                  borderRadius: 3,
+                  background: "rgba(239, 68, 68, 0.9)",
+                  color: "#fff",
+                  border: "none",
+                  fontSize: 10,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  zIndex: 2,
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDelete(r.region_id);
+                }}
+                title="Delete region"
+              >
+                Delete
+              </button>
+            )}
           </div>
         );
       })}

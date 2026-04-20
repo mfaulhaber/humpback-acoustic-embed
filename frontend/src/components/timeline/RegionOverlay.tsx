@@ -3,6 +3,7 @@ import { VIEWPORT_SPAN } from "./constants";
 
 export interface RegionOverlayProps {
   regions: {
+    region_id?: string;
     start_sec: number;
     end_sec: number;
     padded_start_sec: number;
@@ -15,6 +16,7 @@ export interface RegionOverlayProps {
   width: number;
   height: number;
   visible: boolean;
+  onRegionClick?: (regionId: string) => void;
 }
 
 export function RegionOverlay({
@@ -25,12 +27,14 @@ export function RegionOverlay({
   width,
   height,
   visible,
+  onRegionClick,
 }: RegionOverlayProps) {
   if (!visible || width <= 0 || height <= 0) return null;
 
   const pxPerSec = width / VIEWPORT_SPAN[zoomLevel];
+  const interactive = !!onRegionClick;
 
-  const bars: { x: number; w: number; alpha: number; key: string }[] = [];
+  const bars: { x: number; w: number; alpha: number; key: string; regionId?: string }[] = [];
 
   for (let i = 0; i < regions.length; i++) {
     const r = regions[i];
@@ -43,7 +47,7 @@ export function RegionOverlay({
     if (x + w < 0 || x > width) continue;
 
     const alpha = 0.10 + r.max_score * 0.25;
-    bars.push({ x, w, alpha, key: `${r.padded_start_sec}:${r.padded_end_sec}` });
+    bars.push({ x, w, alpha, key: `${r.padded_start_sec}:${r.padded_end_sec}`, regionId: r.region_id });
   }
 
   return (
@@ -55,12 +59,12 @@ export function RegionOverlay({
         left: 0,
         width,
         height,
-        pointerEvents: "none",
+        pointerEvents: interactive ? "auto" : "none",
         zIndex: 5,
         overflow: "hidden",
       }}
     >
-      {bars.map(({ x, w, alpha, key }) => (
+      {bars.map(({ x, w, alpha, key, regionId }) => (
         <div
           key={key}
           style={{
@@ -70,7 +74,9 @@ export function RegionOverlay({
             width: w,
             height,
             background: `rgba(64, 224, 192, ${alpha.toFixed(3)})`,
+            cursor: interactive ? "pointer" : undefined,
           }}
+          onClick={interactive && regionId ? () => onRegionClick(regionId) : undefined}
         />
       ))}
     </div>

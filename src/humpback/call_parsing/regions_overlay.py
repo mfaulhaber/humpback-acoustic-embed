@@ -8,7 +8,6 @@ deleted regions — without modifying the original parquet file.
 
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 
 from sqlalchemy import select
@@ -57,8 +56,8 @@ async def load_corrected_regions(
         if correction.correction_type == "delete":
             continue
         elif correction.correction_type == "adjust":
-            assert correction.start_sec is not None
-            assert correction.end_sec is not None
+            if correction.start_sec is None or correction.end_sec is None:
+                continue
             output.append(
                 Region(
                     region_id=region.region_id,
@@ -74,11 +73,11 @@ async def load_corrected_regions(
 
     for region_id, correction in corrections_by_region.items():
         if correction.correction_type == "add":
-            assert correction.start_sec is not None
-            assert correction.end_sec is not None
+            if correction.start_sec is None or correction.end_sec is None:
+                continue
             output.append(
                 Region(
-                    region_id=str(uuid.uuid4()),
+                    region_id=region_id,
                     start_sec=correction.start_sec,
                     end_sec=correction.end_sec,
                     padded_start_sec=correction.start_sec,

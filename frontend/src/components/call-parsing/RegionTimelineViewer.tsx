@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Pencil } from "lucide-react";
+import { ArrowLeft, X, Check, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ZoomLevel, RegionCorrection } from "@/api/types";
 import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
@@ -20,6 +20,7 @@ import {
   VIEWPORT_SPAN,
   COLORS,
   AUDIO_PREFETCH_SEC,
+  FREQ_AXIS_WIDTH_PX,
 } from "@/components/timeline/constants";
 
 const NOOP = () => {};
@@ -59,6 +60,9 @@ export function RegionTimelineViewer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [editMode, setEditMode] = useState(false);
+  const [addMode, setAddMode] = useState(false);
+  const [showRegionOverlay, setShowRegionOverlay] = useState(true);
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [pendingCorrections, setPendingCorrections] = useState<
     Map<string, RegionCorrection>
   >(new Map());
@@ -85,6 +89,9 @@ export function RegionTimelineViewer() {
       next.set(correction.region_id, correction);
       return next;
     });
+    if (correction.correction_type === "add") {
+      setAddMode(false);
+    }
   }, []);
 
   const handleSaveCorrections = useCallback(() => {
@@ -96,6 +103,7 @@ export function RegionTimelineViewer() {
         onSuccess: () => {
           setEditMode(false);
           setPendingCorrections(new Map());
+          setSelectedRegionId(null);
         },
       },
     );
@@ -103,8 +111,28 @@ export function RegionTimelineViewer() {
 
   const handleCancelEdit = useCallback(() => {
     setEditMode(false);
+    setAddMode(false);
     setPendingCorrections(new Map());
+    setSelectedRegionId(null);
   }, []);
+
+  const handleRegionClick = useCallback(
+    (regionId: string) => {
+      if (!isPlaying && job?.status === "complete") {
+        setEditMode(true);
+        setSelectedRegionId(regionId);
+      }
+    },
+    [isPlaying, job?.status],
+  );
+
+  const toggleEditMode = useCallback(() => {
+    if (editMode) {
+      handleCancelEdit();
+    } else {
+      setEditMode(true);
+    }
+  }, [editMode, handleCancelEdit]);
 
   // Track viewport dimensions for the edit overlay
   const viewportContainerRef = useRef<HTMLDivElement>(null);
@@ -310,46 +338,12 @@ export function RegionTimelineViewer() {
           Back
         </Button>
         <span style={{ color: COLORS.text, fontWeight: 600 }}>Region Detection Timeline</span>
-        <span style={{ color: COLORS.textMuted }}>
+        <span className="truncate min-w-0" style={{ color: COLORS.textMuted }}>
           {startStr} — {endStr}
         </span>
-        <span style={{ color: COLORS.accent }}>
+        <span className="shrink-0" style={{ color: COLORS.accent }}>
           {regionCount} region{regionCount !== 1 ? "s" : ""}
         </span>
-        <div className="ml-auto flex items-center gap-2">
-          {editMode ? (
-            <>
-              <span style={{ color: COLORS.textMuted }}>
-                {pendingCorrections.size} correction{pendingCorrections.size !== 1 ? "s" : ""}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancelEdit}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSaveCorrections}
-                disabled={pendingCorrections.size === 0 || saveCorrections.isPending}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
-              >
-                {saveCorrections.isPending ? "Saving..." : "Save"}
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setEditMode(true)}
-              disabled={job.status !== "complete"}
-            >
-              <Pencil className="h-3.5 w-3.5 mr-1" />
-              Edit Regions
-            </Button>
-          )}
-        </div>
       </div>
 
       {/* Spectrogram viewport */}
@@ -374,9 +368,11 @@ export function RegionTimelineViewer() {
           onPan={editMode ? NOOP : handlePan}
           labelMode={false}
           labelEditMode={null}
-          overlayMode={editMode ? undefined : "region"}
-          regions={editMode ? undefined : regions}
+          overlayMode={showRegionOverlay ? "region" : undefined}
+          regions={showRegionOverlay ? regions : undefined}
           tileUrlBuilder={tileUrlBuilder}
+          onRegionClick={!isPlaying && !editMode ? handleRegionClick : undefined}
+          disablePan={editMode}
         />
         {editMode && regions && (
           <RegionEditOverlay
@@ -385,8 +381,12 @@ export function RegionTimelineViewer() {
             jobStart={jobStart}
             centerTimestamp={centerTimestamp}
             zoomLevel={zoomLevel}
-            width={viewportWidth}
+            width={Math.max(0, viewportWidth - FREQ_AXIS_WIDTH_PX)}
             height={viewportHeight}
+            leftOffset={FREQ_AXIS_WIDTH_PX}
+            addMode={addMode}
+            selectedRegionId={selectedRegionId}
+            onSelectRegion={setSelectedRegionId}
             onCorrection={handleCorrection}
           />
         )}
@@ -401,7 +401,49 @@ export function RegionTimelineViewer() {
         className="shrink-0"
         style={{ background: COLORS.headerBg, borderTop: `1px solid ${COLORS.border}` }}
       >
-        <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
+        <div className="flex items-center px-4 py-1">
+          <div className="flex-1">
+            <ZoomSelector activeLevel={zoomLevel} onChange={setZoomLevel} />
+          </div>
+          {editMode && (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[10px] font-mono" style={{ color: COLORS.textMuted }}>
+                {pendingCorrections.size} edit{pendingCorrections.size !== 1 ? "s" : ""}
+              </span>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium"
+                style={{ color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}
+                onClick={handleCancelEdit}
+              >
+                <X size={10} /> Cancel
+              </button>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium"
+                style={{
+                  background: addMode ? "rgba(100, 180, 255, 0.3)" : "transparent",
+                  color: addMode ? "rgba(100, 180, 255, 1)" : COLORS.accent,
+                  border: `1px solid ${addMode ? "rgba(100, 180, 255, 0.8)" : COLORS.accent}`,
+                }}
+                onClick={() => setAddMode((v) => !v)}
+              >
+                <Plus size={10} /> Add
+              </button>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium"
+                style={{
+                  background: pendingCorrections.size > 0 ? "rgba(16, 185, 129, 0.8)" : "transparent",
+                  color: pendingCorrections.size > 0 ? "#fff" : COLORS.textMuted,
+                  border: `1px solid ${pendingCorrections.size > 0 ? "rgba(16, 185, 129, 0.8)" : COLORS.border}`,
+                  opacity: pendingCorrections.size > 0 && !saveCorrections.isPending ? 1 : 0.5,
+                }}
+                onClick={handleSaveCorrections}
+                disabled={pendingCorrections.size === 0 || saveCorrections.isPending}
+              >
+                <Check size={10} /> {saveCorrections.isPending ? "Saving..." : "Save"}
+              </button>
+            </div>
+          )}
+        </div>
         <PlaybackControls
           centerTimestamp={centerTimestamp}
           isPlaying={isPlaying}
@@ -419,6 +461,15 @@ export function RegionTimelineViewer() {
           onToggleVocalization={NOOP}
           hasVocalizationData={false}
           freqRange={[0, 3000]}
+          regionEditMode={editMode}
+          regionEditEnabled={job.status === "complete"}
+          onRegionEditToggle={toggleEditMode}
+          showRegionOverlay={showRegionOverlay}
+          onToggleRegionOverlay={() => setShowRegionOverlay((v) => !v)}
+          pendingCorrectionCount={pendingCorrections.size}
+          onSaveCorrections={handleSaveCorrections}
+          onCancelCorrections={handleCancelEdit}
+          isSavingCorrections={saveCorrections.isPending}
         />
       </div>
     </div>

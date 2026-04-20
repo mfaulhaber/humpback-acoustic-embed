@@ -799,6 +799,23 @@ async def list_region_corrections(
     return list(result.scalars().all())
 
 
+async def clear_region_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> None:
+    """Delete all region corrections for a region detection job."""
+    from humpback.models.feedback_training import RegionBoundaryCorrection
+
+    from sqlalchemy import delete as _delete
+
+    await session.execute(
+        _delete(RegionBoundaryCorrection).where(
+            RegionBoundaryCorrection.region_detection_job_id == job_id
+        )
+    )
+    await session.commit()
+
+
 # ---- Feedback training: boundary corrections (Pass 2) --------------------
 
 

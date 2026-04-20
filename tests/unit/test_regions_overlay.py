@@ -119,6 +119,7 @@ async def test_add_inserts_new_region(db_session, regions_parquet):
     new_regions = [r for r in result if r.start_sec == 25.0]
     assert len(new_regions) == 1
     assert new_regions[0].end_sec == 28.0
+    assert new_regions[0].region_id == "new-r"
 
 
 @pytest.mark.asyncio

@@ -515,6 +515,12 @@ async def list_region_corrections(job_id: str, session: SessionDep):
     return [RegionCorrectionResponse.model_validate(r) for r in rows]
 
 
+@router.delete("/region-detection-jobs/{job_id}/corrections", status_code=204)
+async def delete_region_corrections(job_id: str, session: SessionDep):
+    await service.clear_region_corrections(session, job_id)
+    return None
+
+
 # ---- Pass 2: segmentation jobs ------------------------------------------
 
 
