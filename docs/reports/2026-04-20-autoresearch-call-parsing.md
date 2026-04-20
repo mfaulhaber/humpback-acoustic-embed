@@ -67,7 +67,7 @@ Every pluggable algorithm in the pipeline has a defined contract — a Python Pr
 
 The agent can write a Python file that implements any of these contracts. Before the implementation is used in an experiment, it must pass the existing unit test suite for the algorithm slot it replaces. This is the safety mechanism — the tests define the behavioral contract, and any replacement must satisfy it.
 
-There are 11 algorithm slots across the pipeline that the agent can target:
+There are 7 formally defined algorithm slots (with Python Protocol contracts) that the agent can target immediately:
 
 | Slot | Pass | What it does | Current approach |
 |------|------|-------------|-----------------|
@@ -76,14 +76,12 @@ There are 11 algorithm slots across the pipeline that the agent can target:
 | Event decoder | 2 | Frame probabilities to events | Framewise hysteresis |
 | Feature normalizer | 2+3 | Normalize spectrograms | Per-region z-score |
 | Inference windower | 2 | Handle long audio | 50% overlap averaging |
-| Training loss | 2 | Segmentation loss function | Masked BCE |
-| Train/val splitter | 2+3 | Partition training data | Audio-source-disjoint |
-| Event matcher | eval | Match predictions to truth | Greedy IoU |
 | Threshold optimizer | 3 | Find per-type thresholds | Grid search |
-| Class weighter | 3 | Compute loss weights | Positive/negative ratio |
-| Post-processor | 3 | Logits to typed events | Threshold + fallback |
+| Event matcher | eval | Match predictions to truth | Greedy IoU |
 
-Each of these is under 100 lines of code, a pure function or lightweight module, and has existing tests. The agent isn't rewriting the entire pipeline — it's swapping out small, well-defined components.
+Four additional algorithms (training loss, train/val splitter, class weighter, multi-label post-processor) are also self-contained and under 100 lines each, but are not formalized as Protocol slots in the initial design. They are candidates for future Protocol promotion as the system matures.
+
+Each of the 7 Protocol-defined slots is under 100 lines of code, a pure function or lightweight module, and has existing tests. The agent isn't rewriting the entire pipeline — it's swapping out small, well-defined components.
 
 For example, the current region detector uses a simple hysteresis state machine: open a region when confidence exceeds a high threshold, keep it open while above a low threshold, close it when confidence drops below. The agent might write an adaptive version that adjusts thresholds based on local noise floor estimates, or a peak-picking approach that finds confidence maxima and grows regions outward until the signal drops. As long as it takes scores in and produces regions out, and passes the tests, it's valid.
 

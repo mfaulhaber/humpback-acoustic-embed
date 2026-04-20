@@ -115,25 +115,27 @@ When the agent triggers retraining, the training data assembly pipeline must exc
 
 Scalar parameters the agent can sweep. Bounded ranges enforced by the experiment spec schema.
 
-| Pass | Parameter | Default | Description |
-|------|-----------|---------|-------------|
-| 1 | `high_threshold` | 0.70 | Hysteresis upper bound |
-| 1 | `low_threshold` | 0.45 | Hysteresis lower bound |
-| 1 | `padding_sec` | 1.0 | Symmetric padding around regions |
-| 1 | `min_region_duration_sec` | 0.0 | Minimum region length filter |
-| 2 | `learning_rate` | 1e-3 | Training step size |
-| 2 | `weight_decay` | 1e-4 | Regularization strength |
-| 2 | `epochs` | 30 | Max training epochs |
-| 2 | `early_stopping_patience` | 5 | Epochs without improvement before stop |
-| 2 | decoder `high_threshold` | 0.5 | Event boundary sensitivity |
-| 2 | decoder `low_threshold` | 0.3 | Event termination sensitivity |
-| 2 | decoder `min_event_sec` | 0.2 | Minimum event duration |
-| 2 | decoder `merge_gap_sec` | 0.1 | Merge gap for adjacent events |
-| 3 | `learning_rate` | 1e-3 | Training step size |
-| 3 | `weight_decay` | 1e-4 | Regularization strength |
-| 3 | `epochs` | 30 | Max training epochs |
-| 3 | `min_examples_per_type` | varies | Drop rare types from training |
-| 3 | per-type thresholds | F1-optimized | Precision/recall tradeoff per type |
+| Pass | Parameter | Default | Range | Description |
+|------|-----------|---------|-------|-------------|
+| 1 | `high_threshold` | 0.70 | [0.30, 0.95] | Hysteresis upper bound |
+| 1 | `low_threshold` | 0.45 | [0.10, 0.80] | Hysteresis lower bound |
+| 1 | `padding_sec` | 1.0 | [0.0, 5.0] | Symmetric padding around regions |
+| 1 | `min_region_duration_sec` | 0.0 | [0.0, 10.0] | Minimum region length filter |
+| 2 | `learning_rate` | 1e-3 | [1e-5, 1e-1] | Training step size |
+| 2 | `weight_decay` | 1e-4 | [0, 1e-1] | Regularization strength |
+| 2 | `epochs` | 30 | [5, 200] | Max training epochs |
+| 2 | `early_stopping_patience` | 5 | [2, 30] | Epochs without improvement before stop |
+| 2 | decoder `high_threshold` | 0.5 | [0.20, 0.90] | Event boundary sensitivity |
+| 2 | decoder `low_threshold` | 0.3 | [0.05, 0.70] | Event termination sensitivity |
+| 2 | decoder `min_event_sec` | 0.2 | [0.05, 2.0] | Minimum event duration |
+| 2 | decoder `merge_gap_sec` | 0.1 | [0.0, 1.0] | Merge gap for adjacent events |
+| 3 | `learning_rate` | 1e-3 | [1e-5, 1e-1] | Training step size |
+| 3 | `weight_decay` | 1e-4 | [0, 1e-1] | Regularization strength |
+| 3 | `epochs` | 30 | [5, 200] | Max training epochs |
+| 3 | `min_examples_per_type` | varies | [1, 50] | Drop rare types from training |
+| 3 | per-type thresholds | F1-optimized | [0.05, 0.95] | Precision/recall tradeoff per type |
+
+Constraint: `low_threshold` must be strictly less than `high_threshold` for both Pass 1 and Pass 2 decoder dials. The experiment spec schema enforces this.
 
 ### Tier 2a — Built-In Strategy Switches
 

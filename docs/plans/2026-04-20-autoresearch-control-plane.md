@@ -56,8 +56,11 @@
 ### Task 3: Pass 1 Region Correction — Frontend UI
 
 **Files:**
-- Modify: `frontend/src/pages/` (region detection timeline viewer component)
-- Modify: `frontend/src/api/` (API client additions for correction endpoints)
+- Modify: `frontend/src/components/call-parsing/RegionTimelineViewer.tsx`
+- Modify: `frontend/src/components/call-parsing/DetectionPage.tsx`
+- Modify: `frontend/src/api/client.ts`
+- Modify: `frontend/src/api/types.ts`
+- Modify: `frontend/src/hooks/queries/useCallParsing.ts`
 
 **Acceptance criteria:**
 - [ ] Region detection timeline viewer has an editing mode toggle
@@ -303,6 +306,18 @@
 - Agent config rejects invalid configurations
 - Orchestrator entry point initializes without error with a valid config
 - System prompt includes all required sections
+
+---
+
+### Intentionally Deferred
+
+The following items from the spec are not covered by tasks above and are deferred to future work:
+
+- **Architecture variant registries** (spec Tier 2a: CRNN/Conv-only/UNet-style for Pass 2; Conv4/ResNet-small/attention pooling for Pass 3) — lower priority per spec §8. The Protocol system supports adding these later without structural changes.
+- **Train/val split strategy registry** (spec Tier 2a: by-source/temporal/stratified) — the existing `split_by_audio_source` is adequate for initial autoresearch runs. Can be promoted to a registry when the agent identifies split strategy as a bottleneck.
+- **Dice loss** (spec Tier 2a) — deferred from the initial loss registry in Task 7. BCE and focal loss cover the highest-impact cases. Dice loss can be added as a registry entry later.
+- **Gold standard UI** — Tasks 4-5 provide API-only gold management. The agent interacts via tools, and human promotion can be done via API calls or a simple admin UI added later.
+- **`gold_set_id` versioning** — the experiment spec references `gold_set_id` but the initial implementation evaluates against all currently-promoted gold segments. Versioned snapshots can be added when the gold set is large enough to warrant it.
 
 ---
 
