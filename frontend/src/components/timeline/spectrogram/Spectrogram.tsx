@@ -49,17 +49,17 @@ export function Spectrogram({
     return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (containerWidth > 0 && containerHeight > 0) {
-      ctx.setViewportDimensions(canvasWidth, canvasHeight);
-    }
-  }, [containerWidth, containerHeight]);
-
   const canvasWidth = Math.max(0, containerWidth - FREQ_AXIS_WIDTH_PX);
   const canvasHeight = Math.max(
     0,
     containerHeight - (scores ? CONFIDENCE_STRIP_HEIGHT : 0) - TIME_AXIS_HEIGHT,
   );
+
+  useEffect(() => {
+    if (canvasWidth > 0 && canvasHeight > 0) {
+      ctx.setViewportDimensions(canvasWidth, canvasHeight);
+    }
+  }, [canvasWidth, canvasHeight, ctx.setViewportDimensions]);
 
   // Drag-to-pan
   const dragRef = useRef<{ startX: number; startCenter: number } | null>(null);

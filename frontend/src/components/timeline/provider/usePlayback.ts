@@ -42,6 +42,8 @@ export function usePlayback({
     }
     return () => {
       cancelAnimationFrame(rafRef.current);
+      audioARef.current?.pause();
+      audioBRef.current?.pause();
     };
   }, [mode]);
 
