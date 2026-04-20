@@ -619,8 +619,11 @@ async def get_confidence(
         # Fallback: offset is already job-relative (local detection jobs)
         absolute_offsets.append(offset)
 
-    # Bucket into fixed-size windows across the full job duration
-    n_buckets = max(1, int(job_duration / window_sec))
+    # Bucket into fixed-size windows across the full job duration.
+    # Use ceiling division so the final partial window is not dropped.
+    import math
+
+    n_buckets = max(1, math.ceil(job_duration / window_sec))
     bucket_sums: list[float] = [0.0] * n_buckets
     bucket_counts: list[int] = [0] * n_buckets
 

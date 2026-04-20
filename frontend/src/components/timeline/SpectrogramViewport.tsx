@@ -4,6 +4,7 @@ import type { DetectionRow, TimelineVocalizationLabel, ZoomLevel } from "@/api/t
 import { TileCanvas } from "./TileCanvas";
 import { DetectionOverlay } from "./DetectionOverlay";
 import { VocalizationOverlay } from "./VocalizationOverlay";
+import { RegionOverlay } from "./RegionOverlay";
 import { DetectionPopover } from "./DetectionPopover";
 import {
   FREQ_AXIS_WIDTH_PX,
@@ -24,6 +25,8 @@ export interface SpectrogramViewportProps {
   freqRange: [number, number];
   isPlaying: boolean;
   scores: (number | null)[];
+  /** Backend-provided window size in seconds for the confidence strip. */
+  windowSec?: number;
   showLabels: boolean;
   detections: DetectionRow[];
   onCenterChange: (t: number) => void;
@@ -37,12 +40,18 @@ export interface SpectrogramViewportProps {
   renderLabelEditor?: (width: number, height: number) => React.ReactNode;
   /** Render function for vocalization label editor; receives canvas width and height. */
   renderVocLabelEditor?: (width: number, height: number) => React.ReactNode;
-  /** Which overlay to show: detection labels or vocalization types. */
-  overlayMode?: "detection" | "vocalization";
+  /** Which overlay to show: detection labels, vocalization types, or call parsing regions. */
+  overlayMode?: "detection" | "vocalization" | "region";
   /** Vocalization labels for the overlay. */
   vocalizationLabels?: TimelineVocalizationLabel[];
   /** Called when a detection bar is clicked in view mode. Return true to suppress popover. */
   onDetectionBarClick?: (row: DetectionRow) => boolean;
+  /** Custom tile URL builder. If omitted, uses default classifier detection URLs. */
+  tileUrlBuilder?: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
+  /** Custom audio slice URL builder. If omitted, uses default classifier detection URLs. */
+  audioSliceUrlBuilder?: (jobId: string, startSec: number, durationSec: number) => string;
+  /** Regions for the region overlay (call parsing). */
+  regions?: { start_sec: number; end_sec: number; padded_start_sec: number; padded_end_sec: number; max_score: number }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +184,10 @@ export function SpectrogramViewport({
   overlayMode = "detection",
   vocalizationLabels,
   onDetectionBarClick,
+  windowSec: windowSecProp,
+  tileUrlBuilder,
+  audioSliceUrlBuilder,
+  regions,
 }: SpectrogramViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -314,7 +327,7 @@ export function SpectrogramViewport({
     if (scores.length === 0 || canvasWidth <= 0) return null;
 
     const totalDuration = jobEnd - jobStart;
-    const windowSec = totalDuration / scores.length;
+    const windowSec = windowSecProp ?? totalDuration / scores.length;
     const halfSpan = viewportSpan / 2;
     const viewStart = centerTimestamp - halfSpan;
     const viewEnd = centerTimestamp + halfSpan;
@@ -337,7 +350,7 @@ export function SpectrogramViewport({
       });
     }
     return bars;
-  }, [scores, canvasWidth, centerTimestamp, viewportSpan, pxPerSec, jobStart, jobEnd]);
+  }, [scores, canvasWidth, centerTimestamp, viewportSpan, pxPerSec, jobStart, jobEnd, windowSecProp]);
 
   // Cursor style for pan
   const cursorStyle = isPlaying
@@ -401,6 +414,7 @@ export function SpectrogramViewport({
               freqRange={freqRange}
               width={canvasWidth}
               height={canvasHeight}
+              tileUrlBuilder={tileUrlBuilder}
             />
           )}
 
@@ -429,6 +443,17 @@ export function SpectrogramViewport({
               width={canvasWidth}
               height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
               visible={showLabels}
+            />
+          )}
+          {overlayMode === "region" && regions && (
+            <RegionOverlay
+              regions={regions}
+              jobStart={jobStart}
+              centerTimestamp={centerTimestamp}
+              zoomLevel={zoomLevel}
+              width={canvasWidth}
+              height={canvasHeight + CONFIDENCE_STRIP_HEIGHT}
+              visible={true}
             />
           )}
           {labelMode && labelEditMode === "detection" && renderLabelEditor?.(canvasWidth, canvasHeight + CONFIDENCE_STRIP_HEIGHT)}

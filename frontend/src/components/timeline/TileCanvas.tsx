@@ -110,6 +110,8 @@ export interface TileCanvasProps {
   freqRange: [number, number];
   width: number;
   height: number;
+  /** Custom tile URL builder. If omitted, uses default classifier detection URLs. */
+  tileUrlBuilder?: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +126,10 @@ export function TileCanvas({
   freqRange,
   width,
   height,
+  tileUrlBuilder: tileUrlBuilderProp,
 }: TileCanvasProps) {
+  const buildTileUrl = tileUrlBuilderProp ?? timelineTileUrl;
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Track zoom transitions
@@ -177,7 +182,7 @@ export function TileCanvas({
   useEffect(() => {
     const tiles = getVisibleTiles(zoomLevel);
     for (const idx of tiles) {
-      const url = timelineTileUrl(
+      const url = buildTileUrl(
         jobId,
         zoomLevel,
         idx,
@@ -193,7 +198,7 @@ export function TileCanvas({
     if (transitionRef.current) {
       const prevTiles = getVisibleTiles(transitionRef.current.prevZoom);
       for (const idx of prevTiles) {
-        const url = timelineTileUrl(
+        const url = buildTileUrl(
           jobId,
           transitionRef.current.prevZoom,
           idx,
@@ -205,7 +210,7 @@ export function TileCanvas({
         });
       }
     }
-  }, [jobId, zoomLevel, freqRange, getVisibleTiles]);
+  }, [jobId, zoomLevel, freqRange, getVisibleTiles, buildTileUrl]);
 
   // Draw loop
   const drawRef = useRef<number>(0);
@@ -249,7 +254,7 @@ export function TileCanvas({
 
       ctx.globalAlpha = alpha;
       for (const idx of tiles) {
-        const url = timelineTileUrl(
+        const url = buildTileUrl(
           jobId,
           zoom,
           idx,
@@ -296,6 +301,7 @@ export function TileCanvas({
     jobStart,
     freqRange,
     getVisibleTiles,
+    buildTileUrl,
   ]);
 
   // Re-draw on state changes

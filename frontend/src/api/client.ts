@@ -946,6 +946,11 @@ export const regionAudioSliceUrl = (
 ) =>
   `/call-parsing/region-jobs/${jobId}/audio-slice?start_sec=${startSec}&duration_sec=${durationSec}`;
 
+export const fetchRegionJobConfidence = (jobId: string) =>
+  api<TimelineConfidenceResponse>(
+    `/call-parsing/region-jobs/${jobId}/confidence`,
+  );
+
 // ---- Call Parsing (Event Segmentation) ----
 
 export const fetchSegmentationJobs = () =>

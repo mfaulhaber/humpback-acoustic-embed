@@ -4,6 +4,7 @@ import {
   createRegionDetectionJob,
   deleteRegionDetectionJob,
   fetchRegionJobRegions,
+  fetchRegionJobConfidence,
   fetchSegmentationJobs,
   createSegmentationJob,
   deleteSegmentationJob,
@@ -81,6 +82,15 @@ export function useRegionJobRegions(jobId: string | null) {
     queryKey: ["region-job-regions", jobId],
     queryFn: () => fetchRegionJobRegions(jobId!),
     enabled: !!jobId,
+  });
+}
+
+export function useRegionJobConfidence(jobId: string | null) {
+  return useQuery({
+    queryKey: ["region-job-confidence", jobId],
+    queryFn: () => fetchRegionJobConfidence(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity,
   });
 }
 
