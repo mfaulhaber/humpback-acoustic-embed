@@ -201,17 +201,10 @@ export function RegionDetectionTimeline() {
 
         {/* Footer */}
         <TimelineFooter>
-          <ZoomSelector />
-          <div className="flex items-center justify-between">
-            <PlaybackControls>
-              <EditToggle
-                active={editMode}
-                enabled={job.status === "complete"}
-                label="Edit Regions"
-                onToggle={toggleEditMode}
-              />
-            </PlaybackControls>
-            <div className="flex items-center gap-2">
+          <div className="flex items-center">
+            <div className="flex-1" />
+            <ZoomSelector />
+            <div className="flex-1 flex justify-end gap-2">
               {editMode && (
                 <EditToolbar
                   pendingCount={pendingCorrections.size}
@@ -238,6 +231,14 @@ export function RegionDetectionTimeline() {
               />
             </div>
           </div>
+          <PlaybackControls>
+            <EditToggle
+              active={editMode}
+              enabled={job.status === "complete"}
+              label="Edit Regions"
+              onToggle={toggleEditMode}
+            />
+          </PlaybackControls>
         </TimelineFooter>
       </TimelineProvider>
     </div>
