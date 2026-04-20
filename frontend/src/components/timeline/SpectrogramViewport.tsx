@@ -48,8 +48,6 @@ export interface SpectrogramViewportProps {
   onDetectionBarClick?: (row: DetectionRow) => boolean;
   /** Custom tile URL builder. If omitted, uses default classifier detection URLs. */
   tileUrlBuilder?: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
-  /** Custom audio slice URL builder. If omitted, uses default classifier detection URLs. */
-  audioSliceUrlBuilder?: (jobId: string, startSec: number, durationSec: number) => string;
   /** Regions for the region overlay (call parsing). */
   regions?: { start_sec: number; end_sec: number; padded_start_sec: number; padded_end_sec: number; max_score: number }[];
 }
@@ -186,7 +184,6 @@ export function SpectrogramViewport({
   onDetectionBarClick,
   windowSec: windowSecProp,
   tileUrlBuilder,
-  audioSliceUrlBuilder,
   regions,
 }: SpectrogramViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);

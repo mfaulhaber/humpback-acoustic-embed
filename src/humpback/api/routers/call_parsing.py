@@ -11,6 +11,7 @@ retrieval, and model-family validation.
 from __future__ import annotations
 
 import asyncio
+import math
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -195,15 +196,7 @@ async def get_region_confidence(
     job_id: str, session: SessionDep, settings: SettingsDep
 ):
     """Return bucketed trace scores for the confidence heatmap strip."""
-    import math
-
-    from pydantic import BaseModel
-
-    class _ConfidenceResponse(BaseModel):
-        window_sec: float
-        scores: list[float | None]
-        start_timestamp: float
-        end_timestamp: float
+    from humpback.api.routers.timeline import ConfidenceResponse
 
     job = await service.get_region_detection_job(session, job_id)
     if job is None:
@@ -219,7 +212,7 @@ async def get_region_confidence(
 
     rows = read_trace(trace_path)
     if not rows:
-        return _ConfidenceResponse(
+        return ConfidenceResponse(
             window_sec=1.0,
             scores=[],
             start_timestamp=job.start_timestamp or 0.0,
@@ -248,7 +241,7 @@ async def get_region_confidence(
         for i in range(n_buckets)
     ]
 
-    return _ConfidenceResponse(
+    return ConfidenceResponse(
         window_sec=window_sec,
         scores=scores,
         start_timestamp=job_start,

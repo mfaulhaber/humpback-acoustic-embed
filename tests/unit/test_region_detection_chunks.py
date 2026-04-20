@@ -300,6 +300,55 @@ def test_merge_no_duplicates_passes_through(tmp_path: Path):
     assert len(deduped) == 4  # no change
 
 
+# ---- Offset fix: score_audio_windows with correct time_offset_sec ----------
+
+
+def test_score_audio_windows_offset_produces_non_overlapping_traces():
+    """Two audio buffers with different time_offset_sec produce non-overlapping traces.
+
+    This simulates the fixed behavior where iter_audio_chunks yields two
+    buffers due to an HLS discontinuity. Each buffer is scored with the
+    correct time_offset_sec derived from seg_start_utc, not the chunk start.
+    """
+    import numpy as np
+
+    from humpback.classifier.detector import score_audio_windows
+    from humpback.classifier.trainer import train_binary_classifier
+    from humpback.processing.inference import FakeTFLiteModel
+
+    model = FakeTFLiteModel(vector_dim=64)
+    rng = np.random.RandomState(42)
+    pos = rng.randn(20, 64).astype(np.float32)
+    neg = rng.randn(20, 64).astype(np.float32) - 5.0
+    classifier, _ = train_binary_classifier(pos, neg)
+
+    sr = 16000
+    config = {"window_size_seconds": 5.0, "hop_seconds": 1.0}
+
+    # Buffer 1: 8 seconds of audio at offset 100s
+    buf1 = np.random.randn(sr * 8).astype(np.float32)
+    records1 = score_audio_windows(
+        buf1, sr, model, classifier, config, time_offset_sec=100.0
+    )
+
+    # Buffer 2: 8 seconds of audio at offset 115s (gap from 108 to 115)
+    buf2 = np.random.randn(sr * 8).astype(np.float32)
+    records2 = score_audio_windows(
+        buf2, sr, model, classifier, config, time_offset_sec=115.0
+    )
+
+    times1 = [r["offset_sec"] for r in records1]
+    times2 = [r["offset_sec"] for r in records2]
+
+    assert len(times1) > 0
+    assert len(times2) > 0
+    assert times1[0] == pytest.approx(100.0)
+    assert times2[0] == pytest.approx(115.0)
+    assert max(times1) < min(times2), (
+        f"Buffers should not overlap: buf1 max={max(times1)}, buf2 min={min(times2)}"
+    )
+
+
 def test_build_archive_detection_provider_accepts_force_refresh():
     """build_archive_detection_provider passes force_refresh to CachingHLSProvider."""
     from unittest.mock import patch

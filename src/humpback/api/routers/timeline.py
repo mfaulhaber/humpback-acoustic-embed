@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
@@ -621,8 +622,6 @@ async def get_confidence(
 
     # Bucket into fixed-size windows across the full job duration.
     # Use ceiling division so the final partial window is not dropped.
-    import math
-
     n_buckets = max(1, math.ceil(job_duration / window_sec))
     bucket_sums: list[float] = [0.0] * n_buckets
     bucket_counts: list[int] = [0] * n_buckets
