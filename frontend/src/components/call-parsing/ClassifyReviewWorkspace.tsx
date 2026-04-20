@@ -1174,7 +1174,7 @@ function ClassifyViewerBody({
 
   return (
     <div className="w-full select-none">
-      <div style={{ height: 200 }}>
+      <div className="flex flex-col" style={{ height: 200 }}>
         <Spectrogram
           jobId={regionDetectionJobId}
           tileUrlBuilder={tileUrlBuilder}

@@ -824,7 +824,7 @@ function SegmentViewerBody({
 
   return (
     <div className="w-full select-none">
-      <div style={{ height: 240 }}>
+      <div className="flex flex-col" style={{ height: 240 }}>
         <Spectrogram
           jobId={regionDetectionJobId}
           tileUrlBuilder={tileUrlBuilder}
