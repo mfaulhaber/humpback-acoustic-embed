@@ -21,6 +21,7 @@ import { SegmentPage } from "@/components/call-parsing/SegmentPage";
 import { SegmentTrainingPage } from "@/components/call-parsing/SegmentTrainingPage";
 import { ClassifyPage } from "@/components/call-parsing/ClassifyPage";
 import { ClassifyTrainingPage } from "@/components/call-parsing/ClassifyTrainingPage";
+import { RegionTimelineViewer } from "@/components/call-parsing/RegionTimelineViewer";
 
 export default function App() {
   return (
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="/app/vocalization/training-data" element={<TrainingDataView />} />
         <Route path="/app/call-parsing" element={<Navigate to="/app/call-parsing/detection" replace />} />
         <Route path="/app/call-parsing/detection" element={<DetectionPage />} />
+        <Route path="/app/call-parsing/region-timeline/:jobId" element={<RegionTimelineViewer />} />
         <Route path="/app/call-parsing/segment" element={<SegmentPage />} />
         <Route path="/app/call-parsing/segment-training" element={<SegmentTrainingPage />} />
         <Route path="/app/call-parsing/classify" element={<ClassifyPage />} />

@@ -479,6 +479,7 @@ export function TimelineViewer() {
           freqRange={freqRange}
           isPlaying={isPlaying}
           scores={confidence?.scores ?? []}
+          windowSec={confidence?.window_sec}
           showLabels={overlayMode !== "off"}
           detections={detections ?? []}
           onCenterChange={setCenterTimestamp}

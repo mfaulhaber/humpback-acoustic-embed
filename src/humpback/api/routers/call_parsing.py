@@ -11,6 +11,7 @@ retrieval, and model-family validation.
 from __future__ import annotations
 
 import asyncio
+import math
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -190,6 +191,64 @@ async def get_region_trace(job_id: str, session: SessionDep, settings: SettingsD
     return [{"time_sec": row.time_sec, "score": row.score} for row in rows]
 
 
+@router.get("/region-jobs/{job_id}/confidence")
+async def get_region_confidence(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    """Return bucketed trace scores for the confidence heatmap strip."""
+    from humpback.api.routers.timeline import ConfidenceResponse
+
+    job = await service.get_region_detection_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Region detection job not found")
+    if job.status != "complete":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Region detection job status is {job.status!r}, not 'complete'",
+        )
+    trace_path = region_job_dir(settings.storage_root, job_id) / "trace.parquet"
+    if not trace_path.exists():
+        raise HTTPException(status_code=404, detail="trace.parquet not found")
+
+    rows = read_trace(trace_path)
+    if not rows:
+        return ConfidenceResponse(
+            window_sec=1.0,
+            scores=[],
+            start_timestamp=job.start_timestamp or 0.0,
+            end_timestamp=job.end_timestamp or 0.0,
+        )
+
+    job_start = job.start_timestamp or 0.0
+    job_end = job.end_timestamp or 0.0
+    job_duration = job_end - job_start
+
+    window_sec = rows[1].time_sec - rows[0].time_sec if len(rows) > 1 else 1.0
+    window_sec = max(0.1, window_sec)
+
+    n_buckets = max(1, math.ceil(job_duration / window_sec))
+    bucket_sums: list[float] = [0.0] * n_buckets
+    bucket_counts: list[int] = [0] * n_buckets
+
+    for row in rows:
+        idx = int(row.time_sec / window_sec)
+        if 0 <= idx < n_buckets:
+            bucket_sums[idx] += row.score
+            bucket_counts[idx] += 1
+
+    scores: list[float | None] = [
+        bucket_sums[i] / bucket_counts[i] if bucket_counts[i] > 0 else None
+        for i in range(n_buckets)
+    ]
+
+    return ConfidenceResponse(
+        window_sec=window_sec,
+        scores=scores,
+        start_timestamp=job_start,
+        end_timestamp=job_end,
+    )
+
+
 @router.get("/region-jobs/{job_id}/regions")
 async def get_region_regions(job_id: str, session: SessionDep, settings: SettingsDep):
     job = await service.get_region_detection_job(session, job_id)
@@ -348,7 +407,7 @@ async def get_region_audio_slice(
     settings: SettingsDep,
     start_sec: float = Query(..., description="Start time in seconds (job-relative)"),
     duration_sec: float = Query(
-        ..., gt=0, le=30, description="Duration in seconds (max 30)"
+        ..., gt=0, le=600, description="Duration in seconds (max 600)"
     ),
 ) -> Response:
     """Return a WAV audio slice for a region detection job."""

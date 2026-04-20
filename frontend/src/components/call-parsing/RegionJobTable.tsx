@@ -341,9 +341,19 @@ export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps)
                         Segment →
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" disabled>
-                      Timeline
-                    </Button>
+                    {job.status === "complete" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          navigate(
+                            `/app/call-parsing/region-timeline/${job.id}`,
+                          )
+                        }
+                      >
+                        Timeline
+                      </Button>
+                    )}
                   </div>
                 </td>
               )}

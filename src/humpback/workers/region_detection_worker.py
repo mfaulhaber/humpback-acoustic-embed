@@ -330,7 +330,7 @@ async def _load_hydrophone_trace(
             try:
                 for (
                     audio_buf,
-                    _seg_start_utc,
+                    seg_start_utc,
                     _segs_done,
                     _segs_total,
                 ) in iter_audio_chunks(
@@ -341,13 +341,14 @@ async def _load_hydrophone_trace(
                     target_sr=target_sample_rate,
                     timeline=chunk_timeline,
                 ):
+                    buf_offset = seg_start_utc.timestamp() - start_ts
                     records = score_audio_windows(
                         audio=audio_buf,
                         sample_rate=target_sample_rate,
                         perch_model=perch_model,
                         classifier=classifier,
                         config=_detector_config(config, input_format),
-                        time_offset_sec=chunk_start - start_ts,
+                        time_offset_sec=buf_offset,
                     )
                     chunk_scores.extend(_score_records_to_window_scores(records))
                     del audio_buf
@@ -396,14 +397,33 @@ async def _load_hydrophone_trace(
             rate,
         )
 
-    # Merge all chunks
+    # Merge all chunks and deduplicate by time_sec (keep highest score).
+    # Adjacent chunks may legitimately overlap by a few windows at
+    # boundaries; dedup ensures a clean 1-row-per-timestamp trace.
     t0 = time.monotonic()
-    all_scores = read_all_chunk_traces(job_dir, total_chunks)
+    raw_scores = read_all_chunk_traces(job_dir, total_chunks)
+    raw_count = len(raw_scores)
+
+    seen: dict[float, WindowScore] = {}
+    for ws in raw_scores:
+        existing = seen.get(ws.time_sec)
+        if existing is None or ws.score > existing.score:
+            seen[ws.time_sec] = ws
+    all_scores = sorted(seen.values(), key=lambda ws: ws.time_sec)
+    dup_count = raw_count - len(all_scores)
+
     merge_elapsed = time.monotonic() - t0
 
+    if dup_count > 0:
+        logger.warning(
+            "region_detection | job=%s | merge | %d duplicate trace rows removed",
+            job_id,
+            dup_count,
+        )
     logger.info(
-        "region_detection | job=%s | merge | read %d trace rows | %.1fs",
+        "region_detection | job=%s | merge | read %d trace rows (%d after dedup) | %.1fs",
         job_id,
+        raw_count,
         len(all_scores),
         merge_elapsed,
     )
