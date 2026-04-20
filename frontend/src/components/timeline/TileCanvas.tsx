@@ -106,10 +106,14 @@ export interface TileCanvasProps {
   jobStart: number;
   jobEnd: number;
   centerTimestamp: number;
-  zoomLevel: ZoomLevel;
+  zoomLevel: ZoomLevel | string;
   freqRange: [number, number];
   width: number;
   height: number;
+  /** Override tile duration instead of looking up from TILE_DURATION constant. */
+  tileDurationOverride?: number;
+  /** Override viewport span instead of looking up from VIEWPORT_SPAN constant. */
+  viewportSpanOverride?: number;
   /** Custom tile URL builder. If omitted, uses default classifier detection URLs. */
   tileUrlBuilder?: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
 }
@@ -126,6 +130,8 @@ export function TileCanvas({
   freqRange,
   width,
   height,
+  tileDurationOverride,
+  viewportSpanOverride,
   tileUrlBuilder: tileUrlBuilderProp,
 }: TileCanvasProps) {
   const buildTileUrl = tileUrlBuilderProp ?? timelineTileUrl;
@@ -133,9 +139,9 @@ export function TileCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Track zoom transitions
-  const prevZoomRef = useRef<ZoomLevel>(zoomLevel);
+  const prevZoomRef = useRef<ZoomLevel | string>(zoomLevel);
   const transitionRef = useRef<{
-    prevZoom: ZoomLevel;
+    prevZoom: ZoomLevel | string;
     startTime: number;
   } | null>(null);
 
@@ -152,9 +158,9 @@ export function TileCanvas({
 
   // Calculate visible tile indices for a given zoom level
   const getVisibleTiles = useCallback(
-    (zoom: ZoomLevel) => {
-      const tileDuration = TILE_DURATION[zoom];
-      const viewportSpan = VIEWPORT_SPAN[zoom];
+    (zoom: ZoomLevel | string) => {
+      const tileDuration = tileDurationOverride ?? TILE_DURATION[zoom as ZoomLevel] ?? 10;
+      const viewportSpan = viewportSpanOverride ?? VIEWPORT_SPAN[zoom as ZoomLevel] ?? 60;
       const halfWidthSec = viewportSpan / 2;
 
       const viewStart = centerTimestamp - halfWidthSec;
@@ -175,7 +181,7 @@ export function TileCanvas({
       }
       return tiles;
     },
-    [centerTimestamp, width, jobStart, jobEnd],
+    [centerTimestamp, width, jobStart, jobEnd, tileDurationOverride, viewportSpanOverride],
   );
 
   // Preload visible tiles (current + transitioning zoom)
@@ -245,10 +251,10 @@ export function TileCanvas({
     }
 
     // Draw a tile layer
-    const drawLayer = (zoom: ZoomLevel, alpha: number) => {
+    const drawLayer = (zoom: ZoomLevel | string, alpha: number) => {
       if (alpha <= 0) return;
-      const tileDuration = TILE_DURATION[zoom];
-      const viewportSpan = VIEWPORT_SPAN[zoom];
+      const tileDuration = tileDurationOverride ?? TILE_DURATION[zoom as ZoomLevel] ?? 10;
+      const viewportSpan = viewportSpanOverride ?? VIEWPORT_SPAN[zoom as ZoomLevel] ?? 60;
       const pxPerSec = width / viewportSpan;
       const tiles = getVisibleTiles(zoom);
 
