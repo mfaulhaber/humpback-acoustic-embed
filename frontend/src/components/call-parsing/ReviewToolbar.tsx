@@ -123,7 +123,7 @@ export function ReviewToolbar({
               className="rounded-md border px-1.5 py-0.5 text-[10px] hover:bg-accent disabled:opacity-30"
               disabled={currentEventIndex >= totalEventCount - 1}
               onClick={onNextEvent}
-              title="Next event (S)"
+              title="Next event (D)"
             >
               <ChevronRight className="h-3 w-3" />
             </button>

@@ -461,7 +461,7 @@ export function SegmentReviewWorkspace({
           e.preventDefault();
           goPrevEvent();
           break;
-        case "KeyS":
+        case "KeyD":
           e.preventDefault();
           goNextEvent();
           break;

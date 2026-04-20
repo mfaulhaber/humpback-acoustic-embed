@@ -32,7 +32,7 @@ The Classify review page has already solved problems 1 and 2 with patterns we ca
 
 **Keyboard shortcuts:**
 - `KeyA` = previous event
-- `KeyS` = next event
+- `KeyD` = next event
 - Same input-field guard as classify (skip INPUT/TEXTAREA/SELECT)
 - Both fire `e.preventDefault()`
 

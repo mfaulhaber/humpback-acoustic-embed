@@ -46,7 +46,7 @@
 
 **Acceptance criteria:**
 - [ ] `KeyA` calls goPrev (decrement currentEventIndex, clamped to 0)
-- [ ] `KeyS` calls goNext (increment currentEventIndex, clamped to length-1)
+- [ ] `KeyD` calls goNext (increment currentEventIndex, clamped to length-1)
 - [ ] Both fire `e.preventDefault()`
 - [ ] INPUT/TEXTAREA/SELECT guard prevents shortcuts while typing
 - [ ] Spacebar handler uses the unified switch-case pattern (matching classify)
