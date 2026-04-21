@@ -1,12 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { TimelineProvider } from "./TimelineProvider";
 import { useTimelineContext } from "./useTimelineContext";
 import { FULL_ZOOM, REVIEW_ZOOM } from "./types";
-import type { ZoomPreset } from "./types";
-import type { ReactNode } from "react";
+import type { TimelinePlaybackHandle, ZoomPreset } from "./types";
+import { createRef, type ReactNode } from "react";
 
-function wrapper(props?: { zoomLevels?: ZoomPreset[]; jobStart?: number; jobEnd?: number; defaultZoom?: string }) {
+function wrapper(props?: {
+  zoomLevels?: ZoomPreset[];
+  jobStart?: number;
+  jobEnd?: number;
+  defaultZoom?: string;
+  disableKeyboardShortcuts?: boolean;
+  onZoomChange?: (key: string) => void;
+  onPlayStateChange?: (playing: boolean) => void;
+}) {
   const zoomLevels = props?.zoomLevels ?? FULL_ZOOM;
   const jobStart = props?.jobStart ?? 1000;
   const jobEnd = props?.jobEnd ?? 87400;
@@ -21,6 +29,9 @@ function wrapper(props?: { zoomLevels?: ZoomPreset[]; jobStart?: number; jobEnd?
         defaultZoom={defaultZoom}
         playback="slice"
         audioUrlBuilder={() => ""}
+        disableKeyboardShortcuts={props?.disableKeyboardShortcuts}
+        onZoomChange={props?.onZoomChange}
+        onPlayStateChange={props?.onPlayStateChange}
       >
         {children}
       </TimelineProvider>
@@ -131,5 +142,93 @@ describe("useTimelineContext throws outside provider", () => {
     expect(() => {
       renderHook(() => useTimelineContext());
     }).toThrow("useTimelineContext must be used within a TimelineProvider");
+  });
+});
+
+describe("TimelineProvider renders without ref (backwards compatible)", () => {
+  it("renders and provides context without ref", () => {
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper(),
+    });
+    expect(result.current.isPlaying).toBe(false);
+    expect(result.current.playbackEpoch).toBeNull();
+  });
+});
+
+describe("onZoomChange callback", () => {
+  it("fires when zoom level changes", () => {
+    const onZoomChange = vi.fn();
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({ onZoomChange, defaultZoom: "1h" }),
+    });
+
+    act(() => {
+      result.current.zoomIn();
+    });
+
+    expect(onZoomChange).toHaveBeenCalledWith("15m");
+  });
+});
+
+describe("onPlayStateChange callback", () => {
+  beforeEach(() => {
+    vi.spyOn(window.HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(window.HTMLMediaElement.prototype, "pause").mockReturnValue(undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fires on play", () => {
+    const onPlayStateChange = vi.fn();
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({ onPlayStateChange }),
+    });
+
+    act(() => {
+      result.current.play(1500, 10);
+    });
+
+    expect(onPlayStateChange).toHaveBeenCalledWith(true);
+  });
+
+  it("fires on pause", () => {
+    const onPlayStateChange = vi.fn();
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({ onPlayStateChange }),
+    });
+
+    act(() => {
+      result.current.play(1500, 10);
+    });
+    act(() => {
+      result.current.pause();
+    });
+
+    expect(onPlayStateChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("disableKeyboardShortcuts", () => {
+  it("does not register keyboard listener when disabled", () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
+    renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({ disableKeyboardShortcuts: true }),
+    });
+
+    const keydownCalls = addSpy.mock.calls.filter(([event]) => event === "keydown");
+    expect(keydownCalls).toHaveLength(0);
+    addSpy.mockRestore();
+  });
+
+  it("registers keyboard listener when not disabled", () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
+    renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({ disableKeyboardShortcuts: false }),
+    });
+
+    const keydownCalls = addSpy.mock.calls.filter(([event]) => event === "keydown");
+    expect(keydownCalls.length).toBeGreaterThan(0);
+    addSpy.mockRestore();
   });
 });

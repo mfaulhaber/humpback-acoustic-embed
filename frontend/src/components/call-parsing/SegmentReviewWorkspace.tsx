@@ -814,6 +814,7 @@ function SegmentViewerBody({
   }, [ctx.viewportSpan, onViewSpanChange]);
 
   // Zoom/pan keyboard shortcuts (provider shortcuts are disabled)
+  const { zoomIn: ctxZoomIn, zoomOut: ctxZoomOut, pan: ctxPan, centerTimestamp: ctxCenter, viewportSpan: ctxSpan } = ctx;
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -823,25 +824,25 @@ function SegmentViewerBody({
         case "+":
         case "=":
           e.preventDefault();
-          ctx.zoomIn();
+          ctxZoomIn();
           break;
         case "-":
           e.preventDefault();
-          ctx.zoomOut();
+          ctxZoomOut();
           break;
         case "ArrowLeft":
           e.preventDefault();
-          ctx.pan(ctx.centerTimestamp - ctx.viewportSpan * 0.1);
+          ctxPan(ctxCenter - ctxSpan * 0.1);
           break;
         case "ArrowRight":
           e.preventDefault();
-          ctx.pan(ctx.centerTimestamp + ctx.viewportSpan * 0.1);
+          ctxPan(ctxCenter + ctxSpan * 0.1);
           break;
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [ctx]);
+  }, [ctxZoomIn, ctxZoomOut, ctxPan, ctxCenter, ctxSpan]);
 
   // Show region bands at wide zoom (1m or 5m)
   const showBands = ctx.activePreset.key === "5m" || ctx.activePreset.key === "1m";
