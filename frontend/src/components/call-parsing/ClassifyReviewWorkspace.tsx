@@ -36,6 +36,7 @@ import {
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
 import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
 import { EventBarOverlay, type EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
@@ -192,10 +193,10 @@ export function ClassifyReviewWorkspace({
     undefined,
   );
 
-  // Audio playback
-  const audioRef = useRef<HTMLAudioElement>(null);
+  // Playback via TimelineProvider ref handle
+  const playbackRef = useRef<TimelinePlaybackHandle>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackOriginSec, setPlaybackOriginSec] = useState(0);
+  const [userZoom, setUserZoom] = useState("30s");
 
   const isDirty =
     pendingCorrections.size > 0 || pendingBoundaryCorrections.size > 0;
@@ -544,25 +545,34 @@ export function ClassifyReviewWorkspace({
     };
   }, [currentEvent, regionEffectiveEvents]);
 
-  // Scroll spectrogram only when the current event is not fully visible
+  // Directional scroll when the current event is not fully visible
+  const navDirectionRef = useRef<"forward" | "backward">("forward");
+
   useEffect(() => {
     if (!currentEvent || viewStart === undefined) return;
     const viewEnd = viewStart + viewSpan;
-    const pad = viewSpan * 0.1; // 10% padding
+    const pad = viewSpan * 0.15;
     const fullyVisible =
       currentEvent.startSec >= viewStart + pad &&
       currentEvent.endSec <= viewEnd - pad;
     if (!fullyVisible) {
-      // Place event end near the right edge with padding
-      setScrollToCenter(currentEvent.endSec + pad - viewSpan / 2);
+      let target: number;
+      if (navDirectionRef.current === "forward") {
+        target = currentEvent.endSec + pad - viewSpan / 2;
+      } else {
+        target = currentEvent.startSec - pad + viewSpan / 2;
+      }
+      setScrollToCenter(target);
     }
   }, [currentEvent, viewStart, viewSpan]);
 
   // Navigation
   const goPrev = useCallback(() => {
+    navDirectionRef.current = "backward";
     setCurrentEventIndex((i) => Math.max(0, i - 1));
   }, []);
   const goNext = useCallback(() => {
+    navDirectionRef.current = "forward";
     setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
   }, [navigableEvents.length]);
 
@@ -629,37 +639,15 @@ export function ClassifyReviewWorkspace({
     [currentRegion],
   );
 
-  // Playback
-  const startPlayback = useCallback(
-    (startSec: number, duration: number) => {
-      const audio = audioRef.current;
-      if (!audio || !regionDetectionJobId) return;
-      audio.pause();
-      audio.currentTime = 0;
-      setPlaybackOriginSec(startSec);
-      audio.src = regionAudioSliceUrl(regionDetectionJobId, startSec, duration);
-      audio.play().catch(() => setIsPlaying(false));
-      setIsPlaying(true);
-    },
-    [regionDetectionJobId],
-  );
-
-  const stopPlayback = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.pause();
-    audio.currentTime = 0;
-    setIsPlaying(false);
-  }, []);
-
+  // Playback via ref handle
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
-      stopPlayback();
+      playbackRef.current?.pause();
     } else if (displayEvent) {
       const duration = displayEvent.endSec - displayEvent.startSec;
-      startPlayback(displayEvent.startSec, duration);
+      playbackRef.current?.play(displayEvent.startSec, duration);
     }
-  }, [isPlaying, displayEvent, startPlayback, stopPlayback]);
+  }, [isPlaying, displayEvent]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -669,13 +657,11 @@ export function ClassifyReviewWorkspace({
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
       switch (e.code) {
-        case "ArrowLeft":
         case "BracketLeft":
         case "KeyA":
           e.preventDefault();
           goPrev();
           break;
-        case "ArrowRight":
         case "BracketRight":
         case "KeyD":
           e.preventDefault();
@@ -1041,15 +1027,20 @@ export function ClassifyReviewWorkspace({
               onClick={() => setContextMenu(null)}
             >
               <TimelineProvider
+                ref={playbackRef}
                 key={`${selectedJobId}-${currentRegion.region_id}`}
                 jobStart={0}
                 jobEnd={currentRegion.padded_end_sec}
                 zoomLevels={REVIEW_ZOOM}
-                defaultZoom="30s"
+                defaultZoom={userZoom}
                 playback="slice"
                 audioUrlBuilder={(startEpoch, durationSec) =>
                   regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
                 }
+                disableKeyboardShortcuts
+                scrollOnPlayback={false}
+                onZoomChange={setUserZoom}
+                onPlayStateChange={setIsPlaying}
               >
                 <ClassifyViewerBody
                   regionDetectionJobId={regionDetectionJobId}
@@ -1104,11 +1095,6 @@ export function ClassifyReviewWorkspace({
         </div>
       )}
 
-      <audio
-        ref={audioRef}
-        onEnded={() => setIsPlaying(false)}
-        style={{ display: "none" }}
-      />
     </div>
   );
 }
@@ -1165,6 +1151,37 @@ function ClassifyViewerBody({
   useEffect(() => {
     onViewSpanChange(ctx.viewportSpan);
   }, [ctx.viewportSpan, onViewSpanChange]);
+
+  // Zoom/pan keyboard shortcuts (provider shortcuts are disabled)
+  const { zoomIn: ctxZoomIn, zoomOut: ctxZoomOut, pan: ctxPan, centerTimestamp: ctxCenter, viewportSpan: ctxSpan } = ctx;
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
+
+      switch (e.key) {
+        case "+":
+        case "=":
+          e.preventDefault();
+          ctxZoomIn();
+          break;
+        case "-":
+          e.preventDefault();
+          ctxZoomOut();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          ctxPan(ctxCenter - ctxSpan * 0.1);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          ctxPan(ctxCenter + ctxSpan * 0.1);
+          break;
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [ctxZoomIn, ctxZoomOut, ctxPan, ctxCenter, ctxSpan]);
 
   const tileUrlBuilder = useCallback(
     (_jobId: string, zoomLevel: string, tileIndex: number) =>

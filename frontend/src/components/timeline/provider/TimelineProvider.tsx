@@ -1,5 +1,5 @@
-import React, { createContext, useCallback, useEffect, useMemo, useReducer } from "react";
-import type { TimelineContextValue, TimelineProviderProps, ZoomPreset } from "./types";
+import React, { createContext, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef } from "react";
+import type { TimelineContextValue, TimelinePlaybackHandle, TimelineProviderProps, ZoomPreset } from "./types";
 import { usePlayback } from "./usePlayback";
 
 export const TimelineContext = createContext<TimelineContextValue | null>(null);
@@ -11,6 +11,7 @@ interface State {
   speed: number;
   viewportWidth: number;
   viewportHeight: number;
+  playbackEpoch: number | null;
 }
 
 type Action =
@@ -19,7 +20,8 @@ type Action =
   | { type: "SET_PLAYING"; playing: boolean }
   | { type: "SET_SPEED"; speed: number }
   | { type: "SEEK"; epoch: number }
-  | { type: "SET_VIEWPORT"; width: number; height: number };
+  | { type: "SET_VIEWPORT"; width: number; height: number }
+  | { type: "SET_PLAYBACK_EPOCH"; epoch: number | null };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -35,6 +37,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, centerTimestamp: action.epoch };
     case "SET_VIEWPORT":
       return { ...state, viewportWidth: action.width, viewportHeight: action.height };
+    case "SET_PLAYBACK_EPOCH":
+      return { ...state, playbackEpoch: action.epoch };
   }
 }
 
@@ -44,15 +48,19 @@ function findDefaultZoomIndex(zoomLevels: ZoomPreset[], defaultZoom?: string): n
   return idx >= 0 ? idx : 0;
 }
 
-export function TimelineProvider({
+export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProviderProps>(function TimelineProvider({
   jobStart,
   jobEnd,
   zoomLevels,
   defaultZoom,
   playback: playbackMode,
   audioUrlBuilder,
+  disableKeyboardShortcuts,
+  scrollOnPlayback = true,
+  onZoomChange,
+  onPlayStateChange,
   children,
-}: TimelineProviderProps) {
+}, ref) {
   const defaultIndex = useMemo(() => findDefaultZoomIndex(zoomLevels, defaultZoom), [zoomLevels, defaultZoom]);
 
   const [state, dispatch] = useReducer(reducer, {
@@ -62,6 +70,7 @@ export function TimelineProvider({
     speed: 1,
     viewportWidth: 0,
     viewportHeight: 0,
+    playbackEpoch: null,
   });
 
   const activePreset = zoomLevels[state.zoomLevel] ?? zoomLevels[0];
@@ -80,13 +89,17 @@ export function TimelineProvider({
     [clampCenter],
   );
 
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
+
   const setZoomLevel = useCallback(
     (index: number) => {
       if (index >= 0 && index < zoomLevels.length) {
         dispatch({ type: "SET_ZOOM", index });
+        onZoomChangeRef.current?.(zoomLevels[index].key);
       }
     },
-    [zoomLevels.length],
+    [zoomLevels],
   );
 
   const zoomIn = useCallback(() => {
@@ -109,12 +122,24 @@ export function TimelineProvider({
     [],
   );
 
+  const onPlayStateChangeRef = useRef(onPlayStateChange);
+  onPlayStateChangeRef.current = onPlayStateChange;
+
   const playbackHandle = usePlayback({
     mode: playbackMode,
     audioUrlBuilder,
     speed: state.speed,
-    onTimeUpdate: (epoch) => dispatch({ type: "PAN", center: clampCenter(epoch) }),
-    onEnded: () => dispatch({ type: "SET_PLAYING", playing: false }),
+    onTimeUpdate: (epoch) => {
+      if (scrollOnPlayback) {
+        dispatch({ type: "PAN", center: clampCenter(epoch) });
+      } else {
+        dispatch({ type: "SET_PLAYBACK_EPOCH", epoch });
+      }
+    },
+    onEnded: () => {
+      dispatch({ type: "SET_PLAYING", playing: false });
+      onPlayStateChangeRef.current?.(false);
+    },
   });
 
   const play = useCallback(
@@ -122,13 +147,18 @@ export function TimelineProvider({
       const start = startEpoch ?? state.centerTimestamp;
       playbackHandle.play(start, duration);
       dispatch({ type: "SET_PLAYING", playing: true });
+      if (!scrollOnPlayback) {
+        dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: start });
+      }
+      onPlayStateChangeRef.current?.(true);
     },
-    [state.centerTimestamp, playbackHandle],
+    [state.centerTimestamp, playbackHandle, scrollOnPlayback],
   );
 
   const pause = useCallback(() => {
     playbackHandle.pause();
     dispatch({ type: "SET_PLAYING", playing: false });
+    onPlayStateChangeRef.current?.(false);
   }, [playbackHandle]);
 
   const togglePlay = useCallback(() => {
@@ -139,8 +169,16 @@ export function TimelineProvider({
     }
   }, [state.isPlaying, play, pause]);
 
-  // Keyboard shortcuts
+  useImperativeHandle(ref, () => ({
+    play: (startEpoch: number, duration?: number) => play(startEpoch, duration),
+    pause,
+    get isPlaying() { return state.isPlaying; },
+  }), [play, pause, state.isPlaying]);
+
+  // Keyboard shortcuts (disabled when consumer manages its own)
   useEffect(() => {
+    if (disableKeyboardShortcuts) return;
+
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
@@ -171,7 +209,7 @@ export function TimelineProvider({
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [togglePlay, zoomIn, zoomOut, pan, clampCenter, state.centerTimestamp, viewportSpan]);
+  }, [disableKeyboardShortcuts, togglePlay, zoomIn, zoomOut, pan, clampCenter, state.centerTimestamp, viewportSpan]);
 
   const value: TimelineContextValue = useMemo(
     () => ({
@@ -223,4 +261,4 @@ export function TimelineProvider({
       {children}
     </TimelineContext.Provider>
   );
-}
+});

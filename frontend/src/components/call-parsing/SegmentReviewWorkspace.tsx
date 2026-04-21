@@ -20,6 +20,7 @@ import { toast } from "@/components/ui/use-toast";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
 import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
 import { RegionBandOverlay } from "@/components/timeline/overlays/RegionBandOverlay";
@@ -80,32 +81,10 @@ export function SegmentReviewWorkspace({
     { target: number; seq: number } | undefined
   >(undefined);
 
-  // Shared audio playback state
-  const audioRef = useRef<HTMLAudioElement>(null);
+  // Playback via TimelineProvider ref handle
+  const playbackRef = useRef<TimelinePlaybackHandle>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackOriginSec, setPlaybackOriginSec] = useState(0);
-
-  const startPlayback = useCallback(
-    (startSec: number, duration: number) => {
-      const audio = audioRef.current;
-      if (!audio || !regionDetectionJobId) return;
-      audio.pause();
-      audio.currentTime = 0;
-      setPlaybackOriginSec(startSec);
-      audio.src = regionAudioSliceUrl(regionDetectionJobId, startSec, duration);
-      audio.play().catch(() => setIsPlaying(false));
-      setIsPlaying(true);
-    },
-    [regionDetectionJobId],
-  );
-
-  const stopPlayback = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.pause();
-    audio.currentTime = 0;
-    setIsPlaying(false);
-  }, []);
+  const [userZoom, setUserZoom] = useState("1m");
 
   // Pending corrections: Map<eventId, BoundaryCorrection>
   const [pendingCorrections, setPendingCorrections] = useState<
@@ -293,7 +272,10 @@ export function SegmentReviewWorkspace({
   }, [selectedRegionId, navigableEvents]);
 
   // Navigation callbacks — cross-region navigation switches the active region
+  const navDirectionRef = useRef<"forward" | "backward">("forward");
+
   const goPrevEvent = useCallback(() => {
+    navDirectionRef.current = "backward";
     setCurrentEventIndex((prev) => {
       const next = Math.max(0, prev - 1);
       const event = navigableEvents[next];
@@ -305,6 +287,7 @@ export function SegmentReviewWorkspace({
     });
   }, [navigableEvents, selectedRegionId]);
   const goNextEvent = useCallback(() => {
+    navDirectionRef.current = "forward";
     setCurrentEventIndex((prev) => {
       const next = Math.min(navigableEvents.length - 1, prev + 1);
       const event = navigableEvents[next];
@@ -320,14 +303,19 @@ export function SegmentReviewWorkspace({
   useEffect(() => {
     if (!currentNavEvent || viewStart === undefined) return;
     const viewEnd = viewStart + viewSpan;
-    const pad = viewSpan * 0.1;
+    const pad = viewSpan * 0.15;
     const fullyVisible =
       currentNavEvent.startSec >= viewStart + pad &&
       currentNavEvent.endSec <= viewEnd - pad;
     if (!fullyVisible) {
-      const mid = (currentNavEvent.startSec + currentNavEvent.endSec) / 2;
+      let target: number;
+      if (navDirectionRef.current === "forward") {
+        target = currentNavEvent.endSec + pad - viewSpan / 2;
+      } else {
+        target = currentNavEvent.startSec - pad + viewSpan / 2;
+      }
       scrollSeqRef.current += 1;
-      setScrollToCenter({ target: mid, seq: scrollSeqRef.current });
+      setScrollToCenter({ target, seq: scrollSeqRef.current });
     }
   }, [currentNavEvent, viewStart, viewSpan]);
 
@@ -442,16 +430,16 @@ export function SegmentReviewWorkspace({
   // Keyboard shortcuts
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
-      stopPlayback();
+      playbackRef.current?.pause();
     } else if (selectedEvent) {
       const duration = selectedEvent.endSec - selectedEvent.startSec;
-      startPlayback(selectedEvent.startSec, duration);
+      playbackRef.current?.play(selectedEvent.startSec, duration);
     } else if (selectedRegion) {
       const playStart = viewStart ?? selectedRegion.padded_start_sec;
       const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
-      startPlayback(playStart, duration);
+      playbackRef.current?.play(playStart, duration);
     }
-  }, [isPlaying, selectedEvent, selectedRegion, viewStart, startPlayback, stopPlayback]);
+  }, [isPlaying, selectedEvent, selectedRegion, viewStart]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -653,13 +641,13 @@ export function SegmentReviewWorkspace({
             isPlaying={isPlaying}
             onPlay={() => {
               if (isPlaying) {
-                stopPlayback();
+                playbackRef.current?.pause();
                 return;
               }
               if (!selectedRegion) return;
               const playStart = viewStart ?? selectedRegion.padded_start_sec;
               const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
-              startPlayback(playStart, duration);
+              playbackRef.current?.play(playStart, duration);
             }}
             hasCorrections={hasCorrections}
             onRetrain={handleRetrain}
@@ -681,13 +669,18 @@ export function SegmentReviewWorkspace({
             totalEventCount={navigableEvents.length}
           />
           <TimelineProvider
+            ref={playbackRef}
             key={`${selectedJobId}-${selectedRegionId}`}
             jobStart={jobStart}
             jobEnd={jobEnd}
             zoomLevels={REVIEW_ZOOM}
-            defaultZoom="1m"
+            defaultZoom={userZoom}
             playback="slice"
             audioUrlBuilder={audioUrlBuilder}
+            disableKeyboardShortcuts
+            scrollOnPlayback={false}
+            onZoomChange={setUserZoom}
+            onPlayStateChange={setIsPlaying}
           >
             <SegmentViewerBody
               regionDetectionJobId={regionDetectionJobId!}
@@ -717,12 +710,12 @@ export function SegmentReviewWorkspace({
             isPlaying={isPlaying}
             onPlaySlice={() => {
               if (isPlaying) {
-                stopPlayback();
+                playbackRef.current?.pause();
                 return;
               }
               if (!selectedEvent) return;
               const duration = selectedEvent.endSec - selectedEvent.startSec;
-              startPlayback(selectedEvent.startSec, duration);
+              playbackRef.current?.play(selectedEvent.startSec, duration);
             }}
           />
           <RegionTable
@@ -752,11 +745,6 @@ export function SegmentReviewWorkspace({
           boundaries.
         </div>
       )}
-      <audio
-        ref={audioRef}
-        onEnded={() => setIsPlaying(false)}
-        style={{ display: "none" }}
-      />
     </div>
   );
 }
@@ -824,6 +812,37 @@ function SegmentViewerBody({
   useEffect(() => {
     onViewSpanChange(ctx.viewportSpan);
   }, [ctx.viewportSpan, onViewSpanChange]);
+
+  // Zoom/pan keyboard shortcuts (provider shortcuts are disabled)
+  const { zoomIn: ctxZoomIn, zoomOut: ctxZoomOut, pan: ctxPan, centerTimestamp: ctxCenter, viewportSpan: ctxSpan } = ctx;
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
+
+      switch (e.key) {
+        case "+":
+        case "=":
+          e.preventDefault();
+          ctxZoomIn();
+          break;
+        case "-":
+          e.preventDefault();
+          ctxZoomOut();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          ctxPan(ctxCenter - ctxSpan * 0.1);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          ctxPan(ctxCenter + ctxSpan * 0.1);
+          break;
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [ctxZoomIn, ctxZoomOut, ctxPan, ctxCenter, ctxSpan]);
 
   // Show region bands at wide zoom (1m or 5m)
   const showBands = ctx.activePreset.key === "5m" || ctx.activePreset.key === "1m";

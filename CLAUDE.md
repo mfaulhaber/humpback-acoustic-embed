@@ -235,6 +235,9 @@ See [docs/reference/classifier-api.md](docs/reference/classifier-api.md) for end
 ### 8.9 Call Parsing Pipeline API Surface
 See [docs/reference/call-parsing-api.md](docs/reference/call-parsing-api.md) for endpoint listings (parent runs, Pass 1–3 CRUD, corrections, feedback training, model management).
 
+### 8.10 Timeline Compound-Component Architecture
+See [docs/reference/behavioral-constraints.md](docs/reference/behavioral-constraints.md) § "Timeline Compound-Component Architecture" for composability rules: ref-based playback handle, keyboard shortcut opt-out, zoom persistence, overlay context.
+
 ---
 
 ## 9. Current State

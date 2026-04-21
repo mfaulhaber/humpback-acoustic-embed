@@ -16,8 +16,8 @@ export const FULL_ZOOM: ZoomPreset[] = [
 export const REVIEW_ZOOM: ZoomPreset[] = [
   { key: "5m", span: 300, tileDuration: 50 },
   { key: "1m", span: 60, tileDuration: 10 },
-  { key: "30s", span: 30, tileDuration: 10 },
-  { key: "10s", span: 10, tileDuration: 10 },
+  { key: "30s", span: 30, tileDuration: 5 },
+  { key: "10s", span: 10, tileDuration: 2 },
 ];
 
 export interface TimelineState {
@@ -27,6 +27,7 @@ export interface TimelineState {
   speed: number;
   viewportWidth: number;
   viewportHeight: number;
+  playbackEpoch: number | null;
 }
 
 export interface TimelineDerived {
@@ -56,6 +57,12 @@ export interface TimelineContextValue extends TimelineState, TimelineDerived, Ti
   zoomLevels: ZoomPreset[];
 }
 
+export interface TimelinePlaybackHandle {
+  play: (startEpoch: number, duration?: number) => void;
+  pause: () => void;
+  isPlaying: boolean;
+}
+
 export interface TimelineProviderProps {
   jobStart: number;
   jobEnd: number;
@@ -63,5 +70,9 @@ export interface TimelineProviderProps {
   defaultZoom?: string;
   playback: "gapless" | "slice";
   audioUrlBuilder: (startEpoch: number, durationSec: number) => string;
+  disableKeyboardShortcuts?: boolean;
+  scrollOnPlayback?: boolean;
+  onZoomChange?: (zoomKey: string) => void;
+  onPlayStateChange?: (playing: boolean) => void;
   children: React.ReactNode;
 }
