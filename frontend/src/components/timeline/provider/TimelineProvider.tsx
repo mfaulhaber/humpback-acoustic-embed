@@ -11,6 +11,7 @@ interface State {
   speed: number;
   viewportWidth: number;
   viewportHeight: number;
+  playbackEpoch: number | null;
 }
 
 type Action =
@@ -19,7 +20,8 @@ type Action =
   | { type: "SET_PLAYING"; playing: boolean }
   | { type: "SET_SPEED"; speed: number }
   | { type: "SEEK"; epoch: number }
-  | { type: "SET_VIEWPORT"; width: number; height: number };
+  | { type: "SET_VIEWPORT"; width: number; height: number }
+  | { type: "SET_PLAYBACK_EPOCH"; epoch: number | null };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -35,6 +37,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, centerTimestamp: action.epoch };
     case "SET_VIEWPORT":
       return { ...state, viewportWidth: action.width, viewportHeight: action.height };
+    case "SET_PLAYBACK_EPOCH":
+      return { ...state, playbackEpoch: action.epoch };
   }
 }
 
@@ -52,6 +56,7 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
   playback: playbackMode,
   audioUrlBuilder,
   disableKeyboardShortcuts,
+  scrollOnPlayback = true,
   onZoomChange,
   onPlayStateChange,
   children,
@@ -65,6 +70,7 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
     speed: 1,
     viewportWidth: 0,
     viewportHeight: 0,
+    playbackEpoch: null,
   });
 
   const activePreset = zoomLevels[state.zoomLevel] ?? zoomLevels[0];
@@ -123,7 +129,13 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
     mode: playbackMode,
     audioUrlBuilder,
     speed: state.speed,
-    onTimeUpdate: (epoch) => dispatch({ type: "PAN", center: clampCenter(epoch) }),
+    onTimeUpdate: (epoch) => {
+      if (scrollOnPlayback) {
+        dispatch({ type: "PAN", center: clampCenter(epoch) });
+      } else {
+        dispatch({ type: "SET_PLAYBACK_EPOCH", epoch });
+      }
+    },
     onEnded: () => {
       dispatch({ type: "SET_PLAYING", playing: false });
       onPlayStateChangeRef.current?.(false);
@@ -135,9 +147,12 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
       const start = startEpoch ?? state.centerTimestamp;
       playbackHandle.play(start, duration);
       dispatch({ type: "SET_PLAYING", playing: true });
+      if (!scrollOnPlayback) {
+        dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: start });
+      }
       onPlayStateChangeRef.current?.(true);
     },
-    [state.centerTimestamp, playbackHandle],
+    [state.centerTimestamp, playbackHandle, scrollOnPlayback],
   );
 
   const pause = useCallback(() => {

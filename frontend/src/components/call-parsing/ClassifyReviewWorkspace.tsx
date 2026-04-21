@@ -545,25 +545,34 @@ export function ClassifyReviewWorkspace({
     };
   }, [currentEvent, regionEffectiveEvents]);
 
-  // Scroll spectrogram only when the current event is not fully visible
+  // Directional scroll when the current event is not fully visible
+  const navDirectionRef = useRef<"forward" | "backward">("forward");
+
   useEffect(() => {
     if (!currentEvent || viewStart === undefined) return;
     const viewEnd = viewStart + viewSpan;
-    const pad = viewSpan * 0.1; // 10% padding
+    const pad = viewSpan * 0.15;
     const fullyVisible =
       currentEvent.startSec >= viewStart + pad &&
       currentEvent.endSec <= viewEnd - pad;
     if (!fullyVisible) {
-      // Place event end near the right edge with padding
-      setScrollToCenter(currentEvent.endSec + pad - viewSpan / 2);
+      let target: number;
+      if (navDirectionRef.current === "forward") {
+        target = currentEvent.endSec + pad - viewSpan / 2;
+      } else {
+        target = currentEvent.startSec - pad + viewSpan / 2;
+      }
+      setScrollToCenter(target);
     }
   }, [currentEvent, viewStart, viewSpan]);
 
   // Navigation
   const goPrev = useCallback(() => {
+    navDirectionRef.current = "backward";
     setCurrentEventIndex((i) => Math.max(0, i - 1));
   }, []);
   const goNext = useCallback(() => {
+    navDirectionRef.current = "forward";
     setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
   }, [navigableEvents.length]);
 
@@ -1029,6 +1038,7 @@ export function ClassifyReviewWorkspace({
                   regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
                 }
                 disableKeyboardShortcuts
+                scrollOnPlayback={false}
                 onZoomChange={setUserZoom}
                 onPlayStateChange={setIsPlaying}
               >

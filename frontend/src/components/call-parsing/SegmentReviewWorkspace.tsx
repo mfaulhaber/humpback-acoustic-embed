@@ -272,7 +272,10 @@ export function SegmentReviewWorkspace({
   }, [selectedRegionId, navigableEvents]);
 
   // Navigation callbacks — cross-region navigation switches the active region
+  const navDirectionRef = useRef<"forward" | "backward">("forward");
+
   const goPrevEvent = useCallback(() => {
+    navDirectionRef.current = "backward";
     setCurrentEventIndex((prev) => {
       const next = Math.max(0, prev - 1);
       const event = navigableEvents[next];
@@ -284,6 +287,7 @@ export function SegmentReviewWorkspace({
     });
   }, [navigableEvents, selectedRegionId]);
   const goNextEvent = useCallback(() => {
+    navDirectionRef.current = "forward";
     setCurrentEventIndex((prev) => {
       const next = Math.min(navigableEvents.length - 1, prev + 1);
       const event = navigableEvents[next];
@@ -299,14 +303,19 @@ export function SegmentReviewWorkspace({
   useEffect(() => {
     if (!currentNavEvent || viewStart === undefined) return;
     const viewEnd = viewStart + viewSpan;
-    const pad = viewSpan * 0.1;
+    const pad = viewSpan * 0.15;
     const fullyVisible =
       currentNavEvent.startSec >= viewStart + pad &&
       currentNavEvent.endSec <= viewEnd - pad;
     if (!fullyVisible) {
-      const mid = (currentNavEvent.startSec + currentNavEvent.endSec) / 2;
+      let target: number;
+      if (navDirectionRef.current === "forward") {
+        target = currentNavEvent.endSec + pad - viewSpan / 2;
+      } else {
+        target = currentNavEvent.startSec - pad + viewSpan / 2;
+      }
       scrollSeqRef.current += 1;
-      setScrollToCenter({ target: mid, seq: scrollSeqRef.current });
+      setScrollToCenter({ target, seq: scrollSeqRef.current });
     }
   }, [currentNavEvent, viewStart, viewSpan]);
 
@@ -669,6 +678,7 @@ export function SegmentReviewWorkspace({
             playback="slice"
             audioUrlBuilder={audioUrlBuilder}
             disableKeyboardShortcuts
+            scrollOnPlayback={false}
             onZoomChange={setUserZoom}
             onPlayStateChange={setIsPlaying}
           >

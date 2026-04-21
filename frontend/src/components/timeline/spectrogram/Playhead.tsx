@@ -1,3 +1,4 @@
+import { useTimelineContext } from "../provider/useTimelineContext";
 import { COLORS } from "../constants";
 
 interface PlayheadProps {
@@ -6,11 +7,23 @@ interface PlayheadProps {
 }
 
 export function Playhead({ canvasWidth, canvasHeight }: PlayheadProps) {
+  const ctx = useTimelineContext();
+
+  let leftPx: number;
+  if (ctx.playbackEpoch !== null) {
+    const pxPerSec = canvasWidth > 0 ? canvasWidth / ctx.viewportSpan : 1;
+    leftPx = (ctx.playbackEpoch - ctx.viewStart) * pxPerSec;
+  } else {
+    leftPx = canvasWidth / 2;
+  }
+
+  if (leftPx < 0 || leftPx > canvasWidth) return null;
+
   return (
     <div
       className="absolute pointer-events-none"
       style={{
-        left: canvasWidth / 2,
+        left: leftPx,
         top: 0,
         width: 0,
         height: canvasHeight,
