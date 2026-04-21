@@ -1,5 +1,5 @@
-import React, { createContext, useCallback, useEffect, useMemo, useReducer } from "react";
-import type { TimelineContextValue, TimelineProviderProps, ZoomPreset } from "./types";
+import React, { createContext, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef } from "react";
+import type { TimelineContextValue, TimelinePlaybackHandle, TimelineProviderProps, ZoomPreset } from "./types";
 import { usePlayback } from "./usePlayback";
 
 export const TimelineContext = createContext<TimelineContextValue | null>(null);
@@ -44,15 +44,18 @@ function findDefaultZoomIndex(zoomLevels: ZoomPreset[], defaultZoom?: string): n
   return idx >= 0 ? idx : 0;
 }
 
-export function TimelineProvider({
+export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProviderProps>(function TimelineProvider({
   jobStart,
   jobEnd,
   zoomLevels,
   defaultZoom,
   playback: playbackMode,
   audioUrlBuilder,
+  disableKeyboardShortcuts,
+  onZoomChange,
+  onPlayStateChange,
   children,
-}: TimelineProviderProps) {
+}, ref) {
   const defaultIndex = useMemo(() => findDefaultZoomIndex(zoomLevels, defaultZoom), [zoomLevels, defaultZoom]);
 
   const [state, dispatch] = useReducer(reducer, {
@@ -80,13 +83,17 @@ export function TimelineProvider({
     [clampCenter],
   );
 
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
+
   const setZoomLevel = useCallback(
     (index: number) => {
       if (index >= 0 && index < zoomLevels.length) {
         dispatch({ type: "SET_ZOOM", index });
+        onZoomChangeRef.current?.(zoomLevels[index].key);
       }
     },
-    [zoomLevels.length],
+    [zoomLevels],
   );
 
   const zoomIn = useCallback(() => {
@@ -109,12 +116,18 @@ export function TimelineProvider({
     [],
   );
 
+  const onPlayStateChangeRef = useRef(onPlayStateChange);
+  onPlayStateChangeRef.current = onPlayStateChange;
+
   const playbackHandle = usePlayback({
     mode: playbackMode,
     audioUrlBuilder,
     speed: state.speed,
     onTimeUpdate: (epoch) => dispatch({ type: "PAN", center: clampCenter(epoch) }),
-    onEnded: () => dispatch({ type: "SET_PLAYING", playing: false }),
+    onEnded: () => {
+      dispatch({ type: "SET_PLAYING", playing: false });
+      onPlayStateChangeRef.current?.(false);
+    },
   });
 
   const play = useCallback(
@@ -122,6 +135,7 @@ export function TimelineProvider({
       const start = startEpoch ?? state.centerTimestamp;
       playbackHandle.play(start, duration);
       dispatch({ type: "SET_PLAYING", playing: true });
+      onPlayStateChangeRef.current?.(true);
     },
     [state.centerTimestamp, playbackHandle],
   );
@@ -129,6 +143,7 @@ export function TimelineProvider({
   const pause = useCallback(() => {
     playbackHandle.pause();
     dispatch({ type: "SET_PLAYING", playing: false });
+    onPlayStateChangeRef.current?.(false);
   }, [playbackHandle]);
 
   const togglePlay = useCallback(() => {
@@ -139,8 +154,16 @@ export function TimelineProvider({
     }
   }, [state.isPlaying, play, pause]);
 
-  // Keyboard shortcuts
+  useImperativeHandle(ref, () => ({
+    play: (startEpoch: number, duration?: number) => play(startEpoch, duration),
+    pause,
+    get isPlaying() { return state.isPlaying; },
+  }), [play, pause, state.isPlaying]);
+
+  // Keyboard shortcuts (disabled when consumer manages its own)
   useEffect(() => {
+    if (disableKeyboardShortcuts) return;
+
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
@@ -171,7 +194,7 @@ export function TimelineProvider({
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [togglePlay, zoomIn, zoomOut, pan, clampCenter, state.centerTimestamp, viewportSpan]);
+  }, [disableKeyboardShortcuts, togglePlay, zoomIn, zoomOut, pan, clampCenter, state.centerTimestamp, viewportSpan]);
 
   const value: TimelineContextValue = useMemo(
     () => ({
@@ -223,4 +246,4 @@ export function TimelineProvider({
       {children}
     </TimelineContext.Provider>
   );
-}
+});

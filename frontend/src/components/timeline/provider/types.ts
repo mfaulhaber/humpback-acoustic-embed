@@ -56,6 +56,12 @@ export interface TimelineContextValue extends TimelineState, TimelineDerived, Ti
   zoomLevels: ZoomPreset[];
 }
 
+export interface TimelinePlaybackHandle {
+  play: (startEpoch: number, duration?: number) => void;
+  pause: () => void;
+  isPlaying: boolean;
+}
+
 export interface TimelineProviderProps {
   jobStart: number;
   jobEnd: number;
@@ -63,5 +69,8 @@ export interface TimelineProviderProps {
   defaultZoom?: string;
   playback: "gapless" | "slice";
   audioUrlBuilder: (startEpoch: number, durationSec: number) => string;
+  disableKeyboardShortcuts?: boolean;
+  onZoomChange?: (zoomKey: string) => void;
+  onPlayStateChange?: (playing: boolean) => void;
   children: React.ReactNode;
 }
