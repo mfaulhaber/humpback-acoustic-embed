@@ -17,22 +17,26 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.call_parsing.regions import decode_regions
 from humpback.call_parsing.storage import (
     chunk_parquet_path,
+    read_all_chunk_embeddings,
     read_all_chunk_traces,
     read_manifest,
     region_job_dir,
     update_manifest_chunk,
+    write_chunk_embeddings,
     write_chunk_trace,
+    write_embeddings,
     write_manifest,
     write_regions,
     write_trace,
 )
-from humpback.call_parsing.types import WindowScore
+from humpback.call_parsing.types import WindowEmbedding, WindowScore
 from humpback.classifier.detector import score_audio_windows
 from humpback.classifier.detector_utils import merge_detection_events
 from humpback.config import Settings
@@ -115,7 +119,7 @@ def _cleanup_partial_artifacts(job_dir: Path) -> None:
     """
     if not job_dir.exists():
         return
-    for name in ("trace.parquet", "regions.parquet"):
+    for name in ("trace.parquet", "regions.parquet", "embeddings.parquet"):
         path = job_dir / name
         if path.exists():
             try:
@@ -127,13 +131,14 @@ def _cleanup_partial_artifacts(job_dir: Path) -> None:
             tmp.unlink()
         except OSError:
             logger.warning("Failed to delete %s", tmp, exc_info=True)
-    chunks_dir = job_dir / "chunks"
-    if chunks_dir.exists():
-        for tmp in chunks_dir.glob("*.tmp"):
-            try:
-                tmp.unlink()
-            except OSError:
-                logger.warning("Failed to delete %s", tmp, exc_info=True)
+    for subdir_name in ("chunks", "chunk_embeddings"):
+        subdir = job_dir / subdir_name
+        if subdir.exists():
+            for tmp in subdir.glob("*.tmp"):
+                try:
+                    tmp.unlink()
+                except OSError:
+                    logger.warning("Failed to delete %s", tmp, exc_info=True)
 
 
 async def _load_file_trace(
@@ -145,13 +150,13 @@ async def _load_file_trace(
     input_format: str,
     target_sample_rate: int,
     storage_root: Path,
-) -> tuple[list[dict[str, Any]], float]:
+) -> tuple[list[dict[str, Any]], np.ndarray, float]:
     """Decode the whole audio file and run one ``score_audio_windows`` call."""
     path = resolve_audio_path(audio_file, storage_root)
     audio, sr = decode_audio(path)
     audio = resample(audio, sr, target_sample_rate)
     duration_sec = float(len(audio)) / float(target_sample_rate)
-    records = score_audio_windows(
+    records, embeddings = score_audio_windows(
         audio=audio,
         sample_rate=target_sample_rate,
         perch_model=perch_model,
@@ -159,7 +164,7 @@ async def _load_file_trace(
         config=_detector_config(config, input_format),
     )
     del audio
-    return records, duration_sec
+    return records, embeddings, duration_sec
 
 
 def _build_manifest(
@@ -218,7 +223,7 @@ async def _load_hydrophone_trace(
     session: AsyncSession,
     job_id: str,
     job_dir: Path,
-) -> tuple[list[WindowScore], float]:
+) -> tuple[list[WindowScore], list[WindowEmbedding], float]:
     """Stream a hydrophone range with chunk artifacts, resume, and progress.
 
     Writes per-chunk parquet files under ``job_dir/chunks/`` and maintains
@@ -310,6 +315,7 @@ async def _load_hydrophone_trace(
 
         t0 = time.monotonic()
         chunk_scores: list[WindowScore] = []
+        chunk_embeddings: list[WindowEmbedding] = []
 
         if not chunk_timeline:
             logger.info(
@@ -342,7 +348,7 @@ async def _load_hydrophone_trace(
                     timeline=chunk_timeline,
                 ):
                     buf_offset = seg_start_utc.timestamp() - start_ts
-                    records = score_audio_windows(
+                    records, emb_arr = score_audio_windows(
                         audio=audio_buf,
                         sample_rate=target_sample_rate,
                         perch_model=perch_model,
@@ -351,6 +357,13 @@ async def _load_hydrophone_trace(
                         time_offset_sec=buf_offset,
                     )
                     chunk_scores.extend(_score_records_to_window_scores(records))
+                    for j, r in enumerate(records):
+                        chunk_embeddings.append(
+                            WindowEmbedding(
+                                time_sec=float(r["offset_sec"]),
+                                embedding=emb_arr[j].tolist(),
+                            )
+                        )
                     del audio_buf
             except FileNotFoundError:
                 logger.info(
@@ -364,6 +377,8 @@ async def _load_hydrophone_trace(
         rate = elapsed / (chunk_duration / 60.0) if chunk_duration > 0 else 0.0
 
         write_chunk_trace(job_dir, i, chunk_scores)
+        if chunk_embeddings:
+            write_chunk_embeddings(job_dir, i, chunk_embeddings)
 
         above = sum(1 for ws in chunk_scores if ws.score >= config.high_threshold)
         now_utc = datetime.now(timezone.utc).isoformat()
@@ -412,6 +427,16 @@ async def _load_hydrophone_trace(
     all_scores = sorted(seen.values(), key=lambda ws: ws.time_sec)
     dup_count = raw_count - len(all_scores)
 
+    # Deduplicate embeddings to match the trace survivor set.
+    raw_emb = read_all_chunk_embeddings(job_dir, total_chunks)
+    emb_lookup: dict[float, WindowEmbedding] = {}
+    for we in raw_emb:
+        if we.time_sec not in emb_lookup:
+            emb_lookup[we.time_sec] = we
+    all_embeddings = [
+        emb_lookup[ws.time_sec] for ws in all_scores if ws.time_sec in emb_lookup
+    ]
+
     merge_elapsed = time.monotonic() - t0
 
     if dup_count > 0:
@@ -428,7 +453,7 @@ async def _load_hydrophone_trace(
         merge_elapsed,
     )
 
-    return all_scores, float(end_ts - start_ts)
+    return all_scores, all_embeddings, float(end_ts - start_ts)
 
 
 async def run_region_detection_job(
@@ -476,6 +501,8 @@ async def run_region_detection_job(
         job.started_at = datetime.now(timezone.utc)
         await session.commit()
 
+        window_embeddings: list[WindowEmbedding] = []
+
         if audio_file_id:
             af_result = await session.execute(
                 select(AudioFile).where(AudioFile.id == audio_file_id)
@@ -483,7 +510,7 @@ async def run_region_detection_job(
             audio_file = af_result.scalar_one_or_none()
             if audio_file is None:
                 raise ValueError(f"AudioFile {audio_file_id} not found")
-            trace_records, audio_duration_sec = await _load_file_trace(
+            trace_records, emb_arr, audio_duration_sec = await _load_file_trace(
                 audio_file,
                 config=config,
                 perch_model=perch_model,
@@ -493,12 +520,23 @@ async def run_region_detection_job(
                 storage_root=settings.storage_root,
             )
             window_scores = _score_records_to_window_scores(trace_records)
+            for j, r in enumerate(trace_records):
+                window_embeddings.append(
+                    WindowEmbedding(
+                        time_sec=float(r["offset_sec"]),
+                        embedding=emb_arr[j].tolist(),
+                    )
+                )
         else:
             if not hydrophone_id or start_timestamp is None or end_timestamp is None:
                 raise ValueError(
                     "region detection job missing hydrophone source fields"
                 )
-            window_scores, audio_duration_sec = await _load_hydrophone_trace(
+            (
+                window_scores,
+                window_embeddings,
+                audio_duration_sec,
+            ) = await _load_hydrophone_trace(
                 hydrophone_id,
                 float(start_timestamp),
                 float(end_timestamp),
@@ -530,6 +568,8 @@ async def run_region_detection_job(
 
         write_trace(job_dir / "trace.parquet", window_scores)
         write_regions(job_dir / "regions.parquet", regions)
+        if window_embeddings:
+            write_embeddings(job_dir / "embeddings.parquet", window_embeddings)
 
         logger.info(
             "region_detection | job=%s | merge | %d trace rows -> %d regions",

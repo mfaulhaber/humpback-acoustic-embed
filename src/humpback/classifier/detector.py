@@ -190,17 +190,22 @@ def score_audio_windows(
     classifier: Pipeline,
     config: dict[str, Any],
     time_offset_sec: float = 0.0,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], np.ndarray]:
     """Pass 1 streaming primitive: audio → dense per-window score records.
 
-    Returns window records with keys ``offset_sec``, ``end_sec``, and
-    ``confidence``. ``offset_sec`` / ``end_sec`` are shifted by
-    ``time_offset_sec`` so callers streaming audio chunk-by-chunk can set
-    it to the chunk's absolute start and concatenate per-chunk records
-    into a single absolute-time trace. ``config`` must contain
-    ``window_size_seconds``, ``hop_seconds``; ``input_format`` and
-    ``normalization`` are optional (defaults mirror ``run_detection``).
-    Returns an empty list when the audio is shorter than one window.
+    Returns ``(window_records, embeddings)`` where *window_records* is a
+    list of dicts with keys ``offset_sec``, ``end_sec``, ``confidence``
+    and *embeddings* is the ``(N, D)`` Perch embedding matrix (one row
+    per window, same order as the records).
+
+    ``offset_sec`` / ``end_sec`` are shifted by ``time_offset_sec`` so
+    callers streaming audio chunk-by-chunk can set it to the chunk's
+    absolute start and concatenate per-chunk records into a single
+    absolute-time trace. ``config`` must contain ``window_size_seconds``,
+    ``hop_seconds``; ``input_format`` and ``normalization`` are optional
+    (defaults mirror ``run_detection``).
+
+    Returns ``([], empty_array)`` when the audio is shorter than one window.
     """
     state = _run_window_pipeline(
         audio=audio,
@@ -213,8 +218,8 @@ def score_audio_windows(
         normalization=str(config.get("normalization", "per_window_max")),
     )
     if time_offset_sec == 0.0:
-        return state.window_records
-    return [
+        return state.window_records, state.embeddings
+    records = [
         {
             "offset_sec": r["offset_sec"] + time_offset_sec,
             "end_sec": r["end_sec"] + time_offset_sec,
@@ -222,6 +227,7 @@ def score_audio_windows(
         }
         for r in state.window_records
     ]
+    return records, state.embeddings
 
 
 def compute_hysteresis_events(
@@ -242,7 +248,7 @@ def compute_hysteresis_events(
     and ``merge_detection_events``. Returns ``(window_records, events)``.
     Returns two empty lists when the audio is shorter than one window.
     """
-    window_records = score_audio_windows(
+    window_records, _embeddings = score_audio_windows(
         audio=audio,
         sample_rate=sample_rate,
         perch_model=perch_model,

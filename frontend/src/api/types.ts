@@ -951,6 +951,7 @@ export interface VocClassifierTrainingJob {
 export interface VocClassifierModel {
   id: string;
   name: string;
+  model_family: string;
   model_dir_path: string;
   vocabulary_snapshot: string[];
   per_class_thresholds: Record<string, number>;
@@ -1550,5 +1551,39 @@ export interface EventClassifierModel {
   per_class_metrics: string | null;
   training_summary: string | null;
   created_at: string;
+}
+
+// ---- Window Classification Sidecar ----
+
+export interface WindowClassificationJob {
+  id: string;
+  status: string;
+  region_detection_job_id: string;
+  vocalization_model_id: string;
+  config_json: string | null;
+  window_count: number | null;
+  vocabulary_snapshot: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WindowScoreRow {
+  time_sec: number;
+  region_id: string;
+  scores: Record<string, number>;
+}
+
+export interface WindowScoreCorrection {
+  id: string;
+  window_classification_job_id: string;
+  time_sec: number;
+  region_id: string;
+  correction_type: "add" | "remove";
+  type_name: string;
+  created_at: string;
+  updated_at: string;
 }
 

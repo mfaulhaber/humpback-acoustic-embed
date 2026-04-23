@@ -40,6 +40,13 @@
   searches/{search_id}/search_history.json           (per-trial config, metrics, objective)
   searches/{search_id}/best_run.json                 (best trial config + metrics)
   searches/{search_id}/top_false_positives.json      (highest-scoring false positives from best run)
+/call_parsing/
+  regions/{job_id}/trace.parquet               (Pass 1 scalar confidence trace)
+  regions/{job_id}/embeddings.parquet          (Pass 1 cached 1536-d Perch embedding vectors: time_sec, embedding)
+  regions/{job_id}/regions.parquet             (detected regions with padded bounds)
+  segmentation/{job_id}/events.parquet         (Pass 2 framewise segmentation events)
+  classification/{job_id}/typed_events.parquet (Pass 3 per-event classification scores)
+  window_classification/{job_id}/window_scores.parquet (wide format: time_sec, region_id, one float64 column per vocalization type)
 /timeline_cache/
   {job_id}/{zoom_level}/tile_{NNNN}.png   (PCEN-normalized spectrogram tiles, LRU-evicted per job)
   {job_id}/.cache_version                  (integer; current is 2. Migrations run on first access when missing or lower)

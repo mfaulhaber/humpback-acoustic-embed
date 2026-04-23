@@ -569,3 +569,70 @@ class ClassifierModelResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---- Window classification sidecar schemas ---------------------------------
+
+
+class CreateWindowClassificationJobRequest(BaseModel):
+    """Request body for ``POST /call-parsing/window-classification-jobs``."""
+
+    region_detection_job_id: str
+    vocalization_model_id: str
+
+
+class WindowClassificationJobSummary(BaseModel):
+    """Response model for window classification jobs."""
+
+    id: str
+    status: str
+    region_detection_job_id: str
+    vocalization_model_id: str
+    config_json: Optional[str] = None
+    window_count: Optional[int] = None
+    vocabulary_snapshot: Optional[str] = None
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class WindowScoreRow(BaseModel):
+    """One window's classification scores for the ``/scores`` endpoint."""
+
+    time_sec: float
+    region_id: str
+    scores: dict[str, float]
+
+
+class WindowScoreCorrectionItem(BaseModel):
+    """A single correction in a batch upsert request."""
+
+    time_sec: float
+    region_id: str
+    correction_type: str = Field(pattern=r"^(add|remove)$")
+    type_name: str
+
+
+class WindowScoreCorrectionRequest(BaseModel):
+    """Batch upsert request for window score corrections."""
+
+    corrections: list[WindowScoreCorrectionItem]
+
+
+class WindowScoreCorrectionResponse(BaseModel):
+    """A stored window score correction row."""
+
+    id: str
+    window_classification_job_id: str
+    time_sec: float
+    region_id: str
+    correction_type: str
+    type_name: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

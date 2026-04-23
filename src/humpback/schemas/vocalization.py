@@ -70,6 +70,7 @@ class VocalizationTrainingJobOut(BaseModel):
 class VocalizationModelOut(BaseModel):
     id: str
     name: str
+    model_family: str
     model_dir_path: str
     vocabulary_snapshot: list[str]
     per_class_thresholds: dict[str, float]

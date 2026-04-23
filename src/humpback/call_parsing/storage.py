@@ -25,6 +25,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from humpback.call_parsing.types import (
+    EMBEDDING_SCHEMA,
     EVENT_SCHEMA,
     REGION_SCHEMA,
     TRACE_SCHEMA,
@@ -32,6 +33,7 @@ from humpback.call_parsing.types import (
     Event,
     Region,
     TypedEvent,
+    WindowEmbedding,
     WindowScore,
 )
 
@@ -51,6 +53,10 @@ def segmentation_job_dir(storage_root: Path, job_id: str) -> Path:
 
 def classification_job_dir(storage_root: Path, job_id: str) -> Path:
     return Path(storage_root) / "call_parsing" / "classification" / job_id
+
+
+def window_classification_job_dir(storage_root: Path, job_id: str) -> Path:
+    return Path(storage_root) / "call_parsing" / "window_classification" / job_id
 
 
 # ---- Internals ----------------------------------------------------------
@@ -112,6 +118,19 @@ def write_trace(path: Path, scores: Iterable[WindowScore]) -> None:
 def read_trace(path: Path) -> list[WindowScore]:
     table = pq.read_table(path)
     return _rows_from_table(table, TRACE_SCHEMA, WindowScore)
+
+
+# ---- Embeddings (Pass 1) ------------------------------------------------
+
+
+def write_embeddings(path: Path, embeddings: Iterable[WindowEmbedding]) -> None:
+    table = _table_from_rows(list(embeddings), EMBEDDING_SCHEMA, WindowEmbedding)
+    _atomic_write_parquet(table, path)
+
+
+def read_embeddings(path: Path) -> list[WindowEmbedding]:
+    table = pq.read_table(path)
+    return _rows_from_table(table, EMBEDDING_SCHEMA, WindowEmbedding)
 
 
 # ---- Regions (Pass 1) ---------------------------------------------------
@@ -210,3 +229,32 @@ def read_all_chunk_traces(job_dir: Path, total_chunks: int) -> list[WindowScore]
         table = pq.read_table(path)
         all_scores.extend(_rows_from_table(table, TRACE_SCHEMA, WindowScore))
     return all_scores
+
+
+# ---- Chunk embedding parquet I/O (Pass 1 hydrophone progress) -------------
+
+
+def chunk_embedding_parquet_path(job_dir: Path, chunk_index: int) -> Path:
+    return job_dir / "chunk_embeddings" / f"{chunk_index:04d}.parquet"
+
+
+def write_chunk_embeddings(
+    job_dir: Path, chunk_index: int, embeddings: Sequence[WindowEmbedding]
+) -> None:
+    table = _table_from_rows(list(embeddings), EMBEDDING_SCHEMA, WindowEmbedding)
+    _atomic_write_parquet(table, chunk_embedding_parquet_path(job_dir, chunk_index))
+
+
+def read_all_chunk_embeddings(
+    job_dir: Path, total_chunks: int
+) -> list[WindowEmbedding]:
+    all_embeddings: list[WindowEmbedding] = []
+    for i in range(total_chunks):
+        path = chunk_embedding_parquet_path(job_dir, i)
+        if not path.exists():
+            continue
+        table = pq.read_table(path)
+        all_embeddings.extend(
+            _rows_from_table(table, EMBEDDING_SCHEMA, WindowEmbedding)
+        )
+    return all_embeddings

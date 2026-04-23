@@ -12,7 +12,7 @@ contract.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, Text
+from sqlalchemy import DateTime, Float, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from humpback.database import Base, TimestampMixin, UUIDMixin
@@ -148,3 +148,41 @@ class EventClassificationJob(UUIDMixin, TimestampMixin, Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+
+
+class WindowClassificationJob(UUIDMixin, TimestampMixin, Base):
+    """Standalone sidecar: score cached Perch embeddings from Pass 1 regions
+    through an existing multi-label vocalization classifier.
+
+    Not numbered as a pass — runs independently against a completed
+    ``RegionDetectionJob`` and has no FK on ``CallParsingRun``.
+    """
+
+    __tablename__ = "window_classification_jobs"
+
+    status: Mapped[str] = mapped_column(default="queued")
+    region_detection_job_id: Mapped[str]
+    vocalization_model_id: Mapped[str]
+    config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    window_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    vocabulary_snapshot: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+
+
+class WindowScoreCorrection(UUIDMixin, TimestampMixin, Base):
+    """Human correction to a window classification score.
+
+    A row means "this type is present (add) or absent (remove) for this
+    window, overriding inference." Multiple rows per window are valid
+    (multi-label).
+    """
+
+    __tablename__ = "window_score_corrections"
+
+    window_classification_job_id: Mapped[str]
+    time_sec: Mapped[float] = mapped_column(Float)
+    region_id: Mapped[str]
+    correction_type: Mapped[str]
+    type_name: Mapped[str]

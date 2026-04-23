@@ -349,6 +349,7 @@ def vocalization_model_to_out(m) -> VocalizationModelOut:
     return VocalizationModelOut(
         id=m.id,
         name=m.name,
+        model_family=m.model_family,
         model_dir_path=m.model_dir_path,
         vocabulary_snapshot=json.loads(m.vocabulary_snapshot),
         per_class_thresholds=json.loads(m.per_class_thresholds),

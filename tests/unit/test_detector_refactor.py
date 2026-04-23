@@ -151,7 +151,7 @@ def test_compute_hysteresis_events_matches_explicit_composition() -> None:
         config=config,
     )
 
-    manual_records = score_audio_windows(
+    manual_records, _emb = score_audio_windows(
         audio=audio,
         sample_rate=16000,
         perch_model=model,
@@ -201,6 +201,80 @@ def test_compute_hysteresis_events_is_importable() -> None:
 def test_score_audio_windows_is_importable() -> None:
     """Pass 1 streaming primitive is importable from ``detector``."""
     assert score_audio_windows.__name__ == "score_audio_windows"
+
+
+def test_score_audio_windows_returns_embeddings() -> None:
+    """score_audio_windows returns an embedding matrix with one row per window."""
+    pipeline = _synthetic_classifier()
+    model = FakeTFLiteModel(vector_dim=64)
+    audio = _fixture_audio()
+    config = {"window_size_seconds": 5.0, "hop_seconds": 1.0}
+
+    records, embeddings = score_audio_windows(
+        audio=audio,
+        sample_rate=16000,
+        perch_model=model,
+        classifier=pipeline,
+        config=config,
+    )
+
+    assert len(records) > 0
+    assert embeddings.shape[0] == len(records)
+    assert embeddings.shape[1] == 64  # FakeTFLiteModel vector_dim
+    assert embeddings.dtype == np.float32
+
+
+def test_score_audio_windows_short_audio_returns_empty_embeddings() -> None:
+    """Audio shorter than one window returns empty records and empty embeddings."""
+    pipeline = _synthetic_classifier()
+    model = FakeTFLiteModel(vector_dim=64)
+    short_audio = np.zeros(100, dtype=np.float32)
+
+    records, embeddings = score_audio_windows(
+        audio=short_audio,
+        sample_rate=16000,
+        perch_model=model,
+        classifier=pipeline,
+        config={"window_size_seconds": 5.0, "hop_seconds": 1.0},
+    )
+
+    assert records == []
+    assert embeddings.shape == (0, 0)
+
+
+def test_score_audio_windows_embeddings_to_parquet_roundtrip(tmp_path: Path) -> None:
+    """Full pipeline: score_audio_windows → WindowEmbedding → parquet → read back."""
+    from humpback.call_parsing.storage import read_embeddings, write_embeddings
+    from humpback.call_parsing.types import WindowEmbedding
+
+    pipeline = _synthetic_classifier()
+    model = FakeTFLiteModel(vector_dim=64)
+    audio = _fixture_audio()
+    config = {"window_size_seconds": 5.0, "hop_seconds": 1.0}
+
+    records, emb_arr = score_audio_windows(
+        audio=audio,
+        sample_rate=16000,
+        perch_model=model,
+        classifier=pipeline,
+        config=config,
+    )
+
+    window_embeddings = [
+        WindowEmbedding(
+            time_sec=float(r["offset_sec"]),
+            embedding=emb_arr[i].tolist(),
+        )
+        for i, r in enumerate(records)
+    ]
+
+    path = tmp_path / "embeddings.parquet"
+    write_embeddings(path, window_embeddings)
+    loaded = read_embeddings(path)
+
+    assert len(loaded) == len(records)
+    for we in loaded:
+        assert len(we.embedding) == 64
 
 
 @pytest.mark.skipif(not SNAPSHOT_PATH.exists(), reason="snapshot not committed")

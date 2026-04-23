@@ -119,6 +119,9 @@ import type {
   CreateEventClassifierTrainingJobRequest,
   EventClassifierTrainingJob,
   EventClassifierModel,
+  WindowClassificationJob,
+  WindowScoreRow,
+  WindowScoreCorrection,
 } from "./types";
 
 class ApiError extends Error {
@@ -1112,4 +1115,69 @@ export const deleteEventClassifierModel = (modelId: string) =>
   api<{ status: string }>(`/call-parsing/classifier-models/${modelId}`, {
     method: "DELETE",
   });
+
+// ---- Window Classification Sidecar ----
+
+export const createWindowClassificationJob = (body: {
+  region_detection_job_id: string;
+  vocalization_model_id: string;
+}) => post<WindowClassificationJob>("/call-parsing/window-classification-jobs", body);
+
+export const fetchWindowClassificationJobs = () =>
+  api<WindowClassificationJob[]>("/call-parsing/window-classification-jobs");
+
+export const fetchWindowClassificationJob = (jobId: string) =>
+  api<WindowClassificationJob>(
+    `/call-parsing/window-classification-jobs/${jobId}`,
+  );
+
+export const deleteWindowClassificationJob = (jobId: string) =>
+  api<{ status: string }>(
+    `/call-parsing/window-classification-jobs/${jobId}`,
+    { method: "DELETE" },
+  );
+
+export const fetchWindowScores = (
+  jobId: string,
+  params?: {
+    region_id?: string;
+    min_score?: number;
+    type_name?: string;
+  },
+) => {
+  const qs = new URLSearchParams();
+  if (params?.region_id) qs.set("region_id", params.region_id);
+  if (params?.min_score != null)
+    qs.set("min_score", String(params.min_score));
+  if (params?.type_name) qs.set("type_name", params.type_name);
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return api<WindowScoreRow[]>(
+    `/call-parsing/window-classification-jobs/${jobId}/scores${suffix}`,
+  );
+};
+
+export const upsertWindowScoreCorrections = (
+  jobId: string,
+  corrections: Array<{
+    time_sec: number;
+    region_id: string;
+    correction_type: "add" | "remove";
+    type_name: string;
+  }>,
+) =>
+  post<WindowScoreCorrection[]>(
+    `/call-parsing/window-classification-jobs/${jobId}/corrections`,
+    { corrections },
+  );
+
+export const fetchWindowScoreCorrections = (jobId: string) =>
+  api<WindowScoreCorrection[]>(
+    `/call-parsing/window-classification-jobs/${jobId}/corrections`,
+  );
+
+export const clearWindowScoreCorrections = (jobId: string) =>
+  api<{ status: string }>(
+    `/call-parsing/window-classification-jobs/${jobId}/corrections`,
+    { method: "DELETE" },
+  );
 

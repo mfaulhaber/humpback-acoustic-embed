@@ -63,7 +63,7 @@ def test_chunked_score_audio_windows_equals_single_call() -> None:
     chunk_a = audio[:split_samples]
     chunk_b = audio[split_samples:]
 
-    full = score_audio_windows(
+    full, _ = score_audio_windows(
         audio=audio,
         sample_rate=SAMPLE_RATE,
         perch_model=model,
@@ -71,7 +71,7 @@ def test_chunked_score_audio_windows_equals_single_call() -> None:
         config=_config(),
     )
 
-    part_a = score_audio_windows(
+    part_a, _ = score_audio_windows(
         audio=chunk_a,
         sample_rate=SAMPLE_RATE,
         perch_model=model,
@@ -79,7 +79,7 @@ def test_chunked_score_audio_windows_equals_single_call() -> None:
         config=_config(),
         time_offset_sec=0.0,
     )
-    part_b = score_audio_windows(
+    part_b, _ = score_audio_windows(
         audio=chunk_b,
         sample_rate=SAMPLE_RATE,
         perch_model=model,
@@ -102,14 +102,14 @@ def test_time_offset_shifts_window_records() -> None:
     model = FakeTFLiteModel(vector_dim=64)
     audio = _sine_audio(WINDOW_SIZE_SEC * 3)
 
-    base = score_audio_windows(
+    base, _ = score_audio_windows(
         audio=audio,
         sample_rate=SAMPLE_RATE,
         perch_model=model,
         classifier=pipeline,
         config=_config(),
     )
-    shifted = score_audio_windows(
+    shifted, _ = score_audio_windows(
         audio=audio,
         sample_rate=SAMPLE_RATE,
         perch_model=model,

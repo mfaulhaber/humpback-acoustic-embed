@@ -42,6 +42,7 @@ from humpback.schemas.call_parsing import (
     CreateRegionJobRequest,
     CreateSegmentationJobRequest,
     CreateSegmentationTrainingJobRequest,
+    CreateWindowClassificationJobRequest,
     QuickRetrainRequest,
     QuickRetrainResponse,
     RegionCorrectionCreate,
@@ -55,6 +56,10 @@ from humpback.schemas.call_parsing import (
     SegmentationTrainingDatasetSummary,
     TypeCorrectionRequest,
     TypeCorrectionResponse,
+    WindowClassificationJobSummary,
+    WindowScoreCorrectionRequest,
+    WindowScoreCorrectionResponse,
+    WindowScoreRow,
 )
 from humpback.services import call_parsing as service
 
@@ -988,4 +993,127 @@ async def delete_classifier_model(
         raise HTTPException(status_code=409, detail=exc.detail) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Classifier model not found")
+    return None
+
+
+# ---- Window classification sidecar -----------------------------------------
+
+
+@router.post(
+    "/window-classification-jobs",
+    response_model=WindowClassificationJobSummary,
+    status_code=201,
+)
+async def create_window_classification_job(
+    request: CreateWindowClassificationJobRequest,
+    session: SessionDep,
+):
+    try:
+        job = await service.create_window_classification_job(
+            session,
+            request.region_detection_job_id,
+            request.vocalization_model_id,
+        )
+        await session.commit()
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    except service.CallParsingValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+    return WindowClassificationJobSummary.model_validate(job)
+
+
+@router.get(
+    "/window-classification-jobs",
+    response_model=list[WindowClassificationJobSummary],
+)
+async def list_window_classification_jobs(session: SessionDep):
+    jobs = await service.list_window_classification_jobs(session)
+    return [WindowClassificationJobSummary.model_validate(j) for j in jobs]
+
+
+@router.get(
+    "/window-classification-jobs/{job_id}",
+    response_model=WindowClassificationJobSummary,
+)
+async def get_window_classification_job(job_id: str, session: SessionDep):
+    job = await service.get_window_classification_job(session, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail="Window classification job not found"
+        )
+    return WindowClassificationJobSummary.model_validate(job)
+
+
+@router.delete("/window-classification-jobs/{job_id}", status_code=204)
+async def delete_window_classification_job(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    deleted = await service.delete_window_classification_job(session, job_id, settings)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail="Window classification job not found"
+        )
+    return None
+
+
+@router.get(
+    "/window-classification-jobs/{job_id}/scores",
+    response_model=list[WindowScoreRow],
+)
+async def get_window_scores(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    region_id: str | None = Query(default=None),
+    min_score: float | None = Query(default=None),
+    type_name: str | None = Query(default=None),
+):
+    job = await service.get_window_classification_job(session, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail="Window classification job not found"
+        )
+    rows = await service.read_window_scores(
+        job_id,
+        settings,
+        region_id=region_id,
+        min_score=min_score,
+        type_name=type_name,
+    )
+    return [WindowScoreRow(**r) for r in rows]
+
+
+@router.post(
+    "/window-classification-jobs/{job_id}/corrections",
+    response_model=list[WindowScoreCorrectionResponse],
+)
+async def upsert_window_score_corrections(
+    job_id: str,
+    request: WindowScoreCorrectionRequest,
+    session: SessionDep,
+):
+    try:
+        await service.upsert_window_score_corrections(
+            session, job_id, request.corrections
+        )
+    except service.CallParsingFKError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    corrections = await service.list_window_score_corrections(session, job_id)
+    return [WindowScoreCorrectionResponse.model_validate(c) for c in corrections]
+
+
+@router.get(
+    "/window-classification-jobs/{job_id}/corrections",
+    response_model=list[WindowScoreCorrectionResponse],
+)
+async def list_window_score_corrections(job_id: str, session: SessionDep):
+    corrections = await service.list_window_score_corrections(session, job_id)
+    return [WindowScoreCorrectionResponse.model_validate(c) for c in corrections]
+
+
+@router.delete("/window-classification-jobs/{job_id}/corrections", status_code=204)
+async def clear_window_score_corrections(job_id: str, session: SessionDep):
+    await service.clear_window_score_corrections(session, job_id)
     return None

@@ -57,6 +57,7 @@ const navItems: NavItem[] = [
       { label: "Segment Training", to: "/app/call-parsing/segment-training" },
       { label: "Classify", to: "/app/call-parsing/classify" },
       { label: "Classify Training", to: "/app/call-parsing/classify-training" },
+      { label: "Window Classify", to: "/app/call-parsing/window-classify" },
     ],
   },
   { label: "Search", icon: Search, to: "/app/search" },

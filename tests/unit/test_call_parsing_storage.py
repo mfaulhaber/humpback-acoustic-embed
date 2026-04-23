@@ -6,12 +6,14 @@ import pytest
 
 from humpback.call_parsing.storage import (
     classification_job_dir,
+    read_embeddings,
     read_events,
     read_regions,
     read_trace,
     read_typed_events,
     region_job_dir,
     segmentation_job_dir,
+    write_embeddings,
     write_events,
     write_regions,
     write_trace,
@@ -21,6 +23,7 @@ from humpback.call_parsing.types import (
     Event,
     Region,
     TypedEvent,
+    WindowEmbedding,
     WindowScore,
     new_uuid,
 )
@@ -169,3 +172,28 @@ def test_atomic_write_no_tmp_file_left_behind(tmp_path: Path) -> None:
     assert path.exists()
     tmp = path.with_suffix(".parquet.tmp")
     assert not tmp.exists()
+
+
+# ---- Embeddings ----------------------------------------------------------
+
+
+def test_embeddings_roundtrip(tmp_path: Path) -> None:
+    embs = [
+        WindowEmbedding(time_sec=float(i), embedding=[0.1 * j for j in range(8)])
+        for i in range(10)
+    ]
+    path = tmp_path / "embeddings.parquet"
+    write_embeddings(path, embs)
+    loaded = read_embeddings(path)
+    assert len(loaded) == len(embs)
+    for orig, got in zip(embs, loaded):
+        assert orig.time_sec == got.time_sec
+        assert len(got.embedding) == 8
+        for a, b in zip(orig.embedding, got.embedding):
+            assert abs(a - b) < 1e-6
+
+
+def test_embeddings_empty_roundtrip(tmp_path: Path) -> None:
+    path = tmp_path / "empty_embeddings.parquet"
+    write_embeddings(path, [])
+    assert read_embeddings(path) == []
