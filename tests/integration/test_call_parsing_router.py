@@ -1766,56 +1766,141 @@ async def test_boundary_corrections_get_and_delete(
     assert get_resp2.json() == []
 
 
-# ---- Type corrections (Task 5) --------------------------------------------
+# ---- Vocalization corrections (unified) ------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_type_corrections_post_happy(client: AsyncClient, app_settings) -> None:
-    ec_id = await _seed_complete_classification_job(app_settings)
+async def test_vocalization_corrections_post_happy(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.commit()
+        rd_id = rd.id
+    await engine.dispose()
+
     resp = await client.post(
-        f"{BASE}/classification-jobs/{ec_id}/corrections",
-        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+        f"{BASE}/vocalization-corrections",
+        json={
+            "region_detection_job_id": rd_id,
+            "corrections": [
+                {
+                    "start_sec": 94.0,
+                    "end_sec": 99.0,
+                    "type_name": "Whup",
+                    "correction_type": "add",
+                }
+            ],
+        },
     )
     assert resp.status_code == 200
-    assert resp.json()["count"] == 1
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["type_name"] == "Whup"
 
 
 @pytest.mark.asyncio
-async def test_type_corrections_post_404(client: AsyncClient) -> None:
+async def test_vocalization_corrections_post_404(client: AsyncClient) -> None:
     resp = await client.post(
-        f"{BASE}/classification-jobs/nonexistent/corrections",
-        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+        f"{BASE}/vocalization-corrections",
+        json={
+            "region_detection_job_id": "nonexistent",
+            "corrections": [
+                {
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                    "type_name": "Whup",
+                    "correction_type": "add",
+                }
+            ],
+        },
     )
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_type_corrections_overwrite_on_repeat(
+async def test_vocalization_corrections_upsert_and_get(
     client: AsyncClient, app_settings
 ) -> None:
-    ec_id = await _seed_complete_classification_job(app_settings)
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.commit()
+        rd_id = rd.id
+    await engine.dispose()
+
     await client.post(
-        f"{BASE}/classification-jobs/{ec_id}/corrections",
-        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+        f"{BASE}/vocalization-corrections",
+        json={
+            "region_detection_job_id": rd_id,
+            "corrections": [
+                {
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                    "type_name": "Whup",
+                    "correction_type": "add",
+                }
+            ],
+        },
     )
     await client.post(
-        f"{BASE}/classification-jobs/{ec_id}/corrections",
-        json={"corrections": [{"event_id": "e1", "type_name": "moan"}]},
+        f"{BASE}/vocalization-corrections",
+        json={
+            "region_detection_job_id": rd_id,
+            "corrections": [
+                {
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                    "type_name": "Whup",
+                    "correction_type": "remove",
+                }
+            ],
+        },
     )
-    get_resp = await client.get(f"{BASE}/classification-jobs/{ec_id}/corrections")
+    get_resp = await client.get(
+        f"{BASE}/vocalization-corrections",
+        params={"region_detection_job_id": rd_id},
+    )
     data = get_resp.json()
     assert len(data) == 1
-    assert data[0]["type_name"] == "moan"
+    assert data[0]["correction_type"] == "remove"
 
 
 @pytest.mark.asyncio
-async def test_type_corrections_delete(client: AsyncClient, app_settings) -> None:
-    ec_id = await _seed_complete_classification_job(app_settings)
+async def test_vocalization_corrections_delete(
+    client: AsyncClient, app_settings
+) -> None:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.commit()
+        rd_id = rd.id
+    await engine.dispose()
+
     await client.post(
-        f"{BASE}/classification-jobs/{ec_id}/corrections",
-        json={"corrections": [{"event_id": "e1", "type_name": "upcall"}]},
+        f"{BASE}/vocalization-corrections",
+        json={
+            "region_detection_job_id": rd_id,
+            "corrections": [
+                {
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                    "type_name": "Whup",
+                    "correction_type": "add",
+                }
+            ],
+        },
     )
-    del_resp = await client.delete(f"{BASE}/classification-jobs/{ec_id}/corrections")
+    del_resp = await client.delete(
+        f"{BASE}/vocalization-corrections",
+        params={"region_detection_job_id": rd_id},
+    )
     assert del_resp.status_code == 204
 
 
@@ -1949,7 +2034,7 @@ async def test_classification_jobs_with_correction_counts(
     client: AsyncClient, app_settings
 ) -> None:
     """Jobs with and without corrections both appear, with correct counts."""
-    from humpback.models.feedback_training import EventTypeCorrection
+    from humpback.models.call_parsing import VocalizationCorrection
 
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
@@ -1963,28 +2048,41 @@ async def test_classification_jobs_with_correction_counts(
         session.add(rd)
         await session.flush()
 
+        rd2 = RegionDetectionJob(
+            hydrophone_id="orcasound_lab",
+            start_timestamp=3000.0,
+            end_timestamp=4000.0,
+            status="complete",
+        )
+        session.add(rd2)
+        await session.flush()
+
         es = EventSegmentationJob(
             region_detection_job_id=rd.id, status="complete", event_count=5
         )
-        session.add(es)
+        es2 = EventSegmentationJob(
+            region_detection_job_id=rd2.id, status="complete", event_count=3
+        )
+        session.add_all([es, es2])
         await session.flush()
 
         ec1 = EventClassificationJob(
             event_segmentation_job_id=es.id, status="complete", typed_event_count=10
         )
         ec2 = EventClassificationJob(
-            event_segmentation_job_id=es.id, status="complete", typed_event_count=8
+            event_segmentation_job_id=es2.id, status="complete", typed_event_count=8
         )
         session.add_all([ec1, ec2])
         await session.flush()
 
-        # Add corrections only for ec1
         for i in range(4):
             session.add(
-                EventTypeCorrection(
-                    event_classification_job_id=ec1.id,
-                    event_id=f"e{i}",
+                VocalizationCorrection(
+                    region_detection_job_id=rd.id,
+                    start_sec=float(i),
+                    end_sec=float(i + 1),
                     type_name="whup",
+                    correction_type="add",
                 )
             )
         await session.commit()
@@ -2257,56 +2355,3 @@ async def test_window_classification_scores_404_missing_job(
 ) -> None:
     resp = await client.get(f"{BASE}/window-classification-jobs/nonexistent/scores")
     assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_window_classification_corrections_crud(
-    client: AsyncClient, app_settings
-) -> None:
-    ids = await _seed_window_classification_prereqs(app_settings)
-    create_resp = await client.post(
-        f"{BASE}/window-classification-jobs",
-        json={
-            "region_detection_job_id": ids["region_job_id"],
-            "vocalization_model_id": ids["vocalization_model_id"],
-        },
-    )
-    job_id = create_resp.json()["id"]
-
-    upsert_resp = await client.post(
-        f"{BASE}/window-classification-jobs/{job_id}/corrections",
-        json={
-            "corrections": [
-                {
-                    "time_sec": 1.0,
-                    "region_id": "r1",
-                    "correction_type": "add",
-                    "type_name": "whup",
-                },
-                {
-                    "time_sec": 2.0,
-                    "region_id": "r1",
-                    "correction_type": "remove",
-                    "type_name": "moan",
-                },
-            ]
-        },
-    )
-    assert upsert_resp.status_code == 200
-    assert len(upsert_resp.json()) == 2
-
-    list_resp = await client.get(
-        f"{BASE}/window-classification-jobs/{job_id}/corrections"
-    )
-    assert list_resp.status_code == 200
-    assert len(list_resp.json()) == 2
-
-    clear_resp = await client.delete(
-        f"{BASE}/window-classification-jobs/{job_id}/corrections"
-    )
-    assert clear_resp.status_code == 204
-
-    after_clear = await client.get(
-        f"{BASE}/window-classification-jobs/{job_id}/corrections"
-    )
-    assert len(after_clear.json()) == 0

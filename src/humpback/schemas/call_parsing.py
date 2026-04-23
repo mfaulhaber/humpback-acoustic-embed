@@ -473,30 +473,13 @@ class BoundaryCorrectionResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class TypeCorrection(BaseModel):
-    """A single type correction for a Pass 3 classification event."""
+class VocalizationCorrectionItem(BaseModel):
+    """A single vocalization correction in a batch upsert request."""
 
-    event_id: str
-    type_name: Optional[str] = None
-
-
-class TypeCorrectionRequest(BaseModel):
-    """Batch upsert request for Pass 3 type corrections."""
-
-    corrections: list[TypeCorrection]
-
-
-class TypeCorrectionResponse(BaseModel):
-    """A stored type correction row."""
-
-    id: str
-    event_classification_job_id: str
-    event_id: str
-    type_name: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+    start_sec: float
+    end_sec: float
+    type_name: str
+    correction_type: str = Field(pattern=r"^(add|remove)$")
 
 
 # ---- Feedback training: training job schemas -------------------------------
@@ -608,30 +591,22 @@ class WindowScoreRow(BaseModel):
     scores: dict[str, float]
 
 
-class WindowScoreCorrectionItem(BaseModel):
-    """A single correction in a batch upsert request."""
+class VocalizationCorrectionRequest(BaseModel):
+    """Batch upsert request for vocalization corrections."""
 
-    time_sec: float
-    region_id: str
-    correction_type: str = Field(pattern=r"^(add|remove)$")
-    type_name: str
+    region_detection_job_id: str
+    corrections: list[VocalizationCorrectionItem]
 
 
-class WindowScoreCorrectionRequest(BaseModel):
-    """Batch upsert request for window score corrections."""
-
-    corrections: list[WindowScoreCorrectionItem]
-
-
-class WindowScoreCorrectionResponse(BaseModel):
-    """A stored window score correction row."""
+class VocalizationCorrectionResponse(BaseModel):
+    """A stored vocalization correction row."""
 
     id: str
-    window_classification_job_id: str
-    time_sec: float
-    region_id: str
-    correction_type: str
+    region_detection_job_id: str
+    start_sec: float
+    end_sec: float
     type_name: str
+    correction_type: str
     created_at: datetime
     updated_at: datetime
 

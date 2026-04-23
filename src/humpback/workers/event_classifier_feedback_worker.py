@@ -38,10 +38,10 @@ from humpback.models.call_parsing import (
     EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
+    VocalizationCorrection,
 )
 from humpback.models.feedback_training import (
     EventClassifierTrainingJob,
-    EventTypeCorrection,
 )
 from humpback.models.vocalization import VocalizationClassifierModel
 from humpback.schemas.call_parsing import SegmentationFeatureConfig
@@ -63,29 +63,40 @@ class _ClassifierSample:
 
 def _resolve_event_labels(
     typed_events_by_event: dict[str, list[Any]],
-    corrections: dict[str, str | None],
+    corrections: dict[str, dict[str, str]],
+    event_bounds: dict[str, tuple[float, float]],
     *,
     corrections_only: bool = True,
 ) -> dict[str, str | None]:
     """For each event, resolve the final single type label.
 
+    ``corrections`` maps ``event_id → {type_name: correction_type}``
+    where correction_type is "add" or "remove".
+
     Returns ``{event_id: type_name}`` where type_name is None for negatives.
-    Corrected events use the correction; when *corrections_only* is False,
-    uncorrected events fall back to the highest-scoring above-threshold type
-    from inference output.  When True, uncorrected events are excluded.
+    When *corrections_only* is True, only events with an "add" correction
+    are included.
     """
     labels: dict[str, str | None] = {}
 
     all_event_ids = set(typed_events_by_event.keys()) | set(corrections.keys())
 
     for event_id in all_event_ids:
-        if event_id in corrections:
-            labels[event_id] = corrections[event_id]
+        event_corrections = corrections.get(event_id, {})
+        add_types = [t for t, ct in event_corrections.items() if ct == "add"]
+
+        if add_types:
+            labels[event_id] = add_types[0]
+        elif event_corrections:
+            labels[event_id] = None
         elif corrections_only:
             labels[event_id] = None
         else:
             rows = typed_events_by_event.get(event_id, [])
-            above = [r for r in rows if r.above_threshold]
+            remove_types = {t for t, ct in event_corrections.items() if ct == "remove"}
+            above = [
+                r for r in rows if r.above_threshold and r.type_name not in remove_types
+            ]
             if above:
                 best = max(above, key=lambda r: r.score)
                 labels[event_id] = best.type_name
@@ -163,16 +174,27 @@ async def _collect_samples(
             e.event_id: (e.start_sec, e.end_sec) for e in corrected_events
         }
 
+        rd_job_id = seg_job.region_detection_job_id
         corr_result = await session.execute(
-            select(EventTypeCorrection).where(
-                EventTypeCorrection.event_classification_job_id == cls_job_id
+            select(VocalizationCorrection).where(
+                VocalizationCorrection.region_detection_job_id == rd_job_id
             )
         )
         corrections_raw = list(corr_result.scalars().all())
-        corrections = {c.event_id: c.type_name for c in corrections_raw}
+
+        corrections: dict[str, dict[str, str]] = {}
+        for event in corrected_events:
+            for vc in corrections_raw:
+                if vc.start_sec < event.end_sec and vc.end_sec > event.start_sec:
+                    corrections.setdefault(event.event_id, {})[vc.type_name] = (
+                        vc.correction_type
+                    )
 
         labels = _resolve_event_labels(
-            typed_by_event, corrections, corrections_only=corrections_only
+            typed_by_event,
+            corrections,
+            event_bounds,
+            corrections_only=corrections_only,
         )
 
         for event_id, type_name in labels.items():

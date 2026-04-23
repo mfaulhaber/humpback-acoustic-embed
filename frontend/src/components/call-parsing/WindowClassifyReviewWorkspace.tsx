@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useWindowClassificationJobs,
   useWindowScores,
-  useWindowScoreCorrections,
-  useUpsertWindowScoreCorrections,
+  useSegmentationJobs,
+  useSegmentationJobEvents,
   useRegionJobRegions,
+  useVocalizationCorrections,
+  useUpsertVocalizationCorrections,
 } from "@/hooks/queries/useCallParsing";
 import { useVocClassifierModel } from "@/hooks/queries/useVocalization";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
@@ -13,7 +15,8 @@ import type {
   Region,
   WindowClassificationJob,
   WindowScoreRow,
-  WindowScoreCorrection,
+  SegmentationEvent,
+  VocalizationCorrectionItem,
 } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -54,18 +57,23 @@ const HEATMAP_GRADIENT: GradientStops = [
 ] as const;
 
 interface PendingCorrection {
-  time_sec: number;
-  region_id: string;
-  correction_type: "add" | "remove";
+  start_sec: number;
+  end_sec: number;
   type_name: string;
+  correction_type: "add" | "remove";
 }
 
 function correctionKey(c: {
-  time_sec: number;
-  region_id: string;
+  start_sec: number;
+  end_sec: number;
   type_name: string;
 }) {
-  return `${c.time_sec}:${c.region_id}:${c.type_name}`;
+  return `${c.start_sec}:${c.end_sec}:${c.type_name}`;
+}
+
+interface EventWithRegion extends SegmentationEvent {
+  regionIndex: number;
+  eventIndexInRegion: number;
 }
 
 export function WindowClassifyReviewWorkspace({
@@ -75,6 +83,7 @@ export function WindowClassifyReviewWorkspace({
 }) {
   const { data: wcJobs = [] } = useWindowClassificationJobs(0);
   const { data: hydrophones = [] } = useHydrophones();
+  const { data: segJobs = [] } = useSegmentationJobs(0);
 
   const completeJobs = useMemo(
     () => wcJobs.filter((j) => j.status === "complete"),
@@ -99,9 +108,6 @@ export function WindowClassifyReviewWorkspace({
   const { data: allScoreRows = [] } = useWindowScores(
     selectedJobId ?? undefined,
   );
-  const { data: savedCorrections = [] } = useWindowScoreCorrections(
-    selectedJobId ?? undefined,
-  );
 
   const { data: vocModel } = useVocClassifierModel(
     selectedJob?.vocalization_model_id ?? null,
@@ -123,27 +129,76 @@ export function WindowClassifyReviewWorkspace({
     [vocModel?.per_class_thresholds],
   );
 
-  // Region navigation
-  const [regionIndex, setRegionIndex] = useState(0);
+  // Find completed Pass 2 segmentation job for this detection job
+  const segmentationJob = useMemo(
+    () =>
+      regionDetectionJobId
+        ? segJobs.find(
+            (j) =>
+              j.region_detection_job_id === regionDetectionJobId &&
+              j.status === "complete",
+          ) ?? null
+        : null,
+    [segJobs, regionDetectionJobId],
+  );
+
+  const { data: rawEvents = [] } = useSegmentationJobEvents(
+    segmentationJob?.id ?? null,
+  );
+
+  // Saved vocalization corrections
+  const { data: savedCorrections = [] } =
+    useVocalizationCorrections(regionDetectionJobId);
+
+  // Group events by region and annotate with indices
+  const eventsByRegion = useMemo(() => {
+    const grouped: Record<string, EventWithRegion[]> = {};
+    for (const evt of rawEvents) {
+      if (!grouped[evt.region_id]) grouped[evt.region_id] = [];
+    }
+    // Sort events within each region by start time
+    for (const evt of rawEvents) {
+      grouped[evt.region_id].push({
+        ...evt,
+        regionIndex: 0,
+        eventIndexInRegion: 0,
+      });
+    }
+    // Assign indices
+    const regionOrder = regions.map((r) => r.region_id);
+    for (let ri = 0; ri < regionOrder.length; ri++) {
+      const evts = grouped[regionOrder[ri]];
+      if (!evts) continue;
+      evts.sort((a, b) => a.start_sec - b.start_sec);
+      for (let ei = 0; ei < evts.length; ei++) {
+        evts[ei].regionIndex = ri;
+        evts[ei].eventIndexInRegion = ei;
+      }
+    }
+    return grouped;
+  }, [rawEvents, regions]);
+
+  // Flat list of all events in region order
+  const allEvents = useMemo(() => {
+    const result: EventWithRegion[] = [];
+    for (const r of regions) {
+      const evts = eventsByRegion[r.region_id];
+      if (evts) result.push(...evts);
+    }
+    return result;
+  }, [regions, eventsByRegion]);
+
+  // Event/region navigation state
+  const [selectedEventIdx, setSelectedEventIdx] = useState(0);
 
   useEffect(() => {
-    setRegionIndex(0);
-    setSelectedWindowTime(null);
+    setSelectedEventIdx(0);
     setPendingCorrections(new Map());
   }, [selectedJobId]);
 
-  const currentRegion = regions[regionIndex] ?? null;
-
-  // Scores for current region
-  const regionScores = useMemo(
-    () =>
-      currentRegion
-        ? allScoreRows.filter(
-            (s) => s.region_id === currentRegion.region_id,
-          )
-        : [],
-    [allScoreRows, currentRegion],
-  );
+  const selectedEvent = allEvents[selectedEventIdx] ?? null;
+  const currentRegionIndex = selectedEvent?.regionIndex ?? 0;
+  const currentRegion = regions[currentRegionIndex] ?? null;
 
   // Type selector for confidence strip
   const [selectedType, setSelectedType] = useState<string | null>(null);
@@ -162,14 +217,13 @@ export function WindowClassifyReviewWorkspace({
     return 0.5;
   }, [thresholdOverride, selectedType, perClassThresholds]);
 
-  // Timeline extent covers all regions so the user can scroll freely.
+  // Timeline extent covers all regions
   const timelineEnd = useMemo(() => {
     if (regions.length === 0) return 0;
     return Math.max(...regions.map((r) => r.padded_end_sec));
   }, [regions]);
 
-  // Build confidence strip scores array covering the full timeline (jobStart=0
-  // to timelineEnd) using ALL score rows so strips render for every region.
+  // Build confidence strip scores array
   const stripScores = useMemo(() => {
     if (allScoreRows.length === 0 || timelineEnd === 0) return [];
     const n = Math.ceil(timelineEnd / HOP_SEC);
@@ -194,21 +248,23 @@ export function WindowClassifyReviewWorkspace({
     return arr;
   }, [allScoreRows, timelineEnd, selectedType]);
 
-  // Selected window
-  const [selectedWindowTime, setSelectedWindowTime] = useState<number | null>(
-    null,
-  );
-
-  const selectedScoreRow = useMemo(
-    () =>
-      selectedWindowTime != null
-        ? regionScores.find(
-            (s) =>
-              Math.abs(s.time_sec - selectedWindowTime) < HOP_SEC * 0.5,
-          ) ?? null
-        : null,
-    [selectedWindowTime, regionScores],
-  );
+  // Compute max scores for selected event from overlapping windows
+  const eventMaxScores = useMemo(() => {
+    if (!selectedEvent) return {};
+    const scores: Record<string, number> = {};
+    for (const row of allScoreRows) {
+      const winStart = row.time_sec;
+      const winEnd = row.time_sec + WINDOW_SIZE_SEC;
+      if (winStart < selectedEvent.end_sec && winEnd > selectedEvent.start_sec) {
+        for (const [typeName, score] of Object.entries(row.scores)) {
+          if (score > (scores[typeName] ?? 0)) {
+            scores[typeName] = score;
+          }
+        }
+      }
+    }
+    return scores;
+  }, [selectedEvent, allScoreRows]);
 
   // Pending corrections: Map<correctionKey, PendingCorrection>
   const [pendingCorrections, setPendingCorrections] = useState<
@@ -234,63 +290,85 @@ export function WindowClassifyReviewWorkspace({
   const [isPlaying, setIsPlaying] = useState(false);
   const [userZoom, setUserZoom] = useState("30s");
 
-  // Region navigation handlers
-  const goPrevRegion = useCallback(() => {
-    setRegionIndex((i) => Math.max(0, i - 1));
-    setSelectedWindowTime(null);
+  // Event navigation
+  const goPrevEvent = useCallback(() => {
+    setSelectedEventIdx((i) => Math.max(0, i - 1));
   }, []);
+  const goNextEvent = useCallback(() => {
+    setSelectedEventIdx((i) => Math.min(allEvents.length - 1, i + 1));
+  }, [allEvents.length]);
+  const goPrevRegion = useCallback(() => {
+    if (!selectedEvent || !regions.length) return;
+    const targetRi = selectedEvent.regionIndex - 1;
+    if (targetRi < 0) return;
+    const targetRegion = regions[targetRi];
+    const evts = eventsByRegion[targetRegion.region_id];
+    if (evts && evts.length > 0) {
+      // Last event of previous region
+      const lastEvt = evts[evts.length - 1];
+      const idx = allEvents.indexOf(lastEvt);
+      if (idx >= 0) setSelectedEventIdx(idx);
+    }
+  }, [selectedEvent, regions, eventsByRegion, allEvents]);
   const goNextRegion = useCallback(() => {
-    setRegionIndex((i) => Math.min(regions.length - 1, i + 1));
-    setSelectedWindowTime(null);
-  }, [regions.length]);
+    if (!selectedEvent || !regions.length) return;
+    const targetRi = selectedEvent.regionIndex + 1;
+    if (targetRi >= regions.length) return;
+    const targetRegion = regions[targetRi];
+    const evts = eventsByRegion[targetRegion.region_id];
+    if (evts && evts.length > 0) {
+      // First event of next region
+      const firstEvt = evts[0];
+      const idx = allEvents.indexOf(firstEvt);
+      if (idx >= 0) setSelectedEventIdx(idx);
+    }
+  }, [selectedEvent, regions, eventsByRegion, allEvents]);
 
-  // Playback
+  // Playback bounded to selected event
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
       playbackRef.current?.pause();
-    } else if (selectedWindowTime != null) {
-      playbackRef.current?.play(selectedWindowTime, WINDOW_SIZE_SEC);
+    } else if (selectedEvent) {
+      const duration = selectedEvent.end_sec - selectedEvent.start_sec;
+      playbackRef.current?.play(selectedEvent.start_sec, duration);
     }
-  }, [isPlaying, selectedWindowTime]);
+  }, [isPlaying, selectedEvent]);
 
-  // Badge click: toggle add/remove correction
+  // Badge click: toggle add/remove correction for event
   const handleBadgeClick = useCallback(
     (typeName: string) => {
-      if (selectedScoreRow == null || !currentRegion) return;
+      if (!selectedEvent) return;
       const key = correctionKey({
-        time_sec: selectedScoreRow.time_sec,
-        region_id: currentRegion.region_id,
+        start_sec: selectedEvent.start_sec,
+        end_sec: selectedEvent.end_sec,
         type_name: typeName,
       });
       const existing = mergedCorrections.get(key);
-      const score = selectedScoreRow.scores[typeName] ?? 0;
+      const score = eventMaxScores[typeName] ?? 0;
       const threshold = perClassThresholds[typeName] ?? effectiveThreshold;
       const isAbove = score >= threshold;
 
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         if (existing === "remove") {
-          // Undo removal
           next.delete(key);
         } else if (isAbove && existing !== "add") {
-          // Mark as removed
           next.set(key, {
-            time_sec: selectedScoreRow.time_sec,
-            region_id: currentRegion.region_id,
+            start_sec: selectedEvent.start_sec,
+            end_sec: selectedEvent.end_sec,
             correction_type: "remove",
             type_name: typeName,
           });
         } else {
-          // Toggle off add if already added
           next.delete(key);
         }
         return next;
       });
     },
     [
-      selectedScoreRow,
-      currentRegion,
+      selectedEvent,
       mergedCorrections,
+      eventMaxScores,
       perClassThresholds,
       effectiveThreshold,
     ],
@@ -299,34 +377,36 @@ export function WindowClassifyReviewWorkspace({
   // Add type via popover
   const handleAddType = useCallback(
     (typeName: string) => {
-      if (selectedScoreRow == null || !currentRegion) return;
+      if (!selectedEvent) return;
       const key = correctionKey({
-        time_sec: selectedScoreRow.time_sec,
-        region_id: currentRegion.region_id,
+        start_sec: selectedEvent.start_sec,
+        end_sec: selectedEvent.end_sec,
         type_name: typeName,
       });
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         next.set(key, {
-          time_sec: selectedScoreRow.time_sec,
-          region_id: currentRegion.region_id,
+          start_sec: selectedEvent.start_sec,
+          end_sec: selectedEvent.end_sec,
           correction_type: "add",
           type_name: typeName,
         });
         return next;
       });
     },
-    [selectedScoreRow, currentRegion],
+    [selectedEvent],
   );
 
   // Save
-  const upsertMutation = useUpsertWindowScoreCorrections();
+  const upsertMutation = useUpsertVocalizationCorrections();
 
   const handleSave = useCallback(() => {
-    if (!selectedJobId || !isDirty) return;
-    const corrections = Array.from(pendingCorrections.values());
+    if (!regionDetectionJobId || !isDirty) return;
+    const corrections: VocalizationCorrectionItem[] = Array.from(
+      pendingCorrections.values(),
+    );
     upsertMutation.mutate(
-      { jobId: selectedJobId, corrections },
+      { regionDetectionJobId, corrections },
       {
         onSuccess: () => {
           setPendingCorrections(new Map());
@@ -344,7 +424,7 @@ export function WindowClassifyReviewWorkspace({
         },
       },
     );
-  }, [selectedJobId, isDirty, pendingCorrections, upsertMutation]);
+  }, [regionDetectionJobId, isDirty, pendingCorrections, upsertMutation]);
 
   const handleCancel = useCallback(() => {
     if (isDirty && !window.confirm("Discard unsaved corrections?")) return;
@@ -373,16 +453,31 @@ export function WindowClassifyReviewWorkspace({
       )
         return;
 
+      if (e.shiftKey) {
+        switch (e.code) {
+          case "ArrowRight":
+          case "KeyD":
+            e.preventDefault();
+            goNextRegion();
+            return;
+          case "ArrowLeft":
+          case "KeyA":
+            e.preventDefault();
+            goPrevRegion();
+            return;
+        }
+      }
+
       switch (e.code) {
-        case "BracketLeft":
-        case "KeyA":
-          e.preventDefault();
-          goPrevRegion();
-          break;
-        case "BracketRight":
+        case "ArrowRight":
         case "KeyD":
           e.preventDefault();
-          goNextRegion();
+          goNextEvent();
+          break;
+        case "ArrowLeft":
+        case "KeyA":
+          e.preventDefault();
+          goPrevEvent();
           break;
         case "Space":
           e.preventDefault();
@@ -392,60 +487,56 @@ export function WindowClassifyReviewWorkspace({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goPrevRegion, goNextRegion, togglePlayback]);
+  }, [goPrevEvent, goNextEvent, goPrevRegion, goNextRegion, togglePlayback]);
 
   // Job label
   const jobLabel = useCallback(
     (job: WindowClassificationJob) => {
       const shortId = job.id.slice(0, 8);
       const wc = job.window_count ?? 0;
-      // Try to find hydrophone name via upstream region job
-      // We don't have the region job data per-job here, so use a simpler label
       return `${shortId} — ${wc} windows`;
     },
     [],
   );
 
-  // Detail: compute effective labels for selected window
-  const selectedWindowLabels = useMemo(() => {
-    if (!selectedScoreRow || !currentRegion) return [];
+  // Event labels for the detail panel
+  const selectedEventLabels = useMemo(() => {
+    if (!selectedEvent) return [];
     return vocabulary.map((typeName) => {
-      const score = selectedScoreRow.scores[typeName] ?? 0;
+      const score = eventMaxScores[typeName] ?? 0;
       const threshold = perClassThresholds[typeName] ?? effectiveThreshold;
       const aboveThreshold = score >= threshold;
-      const addKey = correctionKey({
-        time_sec: selectedScoreRow.time_sec,
-        region_id: currentRegion.region_id,
+      const key = correctionKey({
+        start_sec: selectedEvent.start_sec,
+        end_sec: selectedEvent.end_sec,
         type_name: typeName,
       });
-      const correction = mergedCorrections.get(addKey);
-      const isPendingAdd = pendingCorrections.has(addKey);
+      const correction = mergedCorrections.get(key);
+      const isPending = pendingCorrections.has(key);
       return {
         typeName,
         score,
         threshold,
         aboveThreshold,
         correction,
-        isPending: isPendingAdd,
+        isPending,
       };
     });
   }, [
-    selectedScoreRow,
-    currentRegion,
+    selectedEvent,
     vocabulary,
+    eventMaxScores,
     perClassThresholds,
     effectiveThreshold,
     mergedCorrections,
     pendingCorrections,
   ]);
 
-  // Types not in vocabulary (for the plus popover)
-  const [showAddPopover, setShowAddPopover] = useState(false);
-  const addableTypes = useMemo(() => {
-    if (!selectedScoreRow) return [];
-    const present = new Set(vocabulary);
-    return [] as string[]; // Vocabulary already covers all types from the model
-  }, [selectedScoreRow, vocabulary]);
+  // Count events in current region
+  const currentRegionEvents = currentRegion
+    ? eventsByRegion[currentRegion.region_id] ?? []
+    : [];
+  const eventIndexInRegion = selectedEvent?.eventIndexInRegion ?? 0;
 
   return (
     <div className="space-y-4">
@@ -476,7 +567,13 @@ export function WindowClassifyReviewWorkspace({
       </div>
 
       {/* Workspace */}
-      {selectedJob ? (
+      {selectedJob && !segmentationJob ? (
+        <div className="py-8 text-center text-muted-foreground">
+          No completed event segmentation (Pass 2) job exists for this
+          detection job. Run event segmentation first to enable event-level
+          review.
+        </div>
+      ) : selectedJob && segmentationJob ? (
         <div className="rounded-md border">
           {/* Toolbar */}
           <div className="flex items-center justify-between px-4 py-2 border-b">
@@ -487,26 +584,52 @@ export function WindowClassifyReviewWorkspace({
                 size="sm"
                 className="h-7"
                 onClick={goPrevRegion}
-                disabled={regionIndex === 0}
+                disabled={currentRegionIndex === 0}
+                title="Previous region (Shift+←)"
               >
                 <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-4 w-4 -ml-2.5" />
               </Button>
-              <span className="text-xs text-muted-foreground tabular-nums min-w-[100px] text-center">
-                Region {regions.length > 0 ? regionIndex + 1 : 0} of{" "}
+              <span className="text-xs text-muted-foreground tabular-nums min-w-[90px] text-center">
+                Region {regions.length > 0 ? currentRegionIndex + 1 : 0} /{" "}
                 {regions.length}
-                {currentRegion && (
-                  <span className="ml-1.5 text-muted-foreground/70">
-                    ({currentRegion.start_sec.toFixed(1)}s –{" "}
-                    {currentRegion.end_sec.toFixed(1)}s)
-                  </span>
-                )}
               </span>
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-7"
                 onClick={goNextRegion}
-                disabled={regionIndex >= regions.length - 1}
+                disabled={currentRegionIndex >= regions.length - 1}
+                title="Next region (Shift+→)"
+              >
+                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4 -ml-2.5" />
+              </Button>
+
+              <div className="w-px h-5 bg-border mx-1" />
+
+              {/* Event navigator */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7"
+                onClick={goPrevEvent}
+                disabled={selectedEventIdx === 0}
+                title="Previous event (←)"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-xs text-muted-foreground tabular-nums min-w-[80px] text-center">
+                Event {currentRegionEvents.length > 0 ? eventIndexInRegion + 1 : 0} /{" "}
+                {currentRegionEvents.length}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7"
+                onClick={goNextEvent}
+                disabled={selectedEventIdx >= allEvents.length - 1}
+                title="Next event (→)"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -518,7 +641,8 @@ export function WindowClassifyReviewWorkspace({
                 size="sm"
                 className="h-7"
                 onClick={togglePlayback}
-                disabled={selectedWindowTime == null}
+                disabled={!selectedEvent}
+                title="Play/pause event (Space)"
               >
                 {isPlaying ? (
                   <Square className="h-3.5 w-3.5" />
@@ -609,9 +733,10 @@ export function WindowClassifyReviewWorkspace({
                 region={currentRegion}
                 allRegions={regions}
                 stripScores={stripScores}
-                selectedWindowTime={selectedWindowTime}
-                onSelectWindow={setSelectedWindowTime}
+                selectedEvent={selectedEvent}
+                allEvents={allEvents}
                 allScoreRows={allScoreRows}
+                onSelectEvent={(idx) => setSelectedEventIdx(idx)}
               />
             </TimelineProvider>
           ) : (
@@ -621,10 +746,9 @@ export function WindowClassifyReviewWorkspace({
           )}
 
           {/* Detail panel */}
-          <WindowDetailPanel
-            selectedScoreRow={selectedScoreRow}
-            selectedWindowTime={selectedWindowTime}
-            labels={selectedWindowLabels}
+          <EventDetailPanel
+            selectedEvent={selectedEvent}
+            labels={selectedEventLabels}
             region={currentRegion}
             onBadgeClick={handleBadgeClick}
             onAddType={handleAddType}
@@ -648,9 +772,10 @@ interface WindowClassifyViewerBodyProps {
   region: Region;
   allRegions: Region[];
   stripScores: (number | null)[];
-  selectedWindowTime: number | null;
-  onSelectWindow: (time: number | null) => void;
+  selectedEvent: EventWithRegion | null;
+  allEvents: EventWithRegion[];
   allScoreRows: WindowScoreRow[];
+  onSelectEvent: (globalIndex: number) => void;
 }
 
 function WindowClassifyViewerBody({
@@ -658,9 +783,10 @@ function WindowClassifyViewerBody({
   region,
   allRegions,
   stripScores,
-  selectedWindowTime,
-  onSelectWindow,
+  selectedEvent,
+  allEvents,
   allScoreRows,
+  onSelectEvent,
 }: WindowClassifyViewerBodyProps) {
   const ctx = useTimelineContext();
 
@@ -674,6 +800,15 @@ function WindowClassifyViewerBody({
       ctx.seekTo(region.padded_start_sec + Math.min(dur, span) / 2);
     }
   }, [region.region_id, region.padded_start_sec, region.padded_end_sec, ctx]);
+
+  // Center on selected event
+  useEffect(() => {
+    if (selectedEvent) {
+      const evtCenter =
+        (selectedEvent.start_sec + selectedEvent.end_sec) / 2;
+      ctx.seekTo(evtCenter);
+    }
+  }, [selectedEvent?.start_sec, selectedEvent?.end_sec]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Zoom/pan keyboard shortcuts (provider shortcuts disabled)
   const {
@@ -703,14 +838,6 @@ function WindowClassifyViewerBody({
           e.preventDefault();
           ctxZoomOut();
           break;
-        case "ArrowLeft":
-          e.preventDefault();
-          ctxPan(ctxCenter - ctxSpan * 0.1);
-          break;
-        case "ArrowRight":
-          e.preventDefault();
-          ctxPan(ctxCenter + ctxSpan * 0.1);
-          break;
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -723,7 +850,7 @@ function WindowClassifyViewerBody({
     [regionDetectionJobId],
   );
 
-  // Click handler for window selection
+  // Click handler for event selection
   const handleSpectrogramClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
@@ -731,21 +858,22 @@ function WindowClassifyViewerBody({
       const clickEpoch =
         ctx.centerTimestamp + (relX - rect.width / 2) / ctx.pxPerSec;
 
-      // Snap to nearest window by time_sec (search all regions)
-      let nearest: WindowScoreRow | null = null;
+      let nearestIdx = -1;
       let minDist = Infinity;
-      for (const row of allScoreRows) {
-        const dist = Math.abs(row.time_sec + WINDOW_SIZE_SEC / 2 - clickEpoch);
+      for (let i = 0; i < allEvents.length; i++) {
+        const evt = allEvents[i];
+        const evtCenter = (evt.start_sec + evt.end_sec) / 2;
+        const dist = Math.abs(evtCenter - clickEpoch);
         if (dist < minDist) {
           minDist = dist;
-          nearest = row;
+          nearestIdx = i;
         }
       }
-      if (nearest && minDist < WINDOW_SIZE_SEC) {
-        onSelectWindow(nearest.time_sec);
+      if (nearestIdx >= 0 && minDist < WINDOW_SIZE_SEC * 2) {
+        onSelectEvent(nearestIdx);
       }
     },
-    [ctx.centerTimestamp, ctx.pxPerSec, allScoreRows, onSelectWindow],
+    [ctx.centerTimestamp, ctx.pxPerSec, allEvents, onSelectEvent],
   );
 
   return (
@@ -768,12 +896,10 @@ function WindowClassifyViewerBody({
             regions={allRegions}
             activeRegionId={region.region_id}
           />
-          {selectedWindowTime != null && (
-            <WindowBandOverlay
-              timeSec={selectedWindowTime}
-              windowSize={WINDOW_SIZE_SEC}
-            />
-          )}
+          <EventOverlays
+            events={allEvents}
+            selectedEvent={selectedEvent}
+          />
         </Spectrogram>
       </div>
       <div className="border-t border-border px-2 py-1">
@@ -783,35 +909,53 @@ function WindowClassifyViewerBody({
   );
 }
 
-// ---- Window band overlay ----
+// ---- Event boundary overlays ----
 
-function WindowBandOverlay({
-  timeSec,
-  windowSize,
+function EventOverlays({
+  events,
+  selectedEvent,
 }: {
-  timeSec: number;
-  windowSize: number;
+  events: EventWithRegion[];
+  selectedEvent: EventWithRegion | null;
 }) {
   const { epochToX, canvasHeight } = useOverlayContext();
-  const x1 = epochToX(timeSec);
-  const x2 = epochToX(timeSec + windowSize);
-  const width = x2 - x1;
 
   return (
     <div
       style={{
         position: "absolute",
-        top: 0,
-        left: x1,
-        width: Math.max(2, width),
-        height: canvasHeight,
-        background: "rgba(168, 130, 220, 0.35)",
-        borderLeft: "2px solid rgba(168, 130, 220, 0.8)",
-        borderRight: "2px solid rgba(168, 130, 220, 0.8)",
+        inset: 0,
         pointerEvents: "none",
-        zIndex: 5,
+        overflow: "hidden",
       }}
-    />
+    >
+      {events.map((evt) => {
+        const isSelected = selectedEvent?.event_id === evt.event_id;
+        const x1 = epochToX(evt.start_sec);
+        const x2 = epochToX(evt.end_sec);
+        const width = x2 - x1;
+
+        return (
+          <div key={evt.event_id}>
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: x1,
+                width: Math.max(2, width),
+                height: canvasHeight,
+                background: isSelected
+                  ? "rgba(168, 130, 220, 0.3)"
+                  : "rgba(168, 130, 220, 0.08)",
+                borderLeft: `2px solid ${isSelected ? "rgba(168, 130, 220, 0.9)" : "rgba(168, 130, 220, 0.4)"}`,
+                borderRight: `2px solid ${isSelected ? "rgba(168, 130, 220, 0.9)" : "rgba(168, 130, 220, 0.4)"}`,
+                zIndex: isSelected ? 6 : 4,
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -877,9 +1021,9 @@ function AllRegionLines({
   );
 }
 
-// ---- Detail panel ----
+// ---- Event detail panel ----
 
-interface WindowLabel {
+interface EventLabel {
   typeName: string;
   score: number;
   threshold: number;
@@ -888,18 +1032,16 @@ interface WindowLabel {
   isPending: boolean;
 }
 
-function WindowDetailPanel({
-  selectedScoreRow,
-  selectedWindowTime,
+function EventDetailPanel({
+  selectedEvent,
   labels,
   region,
   onBadgeClick,
   onAddType,
   vocabulary,
 }: {
-  selectedScoreRow: WindowScoreRow | null;
-  selectedWindowTime: number | null;
-  labels: WindowLabel[];
+  selectedEvent: EventWithRegion | null;
+  labels: EventLabel[];
   region: Region | null;
   onBadgeClick: (typeName: string) => void;
   onAddType: (typeName: string) => void;
@@ -907,17 +1049,14 @@ function WindowDetailPanel({
 }) {
   const [showAddPopover, setShowAddPopover] = useState(false);
 
-  if (selectedWindowTime == null || !selectedScoreRow) {
+  if (!selectedEvent) {
     return (
       <div className="px-4 py-3 text-sm text-muted-foreground border-t">
-        Click on a window in the spectrogram to inspect scores
+        No events found — run event segmentation first
       </div>
     );
   }
 
-  const endSec = selectedWindowTime + WINDOW_SIZE_SEC;
-
-  // Separate above/below threshold, then sort by score descending
   const aboveLabels = labels
     .filter(
       (l) =>
@@ -933,17 +1072,16 @@ function WindowDetailPanel({
     )
     .sort((a, b) => b.score - a.score);
 
-  // Types not currently shown as "add" that could be added
   const addableTypes = vocabulary.filter(
     (t) => !aboveLabels.some((l) => l.typeName === t),
   );
 
   return (
     <div className="px-4 py-3 border-t space-y-2">
-      {/* Time range + region */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-muted-foreground">
-          Window: {selectedWindowTime.toFixed(1)}s – {endSec.toFixed(1)}s
+          Event: {selectedEvent.start_sec.toFixed(1)}s –{" "}
+          {selectedEvent.end_sec.toFixed(1)}s
           {region && (
             <span className="ml-2">
               Region: {region.region_id.slice(0, 8)}
@@ -952,9 +1090,7 @@ function WindowDetailPanel({
         </div>
       </div>
 
-      {/* Vocalization badges */}
       <div className="flex flex-wrap items-center gap-1.5">
-        {/* Above-threshold badges */}
         {aboveLabels.map((l) => (
           <Badge
             key={l.typeName}
@@ -975,7 +1111,6 @@ function WindowDetailPanel({
           </Badge>
         ))}
 
-        {/* Below-threshold badges (dimmed) */}
         {belowLabels.map((l) => (
           <Badge
             key={l.typeName}
@@ -998,7 +1133,6 @@ function WindowDetailPanel({
           </Badge>
         ))}
 
-        {/* Plus button for adding types */}
         <div className="relative">
           <button
             className="px-1.5 py-0.5 rounded text-xs border border-dashed border-muted-foreground/40 text-muted-foreground hover:border-muted-foreground hover:text-foreground"
@@ -1029,10 +1163,11 @@ function WindowDetailPanel({
         </div>
       </div>
 
-      {/* All scores grid */}
       {labels.length > 0 && (
         <div className="text-xs">
-          <span className="text-muted-foreground font-medium">All scores:</span>
+          <span className="text-muted-foreground font-medium">
+            Max scores (overlapping windows):
+          </span>
           <div className="mt-1 grid grid-cols-3 gap-x-4 gap-y-0.5">
             {labels
               .slice()

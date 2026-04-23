@@ -26,9 +26,9 @@ def test_corrections_only_excludes_uncorrected_events():
         "e2": [_typed_row("e2", "Moan", 0.8, True)],
         "e3": [_typed_row("e3", "Moan", 0.7, True)],
     }
-    corrections: dict[str, str | None] = {"e1": "Cry"}
-    labels = _resolve_event_labels(typed, corrections, corrections_only=True)
-    # Only corrected event gets a positive label
+    corrections: dict[str, dict[str, str]] = {"e1": {"Cry": "add"}}
+    bounds = {"e1": (1.0, 2.0), "e2": (3.0, 4.0), "e3": (5.0, 6.0)}
+    labels = _resolve_event_labels(typed, corrections, bounds, corrections_only=True)
     assert labels["e1"] == "Cry"
     assert labels["e2"] is None
     assert labels["e3"] is None
@@ -40,8 +40,9 @@ def test_corrections_only_false_includes_inference_labels():
         "e2": [_typed_row("e2", "Moan", 0.8, True)],
         "e3": [_typed_row("e3", "Growl", 0.3, False)],
     }
-    corrections: dict[str, str | None] = {"e1": "Cry"}
-    labels = _resolve_event_labels(typed, corrections, corrections_only=False)
+    corrections: dict[str, dict[str, str]] = {"e1": {"Cry": "add"}}
+    bounds = {"e1": (1.0, 2.0), "e2": (3.0, 4.0), "e3": (5.0, 6.0)}
+    labels = _resolve_event_labels(typed, corrections, bounds, corrections_only=False)
     assert labels["e1"] == "Cry"
     assert labels["e2"] == "Moan"  # inference fallback
     assert labels["e3"] is None  # below threshold
@@ -51,18 +52,19 @@ def test_corrections_only_default_is_true():
     typed = {
         "e1": [_typed_row("e1", "Moan", 0.9, True)],
     }
-    corrections: dict[str, str | None] = {}
-    labels = _resolve_event_labels(typed, corrections)
-    # Default corrections_only=True means no inference fallback
+    corrections: dict[str, dict[str, str]] = {}
+    bounds = {"e1": (1.0, 2.0)}
+    labels = _resolve_event_labels(typed, corrections, bounds)
     assert labels["e1"] is None
 
 
-def test_negative_correction_sets_none():
+def test_remove_correction_suppresses_type():
     typed = {
         "e1": [_typed_row("e1", "Moan", 0.9, True)],
     }
-    corrections: dict[str, str | None] = {"e1": None}
-    labels = _resolve_event_labels(typed, corrections, corrections_only=True)
+    corrections: dict[str, dict[str, str]] = {"e1": {"Moan": "remove"}}
+    bounds = {"e1": (1.0, 2.0)}
+    labels = _resolve_event_labels(typed, corrections, bounds, corrections_only=True)
     assert labels["e1"] is None
 
 

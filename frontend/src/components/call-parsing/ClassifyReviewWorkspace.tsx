@@ -5,8 +5,8 @@ import {
   useRegionDetectionJobs,
   useRegionJobRegions,
   useTypedEvents,
-  useTypeCorrections,
-  useUpsertTypeCorrections,
+  useVocalizationCorrections,
+  useUpsertVocalizationCorrections,
   useBoundaryCorrections,
   useSaveBoundaryCorrections,
   useEventClassifierModels,
@@ -171,7 +171,8 @@ export function ClassifyReviewWorkspace({
 
   const { data: regions = [] } = useRegionJobRegions(regionDetectionJobId);
   const { data: typedEventRows = [] } = useTypedEvents(selectedJobId);
-  const { data: savedCorrections = [] } = useTypeCorrections(selectedJobId);
+  const { data: savedVocCorrections = [] } =
+    useVocalizationCorrections(regionDetectionJobId);
 
   // Upstream segmentation job ID for boundary corrections
   const segJobId = selectedJob?.event_segmentation_job_id ?? null;
@@ -213,17 +214,48 @@ export function ClassifyReviewWorkspace({
     setRetrainError(null);
   }, [selectedJobId]);
 
-  // Build merged correction map: saved + pending (pending overrides saved)
+  // Build merged correction map: resolve saved vocalization corrections to
+  // event_id → type_name by matching time range overlap, then overlay pending.
   const mergedCorrections = useMemo(() => {
     const map = new Map<string, string | null>();
-    for (const c of savedCorrections) {
-      map.set(c.event_id, c.type_name);
+
+    // Map vocalization corrections to events by time overlap.
+    // For each typed event row group, find matching corrections.
+    const eventTimeMap = new Map<
+      string,
+      { startSec: number; endSec: number }
+    >();
+    for (const r of typedEventRows) {
+      if (!eventTimeMap.has(r.event_id)) {
+        eventTimeMap.set(r.event_id, {
+          startSec: r.start_sec,
+          endSec: r.end_sec,
+        });
+      }
     }
+
+    for (const [eventId, bounds] of eventTimeMap) {
+      for (const vc of savedVocCorrections) {
+        if (
+          vc.start_sec < bounds.endSec &&
+          vc.end_sec > bounds.startSec
+        ) {
+          if (vc.correction_type === "add") {
+            map.set(eventId, vc.type_name);
+          } else if (vc.correction_type === "remove") {
+            if (!map.has(eventId)) {
+              map.set(eventId, null);
+            }
+          }
+        }
+      }
+    }
+
     for (const [eventId, typeName] of pendingCorrections) {
       map.set(eventId, typeName);
     }
     return map;
-  }, [savedCorrections, pendingCorrections]);
+  }, [typedEventRows, savedVocCorrections, pendingCorrections]);
 
   // Aggregated events (full list, including deleted — needed for ghost rendering)
   const events = useMemo(
@@ -682,12 +714,12 @@ export function ClassifyReviewWorkspace({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [goPrev, goNext, togglePlayback, handleDeleteEvent]);
 
-  // Save — persist both type and boundary corrections in parallel
-  const saveMutation = useUpsertTypeCorrections();
+  // Save — persist both vocalization and boundary corrections in parallel
+  const saveMutation = useUpsertVocalizationCorrections();
   const saveBoundaryMutation = useSaveBoundaryCorrections();
 
   const handleSave = useCallback(() => {
-    if (!selectedJobId || !isDirty) return;
+    if (!regionDetectionJobId || !isDirty) return;
 
     const hasTypeCorrections = pendingCorrections.size > 0;
     const hasBoundaryCorrections = pendingBoundaryCorrections.size > 0;
@@ -707,26 +739,59 @@ export function ClassifyReviewWorkspace({
     };
 
     if (hasTypeCorrections) {
-      const corrections = Array.from(pendingCorrections.entries()).map(
-        ([event_id, type_name]) => ({ event_id, type_name }),
-      );
-      saveMutation.mutate(
-        { jobId: selectedJobId, corrections },
-        {
-          onSuccess: () => {
-            setPendingCorrections(new Map());
-            typeOk = true;
-            checkDone();
-          },
-          onError: (err) => {
-            toast({
-              title: "Failed to save type corrections",
-              description: (err as Error).message,
-              variant: "destructive",
+      // Convert pending eventId → typeName corrections to vocalization corrections
+      // using event time ranges from the aggregated events list
+      const vocCorrections: Array<{
+        start_sec: number;
+        end_sec: number;
+        type_name: string;
+        correction_type: "add" | "remove";
+      }> = [];
+      for (const [eventId, typeName] of pendingCorrections) {
+        const evt = navigableEvents.find((e) => e.eventId === eventId);
+        if (!evt) continue;
+        if (typeName) {
+          vocCorrections.push({
+            start_sec: evt.startSec,
+            end_sec: evt.endSec,
+            type_name: typeName,
+            correction_type: "add",
+          });
+        } else {
+          // Negative correction — remove the predicted type
+          if (evt.predictedType) {
+            vocCorrections.push({
+              start_sec: evt.startSec,
+              end_sec: evt.endSec,
+              type_name: evt.predictedType,
+              correction_type: "remove",
             });
+          }
+        }
+      }
+      if (vocCorrections.length > 0) {
+        saveMutation.mutate(
+          { regionDetectionJobId, corrections: vocCorrections },
+          {
+            onSuccess: () => {
+              setPendingCorrections(new Map());
+              typeOk = true;
+              checkDone();
+            },
+            onError: (err) => {
+              toast({
+                title: "Failed to save type corrections",
+                description: (err as Error).message,
+                variant: "destructive",
+              });
+            },
           },
-        },
-      );
+        );
+      } else {
+        setPendingCorrections(new Map());
+        typeOk = true;
+        checkDone();
+      }
     }
 
     if (hasBoundaryCorrections && segJobId) {
@@ -750,11 +815,12 @@ export function ClassifyReviewWorkspace({
       );
     }
   }, [
-    selectedJobId,
+    regionDetectionJobId,
     segJobId,
     isDirty,
     pendingCorrections,
     pendingBoundaryCorrections,
+    navigableEvents,
     saveMutation,
     saveBoundaryMutation,
   ]);
@@ -878,7 +944,7 @@ export function ClassifyReviewWorkspace({
     [segJobs, regionJobs, hydrophones],
   );
 
-  const hasCorrections = savedCorrections.length > 0;
+  const hasCorrections = savedVocCorrections.length > 0;
 
   return (
     <div className="space-y-4">

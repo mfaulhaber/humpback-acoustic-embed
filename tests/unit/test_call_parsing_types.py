@@ -145,24 +145,24 @@ def test_create_window_classification_job_request_rejects_missing_fields() -> No
         CreateWindowClassificationJobRequest(vocalization_model_id="vm-1")  # type: ignore[call-arg]
 
 
-def test_window_score_correction_item_validates_type() -> None:
+def test_vocalization_correction_item_validates_type() -> None:
     from pydantic import ValidationError
 
-    from humpback.schemas.call_parsing import WindowScoreCorrectionItem
+    from humpback.schemas.call_parsing import VocalizationCorrectionItem
 
-    good = WindowScoreCorrectionItem(
-        time_sec=1.0, region_id="r1", correction_type="add", type_name="whup"
+    good = VocalizationCorrectionItem(
+        start_sec=1.0, end_sec=2.0, correction_type="add", type_name="whup"
     )
     assert good.correction_type == "add"
 
-    good2 = WindowScoreCorrectionItem(
-        time_sec=1.0, region_id="r1", correction_type="remove", type_name="whup"
+    good2 = VocalizationCorrectionItem(
+        start_sec=1.0, end_sec=2.0, correction_type="remove", type_name="whup"
     )
     assert good2.correction_type == "remove"
 
     with pytest.raises(ValidationError):
-        WindowScoreCorrectionItem(
-            time_sec=1.0, region_id="r1", correction_type="invalid", type_name="whup"
+        VocalizationCorrectionItem(
+            start_sec=1.0, end_sec=2.0, correction_type="invalid", type_name="whup"
         )
 
 
