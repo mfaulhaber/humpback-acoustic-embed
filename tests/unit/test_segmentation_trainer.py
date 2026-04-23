@@ -143,6 +143,36 @@ def test_split_by_audio_source_hydrophone_key_falls_back() -> None:
     assert len(train) + len(val) == 4
 
 
+def test_split_by_audio_source_few_groups_temporal_fallback() -> None:
+    """When n_val_groups rounds to 0, fall back to per-group temporal split."""
+    samples = [
+        _FakeSample(
+            events_json="[]",
+            crop_start_sec=0.0,
+            crop_end_sec=1.0,
+            hydrophone_id="hydro-a" if i < 8 else "hydro-b",
+            start_timestamp=float(i * 100),
+        )
+        for i in range(10)
+    ]
+    train, val = split_by_audio_source(samples, val_fraction=0.2, seed=42)
+    assert len(val) > 0, "val must not be empty"
+    assert len(train) + len(val) == 10
+    # Both hydrophones should contribute to val
+    val_hydros = {s.hydrophone_id for s in val}
+    assert val_hydros == {"hydro-a", "hydro-b"}
+    # Val samples should be the temporally latest within each group
+    for s in val:
+        train_from_same = [t for t in train if t.hydrophone_id == s.hydrophone_id]
+        if train_from_same:
+            max_train_ts = max(
+                t.start_timestamp
+                for t in train_from_same  # type: ignore[union-attr]
+            )
+            assert s.start_timestamp is not None
+            assert s.start_timestamp >= max_train_ts
+
+
 def test_split_by_audio_source_rejects_sample_without_source() -> None:
     samples = [_FakeSample(events_json="[]", crop_start_sec=0.0, crop_end_sec=1.0)]
     with pytest.raises(ValueError):
