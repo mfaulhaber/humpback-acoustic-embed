@@ -567,9 +567,6 @@ export const patchVocalizationLabels = (
     body,
   );
 
-export const fetchLabelVocabulary = () =>
-  api<string[]>("/labeling/label-vocabulary");
-
 export const fetchLabelingSummary = (detectionJobId: string) =>
   api<LabelingSummary>(`/labeling/summary/${detectionJobId}`);
 
