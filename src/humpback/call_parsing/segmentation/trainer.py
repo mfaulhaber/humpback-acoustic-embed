@@ -119,14 +119,14 @@ def split_by_audio_source(
     val_fraction: float,
     seed: int,
 ) -> tuple[list[Any], list[Any]]:
-    """Return ``(train_samples, val_samples)`` with no shared audio source.
+    """Return ``(train_samples, val_samples)`` split by audio source.
 
     Samples are grouped by ``audio_file_id`` (or ``hydrophone_id`` as the
-    fallback key); groups are shuffled deterministically under ``seed``
-    and the first ``~val_fraction`` of groups go to val, the rest to
-    train. When only one source group exists, falls back to a temporal
-    split: samples are sorted by timestamp and the last ``val_fraction``
-    go to val, giving temporal separation even within a single hydrophone.
+    fallback key).  When there are enough groups for group-level splitting
+    to produce at least one val group, whole groups are assigned to val.
+    Otherwise, falls back to a **per-group temporal split**: within each
+    group, the last ``val_fraction`` of samples (sorted by timestamp) go
+    to val, giving temporal separation without sacrificing entire sources.
     """
     if not 0.0 <= val_fraction < 1.0:
         raise ValueError(f"val_fraction must be in [0, 1), got {val_fraction}")
@@ -138,12 +138,8 @@ def split_by_audio_source(
 
     group_keys = sorted(groups.keys())
 
-    if len(group_keys) == 1 and val_fraction > 0.0:
-        all_samples = list(samples)
-        all_samples.sort(key=_temporal_sort_key)
-        n_val = max(1, int(round(val_fraction * len(all_samples))))
-        split_idx = len(all_samples) - n_val
-        return all_samples[:split_idx], all_samples[split_idx:]
+    if val_fraction == 0.0:
+        return list(samples), []
 
     rng = random.Random(seed)
     rng.shuffle(group_keys)
@@ -152,12 +148,26 @@ def split_by_audio_source(
     n_val_groups = int(round(val_fraction * n_groups))
     n_val_groups = max(0, min(n_groups - 1, n_val_groups))
 
-    val_keys = set(group_keys[:n_val_groups])
-    train_samples: list[Any] = []
-    val_samples: list[Any] = []
+    if n_val_groups >= 1:
+        val_keys = set(group_keys[:n_val_groups])
+        train_samples: list[Any] = []
+        val_samples: list[Any] = []
+        for key in group_keys:
+            bucket = val_samples if key in val_keys else train_samples
+            bucket.extend(groups[key])
+        return train_samples, val_samples
+
+    # Too few groups for group-level split — split temporally within
+    # each group so every source contributes to both train and val.
+    train_samples = []
+    val_samples = []
     for key in group_keys:
-        bucket = val_samples if key in val_keys else train_samples
-        bucket.extend(groups[key])
+        group = groups[key]
+        group.sort(key=_temporal_sort_key)
+        n_val = max(1, int(round(val_fraction * len(group))))
+        split_idx = len(group) - n_val
+        train_samples.extend(group[:split_idx])
+        val_samples.extend(group[split_idx:])
     return train_samples, val_samples
 
 
