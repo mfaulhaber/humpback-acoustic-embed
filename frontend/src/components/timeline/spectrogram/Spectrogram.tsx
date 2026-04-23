@@ -5,11 +5,11 @@ import type { OverlayContextValue } from "../overlays/OverlayContext";
 import { TileCanvas } from "../TileCanvas";
 import { FrequencyAxis } from "./FrequencyAxis";
 import { TimeAxis } from "./TimeAxis";
-import { ConfidenceStrip } from "./ConfidenceStrip";
+import { ConfidenceStrip, DEFAULT_STRIP_HEIGHT } from "./ConfidenceStrip";
+import type { GradientStops } from "./ConfidenceStrip";
 import { Playhead } from "./Playhead";
 import { FREQ_AXIS_WIDTH_PX } from "../constants";
 
-const CONFIDENCE_STRIP_HEIGHT = 20;
 const TIME_AXIS_HEIGHT = 20;
 
 interface SpectrogramProps {
@@ -19,6 +19,10 @@ interface SpectrogramProps {
   scores?: (number | null)[];
   windowSec?: number;
   children?: React.ReactNode;
+  stripHeight?: number;
+  stripGradient?: GradientStops;
+  stripThreshold?: number;
+  stripBarMode?: boolean;
 }
 
 export function Spectrogram({
@@ -28,6 +32,10 @@ export function Spectrogram({
   scores,
   windowSec,
   children,
+  stripHeight,
+  stripGradient,
+  stripThreshold,
+  stripBarMode,
 }: SpectrogramProps) {
   const ctx = useTimelineContext();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -49,10 +57,11 @@ export function Spectrogram({
     return () => ro.disconnect();
   }, []);
 
+  const effectiveStripHeight = stripHeight ?? DEFAULT_STRIP_HEIGHT;
   const canvasWidth = Math.max(0, containerWidth - FREQ_AXIS_WIDTH_PX);
   const canvasHeight = Math.max(
     0,
-    containerHeight - (scores ? CONFIDENCE_STRIP_HEIGHT : 0) - TIME_AXIS_HEIGHT,
+    containerHeight - (scores ? effectiveStripHeight : 0) - TIME_AXIS_HEIGHT,
   );
 
   useEffect(() => {
@@ -149,7 +158,7 @@ export function Spectrogram({
             </OverlayContext.Provider>
           </div>
 
-          <Playhead canvasWidth={canvasWidth} canvasHeight={canvasHeight + (scores ? CONFIDENCE_STRIP_HEIGHT : 0)} />
+          <Playhead canvasWidth={canvasWidth} canvasHeight={canvasHeight + (scores ? effectiveStripHeight : 0)} />
 
           {scores && (
             <ConfidenceStrip
@@ -162,6 +171,10 @@ export function Spectrogram({
               pxPerSec={ctx.pxPerSec}
               canvasWidth={canvasWidth}
               centerTimestamp={ctx.centerTimestamp}
+              height={stripHeight}
+              gradient={stripGradient}
+              thresholdValue={stripThreshold}
+              barMode={stripBarMode}
             />
           )}
 

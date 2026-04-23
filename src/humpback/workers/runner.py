@@ -358,6 +358,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then window classification sidecar jobs
+        wcjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_window_classification_job
+
+            wcjob = await claim_window_classification_job(session)
+        if wcjob:
+            logger.info(f"Window classification job {wcjob.id}")
+            from humpback.workers.window_classification_worker import (
+                run_window_classification_job,
+            )
+
+            async with session_factory() as session:
+                await run_window_classification_job(session, wcjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # Then manifest generation jobs
         mfjob = None
         async with session_factory() as session:

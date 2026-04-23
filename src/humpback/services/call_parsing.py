@@ -16,13 +16,14 @@ if TYPE_CHECKING:
     from humpback.models.segmentation_training import SegmentationTrainingDataset
     from humpback.schemas.call_parsing import SegmentationTrainingConfig
 
-from sqlalchemy import func, select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.call_parsing.storage import (
     classification_job_dir,
     region_job_dir,
     segmentation_job_dir,
+    window_classification_job_dir,
 )
 from humpback.config import Settings, get_archive_source
 from humpback.models.audio import AudioFile
@@ -31,6 +32,8 @@ from humpback.models.call_parsing import (
     EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
+    WindowClassificationJob,
+    WindowScoreCorrection,
 )
 from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
@@ -1264,3 +1267,207 @@ async def create_dataset_and_train(
     await session.commit()
 
     return dataset.id, job.id, sample_count
+
+
+# ---- Window classification sidecar ----------------------------------------
+
+
+async def create_window_classification_job(
+    session: AsyncSession,
+    region_detection_job_id: str,
+    vocalization_model_id: str,
+) -> WindowClassificationJob:
+    """Create a queued window classification sidecar job.
+
+    Validates that the region detection job exists and is complete, and
+    that the vocalization model exists and is ``sklearn_perch_embedding``.
+    """
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    rd = await session.get(RegionDetectionJob, region_detection_job_id)
+    if rd is None:
+        raise CallParsingFKError("region_detection_job_id", region_detection_job_id)
+    if rd.status != "complete":
+        raise CallParsingStateError(
+            f"Region detection job status is {rd.status!r}, not 'complete'"
+        )
+
+    vm = await session.get(VocalizationClassifierModel, vocalization_model_id)
+    if vm is None:
+        raise CallParsingFKError("vocalization_model_id", vocalization_model_id)
+    if vm.model_family != "sklearn_perch_embedding":
+        raise CallParsingValidationError(
+            f"Vocalization model {vocalization_model_id} has "
+            f"model_family={vm.model_family!r}; "
+            f"expected sklearn_perch_embedding"
+        )
+
+    job = WindowClassificationJob(
+        region_detection_job_id=region_detection_job_id,
+        vocalization_model_id=vocalization_model_id,
+    )
+    session.add(job)
+    await session.flush()
+    return job
+
+
+async def list_window_classification_jobs(
+    session: AsyncSession,
+) -> list[WindowClassificationJob]:
+    result = await session.execute(
+        select(WindowClassificationJob).order_by(
+            WindowClassificationJob.created_at.desc()
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_window_classification_job(
+    session: AsyncSession, job_id: str
+) -> Optional[WindowClassificationJob]:
+    return await session.get(WindowClassificationJob, job_id)
+
+
+async def delete_window_classification_job(
+    session: AsyncSession, job_id: str, settings: Settings
+) -> bool:
+    job = await session.get(WindowClassificationJob, job_id)
+    if job is None:
+        return False
+    _remove_dir(window_classification_job_dir(settings.storage_root, job.id))
+    await session.execute(
+        sa_delete(WindowScoreCorrection).where(
+            WindowScoreCorrection.window_classification_job_id == job_id
+        )
+    )
+    await session.delete(job)
+    await session.commit()
+    return True
+
+
+async def read_window_scores(
+    job_id: str,
+    settings: Settings,
+    *,
+    region_id: Optional[str] = None,
+    min_score: Optional[float] = None,
+    type_name: Optional[str] = None,
+) -> list[dict]:
+    """Read window_scores.parquet and return filtered score dicts.
+
+    Each dict has ``time_sec``, ``region_id``, and ``scores`` (a dict
+    mapping type names to float scores). Filtering:
+    - ``region_id``: only rows for this region
+    - ``min_score``: only rows where at least one type >= threshold
+    - ``type_name``: ``scores`` dict contains only this type
+    """
+    import pyarrow.parquet as pq
+
+    job_dir = window_classification_job_dir(settings.storage_root, job_id)
+    path = job_dir / "window_scores.parquet"
+    if not path.exists():
+        return []
+
+    table = pq.read_table(path)
+    rows = table.to_pydict()
+
+    time_secs = rows.get("time_sec", [])
+    region_ids = rows.get("region_id", [])
+    type_columns = [c for c in table.column_names if c not in ("time_sec", "region_id")]
+
+    result: list[dict] = []
+    for i in range(len(time_secs)):
+        if region_id is not None and region_ids[i] != region_id:
+            continue
+
+        scores: dict[str, float] = {}
+        for col in type_columns:
+            val = rows[col][i]
+            if val is not None:
+                scores[col] = float(val)
+
+        if type_name is not None:
+            scores = {k: v for k, v in scores.items() if k == type_name}
+
+        if min_score is not None and not any(v >= min_score for v in scores.values()):
+            continue
+
+        result.append(
+            {
+                "time_sec": float(time_secs[i]),
+                "region_id": str(region_ids[i]),
+                "scores": scores,
+            }
+        )
+
+    return result
+
+
+async def upsert_window_score_corrections(
+    session: AsyncSession,
+    job_id: str,
+    corrections: list,
+) -> int:
+    """Batch upsert window score corrections.
+
+    Keyed by ``(window_classification_job_id, time_sec, type_name)`` —
+    repeated calls overwrite the previous correction for the same window
+    and type.
+    """
+    job = await session.get(WindowClassificationJob, job_id)
+    if job is None:
+        raise CallParsingFKError("window_classification_job_id", job_id)
+
+    count = 0
+    for c in corrections:
+        existing = await session.execute(
+            select(WindowScoreCorrection).where(
+                WindowScoreCorrection.window_classification_job_id == job_id,
+                WindowScoreCorrection.time_sec == c.time_sec,
+                WindowScoreCorrection.type_name == c.type_name,
+            )
+        )
+        row = existing.scalar_one_or_none()
+        if row is not None:
+            row.region_id = c.region_id
+            row.correction_type = c.correction_type
+        else:
+            session.add(
+                WindowScoreCorrection(
+                    window_classification_job_id=job_id,
+                    time_sec=c.time_sec,
+                    region_id=c.region_id,
+                    correction_type=c.correction_type,
+                    type_name=c.type_name,
+                )
+            )
+        count += 1
+
+    await session.commit()
+    return count
+
+
+async def list_window_score_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> list[WindowScoreCorrection]:
+    result = await session.execute(
+        select(WindowScoreCorrection)
+        .where(WindowScoreCorrection.window_classification_job_id == job_id)
+        .order_by(WindowScoreCorrection.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def clear_window_score_corrections(
+    session: AsyncSession,
+    job_id: str,
+) -> None:
+    from sqlalchemy import delete as _delete
+
+    await session.execute(
+        _delete(WindowScoreCorrection).where(
+            WindowScoreCorrection.window_classification_job_id == job_id
+        )
+    )
+    await session.commit()

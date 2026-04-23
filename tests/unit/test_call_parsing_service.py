@@ -20,7 +20,11 @@ from pydantic import ValidationError
 
 from humpback.database import Base, create_engine, create_session_factory
 from humpback.models.audio import AudioFile
-from humpback.models.call_parsing import CallParsingRun, RegionDetectionJob
+from humpback.models.call_parsing import (
+    CallParsingRun,
+    RegionDetectionJob,
+    WindowClassificationJob,
+)
 from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
 from humpback.schemas.call_parsing import (
@@ -29,8 +33,12 @@ from humpback.schemas.call_parsing import (
 )
 from humpback.services.call_parsing import (
     CallParsingFKError,
+    CallParsingStateError,
+    CallParsingValidationError,
     create_parent_run,
     create_region_job,
+    create_window_classification_job,
+    delete_window_classification_job,
 )
 
 
@@ -412,3 +420,133 @@ async def test_create_parent_run_missing_fk_raises(session_factory):
             await session.execute(select(func.count(CallParsingRun.id)))
         ).scalar_one()
         assert count == 0
+
+
+# --- Window classification sidecar service tests ----------------------------
+
+
+async def _seed_window_classification_prereqs(
+    session_factory,
+) -> dict[str, str]:
+    """Create a completed region detection job + sklearn_perch_embedding model."""
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    async with session_factory() as session:
+        rd = RegionDetectionJob(audio_file_id="audio-1", status="complete")
+        session.add(rd)
+        await session.flush()
+        rd_id = rd.id
+
+        vm = VocalizationClassifierModel(
+            name="test-sklearn",
+            model_dir_path="/tmp/test-sklearn",
+            vocabulary_snapshot='["whup","moan"]',
+            per_class_thresholds='{"whup":0.5,"moan":0.5}',
+            model_family="sklearn_perch_embedding",
+            input_mode="detection_row",
+        )
+        session.add(vm)
+        await session.flush()
+        vm_id = vm.id
+
+        vm_wrong = VocalizationClassifierModel(
+            name="test-event-cnn",
+            model_dir_path="/tmp/test-event-cnn",
+            vocabulary_snapshot='["whup"]',
+            per_class_thresholds='{"whup":0.5}',
+            model_family="pytorch_event_cnn",
+            input_mode="segmented_event",
+        )
+        session.add(vm_wrong)
+        await session.flush()
+        vm_wrong_id = vm_wrong.id
+
+        rd_incomplete = RegionDetectionJob(audio_file_id="audio-2", status="running")
+        session.add(rd_incomplete)
+        await session.flush()
+        rd_incomplete_id = rd_incomplete.id
+
+        await session.commit()
+        return {
+            "region_job_id": rd_id,
+            "vocalization_model_id": vm_id,
+            "wrong_model_id": vm_wrong_id,
+            "incomplete_region_job_id": rd_incomplete_id,
+        }
+
+
+async def test_create_window_classification_job_happy_path(session_factory):
+    ids = await _seed_window_classification_prereqs(session_factory)
+    async with session_factory() as session:
+        job = await create_window_classification_job(
+            session, ids["region_job_id"], ids["vocalization_model_id"]
+        )
+        await session.commit()
+    assert job.status == "queued"
+    assert job.region_detection_job_id == ids["region_job_id"]
+    assert job.vocalization_model_id == ids["vocalization_model_id"]
+
+
+async def test_create_window_classification_job_rejects_incomplete_region(
+    session_factory,
+):
+    ids = await _seed_window_classification_prereqs(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(CallParsingStateError):
+            await create_window_classification_job(
+                session, ids["incomplete_region_job_id"], ids["vocalization_model_id"]
+            )
+
+
+async def test_create_window_classification_job_rejects_wrong_model_family(
+    session_factory,
+):
+    ids = await _seed_window_classification_prereqs(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(CallParsingValidationError):
+            await create_window_classification_job(
+                session, ids["region_job_id"], ids["wrong_model_id"]
+            )
+
+
+async def test_create_window_classification_job_rejects_missing_region(session_factory):
+    ids = await _seed_window_classification_prereqs(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(CallParsingFKError):
+            await create_window_classification_job(
+                session, "nonexistent", ids["vocalization_model_id"]
+            )
+
+
+async def test_create_window_classification_job_rejects_missing_model(session_factory):
+    ids = await _seed_window_classification_prereqs(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(CallParsingFKError):
+            await create_window_classification_job(
+                session, ids["region_job_id"], "nonexistent"
+            )
+
+
+async def test_delete_window_classification_job_removes_row(session_factory, tmp_path):
+    from humpback.config import Settings
+
+    ids = await _seed_window_classification_prereqs(session_factory)
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_url=f"sqlite+aiosqlite:///{tmp_path}/service.db",
+    )
+    (tmp_path / "storage").mkdir(exist_ok=True)
+
+    async with session_factory() as session:
+        job = await create_window_classification_job(
+            session, ids["region_job_id"], ids["vocalization_model_id"]
+        )
+        await session.commit()
+        job_id = job.id
+
+    async with session_factory() as session:
+        deleted = await delete_window_classification_job(session, job_id, settings)
+    assert deleted is True
+
+    async with session_factory() as session:
+        assert await session.get(WindowClassificationJob, job_id) is None

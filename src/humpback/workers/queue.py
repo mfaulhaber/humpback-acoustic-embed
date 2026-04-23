@@ -878,6 +878,23 @@ async def claim_hyperparameter_search_job(session: AsyncSession):
     return None
 
 
+async def claim_window_classification_job(session: AsyncSession):
+    from humpback.models.call_parsing import WindowClassificationJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            WindowClassificationJob,
+            status_attr=WindowClassificationJob.status,
+            queued_value="queued",
+            running_value="running",
+            order_attr=WindowClassificationJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
 async def claim_detection_embedding_job(
     session: AsyncSession,
 ) -> DetectionEmbeddingJob | None:

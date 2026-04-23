@@ -327,13 +327,13 @@ def test_score_audio_windows_offset_produces_non_overlapping_traces():
 
     # Buffer 1: 8 seconds of audio at offset 100s
     buf1 = np.random.randn(sr * 8).astype(np.float32)
-    records1 = score_audio_windows(
+    records1, _ = score_audio_windows(
         buf1, sr, model, classifier, config, time_offset_sec=100.0
     )
 
     # Buffer 2: 8 seconds of audio at offset 115s (gap from 108 to 115)
     buf2 = np.random.randn(sr * 8).astype(np.float32)
-    records2 = score_audio_windows(
+    records2, _ = score_audio_windows(
         buf2, sr, model, classifier, config, time_offset_sec=115.0
     )
 

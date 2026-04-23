@@ -39,6 +39,10 @@ const staticRoutes: Record<string, Crumb[]> = {
     { label: "Call Parsing", to: "/app/call-parsing" },
     { label: "Segment Training" },
   ],
+  "/app/call-parsing/window-classify": [
+    { label: "Call Parsing", to: "/app/call-parsing" },
+    { label: "Window Classify" },
+  ],
   "/app/search": [{ label: "Search" }],
   "/app/label-processing": [{ label: "Label Processing" }],
   "/app/admin": [{ label: "Admin" }],

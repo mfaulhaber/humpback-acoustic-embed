@@ -21,6 +21,7 @@ import { SegmentPage } from "@/components/call-parsing/SegmentPage";
 import { SegmentTrainingPage } from "@/components/call-parsing/SegmentTrainingPage";
 import { ClassifyPage } from "@/components/call-parsing/ClassifyPage";
 import { ClassifyTrainingPage } from "@/components/call-parsing/ClassifyTrainingPage";
+import { WindowClassifyPage } from "@/components/call-parsing/WindowClassifyPage";
 import { RegionDetectionTimeline } from "@/components/call-parsing/RegionDetectionTimeline";
 
 export default function App() {
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/app/call-parsing/segment-training" element={<SegmentTrainingPage />} />
         <Route path="/app/call-parsing/classify" element={<ClassifyPage />} />
         <Route path="/app/call-parsing/classify-training" element={<ClassifyTrainingPage />} />
+        <Route path="/app/call-parsing/window-classify" element={<WindowClassifyPage />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />

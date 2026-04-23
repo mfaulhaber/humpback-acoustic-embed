@@ -34,6 +34,13 @@ import {
   deleteClassifierTrainingJob,
   fetchEventClassifierModels,
   deleteEventClassifierModel,
+  createWindowClassificationJob,
+  fetchWindowClassificationJobs,
+  deleteWindowClassificationJob,
+  fetchWindowScores,
+  fetchWindowScoreCorrections,
+  upsertWindowScoreCorrections,
+  clearWindowScoreCorrections,
 } from "@/api/client";
 import type {
   CreateRegionJobRequest,
@@ -426,6 +433,91 @@ export function useDeleteEventClassifierModel() {
     mutationFn: (modelId: string) => deleteEventClassifierModel(modelId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: CLASSIFIER_MODELS_KEY });
+    },
+  });
+}
+
+// ---- Window Classification Sidecar ----
+
+const WINDOW_CLASSIFICATION_JOBS_KEY = ["windowClassificationJobs"];
+
+export function useWindowClassificationJobs(refetchInterval?: number) {
+  return useQuery({
+    queryKey: WINDOW_CLASSIFICATION_JOBS_KEY,
+    queryFn: fetchWindowClassificationJobs,
+    refetchInterval,
+  });
+}
+
+export function useCreateWindowClassificationJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      region_detection_job_id: string;
+      vocalization_model_id: string;
+    }) => createWindowClassificationJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: WINDOW_CLASSIFICATION_JOBS_KEY });
+    },
+  });
+}
+
+export function useDeleteWindowClassificationJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteWindowClassificationJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: WINDOW_CLASSIFICATION_JOBS_KEY });
+    },
+  });
+}
+
+export function useWindowScores(
+  jobId: string | undefined,
+  params?: { region_id?: string; min_score?: number; type_name?: string },
+) {
+  return useQuery({
+    queryKey: ["windowScores", jobId, params],
+    queryFn: () => fetchWindowScores(jobId!, params),
+    enabled: !!jobId,
+  });
+}
+
+export function useWindowScoreCorrections(jobId: string | undefined) {
+  return useQuery({
+    queryKey: ["windowScoreCorrections", jobId],
+    queryFn: () => fetchWindowScoreCorrections(jobId!),
+    enabled: !!jobId,
+  });
+}
+
+export function useUpsertWindowScoreCorrections() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      corrections,
+    }: {
+      jobId: string;
+      corrections: Array<{
+        time_sec: number;
+        region_id: string;
+        correction_type: "add" | "remove";
+        type_name: string;
+      }>;
+    }) => upsertWindowScoreCorrections(jobId, corrections),
+    onSuccess: (_data, { jobId }) => {
+      qc.invalidateQueries({ queryKey: ["windowScoreCorrections", jobId] });
+    },
+  });
+}
+
+export function useClearWindowScoreCorrections() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => clearWindowScoreCorrections(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["windowScoreCorrections", jobId] });
     },
   });
 }

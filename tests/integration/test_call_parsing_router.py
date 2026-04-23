@@ -2183,3 +2183,130 @@ async def test_region_corrections_get(client: AsyncClient, app_settings) -> None
     assert len(data) == 2
     types = {c["correction_type"] for c in data}
     assert types == {"add", "delete"}
+
+
+# ---- Window classification sidecar API tests --------------------------------
+
+
+async def _seed_window_classification_prereqs(app_settings) -> dict[str, str]:
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+        session.add(rd)
+        await session.flush()
+
+        vm = VocalizationClassifierModel(
+            name="test-sklearn-wc",
+            model_dir_path="/tmp/test-sklearn-wc",
+            vocabulary_snapshot='["whup","moan"]',
+            per_class_thresholds='{"whup":0.5,"moan":0.5}',
+            model_family="sklearn_perch_embedding",
+            input_mode="detection_row",
+        )
+        session.add(vm)
+        await session.flush()
+
+        await session.commit()
+        result = {
+            "region_job_id": rd.id,
+            "vocalization_model_id": vm.id,
+        }
+    await engine.dispose()
+    return result
+
+
+@pytest.mark.asyncio
+async def test_window_classification_job_crud(
+    client: AsyncClient, app_settings
+) -> None:
+    ids = await _seed_window_classification_prereqs(app_settings)
+
+    create_resp = await client.post(
+        f"{BASE}/window-classification-jobs",
+        json={
+            "region_detection_job_id": ids["region_job_id"],
+            "vocalization_model_id": ids["vocalization_model_id"],
+        },
+    )
+    assert create_resp.status_code == 201
+    job = create_resp.json()
+    assert job["status"] == "queued"
+    job_id = job["id"]
+
+    list_resp = await client.get(f"{BASE}/window-classification-jobs")
+    assert list_resp.status_code == 200
+    assert any(j["id"] == job_id for j in list_resp.json())
+
+    get_resp = await client.get(f"{BASE}/window-classification-jobs/{job_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["id"] == job_id
+
+    del_resp = await client.delete(f"{BASE}/window-classification-jobs/{job_id}")
+    assert del_resp.status_code == 204
+
+    get_after = await client.get(f"{BASE}/window-classification-jobs/{job_id}")
+    assert get_after.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_window_classification_scores_404_missing_job(
+    client: AsyncClient,
+) -> None:
+    resp = await client.get(f"{BASE}/window-classification-jobs/nonexistent/scores")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_window_classification_corrections_crud(
+    client: AsyncClient, app_settings
+) -> None:
+    ids = await _seed_window_classification_prereqs(app_settings)
+    create_resp = await client.post(
+        f"{BASE}/window-classification-jobs",
+        json={
+            "region_detection_job_id": ids["region_job_id"],
+            "vocalization_model_id": ids["vocalization_model_id"],
+        },
+    )
+    job_id = create_resp.json()["id"]
+
+    upsert_resp = await client.post(
+        f"{BASE}/window-classification-jobs/{job_id}/corrections",
+        json={
+            "corrections": [
+                {
+                    "time_sec": 1.0,
+                    "region_id": "r1",
+                    "correction_type": "add",
+                    "type_name": "whup",
+                },
+                {
+                    "time_sec": 2.0,
+                    "region_id": "r1",
+                    "correction_type": "remove",
+                    "type_name": "moan",
+                },
+            ]
+        },
+    )
+    assert upsert_resp.status_code == 200
+    assert len(upsert_resp.json()) == 2
+
+    list_resp = await client.get(
+        f"{BASE}/window-classification-jobs/{job_id}/corrections"
+    )
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 2
+
+    clear_resp = await client.delete(
+        f"{BASE}/window-classification-jobs/{job_id}/corrections"
+    )
+    assert clear_resp.status_code == 204
+
+    after_clear = await client.get(
+        f"{BASE}/window-classification-jobs/{job_id}/corrections"
+    )
+    assert len(after_clear.json()) == 0

@@ -1,6 +1,9 @@
 """Unit tests for call_parsing types and schemas."""
 
+import pytest
+
 from humpback.call_parsing.types import (
+    EMBEDDING_SCHEMA,
     EVENT_SCHEMA,
     REGION_SCHEMA,
     TRACE_SCHEMA,
@@ -8,6 +11,7 @@ from humpback.call_parsing.types import (
     Event,
     Region,
     TypedEvent,
+    WindowEmbedding,
     WindowScore,
     new_uuid,
 )
@@ -70,8 +74,18 @@ def test_schemas_have_expected_fields() -> None:
     ]
 
 
+def test_embedding_schema_has_expected_fields() -> None:
+    assert EMBEDDING_SCHEMA.names == ["time_sec", "embedding"]
+
+
 def test_schema_fields_are_not_nullable() -> None:
-    for schema in (TRACE_SCHEMA, REGION_SCHEMA, EVENT_SCHEMA, TYPED_EVENT_SCHEMA):
+    for schema in (
+        TRACE_SCHEMA,
+        REGION_SCHEMA,
+        EVENT_SCHEMA,
+        TYPED_EVENT_SCHEMA,
+        EMBEDDING_SCHEMA,
+    ):
         for name in schema.names:
             assert not schema.field(name).nullable, (
                 f"{schema} field {name} unexpectedly nullable"
@@ -101,3 +115,71 @@ def test_dataclass_instances_construct_as_expected() -> None:
         above_threshold=True,
     )
     assert typed.above_threshold is True
+
+    emb = WindowEmbedding(time_sec=0.0, embedding=[1.0, 2.0, 3.0])
+    assert len(emb.embedding) == 3
+
+
+# ---- Pydantic schema validation tests (window classification) ---------------
+
+
+def test_create_window_classification_job_request_required_fields() -> None:
+    from humpback.schemas.call_parsing import CreateWindowClassificationJobRequest
+
+    req = CreateWindowClassificationJobRequest(
+        region_detection_job_id="rd-1",
+        vocalization_model_id="vm-1",
+    )
+    assert req.region_detection_job_id == "rd-1"
+    assert req.vocalization_model_id == "vm-1"
+
+
+def test_create_window_classification_job_request_rejects_missing_fields() -> None:
+    from pydantic import ValidationError
+
+    from humpback.schemas.call_parsing import CreateWindowClassificationJobRequest
+
+    with pytest.raises(ValidationError):
+        CreateWindowClassificationJobRequest(region_detection_job_id="rd-1")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        CreateWindowClassificationJobRequest(vocalization_model_id="vm-1")  # type: ignore[call-arg]
+
+
+def test_window_score_correction_item_validates_type() -> None:
+    from pydantic import ValidationError
+
+    from humpback.schemas.call_parsing import WindowScoreCorrectionItem
+
+    good = WindowScoreCorrectionItem(
+        time_sec=1.0, region_id="r1", correction_type="add", type_name="whup"
+    )
+    assert good.correction_type == "add"
+
+    good2 = WindowScoreCorrectionItem(
+        time_sec=1.0, region_id="r1", correction_type="remove", type_name="whup"
+    )
+    assert good2.correction_type == "remove"
+
+    with pytest.raises(ValidationError):
+        WindowScoreCorrectionItem(
+            time_sec=1.0, region_id="r1", correction_type="invalid", type_name="whup"
+        )
+
+
+def test_window_classification_job_summary_from_attributes() -> None:
+    from datetime import datetime, timezone
+
+    from humpback.schemas.call_parsing import WindowClassificationJobSummary
+
+    now = datetime.now(timezone.utc)
+    summary = WindowClassificationJobSummary(
+        id="j1",
+        status="complete",
+        region_detection_job_id="rd-1",
+        vocalization_model_id="vm-1",
+        window_count=100,
+        created_at=now,
+        updated_at=now,
+    )
+    assert summary.window_count == 100
+    assert summary.vocabulary_snapshot is None

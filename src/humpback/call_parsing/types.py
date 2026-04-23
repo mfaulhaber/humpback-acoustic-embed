@@ -42,6 +42,20 @@ class WindowScore:
 
 
 @dataclass(frozen=True)
+class WindowEmbedding:
+    """One row of the per-window embedding cache (Pass 1 output).
+
+    Written to ``embeddings.parquet`` alongside the scalar trace.
+    Stores the full Perch embedding vector for each detector window
+    so downstream sidecar jobs can score cached embeddings without
+    re-running inference.
+    """
+
+    time_sec: float
+    embedding: list[float]
+
+
+@dataclass(frozen=True)
 class Region:
     """One padded whale-active region (Pass 1 output).
 
@@ -112,6 +126,13 @@ TRACE_SCHEMA = pa.schema(
     [
         pa.field("time_sec", pa.float64(), nullable=False),
         pa.field("score", pa.float64(), nullable=False),
+    ]
+)
+
+EMBEDDING_SCHEMA = pa.schema(
+    [
+        pa.field("time_sec", pa.float64(), nullable=False),
+        pa.field("embedding", pa.list_(pa.float32()), nullable=False),
     ]
 )
 
