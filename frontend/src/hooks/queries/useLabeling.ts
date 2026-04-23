@@ -3,7 +3,6 @@ import {
   fetchVocalizationLabels,
   createVocalizationLabel,
   deleteVocalizationLabel,
-  fetchLabelVocabulary,
   fetchLabelingSummary,
   fetchTrainingSummary,
   fetchDetectionNeighbors,
@@ -57,7 +56,6 @@ export function useAddVocalizationLabel() {
         queryKey: ["labeling", "summary", vars.detectionJobId],
       });
       qc.invalidateQueries({ queryKey: ["labeling", "training-summary"] });
-      qc.invalidateQueries({ queryKey: ["labeling", "label-vocabulary"] });
     },
   });
 }
@@ -83,14 +81,6 @@ export function useDeleteVocalizationLabel() {
         queryKey: ["labeling", "summary", vars.detectionJobId],
       });
     },
-  });
-}
-
-export function useLabelVocabulary() {
-  return useQuery({
-    queryKey: ["labeling", "label-vocabulary"],
-    queryFn: fetchLabelVocabulary,
-    staleTime: 30_000,
   });
 }
 

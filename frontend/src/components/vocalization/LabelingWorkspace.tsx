@@ -35,11 +35,9 @@ import {
   useVocClassifierInferenceResults,
   useVocClassifierInferenceJob,
   useVocClassifierModel,
+  useVocalizationTypes,
 } from "@/hooks/queries/useVocalization";
-import {
-  useVocalizationLabels,
-  useLabelVocabulary,
-} from "@/hooks/queries/useLabeling";
+import { useVocalizationLabels } from "@/hooks/queries/useLabeling";
 import {
   createVocalizationLabel,
   deleteVocalizationLabel,
@@ -110,7 +108,10 @@ export function LabelingWorkspace({
     Map<string, Set<string>>
   >(() => new Map());
 
-  const vocabulary = model?.vocabulary_snapshot ?? [];
+  const { data: vocTypes = [] } = useVocalizationTypes();
+  const allTypes = useMemo(() => {
+    return vocTypes.map((vt) => vt.name).sort();
+  }, [vocTypes]);
   const thresholds = model?.per_class_thresholds ?? {};
 
   // Derive dirty state
@@ -131,12 +132,12 @@ export function LabelingWorkspace({
   // Build type→color map
   const typeColorMap = useMemo(() => {
     const m = new Map<string, string>();
-    vocabulary.forEach((t, i) => {
+    allTypes.forEach((t, i) => {
       m.set(t, TYPE_COLORS[i % TYPE_COLORS.length]);
     });
     m.set(NEGATIVE_LABEL, NEGATIVE_COLOR);
     return m;
-  }, [vocabulary]);
+  }, [allTypes]);
 
   // All sorting is server-side to avoid truncation when result count
   // exceeds the fetch limit.
@@ -357,7 +358,7 @@ export function LabelingWorkspace({
                 key={`${row.row_id ?? row.start_sec}-${i}`}
                 row={row}
                 detectionJobId={detectionJobId}
-                vocabulary={vocabulary}
+                allTypes={allTypes}
                 typeColorMap={typeColorMap}
                 thresholds={thresholds}
                 readonly={readonly}
@@ -413,7 +414,7 @@ export function LabelingWorkspace({
 function LabelingRow({
   row,
   detectionJobId,
-  vocabulary,
+  allTypes,
   typeColorMap,
   thresholds,
   readonly,
@@ -426,7 +427,7 @@ function LabelingRow({
 }: {
   row: VocClassifierPredictionRow;
   detectionJobId: string | null;
-  vocabulary: string[];
+  allTypes: string[];
   typeColorMap: Map<string, string>;
   thresholds: Record<string, number>;
   readonly: boolean;
@@ -454,15 +455,6 @@ function LabelingRow({
     detectionJobId,
     row.row_id,
   );
-
-  const { data: labelVocab = [] } = useLabelVocabulary();
-
-  // Merge vocabulary sources (exclude reserved labels)
-  const allTypes = useMemo(() => {
-    const set = new Set([...vocabulary, ...labelVocab]);
-    set.delete(NEGATIVE_LABEL);
-    return Array.from(set).sort();
-  }, [vocabulary, labelVocab]);
 
   const existingTypeNames = new Set(existingLabels.map((l) => l.label));
   const pendingAddSet = pendingAdds ?? new Set<string>();

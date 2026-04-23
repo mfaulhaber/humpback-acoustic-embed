@@ -1,6 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
 import { useVocalizationTypes } from "@/hooks/queries/useVocalization";
-import { useLabelVocabulary } from "@/hooks/queries/useLabeling";
 import { VOCALIZATION_BADGE_PALETTE } from "./constants";
 import type { VocLabelAction, LabelDisplayState } from "@/hooks/queries/useVocLabelEdits";
 
@@ -53,15 +52,14 @@ export function VocLabelPopover({
   const [showDropdown, setShowDropdown] = useState(false);
 
   const { data: vocTypes = [] } = useVocalizationTypes();
-  const { data: labelVocab = [] } = useLabelVocabulary();
 
-  // All available types for the dropdown — merge editor's palette types with vocab/types
+  // All available types for the dropdown — vocalization_types as sole authority,
+  // plus palette types for color continuity on orphaned labels
   const dropdownTypeNames = React.useMemo(() => {
     const names = new Set(allTypeNames);
     for (const vt of vocTypes) names.add(vt.name);
-    for (const lv of labelVocab) names.add(lv);
     return Array.from(names).sort();
-  }, [allTypeNames, vocTypes, labelVocab]);
+  }, [allTypeNames, vocTypes]);
 
   // Clamp popover position to viewport
   useEffect(() => {
