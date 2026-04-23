@@ -15,9 +15,9 @@ import {
   useVocalizationLabels,
   useAddVocalizationLabel,
   useDeleteVocalizationLabel,
-  useLabelVocabulary,
   useDetectionNeighbors,
 } from "@/hooks/queries/useLabeling";
+import { useVocalizationTypes } from "@/hooks/queries/useVocalization";
 import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
 import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
 import {
@@ -263,7 +263,7 @@ export function LabelingTab() {
   const vocLabelsQuery = useVocalizationLabels(selectedJobId, currentRowId);
   const addLabel = useAddVocalizationLabel();
   const removeLabel = useDeleteVocalizationLabel();
-  const vocabularyQuery = useLabelVocabulary();
+  const { data: vocTypes = [] } = useVocalizationTypes();
   const [labelInput, setLabelInput] = useState("");
 
   const handleAddLabel = useCallback(
@@ -491,11 +491,11 @@ export function LabelingTab() {
 
   // ---- Vocabulary suggestions for autocomplete ----
   const suggestions = useMemo(() => {
-    const vocab = vocabularyQuery.data ?? [];
+    const vocab = vocTypes.map((vt) => vt.name).sort();
     if (!labelInput.trim()) return vocab.slice(0, 10);
     const q = labelInput.toLowerCase();
     return vocab.filter((v) => v.toLowerCase().includes(q)).slice(0, 10);
-  }, [vocabularyQuery.data, labelInput]);
+  }, [vocTypes, labelInput]);
 
   // ---- Render ----
   if (!localJobsQuery.data && !hydroJobsQuery.data) {

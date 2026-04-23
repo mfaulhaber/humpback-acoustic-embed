@@ -11,12 +11,12 @@
 - Modify: `frontend/src/components/vocalization/LabelingWorkspace.tsx`
 
 **Acceptance criteria:**
-- [ ] Import `useVocalizationTypes` from `@/hooks/queries/useVocalization`
-- [ ] Remove `useLabelVocabulary` import and its call
-- [ ] Replace `allTypes` computation: derive from `useVocalizationTypes()` response (map to `.name`, exclude `(Negative)`, sort)
-- [ ] Remove `vocabulary` prop from `LabelingRow` — replace with the new `allTypes` derived from vocalization types
-- [ ] Update `typeColorMap` to build from `allTypes` (vocalization types) instead of `vocabulary` (model snapshot)
-- [ ] `(Negative)` option remains available unchanged
+- [x] Import `useVocalizationTypes` from `@/hooks/queries/useVocalization`
+- [x] Remove `useLabelVocabulary` import and its call
+- [x] Replace `allTypes` computation: derive from `useVocalizationTypes()` response (map to `.name`, exclude `(Negative)`, sort)
+- [x] Remove `vocabulary` prop from `LabelingRow` — replace with the new `allTypes` derived from vocalization types
+- [x] Update `typeColorMap` to build from `allTypes` (vocalization types) instead of `vocabulary` (model snapshot)
+- [x] `(Negative)` option remains available unchanged
 
 ---
 
@@ -26,10 +26,21 @@
 - Modify: `frontend/src/components/timeline/VocLabelPopover.tsx`
 
 **Acceptance criteria:**
-- [ ] Remove `useLabelVocabulary` import and its call
-- [ ] Simplify `dropdownTypeNames` computation: merge `allTypeNames` (palette continuity for existing rows) with `vocTypes` names only
-- [ ] Orphaned labels on existing rows still render with their color via `allTypeNames`
-- [ ] `(Negative)` handling unchanged
+- [x] Remove `useLabelVocabulary` import and its call
+- [x] Simplify `dropdownTypeNames` computation: merge `allTypeNames` (palette continuity for existing rows) with `vocTypes` names only
+- [x] Orphaned labels on existing rows still render with their color via `allTypeNames`
+- [x] `(Negative)` handling unchanged
+
+---
+
+### Task 2b: Switch classifier LabelingTab to vocalization_types
+
+**Files:**
+- Modify: `frontend/src/components/classifier/LabelingTab.tsx`
+
+**Acceptance criteria:**
+- [x] Replace `useLabelVocabulary` with `useVocalizationTypes` for autocomplete suggestions
+- [x] Map vocalization type objects to names for the suggestions list
 
 ---
 

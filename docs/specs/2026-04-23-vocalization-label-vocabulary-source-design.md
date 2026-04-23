@@ -52,7 +52,15 @@ source. Keep `allTypeNames` from saved/pending labels for color palette
 continuity (so orphaned labels on existing rows still render with their
 assigned color). Remove `useLabelVocabulary()` call.
 
-### 3. Backend
+### 3. Classifier LabelingTab.tsx
+
+**Current behavior:** Uses `useLabelVocabulary()` for autocomplete suggestions
+when manually typing labels.
+
+**New behavior:** Fetch `vocalization_types` via `useVocalizationTypes()` and
+map to type names for the suggestion list. Remove `useLabelVocabulary()` call.
+
+### 4. Backend
 
 No changes. The `/vocalization/types` GET endpoint already returns all
 defined types. The `/labeling/label-vocabulary` endpoint remains in the
