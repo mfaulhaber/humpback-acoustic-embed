@@ -48,6 +48,12 @@ import {
   type AggregatedEvent,
 } from "./ClassifyDetailPanel";
 
+type SavedEventBounds = {
+  eventId: string;
+  startSec: number;
+  endSec: number;
+};
+
 /** Resolve the effective type + source for a single event given its
  *  predicted (inference) and corrected (human) types. Correction overrides
  *  prediction; a null correction means the human marked the event negative. */
@@ -68,6 +74,78 @@ function resolveEventType(
     return { effectiveType: predictedType, typeSource: "inference" };
   }
   return { effectiveType: null, typeSource: null };
+}
+
+function collectSavedEventBounds(
+  typedEventRows: TypedEventRow[],
+  savedBoundaryCorrections: EventBoundaryCorrectionResponse[],
+): SavedEventBounds[] {
+  const boundsByEvent = new Map<string, SavedEventBounds>();
+
+  for (const row of typedEventRows) {
+    if (!boundsByEvent.has(row.event_id)) {
+      boundsByEvent.set(row.event_id, {
+        eventId: row.event_id,
+        startSec: row.start_sec,
+        endSec: row.end_sec,
+      });
+    }
+  }
+
+  for (const correction of savedBoundaryCorrections) {
+    if (
+      correction.correction_type === "add" &&
+      correction.corrected_start_sec != null &&
+      correction.corrected_end_sec != null
+    ) {
+      boundsByEvent.set(`saved-add-${correction.id}`, {
+        eventId: `saved-add-${correction.id}`,
+        startSec: correction.corrected_start_sec,
+        endSec: correction.corrected_end_sec,
+      });
+    }
+  }
+
+  return Array.from(boundsByEvent.values());
+}
+
+export function buildMergedCorrections(
+  typedEventRows: TypedEventRow[],
+  savedVocCorrections: Array<{
+    start_sec: number;
+    end_sec: number;
+    type_name: string;
+    correction_type: "add" | "remove";
+  }>,
+  savedBoundaryCorrections: EventBoundaryCorrectionResponse[],
+  pendingCorrections: Map<string, string | null>,
+): Map<string, string | null> {
+  const map = new Map<string, string | null>();
+  const savedEventBounds = collectSavedEventBounds(
+    typedEventRows,
+    savedBoundaryCorrections,
+  );
+
+  for (const { eventId, startSec, endSec } of savedEventBounds) {
+    for (const correction of savedVocCorrections) {
+      if (
+        correction.start_sec < endSec &&
+        correction.end_sec > startSec
+      ) {
+        if (correction.correction_type === "add") {
+          map.set(eventId, correction.type_name);
+        } else if (!map.has(eventId)) {
+          map.set(eventId, null);
+        }
+      }
+    }
+  }
+
+  for (const [eventId, typeName] of pendingCorrections) {
+    map.set(eventId, typeName);
+  }
+
+  return map;
 }
 
 /** Aggregate typed event rows by event_id */
@@ -216,45 +294,18 @@ export function ClassifyReviewWorkspace({
   // Build merged correction map: resolve saved vocalization corrections to
   // event_id → type_name by matching time range overlap, then overlay pending.
   const mergedCorrections = useMemo(() => {
-    const map = new Map<string, string | null>();
-
-    // Map vocalization corrections to events by time overlap.
-    // For each typed event row group, find matching corrections.
-    const eventTimeMap = new Map<
-      string,
-      { startSec: number; endSec: number }
-    >();
-    for (const r of typedEventRows) {
-      if (!eventTimeMap.has(r.event_id)) {
-        eventTimeMap.set(r.event_id, {
-          startSec: r.start_sec,
-          endSec: r.end_sec,
-        });
-      }
-    }
-
-    for (const [eventId, bounds] of eventTimeMap) {
-      for (const vc of savedVocCorrections) {
-        if (
-          vc.start_sec < bounds.endSec &&
-          vc.end_sec > bounds.startSec
-        ) {
-          if (vc.correction_type === "add") {
-            map.set(eventId, vc.type_name);
-          } else if (vc.correction_type === "remove") {
-            if (!map.has(eventId)) {
-              map.set(eventId, null);
-            }
-          }
-        }
-      }
-    }
-
-    for (const [eventId, typeName] of pendingCorrections) {
-      map.set(eventId, typeName);
-    }
-    return map;
-  }, [typedEventRows, savedVocCorrections, pendingCorrections]);
+    return buildMergedCorrections(
+      typedEventRows,
+      savedVocCorrections,
+      savedBoundaryCorrections,
+      pendingCorrections,
+    );
+  }, [
+    typedEventRows,
+    savedVocCorrections,
+    savedBoundaryCorrections,
+    pendingCorrections,
+  ]);
 
   // Aggregated events (full list, including deleted — needed for ghost rendering)
   const events = useMemo(
