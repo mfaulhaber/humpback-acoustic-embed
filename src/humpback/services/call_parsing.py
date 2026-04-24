@@ -273,6 +273,11 @@ async def delete_region_detection_job(
     if job is None:
         return False
     _remove_dir(region_job_dir(settings.storage_root, job.id))
+    await session.execute(
+        sa_delete(VocalizationCorrection).where(
+            VocalizationCorrection.region_detection_job_id == job_id
+        )
+    )
     await session.delete(job)
     await session.commit()
     return True

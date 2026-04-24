@@ -64,7 +64,6 @@ class _ClassifierSample:
 def _resolve_event_labels(
     typed_events_by_event: dict[str, list[Any]],
     corrections: dict[str, dict[str, str]],
-    event_bounds: dict[str, tuple[float, float]],
     *,
     corrections_only: bool = True,
 ) -> dict[str, str | None]:
@@ -93,10 +92,7 @@ def _resolve_event_labels(
             labels[event_id] = None
         else:
             rows = typed_events_by_event.get(event_id, [])
-            remove_types = {t for t, ct in event_corrections.items() if ct == "remove"}
-            above = [
-                r for r in rows if r.above_threshold and r.type_name not in remove_types
-            ]
+            above = [r for r in rows if r.above_threshold]
             if above:
                 best = max(above, key=lambda r: r.score)
                 labels[event_id] = best.type_name
@@ -193,7 +189,6 @@ async def _collect_samples(
         labels = _resolve_event_labels(
             typed_by_event,
             corrections,
-            event_bounds,
             corrections_only=corrections_only,
         )
 
