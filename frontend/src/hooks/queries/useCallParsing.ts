@@ -11,9 +11,9 @@ import {
   createSegmentationJob,
   deleteSegmentationJob,
   fetchSegmentationJobEvents,
-  fetchBoundaryCorrections,
-  saveBoundaryCorrections,
-  clearBoundaryCorrections,
+  fetchEventBoundaryCorrections,
+  upsertEventBoundaryCorrections,
+  clearEventBoundaryCorrections,
   fetchSegmentationModels,
   deleteSegmentationModel,
   fetchSegmentationJobsWithCorrectionCounts,
@@ -46,7 +46,7 @@ import type {
   CreateDatasetFromCorrectionsRequest,
   CreateSegmentationTrainingJobRequest,
   QuickRetrainRequest,
-  BoundaryCorrectionRequest,
+  EventBoundaryCorrectionItem,
   ModelConfig,
   CreateEventClassificationJobRequest,
   VocalizationCorrectionItem,
@@ -182,42 +182,50 @@ export function useSegmentationJobEvents(jobId: string | null) {
   });
 }
 
-// ---- Boundary Corrections ----
+// ---- Event Boundary Corrections ----
 
-const CORRECTIONS_KEY = "boundary-corrections";
+const EVENT_BOUNDARY_CORRECTIONS_KEY = "event-boundary-corrections";
 
-export function useBoundaryCorrections(jobId: string | null) {
+export function useEventBoundaryCorrections(
+  regionDetectionJobId: string | null,
+) {
   return useQuery({
-    queryKey: [CORRECTIONS_KEY, jobId],
-    queryFn: () => fetchBoundaryCorrections(jobId!),
-    enabled: !!jobId,
+    queryKey: [EVENT_BOUNDARY_CORRECTIONS_KEY, regionDetectionJobId],
+    queryFn: () => fetchEventBoundaryCorrections(regionDetectionJobId!),
+    enabled: !!regionDetectionJobId,
   });
 }
 
-export function useSaveBoundaryCorrections() {
+export function useUpsertEventBoundaryCorrections() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
-      jobId,
-      body,
+      regionDetectionJobId,
+      corrections,
     }: {
-      jobId: string;
-      body: BoundaryCorrectionRequest;
-    }) => saveBoundaryCorrections(jobId, body),
+      regionDetectionJobId: string;
+      corrections: EventBoundaryCorrectionItem[];
+    }) => upsertEventBoundaryCorrections(regionDetectionJobId, corrections),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({
-        queryKey: [CORRECTIONS_KEY, variables.jobId],
+        queryKey: [
+          EVENT_BOUNDARY_CORRECTIONS_KEY,
+          variables.regionDetectionJobId,
+        ],
       });
     },
   });
 }
 
-export function useClearBoundaryCorrections() {
+export function useClearEventBoundaryCorrections() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => clearBoundaryCorrections(jobId),
-    onSuccess: (_data, jobId) => {
-      qc.invalidateQueries({ queryKey: [CORRECTIONS_KEY, jobId] });
+    mutationFn: (regionDetectionJobId: string) =>
+      clearEventBoundaryCorrections(regionDetectionJobId),
+    onSuccess: (_data, regionDetectionJobId) => {
+      qc.invalidateQueries({
+        queryKey: [EVENT_BOUNDARY_CORRECTIONS_KEY, regionDetectionJobId],
+      });
     },
   });
 }

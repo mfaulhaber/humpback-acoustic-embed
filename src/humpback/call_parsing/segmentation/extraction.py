@@ -24,10 +24,9 @@ from humpback.call_parsing.storage import (
 )
 from humpback.call_parsing.types import Event, Region
 from humpback.models.call_parsing import (
-    EventSegmentationJob,
+    EventBoundaryCorrection,
     RegionDetectionJob,
 )
-from humpback.models.feedback_training import EventBoundaryCorrection
 
 logger = logging.getLogger(__name__)
 
@@ -57,46 +56,58 @@ def apply_corrections(
     """Apply boundary corrections to a region's events.
 
     Returns corrected event dicts with ``start_sec`` and ``end_sec`` keys.
+    Matches events by ``(original_start_sec, original_end_sec)`` time-range
+    identity rather than event_id.
     """
-    events_by_id: dict[str, dict[str, float]] = {
-        e.event_id: {"start_sec": e.start_sec, "end_sec": e.end_sec}
-        for e in original_events
-    }
+    events: list[dict[str, float]] = [
+        {"start_sec": e.start_sec, "end_sec": e.end_sec} for e in original_events
+    ]
 
     for c in corrections:
         if c.correction_type == "delete":
-            events_by_id.pop(c.event_id, None)
+            events = [
+                e
+                for e in events
+                if not (
+                    e["start_sec"] == c.original_start_sec
+                    and e["end_sec"] == c.original_end_sec
+                )
+            ]
         elif c.correction_type == "adjust":
-            if (
-                c.event_id in events_by_id
-                and c.start_sec is not None
-                and c.end_sec is not None
-            ):
-                events_by_id[c.event_id] = {
-                    "start_sec": c.start_sec,
-                    "end_sec": c.end_sec,
-                }
+            for e in events:
+                if (
+                    e["start_sec"] == c.original_start_sec
+                    and e["end_sec"] == c.original_end_sec
+                    and c.corrected_start_sec is not None
+                    and c.corrected_end_sec is not None
+                ):
+                    e["start_sec"] = c.corrected_start_sec
+                    e["end_sec"] = c.corrected_end_sec
+                    break
         elif c.correction_type == "add":
-            if c.start_sec is not None and c.end_sec is not None:
-                events_by_id[c.event_id] = {
-                    "start_sec": c.start_sec,
-                    "end_sec": c.end_sec,
-                }
+            if c.corrected_start_sec is not None and c.corrected_end_sec is not None:
+                events.append(
+                    {
+                        "start_sec": c.corrected_start_sec,
+                        "end_sec": c.corrected_end_sec,
+                    }
+                )
 
-    return list(events_by_id.values())
+    return events
 
 
 async def load_corrected_events(
     session: AsyncSession,
+    region_detection_job_id: str,
     segmentation_job_id: str,
     storage_root: Path,
 ) -> list[Event]:
     """Load events for a segmentation job with boundary corrections applied.
 
-    Reads ``events.parquet``, queries ``event_boundary_corrections`` for the
-    job, merges via :func:`apply_corrections`, and returns full ``Event``
-    objects.  When no corrections exist the original events are returned
-    unchanged.
+    Reads ``events.parquet`` (located via *segmentation_job_id*), queries
+    ``event_boundary_corrections`` by *region_detection_job_id*, merges via
+    :func:`apply_corrections`, and returns full ``Event`` objects.  When no
+    corrections exist the original events are returned unchanged.
     """
     seg_dir = segmentation_job_dir(storage_root, segmentation_job_id)
     events_path = seg_dir / "events.parquet"
@@ -109,7 +120,7 @@ async def load_corrected_events(
 
     corr_result = await session.execute(
         select(EventBoundaryCorrection).where(
-            EventBoundaryCorrection.event_segmentation_job_id == segmentation_job_id
+            EventBoundaryCorrection.region_detection_job_id == region_detection_job_id
         )
     )
     corrections = list(corr_result.scalars().all())
@@ -117,52 +128,46 @@ async def load_corrected_events(
     if not corrections:
         return original_events
 
-    # Build lookup for original event metadata (region_id, confidence)
-    originals_by_id: dict[str, Event] = {e.event_id: e for e in original_events}
-
-    # apply_corrections returns dicts keyed by event_id
-    events_by_id: dict[str, dict[str, float]] = {
-        e.event_id: {"start_sec": e.start_sec, "end_sec": e.end_sec}
-        for e in original_events
-    }
+    # Group corrections and events by region for scoped application
+    corrections_by_region: dict[str, list[EventBoundaryCorrection]] = defaultdict(list)
     for c in corrections:
-        if c.correction_type == "delete":
-            events_by_id.pop(c.event_id, None)
-        elif c.correction_type == "adjust":
-            if (
-                c.event_id in events_by_id
-                and c.start_sec is not None
-                and c.end_sec is not None
-            ):
-                events_by_id[c.event_id] = {
-                    "start_sec": c.start_sec,
-                    "end_sec": c.end_sec,
-                }
-        elif c.correction_type == "add":
-            if c.start_sec is not None and c.end_sec is not None:
-                events_by_id[c.event_id] = {
-                    "start_sec": c.start_sec,
-                    "end_sec": c.end_sec,
-                }
+        corrections_by_region[c.region_id].append(c)
 
-    # Rebuild Event objects — preserve original metadata where available,
-    # synthesize for added events.
-    corr_region_lookup: dict[str, str] = {c.event_id: c.region_id for c in corrections}
-    result: list[Event] = []
-    for eid, bounds in events_by_id.items():
-        start = bounds["start_sec"]
-        end = bounds["end_sec"]
-        orig = originals_by_id.get(eid)
-        result.append(
-            Event(
-                event_id=eid,
-                region_id=orig.region_id if orig else corr_region_lookup.get(eid, ""),
-                start_sec=start,
-                end_sec=end,
-                center_sec=(start + end) / 2.0,
-                segmentation_confidence=orig.segmentation_confidence if orig else 0.0,
+    events_by_region: dict[str, list[Event]] = defaultdict(list)
+    uncorrected_events: list[Event] = []
+    for e in original_events:
+        if e.region_id in corrections_by_region:
+            events_by_region[e.region_id].append(e)
+        else:
+            uncorrected_events.append(e)
+
+    # Build lookup for original event metadata keyed by (start_sec, end_sec)
+    originals_by_bounds: dict[tuple[float, float], Event] = {
+        (e.start_sec, e.end_sec): e for e in original_events
+    }
+
+    result: list[Event] = list(uncorrected_events)
+
+    for region_id, region_corrections in corrections_by_region.items():
+        region_events = events_by_region.get(region_id, [])
+        corrected = apply_corrections(region_events, region_corrections)
+
+        for bounds in corrected:
+            start = bounds["start_sec"]
+            end = bounds["end_sec"]
+            orig = originals_by_bounds.get((start, end))
+            result.append(
+                Event(
+                    event_id=orig.event_id if orig else f"added-{start:.3f}-{end:.3f}",
+                    region_id=region_id,
+                    start_sec=start,
+                    end_sec=end,
+                    center_sec=(start + end) / 2.0,
+                    segmentation_confidence=(
+                        orig.segmentation_confidence if orig else 0.0
+                    ),
+                )
             )
-        )
 
     return result
 
@@ -225,23 +230,20 @@ def subdivide_region(
 
 async def collect_corrected_samples(
     session: AsyncSession,
+    region_detection_job_id: str,
     segmentation_job_id: str,
     storage_root: Path,
 ) -> list[CorrectedSample]:
-    """Collect training samples from corrected regions of one segmentation job.
+    """Collect training samples from corrected regions.
 
-    Only regions with at least one boundary correction are included.
-    Returns an empty list if no corrections exist.
+    Queries corrections by *region_detection_job_id*, reads events from
+    the segmentation parquet via *segmentation_job_id*.  Only regions with
+    at least one boundary correction are included.  Returns an empty list
+    if no corrections exist.
     """
-    seg_job = await session.get(EventSegmentationJob, segmentation_job_id)
-    if seg_job is None:
-        raise ValueError(f"Segmentation job {segmentation_job_id} not found")
-
-    upstream = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
+    upstream = await session.get(RegionDetectionJob, region_detection_job_id)
     if upstream is None:
-        raise ValueError(
-            f"Upstream region detection job {seg_job.region_detection_job_id} not found"
-        )
+        raise ValueError(f"Region detection job {region_detection_job_id} not found")
     if not upstream.hydrophone_id:
         raise ValueError(
             f"Region detection job {upstream.id} is not hydrophone-sourced"
@@ -274,7 +276,7 @@ async def collect_corrected_samples(
 
     corr_result = await session.execute(
         select(EventBoundaryCorrection).where(
-            EventBoundaryCorrection.event_segmentation_job_id == segmentation_job_id
+            EventBoundaryCorrection.region_detection_job_id == region_detection_job_id
         )
     )
     corrections = list(corr_result.scalars().all())

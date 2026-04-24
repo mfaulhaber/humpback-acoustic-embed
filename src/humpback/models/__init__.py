@@ -1,6 +1,7 @@
 from humpback.models.audio import AudioFile, AudioMetadata
 from humpback.models.call_parsing import (
     CallParsingRun,
+    EventBoundaryCorrection,
     EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
@@ -9,7 +10,6 @@ from humpback.models.call_parsing import (
 )
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.feedback_training import (
-    EventBoundaryCorrection,
     EventClassifierTrainingJob,
 )
 from humpback.models.hyperparameter import (

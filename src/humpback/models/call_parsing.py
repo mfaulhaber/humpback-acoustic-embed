@@ -195,3 +195,22 @@ class VocalizationCorrection(UUIDMixin, TimestampMixin, Base):
     end_sec: Mapped[float] = mapped_column(Float)
     type_name: Mapped[str]
     correction_type: Mapped[str]
+
+
+class EventBoundaryCorrection(UUIDMixin, TimestampMixin, Base):
+    """Unified human correction to event boundaries.
+
+    Anchored to ``region_detection_job_id`` (Pass 1) so corrections are
+    shared across Pass 2, Pass 3, and Window Classify review surfaces.
+    Uses explicit original/corrected time pairs for time-range identity.
+    """
+
+    __tablename__ = "event_boundary_corrections"
+
+    region_detection_job_id: Mapped[str]
+    region_id: Mapped[str]
+    correction_type: Mapped[str]
+    original_start_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    original_end_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    corrected_start_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    corrected_end_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)

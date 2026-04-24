@@ -4,8 +4,8 @@ import {
   useSegmentationJobEvents,
   useRegionDetectionJobs,
   useRegionJobRegions,
-  useBoundaryCorrections,
-  useSaveBoundaryCorrections,
+  useEventBoundaryCorrections,
+  useUpsertEventBoundaryCorrections,
   useCreateSegmentationJob,
   useSegmentationModels,
   useQuickRetrain,
@@ -14,7 +14,8 @@ import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
 import type {
   EventSegmentationJob,
-  BoundaryCorrection,
+  EventBoundaryCorrectionItem,
+  EventBoundaryCorrectionResponse,
 } from "@/api/types";
 import { toast } from "@/components/ui/use-toast";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
@@ -62,7 +63,7 @@ export function SegmentReviewWorkspace({
 
   const { data: regions = [] } = useRegionJobRegions(regionDetectionJobId);
   const { data: events = [] } = useSegmentationJobEvents(selectedJobId);
-  const { data: savedCorrections = [] } = useBoundaryCorrections(selectedJobId);
+  const { data: savedCorrections = [] } = useEventBoundaryCorrections(regionDetectionJobId);
 
   const timelineExtent = useMemo(() => {
     if (regions.length === 0) return undefined;
@@ -86,9 +87,9 @@ export function SegmentReviewWorkspace({
   const [isPlaying, setIsPlaying] = useState(false);
   const [userZoom, setUserZoom] = useState("1m");
 
-  // Pending corrections: Map<eventId, BoundaryCorrection>
+  // Pending corrections: Map<eventId, EventBoundaryCorrectionItem>
   const [pendingCorrections, setPendingCorrections] = useState<
-    Map<string, BoundaryCorrection>
+    Map<string, EventBoundaryCorrectionItem>
   >(new Map());
 
   const isDirty = pendingCorrections.size > 0;
@@ -118,23 +119,28 @@ export function SegmentReviewWorkspace({
 
   // Build effective events: merge original events + saved corrections + pending corrections
   const effectiveEvents: EffectiveEvent[] = useMemo(() => {
-    const savedMap = new Map(
-      savedCorrections.map((c) => [c.event_id, c]),
-    );
+    // Index saved corrections by (region_id, original_start, original_end) for adjust/delete
+    const savedByKey = new Map<string, EventBoundaryCorrectionResponse>();
+    for (const c of savedCorrections) {
+      if (c.correction_type !== "add") {
+        const key = `${c.region_id}:${c.original_start_sec}:${c.original_end_sec}`;
+        savedByKey.set(key, c);
+      }
+    }
+
+    const noType = { effectiveType: null, typeSource: null } as const;
 
     const result: EffectiveEvent[] = events.map((ev) => {
       const pending = pendingCorrections.get(ev.event_id);
-      const saved = savedMap.get(ev.event_id);
-
-      // Segmentation review does not surface classification type info.
-      const noType = { effectiveType: null, typeSource: null } as const;
+      const savedKey = `${ev.region_id}:${ev.start_sec}:${ev.end_sec}`;
+      const saved = savedByKey.get(savedKey);
 
       if (pending) {
         return {
           eventId: ev.event_id,
           regionId: ev.region_id,
-          startSec: pending.start_sec ?? ev.start_sec,
-          endSec: pending.end_sec ?? ev.end_sec,
+          startSec: pending.corrected_start_sec ?? ev.start_sec,
+          endSec: pending.corrected_end_sec ?? ev.end_sec,
           originalStartSec: ev.start_sec,
           originalEndSec: ev.end_sec,
           confidence: ev.segmentation_confidence,
@@ -147,8 +153,8 @@ export function SegmentReviewWorkspace({
         return {
           eventId: ev.event_id,
           regionId: ev.region_id,
-          startSec: saved.start_sec ?? ev.start_sec,
-          endSec: saved.end_sec ?? ev.end_sec,
+          startSec: saved.corrected_start_sec ?? ev.start_sec,
+          endSec: saved.corrected_end_sec ?? ev.end_sec,
           originalStartSec: ev.start_sec,
           originalEndSec: ev.end_sec,
           confidence: ev.segmentation_confidence,
@@ -171,40 +177,39 @@ export function SegmentReviewWorkspace({
     });
 
     // Add saved "add" corrections (they have no corresponding original event)
-    const originalEventIds = new Set(events.map((e) => e.event_id));
     for (const corr of savedCorrections) {
       if (
         corr.correction_type === "add" &&
-        corr.start_sec != null &&
-        corr.end_sec != null &&
-        !originalEventIds.has(corr.event_id) &&
-        !pendingCorrections.has(corr.event_id)
+        corr.corrected_start_sec != null &&
+        corr.corrected_end_sec != null
       ) {
-        result.push({
-          eventId: corr.event_id,
-          regionId: corr.region_id,
-          startSec: corr.start_sec,
-          endSec: corr.end_sec,
-          originalStartSec: corr.start_sec,
-          originalEndSec: corr.end_sec,
-          confidence: 0,
-          correctionType: "add",
-          effectiveType: null,
-          typeSource: null,
-        });
+        const addId = `saved-add-${corr.id}`;
+        if (!pendingCorrections.has(addId)) {
+          result.push({
+            eventId: addId,
+            regionId: corr.region_id,
+            startSec: corr.corrected_start_sec,
+            endSec: corr.corrected_end_sec,
+            originalStartSec: corr.corrected_start_sec,
+            originalEndSec: corr.corrected_end_sec,
+            confidence: 0,
+            correctionType: "add",
+            ...noType,
+          });
+        }
       }
     }
 
     // Add pending "add" corrections (they have no corresponding event)
     for (const [key, corr] of pendingCorrections) {
-      if (corr.correction_type === "add" && corr.start_sec != null && corr.end_sec != null) {
+      if (corr.correction_type === "add" && corr.corrected_start_sec != null && corr.corrected_end_sec != null) {
         result.push({
           eventId: key,
           regionId: corr.region_id,
-          startSec: corr.start_sec,
-          endSec: corr.end_sec,
-          originalStartSec: corr.start_sec,
-          originalEndSec: corr.end_sec,
+          startSec: corr.corrected_start_sec,
+          endSec: corr.corrected_end_sec,
+          originalStartSec: corr.corrected_start_sec,
+          originalEndSec: corr.corrected_end_sec,
           confidence: 0,
           correctionType: "add",
           effectiveType: null,
@@ -325,24 +330,33 @@ export function SegmentReviewWorkspace({
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         const existing = prev.get(eventId);
-        const saved = savedCorrections.find((c) => c.event_id === eventId);
-        // Preserve "add" type when adjusting an added event (pending or saved)
-        const isAdd =
-          existing?.correction_type === "add" ||
-          saved?.correction_type === "add";
-        const correctionType = isAdd ? "add" : "adjust";
         const ev = events.find((e) => e.event_id === eventId);
-        next.set(eventId, {
-          event_id: eventId,
-          region_id: ev?.region_id ?? existing?.region_id ?? saved?.region_id ?? selectedRegionId ?? "",
-          correction_type: correctionType,
-          start_sec: startSec,
-          end_sec: endSec,
-        });
+        const effectiveEv = effectiveEvents.find((e) => e.eventId === eventId);
+        const isAdd = existing?.correction_type === "add" || effectiveEv?.correctionType === "add";
+        const regionId = ev?.region_id ?? existing?.region_id ?? selectedRegionId ?? "";
+        if (isAdd) {
+          next.set(eventId, {
+            region_id: regionId,
+            correction_type: "add",
+            original_start_sec: null,
+            original_end_sec: null,
+            corrected_start_sec: startSec,
+            corrected_end_sec: endSec,
+          });
+        } else {
+          next.set(eventId, {
+            region_id: regionId,
+            correction_type: "adjust",
+            original_start_sec: ev?.start_sec ?? effectiveEv?.originalStartSec ?? startSec,
+            original_end_sec: ev?.end_sec ?? effectiveEv?.originalEndSec ?? endSec,
+            corrected_start_sec: startSec,
+            corrected_end_sec: endSec,
+          });
+        }
         return next;
       });
     },
-    [events, savedCorrections, selectedRegionId],
+    [events, effectiveEvents, selectedRegionId],
   );
 
   const handleAdd = useCallback(
@@ -351,11 +365,12 @@ export function SegmentReviewWorkspace({
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         next.set(tempId, {
-          event_id: tempId,
           region_id: regionId,
           correction_type: "add",
-          start_sec: startSec,
-          end_sec: endSec,
+          original_start_sec: null,
+          original_end_sec: null,
+          corrected_start_sec: startSec,
+          corrected_end_sec: endSec,
         });
         return next;
       });
@@ -370,19 +385,18 @@ export function SegmentReviewWorkspace({
         const next = new Map(prev);
         const existing = next.get(eventId);
         if (existing?.correction_type === "delete") {
-          // Undo delete
           next.delete(eventId);
         } else if (existing?.correction_type === "add") {
-          // Remove the add entirely
           next.delete(eventId);
         } else {
           const ev = events.find((e) => e.event_id === eventId);
           next.set(eventId, {
-            event_id: eventId,
             region_id: ev?.region_id ?? selectedRegionId ?? "",
             correction_type: "delete",
-            start_sec: null,
-            end_sec: null,
+            original_start_sec: ev?.start_sec ?? null,
+            original_end_sec: ev?.end_sec ?? null,
+            corrected_start_sec: null,
+            corrected_end_sec: null,
           });
         }
         return next;
@@ -391,17 +405,17 @@ export function SegmentReviewWorkspace({
     [events, selectedRegionId],
   );
 
-  const saveMutation = useSaveBoundaryCorrections();
+  const saveMutation = useUpsertEventBoundaryCorrections();
 
   const handleToggleAddMode = useCallback(() => {
     setAddMode((prev) => !prev);
   }, []);
 
   const handleSave = useCallback(() => {
-    if (!selectedJobId || pendingCorrections.size === 0) return;
+    if (!regionDetectionJobId || pendingCorrections.size === 0) return;
     const corrections = Array.from(pendingCorrections.values());
     saveMutation.mutate(
-      { jobId: selectedJobId, body: { corrections } },
+      { regionDetectionJobId, corrections },
       {
         onSuccess: () => {
           setPendingCorrections(new Map());
@@ -409,7 +423,7 @@ export function SegmentReviewWorkspace({
         },
       },
     );
-  }, [selectedJobId, pendingCorrections, saveMutation]);
+  }, [regionDetectionJobId, pendingCorrections, saveMutation]);
 
   const handleCancel = useCallback(() => {
     setPendingCorrections(new Map());

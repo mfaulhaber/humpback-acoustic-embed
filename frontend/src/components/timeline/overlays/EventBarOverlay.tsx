@@ -1,7 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useOverlayContext } from "./OverlayContext";
 import { cn } from "@/lib/utils";
-import type { BoundaryCorrection } from "@/api/types";
 import { typeColor } from "@/components/call-parsing/TypePalette";
 
 const BADGE_WIDTH_PX = 22;

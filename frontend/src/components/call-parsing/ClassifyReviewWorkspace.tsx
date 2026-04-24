@@ -7,8 +7,8 @@ import {
   useTypedEvents,
   useVocalizationCorrections,
   useUpsertVocalizationCorrections,
-  useBoundaryCorrections,
-  useSaveBoundaryCorrections,
+  useEventBoundaryCorrections,
+  useUpsertEventBoundaryCorrections,
   useEventClassifierModels,
   useCreateClassifierTrainingJob,
   useCreateClassificationJob,
@@ -16,7 +16,8 @@ import {
 import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
 import type {
-  BoundaryCorrection,
+  EventBoundaryCorrectionItem,
+  EventBoundaryCorrectionResponse,
   EventClassificationJob,
   Region,
   TypedEventRow,
@@ -174,18 +175,16 @@ export function ClassifyReviewWorkspace({
   const { data: savedVocCorrections = [] } =
     useVocalizationCorrections(regionDetectionJobId);
 
-  // Upstream segmentation job ID for boundary corrections
-  const segJobId = selectedJob?.event_segmentation_job_id ?? null;
   const { data: savedBoundaryCorrections = [] } =
-    useBoundaryCorrections(segJobId);
+    useEventBoundaryCorrections(regionDetectionJobId);
 
   // Pending type corrections: Map<eventId, typeName | null>
   const [pendingCorrections, setPendingCorrections] = useState<
     Map<string, string | null>
   >(new Map());
-  // Pending boundary corrections: Map<eventId, BoundaryCorrection>
+  // Pending boundary corrections: Map<eventId, EventBoundaryCorrectionItem>
   const [pendingBoundaryCorrections, setPendingBoundaryCorrections] = useState<
-    Map<string, BoundaryCorrection>
+    Map<string, EventBoundaryCorrectionItem>
   >(new Map());
   const [currentEventIndex, setCurrentEventIndex] = useState(0);
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
@@ -266,38 +265,43 @@ export function ClassifyReviewWorkspace({
   // Navigable events: exclude deleted events and include added boundary events
   // so the user can step through, select, and label all active events.
   const navigableEvents = useMemo(() => {
-    const deletedIds = new Set(
+    // Build set of deleted event keys: (region_id, original_start, original_end)
+    const deletedKeys = new Set(
       savedBoundaryCorrections
         .filter((c) => c.correction_type === "delete")
-        .map((c) => c.event_id),
+        .map((c) => `${c.region_id}:${c.original_start_sec}:${c.original_end_sec}`),
     );
     const filtered =
-      deletedIds.size === 0
+      deletedKeys.size === 0
         ? [...events]
-        : events.filter((e) => !deletedIds.has(e.eventId));
+        : events.filter(
+            (e) => !deletedKeys.has(`${e.regionId}:${e.startSec}:${e.endSec}`),
+          );
 
     // Include saved "add" boundary corrections as navigable events
     const existingIds = new Set(events.map((e) => e.eventId));
     for (const corr of savedBoundaryCorrections) {
       if (
         corr.correction_type === "add" &&
-        corr.start_sec != null &&
-        corr.end_sec != null &&
-        !existingIds.has(corr.event_id)
+        corr.corrected_start_sec != null &&
+        corr.corrected_end_sec != null
       ) {
-        const correctedType = mergedCorrections.has(corr.event_id)
-          ? mergedCorrections.get(corr.event_id) ?? null
-          : undefined;
-        filtered.push({
-          eventId: corr.event_id,
-          regionId: corr.region_id,
-          startSec: corr.start_sec,
-          endSec: corr.end_sec,
-          predictedType: null,
-          predictedScore: null,
-          correctedType,
-          allScores: [],
-        });
+        const addId = `saved-add-${corr.id}`;
+        if (!existingIds.has(addId)) {
+          const correctedType = mergedCorrections.has(addId)
+            ? mergedCorrections.get(addId) ?? null
+            : undefined;
+          filtered.push({
+            eventId: addId,
+            regionId: corr.region_id,
+            startSec: corr.corrected_start_sec,
+            endSec: corr.corrected_end_sec,
+            predictedType: null,
+            predictedScore: null,
+            correctedType,
+            allScores: [],
+          });
+        }
       }
     }
 
@@ -305,8 +309,8 @@ export function ClassifyReviewWorkspace({
     for (const [key, corr] of pendingBoundaryCorrections) {
       if (
         corr.correction_type === "add" &&
-        corr.start_sec != null &&
-        corr.end_sec != null &&
+        corr.corrected_start_sec != null &&
+        corr.corrected_end_sec != null &&
         !existingIds.has(key)
       ) {
         const correctedType = mergedCorrections.has(key)
@@ -315,8 +319,8 @@ export function ClassifyReviewWorkspace({
         filtered.push({
           eventId: key,
           regionId: corr.region_id,
-          startSec: corr.start_sec,
-          endSec: corr.end_sec,
+          startSec: corr.corrected_start_sec,
+          endSec: corr.corrected_end_sec,
           predictedType: null,
           predictedScore: null,
           correctedType,
@@ -385,45 +389,55 @@ export function ClassifyReviewWorkspace({
       setPendingBoundaryCorrections((prev) => {
         const next = new Map(prev);
         const existing = prev.get(eventId);
-        const saved = savedBoundaryCorrections.find(
-          (c) => c.event_id === eventId,
-        );
-        // Preserve "add" type when adjusting an added event
-        const isAdd =
-          existing?.correction_type === "add" ||
-          saved?.correction_type === "add";
         const ev = events.find((e) => e.eventId === eventId);
-        next.set(eventId, {
-          event_id: eventId,
-          region_id:
-            ev?.regionId ??
-            existing?.region_id ??
-            saved?.region_id ??
-            currentRegion?.region_id ??
-            "",
-          correction_type: isAdd ? "add" : "adjust",
-          start_sec: startSec,
-          end_sec: endSec,
-        });
+        // Check if event is an "add" correction: pending add, or saved add (eventId starts with "saved-add-")
+        const isAdd = existing?.correction_type === "add" || eventId.startsWith("saved-add-") || eventId.startsWith("add-");
+        const regionId =
+          ev?.regionId ?? existing?.region_id ?? currentRegion?.region_id ?? "";
+        if (isAdd) {
+          next.set(eventId, {
+            region_id: regionId,
+            correction_type: "add",
+            original_start_sec: null,
+            original_end_sec: null,
+            corrected_start_sec: startSec,
+            corrected_end_sec: endSec,
+          });
+        } else {
+          next.set(eventId, {
+            region_id: regionId,
+            correction_type: "adjust",
+            original_start_sec: ev?.startSec ?? startSec,
+            original_end_sec: ev?.endSec ?? endSec,
+            corrected_start_sec: startSec,
+            corrected_end_sec: endSec,
+          });
+        }
         return next;
       });
     },
-    [events, savedBoundaryCorrections, currentRegion],
+    [events, currentRegion],
   );
 
   // Build effective events for the spectrogram overlay (current region only)
   // Incorporates both saved and pending boundary corrections.
   const regionEffectiveEvents: EffectiveEvent[] = useMemo(() => {
     if (!currentRegion) return [];
-    const savedBoundaryMap = new Map(
-      savedBoundaryCorrections.map((c) => [c.event_id, c]),
-    );
+    // Index saved boundary corrections by (region_id, original_start, original_end) for adjust/delete
+    const savedBoundaryByKey = new Map<string, EventBoundaryCorrectionResponse>();
+    for (const c of savedBoundaryCorrections) {
+      if (c.correction_type !== "add") {
+        const key = `${c.region_id}:${c.original_start_sec}:${c.original_end_sec}`;
+        savedBoundaryByKey.set(key, c);
+      }
+    }
 
     const result: EffectiveEvent[] = events
       .filter((e) => e.regionId === currentRegion.region_id)
       .map((e) => {
         const pending = pendingBoundaryCorrections.get(e.eventId);
-        const saved = savedBoundaryMap.get(e.eventId);
+        const savedKey = `${e.regionId}:${e.startSec}:${e.endSec}`;
+        const saved = savedBoundaryByKey.get(savedKey);
         const types = resolveEventType(e.predictedType, e.correctedType);
 
         if (pending) {
@@ -443,8 +457,8 @@ export function ClassifyReviewWorkspace({
           return {
             eventId: e.eventId,
             regionId: e.regionId,
-            startSec: pending.start_sec ?? e.startSec,
-            endSec: pending.end_sec ?? e.endSec,
+            startSec: pending.corrected_start_sec ?? e.startSec,
+            endSec: pending.corrected_end_sec ?? e.endSec,
             originalStartSec: e.startSec,
             originalEndSec: e.endSec,
             confidence: e.predictedScore ?? 0,
@@ -470,8 +484,8 @@ export function ClassifyReviewWorkspace({
           return {
             eventId: e.eventId,
             regionId: e.regionId,
-            startSec: saved.start_sec ?? e.startSec,
-            endSec: saved.end_sec ?? e.endSec,
+            startSec: saved.corrected_start_sec ?? e.startSec,
+            endSec: saved.corrected_end_sec ?? e.endSec,
             originalStartSec: e.startSec,
             originalEndSec: e.endSec,
             confidence: e.predictedScore ?? 0,
@@ -494,35 +508,33 @@ export function ClassifyReviewWorkspace({
         };
       });
 
-    // Include saved "add" boundary corrections (no original event). These
-    // events aren't in the aggregated list, so their only type signal is the
-    // merged human correction (if any) — pure inference has nowhere to come
-    // from here.
+    // Include saved "add" boundary corrections
     const originalEventIds = new Set(events.map((e) => e.eventId));
     for (const corr of savedBoundaryCorrections) {
       if (
         corr.correction_type === "add" &&
-        corr.start_sec != null &&
-        corr.end_sec != null &&
-        corr.region_id === currentRegion.region_id &&
-        !originalEventIds.has(corr.event_id) &&
-        !pendingBoundaryCorrections.has(corr.event_id)
+        corr.corrected_start_sec != null &&
+        corr.corrected_end_sec != null &&
+        corr.region_id === currentRegion.region_id
       ) {
-        const correctedType = mergedCorrections.has(corr.event_id)
-          ? mergedCorrections.get(corr.event_id) ?? null
-          : undefined;
-        const types = resolveEventType(null, correctedType);
-        result.push({
-          eventId: corr.event_id,
-          regionId: corr.region_id,
-          startSec: corr.start_sec,
-          endSec: corr.end_sec,
-          originalStartSec: corr.start_sec,
-          originalEndSec: corr.end_sec,
-          confidence: 0,
-          correctionType: "add",
-          ...types,
-        });
+        const addId = `saved-add-${corr.id}`;
+        if (!originalEventIds.has(addId) && !pendingBoundaryCorrections.has(addId)) {
+          const correctedType = mergedCorrections.has(addId)
+            ? mergedCorrections.get(addId) ?? null
+            : undefined;
+          const types = resolveEventType(null, correctedType);
+          result.push({
+            eventId: addId,
+            regionId: corr.region_id,
+            startSec: corr.corrected_start_sec,
+            endSec: corr.corrected_end_sec,
+            originalStartSec: corr.corrected_start_sec,
+            originalEndSec: corr.corrected_end_sec,
+            confidence: 0,
+            correctionType: "add",
+            ...types,
+          });
+        }
       }
     }
 
@@ -530,8 +542,8 @@ export function ClassifyReviewWorkspace({
     for (const [key, corr] of pendingBoundaryCorrections) {
       if (
         corr.correction_type === "add" &&
-        corr.start_sec != null &&
-        corr.end_sec != null &&
+        corr.corrected_start_sec != null &&
+        corr.corrected_end_sec != null &&
         corr.region_id === currentRegion.region_id &&
         !originalEventIds.has(key)
       ) {
@@ -542,10 +554,10 @@ export function ClassifyReviewWorkspace({
         result.push({
           eventId: key,
           regionId: corr.region_id,
-          startSec: corr.start_sec,
-          endSec: corr.end_sec,
-          originalStartSec: corr.start_sec,
-          originalEndSec: corr.end_sec,
+          startSec: corr.corrected_start_sec,
+          endSec: corr.corrected_end_sec,
+          originalStartSec: corr.corrected_start_sec,
+          originalEndSec: corr.corrected_end_sec,
           confidence: 0,
           correctionType: "add",
           ...types,
@@ -625,20 +637,19 @@ export function ClassifyReviewWorkspace({
       const next = new Map(prev);
       const existing = next.get(currentEvent.eventId);
       if (existing?.correction_type === "add") {
-        // Remove the pending add entirely
         next.delete(currentEvent.eventId);
       } else {
         next.set(currentEvent.eventId, {
-          event_id: currentEvent.eventId,
           region_id: currentEvent.regionId,
           correction_type: "delete",
-          start_sec: null,
-          end_sec: null,
+          original_start_sec: currentEvent.startSec,
+          original_end_sec: currentEvent.endSec,
+          corrected_start_sec: null,
+          corrected_end_sec: null,
         });
       }
       return next;
     });
-    // Advance to next event (clamp if already at end)
     setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
   }, [currentEvent, navigableEvents.length]);
 
@@ -658,11 +669,12 @@ export function ClassifyReviewWorkspace({
       setPendingBoundaryCorrections((prev) => {
         const next = new Map(prev);
         next.set(tempId, {
-          event_id: tempId,
           region_id: currentRegion.region_id,
           correction_type: "add",
-          start_sec: start,
-          end_sec: end,
+          original_start_sec: null,
+          original_end_sec: null,
+          corrected_start_sec: start,
+          corrected_end_sec: end,
         });
         return next;
       });
@@ -716,7 +728,7 @@ export function ClassifyReviewWorkspace({
 
   // Save — persist both vocalization and boundary corrections in parallel
   const saveMutation = useUpsertVocalizationCorrections();
-  const saveBoundaryMutation = useSaveBoundaryCorrections();
+  const saveBoundaryMutation = useUpsertEventBoundaryCorrections();
 
   const handleSave = useCallback(() => {
     if (!regionDetectionJobId || !isDirty) return;
@@ -739,8 +751,6 @@ export function ClassifyReviewWorkspace({
     };
 
     if (hasTypeCorrections) {
-      // Convert pending eventId → typeName corrections to vocalization corrections
-      // using event time ranges from the aggregated events list
       const vocCorrections: Array<{
         start_sec: number;
         end_sec: number;
@@ -758,7 +768,6 @@ export function ClassifyReviewWorkspace({
             correction_type: "add",
           });
         } else {
-          // Negative correction — remove the predicted type
           if (evt.predictedType) {
             vocCorrections.push({
               start_sec: evt.startSec,
@@ -778,7 +787,7 @@ export function ClassifyReviewWorkspace({
               typeOk = true;
               checkDone();
             },
-            onError: (err) => {
+            onError: (err: unknown) => {
               toast({
                 title: "Failed to save type corrections",
                 description: (err as Error).message,
@@ -794,17 +803,17 @@ export function ClassifyReviewWorkspace({
       }
     }
 
-    if (hasBoundaryCorrections && segJobId) {
+    if (hasBoundaryCorrections) {
       const corrections = Array.from(pendingBoundaryCorrections.values());
       saveBoundaryMutation.mutate(
-        { jobId: segJobId, body: { corrections } },
+        { regionDetectionJobId, corrections },
         {
           onSuccess: () => {
             setPendingBoundaryCorrections(new Map());
             boundaryOk = true;
             checkDone();
           },
-          onError: (err) => {
+          onError: (err: unknown) => {
             toast({
               title: "Failed to save boundary corrections",
               description: (err as Error).message,
@@ -816,7 +825,6 @@ export function ClassifyReviewWorkspace({
     }
   }, [
     regionDetectionJobId,
-    segJobId,
     isDirty,
     pendingCorrections,
     pendingBoundaryCorrections,
