@@ -31,6 +31,19 @@ export function audioDisplayName(filename: string, folderPath?: string): string 
   return filename;
 }
 
+/** Format an offset (seconds from job start) as recording-based UTC time HH:MM:SS.d */
+export function formatRecordingTime(
+  offsetSec: number,
+  jobStartEpoch: number,
+): string {
+  const epoch = jobStartEpoch + offsetSec;
+  const d = new Date(epoch * 1000);
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = d.getUTCSeconds() + (epoch % 1);
+  return `${hh}:${mm}:${ss.toFixed(1).padStart(4, "0")}`;
+}
+
 /** Format a UTC epoch (seconds) as a short month+day string, e.g. "Apr 14". */
 export function formatUtcShort(epoch: number): string {
   const d = new Date(epoch * 1000);

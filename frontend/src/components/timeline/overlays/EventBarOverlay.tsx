@@ -6,6 +6,8 @@ import { typeColor } from "@/components/call-parsing/TypePalette";
 const BADGE_WIDTH_PX = 22;
 const BADGE_HEIGHT_PX = 14;
 const NEGATIVE_COLOR = "hsl(0, 70%, 50%)";
+export const APPROVED_RING_COLOR = "hsl(85, 80%, 45%)";
+export const CORRECTED_RING_COLOR = "rgb(74, 222, 128)";
 
 const SNAP = 0.1;
 const EDGE_HIT_PX = 8;
@@ -26,7 +28,7 @@ export interface EffectiveEvent {
   confidence: number;
   correctionType: "adjust" | "add" | "delete" | null;
   effectiveType: string | null;
-  typeSource: "inference" | "correction" | "negative" | null;
+  typeSource: "inference" | "correction" | "approved" | "negative" | null;
 }
 
 interface EventBarOverlayProps {
@@ -119,10 +121,9 @@ export function EventBarOverlay({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      e.stopPropagation();
-      const sec = getMouseSec(e);
-
       if (dragRef.current) {
+        e.stopPropagation();
+        const sec = getMouseSec(e);
         const d = dragRef.current;
         const delta = sec - d.startMouseSec;
         const newEdge = clampEdge(d.originalEdgeSec + delta, d.edge, d.anchor, d.eventId);
@@ -132,16 +133,22 @@ export function EventBarOverlay({
         return;
       }
 
-      if (addMode) setGhostSec(sec);
+      if (addMode) {
+        e.stopPropagation();
+        const sec = getMouseSec(e);
+        setGhostSec(sec);
+      }
     },
     [getMouseSec, clampEdge, addMode],
   );
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (dragRef.current && dragPreview) {
-        onAdjust(dragPreview.eventId, dragPreview.startSec, dragPreview.endSec);
+      if (dragRef.current) {
+        e.stopPropagation();
+        if (dragPreview) {
+          onAdjust(dragPreview.eventId, dragPreview.startSec, dragPreview.endSec);
+        }
       }
       dragRef.current = null;
       setDragPreview(null);
@@ -151,11 +158,13 @@ export function EventBarOverlay({
 
   const handleMouseLeave = useCallback(() => {
     setGhostSec(null);
-    if (dragRef.current && dragPreview) {
-      onAdjust(dragPreview.eventId, dragPreview.startSec, dragPreview.endSec);
+    if (dragRef.current) {
+      if (dragPreview) {
+        onAdjust(dragPreview.eventId, dragPreview.startSec, dragPreview.endSec);
+      }
+      dragRef.current = null;
+      setDragPreview(null);
     }
-    dragRef.current = null;
-    setDragPreview(null);
   }, [dragPreview, onAdjust]);
 
   const handleContainerClick = useCallback(
@@ -326,6 +335,8 @@ function EventTypeBadge({
   let color: string;
   let borderColor: string;
 
+  let ringColor: string | undefined;
+
   if (typeSource === "negative") {
     label = "—";
     background = NEGATIVE_COLOR;
@@ -336,9 +347,10 @@ function EventTypeBadge({
     label = type.slice(0, 2).toUpperCase();
     const tc = typeColor(type);
     borderColor = tc;
-    if (typeSource === "correction") {
+    if (typeSource === "correction" || typeSource === "approved") {
       background = tc;
       color = "#fff";
+      ringColor = typeSource === "approved" ? APPROVED_RING_COLOR : CORRECTED_RING_COLOR;
     } else {
       background = "#fff";
       color = tc;
@@ -367,6 +379,7 @@ function EventTypeBadge({
         borderRadius: 2,
         pointerEvents: "none",
         overflow: "visible",
+        boxShadow: ringColor ? `0 0 0 1.5px ${ringColor}` : undefined,
       }}
     >
       {label}

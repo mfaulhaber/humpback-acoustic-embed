@@ -1,5 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { typeColor } from "./TypePalette";
+import { formatRecordingTime } from "@/utils/format";
+import {
+  APPROVED_RING_COLOR,
+  CORRECTED_RING_COLOR,
+} from "@/components/timeline/overlays/EventBarOverlay";
 
 export interface AggregatedEvent {
   eventId: string;
@@ -10,6 +15,9 @@ export interface AggregatedEvent {
   predictedScore: number | null;
   correctedType: string | null | undefined; // undefined = no correction
   allScores: { type_name: string; score: number; above_threshold: boolean }[];
+  correctionType?: "adjust" | "add" | "delete" | null;
+  originalStartSec?: number;
+  originalEndSec?: number;
 }
 
 function formatDuration(sec: number): string {
@@ -18,9 +26,13 @@ function formatDuration(sec: number): string {
 
 interface ClassifyDetailPanelProps {
   event: AggregatedEvent | null;
+  jobStartEpoch: number;
 }
 
-export function ClassifyDetailPanel({ event }: ClassifyDetailPanelProps) {
+export function ClassifyDetailPanel({
+  event,
+  jobStartEpoch,
+}: ClassifyDetailPanelProps) {
   if (!event) {
     return (
       <div className="px-4 py-3 text-sm text-muted-foreground border-t">
@@ -33,6 +45,28 @@ export function ClassifyDetailPanel({ event }: ClassifyDetailPanelProps) {
   const hasCorrected = event.correctedType !== undefined;
   const displayType = hasCorrected ? event.correctedType : event.predictedType;
   const isNegative = hasCorrected && event.correctedType === null;
+  const isApproved =
+    hasCorrected &&
+    typeof event.correctedType === "string" &&
+    event.correctedType === event.predictedType;
+  const typeSource = isNegative
+    ? "negative"
+    : isApproved
+      ? "approved"
+      : hasCorrected
+        ? "correction"
+        : null;
+
+  const ringColor =
+    typeSource === "approved"
+      ? APPROVED_RING_COLOR
+      : typeSource === "correction"
+        ? CORRECTED_RING_COLOR
+        : undefined;
+
+  const isAdjusted = event.correctionType === "adjust";
+  const isDeleted = event.correctionType === "delete";
+  const isAdded = event.correctionType === "add";
 
   return (
     <div className="px-4 py-3 border-t space-y-2">
@@ -40,21 +74,40 @@ export function ClassifyDetailPanel({ event }: ClassifyDetailPanelProps) {
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Type:</span>
           {isNegative ? (
-            <Badge variant="outline" className="text-xs text-red-500 border-red-400">
+            <Badge
+              variant="outline"
+              className="text-xs text-red-500 border-red-400"
+            >
               (Negative)
             </Badge>
           ) : displayType ? (
             <Badge
               className="text-xs text-white"
-              style={{ backgroundColor: typeColor(displayType) }}
+              style={{
+                backgroundColor: typeColor(displayType),
+                boxShadow: ringColor
+                  ? `0 0 0 1.5px ${ringColor}`
+                  : undefined,
+              }}
             >
               {displayType}
             </Badge>
           ) : (
             <span className="text-xs text-muted-foreground">none</span>
           )}
-          {hasCorrected && (
-            <span className="text-xs text-green-600 font-medium">
+          {typeSource === "approved" && (
+            <span
+              className="text-xs font-medium"
+              style={{ color: APPROVED_RING_COLOR }}
+            >
+              approved
+            </span>
+          )}
+          {typeSource === "correction" && (
+            <span
+              className="text-xs font-medium"
+              style={{ color: CORRECTED_RING_COLOR }}
+            >
               corrected
             </span>
           )}
@@ -63,10 +116,34 @@ export function ClassifyDetailPanel({ event }: ClassifyDetailPanelProps) {
               score: {event.predictedScore.toFixed(3)}
             </span>
           )}
+          {isAdjusted && (
+            <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-xs text-purple-300">
+              adjusted
+            </span>
+          )}
+          {isDeleted && (
+            <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-xs text-red-300">
+              deleted
+            </span>
+          )}
+          {isAdded && (
+            <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-xs text-green-300">
+              added
+            </span>
+          )}
         </div>
         <div className="text-xs text-muted-foreground">
-          {event.startSec.toFixed(2)}s – {event.endSec.toFixed(2)}s (
+          {formatRecordingTime(event.startSec, jobStartEpoch)} –{" "}
+          {formatRecordingTime(event.endSec, jobStartEpoch)} (
           {formatDuration(duration)})
+          {isAdjusted &&
+            event.originalStartSec != null &&
+            event.originalEndSec != null && (
+              <span className="ml-1 text-purple-400">
+                was {formatRecordingTime(event.originalStartSec, jobStartEpoch)}{" "}
+                – {formatRecordingTime(event.originalEndSec, jobStartEpoch)}
+              </span>
+            )}
         </div>
       </div>
 

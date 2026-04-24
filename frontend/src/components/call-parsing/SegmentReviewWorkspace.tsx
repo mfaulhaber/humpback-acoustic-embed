@@ -681,6 +681,7 @@ export function SegmentReviewWorkspace({
             onNextEvent={goNextEvent}
             currentEventIndex={currentEventIndex}
             totalEventCount={navigableEvents.length}
+            jobStartEpoch={jobStart}
           />
           <TimelineProvider
             ref={playbackRef}
@@ -731,6 +732,7 @@ export function SegmentReviewWorkspace({
               const duration = selectedEvent.endSec - selectedEvent.startSec;
               playbackRef.current?.play(selectedEvent.startSec, duration);
             }}
+            jobStartEpoch={jobStart}
           />
           <RegionTable
             regions={regions}
@@ -738,6 +740,7 @@ export function SegmentReviewWorkspace({
             corrections={savedCorrections}
             selectedRegionId={selectedRegionId}
             onSelectRegion={handleSelectRegion}
+            jobStartEpoch={jobStart}
           />
         </div>
       ) : selectedJob ? (
@@ -751,6 +754,7 @@ export function SegmentReviewWorkspace({
             corrections={savedCorrections}
             selectedRegionId={selectedRegionId}
             onSelectRegion={handleSelectRegion}
+            jobStartEpoch={jobStart}
           />
         </div>
       ) : (

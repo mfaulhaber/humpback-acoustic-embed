@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useVocalizationTypes } from "@/hooks/queries/useVocalization";
 import { createVocalizationType } from "@/api/client";
+import {
+  APPROVED_RING_COLOR,
+  CORRECTED_RING_COLOR,
+  type EffectiveEvent,
+} from "@/components/timeline/overlays/EventBarOverlay";
 
 // Simple deterministic color from type name
 function typeColor(name: string): string {
@@ -20,9 +25,10 @@ export { typeColor };
 interface TypePaletteProps {
   activeType: string | null; // null = no selection, "" = negative
   onSelectType: (typeName: string | null) => void;
+  typeSource?: EffectiveEvent["typeSource"];
 }
 
-export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
+export function TypePalette({ activeType, onSelectType, typeSource }: TypePaletteProps) {
   const { data: vocTypes = [], refetch } = useVocalizationTypes();
   const [showAddInput, setShowAddInput] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
@@ -67,26 +73,34 @@ export function TypePalette({ activeType, onSelectType }: TypePaletteProps) {
       </button>
 
       {/* Type buttons */}
-      {vocTypes.map((vt) => (
-        <button
-          key={vt.id}
-          className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
-            activeType === vt.name
-              ? "ring-2 ring-offset-1"
-              : "hover:opacity-80"
-          }`}
-          style={{
-            borderColor: typeColor(vt.name),
-            color: activeType === vt.name ? "white" : typeColor(vt.name),
-            backgroundColor:
-              activeType === vt.name ? typeColor(vt.name) : "transparent",
-            ["--tw-ring-color" as string]: typeColor(vt.name),
-          }}
-          onClick={() => onSelectType(vt.name)}
-        >
-          {vt.name}
-        </button>
-      ))}
+      {vocTypes.map((vt) => {
+        const isActive = activeType === vt.name;
+        const ringColor = isActive && typeSource === "approved"
+          ? APPROVED_RING_COLOR
+          : isActive && typeSource === "correction"
+            ? CORRECTED_RING_COLOR
+            : undefined;
+        return (
+          <button
+            key={vt.id}
+            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
+              isActive
+                ? ringColor ? "" : "ring-2 ring-offset-1"
+                : "hover:opacity-80"
+            }`}
+            style={{
+              borderColor: typeColor(vt.name),
+              color: isActive ? "white" : typeColor(vt.name),
+              backgroundColor: isActive ? typeColor(vt.name) : "transparent",
+              ["--tw-ring-color" as string]: typeColor(vt.name),
+              boxShadow: ringColor ? `0 0 0 2.5px ${ringColor}` : undefined,
+            }}
+            onClick={() => onSelectType(vt.name)}
+          >
+            {vt.name}
+          </button>
+        );
+      })}
 
       {/* Add type */}
       {showAddInput ? (

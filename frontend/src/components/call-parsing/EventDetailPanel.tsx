@@ -1,4 +1,4 @@
-import { formatTimeDecimal } from "@/utils/format";
+import { formatRecordingTime } from "@/utils/format";
 import type { EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
 
 interface EventDetailPanelProps {
@@ -6,6 +6,7 @@ interface EventDetailPanelProps {
   onDelete: (eventId: string) => void;
   isPlaying: boolean;
   onPlaySlice: () => void;
+  jobStartEpoch: number;
 }
 
 export function EventDetailPanel({
@@ -13,6 +14,7 @@ export function EventDetailPanel({
   onDelete,
   isPlaying,
   onPlaySlice,
+  jobStartEpoch,
 }: EventDetailPanelProps) {
   if (!event) {
     return (
@@ -53,19 +55,19 @@ export function EventDetailPanel({
           <div className="grid grid-cols-3 gap-x-6 gap-y-0.5 text-xs text-muted-foreground">
             <div>
               <span className="text-foreground">Start:</span>{" "}
-              {formatTimeDecimal(event.startSec)}
+              {formatRecordingTime(event.startSec, jobStartEpoch)}
               {isAdjusted && (
                 <span className="ml-1 text-purple-400">
-                  (was {formatTimeDecimal(event.originalStartSec)})
+                  (was {formatRecordingTime(event.originalStartSec, jobStartEpoch)})
                 </span>
               )}
             </div>
             <div>
               <span className="text-foreground">End:</span>{" "}
-              {formatTimeDecimal(event.endSec)}
+              {formatRecordingTime(event.endSec, jobStartEpoch)}
               {isAdjusted && (
                 <span className="ml-1 text-purple-400">
-                  (was {formatTimeDecimal(event.originalEndSec)})
+                  (was {formatRecordingTime(event.originalEndSec, jobStartEpoch)})
                 </span>
               )}
             </div>

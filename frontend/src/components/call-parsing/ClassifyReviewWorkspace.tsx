@@ -57,18 +57,19 @@ type SavedEventBounds = {
 /** Resolve the effective type + source for a single event given its
  *  predicted (inference) and corrected (human) types. Correction overrides
  *  prediction; a null correction means the human marked the event negative. */
-function resolveEventType(
+export function resolveEventType(
   predictedType: string | null,
   correctedType: string | null | undefined,
 ): {
   effectiveType: string | null;
-  typeSource: "inference" | "correction" | "negative" | null;
+  typeSource: "inference" | "correction" | "approved" | "negative" | null;
 } {
   if (correctedType === null) {
     return { effectiveType: null, typeSource: "negative" };
   }
   if (typeof correctedType === "string") {
-    return { effectiveType: correctedType, typeSource: "correction" };
+    const source = correctedType === predictedType ? "approved" : "correction";
+    return { effectiveType: correctedType, typeSource: source };
   }
   if (typeof predictedType === "string") {
     return { effectiveType: predictedType, typeSource: "inference" };
@@ -405,6 +406,11 @@ export function ClassifyReviewWorkspace({
     return currentEvent.predictedType;
   }, [currentEvent]);
 
+  const currentTypeSource = useMemo(() => {
+    if (!currentEvent) return null;
+    return resolveEventType(currentEvent.predictedType, currentEvent.correctedType).typeSource;
+  }, [currentEvent]);
+
   // Clicking a type in the palette applies it to the current event.
   // Clicking the type that already represents the event's effective label is
   // meaningful only when the label came from inference — it promotes the
@@ -637,6 +643,9 @@ export function ClassifyReviewWorkspace({
       ...currentEvent,
       startSec: effective.startSec,
       endSec: effective.endSec,
+      correctionType: effective.correctionType,
+      originalStartSec: effective.originalStartSec,
+      originalEndSec: effective.originalEndSec,
     };
   }, [currentEvent, regionEffectiveEvents]);
 
@@ -1209,10 +1218,10 @@ export function ClassifyReviewWorkspace({
           )}
 
           {/* Type palette */}
-          <TypePalette activeType={currentEventType} onSelectType={handleSelectType} />
+          <TypePalette activeType={currentEventType} onSelectType={handleSelectType} typeSource={currentTypeSource} />
 
           {/* Detail panel */}
-          <ClassifyDetailPanel event={displayEvent} />
+          <ClassifyDetailPanel event={displayEvent} jobStartEpoch={0} />
         </div>
       ) : (
         <div className="py-8 text-center text-muted-foreground">
