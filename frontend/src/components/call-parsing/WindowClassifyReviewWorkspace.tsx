@@ -7,6 +7,8 @@ import {
   useRegionJobRegions,
   useVocalizationCorrections,
   useUpsertVocalizationCorrections,
+  useEventBoundaryCorrections,
+  useUpsertEventBoundaryCorrections,
 } from "@/hooks/queries/useCallParsing";
 import { useVocClassifierModel } from "@/hooks/queries/useVocalization";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
@@ -17,6 +19,8 @@ import type {
   WindowScoreRow,
   SegmentationEvent,
   VocalizationCorrectionItem,
+  EventBoundaryCorrectionItem,
+  EventBoundaryCorrectionResponse,
 } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +32,8 @@ import {
   Save,
   X,
   Plus,
+  Trash2,
+  MousePointerClick,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
@@ -36,6 +42,7 @@ import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
 import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
+import { EventBarOverlay, type EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
 import { useOverlayContext } from "@/components/timeline/overlays/OverlayContext";
 import type { GradientStops } from "@/components/timeline/spectrogram/ConfidenceStrip";
 import { typeColor } from "./TypePalette";
@@ -150,6 +157,10 @@ export function WindowClassifyReviewWorkspace({
   const { data: savedCorrections = [] } =
     useVocalizationCorrections(regionDetectionJobId);
 
+  // Saved boundary corrections
+  const { data: savedBoundaryCorrections = [] } =
+    useEventBoundaryCorrections(regionDetectionJobId);
+
   // Group events by region and annotate with indices
   const eventsByRegion = useMemo(() => {
     const grouped: Record<string, EventWithRegion[]> = {};
@@ -188,17 +199,145 @@ export function WindowClassifyReviewWorkspace({
     return result;
   }, [regions, eventsByRegion]);
 
+  // Pending boundary corrections: Map<eventId, EventBoundaryCorrectionItem>
+  const [pendingBoundaryCorrections, setPendingBoundaryCorrections] = useState<
+    Map<string, EventBoundaryCorrectionItem>
+  >(new Map());
+
+  const [addMode, setAddMode] = useState(false);
+
+  // Build effective events merging boundary corrections with original events
+  const effectiveEvents: EffectiveEvent[] = useMemo(() => {
+    // Index saved corrections by (region_id, original_start, original_end) for adjust/delete
+    const savedByKey = new Map<string, EventBoundaryCorrectionResponse>();
+    for (const c of savedBoundaryCorrections) {
+      if (c.correction_type !== "add") {
+        const key = `${c.region_id}:${c.original_start_sec}:${c.original_end_sec}`;
+        savedByKey.set(key, c);
+      }
+    }
+
+    const result: EffectiveEvent[] = allEvents.map((ev) => {
+      const pending = pendingBoundaryCorrections.get(ev.event_id);
+      const savedKey = `${ev.region_id}:${ev.start_sec}:${ev.end_sec}`;
+      const saved = savedByKey.get(savedKey);
+
+      if (pending) {
+        return {
+          eventId: ev.event_id,
+          regionId: ev.region_id,
+          startSec: pending.corrected_start_sec ?? ev.start_sec,
+          endSec: pending.corrected_end_sec ?? ev.end_sec,
+          originalStartSec: ev.start_sec,
+          originalEndSec: ev.end_sec,
+          confidence: ev.segmentation_confidence,
+          correctionType: pending.correction_type,
+          effectiveType: null,
+          typeSource: null,
+        };
+      }
+
+      if (saved) {
+        return {
+          eventId: ev.event_id,
+          regionId: ev.region_id,
+          startSec: saved.corrected_start_sec ?? ev.start_sec,
+          endSec: saved.corrected_end_sec ?? ev.end_sec,
+          originalStartSec: ev.start_sec,
+          originalEndSec: ev.end_sec,
+          confidence: ev.segmentation_confidence,
+          correctionType: saved.correction_type as EffectiveEvent["correctionType"],
+          effectiveType: null,
+          typeSource: null,
+        };
+      }
+
+      return {
+        eventId: ev.event_id,
+        regionId: ev.region_id,
+        startSec: ev.start_sec,
+        endSec: ev.end_sec,
+        originalStartSec: ev.start_sec,
+        originalEndSec: ev.end_sec,
+        confidence: ev.segmentation_confidence,
+        correctionType: null,
+        effectiveType: null,
+        typeSource: null,
+      };
+    });
+
+    // Add saved "add" boundary corrections
+    for (const corr of savedBoundaryCorrections) {
+      if (
+        corr.correction_type === "add" &&
+        corr.corrected_start_sec != null &&
+        corr.corrected_end_sec != null
+      ) {
+        const addId = `saved-add-${corr.id}`;
+        if (!pendingBoundaryCorrections.has(addId)) {
+          result.push({
+            eventId: addId,
+            regionId: corr.region_id,
+            startSec: corr.corrected_start_sec,
+            endSec: corr.corrected_end_sec,
+            originalStartSec: corr.corrected_start_sec,
+            originalEndSec: corr.corrected_end_sec,
+            confidence: 0,
+            correctionType: "add",
+            effectiveType: null,
+            typeSource: null,
+          });
+        }
+      }
+    }
+
+    // Add pending "add" boundary corrections
+    for (const [key, corr] of pendingBoundaryCorrections) {
+      if (
+        corr.correction_type === "add" &&
+        corr.corrected_start_sec != null &&
+        corr.corrected_end_sec != null
+      ) {
+        result.push({
+          eventId: key,
+          regionId: corr.region_id,
+          startSec: corr.corrected_start_sec,
+          endSec: corr.corrected_end_sec,
+          originalStartSec: corr.corrected_start_sec,
+          originalEndSec: corr.corrected_end_sec,
+          confidence: 0,
+          correctionType: "add",
+          effectiveType: null,
+          typeSource: null,
+        });
+      }
+    }
+
+    return result;
+  }, [allEvents, savedBoundaryCorrections, pendingBoundaryCorrections]);
+
   // Event/region navigation state
   const [selectedEventIdx, setSelectedEventIdx] = useState(0);
 
   useEffect(() => {
     setSelectedEventIdx(0);
     setPendingCorrections(new Map());
+    setPendingBoundaryCorrections(new Map());
+    setAddMode(false);
   }, [selectedJobId]);
 
   const selectedEvent = allEvents[selectedEventIdx] ?? null;
   const currentRegionIndex = selectedEvent?.regionIndex ?? 0;
   const currentRegion = regions[currentRegionIndex] ?? null;
+
+  // Effective events filtered to current region
+  const regionEffectiveEvents = useMemo(
+    () =>
+      currentRegion
+        ? effectiveEvents.filter((e) => e.regionId === currentRegion.region_id)
+        : [],
+    [effectiveEvents, currentRegion],
+  );
 
   // Type selector for confidence strip
   const [selectedType, setSelectedType] = useState<string | null>(null);
@@ -266,12 +405,15 @@ export function WindowClassifyReviewWorkspace({
     return scores;
   }, [selectedEvent, allScoreRows]);
 
-  // Pending corrections: Map<correctionKey, PendingCorrection>
+  // Pending vocalization corrections: Map<correctionKey, PendingCorrection>
   const [pendingCorrections, setPendingCorrections] = useState<
     Map<string, PendingCorrection>
   >(new Map());
 
-  const isDirty = pendingCorrections.size > 0;
+  const isDirty =
+    pendingCorrections.size > 0 || pendingBoundaryCorrections.size > 0;
+  const unsavedCount =
+    pendingCorrections.size + pendingBoundaryCorrections.size;
 
   // Merged corrections (saved + pending, pending overrides)
   const mergedCorrections = useMemo(() => {
@@ -397,38 +539,170 @@ export function WindowClassifyReviewWorkspace({
     [selectedEvent],
   );
 
+  // Boundary editing: adjust handler
+  const handleBoundaryAdjust = useCallback(
+    (eventId: string, startSec: number, endSec: number) => {
+      setPendingBoundaryCorrections((prev) => {
+        const next = new Map(prev);
+        const existing = prev.get(eventId);
+        const isAdd = existing?.correction_type === "add";
+        const ev = allEvents.find((e) => e.event_id === eventId);
+        const effectiveEv = effectiveEvents.find((e) => e.eventId === eventId);
+        const regionId =
+          ev?.region_id ?? existing?.region_id ?? currentRegion?.region_id ?? "";
+        if (isAdd) {
+          next.set(eventId, {
+            region_id: regionId,
+            correction_type: "add",
+            original_start_sec: null,
+            original_end_sec: null,
+            corrected_start_sec: startSec,
+            corrected_end_sec: endSec,
+          });
+        } else {
+          next.set(eventId, {
+            region_id: regionId,
+            correction_type: "adjust",
+            original_start_sec: ev?.start_sec ?? effectiveEv?.originalStartSec ?? startSec,
+            original_end_sec: ev?.end_sec ?? effectiveEv?.originalEndSec ?? endSec,
+            corrected_start_sec: startSec,
+            corrected_end_sec: endSec,
+          });
+        }
+        return next;
+      });
+    },
+    [allEvents, effectiveEvents, currentRegion],
+  );
+
+  // Boundary editing: add handler
+  const handleBoundaryAdd = useCallback(
+    (regionId: string, startSec: number, endSec: number) => {
+      const tempId = `add-${crypto.randomUUID()}`;
+      setPendingBoundaryCorrections((prev) => {
+        const next = new Map(prev);
+        next.set(tempId, {
+          region_id: regionId,
+          correction_type: "add",
+          original_start_sec: null,
+          original_end_sec: null,
+          corrected_start_sec: startSec,
+          corrected_end_sec: endSec,
+        });
+        return next;
+      });
+      setAddMode(false);
+    },
+    [],
+  );
+
+  // Boundary editing: delete handler
+  const handleBoundaryDelete = useCallback(
+    (eventId: string) => {
+      setPendingBoundaryCorrections((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(eventId);
+        if (existing?.correction_type === "delete") {
+          next.delete(eventId);
+        } else if (existing?.correction_type === "add") {
+          next.delete(eventId);
+        } else {
+          const ev = allEvents.find((e) => e.event_id === eventId);
+          next.set(eventId, {
+            region_id: ev?.region_id ?? currentRegion?.region_id ?? "",
+            correction_type: "delete",
+            original_start_sec: ev?.start_sec ?? null,
+            original_end_sec: ev?.end_sec ?? null,
+            corrected_start_sec: null,
+            corrected_end_sec: null,
+          });
+        }
+        return next;
+      });
+    },
+    [allEvents, currentRegion],
+  );
+
   // Save
   const upsertMutation = useUpsertVocalizationCorrections();
+  const upsertBoundaryMutation = useUpsertEventBoundaryCorrections();
 
   const handleSave = useCallback(() => {
     if (!regionDetectionJobId || !isDirty) return;
-    const corrections: VocalizationCorrectionItem[] = Array.from(
-      pendingCorrections.values(),
-    );
-    upsertMutation.mutate(
-      { regionDetectionJobId, corrections },
-      {
-        onSuccess: () => {
-          setPendingCorrections(new Map());
-          toast({
-            title: "Corrections saved",
-            description: `${corrections.length} correction${corrections.length !== 1 ? "s" : ""} saved.`,
-          });
+
+    const hasVocCorrections = pendingCorrections.size > 0;
+    const hasBoundaryCorrections = pendingBoundaryCorrections.size > 0;
+    let vocOk = !hasVocCorrections;
+    let boundaryOk = !hasBoundaryCorrections;
+
+    const checkDone = () => {
+      if (vocOk && boundaryOk) {
+        const total = unsavedCount;
+        toast({
+          title: "Corrections saved",
+          description: `${total} correction${total !== 1 ? "s" : ""} saved.`,
+        });
+      }
+    };
+
+    if (hasVocCorrections) {
+      const corrections: VocalizationCorrectionItem[] = Array.from(
+        pendingCorrections.values(),
+      );
+      upsertMutation.mutate(
+        { regionDetectionJobId, corrections },
+        {
+          onSuccess: () => {
+            setPendingCorrections(new Map());
+            vocOk = true;
+            checkDone();
+          },
+          onError: (err: unknown) => {
+            toast({
+              title: "Failed to save vocalization corrections",
+              description: (err as Error).message,
+              variant: "destructive",
+            });
+          },
         },
-        onError: (err) => {
-          toast({
-            title: "Failed to save corrections",
-            description: (err as Error).message,
-            variant: "destructive",
-          });
+      );
+    }
+
+    if (hasBoundaryCorrections) {
+      const corrections = Array.from(pendingBoundaryCorrections.values());
+      upsertBoundaryMutation.mutate(
+        { regionDetectionJobId, corrections },
+        {
+          onSuccess: () => {
+            setPendingBoundaryCorrections(new Map());
+            boundaryOk = true;
+            checkDone();
+          },
+          onError: (err: unknown) => {
+            toast({
+              title: "Failed to save boundary corrections",
+              description: (err as Error).message,
+              variant: "destructive",
+            });
+          },
         },
-      },
-    );
-  }, [regionDetectionJobId, isDirty, pendingCorrections, upsertMutation]);
+      );
+    }
+  }, [
+    regionDetectionJobId,
+    isDirty,
+    unsavedCount,
+    pendingCorrections,
+    pendingBoundaryCorrections,
+    upsertMutation,
+    upsertBoundaryMutation,
+  ]);
 
   const handleCancel = useCallback(() => {
     if (isDirty && !window.confirm("Discard unsaved corrections?")) return;
     setPendingCorrections(new Map());
+    setPendingBoundaryCorrections(new Map());
+    setAddMode(false);
   }, [isDirty]);
 
   // beforeunload warning
@@ -483,11 +757,16 @@ export function WindowClassifyReviewWorkspace({
           e.preventDefault();
           togglePlayback();
           break;
+        case "Backspace":
+        case "Delete":
+          e.preventDefault();
+          if (selectedEvent) handleBoundaryDelete(selectedEvent.event_id);
+          break;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goPrevEvent, goNextEvent, goPrevRegion, goNextRegion, togglePlayback]);
+  }, [goPrevEvent, goNextEvent, goPrevRegion, goNextRegion, togglePlayback, selectedEvent, handleBoundaryDelete]);
 
   // Job label
   const jobLabel = useCallback(
@@ -560,8 +839,8 @@ export function WindowClassifyReviewWorkspace({
         </select>
         {isDirty && (
           <span className="text-xs text-yellow-500">
-            {pendingCorrections.size} unsaved change
-            {pendingCorrections.size !== 1 ? "s" : ""}
+            {unsavedCount} unsaved change
+            {unsavedCount !== 1 ? "s" : ""}
           </span>
         )}
       </div>
@@ -650,6 +929,32 @@ export function WindowClassifyReviewWorkspace({
                   <Play className="h-3.5 w-3.5" />
                 )}
               </Button>
+
+              <div className="w-px h-5 bg-border mx-1" />
+
+              <Button
+                variant={addMode ? "default" : "ghost"}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setAddMode((prev) => !prev)}
+                title="Add event mode"
+              >
+                <MousePointerClick className="h-3 w-3 mr-1" />
+                Add
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  if (selectedEvent) handleBoundaryDelete(selectedEvent.event_id);
+                }}
+                disabled={!selectedEvent}
+                title="Delete event (Del)"
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Delete
+              </Button>
             </div>
 
             <div className="flex items-center gap-2">
@@ -667,10 +972,16 @@ export function WindowClassifyReviewWorkspace({
                 size="sm"
                 className="h-7 text-xs"
                 onClick={handleSave}
-                disabled={!isDirty || upsertMutation.isPending}
+                disabled={
+                  !isDirty ||
+                  upsertMutation.isPending ||
+                  upsertBoundaryMutation.isPending
+                }
               >
                 <Save className="h-3 w-3 mr-1" />
-                {upsertMutation.isPending ? "Saving…" : "Save"}
+                {upsertMutation.isPending || upsertBoundaryMutation.isPending
+                  ? "Saving…"
+                  : "Save"}
               </Button>
             </div>
           </div>
@@ -737,6 +1048,10 @@ export function WindowClassifyReviewWorkspace({
                 allEvents={allEvents}
                 allScoreRows={allScoreRows}
                 onSelectEvent={(idx) => setSelectedEventIdx(idx)}
+                regionEffectiveEvents={regionEffectiveEvents}
+                onAdjust={handleBoundaryAdjust}
+                onAdd={handleBoundaryAdd}
+                addMode={addMode}
               />
             </TimelineProvider>
           ) : (
@@ -776,6 +1091,10 @@ interface WindowClassifyViewerBodyProps {
   allEvents: EventWithRegion[];
   allScoreRows: WindowScoreRow[];
   onSelectEvent: (globalIndex: number) => void;
+  regionEffectiveEvents: EffectiveEvent[];
+  onAdjust: (eventId: string, startSec: number, endSec: number) => void;
+  onAdd: (regionId: string, startSec: number, endSec: number) => void;
+  addMode: boolean;
 }
 
 function WindowClassifyViewerBody({
@@ -787,6 +1106,10 @@ function WindowClassifyViewerBody({
   allEvents,
   allScoreRows,
   onSelectEvent,
+  regionEffectiveEvents,
+  onAdjust,
+  onAdd,
+  addMode,
 }: WindowClassifyViewerBodyProps) {
   const ctx = useTimelineContext();
 
@@ -850,39 +1173,9 @@ function WindowClassifyViewerBody({
     [regionDetectionJobId],
   );
 
-  // Click handler for event selection
-  const handleSpectrogramClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const relX = e.clientX - rect.left;
-      const clickEpoch =
-        ctx.centerTimestamp + (relX - rect.width / 2) / ctx.pxPerSec;
-
-      let nearestIdx = -1;
-      let minDist = Infinity;
-      for (let i = 0; i < allEvents.length; i++) {
-        const evt = allEvents[i];
-        const evtCenter = (evt.start_sec + evt.end_sec) / 2;
-        const dist = Math.abs(evtCenter - clickEpoch);
-        if (dist < minDist) {
-          minDist = dist;
-          nearestIdx = i;
-        }
-      }
-      if (nearestIdx >= 0 && minDist < WINDOW_SIZE_SEC * 2) {
-        onSelectEvent(nearestIdx);
-      }
-    },
-    [ctx.centerTimestamp, ctx.pxPerSec, allEvents, onSelectEvent],
-  );
-
   return (
     <div className="w-full select-none">
-      <div
-        className="flex flex-col"
-        style={{ height: 200 }}
-        onClick={handleSpectrogramClick}
-      >
+      <div className="flex flex-col" style={{ height: 200 }}>
         <Spectrogram
           jobId={regionDetectionJobId}
           tileUrlBuilder={tileUrlBuilder}
@@ -896,65 +1189,24 @@ function WindowClassifyViewerBody({
             regions={allRegions}
             activeRegionId={region.region_id}
           />
-          <EventOverlays
-            events={allEvents}
-            selectedEvent={selectedEvent}
+          <EventBarOverlay
+            events={regionEffectiveEvents}
+            selectedEventId={selectedEvent?.event_id ?? null}
+            onSelectEvent={(eventId) => {
+              if (!eventId) return;
+              const idx = allEvents.findIndex((e) => e.event_id === eventId);
+              if (idx >= 0) onSelectEvent(idx);
+            }}
+            onAdjust={onAdjust}
+            onAdd={onAdd}
+            addMode={addMode}
+            activeRegionId={region.region_id}
           />
         </Spectrogram>
       </div>
       <div className="border-t border-border px-2 py-1">
         <ZoomSelector />
       </div>
-    </div>
-  );
-}
-
-// ---- Event boundary overlays ----
-
-function EventOverlays({
-  events,
-  selectedEvent,
-}: {
-  events: EventWithRegion[];
-  selectedEvent: EventWithRegion | null;
-}) {
-  const { epochToX, canvasHeight } = useOverlayContext();
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        pointerEvents: "none",
-        overflow: "hidden",
-      }}
-    >
-      {events.map((evt) => {
-        const isSelected = selectedEvent?.event_id === evt.event_id;
-        const x1 = epochToX(evt.start_sec);
-        const x2 = epochToX(evt.end_sec);
-        const width = x2 - x1;
-
-        return (
-          <div key={evt.event_id}>
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: x1,
-                width: Math.max(2, width),
-                height: canvasHeight,
-                background: isSelected
-                  ? "rgba(168, 130, 220, 0.3)"
-                  : "rgba(168, 130, 220, 0.08)",
-                borderLeft: `2px solid ${isSelected ? "rgba(168, 130, 220, 0.9)" : "rgba(168, 130, 220, 0.4)"}`,
-                borderRight: `2px solid ${isSelected ? "rgba(168, 130, 220, 0.9)" : "rgba(168, 130, 220, 0.4)"}`,
-                zIndex: isSelected ? 6 : 4,
-              }}
-            />
-          </div>
-        );
-      })}
     </div>
   );
 }
