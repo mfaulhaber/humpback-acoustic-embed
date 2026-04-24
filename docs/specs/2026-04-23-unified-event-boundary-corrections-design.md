@@ -94,7 +94,7 @@ async def load_corrected_events(session, region_detection_job_id, segmentation_j
 **Consumers:**
 - Classification inference worker — corrected boundaries for Pass 3
 - Classifier feedback training worker — corrected boundaries + vocalization label resolution
-- Segmentation training (future) — corrections as ground truth targets
+- Segmentation training (`collect_corrected_samples()` in `extraction.py`, `create_dataset_from_corrections()` in service layer) — corrections as ground truth targets for retraining
 - All three review UIs — merge saved + pending corrections over parquet events
 
 ### Frontend Changes
@@ -150,10 +150,9 @@ Corrections survive Pass 2 re-runs because they are anchored to the detection jo
 - Full boundary editing (adjust, add, delete) added to Window Classify review
 - Migration dropping old table
 - Dead code cleanup
-- Updated downstream workers
+- Updated downstream workers (classification inference, classifier feedback training, segmentation training via `collect_corrected_samples()`)
 
 **Not in scope:**
-- Segmentation model training from corrections (future work)
 - Stale correction handling after re-running Pass 2 (silent application)
 - Changes to vocalization corrections (already unified)
 - Changes to Pass 1 or Pass 4
