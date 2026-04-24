@@ -12,10 +12,11 @@
 - Modify: `src/humpback/models/clustering.py`
 
 **Acceptance criteria:**
+- [ ] Back up the production database before any schema change: read `HUMPBACK_DATABASE_URL` from `.env`, copy to `<path>.YYYY-MM-DD-HH:mm.bak` (UTC), verify backup exists with non-zero size. Stop if backup fails.
 - [ ] New nullable `detection_job_ids` column (Text) added to `clustering_jobs` table
 - [ ] Migration uses `op.batch_alter_table()` for SQLite compatibility
 - [ ] `ClusteringJob` model updated with `detection_job_ids: Mapped[Optional[str]]`
-- [ ] Migration runs cleanly against the production database (backup first per CLAUDE.md §3.5)
+- [ ] Migration runs cleanly against the production database
 - [ ] Existing clustering jobs unaffected (column is null for them)
 
 **Tests needed:**

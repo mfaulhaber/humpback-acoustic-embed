@@ -26,6 +26,7 @@ When using the superpowers brainstorming skill before this step:
 4. **Break the spec into discrete implementation tasks**
    - Each task has: title, file paths (create/modify), acceptance criteria (checkboxes), test requirements
    - No code blocks in tasks — describe what to do, not how
+   - If any task includes an Alembic migration, its first acceptance criterion must be the CLAUDE.md §3.5 database backup step with the explicit commands (read path from `.env`, copy with UTC timestamp, verify non-zero size). This is not a parenthetical — it is a blocking prerequisite.
    - Include a verification section at the end with the exact commands to run
 
 5. **Write the plan** to `docs/plans/YYYY-MM-DD-<feature>.md`
