@@ -26,9 +26,8 @@ def test_corrections_only_excludes_uncorrected_events():
         "e2": [_typed_row("e2", "Moan", 0.8, True)],
         "e3": [_typed_row("e3", "Moan", 0.7, True)],
     }
-    corrections: dict[str, str | None] = {"e1": "Cry"}
+    corrections: dict[str, dict[str, str]] = {"e1": {"Cry": "add"}}
     labels = _resolve_event_labels(typed, corrections, corrections_only=True)
-    # Only corrected event gets a positive label
     assert labels["e1"] == "Cry"
     assert labels["e2"] is None
     assert labels["e3"] is None
@@ -40,7 +39,7 @@ def test_corrections_only_false_includes_inference_labels():
         "e2": [_typed_row("e2", "Moan", 0.8, True)],
         "e3": [_typed_row("e3", "Growl", 0.3, False)],
     }
-    corrections: dict[str, str | None] = {"e1": "Cry"}
+    corrections: dict[str, dict[str, str]] = {"e1": {"Cry": "add"}}
     labels = _resolve_event_labels(typed, corrections, corrections_only=False)
     assert labels["e1"] == "Cry"
     assert labels["e2"] == "Moan"  # inference fallback
@@ -51,17 +50,16 @@ def test_corrections_only_default_is_true():
     typed = {
         "e1": [_typed_row("e1", "Moan", 0.9, True)],
     }
-    corrections: dict[str, str | None] = {}
+    corrections: dict[str, dict[str, str]] = {}
     labels = _resolve_event_labels(typed, corrections)
-    # Default corrections_only=True means no inference fallback
     assert labels["e1"] is None
 
 
-def test_negative_correction_sets_none():
+def test_remove_correction_suppresses_type():
     typed = {
         "e1": [_typed_row("e1", "Moan", 0.9, True)],
     }
-    corrections: dict[str, str | None] = {"e1": None}
+    corrections: dict[str, dict[str, str]] = {"e1": {"Moan": "remove"}}
     labels = _resolve_event_labels(typed, corrections, corrections_only=True)
     assert labels["e1"] is None
 

@@ -20,21 +20,21 @@ from humpback.models.vocalization import VocalizationClassifierModel
 from humpback.schemas.call_parsing import (
     BoundaryCorrection,
     CreateClassifierTrainingJobRequest,
-    TypeCorrection,
+    VocalizationCorrectionItem,
 )
 from humpback.services.call_parsing import (
     CallParsingFKError,
     CallParsingStateError,
     clear_boundary_corrections,
-    clear_type_corrections,
+    clear_vocalization_corrections,
     create_classifier_training_job,
     delete_classifier_model,
     delete_classifier_training_job,
     list_boundary_corrections,
     list_classifier_models,
-    list_type_corrections,
+    list_vocalization_corrections,
     upsert_boundary_corrections,
-    upsert_type_corrections,
+    upsert_vocalization_corrections,
 )
 
 
@@ -110,14 +110,25 @@ def test_boundary_correction_rejects_invalid_type():
         )
 
 
-def test_type_correction_accepts_null_type_name():
-    c = TypeCorrection(event_id="e1", type_name=None)
-    assert c.type_name is None
+def test_vocalization_correction_rejects_invalid_correction_type():
+    with pytest.raises(ValidationError):
+        VocalizationCorrectionItem(
+            start_sec=1.0, end_sec=2.0, type_name="Whup", correction_type="invalid"
+        )
 
 
-def test_type_correction_accepts_string_type_name():
-    c = TypeCorrection(event_id="e1", type_name="upcall")
-    assert c.type_name == "upcall"
+def test_vocalization_correction_accepts_add():
+    c = VocalizationCorrectionItem(
+        start_sec=1.0, end_sec=2.0, type_name="Whup", correction_type="add"
+    )
+    assert c.correction_type == "add"
+
+
+def test_vocalization_correction_accepts_remove():
+    c = VocalizationCorrectionItem(
+        start_sec=1.0, end_sec=2.0, type_name="Whup", correction_type="remove"
+    )
+    assert c.correction_type == "remove"
 
 
 def test_create_classifier_request_rejects_empty_ids():
@@ -264,94 +275,102 @@ async def test_list_boundary_empty_for_no_corrections(session):
     assert rows == []
 
 
-async def test_upsert_type_creates_and_overwrites(session):
-    rd, es, ec = _make_complete_classification_job()
-    session.add(rd)
-    await session.flush()
-    es.region_detection_job_id = rd.id
-    session.add(es)
-    await session.flush()
-    ec.event_segmentation_job_id = es.id
-    session.add(ec)
-    await session.commit()
-
-    corrections1 = [TypeCorrection(event_id="e1", type_name="upcall")]
-    count = await upsert_type_corrections(session, ec.id, corrections1)
-    assert count == 1
-
-    rows = await list_type_corrections(session, ec.id)
-    assert len(rows) == 1
-    assert rows[0].type_name == "upcall"
-
-    corrections2 = [TypeCorrection(event_id="e1", type_name="moan")]
-    await upsert_type_corrections(session, ec.id, corrections2)
-
-    rows = await list_type_corrections(session, ec.id)
-    assert len(rows) == 1
-    assert rows[0].type_name == "moan"
-
-
-async def test_upsert_type_accepts_null_type_name(session):
-    rd, es, ec = _make_complete_classification_job()
-    session.add(rd)
-    await session.flush()
-    es.region_detection_job_id = rd.id
-    session.add(es)
-    await session.flush()
-    ec.event_segmentation_job_id = es.id
-    session.add(ec)
-    await session.commit()
-
-    corrections = [TypeCorrection(event_id="e1", type_name=None)]
-    await upsert_type_corrections(session, ec.id, corrections)
-
-    rows = await list_type_corrections(session, ec.id)
-    assert len(rows) == 1
-    assert rows[0].type_name is None
-
-
-async def test_upsert_type_rejects_nonexistent_job(session):
-    corrections = [TypeCorrection(event_id="e1", type_name="upcall")]
-    with pytest.raises(CallParsingFKError):
-        await upsert_type_corrections(session, "nonexistent", corrections)
-
-
-async def test_upsert_type_rejects_noncomplete_job(session):
+async def test_upsert_vocalization_creates_new(session):
     rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
     session.add(rd)
-    await session.flush()
-    es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
-    session.add(es)
-    await session.flush()
-    ec = EventClassificationJob(event_segmentation_job_id=es.id, status="running")
-    session.add(ec)
-    await session.commit()
-
-    corrections = [TypeCorrection(event_id="e1", type_name="upcall")]
-    with pytest.raises(CallParsingStateError):
-        await upsert_type_corrections(session, ec.id, corrections)
-
-
-async def test_clear_type_removes_all(session):
-    rd, es, ec = _make_complete_classification_job()
-    session.add(rd)
-    await session.flush()
-    es.region_detection_job_id = rd.id
-    session.add(es)
-    await session.flush()
-    ec.event_segmentation_job_id = es.id
-    session.add(ec)
     await session.commit()
 
     corrections = [
-        TypeCorrection(event_id="e1", type_name="upcall"),
-        TypeCorrection(event_id="e2", type_name="moan"),
+        VocalizationCorrectionItem(
+            start_sec=94.0, end_sec=99.0, type_name="Whup", correction_type="add"
+        )
     ]
-    await upsert_type_corrections(session, ec.id, corrections)
-    assert len(await list_type_corrections(session, ec.id)) == 2
+    rows = await upsert_vocalization_corrections(session, rd.id, corrections)
+    assert len(rows) == 1
+    assert rows[0].type_name == "Whup"
+    assert rows[0].correction_type == "add"
 
-    await clear_type_corrections(session, ec.id)
-    assert len(await list_type_corrections(session, ec.id)) == 0
+
+async def test_upsert_vocalization_updates_on_same_key(session):
+    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+    session.add(rd)
+    await session.commit()
+
+    corrections1 = [
+        VocalizationCorrectionItem(
+            start_sec=94.0, end_sec=99.0, type_name="Whup", correction_type="add"
+        )
+    ]
+    await upsert_vocalization_corrections(session, rd.id, corrections1)
+
+    corrections2 = [
+        VocalizationCorrectionItem(
+            start_sec=94.0, end_sec=99.0, type_name="Whup", correction_type="remove"
+        )
+    ]
+    rows = await upsert_vocalization_corrections(session, rd.id, corrections2)
+    assert len(rows) == 1
+    assert rows[0].correction_type == "remove"
+
+
+async def test_list_vocalization_filtered_by_detection_job(session):
+    rd1 = RegionDetectionJob(audio_file_id="af-1", status="complete")
+    rd2 = RegionDetectionJob(audio_file_id="af-2", status="complete")
+    session.add_all([rd1, rd2])
+    await session.commit()
+
+    await upsert_vocalization_corrections(
+        session,
+        rd1.id,
+        [
+            VocalizationCorrectionItem(
+                start_sec=1.0, end_sec=2.0, type_name="Whup", correction_type="add"
+            )
+        ],
+    )
+    await upsert_vocalization_corrections(
+        session,
+        rd2.id,
+        [
+            VocalizationCorrectionItem(
+                start_sec=3.0, end_sec=4.0, type_name="Moan", correction_type="add"
+            )
+        ],
+    )
+
+    rows = await list_vocalization_corrections(session, rd1.id)
+    assert len(rows) == 1
+    assert rows[0].type_name == "Whup"
+
+
+async def test_clear_vocalization_removes_all(session):
+    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+    session.add(rd)
+    await session.commit()
+
+    corrections = [
+        VocalizationCorrectionItem(
+            start_sec=1.0, end_sec=2.0, type_name="Whup", correction_type="add"
+        ),
+        VocalizationCorrectionItem(
+            start_sec=3.0, end_sec=4.0, type_name="Moan", correction_type="remove"
+        ),
+    ]
+    await upsert_vocalization_corrections(session, rd.id, corrections)
+    assert len(await list_vocalization_corrections(session, rd.id)) == 2
+
+    await clear_vocalization_corrections(session, rd.id)
+    assert len(await list_vocalization_corrections(session, rd.id)) == 0
+
+
+async def test_upsert_vocalization_rejects_nonexistent_job(session):
+    corrections = [
+        VocalizationCorrectionItem(
+            start_sec=1.0, end_sec=2.0, type_name="Whup", correction_type="add"
+        )
+    ]
+    with pytest.raises(CallParsingFKError):
+        await upsert_vocalization_corrections(session, "nonexistent", corrections)
 
 
 # ---- Task 4: Service layer — training jobs + model management --------------

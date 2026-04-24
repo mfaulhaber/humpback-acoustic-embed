@@ -12,7 +12,7 @@ contract.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, Integer, Text
+from sqlalchemy import DateTime, Float, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from humpback.database import Base, TimestampMixin, UUIDMixin
@@ -171,18 +171,27 @@ class WindowClassificationJob(UUIDMixin, TimestampMixin, Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
 
 
-class WindowScoreCorrection(UUIDMixin, TimestampMixin, Base):
-    """Human correction to a window classification score.
+class VocalizationCorrection(UUIDMixin, TimestampMixin, Base):
+    """Unified human correction for vocalization presence/absence.
 
-    A row means "this type is present (add) or absent (remove) for this
-    window, overriding inference." Multiple rows per window are valid
-    (multi-label).
+    Keyed by ``(region_detection_job_id, start_sec, end_sec, type_name)``
+    — one row per vocalization type per event time range. Used by both
+    Window Classify review and Classify review surfaces.
     """
 
-    __tablename__ = "window_score_corrections"
+    __tablename__ = "vocalization_corrections"
+    __table_args__ = (
+        UniqueConstraint(
+            "region_detection_job_id",
+            "start_sec",
+            "end_sec",
+            "type_name",
+            name="uq_vocalization_corrections_job_time_type",
+        ),
+    )
 
-    window_classification_job_id: Mapped[str]
-    time_sec: Mapped[float] = mapped_column(Float)
-    region_id: Mapped[str]
-    correction_type: Mapped[str]
+    region_detection_job_id: Mapped[str]
+    start_sec: Mapped[float] = mapped_column(Float)
+    end_sec: Mapped[float] = mapped_column(Float)
     type_name: Mapped[str]
+    correction_type: Mapped[str]

@@ -113,15 +113,14 @@ import type {
   EventClassificationJob,
   CreateEventClassificationJobRequest,
   TypedEventRow,
-  TypeCorrectionItem,
-  TypeCorrectionResponse,
+  VocalizationCorrectionItem,
+  VocalizationCorrection,
   ClassificationJobWithCorrectionCount,
   CreateEventClassifierTrainingJobRequest,
   EventClassifierTrainingJob,
   EventClassifierModel,
   WindowClassificationJob,
   WindowScoreRow,
-  WindowScoreCorrection,
 } from "./types";
 
 class ApiError extends Error {
@@ -1067,23 +1066,23 @@ export const fetchTypedEvents = (jobId: string) =>
     `/call-parsing/classification-jobs/${jobId}/typed-events`,
   );
 
-export const fetchTypeCorrections = (jobId: string) =>
-  api<TypeCorrectionResponse[]>(
-    `/call-parsing/classification-jobs/${jobId}/corrections`,
+export const fetchVocalizationCorrections = (regionDetectionJobId: string) =>
+  api<VocalizationCorrection[]>(
+    `/call-parsing/vocalization-corrections?region_detection_job_id=${regionDetectionJobId}`,
   );
 
-export const saveTypeCorrections = (
-  jobId: string,
-  corrections: TypeCorrectionItem[],
+export const upsertVocalizationCorrections = (
+  regionDetectionJobId: string,
+  corrections: VocalizationCorrectionItem[],
 ) =>
-  post<{ count: number }>(
-    `/call-parsing/classification-jobs/${jobId}/corrections`,
-    { corrections },
+  post<VocalizationCorrection[]>(
+    `/call-parsing/vocalization-corrections`,
+    { region_detection_job_id: regionDetectionJobId, corrections },
   );
 
-export const clearTypeCorrections = (jobId: string) =>
-  api<{ status: string }>(
-    `/call-parsing/classification-jobs/${jobId}/corrections`,
+export const clearVocalizationCorrections = (regionDetectionJobId: string) =>
+  api<void>(
+    `/call-parsing/vocalization-corrections?region_detection_job_id=${regionDetectionJobId}`,
     { method: "DELETE" },
   );
 
@@ -1156,28 +1155,4 @@ export const fetchWindowScores = (
   );
 };
 
-export const upsertWindowScoreCorrections = (
-  jobId: string,
-  corrections: Array<{
-    time_sec: number;
-    region_id: string;
-    correction_type: "add" | "remove";
-    type_name: string;
-  }>,
-) =>
-  post<WindowScoreCorrection[]>(
-    `/call-parsing/window-classification-jobs/${jobId}/corrections`,
-    { corrections },
-  );
-
-export const fetchWindowScoreCorrections = (jobId: string) =>
-  api<WindowScoreCorrection[]>(
-    `/call-parsing/window-classification-jobs/${jobId}/corrections`,
-  );
-
-export const clearWindowScoreCorrections = (jobId: string) =>
-  api<{ status: string }>(
-    `/call-parsing/window-classification-jobs/${jobId}/corrections`,
-    { method: "DELETE" },
-  );
 

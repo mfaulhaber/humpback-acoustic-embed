@@ -32,8 +32,8 @@ from humpback.models.call_parsing import (
     EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
+    VocalizationCorrection,
     WindowClassificationJob,
-    WindowScoreCorrection,
 )
 from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
@@ -273,6 +273,11 @@ async def delete_region_detection_job(
     if job is None:
         return False
     _remove_dir(region_job_dir(settings.storage_root, job.id))
+    await session.execute(
+        sa_delete(VocalizationCorrection).where(
+            VocalizationCorrection.region_detection_job_id == job_id
+        )
+    )
     await session.delete(job)
     await session.commit()
     return True
@@ -498,16 +503,15 @@ async def list_classification_jobs_with_correction_counts(
     """Return completed classification jobs with correction counts and hydrophone info.
 
     Traces through segmentation job → region detection job for hydrophone metadata.
+    Counts vocalization corrections keyed by the upstream region detection job.
     Uses a LEFT JOIN subquery so there is no N+1 overhead.
     """
-    from humpback.models.feedback_training import EventTypeCorrection
-
     correction_counts = (
         select(
-            EventTypeCorrection.event_classification_job_id.label("job_id"),
-            func.count(EventTypeCorrection.id).label("correction_count"),
+            VocalizationCorrection.region_detection_job_id.label("rd_job_id"),
+            func.count(VocalizationCorrection.id).label("correction_count"),
         )
-        .group_by(EventTypeCorrection.event_classification_job_id)
+        .group_by(VocalizationCorrection.region_detection_job_id)
         .subquery()
     )
 
@@ -531,7 +535,8 @@ async def list_classification_jobs_with_correction_counts(
         )
         .outerjoin(
             correction_counts,
-            correction_counts.c.job_id == EventClassificationJob.id,
+            correction_counts.c.rd_job_id
+            == EventSegmentationJob.region_detection_job_id,
         )
         .where(EventClassificationJob.status == "complete")
         .order_by(EventClassificationJob.created_at.desc())
@@ -906,82 +911,79 @@ async def clear_boundary_corrections(
     await session.commit()
 
 
-# ---- Feedback training: type corrections (Pass 3) ------------------------
+# ---- Vocalization corrections (unified) ------------------------------------
 
 
-async def upsert_type_corrections(
+async def upsert_vocalization_corrections(
     session: AsyncSession,
-    job_id: str,
+    region_detection_job_id: str,
     corrections: list,
-) -> int:
-    """Batch upsert type corrections for a classification job.
+) -> list[VocalizationCorrection]:
+    """Batch upsert vocalization corrections for a region detection job.
 
-    Validates the job exists and is complete. Upserts by
-    ``(event_classification_job_id, event_id)`` — repeated calls
-    overwrite the previous correction for the same event.
+    Validates the detection job exists and is complete. Upserts by
+    ``(region_detection_job_id, start_sec, end_sec, type_name)``.
+    Returns the full list of corrections for the detection job after upsert.
     """
-    from humpback.models.feedback_training import EventTypeCorrection
-
-    ec = await session.get(EventClassificationJob, job_id)
-    if ec is None:
-        raise CallParsingFKError("event_classification_job_id", job_id)
-    if ec.status != "complete":
+    rd = await session.get(RegionDetectionJob, region_detection_job_id)
+    if rd is None:
+        raise CallParsingFKError("region_detection_job_id", region_detection_job_id)
+    if rd.status != "complete":
         raise CallParsingStateError(
-            f"Classification job status is {ec.status!r}, not 'complete'"
+            f"Region detection job status is {rd.status!r}, not 'complete'"
         )
 
-    count = 0
     for c in corrections:
         existing = await session.execute(
-            select(EventTypeCorrection).where(
-                EventTypeCorrection.event_classification_job_id == job_id,
-                EventTypeCorrection.event_id == c.event_id,
+            select(VocalizationCorrection).where(
+                VocalizationCorrection.region_detection_job_id
+                == region_detection_job_id,
+                VocalizationCorrection.start_sec == c.start_sec,
+                VocalizationCorrection.end_sec == c.end_sec,
+                VocalizationCorrection.type_name == c.type_name,
             )
         )
         row = existing.scalar_one_or_none()
         if row is not None:
-            row.type_name = c.type_name
+            row.correction_type = c.correction_type
         else:
             session.add(
-                EventTypeCorrection(
-                    event_classification_job_id=job_id,
-                    event_id=c.event_id,
+                VocalizationCorrection(
+                    region_detection_job_id=region_detection_job_id,
+                    start_sec=c.start_sec,
+                    end_sec=c.end_sec,
                     type_name=c.type_name,
+                    correction_type=c.correction_type,
                 )
             )
-        count += 1
 
     await session.commit()
-    return count
+    return await list_vocalization_corrections(session, region_detection_job_id)
 
 
-async def list_type_corrections(
+async def list_vocalization_corrections(
     session: AsyncSession,
-    job_id: str,
-) -> list:
-    """List all type corrections for a classification job."""
-    from humpback.models.feedback_training import EventTypeCorrection
-
+    region_detection_job_id: str,
+) -> list[VocalizationCorrection]:
+    """List all vocalization corrections for a region detection job."""
     result = await session.execute(
-        select(EventTypeCorrection)
-        .where(EventTypeCorrection.event_classification_job_id == job_id)
-        .order_by(EventTypeCorrection.created_at)
+        select(VocalizationCorrection)
+        .where(
+            VocalizationCorrection.region_detection_job_id == region_detection_job_id
+        )
+        .order_by(VocalizationCorrection.created_at)
     )
     return list(result.scalars().all())
 
 
-async def clear_type_corrections(
+async def clear_vocalization_corrections(
     session: AsyncSession,
-    job_id: str,
+    region_detection_job_id: str,
 ) -> None:
-    """Delete all type corrections for a classification job."""
-    from humpback.models.feedback_training import EventTypeCorrection
-
-    from sqlalchemy import delete as _delete
-
+    """Delete all vocalization corrections for a region detection job."""
     await session.execute(
-        _delete(EventTypeCorrection).where(
-            EventTypeCorrection.event_classification_job_id == job_id
+        sa_delete(VocalizationCorrection).where(
+            VocalizationCorrection.region_detection_job_id == region_detection_job_id
         )
     )
     await session.commit()
@@ -1335,11 +1337,6 @@ async def delete_window_classification_job(
     if job is None:
         return False
     _remove_dir(window_classification_job_dir(settings.storage_root, job.id))
-    await session.execute(
-        sa_delete(WindowScoreCorrection).where(
-            WindowScoreCorrection.window_classification_job_id == job_id
-        )
-    )
     await session.delete(job)
     await session.commit()
     return True
@@ -1401,73 +1398,3 @@ async def read_window_scores(
         )
 
     return result
-
-
-async def upsert_window_score_corrections(
-    session: AsyncSession,
-    job_id: str,
-    corrections: list,
-) -> int:
-    """Batch upsert window score corrections.
-
-    Keyed by ``(window_classification_job_id, time_sec, type_name)`` —
-    repeated calls overwrite the previous correction for the same window
-    and type.
-    """
-    job = await session.get(WindowClassificationJob, job_id)
-    if job is None:
-        raise CallParsingFKError("window_classification_job_id", job_id)
-
-    count = 0
-    for c in corrections:
-        existing = await session.execute(
-            select(WindowScoreCorrection).where(
-                WindowScoreCorrection.window_classification_job_id == job_id,
-                WindowScoreCorrection.time_sec == c.time_sec,
-                WindowScoreCorrection.type_name == c.type_name,
-            )
-        )
-        row = existing.scalar_one_or_none()
-        if row is not None:
-            row.region_id = c.region_id
-            row.correction_type = c.correction_type
-        else:
-            session.add(
-                WindowScoreCorrection(
-                    window_classification_job_id=job_id,
-                    time_sec=c.time_sec,
-                    region_id=c.region_id,
-                    correction_type=c.correction_type,
-                    type_name=c.type_name,
-                )
-            )
-        count += 1
-
-    await session.commit()
-    return count
-
-
-async def list_window_score_corrections(
-    session: AsyncSession,
-    job_id: str,
-) -> list[WindowScoreCorrection]:
-    result = await session.execute(
-        select(WindowScoreCorrection)
-        .where(WindowScoreCorrection.window_classification_job_id == job_id)
-        .order_by(WindowScoreCorrection.created_at)
-    )
-    return list(result.scalars().all())
-
-
-async def clear_window_score_corrections(
-    session: AsyncSession,
-    job_id: str,
-) -> None:
-    from sqlalchemy import delete as _delete
-
-    await session.execute(
-        _delete(WindowScoreCorrection).where(
-            WindowScoreCorrection.window_classification_job_id == job_id
-        )
-    )
-    await session.commit()

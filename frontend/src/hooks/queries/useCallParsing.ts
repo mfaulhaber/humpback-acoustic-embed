@@ -25,9 +25,9 @@ import {
   createClassificationJob,
   deleteClassificationJob,
   fetchTypedEvents,
-  fetchTypeCorrections,
-  saveTypeCorrections,
-  clearTypeCorrections,
+  fetchVocalizationCorrections,
+  upsertVocalizationCorrections,
+  clearVocalizationCorrections,
   fetchClassificationJobsWithCorrectionCounts,
   fetchClassifierTrainingJobs,
   createClassifierTrainingJob,
@@ -38,9 +38,6 @@ import {
   fetchWindowClassificationJobs,
   deleteWindowClassificationJob,
   fetchWindowScores,
-  fetchWindowScoreCorrections,
-  upsertWindowScoreCorrections,
-  clearWindowScoreCorrections,
 } from "@/api/client";
 import type {
   CreateRegionJobRequest,
@@ -52,7 +49,7 @@ import type {
   BoundaryCorrectionRequest,
   ModelConfig,
   CreateEventClassificationJobRequest,
-  TypeCorrectionItem,
+  VocalizationCorrectionItem,
   CreateEventClassifierTrainingJobRequest,
 } from "@/api/types";
 
@@ -305,7 +302,7 @@ export function useQuickRetrain() {
 
 const CLASSIFY_JOBS_KEY = ["classification-jobs"];
 const TYPED_EVENTS_KEY = "typed-events";
-const TYPE_CORRECTIONS_KEY = "type-corrections";
+const VOCALIZATION_CORRECTIONS_KEY = "vocalizationCorrections";
 const CLASSIFY_CORRECTION_COUNTS_KEY = ["classification-jobs-correction-counts"];
 const CLASSIFIER_TRAINING_JOBS_KEY = ["classifier-training-jobs"];
 const CLASSIFIER_MODELS_KEY = ["classifier-models"];
@@ -347,38 +344,46 @@ export function useTypedEvents(jobId: string | null) {
   });
 }
 
-export function useTypeCorrections(jobId: string | null) {
+export function useVocalizationCorrections(
+  regionDetectionJobId: string | null,
+) {
   return useQuery({
-    queryKey: [TYPE_CORRECTIONS_KEY, jobId],
-    queryFn: () => fetchTypeCorrections(jobId!),
-    enabled: !!jobId,
+    queryKey: [VOCALIZATION_CORRECTIONS_KEY, regionDetectionJobId],
+    queryFn: () => fetchVocalizationCorrections(regionDetectionJobId!),
+    enabled: !!regionDetectionJobId,
   });
 }
 
-export function useUpsertTypeCorrections() {
+export function useUpsertVocalizationCorrections() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
-      jobId,
+      regionDetectionJobId,
       corrections,
     }: {
-      jobId: string;
-      corrections: TypeCorrectionItem[];
-    }) => saveTypeCorrections(jobId, corrections),
+      regionDetectionJobId: string;
+      corrections: VocalizationCorrectionItem[];
+    }) => upsertVocalizationCorrections(regionDetectionJobId, corrections),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({
-        queryKey: [TYPE_CORRECTIONS_KEY, variables.jobId],
+        queryKey: [
+          VOCALIZATION_CORRECTIONS_KEY,
+          variables.regionDetectionJobId,
+        ],
       });
     },
   });
 }
 
-export function useClearTypeCorrections() {
+export function useClearVocalizationCorrections() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => clearTypeCorrections(jobId),
-    onSuccess: (_data, jobId) => {
-      qc.invalidateQueries({ queryKey: [TYPE_CORRECTIONS_KEY, jobId] });
+    mutationFn: (regionDetectionJobId: string) =>
+      clearVocalizationCorrections(regionDetectionJobId),
+    onSuccess: (_data, regionDetectionJobId) => {
+      qc.invalidateQueries({
+        queryKey: [VOCALIZATION_CORRECTIONS_KEY, regionDetectionJobId],
+      });
     },
   });
 }
@@ -483,42 +488,4 @@ export function useWindowScores(
   });
 }
 
-export function useWindowScoreCorrections(jobId: string | undefined) {
-  return useQuery({
-    queryKey: ["windowScoreCorrections", jobId],
-    queryFn: () => fetchWindowScoreCorrections(jobId!),
-    enabled: !!jobId,
-  });
-}
-
-export function useUpsertWindowScoreCorrections() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      jobId,
-      corrections,
-    }: {
-      jobId: string;
-      corrections: Array<{
-        time_sec: number;
-        region_id: string;
-        correction_type: "add" | "remove";
-        type_name: string;
-      }>;
-    }) => upsertWindowScoreCorrections(jobId, corrections),
-    onSuccess: (_data, { jobId }) => {
-      qc.invalidateQueries({ queryKey: ["windowScoreCorrections", jobId] });
-    },
-  });
-}
-
-export function useClearWindowScoreCorrections() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (jobId: string) => clearWindowScoreCorrections(jobId),
-    onSuccess: (_data, jobId) => {
-      qc.invalidateQueries({ queryKey: ["windowScoreCorrections", jobId] });
-    },
-  });
-}
 

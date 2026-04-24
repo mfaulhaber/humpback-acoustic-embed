@@ -5,12 +5,12 @@ from humpback.models.call_parsing import (
     EventSegmentationJob,
     RegionDetectionJob,
     SegmentationModel,
+    VocalizationCorrection,
 )
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.feedback_training import (
     EventBoundaryCorrection,
     EventClassifierTrainingJob,
-    EventTypeCorrection,
 )
 from humpback.models.hyperparameter import (
     HyperparameterManifest,
@@ -42,7 +42,6 @@ __all__ = [
     "EventClassificationJob",
     "EventClassifierTrainingJob",
     "EventSegmentationJob",
-    "EventTypeCorrection",
     "HyperparameterManifest",
     "HyperparameterSearchJob",
     "LabelProcessingJob",
@@ -60,6 +59,7 @@ __all__ = [
     "SegmentationTrainingDataset",
     "SegmentationTrainingJob",
     "SegmentationTrainingSample",
+    "VocalizationCorrection",
     "VocalizationLabel",
     "VocalizationType",
     "VocalizationClassifierModel",

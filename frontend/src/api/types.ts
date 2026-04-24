@@ -1499,16 +1499,20 @@ export interface TypedEventRow {
   above_threshold: boolean;
 }
 
-export interface TypeCorrectionItem {
-  event_id: string;
-  type_name: string | null;
+export interface VocalizationCorrectionItem {
+  start_sec: number;
+  end_sec: number;
+  type_name: string;
+  correction_type: "add" | "remove";
 }
 
-export interface TypeCorrectionResponse {
+export interface VocalizationCorrection {
   id: string;
-  event_classification_job_id: string;
-  event_id: string;
-  type_name: string | null;
+  region_detection_job_id: string;
+  start_sec: number;
+  end_sec: number;
+  type_name: string;
+  correction_type: "add" | "remove";
   created_at: string;
   updated_at: string;
 }
@@ -1576,14 +1580,4 @@ export interface WindowScoreRow {
   scores: Record<string, number>;
 }
 
-export interface WindowScoreCorrection {
-  id: string;
-  window_classification_job_id: string;
-  time_sec: number;
-  region_id: string;
-  correction_type: "add" | "remove";
-  type_name: string;
-  created_at: string;
-  updated_at: string;
-}
 

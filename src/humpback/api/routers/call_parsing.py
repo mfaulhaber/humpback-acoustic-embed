@@ -54,11 +54,9 @@ from humpback.schemas.call_parsing import (
     SegmentationJobWithCorrectionCount,
     SegmentationModelResponse,
     SegmentationTrainingDatasetSummary,
-    TypeCorrectionRequest,
-    TypeCorrectionResponse,
+    VocalizationCorrectionRequest,
+    VocalizationCorrectionResponse,
     WindowClassificationJobSummary,
-    WindowScoreCorrectionRequest,
-    WindowScoreCorrectionResponse,
     WindowScoreRow,
 )
 from humpback.services import call_parsing as service
@@ -891,34 +889,45 @@ async def clear_boundary_corrections(job_id: str, session: SessionDep):
     return None
 
 
-# ---- Type corrections (Pass 3) -------------------------------------------
+# ---- Vocalization corrections (unified) ------------------------------------
 
 
-@router.post("/classification-jobs/{job_id}/corrections")
-async def upsert_type_corrections(
-    job_id: str, body: TypeCorrectionRequest, session: SessionDep
+@router.post(
+    "/vocalization-corrections",
+    response_model=list[VocalizationCorrectionResponse],
+)
+async def upsert_vocalization_corrections(
+    body: VocalizationCorrectionRequest, session: SessionDep
 ):
     try:
-        count = await service.upsert_type_corrections(session, job_id, body.corrections)
+        rows = await service.upsert_vocalization_corrections(
+            session, body.region_detection_job_id, body.corrections
+        )
     except service.CallParsingFKError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except service.CallParsingStateError as exc:
         raise HTTPException(status_code=409, detail=exc.detail) from exc
-    return {"count": count}
+    return [VocalizationCorrectionResponse.model_validate(r) for r in rows]
 
 
 @router.get(
-    "/classification-jobs/{job_id}/corrections",
-    response_model=list[TypeCorrectionResponse],
+    "/vocalization-corrections",
+    response_model=list[VocalizationCorrectionResponse],
 )
-async def list_type_corrections(job_id: str, session: SessionDep):
-    rows = await service.list_type_corrections(session, job_id)
-    return [TypeCorrectionResponse.model_validate(r) for r in rows]
+async def list_vocalization_corrections(
+    session: SessionDep,
+    region_detection_job_id: str = Query(...),
+):
+    rows = await service.list_vocalization_corrections(session, region_detection_job_id)
+    return [VocalizationCorrectionResponse.model_validate(r) for r in rows]
 
 
-@router.delete("/classification-jobs/{job_id}/corrections", status_code=204)
-async def clear_type_corrections(job_id: str, session: SessionDep):
-    await service.clear_type_corrections(session, job_id)
+@router.delete("/vocalization-corrections", status_code=204)
+async def clear_vocalization_corrections(
+    session: SessionDep,
+    region_detection_job_id: str = Query(...),
+):
+    await service.clear_vocalization_corrections(session, region_detection_job_id)
     return None
 
 
@@ -1083,37 +1092,3 @@ async def get_window_scores(
         type_name=type_name,
     )
     return [WindowScoreRow(**r) for r in rows]
-
-
-@router.post(
-    "/window-classification-jobs/{job_id}/corrections",
-    response_model=list[WindowScoreCorrectionResponse],
-)
-async def upsert_window_score_corrections(
-    job_id: str,
-    request: WindowScoreCorrectionRequest,
-    session: SessionDep,
-):
-    try:
-        await service.upsert_window_score_corrections(
-            session, job_id, request.corrections
-        )
-    except service.CallParsingFKError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    corrections = await service.list_window_score_corrections(session, job_id)
-    return [WindowScoreCorrectionResponse.model_validate(c) for c in corrections]
-
-
-@router.get(
-    "/window-classification-jobs/{job_id}/corrections",
-    response_model=list[WindowScoreCorrectionResponse],
-)
-async def list_window_score_corrections(job_id: str, session: SessionDep):
-    corrections = await service.list_window_score_corrections(session, job_id)
-    return [WindowScoreCorrectionResponse.model_validate(c) for c in corrections]
-
-
-@router.delete("/window-classification-jobs/{job_id}/corrections", status_code=204)
-async def clear_window_score_corrections(job_id: str, session: SessionDep):
-    await service.clear_window_score_corrections(session, job_id)
-    return None
