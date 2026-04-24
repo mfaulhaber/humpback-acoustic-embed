@@ -1379,23 +1379,15 @@ function EventDetailPanel({
     );
   }
 
-  const aboveLabels = labels
-    .filter(
-      (l) =>
-        (l.aboveThreshold && l.correction !== "remove") ||
-        l.correction === "add",
-    )
-    .sort((a, b) => b.score - a.score);
-  const belowLabels = labels
-    .filter(
-      (l) =>
-        (!l.aboveThreshold || l.correction === "remove") &&
-        l.correction !== "add",
-    )
-    .sort((a, b) => b.score - a.score);
+  const sortedLabels = labels
+    .slice()
+    .sort((a, b) => a.typeName.localeCompare(b.typeName));
+
+  const isAbove = (l: EventLabel) =>
+    (l.aboveThreshold && l.correction !== "remove") || l.correction === "add";
 
   const addableTypes = vocabulary.filter(
-    (t) => !aboveLabels.some((l) => l.typeName === t),
+    (t) => !sortedLabels.some((l) => l.typeName === t && isAbove(l)),
   );
 
   const isAdjusted = boundaryCorrection?.correctionType === "adjust";
@@ -1434,55 +1426,57 @@ function EventDetailPanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        {aboveLabels.map((l) => {
-          const ringColor = l.correction === "add"
-            ? (l.aboveThreshold ? APPROVED_RING_COLOR : CORRECTED_RING_COLOR)
-            : undefined;
+        {sortedLabels.map((l) => {
+          const above = isAbove(l);
+          if (above) {
+            const ringColor = l.correction === "add"
+              ? (l.aboveThreshold ? APPROVED_RING_COLOR : CORRECTED_RING_COLOR)
+              : undefined;
+            return (
+              <Badge
+                key={l.typeName}
+                className="cursor-pointer text-xs text-white select-none"
+                style={{
+                  backgroundColor: typeColor(l.typeName),
+                  outline: l.isPending
+                    ? "2px solid rgba(250, 204, 21, 0.8)"
+                    : undefined,
+                  outlineOffset: l.isPending ? "1px" : undefined,
+                  boxShadow: !l.isPending && ringColor
+                    ? `0 0 0 1.5px ${ringColor}`
+                    : undefined,
+                }}
+                onClick={() => onBadgeClick(l.typeName)}
+              >
+                {l.typeName} {(l.score * 100).toFixed(0)}%
+                {l.correction === "add" && (
+                  <Plus className="h-2.5 w-2.5 ml-0.5 inline" />
+                )}
+              </Badge>
+            );
+          }
           return (
             <Badge
               key={l.typeName}
-              className="cursor-pointer text-xs text-white select-none"
+              variant="outline"
+              className="cursor-pointer text-xs select-none opacity-50 hover:opacity-75"
               style={{
-                backgroundColor: typeColor(l.typeName),
+                borderColor: typeColor(l.typeName),
+                color: typeColor(l.typeName),
                 outline: l.isPending
                   ? "2px solid rgba(250, 204, 21, 0.8)"
                   : undefined,
                 outlineOffset: l.isPending ? "1px" : undefined,
-                boxShadow: !l.isPending && ringColor
-                  ? `0 0 0 1.5px ${ringColor}`
-                  : undefined,
               }}
               onClick={() => onBadgeClick(l.typeName)}
             >
               {l.typeName} {(l.score * 100).toFixed(0)}%
-              {l.correction === "add" && (
-                <Plus className="h-2.5 w-2.5 ml-0.5 inline" />
+              {l.correction === "remove" && (
+                <X className="h-2.5 w-2.5 ml-0.5 inline" />
               )}
             </Badge>
           );
         })}
-
-        {belowLabels.map((l) => (
-          <Badge
-            key={l.typeName}
-            variant="outline"
-            className="cursor-pointer text-xs select-none opacity-50 hover:opacity-75"
-            style={{
-              borderColor: typeColor(l.typeName),
-              color: typeColor(l.typeName),
-              outline: l.isPending
-                ? "2px solid rgba(250, 204, 21, 0.8)"
-                : undefined,
-              outlineOffset: l.isPending ? "1px" : undefined,
-            }}
-            onClick={() => onBadgeClick(l.typeName)}
-          >
-            {l.typeName} {(l.score * 100).toFixed(0)}%
-            {l.correction === "remove" && (
-              <X className="h-2.5 w-2.5 ml-0.5 inline" />
-            )}
-          </Badge>
-        ))}
 
         <div className="relative">
           <button
