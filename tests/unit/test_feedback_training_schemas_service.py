@@ -18,22 +18,22 @@ from humpback.models.call_parsing import (
 )
 from humpback.models.vocalization import VocalizationClassifierModel
 from humpback.schemas.call_parsing import (
-    BoundaryCorrection,
     CreateClassifierTrainingJobRequest,
+    EventBoundaryCorrectionItem,
     VocalizationCorrectionItem,
 )
 from humpback.services.call_parsing import (
     CallParsingFKError,
     CallParsingStateError,
-    clear_boundary_corrections,
+    clear_event_boundary_corrections,
     clear_vocalization_corrections,
     create_classifier_training_job,
     delete_classifier_model,
     delete_classifier_training_job,
-    list_boundary_corrections,
+    list_event_boundary_corrections,
     list_classifier_models,
     list_vocalization_corrections,
-    upsert_boundary_corrections,
+    upsert_event_boundary_corrections,
     upsert_vocalization_corrections,
 )
 
@@ -41,70 +41,118 @@ from humpback.services.call_parsing import (
 # ---- Task 2: Pydantic schema validation ----------------------------------
 
 
-def test_boundary_correction_add_requires_start_end():
-    with pytest.raises(ValidationError, match="start_sec and end_sec"):
-        BoundaryCorrection(
-            event_id="e1",
+def test_boundary_correction_add_requires_corrected():
+    with pytest.raises(
+        ValidationError, match="corrected_start_sec and corrected_end_sec"
+    ):
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="add",
         )
 
 
-def test_boundary_correction_add_with_start_end_succeeds():
-    c = BoundaryCorrection(
-        event_id="e1",
+def test_boundary_correction_add_rejects_original():
+    with pytest.raises(ValidationError, match="must not set original"):
+        EventBoundaryCorrectionItem(
+            region_id="r1",
+            correction_type="add",
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+            corrected_start_sec=1.0,
+            corrected_end_sec=2.0,
+        )
+
+
+def test_boundary_correction_add_succeeds():
+    c = EventBoundaryCorrectionItem(
         region_id="r1",
         correction_type="add",
-        start_sec=1.0,
-        end_sec=2.0,
+        corrected_start_sec=1.0,
+        corrected_end_sec=2.0,
     )
-    assert c.start_sec == 1.0
+    assert c.corrected_start_sec == 1.0
+    assert c.original_start_sec is None
 
 
-def test_boundary_correction_adjust_requires_start_end():
-    with pytest.raises(ValidationError, match="start_sec and end_sec"):
-        BoundaryCorrection(
-            event_id="e1",
+def test_boundary_correction_adjust_requires_both_pairs():
+    with pytest.raises(
+        ValidationError, match="original_start_sec and original_end_sec"
+    ):
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="adjust",
+            corrected_start_sec=1.0,
+            corrected_end_sec=2.0,
+        )
+    with pytest.raises(
+        ValidationError, match="corrected_start_sec and corrected_end_sec"
+    ):
+        EventBoundaryCorrectionItem(
+            region_id="r1",
+            correction_type="adjust",
+            original_start_sec=1.0,
+            original_end_sec=2.0,
         )
 
 
-def test_boundary_correction_delete_forbids_start_end():
-    with pytest.raises(ValidationError, match="must not set"):
-        BoundaryCorrection(
-            event_id="e1",
+def test_boundary_correction_adjust_succeeds():
+    c = EventBoundaryCorrectionItem(
+        region_id="r1",
+        correction_type="adjust",
+        original_start_sec=1.0,
+        original_end_sec=2.0,
+        corrected_start_sec=1.5,
+        corrected_end_sec=3.0,
+    )
+    assert c.original_start_sec == 1.0
+    assert c.corrected_start_sec == 1.5
+
+
+def test_boundary_correction_delete_requires_original():
+    with pytest.raises(
+        ValidationError, match="original_start_sec and original_end_sec"
+    ):
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="delete",
-            start_sec=1.0,
-            end_sec=2.0,
         )
 
 
-def test_boundary_correction_delete_without_start_end_succeeds():
-    c = BoundaryCorrection(
-        event_id="e1",
+def test_boundary_correction_delete_rejects_corrected():
+    with pytest.raises(ValidationError, match="must not set corrected"):
+        EventBoundaryCorrectionItem(
+            region_id="r1",
+            correction_type="delete",
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+            corrected_start_sec=1.0,
+            corrected_end_sec=2.0,
+        )
+
+
+def test_boundary_correction_delete_succeeds():
+    c = EventBoundaryCorrectionItem(
         region_id="r1",
         correction_type="delete",
+        original_start_sec=1.0,
+        original_end_sec=2.0,
     )
-    assert c.start_sec is None
+    assert c.corrected_start_sec is None
 
 
 def test_boundary_correction_end_must_be_after_start():
     with pytest.raises(ValidationError, match="strictly after"):
-        BoundaryCorrection(
-            event_id="e1",
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="add",
-            start_sec=2.0,
-            end_sec=1.0,
+            corrected_start_sec=2.0,
+            corrected_end_sec=1.0,
         )
 
 
 def test_boundary_correction_rejects_invalid_type():
     with pytest.raises(ValidationError):
-        BoundaryCorrection(
-            event_id="e1",
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="invalid",
         )
@@ -155,123 +203,122 @@ def _make_complete_classification_job():
 
 
 async def test_upsert_boundary_creates_new(session):
-    rd, es = _make_complete_segmentation_job()
+    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
     session.add(rd)
-    await session.flush()
-    es.region_detection_job_id = rd.id
-    session.add(es)
     await session.commit()
 
     corrections = [
-        BoundaryCorrection(
-            event_id="e1",
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="adjust",
-            start_sec=1.0,
-            end_sec=2.0,
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+            corrected_start_sec=1.5,
+            corrected_end_sec=2.5,
         )
     ]
-    count = await upsert_boundary_corrections(session, es.id, corrections)
-    assert count == 1
-
-    rows = await list_boundary_corrections(session, es.id)
+    rows = await upsert_event_boundary_corrections(session, rd.id, corrections)
     assert len(rows) == 1
-    assert rows[0].event_id == "e1"
-    assert rows[0].start_sec == 1.0
+    assert rows[0].original_start_sec == 1.0
+    assert rows[0].corrected_start_sec == 1.5
 
 
 async def test_upsert_boundary_updates_on_repeat(session):
-    rd, es = _make_complete_segmentation_job()
+    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
     session.add(rd)
-    await session.flush()
-    es.region_detection_job_id = rd.id
-    session.add(es)
     await session.commit()
 
     corrections1 = [
-        BoundaryCorrection(
-            event_id="e1",
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="adjust",
-            start_sec=1.0,
-            end_sec=2.0,
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+            corrected_start_sec=1.5,
+            corrected_end_sec=2.5,
         )
     ]
-    await upsert_boundary_corrections(session, es.id, corrections1)
+    await upsert_event_boundary_corrections(session, rd.id, corrections1)
 
     corrections2 = [
-        BoundaryCorrection(
-            event_id="e1",
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="adjust",
-            start_sec=1.5,
-            end_sec=3.0,
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+            corrected_start_sec=1.8,
+            corrected_end_sec=3.0,
         )
     ]
-    await upsert_boundary_corrections(session, es.id, corrections2)
-
-    rows = await list_boundary_corrections(session, es.id)
+    rows = await upsert_event_boundary_corrections(session, rd.id, corrections2)
     assert len(rows) == 1
-    assert rows[0].start_sec == 1.5
+    assert rows[0].corrected_start_sec == 1.8
 
 
 async def test_upsert_boundary_rejects_nonexistent_job(session):
     corrections = [
-        BoundaryCorrection(event_id="e1", region_id="r1", correction_type="delete")
+        EventBoundaryCorrectionItem(
+            region_id="r1",
+            correction_type="delete",
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+        )
     ]
     with pytest.raises(CallParsingFKError):
-        await upsert_boundary_corrections(session, "nonexistent", corrections)
+        await upsert_event_boundary_corrections(session, "nonexistent", corrections)
 
 
 async def test_upsert_boundary_rejects_noncomplete_job(session):
-    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
+    rd = RegionDetectionJob(audio_file_id="af-1", status="queued")
     session.add(rd)
-    await session.flush()
-    es = EventSegmentationJob(region_detection_job_id=rd.id, status="queued")
-    session.add(es)
     await session.commit()
 
     corrections = [
-        BoundaryCorrection(event_id="e1", region_id="r1", correction_type="delete")
+        EventBoundaryCorrectionItem(
+            region_id="r1",
+            correction_type="delete",
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+        )
     ]
     with pytest.raises(CallParsingStateError):
-        await upsert_boundary_corrections(session, es.id, corrections)
+        await upsert_event_boundary_corrections(session, rd.id, corrections)
 
 
 async def test_clear_boundary_removes_all(session):
-    rd, es = _make_complete_segmentation_job()
+    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
     session.add(rd)
-    await session.flush()
-    es.region_detection_job_id = rd.id
-    session.add(es)
     await session.commit()
 
     corrections = [
-        BoundaryCorrection(
-            event_id="e1",
+        EventBoundaryCorrectionItem(
             region_id="r1",
             correction_type="adjust",
-            start_sec=1.0,
-            end_sec=2.0,
+            original_start_sec=1.0,
+            original_end_sec=2.0,
+            corrected_start_sec=1.5,
+            corrected_end_sec=2.5,
         ),
-        BoundaryCorrection(event_id="e2", region_id="r1", correction_type="delete"),
+        EventBoundaryCorrectionItem(
+            region_id="r1",
+            correction_type="delete",
+            original_start_sec=3.0,
+            original_end_sec=4.0,
+        ),
     ]
-    await upsert_boundary_corrections(session, es.id, corrections)
-    assert len(await list_boundary_corrections(session, es.id)) == 2
+    await upsert_event_boundary_corrections(session, rd.id, corrections)
+    assert len(await list_event_boundary_corrections(session, rd.id)) == 2
 
-    await clear_boundary_corrections(session, es.id)
-    assert len(await list_boundary_corrections(session, es.id)) == 0
+    await clear_event_boundary_corrections(session, rd.id)
+    assert len(await list_event_boundary_corrections(session, rd.id)) == 0
 
 
 async def test_list_boundary_empty_for_no_corrections(session):
-    rd, es = _make_complete_segmentation_job()
+    rd = RegionDetectionJob(audio_file_id="af-1", status="complete")
     session.add(rd)
-    await session.flush()
-    es.region_detection_job_id = rd.id
-    session.add(es)
     await session.commit()
 
-    rows = await list_boundary_corrections(session, es.id)
+    rows = await list_event_boundary_corrections(session, rd.id)
     assert rows == []
 
 

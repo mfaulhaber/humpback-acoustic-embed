@@ -163,14 +163,14 @@ async def _collect_samples(
         # Use corrected boundaries from the upstream segmentation job so
         # that human boundary edits (adjust/add/delete) are reflected in
         # the audio crops used for classifier training.
+        rd_job_id = seg_job.region_detection_job_id
         corrected_events = await load_corrected_events(
-            session, cls_job.event_segmentation_job_id, settings.storage_root
+            session, rd_job_id, cls_job.event_segmentation_job_id, settings.storage_root
         )
         event_bounds: dict[str, tuple[float, float]] = {
             e.event_id: (e.start_sec, e.end_sec) for e in corrected_events
         }
 
-        rd_job_id = seg_job.region_detection_job_id
         corr_result = await session.execute(
             select(VocalizationCorrection).where(
                 VocalizationCorrection.region_detection_job_id == rd_job_id

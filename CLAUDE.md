@@ -258,7 +258,7 @@ See [docs/reference/behavioral-constraints.md](docs/reference/behavioral-constra
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `054_vocalization_corrections.py`
+- **Latest migration**: `055_unified_event_boundary_corrections.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models, segmentation_training_datasets, segmentation_training_samples, segmentation_training_jobs, event_boundary_corrections, vocalization_corrections, event_segmentation_training_jobs, event_classifier_training_jobs, window_classification_jobs
 
 ### 9.3 Sensitive Components

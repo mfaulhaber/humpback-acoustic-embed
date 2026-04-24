@@ -20,7 +20,7 @@ from humpback.models.call_parsing import (
     RegionDetectionJob,
     SegmentationModel,
 )
-from humpback.models.feedback_training import EventBoundaryCorrection
+from humpback.models.call_parsing import EventBoundaryCorrection
 from humpback.models.segmentation_training import (
     SegmentationTrainingDataset,
     SegmentationTrainingSample,
@@ -125,22 +125,22 @@ async def _seed_job_with_corrections(app_settings, *, with_corrections: bool = T
                 # Add corrections for region r1 only
                 session.add(
                     EventBoundaryCorrection(
-                        event_segmentation_job_id=seg_job.id,
-                        event_id="e1",
+                        region_detection_job_id=rd.id,
                         region_id="r1",
                         correction_type="adjust",
-                        start_sec=105.5,
-                        end_sec=107.5,
+                        original_start_sec=105.0,
+                        original_end_sec=107.0,
+                        corrected_start_sec=105.5,
+                        corrected_end_sec=107.5,
                     )
                 )
                 session.add(
                     EventBoundaryCorrection(
-                        event_segmentation_job_id=seg_job.id,
-                        event_id="new1",
+                        region_detection_job_id=rd.id,
                         region_id="r1",
                         correction_type="add",
-                        start_sec=110.0,
-                        end_sec=112.0,
+                        corrected_start_sec=110.0,
+                        corrected_end_sec=112.0,
                     )
                 )
 
@@ -513,7 +513,7 @@ async def test_load_corrected_events_no_corrections(client: AsyncClient, app_set
     """No corrections → original events returned unchanged."""
     from humpback.call_parsing.segmentation.extraction import load_corrected_events
 
-    seg_job_id, _ = await _seed_job_with_corrections(
+    seg_job_id, rd_id = await _seed_job_with_corrections(
         app_settings, with_corrections=False
     )
 
@@ -522,7 +522,7 @@ async def test_load_corrected_events_no_corrections(client: AsyncClient, app_set
         sf = create_session_factory(engine)
         async with sf() as session:
             events = await load_corrected_events(
-                session, seg_job_id, app_settings.storage_root
+                session, rd_id, seg_job_id, app_settings.storage_root
             )
             assert len(events) == 2
             ids = {e.event_id for e in events}
@@ -542,36 +542,33 @@ async def test_load_corrected_events_with_corrections(
     """Corrections applied: adjust e1, add new1, e2 unchanged."""
     from humpback.call_parsing.segmentation.extraction import load_corrected_events
 
-    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+    seg_job_id, rd_id = await _seed_job_with_corrections(app_settings)
 
     engine = create_engine(app_settings.database_url)
     try:
         sf = create_session_factory(engine)
         async with sf() as session:
             events = await load_corrected_events(
-                session, seg_job_id, app_settings.storage_root
+                session, rd_id, seg_job_id, app_settings.storage_root
             )
-            ids = {e.event_id for e in events}
-            assert ids == {"e1", "e2", "new1"}
+            # e2 unchanged, e1 adjusted, plus one added event
+            assert len(events) == 3
 
             # e1 adjusted
-            e1 = next(e for e in events if e.event_id == "e1")
-            assert e1.start_sec == 105.5
+            e1 = next(e for e in events if e.start_sec == 105.5)
             assert e1.end_sec == 107.5
             assert e1.region_id == "r1"
             assert e1.center_sec == pytest.approx((105.5 + 107.5) / 2.0)
 
             # e2 unchanged
-            e2 = next(e for e in events if e.event_id == "e2")
-            assert e2.start_sec == 203.0
+            e2 = next(e for e in events if e.start_sec == 203.0)
             assert e2.end_sec == 205.0
 
-            # new1 added
-            new1 = next(e for e in events if e.event_id == "new1")
-            assert new1.start_sec == 110.0
-            assert new1.end_sec == 112.0
-            assert new1.region_id == "r1"
-            assert new1.segmentation_confidence == 0.0
+            # added event
+            added = next(e for e in events if e.start_sec == 110.0)
+            assert added.end_sec == 112.0
+            assert added.region_id == "r1"
+            assert added.segmentation_confidence == 0.0
     finally:
         await engine.dispose()
 
@@ -631,17 +628,18 @@ async def test_load_corrected_events_delete(client: AsyncClient, app_settings):
 
             session.add(
                 EventBoundaryCorrection(
-                    event_segmentation_job_id=seg_job.id,
-                    event_id="e1",
+                    region_detection_job_id=rd.id,
                     region_id="r1",
                     correction_type="delete",
-                    start_sec=None,
-                    end_sec=None,
+                    original_start_sec=10.0,
+                    original_end_sec=12.0,
                 )
             )
             await session.commit()
 
-            events = await load_corrected_events(session, seg_job.id, storage_root)
+            events = await load_corrected_events(
+                session, rd.id, seg_job.id, storage_root
+            )
             assert len(events) == 0
     finally:
         await engine.dispose()

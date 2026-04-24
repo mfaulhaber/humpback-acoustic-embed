@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, Response
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.call_parsing.segmentation.extraction import load_corrected_events
+from humpback.models.call_parsing import EventSegmentationJob
 from humpback.call_parsing.storage import (
     classification_job_dir,
     read_events,
@@ -28,8 +29,8 @@ from humpback.call_parsing.storage import (
     segmentation_job_dir,
 )
 from humpback.schemas.call_parsing import (
-    BoundaryCorrectionRequest,
-    BoundaryCorrectionResponse,
+    EventBoundaryCorrectionRequest,
+    EventBoundaryCorrectionResponse,
     CallParsingRunCreate,
     CallParsingRunResponse,
     ClassificationJobWithCorrectionCount,
@@ -831,19 +832,29 @@ async def get_classification_typed_events(
     # by downstream consumers (ADR-054).
     event_region_map: dict[str, str] = {}
     try:
+        seg_job = await session.get(EventSegmentationJob, job.event_segmentation_job_id)
+        rd_job_id = seg_job.region_detection_job_id if seg_job else ""
         corrected_events = await load_corrected_events(
-            session, job.event_segmentation_job_id, settings.storage_root
+            session, rd_job_id, job.event_segmentation_job_id, settings.storage_root
         )
     except ValueError:
-        # events.parquet missing — leave map empty, typed events fall back to "".
         corrected_events = []
     event_region_map = {e.event_id: e.region_id for e in corrected_events}
+    bounds_region_map = {
+        (e.start_sec, e.end_sec): e.region_id for e in corrected_events
+    }
+
+    def _region_for(te) -> str:  # type: ignore[no-untyped-def]
+        r = event_region_map.get(te.event_id)
+        if r:
+            return r
+        return bounds_region_map.get((te.start_sec, te.end_sec), "")
 
     return sorted(
         [
             {
                 "event_id": te.event_id,
-                "region_id": event_region_map.get(te.event_id, ""),
+                "region_id": _region_for(te),
                 "start_sec": te.start_sec,
                 "end_sec": te.end_sec,
                 "type_name": te.type_name,
@@ -856,36 +867,47 @@ async def get_classification_typed_events(
     )
 
 
-# ---- Boundary corrections (Pass 2) ---------------------------------------
+# ---- Event boundary corrections (unified) ---------------------------------
 
 
-@router.post("/segmentation-jobs/{job_id}/corrections")
-async def upsert_boundary_corrections(
-    job_id: str, body: BoundaryCorrectionRequest, session: SessionDep
+@router.post(
+    "/event-boundary-corrections",
+    response_model=list[EventBoundaryCorrectionResponse],
+)
+async def upsert_event_boundary_corrections(
+    body: EventBoundaryCorrectionRequest, session: SessionDep
 ):
     try:
-        count = await service.upsert_boundary_corrections(
-            session, job_id, body.corrections
+        rows = await service.upsert_event_boundary_corrections(
+            session, body.region_detection_job_id, body.corrections
         )
     except service.CallParsingFKError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except service.CallParsingStateError as exc:
         raise HTTPException(status_code=409, detail=exc.detail) from exc
-    return {"count": count}
+    return [EventBoundaryCorrectionResponse.model_validate(r) for r in rows]
 
 
 @router.get(
-    "/segmentation-jobs/{job_id}/corrections",
-    response_model=list[BoundaryCorrectionResponse],
+    "/event-boundary-corrections",
+    response_model=list[EventBoundaryCorrectionResponse],
 )
-async def list_boundary_corrections(job_id: str, session: SessionDep):
-    rows = await service.list_boundary_corrections(session, job_id)
-    return [BoundaryCorrectionResponse.model_validate(r) for r in rows]
+async def list_event_boundary_corrections(
+    session: SessionDep,
+    region_detection_job_id: str = Query(...),
+):
+    rows = await service.list_event_boundary_corrections(
+        session, region_detection_job_id
+    )
+    return [EventBoundaryCorrectionResponse.model_validate(r) for r in rows]
 
 
-@router.delete("/segmentation-jobs/{job_id}/corrections", status_code=204)
-async def clear_boundary_corrections(job_id: str, session: SessionDep):
-    await service.clear_boundary_corrections(session, job_id)
+@router.delete("/event-boundary-corrections", status_code=204)
+async def clear_event_boundary_corrections(
+    session: SessionDep,
+    region_detection_job_id: str = Query(...),
+):
+    await service.clear_event_boundary_corrections(session, region_detection_job_id)
     return None
 
 

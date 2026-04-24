@@ -1347,26 +1347,29 @@ export interface RegionCorrectionResponse {
   updated_at: string;
 }
 
-export interface BoundaryCorrection {
-  event_id: string;
+export interface EventBoundaryCorrectionItem {
   region_id: string;
   correction_type: "adjust" | "add" | "delete";
-  start_sec: number | null;
-  end_sec: number | null;
+  original_start_sec: number | null;
+  original_end_sec: number | null;
+  corrected_start_sec: number | null;
+  corrected_end_sec: number | null;
 }
 
-export interface BoundaryCorrectionRequest {
-  corrections: BoundaryCorrection[];
+export interface EventBoundaryCorrectionRequest {
+  region_detection_job_id: string;
+  corrections: EventBoundaryCorrectionItem[];
 }
 
-export interface BoundaryCorrectionResponse {
+export interface EventBoundaryCorrectionResponse {
   id: string;
-  event_segmentation_job_id: string;
-  event_id: string;
+  region_detection_job_id: string;
   region_id: string;
   correction_type: "adjust" | "add" | "delete";
-  start_sec: number | null;
-  end_sec: number | null;
+  original_start_sec: number | null;
+  original_end_sec: number | null;
+  corrected_start_sec: number | null;
+  corrected_end_sec: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -44,13 +44,20 @@ def test_apply_corrections_adjust() -> None:
 
     @dataclass
     class _Corr:
-        event_id: str
         correction_type: str
-        start_sec: float | None
-        end_sec: float | None
+        original_start_sec: float | None
+        original_end_sec: float | None
+        corrected_start_sec: float | None
+        corrected_end_sec: float | None
 
     corr = [
-        _Corr(event_id="e1", correction_type="adjust", start_sec=10.5, end_sec=11.5)
+        _Corr(
+            correction_type="adjust",
+            original_start_sec=10.0,
+            original_end_sec=12.0,
+            corrected_start_sec=10.5,
+            corrected_end_sec=11.5,
+        )
     ]
     result = apply_corrections(original, corr)  # type: ignore[arg-type]
     assert len(result) == 1
@@ -63,12 +70,21 @@ def test_apply_corrections_add() -> None:
 
     @dataclass
     class _Corr:
-        event_id: str
         correction_type: str
-        start_sec: float | None
-        end_sec: float | None
+        original_start_sec: float | None
+        original_end_sec: float | None
+        corrected_start_sec: float | None
+        corrected_end_sec: float | None
 
-    corr = [_Corr(event_id="new1", correction_type="add", start_sec=5.0, end_sec=7.0)]
+    corr = [
+        _Corr(
+            correction_type="add",
+            original_start_sec=None,
+            original_end_sec=None,
+            corrected_start_sec=5.0,
+            corrected_end_sec=7.0,
+        )
+    ]
     result = apply_corrections(original, corr)  # type: ignore[arg-type]
     assert len(result) == 1
     assert result[0]["start_sec"] == 5.0
@@ -88,13 +104,20 @@ def test_apply_corrections_delete() -> None:
 
     @dataclass
     class _Corr:
-        event_id: str
         correction_type: str
-        start_sec: float | None
-        end_sec: float | None
+        original_start_sec: float | None
+        original_end_sec: float | None
+        corrected_start_sec: float | None
+        corrected_end_sec: float | None
 
     corr = [
-        _Corr(event_id="e1", correction_type="delete", start_sec=None, end_sec=None)
+        _Corr(
+            correction_type="delete",
+            original_start_sec=10.0,
+            original_end_sec=12.0,
+            corrected_start_sec=None,
+            corrected_end_sec=None,
+        )
     ]
     result = apply_corrections(original, corr)  # type: ignore[arg-type]
     assert len(result) == 0

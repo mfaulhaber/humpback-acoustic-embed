@@ -100,8 +100,8 @@ import type {
   Region,
   RegionCorrection,
   RegionCorrectionResponse,
-  BoundaryCorrectionRequest,
-  BoundaryCorrectionResponse,
+  EventBoundaryCorrectionItem,
+  EventBoundaryCorrectionResponse,
   SegmentationJobWithCorrectionCount,
   CreateDatasetFromCorrectionsRequest,
   CreateDatasetFromCorrectionsResponse,
@@ -984,26 +984,27 @@ export const deleteSegmentationJob = (jobId: string) =>
 export const fetchSegmentationJobEvents = (jobId: string) =>
   api<SegmentationEvent[]>(`/call-parsing/segmentation-jobs/${jobId}/events`);
 
-// ---- Call Parsing (Boundary Corrections) ----
+// ---- Call Parsing (Event Boundary Corrections) ----
 
-export const fetchBoundaryCorrections = (jobId: string) =>
-  api<BoundaryCorrectionResponse[]>(
-    `/call-parsing/segmentation-jobs/${jobId}/corrections`,
+export const fetchEventBoundaryCorrections = (regionDetectionJobId: string) =>
+  api<EventBoundaryCorrectionResponse[]>(
+    `/call-parsing/event-boundary-corrections?region_detection_job_id=${regionDetectionJobId}`,
   );
 
-export const saveBoundaryCorrections = (
-  jobId: string,
-  body: BoundaryCorrectionRequest,
+export const upsertEventBoundaryCorrections = (
+  regionDetectionJobId: string,
+  corrections: EventBoundaryCorrectionItem[],
 ) =>
-  post<{ count: number }>(
-    `/call-parsing/segmentation-jobs/${jobId}/corrections`,
-    body,
+  post<EventBoundaryCorrectionResponse[]>(
+    `/call-parsing/event-boundary-corrections`,
+    { region_detection_job_id: regionDetectionJobId, corrections },
   );
 
-export const clearBoundaryCorrections = (jobId: string) =>
-  api<void>(`/call-parsing/segmentation-jobs/${jobId}/corrections`, {
-    method: "DELETE",
-  });
+export const clearEventBoundaryCorrections = (regionDetectionJobId: string) =>
+  api<void>(
+    `/call-parsing/event-boundary-corrections?region_detection_job_id=${regionDetectionJobId}`,
+    { method: "DELETE" },
+  );
 
 // ---- Call Parsing (Segmentation Models & Training) ----
 

@@ -422,51 +422,77 @@ class RegionCorrectionResponse(BaseModel):
 # ---- Feedback training: correction schemas ---------------------------------
 
 
-class BoundaryCorrection(BaseModel):
-    """A single boundary correction for a Pass 2 segmentation event."""
+class EventBoundaryCorrectionItem(BaseModel):
+    """A single event boundary correction in a batch upsert request."""
 
-    event_id: str
     region_id: str
     correction_type: str = Field(pattern=r"^(adjust|add|delete)$")
-    start_sec: Optional[float] = None
-    end_sec: Optional[float] = None
+    original_start_sec: Optional[float] = None
+    original_end_sec: Optional[float] = None
+    corrected_start_sec: Optional[float] = None
+    corrected_end_sec: Optional[float] = None
 
     @model_validator(mode="after")
-    def _validate_fields(self) -> "BoundaryCorrection":
+    def _validate_fields(self) -> "EventBoundaryCorrectionItem":
         if self.correction_type == "add":
-            if self.start_sec is None or self.end_sec is None:
-                raise ValueError("'add' corrections require start_sec and end_sec")
-        if self.correction_type == "adjust":
-            if self.start_sec is None or self.end_sec is None:
-                raise ValueError("'adjust' corrections require start_sec and end_sec")
-        if self.correction_type == "delete":
-            if self.start_sec is not None or self.end_sec is not None:
-                raise ValueError("'delete' corrections must not set start_sec/end_sec")
+            if self.corrected_start_sec is None or self.corrected_end_sec is None:
+                raise ValueError(
+                    "'add' corrections require corrected_start_sec and corrected_end_sec"
+                )
+            if self.original_start_sec is not None or self.original_end_sec is not None:
+                raise ValueError(
+                    "'add' corrections must not set original_start_sec/original_end_sec"
+                )
+        elif self.correction_type == "adjust":
+            if self.original_start_sec is None or self.original_end_sec is None:
+                raise ValueError(
+                    "'adjust' corrections require original_start_sec and original_end_sec"
+                )
+            if self.corrected_start_sec is None or self.corrected_end_sec is None:
+                raise ValueError(
+                    "'adjust' corrections require corrected_start_sec and corrected_end_sec"
+                )
+        elif self.correction_type == "delete":
+            if self.original_start_sec is None or self.original_end_sec is None:
+                raise ValueError(
+                    "'delete' corrections require original_start_sec and original_end_sec"
+                )
+            if (
+                self.corrected_start_sec is not None
+                or self.corrected_end_sec is not None
+            ):
+                raise ValueError(
+                    "'delete' corrections must not set corrected_start_sec/corrected_end_sec"
+                )
         if (
-            self.start_sec is not None
-            and self.end_sec is not None
-            and self.end_sec <= self.start_sec
+            self.corrected_start_sec is not None
+            and self.corrected_end_sec is not None
+            and self.corrected_end_sec <= self.corrected_start_sec
         ):
-            raise ValueError("end_sec must be strictly after start_sec")
+            raise ValueError(
+                "corrected_end_sec must be strictly after corrected_start_sec"
+            )
         return self
 
 
-class BoundaryCorrectionRequest(BaseModel):
-    """Batch upsert request for Pass 2 boundary corrections."""
+class EventBoundaryCorrectionRequest(BaseModel):
+    """Batch upsert request for event boundary corrections."""
 
-    corrections: list[BoundaryCorrection]
+    region_detection_job_id: str
+    corrections: list[EventBoundaryCorrectionItem]
 
 
-class BoundaryCorrectionResponse(BaseModel):
-    """A stored boundary correction row."""
+class EventBoundaryCorrectionResponse(BaseModel):
+    """A stored event boundary correction row."""
 
     id: str
-    event_segmentation_job_id: str
-    event_id: str
+    region_detection_job_id: str
     region_id: str
     correction_type: str
-    start_sec: Optional[float] = None
-    end_sec: Optional[float] = None
+    original_start_sec: Optional[float] = None
+    original_end_sec: Optional[float] = None
+    corrected_start_sec: Optional[float] = None
+    corrected_end_sec: Optional[float] = None
     created_at: datetime
     updated_at: datetime
 

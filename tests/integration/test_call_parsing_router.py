@@ -1173,40 +1173,48 @@ async def test_segmentation_jobs_with_correction_counts(
     client: AsyncClient, app_settings
 ) -> None:
     """Jobs with and without corrections both appear, with correct counts."""
-    from humpback.models.feedback_training import EventBoundaryCorrection
+    from humpback.models.call_parsing import EventBoundaryCorrection
 
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
     async with sf() as session:
-        rd = RegionDetectionJob(
+        rd1 = RegionDetectionJob(
             hydrophone_id="orcasound_lab",
             start_timestamp=1000.0,
             end_timestamp=2000.0,
             status="complete",
             config_json="{}",
         )
-        session.add(rd)
+        rd2 = RegionDetectionJob(
+            hydrophone_id="orcasound_lab",
+            start_timestamp=3000.0,
+            end_timestamp=4000.0,
+            status="complete",
+            config_json="{}",
+        )
+        session.add_all([rd1, rd2])
         await session.flush()
 
         es1 = EventSegmentationJob(
-            region_detection_job_id=rd.id, status="complete", event_count=5
+            region_detection_job_id=rd1.id, status="complete", event_count=5
         )
         es2 = EventSegmentationJob(
-            region_detection_job_id=rd.id, status="complete", event_count=3
+            region_detection_job_id=rd2.id, status="complete", event_count=3
         )
         session.add_all([es1, es2])
         await session.flush()
 
-        # Add corrections only for es1
+        # Add corrections only for rd1
         for i in range(3):
             session.add(
                 EventBoundaryCorrection(
-                    event_segmentation_job_id=es1.id,
-                    event_id=f"e{i}",
+                    region_detection_job_id=rd1.id,
                     region_id="r1",
                     correction_type="adjust",
-                    start_sec=float(i),
-                    end_sec=float(i + 1),
+                    original_start_sec=float(i),
+                    original_end_sec=float(i + 1),
+                    corrected_start_sec=float(i) + 0.1,
+                    corrected_end_sec=float(i + 1) + 0.1,
                 )
             )
         await session.commit()
@@ -1533,7 +1541,7 @@ async def test_get_typed_events_fills_region_id_for_add_corrections(
     )
     from humpback.call_parsing.types import Event, TypedEvent
     from humpback.models.call_parsing import EventClassificationJob
-    from humpback.models.feedback_training import EventBoundaryCorrection
+    from humpback.models.call_parsing import EventBoundaryCorrection
 
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
@@ -1551,16 +1559,15 @@ async def test_get_typed_events_fills_region_id_for_add_corrections(
             typed_event_count=2,
         )
         session.add(ec)
-        # Add-type boundary correction introduces a new event_id not present
+        # Add-type boundary correction introduces a new event not present
         # in events.parquet.
         session.add(
             EventBoundaryCorrection(
-                event_segmentation_job_id=es.id,
-                event_id="add-new-1",
+                region_detection_job_id=rd.id,
                 region_id="r-added",
                 correction_type="add",
-                start_sec=10.0,
-                end_sec=11.0,
+                corrected_start_sec=10.0,
+                corrected_end_sec=11.0,
             )
         )
         await session.commit()
@@ -1660,7 +1667,11 @@ async def test_segmentation_and_classification_lists_empty(
 # ---- Boundary corrections (Task 5) ----------------------------------------
 
 
-async def _seed_complete_segmentation_job(app_settings) -> str:
+async def _seed_complete_segmentation_job(app_settings) -> tuple[str, str]:
+    """Seed a complete region detection + segmentation job pair.
+
+    Returns ``(region_detection_job_id, segmentation_job_id)``.
+    """
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
     async with sf() as session:
@@ -1670,9 +1681,9 @@ async def _seed_complete_segmentation_job(app_settings) -> str:
         es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
         session.add(es)
         await session.commit()
-        es_id = es.id
+        rd_id, es_id = rd.id, es.id
     await engine.dispose()
-    return es_id
+    return rd_id, es_id
 
 
 async def _seed_complete_classification_job(app_settings) -> str:
@@ -1696,73 +1707,86 @@ async def _seed_complete_classification_job(app_settings) -> str:
 
 
 @pytest.mark.asyncio
-async def test_boundary_corrections_post_happy(
+async def test_event_boundary_corrections_post_happy(
     client: AsyncClient, app_settings
 ) -> None:
-    es_id = await _seed_complete_segmentation_job(app_settings)
+    rd_id, _es_id = await _seed_complete_segmentation_job(app_settings)
     resp = await client.post(
-        f"{BASE}/segmentation-jobs/{es_id}/corrections",
+        f"{BASE}/event-boundary-corrections",
         json={
+            "region_detection_job_id": rd_id,
             "corrections": [
                 {
-                    "event_id": "e1",
                     "region_id": "r1",
                     "correction_type": "adjust",
-                    "start_sec": 1.0,
-                    "end_sec": 2.0,
+                    "original_start_sec": 1.0,
+                    "original_end_sec": 2.0,
+                    "corrected_start_sec": 1.5,
+                    "corrected_end_sec": 2.5,
                 }
-            ]
+            ],
         },
     )
     assert resp.status_code == 200
-    assert resp.json()["count"] == 1
+    assert len(resp.json()) == 1
 
 
 @pytest.mark.asyncio
-async def test_boundary_corrections_post_404(client: AsyncClient) -> None:
+async def test_event_boundary_corrections_post_404(client: AsyncClient) -> None:
     resp = await client.post(
-        f"{BASE}/segmentation-jobs/nonexistent/corrections",
+        f"{BASE}/event-boundary-corrections",
         json={
+            "region_detection_job_id": "nonexistent",
             "corrections": [
                 {
-                    "event_id": "e1",
                     "region_id": "r1",
                     "correction_type": "delete",
+                    "original_start_sec": 1.0,
+                    "original_end_sec": 2.0,
                 }
-            ]
+            ],
         },
     )
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_boundary_corrections_get_and_delete(
+async def test_event_boundary_corrections_get_and_delete(
     client: AsyncClient, app_settings
 ) -> None:
-    es_id = await _seed_complete_segmentation_job(app_settings)
+    rd_id, _es_id = await _seed_complete_segmentation_job(app_settings)
     await client.post(
-        f"{BASE}/segmentation-jobs/{es_id}/corrections",
+        f"{BASE}/event-boundary-corrections",
         json={
+            "region_detection_job_id": rd_id,
             "corrections": [
                 {
-                    "event_id": "e1",
                     "region_id": "r1",
                     "correction_type": "add",
-                    "start_sec": 1.0,
-                    "end_sec": 2.0,
+                    "corrected_start_sec": 1.0,
+                    "corrected_end_sec": 2.0,
                 }
-            ]
+            ],
         },
     )
 
-    get_resp = await client.get(f"{BASE}/segmentation-jobs/{es_id}/corrections")
+    get_resp = await client.get(
+        f"{BASE}/event-boundary-corrections",
+        params={"region_detection_job_id": rd_id},
+    )
     assert get_resp.status_code == 200
     assert len(get_resp.json()) == 1
 
-    del_resp = await client.delete(f"{BASE}/segmentation-jobs/{es_id}/corrections")
+    del_resp = await client.delete(
+        f"{BASE}/event-boundary-corrections",
+        params={"region_detection_job_id": rd_id},
+    )
     assert del_resp.status_code == 204
 
-    get_resp2 = await client.get(f"{BASE}/segmentation-jobs/{es_id}/corrections")
+    get_resp2 = await client.get(
+        f"{BASE}/event-boundary-corrections",
+        params={"region_detection_job_id": rd_id},
+    )
     assert get_resp2.json() == []
 
 

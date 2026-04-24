@@ -1,16 +1,10 @@
 """SQLAlchemy models for human-in-the-loop feedback training.
 
-Tables supporting correction storage and feedback-driven retraining
-for Pass 2 (event segmentation boundaries) and Pass 3 (event type labels):
-
-- ``EventBoundaryCorrection`` — human corrections to segmentation events.
+- ``RegionBoundaryCorrection`` — human corrections to Pass 1 region boundaries.
 - ``EventClassifierTrainingJob`` — feedback training jobs for Pass 3.
 
-Pass 2 segmentation training uses the standard ``SegmentationTrainingDataset``
-→ ``SegmentationTrainingJob`` path (see ``segmentation_training.py``).
-
-Event type corrections are now handled by the unified
-``VocalizationCorrection`` model in ``models/call_parsing.py``.
+Event boundary corrections and vocalization corrections are now handled by
+unified models in ``models/call_parsing.py``.
 """
 
 from datetime import datetime
@@ -35,19 +29,6 @@ class RegionBoundaryCorrection(UUIDMixin, TimestampMixin, Base):
     )
 
     region_detection_job_id: Mapped[str]
-    region_id: Mapped[str]
-    correction_type: Mapped[str]
-    start_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
-    end_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
-
-
-class EventBoundaryCorrection(UUIDMixin, TimestampMixin, Base):
-    """Human correction to a Pass 2 segmentation event boundary."""
-
-    __tablename__ = "event_boundary_corrections"
-
-    event_segmentation_job_id: Mapped[str]
-    event_id: Mapped[str]
     region_id: Mapped[str]
     correction_type: Mapped[str]
     start_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)

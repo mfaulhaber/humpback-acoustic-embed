@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type {
   Region,
   SegmentationEvent,
-  BoundaryCorrectionResponse,
+  EventBoundaryCorrectionResponse,
 } from "@/api/types";
 import { cn } from "@/lib/utils";
 import { formatTime } from "@/utils/format";
@@ -10,7 +10,7 @@ import { formatTime } from "@/utils/format";
 interface RegionTableProps {
   regions: Region[];
   events: SegmentationEvent[];
-  corrections: BoundaryCorrectionResponse[];
+  corrections: EventBoundaryCorrectionResponse[];
   selectedRegionId: string | null;
   onSelectRegion: (regionId: string) => void;
 }
@@ -127,18 +127,22 @@ function StatusDot({ status }: { status: CorrectionStatus }) {
 function buildRegionInfos(
   regions: Region[],
   events: SegmentationEvent[],
-  corrections: BoundaryCorrectionResponse[],
+  corrections: EventBoundaryCorrectionResponse[],
 ): RegionInfo[] {
-  const correctedEventIds = new Set(corrections.map((c) => c.event_id));
+  const correctionsByRegion = new Map<string, number>();
+  for (const c of corrections) {
+    correctionsByRegion.set(
+      c.region_id,
+      (correctionsByRegion.get(c.region_id) ?? 0) + 1,
+    );
+  }
 
   return regions.map((region) => {
     const regionEvents = events.filter(
       (e) => e.region_id === region.region_id,
     );
     const eventCount = regionEvents.length;
-    const correctionCount = regionEvents.filter((e) =>
-      correctedEventIds.has(e.event_id),
-    ).length;
+    const correctionCount = correctionsByRegion.get(region.region_id) ?? 0;
 
     let status: CorrectionStatus = "pending";
     if (eventCount > 0 && correctionCount === eventCount) {

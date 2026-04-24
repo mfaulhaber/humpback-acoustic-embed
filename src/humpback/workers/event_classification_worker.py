@@ -195,10 +195,6 @@ async def run_event_classification_job(
             device.type,
         )
 
-        events = await load_corrected_events(
-            session, upstream_seg_id, settings.storage_root
-        )
-
         upstream_region_id = upstream_seg.region_detection_job_id
         if not upstream_region_id:
             raise ValueError(
@@ -207,6 +203,10 @@ async def run_event_classification_job(
         upstream_region = await session.get(RegionDetectionJob, upstream_region_id)
         if upstream_region is None:
             raise ValueError(f"RegionDetectionJob {upstream_region_id} not found")
+
+        events = await load_corrected_events(
+            session, upstream_region_id, upstream_seg_id, settings.storage_root
+        )
 
         audio_file_id = upstream_region.audio_file_id
         hydrophone_id = upstream_region.hydrophone_id
