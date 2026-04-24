@@ -46,6 +46,11 @@ import { EventBarOverlay, type EffectiveEvent } from "@/components/timeline/over
 import { useOverlayContext } from "@/components/timeline/overlays/OverlayContext";
 import type { GradientStops } from "@/components/timeline/spectrogram/ConfidenceStrip";
 import { typeColor } from "./TypePalette";
+import { formatRecordingTime } from "@/utils/format";
+import {
+  APPROVED_RING_COLOR,
+  CORRECTED_RING_COLOR,
+} from "@/components/timeline/overlays/EventBarOverlay";
 
 const WINDOW_SIZE_SEC = 5.0;
 const HOP_SEC = 1.0;
@@ -1114,6 +1119,12 @@ export function WindowClassifyReviewWorkspace({
             onBadgeClick={handleBadgeClick}
             onAddType={handleAddType}
             vocabulary={vocabulary}
+            jobStartEpoch={0}
+            boundaryCorrection={
+              selectedEventId
+                ? regionEffectiveEvents.find((e) => e.eventId === selectedEventId) ?? null
+                : null
+            }
           />
         </div>
       ) : (
@@ -1346,6 +1357,8 @@ function EventDetailPanel({
   onBadgeClick,
   onAddType,
   vocabulary,
+  jobStartEpoch,
+  boundaryCorrection,
 }: {
   selectedEvent: EventWithRegion | null;
   labels: EventLabel[];
@@ -1353,6 +1366,8 @@ function EventDetailPanel({
   onBadgeClick: (typeName: string) => void;
   onAddType: (typeName: string) => void;
   vocabulary: string[];
+  jobStartEpoch: number;
+  boundaryCorrection?: EffectiveEvent | null;
 }) {
   const [showAddPopover, setShowAddPopover] = useState(false);
 
@@ -1364,33 +1379,54 @@ function EventDetailPanel({
     );
   }
 
-  const aboveLabels = labels
-    .filter(
-      (l) =>
-        (l.aboveThreshold && l.correction !== "remove") ||
-        l.correction === "add",
-    )
-    .sort((a, b) => b.score - a.score);
-  const belowLabels = labels
-    .filter(
-      (l) =>
-        (!l.aboveThreshold || l.correction === "remove") &&
-        l.correction !== "add",
-    )
-    .sort((a, b) => b.score - a.score);
+  const sortedLabels = labels
+    .slice()
+    .sort((a, b) => a.typeName.localeCompare(b.typeName));
+
+  const isAbove = (l: EventLabel) =>
+    (l.aboveThreshold && l.correction !== "remove") || l.correction === "add";
 
   const addableTypes = vocabulary.filter(
-    (t) => !aboveLabels.some((l) => l.typeName === t),
+    (t) => !sortedLabels.some((l) => l.typeName === t && isAbove(l)),
   );
+
+  const isAdjusted = boundaryCorrection?.correctionType === "adjust";
+  const isDeleted = boundaryCorrection?.correctionType === "delete";
+  const isAdded = boundaryCorrection?.correctionType === "add";
 
   return (
     <div className="px-4 py-3 border-t space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-xs text-muted-foreground">
-          Event: {selectedEvent.start_sec.toFixed(1)}s –{" "}
-          {selectedEvent.end_sec.toFixed(1)}s
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>
+            Event: {formatRecordingTime(selectedEvent.start_sec, jobStartEpoch)} –{" "}
+            {formatRecordingTime(selectedEvent.end_sec, jobStartEpoch)}
+            {isAdjusted &&
+              boundaryCorrection?.originalStartSec != null &&
+              boundaryCorrection?.originalEndSec != null && (
+                <span className="ml-1 text-purple-400">
+                  (was {formatRecordingTime(boundaryCorrection.originalStartSec, jobStartEpoch)} –{" "}
+                  {formatRecordingTime(boundaryCorrection.originalEndSec, jobStartEpoch)})
+                </span>
+              )}
+          </span>
+          {isAdjusted && (
+            <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-purple-300">
+              adjusted
+            </span>
+          )}
+          {isDeleted && (
+            <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-red-300">
+              deleted
+            </span>
+          )}
+          {isAdded && (
+            <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-green-300">
+              added
+            </span>
+          )}
           {region && (
-            <span className="ml-2">
+            <span>
               Region: {region.region_id.slice(0, 8)}
             </span>
           )}
@@ -1398,47 +1434,57 @@ function EventDetailPanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        {aboveLabels.map((l) => (
-          <Badge
-            key={l.typeName}
-            className="cursor-pointer text-xs text-white select-none"
-            style={{
-              backgroundColor: typeColor(l.typeName),
-              outline: l.isPending
-                ? "2px solid rgba(250, 204, 21, 0.8)"
-                : undefined,
-              outlineOffset: l.isPending ? "1px" : undefined,
-            }}
-            onClick={() => onBadgeClick(l.typeName)}
-          >
-            {l.typeName} {(l.score * 100).toFixed(0)}%
-            {l.correction === "add" && (
-              <Plus className="h-2.5 w-2.5 ml-0.5 inline" />
-            )}
-          </Badge>
-        ))}
-
-        {belowLabels.map((l) => (
-          <Badge
-            key={l.typeName}
-            variant="outline"
-            className="cursor-pointer text-xs select-none opacity-50 hover:opacity-75"
-            style={{
-              borderColor: typeColor(l.typeName),
-              color: typeColor(l.typeName),
-              outline: l.isPending
-                ? "2px solid rgba(250, 204, 21, 0.8)"
-                : undefined,
-              outlineOffset: l.isPending ? "1px" : undefined,
-            }}
-            onClick={() => onBadgeClick(l.typeName)}
-          >
-            {l.typeName} {(l.score * 100).toFixed(0)}%
-            {l.correction === "remove" && (
-              <X className="h-2.5 w-2.5 ml-0.5 inline" />
-            )}
-          </Badge>
-        ))}
+        {sortedLabels.map((l) => {
+          const above = isAbove(l);
+          if (above) {
+            const ringColor = l.correction === "add"
+              ? (l.aboveThreshold ? APPROVED_RING_COLOR : CORRECTED_RING_COLOR)
+              : undefined;
+            return (
+              <Badge
+                key={l.typeName}
+                className="cursor-pointer text-xs text-white select-none"
+                style={{
+                  backgroundColor: typeColor(l.typeName),
+                  outline: l.isPending
+                    ? "2px solid rgba(250, 204, 21, 0.8)"
+                    : undefined,
+                  outlineOffset: l.isPending ? "1px" : undefined,
+                  boxShadow: !l.isPending && ringColor
+                    ? `0 0 0 1.5px ${ringColor}`
+                    : undefined,
+                }}
+                onClick={() => onBadgeClick(l.typeName)}
+              >
+                {l.typeName} {(l.score * 100).toFixed(0)}%
+                {l.correction === "add" && (
+                  <Plus className="h-2.5 w-2.5 ml-0.5 inline" />
+                )}
+              </Badge>
+            );
+          }
+          return (
+            <Badge
+              key={l.typeName}
+              variant="outline"
+              className="cursor-pointer text-xs select-none opacity-50 hover:opacity-75"
+              style={{
+                borderColor: typeColor(l.typeName),
+                color: typeColor(l.typeName),
+                outline: l.isPending
+                  ? "2px solid rgba(250, 204, 21, 0.8)"
+                  : undefined,
+                outlineOffset: l.isPending ? "1px" : undefined,
+              }}
+              onClick={() => onBadgeClick(l.typeName)}
+            >
+              {l.typeName} {(l.score * 100).toFixed(0)}%
+              {l.correction === "remove" && (
+                <X className="h-2.5 w-2.5 ml-0.5 inline" />
+              )}
+            </Badge>
+          );
+        })}
 
         <div className="relative">
           <button

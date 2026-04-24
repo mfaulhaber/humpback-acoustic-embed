@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Region } from "@/api/types";
-import { formatTime } from "@/utils/format";
+import { formatRecordingTime } from "@/utils/format";
 
 export interface RetrainStatus {
   status: "queued" | "running" | "complete" | "failed";
@@ -33,6 +33,7 @@ interface ReviewToolbarProps {
   onNextEvent?: () => void;
   currentEventIndex?: number;
   totalEventCount?: number;
+  jobStartEpoch: number;
 }
 
 export function ReviewToolbar({
@@ -58,6 +59,7 @@ export function ReviewToolbar({
   onNextEvent,
   currentEventIndex = 0,
   totalEventCount = 0,
+  jobStartEpoch,
 }: ReviewToolbarProps) {
   const handleCancel = useCallback(() => {
     if (isDirty) {
@@ -102,7 +104,7 @@ export function ReviewToolbar({
           <ChevronRight className="h-4 w-4" />
         </button>
         <span className="text-muted-foreground ml-1">
-          Region {regionIdx >= 0 ? regionIdx + 1 : "?"}/{regions.length} · {formatTime(region.start_sec)} – {formatTime(region.end_sec)}
+          Region {regionIdx >= 0 ? regionIdx + 1 : "?"}/{regions.length} · {formatRecordingTime(region.start_sec, jobStartEpoch)} – {formatRecordingTime(region.end_sec, jobStartEpoch)}
         </span>
 
         {onPrevEvent && onNextEvent && (

@@ -5,7 +5,7 @@ import type {
   EventBoundaryCorrectionResponse,
 } from "@/api/types";
 import { cn } from "@/lib/utils";
-import { formatTime } from "@/utils/format";
+import { formatRecordingTime } from "@/utils/format";
 
 interface RegionTableProps {
   regions: Region[];
@@ -13,6 +13,7 @@ interface RegionTableProps {
   corrections: EventBoundaryCorrectionResponse[];
   selectedRegionId: string | null;
   onSelectRegion: (regionId: string) => void;
+  jobStartEpoch: number;
 }
 
 type CorrectionStatus = "pending" | "partial" | "reviewed";
@@ -30,6 +31,7 @@ export function RegionTable({
   corrections,
   selectedRegionId,
   onSelectRegion,
+  jobStartEpoch,
 }: RegionTableProps) {
   const regionInfos = useMemo(
     () => buildRegionInfos(regions, events, corrections),
@@ -91,7 +93,7 @@ export function RegionTable({
                     <StatusDot status={info.status} />
                   </td>
                   <td className="px-3 py-1.5 font-mono">
-                    {formatTime(info.region.start_sec)}
+                    {formatRecordingTime(info.region.start_sec, jobStartEpoch)}
                   </td>
                   <td className="px-3 py-1.5 text-muted-foreground">
                     {duration.toFixed(0)}s
