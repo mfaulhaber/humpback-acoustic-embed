@@ -15,13 +15,6 @@ export function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Format seconds as `m:s.s` with one decimal place. */
-export function formatTimeDecimal(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
-}
-
 export function jsonPretty(obj: unknown): string {
   return JSON.stringify(obj, null, 2);
 }
@@ -36,12 +29,13 @@ export function formatRecordingTime(
   offsetSec: number,
   jobStartEpoch: number,
 ): string {
-  const epoch = jobStartEpoch + offsetSec;
-  const d = new Date(epoch * 1000);
+  const totalSec = jobStartEpoch + offsetSec;
+  const rounded = Math.round(totalSec * 10) / 10;
+  const d = new Date(rounded * 1000);
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  const ss = d.getUTCSeconds() + (epoch % 1);
-  return `${hh}:${mm}:${ss.toFixed(1).padStart(4, "0")}`;
+  const ss = (d.getUTCSeconds() + (rounded % 1)).toFixed(1).padStart(4, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 /** Format a UTC epoch (seconds) as a short month+day string, e.g. "Apr 14". */

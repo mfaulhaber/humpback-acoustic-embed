@@ -1401,6 +1401,14 @@ function EventDetailPanel({
           <span>
             Event: {formatRecordingTime(selectedEvent.start_sec, jobStartEpoch)} –{" "}
             {formatRecordingTime(selectedEvent.end_sec, jobStartEpoch)}
+            {isAdjusted &&
+              boundaryCorrection?.originalStartSec != null &&
+              boundaryCorrection?.originalEndSec != null && (
+                <span className="ml-1 text-purple-400">
+                  (was {formatRecordingTime(boundaryCorrection.originalStartSec, jobStartEpoch)} –{" "}
+                  {formatRecordingTime(boundaryCorrection.originalEndSec, jobStartEpoch)})
+                </span>
+              )}
           </span>
           {isAdjusted && (
             <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-purple-300">

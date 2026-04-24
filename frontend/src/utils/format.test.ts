@@ -30,4 +30,9 @@ describe("formatRecordingTime", () => {
     expect(formatRecordingTime(0.06, start)).toBe("12:00:00.1");
     expect(formatRecordingTime(0.04, start)).toBe("12:00:00.0");
   });
+
+  it("does not produce 60.0 seconds on rounding boundary", () => {
+    const start = Date.UTC(2026, 0, 1, 13, 20, 0) / 1000;
+    expect(formatRecordingTime(59.95, start)).toBe("13:21:00.0");
+  });
 });
