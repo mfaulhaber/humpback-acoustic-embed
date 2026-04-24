@@ -67,6 +67,17 @@ Use these commands for managing dependencies:
 *   When troubleshooting, use `uv cache clean` as a last resort.
 
 ### 3.5 Database Migrations
+
+**⚠️ MANDATORY: Back up the production database BEFORE any database change.**
+Any operation that modifies the database — migrations, data backfills, manual SQL, schema changes, or destructive deletes — **must** be preceded by a backup. No exceptions.
+
+1. Read the production database path from the `HUMPBACK_DATABASE_URL` entry in `.env`.
+2. Copy the database file to `<original_path>.YYYY-MM-DD-HH:mm.bak` (UTC timestamp).
+   Example: `cp "$DB_PATH" "${DB_PATH}.2026-04-24-18:30.bak"`
+3. Confirm the backup file exists and has a non-zero size before proceeding.
+
+If the backup step fails or is skipped, **stop** — do not apply the migration or modification.
+
 *   Honor database file location defined with HUMPBACK_DATABASE_URL, check .env override.  
 *   When a change adds, removes, or renames columns on any SQL table, **always** create an Alembic migration in `alembic/versions/` and run it with `uv run alembic upgrade head` before verifying the change works.
 *   Migration files follow the naming convention `NNN_short_description.py` (e.g., `007_negative_embedding_set_ids.py`), incrementing from the latest revision.
@@ -134,7 +145,7 @@ Testing is not optional. Every meaningful change must include tests.
 
 See [docs/reference/testing.md](docs/reference/testing.md) for unit test guidelines, E2E smoke test spec, Playwright patterns, and model stub strategy.
 
-During implementation sessions, per-task verification uses targeted inline tests plus a background sub-agent for the full suite. See `docs/workflows/session-implement.md` step 4 (Per-task testing) for details.
+During implementation sessions, per-task verification uses targeted inline tests plus a background sub-agent for the full suite. See `docs/workflows/session-implement.md` step 5 (Per-task testing) for details.
 
 ---
 
