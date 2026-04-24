@@ -318,17 +318,34 @@ export function WindowClassifyReviewWorkspace({
 
   // Event/region navigation state
   const [selectedEventIdx, setSelectedEventIdx] = useState(0);
+  // For added events (not in allEvents), track selection by ID
+  const [selectedAddedEventId, setSelectedAddedEventId] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedEventIdx(0);
+    setSelectedAddedEventId(null);
     setPendingCorrections(new Map());
     setPendingBoundaryCorrections(new Map());
     setAddMode(false);
   }, [selectedJobId]);
 
-  const selectedEvent = allEvents[selectedEventIdx] ?? null;
-  const currentRegionIndex = selectedEvent?.regionIndex ?? 0;
-  const currentRegion = regions[currentRegionIndex] ?? null;
+  const selectedEvent = selectedAddedEventId ? null : (allEvents[selectedEventIdx] ?? null);
+
+  // When an added event is selected, find it in effectiveEvents for region/position info
+  const selectedAddedEvent = useMemo(() => {
+    if (!selectedAddedEventId) return null;
+    return effectiveEvents.find((e) => e.eventId === selectedAddedEventId) ?? null;
+  }, [selectedAddedEventId, effectiveEvents]);
+
+  // Synthetic selected event ID covering both original and added events
+  const selectedEventId = selectedAddedEventId ?? selectedEvent?.event_id ?? null;
+
+  const currentRegionIndex = selectedEvent?.regionIndex ?? (
+    selectedAddedEvent
+      ? regions.findIndex((r) => r.region_id === selectedAddedEvent.regionId)
+      : 0
+  );
+  const currentRegion = regions[Math.max(0, currentRegionIndex)] ?? null;
 
   // Effective events filtered to current region
   const regionEffectiveEvents = useMemo(
@@ -435,9 +452,11 @@ export function WindowClassifyReviewWorkspace({
   // Event navigation
   const goPrevEvent = useCallback(() => {
     setSelectedEventIdx((i) => Math.max(0, i - 1));
+    setSelectedAddedEventId(null);
   }, []);
   const goNextEvent = useCallback(() => {
     setSelectedEventIdx((i) => Math.min(allEvents.length - 1, i + 1));
+    setSelectedAddedEventId(null);
   }, [allEvents.length]);
   const goPrevRegion = useCallback(() => {
     if (!selectedEvent || !regions.length) return;
@@ -446,10 +465,12 @@ export function WindowClassifyReviewWorkspace({
     const targetRegion = regions[targetRi];
     const evts = eventsByRegion[targetRegion.region_id];
     if (evts && evts.length > 0) {
-      // Last event of previous region
       const lastEvt = evts[evts.length - 1];
       const idx = allEvents.indexOf(lastEvt);
-      if (idx >= 0) setSelectedEventIdx(idx);
+      if (idx >= 0) {
+        setSelectedEventIdx(idx);
+        setSelectedAddedEventId(null);
+      }
     }
   }, [selectedEvent, regions, eventsByRegion, allEvents]);
   const goNextRegion = useCallback(() => {
@@ -462,19 +483,25 @@ export function WindowClassifyReviewWorkspace({
       // First event of next region
       const firstEvt = evts[0];
       const idx = allEvents.indexOf(firstEvt);
-      if (idx >= 0) setSelectedEventIdx(idx);
+      if (idx >= 0) {
+        setSelectedEventIdx(idx);
+        setSelectedAddedEventId(null);
+      }
     }
   }, [selectedEvent, regions, eventsByRegion, allEvents]);
 
-  // Playback bounded to selected event
+  // Playback bounded to selected event (original or added)
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
       playbackRef.current?.pause();
     } else if (selectedEvent) {
       const duration = selectedEvent.end_sec - selectedEvent.start_sec;
       playbackRef.current?.play(selectedEvent.start_sec, duration);
+    } else if (selectedAddedEvent) {
+      const duration = selectedAddedEvent.endSec - selectedAddedEvent.startSec;
+      playbackRef.current?.play(selectedAddedEvent.startSec, duration);
     }
-  }, [isPlaying, selectedEvent]);
+  }, [isPlaying, selectedEvent, selectedAddedEvent]);
 
   // Badge click: toggle add/remove correction for event
   const handleBadgeClick = useCallback(
@@ -545,9 +572,9 @@ export function WindowClassifyReviewWorkspace({
       setPendingBoundaryCorrections((prev) => {
         const next = new Map(prev);
         const existing = prev.get(eventId);
-        const isAdd = existing?.correction_type === "add";
         const ev = allEvents.find((e) => e.event_id === eventId);
         const effectiveEv = effectiveEvents.find((e) => e.eventId === eventId);
+        const isAdd = existing?.correction_type === "add" || effectiveEv?.correctionType === "add";
         const regionId =
           ev?.region_id ?? existing?.region_id ?? currentRegion?.region_id ?? "";
         if (isAdd) {
@@ -608,19 +635,32 @@ export function WindowClassifyReviewWorkspace({
           next.delete(eventId);
         } else {
           const ev = allEvents.find((e) => e.event_id === eventId);
-          next.set(eventId, {
-            region_id: ev?.region_id ?? currentRegion?.region_id ?? "",
-            correction_type: "delete",
-            original_start_sec: ev?.start_sec ?? null,
-            original_end_sec: ev?.end_sec ?? null,
-            corrected_start_sec: null,
-            corrected_end_sec: null,
-          });
+          const effectiveEv = effectiveEvents.find((e) => e.eventId === eventId);
+          // For saved-add events, treat as removing the add rather than creating a delete
+          if (effectiveEv?.correctionType === "add") {
+            next.set(eventId, {
+              region_id: effectiveEv.regionId,
+              correction_type: "delete",
+              original_start_sec: effectiveEv.originalStartSec,
+              original_end_sec: effectiveEv.originalEndSec,
+              corrected_start_sec: null,
+              corrected_end_sec: null,
+            });
+          } else {
+            next.set(eventId, {
+              region_id: ev?.region_id ?? currentRegion?.region_id ?? "",
+              correction_type: "delete",
+              original_start_sec: ev?.start_sec ?? null,
+              original_end_sec: ev?.end_sec ?? null,
+              corrected_start_sec: null,
+              corrected_end_sec: null,
+            });
+          }
         }
         return next;
       });
     },
-    [allEvents, currentRegion],
+    [allEvents, effectiveEvents, currentRegion],
   );
 
   // Save
@@ -760,13 +800,13 @@ export function WindowClassifyReviewWorkspace({
         case "Backspace":
         case "Delete":
           e.preventDefault();
-          if (selectedEvent) handleBoundaryDelete(selectedEvent.event_id);
+          if (selectedEventId) handleBoundaryDelete(selectedEventId);
           break;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goPrevEvent, goNextEvent, goPrevRegion, goNextRegion, togglePlayback, selectedEvent, handleBoundaryDelete]);
+  }, [goPrevEvent, goNextEvent, goPrevRegion, goNextRegion, togglePlayback, selectedEventId, handleBoundaryDelete]);
 
   // Job label
   const jobLabel = useCallback(
@@ -920,7 +960,7 @@ export function WindowClassifyReviewWorkspace({
                 size="sm"
                 className="h-7"
                 onClick={togglePlayback}
-                disabled={!selectedEvent}
+                disabled={!selectedEvent && !selectedAddedEvent}
                 title="Play/pause event (Space)"
               >
                 {isPlaying ? (
@@ -947,9 +987,9 @@ export function WindowClassifyReviewWorkspace({
                 size="sm"
                 className="h-7 text-xs"
                 onClick={() => {
-                  if (selectedEvent) handleBoundaryDelete(selectedEvent.event_id);
+                  if (selectedEventId) handleBoundaryDelete(selectedEventId);
                 }}
-                disabled={!selectedEvent}
+                disabled={!selectedEventId}
                 title="Delete event (Del)"
               >
                 <Trash2 className="h-3 w-3 mr-1" />
@@ -1044,10 +1084,16 @@ export function WindowClassifyReviewWorkspace({
                 region={currentRegion}
                 allRegions={regions}
                 stripScores={stripScores}
-                selectedEvent={selectedEvent}
+                selectedEventId={selectedEventId}
                 allEvents={allEvents}
                 allScoreRows={allScoreRows}
-                onSelectEvent={(idx) => setSelectedEventIdx(idx)}
+                onSelectEvent={(idx) => {
+                  setSelectedEventIdx(idx);
+                  setSelectedAddedEventId(null);
+                }}
+                onSelectAddedEvent={(eventId) => {
+                  setSelectedAddedEventId(eventId);
+                }}
                 regionEffectiveEvents={regionEffectiveEvents}
                 onAdjust={handleBoundaryAdjust}
                 onAdd={handleBoundaryAdd}
@@ -1087,10 +1133,11 @@ interface WindowClassifyViewerBodyProps {
   region: Region;
   allRegions: Region[];
   stripScores: (number | null)[];
-  selectedEvent: EventWithRegion | null;
+  selectedEventId: string | null;
   allEvents: EventWithRegion[];
   allScoreRows: WindowScoreRow[];
   onSelectEvent: (globalIndex: number) => void;
+  onSelectAddedEvent: (eventId: string) => void;
   regionEffectiveEvents: EffectiveEvent[];
   onAdjust: (eventId: string, startSec: number, endSec: number) => void;
   onAdd: (regionId: string, startSec: number, endSec: number) => void;
@@ -1102,10 +1149,11 @@ function WindowClassifyViewerBody({
   region,
   allRegions,
   stripScores,
-  selectedEvent,
+  selectedEventId,
   allEvents,
   allScoreRows,
   onSelectEvent,
+  onSelectAddedEvent,
   regionEffectiveEvents,
   onAdjust,
   onAdd,
@@ -1124,14 +1172,17 @@ function WindowClassifyViewerBody({
     }
   }, [region.region_id, region.padded_start_sec, region.padded_end_sec, ctx]);
 
-  // Center on selected event
+  // Center on selected event (works for both original and added events)
+  const selectedEffective = useMemo(
+    () => regionEffectiveEvents.find((e) => e.eventId === selectedEventId) ?? null,
+    [regionEffectiveEvents, selectedEventId],
+  );
   useEffect(() => {
-    if (selectedEvent) {
-      const evtCenter =
-        (selectedEvent.start_sec + selectedEvent.end_sec) / 2;
+    if (selectedEffective) {
+      const evtCenter = (selectedEffective.startSec + selectedEffective.endSec) / 2;
       ctx.seekTo(evtCenter);
     }
-  }, [selectedEvent?.start_sec, selectedEvent?.end_sec]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedEffective?.startSec, selectedEffective?.endSec]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Zoom/pan keyboard shortcuts (provider shortcuts disabled)
   const {
@@ -1191,11 +1242,15 @@ function WindowClassifyViewerBody({
           />
           <EventBarOverlay
             events={regionEffectiveEvents}
-            selectedEventId={selectedEvent?.event_id ?? null}
+            selectedEventId={selectedEventId}
             onSelectEvent={(eventId) => {
               if (!eventId) return;
               const idx = allEvents.findIndex((e) => e.event_id === eventId);
-              if (idx >= 0) onSelectEvent(idx);
+              if (idx >= 0) {
+                onSelectEvent(idx);
+              } else {
+                onSelectAddedEvent(eventId);
+              }
             }}
             onAdjust={onAdjust}
             onAdd={onAdd}

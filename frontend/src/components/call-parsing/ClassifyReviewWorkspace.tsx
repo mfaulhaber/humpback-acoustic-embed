@@ -389,8 +389,9 @@ export function ClassifyReviewWorkspace({
       setPendingBoundaryCorrections((prev) => {
         const next = new Map(prev);
         const existing = prev.get(eventId);
-        const isAdd = existing?.correction_type === "add";
         const ev = events.find((e) => e.eventId === eventId);
+        // Check if event is an "add" correction: pending add, or saved add (eventId starts with "saved-add-")
+        const isAdd = existing?.correction_type === "add" || eventId.startsWith("saved-add-") || eventId.startsWith("add-");
         const regionId =
           ev?.regionId ?? existing?.region_id ?? currentRegion?.region_id ?? "";
         if (isAdd) {

@@ -330,9 +330,9 @@ export function SegmentReviewWorkspace({
       setPendingCorrections((prev) => {
         const next = new Map(prev);
         const existing = prev.get(eventId);
-        const isAdd = existing?.correction_type === "add";
         const ev = events.find((e) => e.event_id === eventId);
         const effectiveEv = effectiveEvents.find((e) => e.eventId === eventId);
+        const isAdd = existing?.correction_type === "add" || effectiveEv?.correctionType === "add";
         const regionId = ev?.region_id ?? existing?.region_id ?? selectedRegionId ?? "";
         if (isAdd) {
           next.set(eventId, {
