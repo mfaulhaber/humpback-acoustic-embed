@@ -12,7 +12,7 @@ export function VocalizationClusteringPage() {
   );
 
   const previousJobs = useMemo(
-    () => jobs.filter((j) => j.status === "complete" || j.status === "failed"),
+    () => jobs.filter((j) => j.status === "complete" || j.status === "failed" || j.status === "canceled"),
     [jobs],
   );
 

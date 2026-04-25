@@ -137,6 +137,7 @@ export interface ClusteringJob {
   id: string;
   status: "queued" | "running" | "complete" | "failed" | "canceled";
   embedding_set_ids: string[];
+  detection_job_ids?: string[] | null;
   parameters: Record<string, unknown> | null;
   error_message: string | null;
   metrics: Record<string, unknown> | null;

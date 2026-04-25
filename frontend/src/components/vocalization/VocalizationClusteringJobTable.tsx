@@ -11,7 +11,7 @@ import { useDeleteVocalizationClusteringJob } from "@/hooks/queries/useVocalizat
 import type { ClusteringJob } from "@/api/types";
 
 function detectionJobsSummary(job: ClusteringJob): string {
-  const ids = (job as ClusteringJob & { detection_job_ids?: string[] | null }).detection_job_ids;
+  const ids = job.detection_job_ids;
   if (!ids || ids.length === 0) return "—";
   return `${ids.length} detection job${ids.length !== 1 ? "s" : ""}`;
 }
@@ -61,7 +61,15 @@ export function VocalizationClusteringJobTable({
   const filteredJobs = useMemo(() => {
     if (mode === "active" || !filterText) return jobs;
     const q = filterText.toLowerCase();
-    return jobs.filter((j) => detectionJobsSummary(j).toLowerCase().includes(q));
+    return jobs.filter((j) => {
+      const haystack = [
+        detectionJobsSummary(j),
+        j.status,
+        j.error_message ?? "",
+        j.id,
+      ].join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
   }, [jobs, filterText, mode]);
 
   const sortedJobs = useMemo(() => {
@@ -254,7 +262,7 @@ export function VocalizationClusteringJobTable({
                 <StatusBadge status={job.status} />
               </td>
               <td className="px-3 py-2 text-xs whitespace-nowrap">
-                {new Date(job.created_at).toLocaleString()}
+                {new Date(job.created_at).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC")}
               </td>
               <td className="px-3 py-2 text-xs">{detectionJobsSummary(job)}</td>
               {mode === "previous" && (

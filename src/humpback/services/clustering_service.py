@@ -138,6 +138,15 @@ async def create_vocalization_clustering_job(
     if not detection_job_ids:
         raise ValueError("At least one detection job is required")
 
+    active_model_result = await session.execute(
+        select(VocalizationClassifierModel).where(
+            VocalizationClassifierModel.is_active.is_(True)
+        )
+    )
+    active_model = active_model_result.scalar_one_or_none()
+    if active_model is None:
+        raise ValueError("No active vocalization model")
+
     for djid in detection_job_ids:
         dj_result = await session.execute(
             select(DetectionJob).where(DetectionJob.id == djid)
@@ -145,15 +154,6 @@ async def create_vocalization_clustering_job(
         dj = dj_result.scalar_one_or_none()
         if dj is None:
             raise ValueError(f"Detection job not found: {djid}")
-
-        active_model_result = await session.execute(
-            select(VocalizationClassifierModel).where(
-                VocalizationClassifierModel.is_active.is_(True)
-            )
-        )
-        active_model = active_model_result.scalar_one_or_none()
-        if active_model is None:
-            raise ValueError("No active vocalization model")
 
         inf_result = await session.execute(
             select(VocalizationInferenceJob).where(
@@ -220,14 +220,19 @@ async def list_clustering_eligible_detection_jobs(
             (VocalizationInferenceJob.source_id == DetectionJob.id)
             & (VocalizationInferenceJob.source_type == "detection_job"),
         )
+        .join(
+            DetectionEmbeddingJob,
+            DetectionEmbeddingJob.detection_job_id == DetectionJob.id,
+        )
         .where(
             VocalizationInferenceJob.vocalization_model_id == active_model.id,
             VocalizationInferenceJob.status == "complete",
+            DetectionEmbeddingJob.status == "complete",
         )
         .order_by(DetectionJob.created_at.desc())
     )
     result = await session.execute(stmt)
-    jobs = list(result.scalars().all())
+    jobs = list(result.scalars().unique().all())
 
     out = []
     for dj in jobs:

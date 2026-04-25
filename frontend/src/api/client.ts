@@ -883,13 +883,8 @@ export const fetchVocalizationClusteringJob = (jobId: string) =>
 export const createVocalizationClusteringJob = (body: VocalizationClusteringJobCreate) =>
   post<ClusteringJob>("/vocalization/clustering-jobs", body);
 
-export const deleteVocalizationClusteringJob = async (jobId: string) => {
-  const res = await fetch(`/vocalization/clustering-jobs/${jobId}`, { method: "DELETE" });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text);
-  }
-};
+export const deleteVocalizationClusteringJob = (jobId: string) =>
+  api<{ status: string }>(`/vocalization/clustering-jobs/${jobId}`, { method: "DELETE" });
 
 export const fetchVocClusteringClusters = (jobId: string) =>
   api<ClusterOut[]>(`/vocalization/clustering-jobs/${jobId}/clusters`);

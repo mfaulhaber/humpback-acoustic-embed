@@ -3,7 +3,6 @@ import { ArrowLeft } from "lucide-react";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { ClusterTable } from "@/components/clustering/ClusterTable";
 import { EvaluationPanel } from "@/components/clustering/EvaluationPanel";
-import { ExportReport } from "@/components/clustering/ExportReport";
 import { VocalizationUmapPlot } from "./VocalizationUmapPlot";
 import {
   useVocalizationClusteringJob,
@@ -24,9 +23,7 @@ export function VocalizationClusteringDetail() {
     );
   }
 
-  const detectionJobIds = (
-    job as typeof job & { detection_job_ids?: string[] | null }
-  ).detection_job_ids;
+  const detectionJobIds = job.detection_job_ids;
 
   return (
     <div className="space-y-6">
@@ -45,7 +42,7 @@ export function VocalizationClusteringDetail() {
         </div>
         <div className="text-xs text-muted-foreground space-y-1">
           <div>
-            Created: {new Date(job.created_at).toLocaleString()}
+            Created: {new Date(job.created_at).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC")}
           </div>
           {detectionJobIds && (
             <div>
@@ -75,8 +72,7 @@ export function VocalizationClusteringDetail() {
         <>
           <ClusterTable clusters={clusters} />
           <VocalizationUmapPlot jobId={jobId!} />
-          <EvaluationPanel jobId={jobId!} job={job} />
-          <ExportReport jobId={jobId!} />
+          <EvaluationPanel jobId={jobId!} />
         </>
       )}
     </div>
