@@ -26,9 +26,10 @@ from humpback.clustering.pipeline import (
 from humpback.config import Settings
 from humpback.models.audio import AudioFile
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
+from humpback.models.detection_embedding_job import DetectionEmbeddingJob
 from humpback.models.processing import EmbeddingSet
 from humpback.processing.embeddings import read_embeddings
-from humpback.storage import cluster_dir, ensure_dir
+from humpback.storage import cluster_dir, detection_embeddings_path, ensure_dir
 from humpback.workers.queue import complete_clustering_job, fail_clustering_job
 
 logger = logging.getLogger(__name__)
@@ -42,38 +43,77 @@ async def run_clustering_job(
     """Execute a clustering job end-to-end."""
     try:
         es_ids = json.loads(job.embedding_set_ids)
+        det_ids = json.loads(job.detection_job_ids) if job.detection_job_ids else []
         params = json.loads(job.parameters) if job.parameters else None
 
-        # Load all embedding sets
-        all_embeddings = []
-        all_es_ids = []
-        all_row_indices = []
-        # Map embedding_set_id -> folder_path for category metrics
+        all_embeddings: list[np.ndarray] = []
+        all_es_ids: list[str] = []
+        all_row_indices: list[int] = []
         es_folder_paths: dict[str, str] = {}
 
-        for es_id in es_ids:
-            result = await session.execute(
-                select(EmbeddingSet).where(EmbeddingSet.id == es_id)
-            )
-            es = result.scalar_one_or_none()
-            if es is None:
-                raise ValueError(f"Embedding set {es_id} not found")
-
-            # Resolve folder_path from audio file
-            if es_id not in es_folder_paths:
-                audio_result = await session.execute(
-                    select(AudioFile).where(AudioFile.id == es.audio_file_id)
+        if det_ids:
+            for dj_id in det_ids:
+                emb_result = await session.execute(
+                    select(DetectionEmbeddingJob)
+                    .where(
+                        DetectionEmbeddingJob.detection_job_id == dj_id,
+                        DetectionEmbeddingJob.status == "complete",
+                    )
+                    .order_by(DetectionEmbeddingJob.created_at.desc())
+                    .limit(1)
                 )
-                audio_file = audio_result.scalar_one_or_none()
-                es_folder_paths[es_id] = audio_file.folder_path if audio_file else ""
+                emb_job = emb_result.scalar_one_or_none()
+                if emb_job is None:
+                    raise ValueError(
+                        f"No completed embedding job for detection job {dj_id}"
+                    )
 
-            indices, embeddings = await asyncio.to_thread(
-                read_embeddings, Path(es.parquet_path)
-            )
-            for i, idx in enumerate(indices):
-                all_embeddings.append(embeddings[i])
-                all_es_ids.append(es_id)
-                all_row_indices.append(int(idx))
+                parquet_path = detection_embeddings_path(
+                    settings.storage_root, dj_id, emb_job.model_version
+                )
+                if not parquet_path.exists():
+                    raise ValueError(
+                        f"Embeddings parquet not found for detection job {dj_id}"
+                    )
+
+                det_table = await asyncio.to_thread(pq.read_table, str(parquet_path))
+                row_ids = det_table.column("row_id").to_pylist()
+                emb_col = det_table.column("embedding").to_pylist()
+                for i, rid in enumerate(row_ids):
+                    all_embeddings.append(np.array(emb_col[i], dtype=np.float32))
+                    all_es_ids.append(dj_id)
+                    all_row_indices.append(i)
+
+                logger.info(
+                    "Loaded %d detection embeddings for job %s",
+                    len(row_ids),
+                    dj_id,
+                )
+        else:
+            for es_id in es_ids:
+                result = await session.execute(
+                    select(EmbeddingSet).where(EmbeddingSet.id == es_id)
+                )
+                es = result.scalar_one_or_none()
+                if es is None:
+                    raise ValueError(f"Embedding set {es_id} not found")
+
+                if es_id not in es_folder_paths:
+                    audio_result = await session.execute(
+                        select(AudioFile).where(AudioFile.id == es.audio_file_id)
+                    )
+                    audio_file = audio_result.scalar_one_or_none()
+                    es_folder_paths[es_id] = (
+                        audio_file.folder_path if audio_file else ""
+                    )
+
+                indices, embeddings = await asyncio.to_thread(
+                    read_embeddings, Path(es.parquet_path)
+                )
+                for i, idx in enumerate(indices):
+                    all_embeddings.append(embeddings[i])
+                    all_es_ids.append(es_id)
+                    all_row_indices.append(int(idx))
 
         if not all_embeddings:
             raise ValueError("No embeddings found")

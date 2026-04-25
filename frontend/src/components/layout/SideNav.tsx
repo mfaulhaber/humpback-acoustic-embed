@@ -46,6 +46,7 @@ const navItems: NavItem[] = [
       { label: "Training", to: "/app/vocalization/training" },
       { label: "Labeling", to: "/app/vocalization/labeling" },
       { label: "Training Data", to: "/app/vocalization/training-data" },
+      { label: "Clustering", to: "/app/vocalization/clustering" },
     ],
   },
   {

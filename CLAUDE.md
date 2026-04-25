@@ -258,18 +258,18 @@ See [docs/reference/behavioral-constraints.md](docs/reference/behavioral-constra
 - Audio upload/import, processing (TFLite + TF2), embedding search, clustering (HDBSCAN/K-Means/Agglomerative)
 - Binary classifier training (LogisticRegression/MLP), hyperparameter tuning, autoresearch candidate promotion, retrain workflow; perch_v2 registered as first-class embedding model family with detection-manifest training and model-versioned re-embedding (ADR-055)
 - Hydrophone streaming (Orcasound HLS + NOAA), detection with configurable window selection (NMS/prominence/tiling)
-- Vocalization labeling workspace, multi-label vocalization classifier, training dataset review, label processing
+- Vocalization labeling workspace, multi-label vocalization classifier, training dataset review, label processing, vocalization clustering (detection-job embeddings via HDBSCAN)
 - Timeline viewer with PCEN spectrograms, interactive labeling, gapless playback, static export
 - Four-pass call parsing pipeline (Passes 1–3 functional, Pass 4 deferred): region detection, event segmentation, event classification, human feedback training loop
 - Window classification sidecar: standalone enrichment scoring cached Pass 1 Perch embeddings through vocalization classifiers, producing dense per-window probability vectors with event-level review workspace (requires Pass 2 segmentation) and unified vocalization corrections shared with Classify review
 - Classify review boundary editing: adjust/add/delete event boundaries in Pass 3 review, corrections flow to both classification inference and classifier feedback training via read-time overlay (ADR-054); type corrections use unified vocalization_corrections table shared with Window Classify review
 - Pass 2 (event segmentation) and Pass 3 (event classification) inference run on MPS/CUDA when available with per-job load-time validation against CPU output and a fallback to CPU on validation failure; the chosen device and any fallback reason are persisted on the job row and surfaced as a UI badge
-- Web UI: Audio, Processing, Clustering, Classifier, Vocalization, Call Parsing (Detection, Segment, Segment Training, Classify, Classify Training, Window Classify), Search, Label Processing, Admin
+- Web UI: Audio, Processing, Clustering, Classifier, Vocalization (Training, Labeling, Training Data, Clustering), Call Parsing (Detection, Segment, Segment Training, Classify, Classify Training, Window Classify), Search, Label Processing, Admin
 
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `055_unified_event_boundary_corrections.py`
+- **Latest migration**: `056_clustering_detection_job_ids.py`
 - **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models, segmentation_training_datasets, segmentation_training_samples, segmentation_training_jobs, event_boundary_corrections, vocalization_corrections, event_segmentation_training_jobs, event_classifier_training_jobs, window_classification_jobs
 
 ### 9.3 Sensitive Components

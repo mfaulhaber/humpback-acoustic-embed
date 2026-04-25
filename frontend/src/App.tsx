@@ -16,6 +16,8 @@ import { TuningTab } from "@/components/classifier/TuningTab";
 import { VocalizationTrainingTab } from "@/components/vocalization/VocalizationTrainingTab";
 import { VocalizationLabelingTab } from "@/components/vocalization/VocalizationLabelingTab";
 import { TrainingDataView } from "@/components/vocalization/TrainingDataView";
+import { VocalizationClusteringPage } from "@/components/vocalization/VocalizationClusteringPage";
+import { VocalizationClusteringDetail } from "@/components/vocalization/VocalizationClusteringDetail";
 import { DetectionPage } from "@/components/call-parsing/DetectionPage";
 import { SegmentPage } from "@/components/call-parsing/SegmentPage";
 import { SegmentTrainingPage } from "@/components/call-parsing/SegmentTrainingPage";
@@ -45,6 +47,8 @@ export default function App() {
         <Route path="/app/vocalization/training" element={<VocalizationTrainingTab />} />
         <Route path="/app/vocalization/labeling" element={<VocalizationLabelingTab />} />
         <Route path="/app/vocalization/training-data" element={<TrainingDataView />} />
+        <Route path="/app/vocalization/clustering/:jobId" element={<VocalizationClusteringDetail />} />
+        <Route path="/app/vocalization/clustering" element={<VocalizationClusteringPage />} />
         <Route path="/app/call-parsing" element={<Navigate to="/app/call-parsing/detection" replace />} />
         <Route path="/app/call-parsing/detection" element={<DetectionPage />} />
         <Route path="/app/call-parsing/region-timeline/:jobId" element={<RegionDetectionTimeline />} />

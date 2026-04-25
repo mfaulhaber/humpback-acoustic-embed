@@ -16,10 +16,30 @@ class ClusteringJobCreate(BaseModel):
         return self
 
 
+class VocalizationClusteringJobCreate(BaseModel):
+    detection_job_ids: list[str]
+    parameters: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _validate_detection_jobs(self):
+        if not self.detection_job_ids:
+            raise ValueError("At least one detection job is required")
+        return self
+
+
+class ClusteringEligibleDetectionJobOut(BaseModel):
+    id: str
+    hydrophone_name: Optional[str] = None
+    start_timestamp: Optional[float] = None
+    end_timestamp: Optional[float] = None
+    detection_count: Optional[int] = None
+
+
 class ClusteringJobOut(BaseModel):
     id: str
     status: str
     embedding_set_ids: list[str]
+    detection_job_ids: Optional[list[str]] = None
     parameters: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     metrics: Optional[dict[str, Any]] = None

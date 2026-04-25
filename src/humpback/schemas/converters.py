@@ -98,6 +98,9 @@ def clustering_job_to_out(job) -> ClusteringJobOut:
         id=job.id,
         status=job.status,
         embedding_set_ids=json.loads(job.embedding_set_ids),
+        detection_job_ids=json.loads(job.detection_job_ids)
+        if job.detection_job_ids
+        else None,
         parameters=json.loads(job.parameters) if job.parameters else None,
         error_message=job.error_message,
         metrics=json.loads(job.metrics_json) if job.metrics_json else None,

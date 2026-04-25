@@ -47,7 +47,10 @@ from humpback.services.vocalization_service import (
     update_type,
 )
 
+from humpback.schemas.clustering import VocalizationClusteringJobCreate
 from humpback.schemas.converters import (
+    cluster_to_out as _cluster_to_out,
+    clustering_job_to_out as _clustering_job_to_out,
     training_dataset_to_out as _dataset_to_out,
     vocalization_inference_job_to_out as _inference_job_to_out,
     vocalization_model_to_out as _model_to_out,
@@ -872,3 +875,260 @@ async def delete_training_dataset_label(
 
     await session.delete(label)
     await session.commit()
+
+
+# ---- Vocalization Clustering ----
+
+
+@router.get("/clustering-eligible-jobs")
+async def list_clustering_eligible_jobs(session: SessionDep):
+    from humpback.services.clustering_service import (
+        list_clustering_eligible_detection_jobs,
+    )
+
+    return await list_clustering_eligible_detection_jobs(session)
+
+
+@router.post("/clustering-jobs", status_code=201)
+async def create_vocalization_clustering_job_endpoint(
+    body: "VocalizationClusteringJobCreate",
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    from pathlib import Path
+
+    from humpback.services.clustering_service import (
+        create_vocalization_clustering_job,
+    )
+
+    try:
+        job = await create_vocalization_clustering_job(
+            session,
+            body.detection_job_ids,
+            body.parameters,
+            storage_root=Path(settings.storage_root),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return _clustering_job_to_out(job)
+
+
+@router.get("/clustering-jobs")
+async def list_vocalization_clustering_jobs_endpoint(session: SessionDep):
+    from humpback.services.clustering_service import (
+        list_vocalization_clustering_jobs,
+    )
+
+    jobs = await list_vocalization_clustering_jobs(session)
+    return [_clustering_job_to_out(j) for j in jobs]
+
+
+@router.get("/clustering-jobs/{job_id}")
+async def get_vocalization_clustering_job(job_id: str, session: SessionDep):
+    from humpback.services.clustering_service import get_clustering_job
+
+    job = await get_clustering_job(session, job_id)
+    if job is None or job.detection_job_ids is None:
+        raise HTTPException(404, "Vocalization clustering job not found")
+    return _clustering_job_to_out(job)
+
+
+@router.delete("/clustering-jobs/{job_id}")
+async def delete_vocalization_clustering_job(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    from humpback.services.clustering_service import (
+        delete_clustering_job,
+        get_clustering_job,
+    )
+
+    job = await get_clustering_job(session, job_id)
+    if job is None or job.detection_job_ids is None:
+        raise HTTPException(404, "Vocalization clustering job not found")
+    from pathlib import Path
+
+    await delete_clustering_job(session, job_id, Path(settings.storage_root))
+    return {"status": "deleted"}
+
+
+@router.get("/clustering-jobs/{job_id}/clusters")
+async def get_vocalization_clustering_clusters(job_id: str, session: SessionDep):
+    from humpback.services.clustering_service import get_clustering_job, list_clusters
+
+    job = await get_clustering_job(session, job_id)
+    if job is None or job.detection_job_ids is None:
+        raise HTTPException(404, "Vocalization clustering job not found")
+    clusters = await list_clusters(session, job_id)
+    return [_cluster_to_out(c) for c in clusters]
+
+
+@router.get("/clustering-jobs/{job_id}/visualization")
+async def get_vocalization_clustering_visualization(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    from pathlib import Path
+
+    import pyarrow.parquet as pq
+
+    from humpback.models.detection_embedding_job import DetectionEmbeddingJob
+    from humpback.services.clustering_service import get_clustering_job
+    from humpback.storage import cluster_dir, detection_embeddings_path
+
+    job = await get_clustering_job(session, job_id)
+    if job is None or job.detection_job_ids is None:
+        raise HTTPException(404, "Vocalization clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    umap_path = cluster_dir(Path(settings.storage_root), job_id) / "umap_coords.parquet"
+    if not umap_path.exists():
+        raise HTTPException(404, "UMAP coordinates not available for this job")
+
+    table = pq.read_table(str(umap_path))
+    es_ids = table.column("embedding_set_id").to_pylist()
+    row_indices = table.column("embedding_row_index").to_pylist()
+
+    from humpback.models.classifier import DetectionJob
+
+    unique_dj_ids = list(set(es_ids))
+    dj_result = await session.execute(
+        select(DetectionJob).where(DetectionJob.id.in_(unique_dj_ids))
+    )
+    dj_map = {dj.id: dj.hydrophone_name or dj.id for dj in dj_result.scalars().all()}
+
+    # Build (detection_job_id, row_index) → vocalization label mapping
+    voc_label_map: dict[tuple[str, int], str] = {}
+
+    # Find active vocalization model
+    active_model_result = await session.execute(
+        select(VocalizationClassifierModel).where(
+            VocalizationClassifierModel.is_active.is_(True)
+        )
+    )
+    active_model = active_model_result.scalar_one_or_none()
+
+    if active_model is not None:
+        vocabulary: list[str] = json.loads(active_model.vocabulary_snapshot)
+        thresholds: dict[str, float] = json.loads(active_model.per_class_thresholds)
+
+        for dj_id in unique_dj_ids:
+            inf_result = await session.execute(
+                select(VocalizationInferenceJob).where(
+                    VocalizationInferenceJob.source_type == "detection_job",
+                    VocalizationInferenceJob.source_id == dj_id,
+                    VocalizationInferenceJob.vocalization_model_id == active_model.id,
+                    VocalizationInferenceJob.status == "complete",
+                )
+            )
+            inf_job = inf_result.scalar_one_or_none()
+            if inf_job is None or not inf_job.output_path:
+                continue
+
+            # Build row_id order from detection embeddings parquet
+            emb_result = await session.execute(
+                select(DetectionEmbeddingJob)
+                .where(
+                    DetectionEmbeddingJob.detection_job_id == dj_id,
+                    DetectionEmbeddingJob.status == "complete",
+                )
+                .order_by(DetectionEmbeddingJob.created_at.desc())
+                .limit(1)
+            )
+            emb_job = emb_result.scalar_one_or_none()
+            if emb_job is None:
+                continue
+
+            emb_parquet = detection_embeddings_path(
+                Path(settings.storage_root), dj_id, emb_job.model_version
+            )
+            if not emb_parquet.exists():
+                continue
+
+            emb_table = pq.read_table(str(emb_parquet), columns=["row_id"])
+            ordered_row_ids = emb_table.column("row_id").to_pylist()
+
+            # Read inference predictions keyed by row_id
+            pred_path = Path(inf_job.output_path)
+            if not pred_path.exists():
+                continue
+
+            pred_table = pq.read_table(str(pred_path))
+            pred_cols = set(pred_table.column_names)
+            pred_row_ids = (
+                pred_table.column("row_id").to_pylist() if "row_id" in pred_cols else []
+            )
+
+            # Map row_id → top vocalization label
+            row_id_to_label: dict[str, str] = {}
+            for pi in range(pred_table.num_rows):
+                rid = pred_row_ids[pi] if pred_row_ids else str(pi)
+                best_type = ""
+                best_score = -1.0
+                for type_name in vocabulary:
+                    if type_name not in pred_cols:
+                        continue
+                    score = float(pred_table.column(type_name)[pi].as_py())
+                    t = thresholds.get(type_name, 0.5)
+                    if score >= t and score > best_score:
+                        best_score = score
+                        best_type = type_name
+                row_id_to_label[rid] = best_type or "unlabeled"
+
+            # Map integer index → vocalization label
+            for idx, rid in enumerate(ordered_row_ids):
+                label = row_id_to_label.get(rid, "unlabeled")
+                voc_label_map[(dj_id, idx)] = label
+
+    hydrophone_names = [dj_map.get(es_id, es_id) for es_id in es_ids]
+    categories = [
+        voc_label_map.get((es_ids[i], row_indices[i]), "unlabeled")
+        for i in range(len(es_ids))
+    ]
+
+    return {
+        "x": table.column("x").to_pylist(),
+        "y": table.column("y").to_pylist(),
+        "cluster_label": table.column("cluster_label").to_pylist(),
+        "embedding_set_id": es_ids,
+        "embedding_row_index": row_indices,
+        "audio_filename": hydrophone_names,
+        "audio_file_id": [""] * len(es_ids),
+        "window_size_seconds": [5.0] * len(es_ids),
+        "category": categories,
+    }
+
+
+@router.get("/clustering-jobs/{job_id}/metrics")
+async def get_vocalization_clustering_metrics(job_id: str, session: SessionDep):
+    from humpback.services.clustering_service import get_clustering_job
+
+    job = await get_clustering_job(session, job_id)
+    if job is None or job.detection_job_ids is None:
+        raise HTTPException(404, "Vocalization clustering job not found")
+    if not job.metrics_json:
+        return {}
+    return json.loads(job.metrics_json)
+
+
+@router.get("/clustering-jobs/{job_id}/stability")
+async def get_vocalization_clustering_stability(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    from pathlib import Path
+
+    from humpback.services.clustering_service import get_clustering_job
+    from humpback.storage import cluster_dir
+
+    job = await get_clustering_job(session, job_id)
+    if job is None or job.detection_job_ids is None:
+        raise HTTPException(404, "Vocalization clustering job not found")
+    if job.status != "complete":
+        raise HTTPException(400, "Clustering job is not complete")
+
+    stability_path = (
+        cluster_dir(Path(settings.storage_root), job_id) / "stability_summary.json"
+    )
+    if not stability_path.exists():
+        raise HTTPException(404, "Stability data not available")
+
+    return json.loads(stability_path.read_text())
