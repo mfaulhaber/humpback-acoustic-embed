@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.clustering.metrics import (
@@ -184,10 +184,15 @@ async def run_clustering_job(
 
         # Category-based supervised metrics (detailed)
         try:
-            category_labels = [
-                extract_category_from_folder_path(es_folder_paths.get(es_id, ""))
-                for es_id in all_es_ids
-            ]
+            if det_ids:
+                category_labels = await _resolve_vocalization_labels(
+                    session, settings, all_es_ids, all_row_indices
+                )
+            else:
+                category_labels = [
+                    extract_category_from_folder_path(es_folder_paths.get(es_id, ""))
+                    for es_id in all_es_ids
+                ]
             if any(c is not None for c in category_labels):
                 cat_metrics = compute_detailed_category_metrics(labels, category_labels)
                 metrics.update(cat_metrics)
@@ -309,9 +314,13 @@ async def run_clustering_job(
         except Exception:
             logger.exception("Failed to run metric learning refinement")
 
-        # Persist metrics
+        # Persist metrics via explicit UPDATE (job object is detached from this session)
         if metrics:
-            job.metrics_json = json.dumps(metrics)
+            await session.execute(
+                update(ClusteringJob)
+                .where(ClusteringJob.id == job.id)
+                .values(metrics_json=json.dumps(metrics))
+            )
 
         # Persist clusters and assignments
 
@@ -389,3 +398,102 @@ async def run_clustering_job(
             await fail_clustering_job(session, job.id, str(e))
         except Exception:
             logger.exception("Failed to mark clustering job as failed")
+
+
+async def _resolve_vocalization_labels(
+    session: AsyncSession,
+    settings: Settings,
+    all_es_ids: list[str],
+    all_row_indices: list[int],
+) -> list[str | None]:
+    """Resolve vocalization inference labels for detection-based clustering points."""
+    from humpback.models.vocalization import (
+        VocalizationClassifierModel,
+        VocalizationInferenceJob,
+    )
+
+    active_result = await session.execute(
+        select(VocalizationClassifierModel).where(
+            VocalizationClassifierModel.is_active.is_(True)
+        )
+    )
+    active_model = active_result.scalar_one_or_none()
+    if active_model is None:
+        return [None] * len(all_es_ids)
+
+    vocabulary: list[str] = json.loads(active_model.vocabulary_snapshot)
+    thresholds: dict[str, float] = json.loads(active_model.per_class_thresholds)
+
+    voc_label_map: dict[tuple[str, int], str] = {}
+
+    unique_dj_ids = list(set(all_es_ids))
+    for dj_id in unique_dj_ids:
+        emb_result = await session.execute(
+            select(DetectionEmbeddingJob)
+            .where(
+                DetectionEmbeddingJob.detection_job_id == dj_id,
+                DetectionEmbeddingJob.status == "complete",
+            )
+            .order_by(DetectionEmbeddingJob.created_at.desc())
+            .limit(1)
+        )
+        emb_job = emb_result.scalar_one_or_none()
+        if emb_job is None:
+            continue
+
+        emb_parquet = detection_embeddings_path(
+            settings.storage_root, dj_id, emb_job.model_version
+        )
+        if not emb_parquet.exists():
+            continue
+
+        emb_table = pq.read_table(str(emb_parquet), columns=["row_id"])
+        ordered_row_ids = emb_table.column("row_id").to_pylist()
+
+        inf_result = await session.execute(
+            select(VocalizationInferenceJob).where(
+                VocalizationInferenceJob.source_type == "detection_job",
+                VocalizationInferenceJob.source_id == dj_id,
+                VocalizationInferenceJob.vocalization_model_id == active_model.id,
+                VocalizationInferenceJob.status == "complete",
+            )
+        )
+        inf_job = inf_result.scalar_one_or_none()
+        if inf_job is None or not inf_job.output_path:
+            continue
+
+        pred_path = Path(inf_job.output_path)
+        if not pred_path.exists():
+            continue
+
+        pred_table = pq.read_table(str(pred_path))
+        pred_cols = set(pred_table.column_names)
+        pred_row_ids = (
+            pred_table.column("row_id").to_pylist() if "row_id" in pred_cols else []
+        )
+
+        row_id_to_label: dict[str, str] = {}
+        for pi in range(pred_table.num_rows):
+            rid = pred_row_ids[pi] if pred_row_ids else str(pi)
+            best_type = ""
+            best_score = -1.0
+            for type_name in vocabulary:
+                if type_name not in pred_cols:
+                    continue
+                score = float(pred_table.column(type_name)[pi].as_py())
+                t = thresholds.get(type_name, 0.5)
+                if score >= t and score > best_score:
+                    best_score = score
+                    best_type = type_name
+            if best_type:
+                row_id_to_label[rid] = best_type
+
+        for idx, rid in enumerate(ordered_row_ids):
+            label = row_id_to_label.get(rid)
+            if label:
+                voc_label_map[(dj_id, idx)] = label
+
+    return [
+        voc_label_map.get((all_es_ids[i], all_row_indices[i]))
+        for i in range(len(all_es_ids))
+    ]

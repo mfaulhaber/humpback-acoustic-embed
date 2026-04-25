@@ -1,21 +1,60 @@
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { useQueries } from "@tanstack/react-query";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { ClusterTable } from "@/components/clustering/ClusterTable";
-import { EvaluationPanel } from "@/components/clustering/EvaluationPanel";
 import { VocalizationUmapPlot } from "./VocalizationUmapPlot";
 import {
   useVocalizationClusteringJob,
-  useVocClusteringClusters,
+  useVocClusteringMetrics,
 } from "@/hooks/queries/useVocalization";
+import { fetchDetectionJob } from "@/api/client";
+import type { DetectionJob } from "@/api/types";
+
+function fmt(v: number | undefined | null, decimals = 4): string {
+  if (v == null) return "—";
+  return v.toFixed(decimals);
+}
+
+function formatUtcRange(start: number | null, end: number | null): string {
+  if (start == null) return "Unknown dates";
+  const s = new Date(start * 1000).toISOString().slice(0, 10);
+  if (end == null) return s;
+  const e = new Date(end * 1000).toISOString().slice(0, 10);
+  return s === e ? s : `${s} – ${e}`;
+}
+
+function DetectionJobList({ jobIds }: { jobIds: string[] }) {
+  const results = useQueries({
+    queries: jobIds.map((id) => ({
+      queryKey: ["detectionJob", id],
+      queryFn: () => fetchDetectionJob(id),
+      staleTime: Infinity,
+    })),
+  });
+
+  return (
+    <div className="text-xs text-muted-foreground space-y-0.5">
+      <div className="font-medium text-foreground">Detection Jobs:</div>
+      {results.map((r, i) => {
+        if (r.isLoading) return <div key={jobIds[i]}>Loading...</div>;
+        const dj = r.data as DetectionJob | undefined;
+        if (!dj) return <div key={jobIds[i]}>{jobIds[i].slice(0, 8)}...</div>;
+        const name = dj.hydrophone_name || dj.audio_folder || jobIds[i].slice(0, 8);
+        return (
+          <div key={jobIds[i]}>
+            {name} — {formatUtcRange(dj.start_timestamp, dj.end_timestamp)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function VocalizationClusteringDetail() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data: job } = useVocalizationClusteringJob(jobId ?? null);
   const isComplete = job?.status === "complete";
-  const { data: clusters = [] } = useVocClusteringClusters(
-    isComplete ? jobId! : null,
-  );
+  const { data: metrics } = useVocClusteringMetrics(isComplete ? jobId! : null);
 
   if (!job) {
     return (
@@ -24,6 +63,16 @@ export function VocalizationClusteringDetail() {
   }
 
   const detectionJobIds = job.detection_job_ids;
+
+  const mainMetrics = [
+    { label: "Silhouette Score", value: metrics?.silhouette_score },
+    { label: "Davies-Bouldin Index", value: metrics?.davies_bouldin_index },
+    { label: "Calinski-Harabasz Score", value: metrics?.calinski_harabasz_score },
+    { label: "N Clusters", value: metrics?.n_clusters },
+    { label: "Noise Points", value: metrics?.noise_count },
+  ];
+
+  const hasMetrics = mainMetrics.some((m) => m.value != null);
 
   return (
     <div className="space-y-6">
@@ -44,12 +93,6 @@ export function VocalizationClusteringDetail() {
           <div>
             Created: {new Date(job.created_at).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC")}
           </div>
-          {detectionJobIds && (
-            <div>
-              Source: {detectionJobIds.length} detection job
-              {detectionJobIds.length !== 1 ? "s" : ""}
-            </div>
-          )}
           {job.parameters && (
             <div>
               Parameters:{" "}
@@ -60,6 +103,9 @@ export function VocalizationClusteringDetail() {
             </div>
           )}
         </div>
+        {detectionJobIds && detectionJobIds.length > 0 && (
+          <DetectionJobList jobIds={detectionJobIds} />
+        )}
       </div>
 
       {job.status === "failed" && job.error_message && (
@@ -70,9 +116,35 @@ export function VocalizationClusteringDetail() {
 
       {isComplete && (
         <>
-          <ClusterTable clusters={clusters} />
           <VocalizationUmapPlot jobId={jobId!} />
-          <EvaluationPanel jobId={jobId!} />
+
+          {hasMetrics && (
+            <div className="border rounded-md">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left py-2 px-3 font-medium">Metric</th>
+                    <th className="text-left py-2 px-3 font-medium">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mainMetrics.map(
+                    (m) =>
+                      m.value != null && (
+                        <tr key={m.label} className="border-b last:border-0">
+                          <td className="py-1.5 px-3">{m.label}</td>
+                          <td className="py-1.5 px-3 font-mono text-xs">
+                            {typeof m.value === "number"
+                              ? Number.isInteger(m.value) ? String(m.value) : fmt(m.value)
+                              : m.value}
+                          </td>
+                        </tr>
+                      ),
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>

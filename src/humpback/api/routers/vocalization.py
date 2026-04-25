@@ -972,7 +972,11 @@ async def get_vocalization_clustering_visualization(
 
     from humpback.models.detection_embedding_job import DetectionEmbeddingJob
     from humpback.services.clustering_service import get_clustering_job
-    from humpback.storage import cluster_dir, detection_embeddings_path
+    from humpback.storage import (
+        cluster_dir,
+        detection_embeddings_path,
+        detection_row_store_path,
+    )
 
     job = await get_clustering_job(session, job_id)
     if job is None or job.detection_job_ids is None:
@@ -996,10 +1000,52 @@ async def get_vocalization_clustering_visualization(
     )
     dj_map = {dj.id: dj.hydrophone_name or dj.id for dj in dj_result.scalars().all()}
 
+    # Build per-detection-job row_id order and start_utc from row store
+    ordered_row_ids_by_dj: dict[str, list[str]] = {}
+    start_utc_map: dict[tuple[str, int], float | None] = {}
+
+    for dj_id in unique_dj_ids:
+        emb_result = await session.execute(
+            select(DetectionEmbeddingJob)
+            .where(
+                DetectionEmbeddingJob.detection_job_id == dj_id,
+                DetectionEmbeddingJob.status == "complete",
+            )
+            .order_by(DetectionEmbeddingJob.created_at.desc())
+            .limit(1)
+        )
+        emb_job = emb_result.scalar_one_or_none()
+        if emb_job is None:
+            continue
+
+        emb_parquet = detection_embeddings_path(
+            Path(settings.storage_root), dj_id, emb_job.model_version
+        )
+        if not emb_parquet.exists():
+            continue
+
+        emb_table = pq.read_table(str(emb_parquet), columns=["row_id"])
+        ordered_row_ids = emb_table.column("row_id").to_pylist()
+        ordered_row_ids_by_dj[dj_id] = ordered_row_ids
+
+        row_store = detection_row_store_path(Path(settings.storage_root), dj_id)
+        if row_store.exists():
+            rs_table = pq.read_table(str(row_store), columns=["row_id", "start_utc"])
+            rs_row_ids = rs_table.column("row_id").to_pylist()
+            rs_start_utcs = rs_table.column("start_utc").to_pylist()
+            rid_to_utc: dict[str, float] = {}
+            for ri, su in zip(rs_row_ids, rs_start_utcs):
+                if su:
+                    try:
+                        rid_to_utc[ri] = float(su)
+                    except (ValueError, TypeError):
+                        pass
+            for idx, rid in enumerate(ordered_row_ids):
+                start_utc_map[(dj_id, idx)] = rid_to_utc.get(rid)
+
     # Build (detection_job_id, row_index) → vocalization label mapping
     voc_label_map: dict[tuple[str, int], str] = {}
 
-    # Find active vocalization model
     active_model_result = await session.execute(
         select(VocalizationClassifierModel).where(
             VocalizationClassifierModel.is_active.is_(True)
@@ -1012,6 +1058,10 @@ async def get_vocalization_clustering_visualization(
         thresholds: dict[str, float] = json.loads(active_model.per_class_thresholds)
 
         for dj_id in unique_dj_ids:
+            ordered_row_ids = ordered_row_ids_by_dj.get(dj_id)
+            if ordered_row_ids is None:
+                continue
+
             inf_result = await session.execute(
                 select(VocalizationInferenceJob).where(
                     VocalizationInferenceJob.source_type == "detection_job",
@@ -1024,30 +1074,6 @@ async def get_vocalization_clustering_visualization(
             if inf_job is None or not inf_job.output_path:
                 continue
 
-            # Build row_id order from detection embeddings parquet
-            emb_result = await session.execute(
-                select(DetectionEmbeddingJob)
-                .where(
-                    DetectionEmbeddingJob.detection_job_id == dj_id,
-                    DetectionEmbeddingJob.status == "complete",
-                )
-                .order_by(DetectionEmbeddingJob.created_at.desc())
-                .limit(1)
-            )
-            emb_job = emb_result.scalar_one_or_none()
-            if emb_job is None:
-                continue
-
-            emb_parquet = detection_embeddings_path(
-                Path(settings.storage_root), dj_id, emb_job.model_version
-            )
-            if not emb_parquet.exists():
-                continue
-
-            emb_table = pq.read_table(str(emb_parquet), columns=["row_id"])
-            ordered_row_ids = emb_table.column("row_id").to_pylist()
-
-            # Read inference predictions keyed by row_id
             pred_path = Path(inf_job.output_path)
             if not pred_path.exists():
                 continue
@@ -1058,7 +1084,6 @@ async def get_vocalization_clustering_visualization(
                 pred_table.column("row_id").to_pylist() if "row_id" in pred_cols else []
             )
 
-            # Map row_id → top vocalization label
             row_id_to_label: dict[str, str] = {}
             for pi in range(pred_table.num_rows):
                 rid = pred_row_ids[pi] if pred_row_ids else str(pi)
@@ -1074,7 +1099,6 @@ async def get_vocalization_clustering_visualization(
                         best_type = type_name
                 row_id_to_label[rid] = best_type or "unlabeled"
 
-            # Map integer index → vocalization label
             for idx, rid in enumerate(ordered_row_ids):
                 label = row_id_to_label.get(rid, "unlabeled")
                 voc_label_map[(dj_id, idx)] = label
@@ -1083,6 +1107,9 @@ async def get_vocalization_clustering_visualization(
     categories = [
         voc_label_map.get((es_ids[i], row_indices[i]), "unlabeled")
         for i in range(len(es_ids))
+    ]
+    start_utcs = [
+        start_utc_map.get((es_ids[i], row_indices[i])) for i in range(len(es_ids))
     ]
 
     return {
@@ -1095,6 +1122,7 @@ async def get_vocalization_clustering_visualization(
         "audio_file_id": [""] * len(es_ids),
         "window_size_seconds": [5.0] * len(es_ids),
         "category": categories,
+        "start_utc": start_utcs,
     }
 
 

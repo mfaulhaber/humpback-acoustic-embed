@@ -171,6 +171,7 @@ export interface VisualizationData {
   audio_file_id: string[];
   window_size_seconds: number[];
   category: string[];
+  start_utc?: (number | null)[];
 }
 
 export interface ClusteringMetrics {
