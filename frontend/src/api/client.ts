@@ -121,6 +121,8 @@ import type {
   EventClassifierModel,
   WindowClassificationJob,
   WindowScoreRow,
+  ClusteringEligibleDetectionJob,
+  VocalizationClusteringJobCreate,
 } from "./types";
 
 class ApiError extends Error {
@@ -866,6 +868,40 @@ export const deleteTrainingDatasetLabel = async (
     throw new ApiError(res.status, text);
   }
 };
+
+// ---- Vocalization Clustering ----
+
+export const fetchClusteringEligibleJobs = () =>
+  api<ClusteringEligibleDetectionJob[]>("/vocalization/clustering-eligible-jobs");
+
+export const fetchVocalizationClusteringJobs = () =>
+  api<ClusteringJob[]>("/vocalization/clustering-jobs");
+
+export const fetchVocalizationClusteringJob = (jobId: string) =>
+  api<ClusteringJob>(`/vocalization/clustering-jobs/${jobId}`);
+
+export const createVocalizationClusteringJob = (body: VocalizationClusteringJobCreate) =>
+  post<ClusteringJob>("/vocalization/clustering-jobs", body);
+
+export const deleteVocalizationClusteringJob = async (jobId: string) => {
+  const res = await fetch(`/vocalization/clustering-jobs/${jobId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(res.status, text);
+  }
+};
+
+export const fetchVocClusteringClusters = (jobId: string) =>
+  api<ClusterOut[]>(`/vocalization/clustering-jobs/${jobId}/clusters`);
+
+export const fetchVocClusteringVisualization = (jobId: string) =>
+  api<VisualizationData>(`/vocalization/clustering-jobs/${jobId}/visualization`);
+
+export const fetchVocClusteringMetrics = (jobId: string) =>
+  api<ClusteringMetrics>(`/vocalization/clustering-jobs/${jobId}/metrics`);
+
+export const fetchVocClusteringStability = (jobId: string) =>
+  api<StabilitySummary>(`/vocalization/clustering-jobs/${jobId}/stability`);
 
 // ---- Health ----
 

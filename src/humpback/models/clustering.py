@@ -15,6 +15,7 @@ class ClusteringJob(UUIDMixin, TimestampMixin, Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     metrics_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
     refined_from_job_id: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    detection_job_ids: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
     clusters: Mapped[list["Cluster"]] = relationship(
         back_populates="clustering_job", cascade="all, delete-orphan"

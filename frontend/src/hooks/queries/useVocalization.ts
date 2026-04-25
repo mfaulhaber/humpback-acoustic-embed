@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FolderEmbeddingSetResponse,
   TrainingDatasetExtendRequest,
+  VocalizationClusteringJobCreate,
 } from "@/api/types";
 import {
   fetchVocalizationTypes,
@@ -30,6 +31,15 @@ import {
   extendTrainingDataset,
   createTrainingDatasetLabel,
   deleteTrainingDatasetLabel,
+  fetchClusteringEligibleJobs,
+  fetchVocalizationClusteringJobs,
+  fetchVocalizationClusteringJob,
+  createVocalizationClusteringJob,
+  deleteVocalizationClusteringJob,
+  fetchVocClusteringClusters,
+  fetchVocClusteringVisualization,
+  fetchVocClusteringMetrics,
+  fetchVocClusteringStability,
 } from "@/api/client";
 import type {
   VocalizationTypeCreate,
@@ -350,5 +360,89 @@ export function useDeleteTrainingDatasetLabel() {
         queryKey: ["vocalization", "training-dataset-rows", params.datasetId],
       });
     },
+  });
+}
+
+// ---- Vocalization Clustering ----
+
+export function useClusteringEligibleJobs() {
+  return useQuery({
+    queryKey: ["vocalization", "clustering-eligible-jobs"],
+    queryFn: fetchClusteringEligibleJobs,
+    staleTime: 10_000,
+  });
+}
+
+export function useVocalizationClusteringJobs(pollInterval?: number) {
+  return useQuery({
+    queryKey: ["vocalization", "clustering-jobs"],
+    queryFn: fetchVocalizationClusteringJobs,
+    refetchInterval: pollInterval || false,
+  });
+}
+
+export function useVocalizationClusteringJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["vocalization", "clustering-jobs", jobId],
+    queryFn: () => fetchVocalizationClusteringJob(jobId!),
+    enabled: jobId !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (status === "complete" || status === "failed") return false;
+      return 2000;
+    },
+  });
+}
+
+export function useCreateVocalizationClusteringJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: VocalizationClusteringJobCreate) =>
+      createVocalizationClusteringJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["vocalization", "clustering-jobs"] });
+    },
+  });
+}
+
+export function useDeleteVocalizationClusteringJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteVocalizationClusteringJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["vocalization", "clustering-jobs"] });
+    },
+  });
+}
+
+export function useVocClusteringClusters(jobId: string | null) {
+  return useQuery({
+    queryKey: ["vocalization", "clustering-clusters", jobId],
+    queryFn: () => fetchVocClusteringClusters(jobId!),
+    enabled: jobId !== null,
+  });
+}
+
+export function useVocClusteringVisualization(jobId: string | null) {
+  return useQuery({
+    queryKey: ["vocalization", "clustering-visualization", jobId],
+    queryFn: () => fetchVocClusteringVisualization(jobId!),
+    enabled: jobId !== null,
+  });
+}
+
+export function useVocClusteringMetrics(jobId: string | null) {
+  return useQuery({
+    queryKey: ["vocalization", "clustering-metrics", jobId],
+    queryFn: () => fetchVocClusteringMetrics(jobId!),
+    enabled: jobId !== null,
+  });
+}
+
+export function useVocClusteringStability(jobId: string | null) {
+  return useQuery({
+    queryKey: ["vocalization", "clustering-stability", jobId],
+    queryFn: () => fetchVocClusteringStability(jobId!),
+    enabled: jobId !== null,
   });
 }

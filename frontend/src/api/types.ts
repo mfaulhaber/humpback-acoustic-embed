@@ -120,6 +120,19 @@ export interface ClusteringJobCreate {
   refined_from_job_id?: string | null;
 }
 
+export interface VocalizationClusteringJobCreate {
+  detection_job_ids: string[];
+  parameters?: Record<string, unknown> | null;
+}
+
+export interface ClusteringEligibleDetectionJob {
+  id: string;
+  hydrophone_name: string | null;
+  start_timestamp: number | null;
+  end_timestamp: number | null;
+  detection_count: number | null;
+}
+
 export interface ClusteringJob {
   id: string;
   status: "queued" | "running" | "complete" | "failed" | "canceled";
