@@ -970,8 +970,9 @@ async def get_vocalization_clustering_visualization(
 
     import pyarrow.parquet as pq
 
+    from humpback.models.detection_embedding_job import DetectionEmbeddingJob
     from humpback.services.clustering_service import get_clustering_job
-    from humpback.storage import cluster_dir
+    from humpback.storage import cluster_dir, detection_embeddings_path
 
     job = await get_clustering_job(session, job_id)
     if job is None or job.detection_job_ids is None:
@@ -985,6 +986,7 @@ async def get_vocalization_clustering_visualization(
 
     table = pq.read_table(str(umap_path))
     es_ids = table.column("embedding_set_id").to_pylist()
+    row_indices = table.column("embedding_row_index").to_pylist()
 
     from humpback.models.classifier import DetectionJob
 
@@ -994,18 +996,105 @@ async def get_vocalization_clustering_visualization(
     )
     dj_map = {dj.id: dj.hydrophone_name or dj.id for dj in dj_result.scalars().all()}
 
+    # Build (detection_job_id, row_index) → vocalization label mapping
+    voc_label_map: dict[tuple[str, int], str] = {}
+
+    # Find active vocalization model
+    active_model_result = await session.execute(
+        select(VocalizationClassifierModel).where(
+            VocalizationClassifierModel.is_active.is_(True)
+        )
+    )
+    active_model = active_model_result.scalar_one_or_none()
+
+    if active_model is not None:
+        vocabulary: list[str] = json.loads(active_model.vocabulary_snapshot)
+        thresholds: dict[str, float] = json.loads(active_model.per_class_thresholds)
+
+        for dj_id in unique_dj_ids:
+            inf_result = await session.execute(
+                select(VocalizationInferenceJob).where(
+                    VocalizationInferenceJob.source_type == "detection_job",
+                    VocalizationInferenceJob.source_id == dj_id,
+                    VocalizationInferenceJob.vocalization_model_id == active_model.id,
+                    VocalizationInferenceJob.status == "complete",
+                )
+            )
+            inf_job = inf_result.scalar_one_or_none()
+            if inf_job is None or not inf_job.output_path:
+                continue
+
+            # Build row_id order from detection embeddings parquet
+            emb_result = await session.execute(
+                select(DetectionEmbeddingJob)
+                .where(
+                    DetectionEmbeddingJob.detection_job_id == dj_id,
+                    DetectionEmbeddingJob.status == "complete",
+                )
+                .order_by(DetectionEmbeddingJob.created_at.desc())
+                .limit(1)
+            )
+            emb_job = emb_result.scalar_one_or_none()
+            if emb_job is None:
+                continue
+
+            emb_parquet = detection_embeddings_path(
+                Path(settings.storage_root), dj_id, emb_job.model_version
+            )
+            if not emb_parquet.exists():
+                continue
+
+            emb_table = pq.read_table(str(emb_parquet), columns=["row_id"])
+            ordered_row_ids = emb_table.column("row_id").to_pylist()
+
+            # Read inference predictions keyed by row_id
+            pred_path = Path(inf_job.output_path)
+            if not pred_path.exists():
+                continue
+
+            pred_table = pq.read_table(str(pred_path))
+            pred_cols = set(pred_table.column_names)
+            pred_row_ids = (
+                pred_table.column("row_id").to_pylist() if "row_id" in pred_cols else []
+            )
+
+            # Map row_id → top vocalization label
+            row_id_to_label: dict[str, str] = {}
+            for pi in range(pred_table.num_rows):
+                rid = pred_row_ids[pi] if pred_row_ids else str(pi)
+                best_type = ""
+                best_score = -1.0
+                for type_name in vocabulary:
+                    if type_name not in pred_cols:
+                        continue
+                    score = float(pred_table.column(type_name)[pi].as_py())
+                    t = thresholds.get(type_name, 0.5)
+                    if score >= t and score > best_score:
+                        best_score = score
+                        best_type = type_name
+                row_id_to_label[rid] = best_type or "unlabeled"
+
+            # Map integer index → vocalization label
+            for idx, rid in enumerate(ordered_row_ids):
+                label = row_id_to_label.get(rid, "unlabeled")
+                voc_label_map[(dj_id, idx)] = label
+
     hydrophone_names = [dj_map.get(es_id, es_id) for es_id in es_ids]
+    categories = [
+        voc_label_map.get((es_ids[i], row_indices[i]), "unlabeled")
+        for i in range(len(es_ids))
+    ]
 
     return {
         "x": table.column("x").to_pylist(),
         "y": table.column("y").to_pylist(),
         "cluster_label": table.column("cluster_label").to_pylist(),
         "embedding_set_id": es_ids,
-        "embedding_row_index": table.column("embedding_row_index").to_pylist(),
+        "embedding_row_index": row_indices,
         "audio_filename": hydrophone_names,
         "audio_file_id": [""] * len(es_ids),
         "window_size_seconds": [5.0] * len(es_ids),
-        "category": hydrophone_names,
+        "category": categories,
     }
 
 

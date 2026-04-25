@@ -2,9 +2,9 @@ import { useParams, Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { ClusterTable } from "@/components/clustering/ClusterTable";
-import { UmapPlot } from "@/components/clustering/UmapPlot";
 import { EvaluationPanel } from "@/components/clustering/EvaluationPanel";
 import { ExportReport } from "@/components/clustering/ExportReport";
+import { VocalizationUmapPlot } from "./VocalizationUmapPlot";
 import {
   useVocalizationClusteringJob,
   useVocClusteringClusters,
@@ -74,7 +74,7 @@ export function VocalizationClusteringDetail() {
       {isComplete && (
         <>
           <ClusterTable clusters={clusters} />
-          <UmapPlot jobId={jobId!} />
+          <VocalizationUmapPlot jobId={jobId!} />
           <EvaluationPanel jobId={jobId!} job={job} />
           <ExportReport jobId={jobId!} />
         </>
