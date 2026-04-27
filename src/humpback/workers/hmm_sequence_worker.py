@@ -132,6 +132,7 @@ async def run_hmm_sequence_job(
     job_dir = ensure_dir(hmm_sequence_dir(settings.storage_root, job_id))
 
     try:
+        job = await session.merge(job)
         # Validate source
         source = await session.get(
             ContinuousEmbeddingJob, job.continuous_embedding_job_id

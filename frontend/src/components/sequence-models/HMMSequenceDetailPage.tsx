@@ -140,6 +140,16 @@ function TransitionHeatmap({
   );
 }
 
+function binRunLengths(runLengths: number[]): { x: number[]; y: number[] } {
+  if (runLengths.length === 0) return { x: [], y: [] };
+  const freq = new Map<number, number>();
+  for (const len of runLengths) {
+    freq.set(len, (freq.get(len) ?? 0) + 1);
+  }
+  const sorted = Array.from(freq.entries()).sort((a, b) => a[0] - b[0]);
+  return { x: sorted.map(([k]) => k), y: sorted.map(([, v]) => v) };
+}
+
 function DwellHistogramsGrid({
   histograms,
   nStates,
@@ -153,14 +163,15 @@ function DwellHistogramsGrid({
       data-testid="hmm-dwell-histograms"
     >
       {Array.from({ length: nStates }, (_, s) => {
-        const bins = histograms[String(s)] ?? [];
+        const rawRuns = histograms[String(s)] ?? [];
+        const binned = binRunLengths(rawRuns);
         return (
           <div key={s}>
             <Plot
               data={[
                 {
-                  x: bins.map((_, i) => i + 1),
-                  y: bins,
+                  x: binned.x,
+                  y: binned.y,
                   type: "bar",
                   marker: {
                     color: STATE_COLORS[s % STATE_COLORS.length],
@@ -250,7 +261,7 @@ export function HMMSequenceDetailPage() {
             <span className="font-medium">Status:</span>{" "}
             <span data-testid="hmm-detail-status">{job.status}</span>
           </div>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-5 gap-2">
             <div>
               <span className="font-medium text-slate-500">states</span>
               <div>{job.n_states}</div>
@@ -260,12 +271,36 @@ export function HMMSequenceDetailPage() {
               <div>{job.pca_dims}</div>
             </div>
             <div>
+              <span className="font-medium text-slate-500">pca_whiten</span>
+              <div>{job.pca_whiten ? "yes" : "no"}</div>
+            </div>
+            <div>
+              <span className="font-medium text-slate-500">l2_normalize</span>
+              <div>{job.l2_normalize ? "yes" : "no"}</div>
+            </div>
+            <div>
               <span className="font-medium text-slate-500">cov_type</span>
               <div>{job.covariance_type}</div>
             </div>
             <div>
               <span className="font-medium text-slate-500">n_iter</span>
               <div>{job.n_iter}</div>
+            </div>
+            <div>
+              <span className="font-medium text-slate-500">tol</span>
+              <div>{job.tol}</div>
+            </div>
+            <div>
+              <span className="font-medium text-slate-500">seed</span>
+              <div>{job.random_seed}</div>
+            </div>
+            <div>
+              <span className="font-medium text-slate-500">min_seq_len</span>
+              <div>{job.min_sequence_length_frames}</div>
+            </div>
+            <div>
+              <span className="font-medium text-slate-500">library</span>
+              <div>{job.library}</div>
             </div>
           </div>
           {isComplete && (

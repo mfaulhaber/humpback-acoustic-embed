@@ -443,6 +443,7 @@ async def run_continuous_embedding_job(
     manifest_path = continuous_embedding_manifest_path(settings.storage_root, job_id)
 
     try:
+        job = await session.merge(job)
         region_job = await session.get(RegionDetectionJob, region_detection_job_id)
         if region_job is None:
             raise ValueError(

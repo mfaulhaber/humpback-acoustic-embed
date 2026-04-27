@@ -28,6 +28,7 @@ export default defineConfig({
       "/labeling": "http://localhost:8000",
       "/vocalization": "http://localhost:8000",
       "/call-parsing": "http://localhost:8000",
+      "/sequence-models": "http://localhost:8000",
       "/health": "http://localhost:8000",
     },
   },
