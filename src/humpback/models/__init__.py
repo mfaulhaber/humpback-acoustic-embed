@@ -22,6 +22,7 @@ from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
 from humpback.models.processing import EmbeddingSet, ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
 from humpback.models.search import SearchJob
+from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.models.segmentation_training import (
     SegmentationTrainingDataset,
     SegmentationTrainingJob,
@@ -54,6 +55,7 @@ __all__ = [
     "ClusteringJob",
     "Cluster",
     "ClusterAssignment",
+    "ContinuousEmbeddingJob",
     "RetrainWorkflow",
     "SearchJob",
     "SegmentationTrainingDataset",

@@ -86,6 +86,18 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
+def continuous_embedding_dir(storage_root: Path, job_id: str) -> Path:
+    return storage_root / "continuous_embeddings" / job_id
+
+
+def continuous_embedding_parquet_path(storage_root: Path, job_id: str) -> Path:
+    return continuous_embedding_dir(storage_root, job_id) / "embeddings.parquet"
+
+
+def continuous_embedding_manifest_path(storage_root: Path, job_id: str) -> Path:
+    return continuous_embedding_dir(storage_root, job_id) / "manifest.json"
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 

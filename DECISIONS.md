@@ -287,3 +287,33 @@ Key changes:
 - Detection embedding parquet files now live under a model-version subdirectory; migration 049 relocates existing files.
 - The TuningTab and TrainingTab in the frontend gain a DetectionSourcePicker component with inline re-embedding status.
 - Future work: the hardcoded spectrogram feature parameters in `detector.py` should eventually be resolved from the ModelConfig rather than assumed.
+
+## ADR-056: Sequence Models track parallel to Call Parsing pipeline
+
+**Date**: 2026-04-27
+**Status**: Accepted
+
+**Context**: We need to add a sequence-modeling layer (HMM latent state discovery on SurfPerch embeddings) that consumes Pass-1 region detections without coupling to the four-pass call parsing pipeline. The first PR lands the data-plumbing producer (continuous 1-second-hop embeddings padded around regions); subsequent PRs add HMM training, interpretation visualizations, and motif mining.
+
+**Decision**: Introduce a new top-level **Sequence Models** track parallel to Call Parsing rather than extending the four-pass pipeline. PR 1 adds:
+- `continuous_embedding_jobs` SQL table (Alembic 057) with idempotency keyed on `encoding_signature = sha256(region_detection_job_id, model_version, hop_seconds, window_size_seconds, pad_seconds, target_sample_rate, feature_config)`.
+- A new `processing/region_windowing.py` pure-function module: `merge_padded_regions` and `iter_windows`, deterministic and side-effect free.
+- A producer service + worker pair that reads regions from a completed `RegionDetectionJob` and writes `continuous_embeddings/{job_id}/embeddings.parquet` + `manifest.json` atomically.
+- A new FastAPI router under `/sequence-models/` and a corresponding frontend Sequence Models nav section.
+- 1:1 source linkage (one `region_detection_job_id` per producer job); cross-source training and stored-model decode are explicit non-goals for this PR.
+
+The SurfPerch model invocation is structured behind an injected `EmbedderProtocol` so the worker is testable without depending on hydrophone audio decoding or model loading.
+
+**Alternatives considered**:
+- Folding the producer into the Call Parsing pipeline (e.g., as a fifth pass): rejected because Sequence Models has independent evolution needs (different embedding model versions, different sequence-model families, no human-correction flow).
+- Stuffing the producer parameters into the existing `region_detection_jobs` row: rejected because the producer is parameterized by hop / pad / model version that are orthogonal to detection.
+- Re-using the cached Pass-1 embeddings parquet as-is: rejected because Pass-1 caches at the detector hop, while the producer needs an arbitrary hop and full SurfPerch coverage of the padded region (not just within-region windows).
+
+**Consequences**:
+- New migration 057 adds `continuous_embedding_jobs` with indices on `encoding_signature` and `status`.
+- New ORM model in `src/humpback/models/sequence_models.py`; reuses the existing `JobStatus` enum from `models/processing.py`.
+- New `/sequence-models/continuous-embeddings` API surface; documented in `docs/reference/sequence-models-api.md`.
+- New `continuous_embeddings/{job_id}/` storage tree with atomic temp-rename writes for both `embeddings.parquet` and `manifest.json`.
+- The default production embedder is intentionally a stub that raises until the SurfPerch + hydrophone-streaming integration lands; the worker contract is finalized today behind the injected `EmbedderProtocol`.
+- Producer idempotency lookup is the service layer's responsibility — the worker never re-checks `encoding_signature` and assumes its job row is canonical.
+- `processing/region_windowing.py` is added to the sensitive-components list because every downstream HMM sequence consumer relies on its merge/window-center semantics.

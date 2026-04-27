@@ -98,6 +98,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         label_processing,
         labeling,
         search,
+        sequence_models,
         vocalization,
     )
 
@@ -106,6 +107,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(labeling.router)
     app.include_router(vocalization.router)
     app.include_router(call_parsing.router)
+    app.include_router(sequence_models.router)
 
     # Serve React SPA from dist/ if it exists, otherwise fall back to legacy index.html
     has_dist = DIST_DIR.is_dir() and (DIST_DIR / "index.html").exists()

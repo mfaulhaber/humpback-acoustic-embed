@@ -47,6 +47,9 @@
   segmentation/{job_id}/events.parquet         (Pass 2 framewise segmentation events)
   classification/{job_id}/typed_events.parquet (Pass 3 per-event classification scores)
   window_classification/{job_id}/window_scores.parquet (wide format: time_sec, region_id, one float64 column per vocalization type)
+/continuous_embeddings/
+  {job_id}/embeddings.parquet  (Sequence Models PR 1 producer: merged_span_id, window_index_in_span, audio_file_id, start_time_sec, end_time_sec, is_in_pad, source_region_ids, embedding)
+  {job_id}/manifest.json       (vector_dim, hop/pad/window settings, total_regions, merged_spans, total_windows, per-span summaries)
 /timeline_cache/
   {job_id}/{zoom_level}/tile_{NNNN}.png   (PCEN-normalized spectrogram tiles, LRU-evicted per job)
   {job_id}/.cache_version                  (integer; current is 2. Migrations run on first access when missing or lower)
