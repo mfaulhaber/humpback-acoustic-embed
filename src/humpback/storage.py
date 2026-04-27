@@ -98,6 +98,34 @@ def continuous_embedding_manifest_path(storage_root: Path, job_id: str) -> Path:
     return continuous_embedding_dir(storage_root, job_id) / "manifest.json"
 
 
+def hmm_sequence_dir(storage_root: Path, job_id: str) -> Path:
+    return storage_root / "hmm_sequences" / job_id
+
+
+def hmm_sequence_states_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "states.parquet"
+
+
+def hmm_sequence_pca_model_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "pca_model.joblib"
+
+
+def hmm_sequence_hmm_model_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "hmm_model.joblib"
+
+
+def hmm_sequence_transition_matrix_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "transition_matrix.npy"
+
+
+def hmm_sequence_summary_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "state_summary.json"
+
+
+def hmm_sequence_training_log_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "training_log.json"
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 
