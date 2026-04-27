@@ -7,7 +7,7 @@ region detections. Idempotent on ``encoding_signature``.
 
 from typing import Optional
 
-from sqlalchemy import Float, Integer, Text
+from sqlalchemy import Float, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from humpback.database import Base, TimestampMixin, UUIDMixin
@@ -25,6 +25,7 @@ class ContinuousEmbeddingJob(UUIDMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "continuous_embedding_jobs"
+    __table_args__ = (UniqueConstraint("encoding_signature"),)
 
     status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
     region_detection_job_id: Mapped[str]

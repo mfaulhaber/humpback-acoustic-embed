@@ -11,6 +11,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import numpy as np
 import pyarrow.parquet as pq
 import pytest
 
@@ -19,6 +20,7 @@ from humpback.call_parsing.types import Region
 from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
+from humpback.processing.inference import FakeTF2Model
 from humpback.schemas.sequence_models import ContinuousEmbeddingJobCreate
 from humpback.services.continuous_embedding_service import (
     create_continuous_embedding_job,
@@ -35,13 +37,20 @@ from humpback.workers.continuous_embedding_worker import (
 from tests.fixtures.sequence_models.surfperch_stub import SurfPerchStub
 
 
-def _make_region(region_id: str, start: float, end: float) -> Region:
+def _make_region(
+    region_id: str,
+    start: float,
+    end: float,
+    *,
+    padded_start: float | None = None,
+    padded_end: float | None = None,
+) -> Region:
     return Region(
         region_id=region_id,
         start_sec=start,
         end_sec=end,
-        padded_start_sec=start,
-        padded_end_sec=end,
+        padded_start_sec=start if padded_start is None else padded_start,
+        padded_end_sec=end if padded_end is None else padded_end,
         max_score=0.9,
         mean_score=0.6,
         n_windows=10,
@@ -131,12 +140,45 @@ async def test_happy_path_writes_parquet_and_manifest(session, settings):
 
     embedding_widths = {len(v) for v in table.column("embedding").to_pylist()}
     assert embedding_widths == {8}
+    source_region_ids = table.column("source_region_ids").to_pylist()
+    assert source_region_ids
+    assert all(isinstance(ids, list) for ids in source_region_ids)
+    assert any(ids == ["r1"] for ids in source_region_ids)
 
     manifest = json.loads(Path(manifest_path).read_text())
     assert manifest["vector_dim"] == 8
     assert manifest["merged_spans"] == 2
     assert manifest["total_windows"] == job.total_windows
     assert len(manifest["spans"]) == 2
+
+
+async def test_worker_uses_raw_region_bounds_for_padding_and_membership(
+    session, settings
+):
+    regions = [
+        _make_region("r1", 100.0, 110.0, padded_start=95.0, padded_end=115.0),
+    ]
+    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
+    job = await _seed_continuous_job(session, region_job.id, pad=5.0)
+
+    await run_continuous_embedding_job(
+        session, job, settings, embedder=SurfPerchStub(vector_dim=4)
+    )
+
+    table = pq.read_table(
+        continuous_embedding_parquet_path(settings.storage_root, job.id)
+    )
+    starts = table.column("start_time_sec").to_pylist()
+    in_pad = table.column("is_in_pad").to_pylist()
+    source_region_ids = table.column("source_region_ids").to_pylist()
+
+    assert starts[0] == 95.0
+    assert in_pad[0] is True
+    assert source_region_ids[0] == []
+
+    first_in_region = next(i for i, value in enumerate(in_pad) if value is False)
+    assert starts[first_in_region] == 98.0
+    assert source_region_ids[first_in_region] == ["r1"]
 
 
 async def test_failure_path_marks_failed_and_cleans_artifacts(session, settings):
@@ -218,9 +260,17 @@ async def test_aborts_when_source_not_complete(session, settings):
     region_job.status = JobStatus.running.value
     await session.commit()
 
-    payload = ContinuousEmbeddingJobCreate(region_detection_job_id=region_job.id)
-    # service guard accepts running region_jobs; the worker should reject.
-    job, _ = await create_continuous_embedding_job(session, payload)
+    job = ContinuousEmbeddingJob(
+        region_detection_job_id=region_job.id,
+        model_version="surfperch-tensorflow2",
+        window_size_seconds=5.0,
+        hop_seconds=1.0,
+        pad_seconds=10.0,
+        target_sample_rate=32000,
+        encoding_signature="manual-test-signature",
+    )
+    session.add(job)
+    await session.commit()
     await run_continuous_embedding_job(
         session, job, settings, embedder=SurfPerchStub(vector_dim=4)
     )
@@ -250,16 +300,57 @@ async def test_run_one_iteration_claims_and_runs(session, settings):
     assert job.status == JobStatus.complete.value
 
 
-async def test_default_embedder_raises(session, settings):
+async def test_default_embedder_runs_with_runtime_dependencies(
+    session, settings, monkeypatch
+):
     regions = [_make_region("r1", 100.0, 110.0)]
     region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
     job = await _seed_continuous_job(session, region_job.id)
 
+    class FakeProvider:
+        def build_timeline(self, start_ts: float, end_ts: float):
+            return [("timeline", start_ts, end_ts)]
+
+    async def fake_get_model_by_version(_session, model_version: str, _settings):
+        assert model_version == "surfperch-tensorflow2"
+        return FakeTF2Model(4), "waveform"
+
+    def fake_resolve_audio_slice(
+        provider,
+        stream_start_ts: float,
+        stream_end_ts: float,
+        start_utc: float,
+        duration_sec: float,
+        target_sr: int = 32000,
+        timeline=None,
+    ) -> np.ndarray:
+        assert provider is fake_provider
+        assert stream_start_ts == 0.0
+        assert stream_end_ts == 1000.0
+        assert start_utc >= stream_start_ts
+        assert timeline == fake_provider.build_timeline(stream_start_ts, stream_end_ts)
+        sample_count = int(round(duration_sec * target_sr))
+        return np.linspace(0.0, 1.0, sample_count, dtype=np.float32)
+
+    fake_provider = FakeProvider()
+    monkeypatch.setattr(
+        "humpback.workers.continuous_embedding_worker.get_model_by_version",
+        fake_get_model_by_version,
+    )
+    monkeypatch.setattr(
+        "humpback.workers.continuous_embedding_worker.build_archive_detection_provider",
+        lambda *args, **kwargs: fake_provider,
+    )
+    monkeypatch.setattr(
+        "humpback.workers.continuous_embedding_worker.resolve_audio_slice",
+        fake_resolve_audio_slice,
+    )
+
     await run_continuous_embedding_job(session, job, settings)
 
     await session.refresh(job)
-    assert job.status == JobStatus.failed.value
-    assert "EmbedderProtocol" in (job.error_message or "")
+    assert job.status == JobStatus.complete.value
+    assert job.vector_dim == 4
 
 
 @pytest.fixture

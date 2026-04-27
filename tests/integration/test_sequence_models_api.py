@@ -9,7 +9,12 @@ async def _seed_region_detection_job(app_settings, status: str) -> str:
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
     async with sf() as session:
-        job = RegionDetectionJob(status=status)
+        job = RegionDetectionJob(
+            status=status,
+            hydrophone_id="rpi_orcasound_lab",
+            start_timestamp=0.0,
+            end_timestamp=600.0,
+        )
         session.add(job)
         await session.commit()
         await session.refresh(job)
@@ -148,5 +153,22 @@ async def test_create_rejects_unknown_region_job(client):
     response = await client.post(
         "/sequence-models/continuous-embeddings",
         json={"region_detection_job_id": "nonexistent"},
+    )
+    assert response.status_code == 400
+
+
+async def test_create_rejects_non_hydrophone_region_job(client, app_settings):
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        job = RegionDetectionJob(status=JobStatus.complete.value)
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        region_job_id = job.id
+
+    response = await client.post(
+        "/sequence-models/continuous-embeddings",
+        json={"region_detection_job_id": region_job_id},
     )
     assert response.status_code == 400

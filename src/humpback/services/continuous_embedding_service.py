@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.call_parsing import RegionDetectionJob
@@ -31,6 +33,8 @@ SUPPORTED_MODEL_VERSIONS: dict[str, dict[str, Any]] = {
         "feature_config": None,
     },
 }
+
+_RESETTABLE_STATUSES = {JobStatus.failed.value, JobStatus.canceled.value}
 
 
 def _resolve_model_version(model_version: str) -> dict[str, Any]:
@@ -91,6 +95,19 @@ async def create_continuous_embedding_job(
         raise ValueError(
             f"region_detection_job not found: {payload.region_detection_job_id}"
         )
+    if region_job.status != JobStatus.complete.value:
+        raise ValueError(
+            "continuous embedding requires a completed region_detection_job"
+        )
+    if (
+        not region_job.hydrophone_id
+        or region_job.start_timestamp is None
+        or region_job.end_timestamp is None
+    ):
+        raise ValueError(
+            "continuous embedding currently supports hydrophone-backed "
+            "region_detection_job rows only"
+        )
 
     model_constants = _resolve_model_version(payload.model_version)
     window_size_seconds = float(model_constants["window_size_seconds"])
@@ -108,27 +125,16 @@ async def create_continuous_embedding_job(
         feature_config=feature_config,
     )
 
-    existing_complete = await session.execute(
-        select(ContinuousEmbeddingJob).where(
-            ContinuousEmbeddingJob.encoding_signature == signature,
-            ContinuousEmbeddingJob.status == JobStatus.complete.value,
-        )
-    )
-    job = existing_complete.scalars().first()
-    if job is not None:
-        return job, False
+    existing = await _get_existing_jobs_by_signature(session, signature)
+    reusable = _pick_active_or_complete_job(existing)
+    if reusable is not None:
+        return reusable, False
 
-    in_flight = await session.execute(
-        select(ContinuousEmbeddingJob).where(
-            ContinuousEmbeddingJob.encoding_signature == signature,
-            ContinuousEmbeddingJob.status.in_(
-                [JobStatus.queued.value, JobStatus.running.value]
-            ),
-        )
-    )
-    job = in_flight.scalars().first()
-    if job is not None:
-        return job, False
+    resettable = _pick_resettable_job(existing)
+    if resettable is not None:
+        _reset_job_for_retry(resettable)
+        await session.commit()
+        return resettable, False
 
     job = ContinuousEmbeddingJob(
         region_detection_job_id=payload.region_detection_job_id,
@@ -141,8 +147,22 @@ async def create_continuous_embedding_job(
         encoding_signature=signature,
     )
     session.add(job)
-    await session.commit()
-    return job, True
+    try:
+        await session.commit()
+        return job, True
+    except IntegrityError:
+        await session.rollback()
+        existing = await _get_existing_jobs_by_signature(session, signature)
+        reusable = _pick_active_or_complete_job(existing)
+        if reusable is not None:
+            return reusable, False
+
+        resettable = _pick_resettable_job(existing)
+        if resettable is not None:
+            _reset_job_for_retry(resettable)
+            await session.commit()
+            return resettable, False
+        raise
 
 
 async def list_continuous_embedding_jobs(
@@ -188,3 +208,49 @@ async def cancel_continuous_embedding_job(
     raise CancelTerminalJobError(
         f"continuous_embedding_job {job_id} is in terminal state {job.status!r}"
     )
+
+
+async def _get_existing_jobs_by_signature(
+    session: AsyncSession, signature: str
+) -> list[ContinuousEmbeddingJob]:
+    result = await session.execute(
+        select(ContinuousEmbeddingJob)
+        .where(ContinuousEmbeddingJob.encoding_signature == signature)
+        .order_by(ContinuousEmbeddingJob.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+def _pick_active_or_complete_job(
+    jobs: list[ContinuousEmbeddingJob],
+) -> Optional[ContinuousEmbeddingJob]:
+    for status in (
+        JobStatus.complete.value,
+        JobStatus.running.value,
+        JobStatus.queued.value,
+    ):
+        for job in jobs:
+            if job.status == status:
+                return job
+    return None
+
+
+def _pick_resettable_job(
+    jobs: list[ContinuousEmbeddingJob],
+) -> Optional[ContinuousEmbeddingJob]:
+    for job in jobs:
+        if job.status in _RESETTABLE_STATUSES:
+            return job
+    return None
+
+
+def _reset_job_for_retry(job: ContinuousEmbeddingJob) -> None:
+    now = datetime.now(timezone.utc)
+    job.status = JobStatus.queued.value
+    job.vector_dim = None
+    job.total_regions = None
+    job.merged_spans = None
+    job.total_windows = None
+    job.parquet_path = None
+    job.error_message = None
+    job.updated_at = now

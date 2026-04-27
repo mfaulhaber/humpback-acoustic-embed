@@ -15,6 +15,7 @@ streaming code paths.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -29,11 +30,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.classifier.archive import ArchiveProvider, StreamSegment
+from humpback.classifier.providers import build_archive_detection_provider
+from humpback.classifier.s3_stream import resolve_audio_slice
 from humpback.call_parsing.storage import read_regions, region_job_dir
 from humpback.config import Settings
 from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
+from humpback.processing.features import extract_logmel_batch
+from humpback.processing.inference import EmbeddingModel
 from humpback.processing.region_windowing import (
     AudioEnvelope,
     MergedSpan,
@@ -42,12 +48,14 @@ from humpback.processing.region_windowing import (
     iter_windows,
     merge_padded_regions,
 )
+from humpback.processing.windowing import window_sample_count
 from humpback.storage import (
     continuous_embedding_dir,
     continuous_embedding_manifest_path,
     continuous_embedding_parquet_path,
     ensure_dir,
 )
+from humpback.workers.model_cache import get_model_by_version
 from humpback.workers.queue import claim_continuous_embedding_job
 
 logger = logging.getLogger(__name__)
@@ -61,7 +69,7 @@ CONTINUOUS_EMBEDDING_SCHEMA = pa.schema(
         pa.field("start_time_sec", pa.float64(), nullable=False),
         pa.field("end_time_sec", pa.float64(), nullable=False),
         pa.field("is_in_pad", pa.bool_(), nullable=False),
-        pa.field("source_region_ids", pa.list_(pa.int32()), nullable=False),
+        pa.field("source_region_ids", pa.list_(pa.string()), nullable=False),
         pa.field("embedding", pa.list_(pa.float32()), nullable=False),
     ]
 )
@@ -107,17 +115,8 @@ def _default_embedder(
     target_sample_rate: int,
     settings: Settings,
 ) -> list[np.ndarray]:
-    """Production embedder placeholder.
-
-    The full SurfPerch + hydrophone-streaming integration is intentionally
-    out of scope for PR 1 plumbing. This raises a clear error so the
-    queue surface is testable today and the wiring can be filled in
-    behind the same interface in a follow-up.
-    """
-    raise NotImplementedError(
-        "ContinuousEmbeddingWorker requires an EmbedderProtocol implementation; "
-        "the default production embedder for SurfPerch is not yet wired up. "
-        "Inject an embedder when running this worker."
+    raise RuntimeError(
+        "_default_embedder should be replaced by a prepared production embedder"
     )
 
 
@@ -125,8 +124,8 @@ def _regions_to_window_geometry(regions) -> list[WindowRegion]:
     return [
         WindowRegion(
             region_id=r.region_id,
-            start_time_sec=float(r.padded_start_sec),
-            end_time_sec=float(r.padded_end_sec),
+            start_time_sec=float(r.start_sec),
+            end_time_sec=float(r.end_sec),
         )
         for r in regions
     ]
@@ -205,15 +204,6 @@ def _row_dict(
     record: WindowRecord,
     embedding: np.ndarray,
 ) -> dict:
-    region_ids = []
-    for rid in record.source_region_ids:
-        try:
-            region_ids.append(int(rid))
-        except (TypeError, ValueError):
-            # Region ids in this project are UUID strings; the parquet
-            # schema requires int32, so non-numeric ids are skipped here
-            # and surfaced via the ``source_regions`` manifest section.
-            continue
     emb = np.asarray(embedding, dtype=np.float32)
     return {
         "merged_span_id": int(span.merged_span_id),
@@ -222,7 +212,7 @@ def _row_dict(
         "start_time_sec": float(record.start_time_sec),
         "end_time_sec": float(record.end_time_sec),
         "is_in_pad": bool(record.is_in_pad),
-        "source_region_ids": region_ids,
+        "source_region_ids": list(record.source_region_ids),
         "embedding": emb.tolist(),
     }
 
@@ -234,6 +224,72 @@ class _SpanSummary:
     end_time_sec: float
     window_count: int
     source_region_ids: list[str]
+
+
+@dataclass(slots=True)
+class _ProductionEmbedder:
+    model: EmbeddingModel
+    input_format: str
+    normalization: str
+    provider: ArchiveProvider
+    timeline: list[StreamSegment]
+    stream_start_ts: float
+    stream_end_ts: float
+    target_sample_rate: int
+
+    def __call__(
+        self,
+        *,
+        span: MergedSpan,
+        region_job: RegionDetectionJob,
+        model_version: str,
+        hop_seconds: float,
+        window_size_seconds: float,
+        target_sample_rate: int,
+        settings: Settings,
+    ) -> list[np.ndarray]:
+        del region_job, model_version, settings
+        if target_sample_rate != self.target_sample_rate:
+            raise ValueError(
+                "continuous embedding target_sample_rate mismatch between job "
+                f"({target_sample_rate}) and prepared embedder ({self.target_sample_rate})"
+            )
+
+        window_records = list(
+            iter_windows(
+                span,
+                hop_seconds=hop_seconds,
+                window_size_seconds=window_size_seconds,
+            )
+        )
+        if not window_records:
+            return []
+
+        span_start_utc = self.stream_start_ts + span.start_time_sec
+        span_duration = span.end_time_sec - span.start_time_sec
+        span_audio = resolve_audio_slice(
+            self.provider,
+            self.stream_start_ts,
+            self.stream_end_ts,
+            span_start_utc,
+            span_duration,
+            target_sr=self.target_sample_rate,
+            timeline=self.timeline,
+        )
+        window_batch = _build_window_batch(
+            span_audio=span_audio,
+            span=span,
+            window_records=window_records,
+            window_size_seconds=window_size_seconds,
+            target_sample_rate=self.target_sample_rate,
+        )
+        return _embed_window_batch(
+            model=self.model,
+            input_format=self.input_format,
+            normalization=self.normalization,
+            target_sample_rate=self.target_sample_rate,
+            window_batch=window_batch,
+        )
 
 
 def _build_manifest_payload(
@@ -268,6 +324,105 @@ def _build_manifest_payload(
     }
 
 
+def _build_window_batch(
+    *,
+    span_audio: np.ndarray,
+    span: MergedSpan,
+    window_records: list[WindowRecord],
+    window_size_seconds: float,
+    target_sample_rate: int,
+) -> np.ndarray:
+    window_samples = window_sample_count(target_sample_rate, window_size_seconds)
+    batch = np.zeros((len(window_records), window_samples), dtype=np.float32)
+
+    for idx, record in enumerate(window_records):
+        rel_start_sec = record.start_time_sec - span.start_time_sec
+        start_sample = int(round(rel_start_sec * target_sample_rate))
+        end_sample = start_sample + window_samples
+        window_audio = span_audio[start_sample:end_sample]
+        if len(window_audio) > 0:
+            batch[idx, : min(len(window_audio), window_samples)] = window_audio[
+                :window_samples
+            ]
+
+    return batch
+
+
+def _embed_window_batch(
+    *,
+    model: EmbeddingModel,
+    input_format: str,
+    normalization: str,
+    target_sample_rate: int,
+    window_batch: np.ndarray,
+) -> list[np.ndarray]:
+    if len(window_batch) == 0:
+        return []
+
+    if input_format == "waveform":
+        batch = window_batch
+    else:
+        spectrograms = extract_logmel_batch(
+            list(window_batch),
+            target_sample_rate,
+            n_mels=128,
+            hop_length=1252,
+            target_frames=128,
+            normalization=normalization,
+        )
+        batch = np.stack(spectrograms)
+
+    embeddings = model.embed(batch)
+    return [np.asarray(row, dtype=np.float32) for row in embeddings]
+
+
+async def _prepare_production_embedder(
+    session: AsyncSession,
+    job: ContinuousEmbeddingJob,
+    region_job: RegionDetectionJob,
+    settings: Settings,
+) -> EmbedderProtocol:
+    if (
+        not region_job.hydrophone_id
+        or region_job.start_timestamp is None
+        or region_job.end_timestamp is None
+    ):
+        raise ValueError(
+            "continuous embedding currently supports hydrophone-backed "
+            "region_detection_job rows only"
+        )
+
+    model, input_format = await get_model_by_version(
+        session, job.model_version, settings
+    )
+    feature_config = (
+        json.loads(job.feature_config_json) if job.feature_config_json else {}
+    )
+    normalization = feature_config.get("normalization", "per_window_max")
+    provider = build_archive_detection_provider(
+        region_job.hydrophone_id,
+        local_cache_path=None,
+        s3_cache_path=settings.s3_cache_path,
+        noaa_cache_path=settings.noaa_cache_path,
+        force_refresh=False,
+    )
+    timeline = await asyncio.to_thread(
+        provider.build_timeline,
+        float(region_job.start_timestamp),
+        float(region_job.end_timestamp),
+    )
+    return _ProductionEmbedder(
+        model=model,
+        input_format=input_format,
+        normalization=normalization,
+        provider=provider,
+        timeline=timeline,
+        stream_start_ts=float(region_job.start_timestamp),
+        stream_end_ts=float(region_job.end_timestamp),
+        target_sample_rate=int(job.target_sample_rate),
+    )
+
+
 async def run_continuous_embedding_job(
     session: AsyncSession,
     job: ContinuousEmbeddingJob,
@@ -280,7 +435,6 @@ async def run_continuous_embedding_job(
     The worker assumes ``job`` is the canonical row to execute — the
     idempotency check is the service layer's responsibility.
     """
-    embed = embedder or _default_embedder
     job_id = job.id
     region_detection_job_id = job.region_detection_job_id
 
@@ -299,6 +453,9 @@ async def run_continuous_embedding_job(
                 f"region_detection_job {region_detection_job_id} not complete "
                 f"(status={region_job.status!r})"
             )
+        embed = embedder or await _prepare_production_embedder(
+            session, job, region_job, settings
+        )
 
         regions_path = (
             region_job_dir(settings.storage_root, region_detection_job_id)
@@ -354,7 +511,8 @@ async def run_continuous_embedding_job(
                 )
                 continue
 
-            embeddings = embed(
+            embeddings = await asyncio.to_thread(
+                embed,
                 span=span,
                 region_job=region_job,
                 model_version=job.model_version,
