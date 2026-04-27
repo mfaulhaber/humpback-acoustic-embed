@@ -156,3 +156,205 @@ export function useCancelContinuousEmbeddingJob() {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// HMM Sequence Jobs
+// ---------------------------------------------------------------------------
+
+const HMM_ROOT = "/sequence-models/hmm-sequences";
+
+export interface HMMSequenceJob {
+  id: string;
+  status: string;
+  continuous_embedding_job_id: string;
+  n_states: number;
+  pca_dims: number;
+  pca_whiten: boolean;
+  l2_normalize: boolean;
+  covariance_type: string;
+  n_iter: number;
+  random_seed: number;
+  min_sequence_length_frames: number;
+  tol: number;
+  library: string;
+  train_log_likelihood: number | null;
+  n_train_sequences: number | null;
+  n_train_frames: number | null;
+  n_decoded_sequences: number | null;
+  artifact_dir: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HMMStateSummary {
+  state: number;
+  occupancy: number;
+  mean_dwell_frames: number;
+  dwell_histogram: number[];
+}
+
+export interface HMMSequenceJobDetail {
+  job: HMMSequenceJob;
+  summary: HMMStateSummary[] | null;
+}
+
+export interface CreateHMMSequenceJobRequest {
+  continuous_embedding_job_id: string;
+  n_states: number;
+  pca_dims?: number;
+  pca_whiten?: boolean;
+  l2_normalize?: boolean;
+  covariance_type?: "diag" | "full";
+  n_iter?: number;
+  random_seed?: number;
+  min_sequence_length_frames?: number;
+  tol?: number;
+}
+
+export interface TransitionMatrix {
+  n_states: number;
+  matrix: number[][];
+}
+
+export interface DwellHistograms {
+  n_states: number;
+  histograms: Record<string, number[]>;
+}
+
+export function fetchHMMSequenceJobs(
+  status?: string,
+  continuousEmbeddingJobId?: string,
+): Promise<HMMSequenceJob[]> {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (continuousEmbeddingJobId)
+    params.set("continuous_embedding_job_id", continuousEmbeddingJobId);
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return request<HMMSequenceJob[]>(`${HMM_ROOT}${q}`);
+}
+
+export function fetchHMMSequenceJob(
+  jobId: string,
+): Promise<HMMSequenceJobDetail> {
+  return request<HMMSequenceJobDetail>(`${HMM_ROOT}/${jobId}`);
+}
+
+export function createHMMSequenceJob(
+  body: CreateHMMSequenceJobRequest,
+): Promise<HMMSequenceJob> {
+  return request<HMMSequenceJob>(HMM_ROOT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function cancelHMMSequenceJob(
+  jobId: string,
+): Promise<HMMSequenceJob> {
+  return request<HMMSequenceJob>(`${HMM_ROOT}/${jobId}/cancel`, {
+    method: "POST",
+  });
+}
+
+export function fetchHMMTransitions(
+  jobId: string,
+): Promise<TransitionMatrix> {
+  return request<TransitionMatrix>(`${HMM_ROOT}/${jobId}/transitions`);
+}
+
+export function fetchHMMDwell(jobId: string): Promise<DwellHistograms> {
+  return request<DwellHistograms>(`${HMM_ROOT}/${jobId}/dwell`);
+}
+
+export function fetchHMMStates(
+  jobId: string,
+  offset = 0,
+  limit = 5000,
+): Promise<{
+  total: number;
+  offset: number;
+  limit: number;
+  items: Record<string, unknown>[];
+}> {
+  return request(`${HMM_ROOT}/${jobId}/states?offset=${offset}&limit=${limit}`);
+}
+
+export function isHMMSequenceJobActive(
+  job: Pick<HMMSequenceJob, "status">,
+): boolean {
+  return ACTIVE_STATUSES.has(job.status);
+}
+
+export function useHMMSequenceJobs(refetchInterval = 3000) {
+  return useQuery({
+    queryKey: ["hmm-sequence-jobs"],
+    queryFn: () => fetchHMMSequenceJobs(),
+    refetchInterval,
+  });
+}
+
+export function useHMMSequenceJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["hmm-sequence-job", jobId],
+    queryFn: () => fetchHMMSequenceJob(jobId as string),
+    enabled: jobId != null,
+    refetchInterval: (query) => {
+      const data = query.state.data as HMMSequenceJobDetail | undefined;
+      if (!data) return 3000;
+      return isHMMSequenceJobActive(data.job) ? 3000 : false;
+    },
+  });
+}
+
+export function useCreateHMMSequenceJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateHMMSequenceJobRequest) =>
+      createHMMSequenceJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hmm-sequence-jobs"] });
+    },
+  });
+}
+
+export function useCancelHMMSequenceJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => cancelHMMSequenceJob(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["hmm-sequence-jobs"] });
+      qc.invalidateQueries({ queryKey: ["hmm-sequence-job", jobId] });
+    },
+  });
+}
+
+export function useHMMTransitions(jobId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["hmm-transitions", jobId],
+    queryFn: () => fetchHMMTransitions(jobId as string),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useHMMDwell(jobId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["hmm-dwell", jobId],
+    queryFn: () => fetchHMMDwell(jobId as string),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useHMMStates(
+  jobId: string | null,
+  offset = 0,
+  limit = 5000,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["hmm-states", jobId, offset, limit],
+    queryFn: () => fetchHMMStates(jobId as string, offset, limit),
+    enabled: enabled && jobId != null,
+  });
+}
