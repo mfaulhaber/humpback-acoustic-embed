@@ -20,7 +20,14 @@ export function ContinuousEmbeddingCreateForm() {
   const [error, setError] = useState<string | null>(null);
 
   const completedRegionJobs = useMemo(
-    () => regionJobs.filter((j) => j.status === "complete"),
+    () =>
+      regionJobs.filter(
+        (j) =>
+          j.status === "complete" &&
+          !!j.hydrophone_id &&
+          j.start_timestamp != null &&
+          j.end_timestamp != null,
+      ),
     [regionJobs],
   );
 

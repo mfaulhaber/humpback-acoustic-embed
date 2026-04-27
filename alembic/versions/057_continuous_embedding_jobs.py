@@ -40,16 +40,15 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "encoding_signature",
+            name="uq_continuous_embedding_jobs_encoding_signature",
+        ),
         sa.ForeignKeyConstraint(
             ["region_detection_job_id"],
             ["region_detection_jobs.id"],
             name="fk_continuous_embedding_jobs_region_job",
         ),
-    )
-    op.create_index(
-        "ix_continuous_embedding_jobs_encoding_signature",
-        "continuous_embedding_jobs",
-        ["encoding_signature"],
     )
     op.create_index(
         "ix_continuous_embedding_jobs_status",
@@ -61,10 +60,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(
         "ix_continuous_embedding_jobs_status",
-        table_name="continuous_embedding_jobs",
-    )
-    op.drop_index(
-        "ix_continuous_embedding_jobs_encoding_signature",
         table_name="continuous_embedding_jobs",
     )
     op.drop_table("continuous_embedding_jobs")

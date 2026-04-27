@@ -12,16 +12,17 @@ All endpoints are mounted under `/sequence-models/`.
 
 - `POST /sequence-models/continuous-embeddings` — create or reuse a
   continuous-embedding job, idempotent on `encoding_signature`. Accepts:
-  - `region_detection_job_id` (required) — completed Pass-1 job FK
+  - `region_detection_job_id` (required) — completed hydrophone-backed Pass-1 job FK
   - `model_version` (default `"surfperch-tensorflow2"`)
   - `hop_seconds` (default `1.0`, must be > 0)
   - `pad_seconds` (default `10.0`, must be >= 0)
 
   Returns `ContinuousEmbeddingJob`. Status `201` when a new row is
   created; `200` when an existing complete or in-flight (`queued` /
-  `running`) row with the same signature is returned. `400` on
-  validation errors (missing region detection job, unsupported
-  `model_version`).
+  `running`) row with the same signature is returned, or when a failed /
+  canceled row with the same signature is reset back to `queued`.
+  `400` on validation errors (missing region detection job, incomplete
+  source job, non-hydrophone source, unsupported `model_version`).
 
 - `GET /sequence-models/continuous-embeddings` — list jobs newest-first
   with optional `?status=` filter.
@@ -49,6 +50,11 @@ producer parameters (`hop_seconds`, `pad_seconds`, `window_size_seconds`,
 written next to `embeddings.parquet`, with per-merged-span window-count
 summaries (`merged_span_id`, `start_time_sec`, `end_time_sec`,
 `window_count`, `source_region_ids`).
+
+The parquet artifact stores one row per embedded window with
+`source_region_ids` preserved as UUID strings, allowing downstream
+sequence-model consumers to trace each window back to its contributing
+Pass-1 region rows.
 
 See `src/humpback/schemas/sequence_models.py` for the full Pydantic
 definitions.

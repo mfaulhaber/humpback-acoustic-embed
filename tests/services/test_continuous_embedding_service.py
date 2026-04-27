@@ -1,7 +1,11 @@
 """Tests for the continuous-embedding service idempotency and validation."""
 
-import pytest
+from datetime import datetime, timezone
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from humpback.database import create_session_factory
 from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
@@ -15,8 +19,18 @@ from humpback.services.continuous_embedding_service import (
 )
 
 
-async def _seed_region_job(session) -> RegionDetectionJob:
-    job = RegionDetectionJob(status=JobStatus.complete.value)
+async def _seed_region_job(
+    session,
+    *,
+    status: str = JobStatus.complete.value,
+    hydrophone: bool = True,
+) -> RegionDetectionJob:
+    job = RegionDetectionJob(
+        status=status,
+        hydrophone_id="rpi_orcasound_lab" if hydrophone else None,
+        start_timestamp=0.0 if hydrophone else None,
+        end_timestamp=300.0 if hydrophone else None,
+    )
     session.add(job)
     await session.commit()
     await session.refresh(job)
@@ -83,6 +97,20 @@ async def test_rejects_unknown_region_detection_job(session):
         await create_continuous_embedding_job(session, payload)
 
 
+async def test_rejects_non_complete_region_detection_job(session):
+    region_job = await _seed_region_job(session, status=JobStatus.running.value)
+    payload = ContinuousEmbeddingJobCreate(region_detection_job_id=region_job.id)
+    with pytest.raises(ValueError, match="completed region_detection_job"):
+        await create_continuous_embedding_job(session, payload)
+
+
+async def test_rejects_non_hydrophone_region_detection_job(session):
+    region_job = await _seed_region_job(session, hydrophone=False)
+    payload = ContinuousEmbeddingJobCreate(region_detection_job_id=region_job.id)
+    with pytest.raises(ValueError, match="hydrophone-backed"):
+        await create_continuous_embedding_job(session, payload)
+
+
 async def test_rejects_unsupported_model_version(session):
     region_job = await _seed_region_job(session)
     payload = ContinuousEmbeddingJobCreate(
@@ -142,6 +170,59 @@ async def test_cancel_complete_raises(session):
 async def test_cancel_missing_returns_none(session):
     result = await cancel_continuous_embedding_job(session, "nonexistent")
     assert result is None
+
+
+async def test_resubmitting_failed_job_requeues_existing_row(session):
+    region_job = await _seed_region_job(session)
+    payload = ContinuousEmbeddingJobCreate(region_detection_job_id=region_job.id)
+    job, _ = await create_continuous_embedding_job(session, payload)
+    job.status = JobStatus.failed.value
+    job.error_message = "boom"
+    job.parquet_path = "/tmp/old.parquet"
+    job.vector_dim = 123
+    job.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    retried, created = await create_continuous_embedding_job(session, payload)
+    assert created is False
+    assert retried.id == job.id
+    assert retried.status == JobStatus.queued.value
+    assert retried.error_message is None
+    assert retried.parquet_path is None
+    assert retried.vector_dim is None
+
+
+async def test_integrity_error_race_returns_canonical_existing_job(
+    session, engine, monkeypatch
+):
+    region_job = await _seed_region_job(session)
+    payload = ContinuousEmbeddingJobCreate(region_detection_job_id=region_job.id)
+    factory = create_session_factory(engine)
+    original_commit = session.commit
+    did_inject_race = False
+
+    async def commit_with_race():
+        nonlocal did_inject_race
+        if did_inject_race:
+            return await original_commit()
+
+        did_inject_race = True
+        async with factory() as competing_session:
+            competing_job, competing_created = await create_continuous_embedding_job(
+                competing_session, payload
+            )
+            assert competing_created is True
+            assert competing_job.encoding_signature
+        raise IntegrityError("insert", {"encoding_signature": "dup"}, Exception("dup"))
+
+    monkeypatch.setattr(session, "commit", commit_with_race)
+
+    winner, created = await create_continuous_embedding_job(session, payload)
+    assert created is False
+    assert winner.status == JobStatus.queued.value
+
+    rows = await list_continuous_embedding_jobs(session)
+    assert len(rows) == 1
 
 
 async def test_get_returns_existing_job(session):
