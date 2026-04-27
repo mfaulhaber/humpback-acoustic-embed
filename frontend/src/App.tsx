@@ -25,6 +25,8 @@ import { ClassifyPage } from "@/components/call-parsing/ClassifyPage";
 import { ClassifyTrainingPage } from "@/components/call-parsing/ClassifyTrainingPage";
 import { WindowClassifyPage } from "@/components/call-parsing/WindowClassifyPage";
 import { RegionDetectionTimeline } from "@/components/call-parsing/RegionDetectionTimeline";
+import { ContinuousEmbeddingJobsPage } from "@/components/sequence-models/ContinuousEmbeddingJobsPage";
+import { ContinuousEmbeddingDetailPage } from "@/components/sequence-models/ContinuousEmbeddingDetailPage";
 
 export default function App() {
   return (
@@ -57,6 +59,9 @@ export default function App() {
         <Route path="/app/call-parsing/classify" element={<ClassifyPage />} />
         <Route path="/app/call-parsing/classify-training" element={<ClassifyTrainingPage />} />
         <Route path="/app/call-parsing/window-classify" element={<WindowClassifyPage />} />
+        <Route path="/app/sequence-models" element={<Navigate to="/app/sequence-models/continuous-embedding" replace />} />
+        <Route path="/app/sequence-models/continuous-embedding/:jobId" element={<ContinuousEmbeddingDetailPage />} />
+        <Route path="/app/sequence-models/continuous-embedding" element={<ContinuousEmbeddingJobsPage />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />

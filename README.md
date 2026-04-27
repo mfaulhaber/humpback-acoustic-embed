@@ -26,6 +26,7 @@ Highlights:
 - Autoresearch candidate import, review, and exact-replay promotion into classifier training
 - Multi-label vocalization type classifier with managed vocabulary, per-type thresholds, and inference scoring
 - Four-pass call parsing pipeline (Phase 0 scaffold — region detect → event segment → event classify → sequence export; pass logic ships incrementally)
+- Sequence Models track (parallel to Call Parsing): continuous embedding producer that emits region-bounded, hydrophone-only 1-second-hop SurfPerch embeddings padded around Pass-1 detections; HMM modeling and interpretation visualizations land in subsequent PRs
 - Interactive web UI and REST API for review, labeling, and extraction
 - Local-first artifact storage using SQL and Parquet-backed outputs
 - Zoomable timeline viewer for hydrophone detection jobs (Pattern Radio-inspired, 6 zoom levels, Ocean Depth colormap, startup-scoped tile warming, synchronized audio playback)
@@ -554,6 +555,10 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/label-processing/jobs/{id}` | Get label processing job details |
 | DELETE | `/label-processing/jobs/{id}` | Delete label processing job + output artifacts |
 | GET | `/label-processing/preview` | Dry-run annotation pairing preview (`?annotation_folder=&audio_folder=`) |
+| POST | `/sequence-models/continuous-embeddings` | Create or reuse a continuous-embedding producer job (idempotent on `encoding_signature`); 201 when new, 200 when an existing complete or in-flight row is returned |
+| GET | `/sequence-models/continuous-embeddings` | List continuous-embedding jobs (`?status=` filter) |
+| GET | `/sequence-models/continuous-embeddings/{id}` | Job detail + manifest sidecar (when artifacts exist) |
+| POST | `/sequence-models/continuous-embeddings/{id}/cancel` | Cancel a queued/running job; 409 on terminal-state cancel attempts |
 
 Validation and error behavior notes:
 - `POST /processing/jobs` returns `404` when `audio_file_id` does not exist.
