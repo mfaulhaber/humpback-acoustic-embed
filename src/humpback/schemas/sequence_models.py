@@ -119,6 +119,7 @@ class HMMSequenceJobOut(BaseModel):
     id: str
     status: str
     continuous_embedding_job_id: str
+    region_detection_job_id: Optional[str] = None
     n_states: int
     pca_dims: int
     pca_whiten: bool

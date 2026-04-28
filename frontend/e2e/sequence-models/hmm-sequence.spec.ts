@@ -25,6 +25,7 @@ const QUEUED_JOB = {
   id: "hmm-queued-1",
   status: "queued",
   continuous_embedding_job_id: CEJ_COMPLETE.id,
+  region_detection_job_id: null,
   n_states: 4,
   pca_dims: 50,
   pca_whiten: false,
@@ -49,6 +50,7 @@ const COMPLETE_JOB = {
   ...QUEUED_JOB,
   id: "hmm-complete-1",
   status: "complete",
+  region_detection_job_id: "rj-1",
   train_log_likelihood: -12345.6,
   n_train_sequences: 2,
   n_train_frames: 100,
@@ -316,5 +318,55 @@ test.describe("Sequence Models — HMM Sequence", () => {
     // Switch to span 1
     await selector.selectOption("1");
     await expect(page.getByTestId("hmm-state-timeline")).toBeVisible();
+  });
+
+  test("HMM State Timeline Viewer panel is visible on complete job", async ({
+    page,
+  }) => {
+    const state: MockState = { hmmJobs: [COMPLETE_JOB] };
+    await setupMocks(page, state);
+    // Mock tile requests to return a small transparent PNG
+    await page.route("**/region-jobs/*/tile**", (route) =>
+      route.fulfill({ status: 200, contentType: "image/png", body: Buffer.alloc(0) }),
+    );
+    await page.goto(`/app/sequence-models/hmm-sequence/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("hmm-detail-page")).toBeVisible();
+
+    // The timeline viewer panel should be visible
+    const viewerPanel = page.locator("text=HMM State Timeline Viewer");
+    await expect(viewerPanel).toBeVisible();
+
+    // Span nav buttons visible
+    const prevBtn = page.locator("button[title='Previous span']");
+    const nextBtn = page.locator("button[title='Next span']");
+    await expect(prevBtn).toBeVisible();
+    await expect(nextBtn).toBeVisible();
+
+    // Span label shows span 1 of 2
+    await expect(page.locator("text=Span 1/2")).toBeVisible();
+
+    // Prev is disabled on first span, next is enabled
+    await expect(prevBtn).toBeDisabled();
+    await expect(nextBtn).toBeEnabled();
+
+    // Click next to go to span 2
+    await nextBtn.click();
+    await expect(page.locator("text=Span 2/2")).toBeVisible();
+    await expect(nextBtn).toBeDisabled();
+    await expect(prevBtn).toBeEnabled();
+  });
+
+  test("timeline viewer panel does not render for running job", async ({
+    page,
+  }) => {
+    const runningJob = { ...COMPLETE_JOB, id: "hmm-running-1", status: "running", region_detection_job_id: "rj-1" };
+    const state: MockState = { hmmJobs: [runningJob] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/hmm-sequence/${runningJob.id}`);
+
+    await expect(page.getByTestId("hmm-detail-page")).toBeVisible();
+    await expect(page.getByTestId("hmm-detail-running")).toBeVisible();
+    await expect(page.locator("text=HMM State Timeline Viewer")).not.toBeVisible();
   });
 });
