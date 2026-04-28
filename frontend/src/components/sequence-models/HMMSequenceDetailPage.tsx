@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Plot from "react-plotly.js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -478,7 +478,12 @@ export function HMMSequenceDetailPage() {
   }, [statesData, spanIds]);
 
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
+  const [timelineZoom, setTimelineZoom] = useState<string | null>(null);
   const activeSpan = selectedSpan ?? spanIds[0] ?? 0;
+
+  useEffect(() => {
+    setTimelineZoom(null);
+  }, [jobId]);
 
   const activeSpanIndex = useMemo(
     () => Math.max(0, spanIds.indexOf(activeSpan)),
@@ -700,13 +705,14 @@ export function HMMSequenceDetailPage() {
               jobStart={activeTimelineSpan.startTimestamp}
               jobEnd={activeTimelineSpan.endTimestamp}
               zoomLevels={REVIEW_ZOOM}
-              defaultZoom={defaultZoom}
+              defaultZoom={timelineZoom ?? defaultZoom}
+              onZoomChange={setTimelineZoom}
               playback="slice"
               audioUrlBuilder={(startEpoch, durationSec) =>
                 regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
               }
             >
-              <div style={{ height: 160 }}>
+              <div className="flex" style={{ height: 160 }}>
                 <Spectrogram
                   jobId={regionDetectionJobId}
                   tileUrlBuilder={hmmTileUrlBuilder}

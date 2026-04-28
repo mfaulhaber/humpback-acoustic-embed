@@ -135,7 +135,6 @@ const EXEMPLARS = {
 interface MockState {
   hmmJobs: typeof QUEUED_JOB[];
   regionJobId?: string;
-  tileUrls?: string[];
   audioUrls?: string[];
 }
 
@@ -266,7 +265,6 @@ async function setupMocks(page: Page, state: MockState) {
 
   // Stub tile and audio-slice endpoints used by the timeline viewer
   await page.route("**/call-parsing/region-jobs/*/tile**", (route) => {
-    state.tileUrls?.push(route.request().url());
     // Return a 1x1 transparent PNG
     const pixel = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -358,7 +356,11 @@ test.describe("Sequence Models — HMM Sequence", () => {
 
     // Spectrogram viewport present within the panel
     const viewerPanel = page.getByTestId("hmm-timeline-viewer");
-    await expect(viewerPanel.getByTestId("spectrogram-viewport")).toBeVisible();
+    const viewport = viewerPanel.getByTestId("spectrogram-viewport");
+    await expect(viewport).toBeVisible();
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.height ?? 0)
+      .toBeGreaterThan(100);
 
     // HMMStateBar canvas present
     await expect(viewerPanel.getByTestId("hmm-state-bar")).toBeVisible();
@@ -371,9 +373,15 @@ test.describe("Sequence Models — HMM Sequence", () => {
     await expect(page.getByTestId("hmm-span-prev")).toBeDisabled();
     await expect(page.getByTestId("hmm-span-next")).toBeEnabled();
 
+    // User-selected zoom survives span navigation.
+    const zoomOneMinute = viewerPanel.getByRole("button", { name: "1m" });
+    await zoomOneMinute.click();
+    await expect(zoomOneMinute).toHaveClass(/text-primary/);
+
     // Click next span — label updates
     await page.getByTestId("hmm-span-next").click();
     await expect(page.getByTestId("hmm-span-label")).toContainText("Span 2/2");
+    await expect(zoomOneMinute).toHaveClass(/text-primary/);
 
     // Now next is disabled, prev is enabled
     await expect(page.getByTestId("hmm-span-next")).toBeDisabled();
