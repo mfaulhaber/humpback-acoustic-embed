@@ -307,6 +307,7 @@ test.describe("Sequence Models — HMM Sequence", () => {
 
     await expect(page.getByTestId("hmm-detail-page")).toBeVisible();
     await expect(page.getByTestId("hmm-detail-status")).toHaveText("complete");
+    await expect(page.getByTestId("hmm-timeline-viewer")).toBeVisible();
     await expect(page.getByTestId("hmm-state-timeline")).toBeVisible();
     await expect(page.getByTestId("hmm-pca-umap-scatter")).toBeVisible();
     await expect(page.getByTestId("hmm-transition-heatmap")).toBeVisible();

@@ -12,10 +12,10 @@
 - Modify: `src/humpback/api/routers/sequence_models.py`
 
 **Acceptance criteria:**
-- [ ] `HMMSequenceJobOut` schema includes `region_detection_job_id: str`
-- [ ] `get_hmm_sequence` endpoint resolves `region_detection_job_id` by loading the parent CEJ via `continuous_embedding_job_id`
-- [ ] The `_hmm_to_out` helper (or the endpoint itself) populates the field
-- [ ] Existing tests still pass — no breaking changes to other HMM endpoints
+- [x] `HMMSequenceJobOut` schema includes `region_detection_job_id: str`
+- [x] `get_hmm_sequence` endpoint resolves `region_detection_job_id` by loading the parent CEJ via `continuous_embedding_job_id`
+- [x] The `_hmm_to_out` helper (or the endpoint itself) populates the field
+- [x] Existing tests still pass — no breaking changes to other HMM endpoints
 
 **Tests needed:**
 - Test that `GET /sequence-models/hmm-sequences/{jobId}` response includes `region_detection_job_id` matching the CEJ's value
@@ -29,9 +29,9 @@
 - Modify: `frontend/src/components/sequence-models/HMMSequenceDetailPage.tsx`
 
 **Acceptance criteria:**
-- [ ] `STATE_COLORS` palette moved to `constants.ts` and exported
-- [ ] `HMMSequenceDetailPage.tsx` imports `STATE_COLORS` from `constants.ts` instead of defining it inline
-- [ ] No visual change to existing page behavior
+- [x] `STATE_COLORS` palette moved to `constants.ts` and exported
+- [x] `HMMSequenceDetailPage.tsx` imports `STATE_COLORS` from `constants.ts` instead of defining it inline
+- [x] No visual change to existing page behavior
 
 **Tests needed:**
 - Existing page tests still pass after the import change
@@ -44,8 +44,8 @@
 - Modify: `frontend/src/api/sequenceModels.ts`
 
 **Acceptance criteria:**
-- [ ] `HMMSequenceJobOut` (or equivalent TypeScript interface) includes `region_detection_job_id: string`
-- [ ] TypeScript compiles cleanly (`npx tsc --noEmit`)
+- [x] `HMMSequenceJobOut` (or equivalent TypeScript interface) includes `region_detection_job_id: string`
+- [x] TypeScript compiles cleanly (`npx tsc --noEmit`)
 
 **Tests needed:**
 - Type check passes
@@ -58,11 +58,11 @@
 - Create: `frontend/src/components/sequence-models/SpanNavBar.tsx`
 
 **Acceptance criteria:**
-- [ ] Accepts props: `spans` (array of `{id, startSec, endSec}`), `activeIndex`, `onPrev`, `onNext`
-- [ ] Left-justified layout: `‹` `›` chevron buttons + label `Span {idx+1}/{total} · {startTime} – {endTime}`
-- [ ] Prev button disabled when `activeIndex === 0`, Next disabled when `activeIndex === spans.length - 1`
-- [ ] Time formatting uses `formatRecordingTime` from `@/utils/format`
-- [ ] Uses `ChevronLeft`/`ChevronRight` icons from lucide-react, matching `ReviewToolbar` styling
+- [x] Accepts props: `spans` (array of `{id, startSec, endSec}`), `activeIndex`, `onPrev`, `onNext`
+- [x] Left-justified layout: `‹` `›` chevron buttons + label `Span {idx+1}/{total} · {startTime} – {endTime}`
+- [x] Prev button disabled when `activeIndex === 0`, Next disabled when `activeIndex === spans.length - 1`
+- [x] Time formatting uses `formatRecordingTime` from `@/utils/format`
+- [x] Uses `ChevronLeft`/`ChevronRight` icons from lucide-react, matching `ReviewToolbar` styling
 
 **Tests needed:**
 - Renders correct span label for given activeIndex
@@ -77,18 +77,18 @@
 - Create: `frontend/src/components/sequence-models/HMMStateBar.tsx`
 
 **Acceptance criteria:**
-- [ ] Accepts props: `items` (Viterbi window array for active span), `nStates`
-- [ ] Consumes `useTimelineContext()` for viewport sync (`viewStart`, `viewEnd`, `pxPerSec`, `centerTimestamp`)
-- [ ] Left offset matches spectrogram canvas via `FREQ_AXIS_WIDTH_PX`
-- [ ] Canvas-based rendering: each window is a colored horizontal bar at its state's Y position
-- [ ] Y-axis: state 0 at bottom, state n-1 at top
-- [ ] Y-axis label strip on the left with state numbers, matching frequency axis width
-- [ ] Colors from `STATE_COLORS` palette imported from `constants.ts`
-- [ ] Fixed height of 60px for the canvas area
-- [ ] Playhead: vertical red line at `centerTimestamp`, aligned with spectrogram playhead
-- [ ] Responsive width via `ResizeObserver`
-- [ ] Hover tooltip: positioned `<div>` showing `State {n} · {startTime}–{endTime} · prob {value}`
-- [ ] Hover hit detection via binary search on sorted window start times
+- [x] Accepts props: `items` (Viterbi window array for active span), `nStates`
+- [x] Consumes `useTimelineContext()` for viewport sync (`viewStart`, `viewEnd`, `pxPerSec`, `centerTimestamp`)
+- [x] Left offset matches spectrogram canvas via `FREQ_AXIS_WIDTH_PX`
+- [x] Canvas-based rendering: each window is a colored horizontal bar at its state's Y position
+- [x] Y-axis: state 0 at bottom, state n-1 at top
+- [x] Y-axis label strip on the left with state numbers, matching frequency axis width
+- [x] Colors from `STATE_COLORS` palette imported from `constants.ts`
+- [x] Fixed height of 60px for the canvas area
+- [x] Playhead: vertical red line at `centerTimestamp`, aligned with spectrogram playhead
+- [x] Responsive width via `ResizeObserver`
+- [x] Hover tooltip: positioned `<div>` showing `State {n} · {startTime}–{endTime} · prob {value}`
+- [x] Hover hit detection via binary search on sorted window start times
 
 **Tests needed:**
 - Canvas renders correct number of visible bars for a given viewport range
@@ -104,18 +104,18 @@
 - Modify: `frontend/src/components/sequence-models/HMMSequenceDetailPage.tsx`
 
 **Acceptance criteria:**
-- [ ] New "HMM State Timeline Viewer" Card panel inserted between Job Config and existing State Timeline
-- [ ] Panel only renders when job status is `complete` and states data is loaded
-- [ ] Computes span list with `{id, startSec, endSec}` from states data (min/max times per merged_span_id)
-- [ ] SpanNavBar above TimelineProvider, with prev/next updating the active span
-- [ ] TimelineProvider configured with: `key` including span ID, `jobStart`/`jobEnd` from active span, `REVIEW_ZOOM` presets, `playback="slice"`, `audioUrlBuilder` using `regionAudioSliceUrl`
-- [ ] `defaultZoom` selects the best-fit preset for the span duration
-- [ ] Spectrogram renders PCEN tiles via `regionTileUrl(regionDetectionJobId, ...)` with `freqRange=[0, 3000]`
-- [ ] HMMStateBar receives filtered items for the active span
-- [ ] ZoomSelector and PlaybackControls rendered below HMMStateBar
-- [ ] `region_detection_job_id` read from the updated HMM job detail response
-- [ ] Existing State Timeline (Plotly) panel and all subsequent panels unchanged, just shifted down
-- [ ] Spectrogram height set appropriately (160px or similar, matching other consumers)
+- [x] New "HMM State Timeline Viewer" Card panel inserted between Job Config and existing State Timeline
+- [x] Panel only renders when job status is `complete` and states data is loaded
+- [x] Computes span list with `{id, startSec, endSec}` from states data (min/max times per merged_span_id)
+- [x] SpanNavBar above TimelineProvider, with prev/next updating the active span
+- [x] TimelineProvider configured with: `key` including span ID, `jobStart`/`jobEnd` from active span, `REVIEW_ZOOM` presets, `playback="slice"`, `audioUrlBuilder` using `regionAudioSliceUrl`
+- [x] `defaultZoom` selects the best-fit preset for the span duration
+- [x] Spectrogram renders PCEN tiles via `regionTileUrl(regionDetectionJobId, ...)` with `freqRange=[0, 3000]`
+- [x] HMMStateBar receives filtered items for the active span
+- [x] ZoomSelector and PlaybackControls rendered below HMMStateBar
+- [x] `region_detection_job_id` read from the updated HMM job detail response
+- [x] Existing State Timeline (Plotly) panel and all subsequent panels unchanged, just shifted down
+- [x] Spectrogram height set appropriately (160px or similar, matching other consumers)
 
 **Tests needed:**
 - Panel renders when job is complete with states data
@@ -131,12 +131,12 @@
 - Create or modify: `frontend/tests/hmm-sequence-detail.spec.ts` (or appropriate test file)
 
 **Acceptance criteria:**
-- [ ] Test loads the HMM Sequence detail page for a completed job
-- [ ] Verifies the "HMM State Timeline Viewer" panel is visible
-- [ ] Verifies the spectrogram viewport is present within the panel
-- [ ] Verifies the HMMStateBar canvas is present
-- [ ] Verifies span navigation buttons are visible and functional (click next, verify span label changes)
-- [ ] Verifies zoom preset buttons are present
+- [x] Test loads the HMM Sequence detail page for a completed job
+- [x] Verifies the "HMM State Timeline Viewer" panel is visible
+- [x] Verifies the spectrogram viewport is present within the panel
+- [x] Verifies the HMMStateBar canvas is present
+- [x] Verifies span navigation buttons are visible and functional (click next, verify span label changes)
+- [x] Verifies zoom preset buttons are present
 
 **Tests needed:**
 - Playwright spec covering the above assertions

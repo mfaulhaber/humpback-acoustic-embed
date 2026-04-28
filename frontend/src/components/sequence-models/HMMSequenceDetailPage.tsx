@@ -479,15 +479,20 @@ export function HMMSequenceDetailPage() {
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
   const activeSpan = selectedSpan ?? spanIds[0] ?? 0;
 
-  const [timelineSpanIndex, setTimelineSpanIndex] = useState(0);
-  const activeTimelineSpan = spans[timelineSpanIndex] ?? null;
+  const activeSpanIndex = useMemo(
+    () => Math.max(0, spanIds.indexOf(activeSpan)),
+    [spanIds, activeSpan],
+  );
+  const activeTimelineSpan = spans[activeSpanIndex] ?? null;
 
   const handlePrevSpan = useCallback(() => {
-    setTimelineSpanIndex((i) => Math.max(0, i - 1));
-  }, []);
+    const newIdx = Math.max(0, activeSpanIndex - 1);
+    setSelectedSpan(spanIds[newIdx] ?? null);
+  }, [activeSpanIndex, spanIds]);
   const handleNextSpan = useCallback(() => {
-    setTimelineSpanIndex((i) => Math.min(spans.length - 1, i + 1));
-  }, [spans.length]);
+    const newIdx = Math.min(spanIds.length - 1, activeSpanIndex + 1);
+    setSelectedSpan(spanIds[newIdx] ?? null);
+  }, [activeSpanIndex, spanIds]);
 
   const regionDetectionJobId = data?.region_detection_job_id ?? "";
 
@@ -659,7 +664,7 @@ export function HMMSequenceDetailPage() {
           <CardContent className="space-y-2" data-testid="hmm-timeline-viewer">
             <SpanNavBar
               spans={spans}
-              activeIndex={timelineSpanIndex}
+              activeIndex={activeSpanIndex}
               onPrev={handlePrevSpan}
               onNext={handleNextSpan}
             />
