@@ -37,6 +37,10 @@ All endpoints are mounted under `/sequence-models/`.
   `409` if the job is in a terminal state (`complete` / `failed` /
   `canceled`).
 
+- `DELETE /sequence-models/continuous-embeddings/{id}` — permanently
+  delete a continuous-embedding job and its disk artifacts (parquet,
+  manifest). `204` on success, `404` if the job is missing.
+
 ### Schemas
 
 `ContinuousEmbeddingJob` exposes the producer DB row: status, all
@@ -103,6 +107,11 @@ statistics and visualizations for latent-state discovery.
 
 - `POST /sequence-models/hmm-sequences/{id}/cancel` — flip a `queued`
   or `running` job to `canceled`. `404` if not found, `409` if terminal.
+
+- `DELETE /sequence-models/hmm-sequences/{id}` — permanently delete an
+  HMM sequence job and its disk artifacts (states parquet, models,
+  transition matrix, interpretation artifacts). `204` on success, `404`
+  if the job is missing.
 
 ### Schemas
 

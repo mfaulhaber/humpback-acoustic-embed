@@ -14,7 +14,7 @@ import numpy as np
 import pyarrow.parquet as pq
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from humpback.api.deps import SessionDep
+from humpback.api.deps import SessionDep, SettingsDep
 from humpback.config import Settings
 from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobCreate,
@@ -37,6 +37,7 @@ from humpback.services.continuous_embedding_service import (
     CancelTerminalJobError,
     cancel_continuous_embedding_job,
     create_continuous_embedding_job,
+    delete_continuous_embedding_job,
     get_continuous_embedding_job,
     list_continuous_embedding_jobs,
 )
@@ -44,6 +45,7 @@ from humpback.services.hmm_sequence_service import (
     CancelTerminalJobError as HMMCancelTerminalJobError,
     cancel_hmm_sequence_job,
     create_hmm_sequence_job,
+    delete_hmm_sequence_job,
     generate_interpretations,
     generate_label_distribution,
     get_hmm_sequence_job,
@@ -126,6 +128,18 @@ async def cancel_continuous_embedding(
             status_code=404, detail="continuous embedding job not found"
         )
     return _to_out(job)
+
+
+@router.delete("/continuous-embeddings/{job_id}", status_code=204)
+async def delete_continuous_embedding(
+    job_id: str, session: SessionDep, settings: SettingsDep
+):
+    deleted = await delete_continuous_embedding_job(session, job_id, settings)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail="continuous embedding job not found"
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -355,3 +369,11 @@ async def cancel_hmm_sequence(
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
     return _hmm_to_out(job)
+
+
+@router.delete("/hmm-sequences/{job_id}", status_code=204)
+async def delete_hmm_sequence(job_id: str, session: SessionDep, settings: SettingsDep):
+    deleted = await delete_hmm_sequence_job(session, job_id, settings)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="hmm sequence job not found")
+    return None

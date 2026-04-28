@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,6 +22,7 @@ import pyarrow.parquet as pq
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.config import Settings
 from humpback.models.classifier import DetectionJob
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.processing import JobStatus
@@ -38,6 +40,7 @@ from humpback.storage import (
     continuous_embedding_parquet_path,
     detection_row_store_path,
     ensure_dir,
+    hmm_sequence_dir,
     hmm_sequence_exemplars_dir,
     hmm_sequence_exemplars_path,
     hmm_sequence_label_distribution_path,
@@ -129,6 +132,20 @@ async def cancel_hmm_sequence_job(
     raise CancelTerminalJobError(
         f"hmm_sequence_job {job_id} is in terminal state {job.status!r}"
     )
+
+
+async def delete_hmm_sequence_job(
+    session: AsyncSession, job_id: str, settings: Settings
+) -> bool:
+    job = await session.get(HMMSequenceJob, job_id)
+    if job is None:
+        return False
+    artifact_dir = hmm_sequence_dir(settings.storage_root, job_id)
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+    await session.delete(job)
+    await session.commit()
+    return True
 
 
 # ---------------------------------------------------------------------------
