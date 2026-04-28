@@ -390,7 +390,7 @@ export interface LabelDistribution {
 export interface ExemplarRecord {
   merged_span_id: number;
   window_index_in_span: number;
-  audio_file_id: number;
+  audio_file_id: number | null;
   start_time_sec: number;
   end_time_sec: number;
   max_state_probability: number;
