@@ -20,8 +20,8 @@ from umap import UMAP
 class OverlayMetadata:
     merged_span_ids: list[int]
     window_indices: list[int]
-    start_times: list[float]
-    end_times: list[float]
+    start_timestamps: list[float]
+    end_timestamps: list[float]
 
 
 def compute_overlay(
@@ -90,8 +90,8 @@ def compute_overlay(
         {
             "merged_span_id": pa.array(metadata.merged_span_ids, type=pa.int32()),
             "window_index_in_span": pa.array(metadata.window_indices, type=pa.int32()),
-            "start_time_sec": pa.array(metadata.start_times, type=pa.float64()),
-            "end_time_sec": pa.array(metadata.end_times, type=pa.float64()),
+            "start_timestamp": pa.array(metadata.start_timestamps, type=pa.float64()),
+            "end_timestamp": pa.array(metadata.end_timestamps, type=pa.float64()),
             "pca_x": pa.array(pca_x, type=pa.float32()),
             "pca_y": pa.array(pca_y, type=pa.float32()),
             "umap_x": pa.array(umap_x, type=pa.float32()),

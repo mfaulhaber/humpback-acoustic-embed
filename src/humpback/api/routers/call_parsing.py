@@ -411,7 +411,7 @@ async def get_region_audio_slice(
     job_id: str,
     session: SessionDep,
     settings: SettingsDep,
-    start_sec: float = Query(..., description="Start time in seconds (job-relative)"),
+    start_timestamp: float = Query(..., description="Start time as UTC epoch seconds"),
     duration_sec: float = Query(
         ..., gt=0, le=600, description="Duration in seconds (max 600)"
     ),
@@ -425,11 +425,22 @@ async def get_region_audio_slice(
             status_code=409,
             detail=f"Region detection job status is {job.status!r}, not 'complete'",
         )
+    job_start = job.start_timestamp or 0.0
+    job_end = job.end_timestamp or job_start
+    if start_timestamp < job_start or start_timestamp + duration_sec > job_end:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "audio slice outside region job bounds: "
+                f"{start_timestamp}..{start_timestamp + duration_sec} "
+                f"not within {job_start}..{job_end}"
+            ),
+        )
 
     wav_bytes = await asyncio.to_thread(
         _render_region_audio_slice_sync,
         job=job,
-        start_sec=start_sec,
+        start_timestamp=start_timestamp,
         duration_sec=duration_sec,
         settings=settings,
     )
@@ -439,7 +450,7 @@ async def get_region_audio_slice(
 def _render_region_audio_slice_sync(
     *,
     job,
-    start_sec: float,
+    start_timestamp: float,
     duration_sec: float,
     settings,
 ) -> bytes:
@@ -451,8 +462,6 @@ def _render_region_audio_slice_sync(
 
     from humpback.processing.timeline_audio import resolve_timeline_audio
 
-    job_start = job.start_timestamp or 0.0
-    start_epoch = job_start + start_sec
     sr = 16000
 
     audio = resolve_timeline_audio(
@@ -460,7 +469,7 @@ def _render_region_audio_slice_sync(
         local_cache_path=settings.s3_cache_path or "",
         job_start_timestamp=job.start_timestamp,
         job_end_timestamp=job.end_timestamp,
-        start_sec=start_epoch,
+        start_sec=start_timestamp,
         duration_sec=duration_sec,
         target_sr=sr,
         noaa_cache_path=settings.noaa_cache_path,

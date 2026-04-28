@@ -183,9 +183,7 @@ async def test_cancel_missing_returns_none(session):
     assert result is None
 
 
-async def test_generate_label_distribution_joins_relative_hmm_time_to_utc(
-    session, tmp_path
-):
+async def test_generate_label_distribution_uses_epoch_hmm_timestamps(session, tmp_path):
     rd_start = 1_000.0
     region_job = RegionDetectionJob(
         status=JobStatus.complete.value,
@@ -221,8 +219,8 @@ async def test_generate_label_distribution_joins_relative_hmm_time_to_utc(
     pq.write_table(
         pa.table(
             {
-                "start_time_sec": pa.array([10.0, 100.0], type=pa.float64()),
-                "end_time_sec": pa.array([15.0, 105.0], type=pa.float64()),
+                "start_timestamp": pa.array([1010.0, 1100.0], type=pa.float64()),
+                "end_timestamp": pa.array([1015.0, 1105.0], type=pa.float64()),
                 "viterbi_state": pa.array([0, 1], type=pa.int16()),
             }
         ),

@@ -63,8 +63,8 @@ class ContinuousEmbeddingSpanSummary(BaseModel):
     """Summary of a single merged padded span emitted by the worker."""
 
     merged_span_id: int
-    start_time_sec: float
-    end_time_sec: float
+    start_timestamp: float
+    end_timestamp: float
     window_count: int
     source_region_ids: list[str] = Field(default_factory=list)
 
@@ -155,6 +155,8 @@ class HMMSequenceJobDetail(BaseModel):
 
     job: HMMSequenceJobOut
     region_detection_job_id: str
+    region_start_timestamp: float | None = None
+    region_end_timestamp: float | None = None
     summary: Optional[list[HMMStateSummary]] = None
 
 
@@ -182,8 +184,8 @@ class OverlayPoint(BaseModel):
 
     merged_span_id: int
     window_index_in_span: int
-    start_time_sec: float
-    end_time_sec: float
+    start_timestamp: float
+    end_timestamp: float
     pca_x: float
     pca_y: float
     umap_x: float
@@ -213,8 +215,8 @@ class ExemplarRecord(BaseModel):
     merged_span_id: int
     window_index_in_span: int
     audio_file_id: int | None
-    start_time_sec: float
-    end_time_sec: float
+    start_timestamp: float
+    end_timestamp: float
     max_state_probability: float
     exemplar_type: str
 

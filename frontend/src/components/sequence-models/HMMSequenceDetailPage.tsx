@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Plot from "react-plotly.js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +28,7 @@ import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import { STATE_COLORS } from "./constants";
 import { SpanNavBar, type SpanInfo } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
+import { regionTileIndexForSpanTile } from "./timelineTileIndex";
 
 function StateTimeline({
   items,
@@ -54,8 +55,8 @@ function StateTimeline({
     }
     for (const row of spanItems) {
       const state = row.viterbi_state as number;
-      const start = row.start_time_sec as number;
-      const end = row.end_time_sec as number;
+      const start = row.start_timestamp as number;
+      const end = row.end_timestamp as number;
       byState[state].x.push(start, end, end);
       byState[state].y.push(state, state, null as unknown as number);
     }
@@ -226,7 +227,7 @@ function PcaUmapScatter({
       byState[s].x.push(pt[xKey]);
       byState[s].y.push(pt[yKey]);
       byState[s].text.push(
-        `S${s} p=${pt.max_state_probability.toFixed(2)} t=${pt.start_time_sec.toFixed(0)}s`,
+        `S${s} p=${pt.max_state_probability.toFixed(2)} t=${pt.start_timestamp.toFixed(0)}s`,
       );
     }
     return Object.entries(byState).map(([s, d]) => ({
@@ -409,8 +410,8 @@ function ExemplarGallery({
                                   : String(ex.audio_file_id).slice(0, 8)}
                               </div>
                               <div>
-                                {ex.start_time_sec.toFixed(1)}s –{" "}
-                                {ex.end_time_sec.toFixed(1)}s
+                                {ex.start_timestamp.toFixed(1)}s –{" "}
+                                {ex.end_timestamp.toFixed(1)}s
                               </div>
                               <div>
                                 p={ex.max_state_probability.toFixed(3)}
@@ -467,17 +468,22 @@ export function HMMSequenceDetailPage() {
       let maxT = -Infinity;
       for (const row of statesData.items) {
         if ((row.merged_span_id as number) !== id) continue;
-        const s = row.start_time_sec as number;
-        const e = row.end_time_sec as number;
+        const s = row.start_timestamp as number;
+        const e = row.end_timestamp as number;
         if (s < minT) minT = s;
         if (e > maxT) maxT = e;
       }
-      return { id, startSec: minT, endSec: maxT };
+      return { id, startTimestamp: minT, endTimestamp: maxT };
     });
   }, [statesData, spanIds]);
 
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
+  const [timelineZoom, setTimelineZoom] = useState<string | null>(null);
   const activeSpan = selectedSpan ?? spanIds[0] ?? 0;
+
+  useEffect(() => {
+    setTimelineZoom(null);
+  }, [jobId]);
 
   const activeSpanIndex = useMemo(
     () => Math.max(0, spanIds.indexOf(activeSpan)),
@@ -495,10 +501,13 @@ export function HMMSequenceDetailPage() {
   }, [activeSpanIndex, spanIds]);
 
   const regionDetectionJobId = data?.region_detection_job_id ?? "";
+  const regionStartTimestamp =
+    data?.region_start_timestamp ?? activeTimelineSpan?.startTimestamp ?? 0;
 
   const defaultZoom = useMemo(() => {
     if (!activeTimelineSpan) return REVIEW_ZOOM[0].key;
-    const duration = activeTimelineSpan.endSec - activeTimelineSpan.startSec;
+    const duration =
+      activeTimelineSpan.endTimestamp - activeTimelineSpan.startTimestamp;
     let best = REVIEW_ZOOM[0];
     for (const preset of REVIEW_ZOOM) {
       if (preset.span <= duration * 1.2) best = preset;
@@ -511,12 +520,35 @@ export function HMMSequenceDetailPage() {
     return statesData.items
       .filter((r) => (r.merged_span_id as number) === activeTimelineSpan.id)
       .map((r) => ({
-        start_time_sec: r.start_time_sec as number,
-        end_time_sec: r.end_time_sec as number,
+        start_timestamp: r.start_timestamp as number,
+        end_timestamp: r.end_timestamp as number,
         viterbi_state: r.viterbi_state as number,
         max_state_probability: r.max_state_probability as number,
       }));
   }, [statesData, activeTimelineSpan]);
+
+  const hmmTileUrlBuilder = useCallback(
+    (
+      jid: string,
+      zoomLevel: string,
+      tileIndex: number,
+      _freqMin: number,
+      _freqMax: number,
+    ) => {
+      const preset = REVIEW_ZOOM.find((z) => z.key === zoomLevel);
+      const tileDuration = preset?.tileDuration ?? 10;
+      const activeStart =
+        activeTimelineSpan?.startTimestamp ?? regionStartTimestamp;
+      const regionTileIndex = regionTileIndexForSpanTile(
+        activeStart,
+        regionStartTimestamp,
+        tileIndex,
+        tileDuration,
+      );
+      return regionTileUrl(jid, zoomLevel, regionTileIndex);
+    },
+    [activeTimelineSpan, regionStartTimestamp],
+  );
 
   if (isLoading) {
     return (
@@ -670,21 +702,20 @@ export function HMMSequenceDetailPage() {
             />
             <TimelineProvider
               key={`hmm-timeline-${activeTimelineSpan.id}`}
-              jobStart={activeTimelineSpan.startSec}
-              jobEnd={activeTimelineSpan.endSec}
+              jobStart={activeTimelineSpan.startTimestamp}
+              jobEnd={activeTimelineSpan.endTimestamp}
               zoomLevels={REVIEW_ZOOM}
-              defaultZoom={defaultZoom}
+              defaultZoom={timelineZoom ?? defaultZoom}
+              onZoomChange={setTimelineZoom}
               playback="slice"
               audioUrlBuilder={(startEpoch, durationSec) =>
                 regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
               }
             >
-              <div style={{ height: 160 }}>
+              <div className="flex" style={{ height: 160 }}>
                 <Spectrogram
                   jobId={regionDetectionJobId}
-                  tileUrlBuilder={(jid, zoomLevel, tileIndex, _fMin, _fMax) =>
-                    regionTileUrl(jid, zoomLevel, tileIndex)
-                  }
+                  tileUrlBuilder={hmmTileUrlBuilder}
                   freqRange={[0, 3000]}
                 />
               </div>

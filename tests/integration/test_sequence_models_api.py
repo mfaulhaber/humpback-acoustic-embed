@@ -12,8 +12,8 @@ async def _seed_region_detection_job(app_settings, status: str) -> str:
         job = RegionDetectionJob(
             status=status,
             hydrophone_id="rpi_orcasound_lab",
-            start_timestamp=0.0,
-            end_timestamp=600.0,
+            start_timestamp=1000.0,
+            end_timestamp=1600.0,
         )
         session.add(job)
         await session.commit()
@@ -188,8 +188,8 @@ async def _seed_complete_continuous_embedding_job(app_settings) -> str:
         region_job = RegionDetectionJob(
             status=JobStatus.complete.value,
             hydrophone_id="rpi_orcasound_lab",
-            start_timestamp=0.0,
-            end_timestamp=600.0,
+            start_timestamp=1000.0,
+            end_timestamp=1600.0,
         )
         session.add(region_job)
         await session.flush()
@@ -281,8 +281,8 @@ async def test_hmm_detail_includes_region_detection_job_id(client, app_settings)
         region_job = RegionDetectionJob(
             status=JobStatus.complete.value,
             hydrophone_id="rpi_orcasound_lab",
-            start_timestamp=0.0,
-            end_timestamp=600.0,
+            start_timestamp=1000.0,
+            end_timestamp=1600.0,
         )
         session.add(region_job)
         await session.flush()
@@ -312,6 +312,8 @@ async def test_hmm_detail_includes_region_detection_job_id(client, app_settings)
     assert detail.status_code == 200
     body = detail.json()
     assert body["region_detection_job_id"] == region_job_id
+    assert body["region_start_timestamp"] == 1000.0
+    assert body["region_end_timestamp"] == 1600.0
 
 
 async def test_hmm_cancel_queued_returns_canceled(client, app_settings):

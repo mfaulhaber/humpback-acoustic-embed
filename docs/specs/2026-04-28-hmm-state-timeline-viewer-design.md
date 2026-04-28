@@ -87,7 +87,7 @@ Location: `frontend/src/components/sequence-models/HMMStateBar.tsx`
 A canvas-based visualization rendered between `Spectrogram` and `ZoomSelector` inside the `TimelineProvider`.
 
 Props:
-- `items: Array<{ start_time_sec: number; end_time_sec: number; viterbi_state: number; max_state_probability: number }>` — Viterbi windows for the active span
+- `items: Array<{ start_timestamp: number; end_timestamp: number; viterbi_state: number; max_state_probability: number }>` — Viterbi windows for the active span
 - `nStates: number` — total number of hidden states
 
 Viewport sync:
@@ -114,13 +114,13 @@ Hover tooltip:
 
 ### Existing data (no new fetches)
 
-The HMM states data is already loaded by the page via `useHMMStates(jobId, 0, 5000)`. This returns all Viterbi windows with `merged_span_id`, `start_time_sec`, `end_time_sec`, `viterbi_state`, `max_state_probability`.
+The HMM states data is already loaded by the page via `useHMMStates(jobId, 0, 5000)`. This returns all Viterbi windows with `merged_span_id`, `start_timestamp`, `end_timestamp`, `viterbi_state`, `max_state_probability`.
 
 The page already computes `spanIds` (unique sorted `merged_span_id` values) and manages `selectedSpan` state. The new panel reuses this same data and state.
 
 ### Span-to-timeline mapping
 
-Each merged span has a contiguous time range derived from the min `start_time_sec` and max `end_time_sec` of its windows. These become `jobStart` and `jobEnd` for the `TimelineProvider`.
+Each merged span has a contiguous time range derived from the min `start_timestamp` and max `end_timestamp` of its windows. These become `jobStart` and `jobEnd` for the `TimelineProvider`.
 
 When the user navigates to a different span:
 1. `SpanNavBar` calls `onPrev`/`onNext`, updating the active span index
@@ -142,8 +142,8 @@ Slice-based playback via `regionAudioSliceUrl(regionDetectionJobId, startEpoch, 
 | Prop | Value |
 |------|-------|
 | `key` | `hmm-timeline-${spanId}` |
-| `jobStart` | Active span's min `start_time_sec` |
-| `jobEnd` | Active span's max `end_time_sec` |
+| `jobStart` | Active span's min `start_timestamp` |
+| `jobEnd` | Active span's max `end_timestamp` |
 | `zoomLevels` | `REVIEW_ZOOM` (5m, 1m, 30s, 10s) |
 | `defaultZoom` | Best-fit preset for span duration |
 | `playback` | `"slice"` |
@@ -155,13 +155,13 @@ Slice-based playback via `regionAudioSliceUrl(regionDetectionJobId, startEpoch, 
 
 ### HMM job detail response
 
-The `GET /sequence-models/hmm-sequences/{jobId}` response must include `region_detection_job_id` so the frontend can build tile and audio URLs.
+The `GET /sequence-models/hmm-sequences/{jobId}` response must include `region_detection_job_id`, `region_start_timestamp`, and `region_end_timestamp` so the frontend can build tile and audio URLs and validate epoch ranges.
 
 Resolution path: `hmm_sequence_job.continuous_embedding_job_id` → `continuous_embedding_job.region_detection_job_id`.
 
 Change:
-- Add `region_detection_job_id: str` to the Pydantic response schema (`HMMSequenceJobResponse` or `HMMSequenceJobDetail`)
-- Populate it in the router by loading the parent CEJ and reading its `region_detection_job_id`
+- Add `region_detection_job_id: str`, `region_start_timestamp: float | None`, and `region_end_timestamp: float | None` to the Pydantic response schema (`HMMSequenceJobResponse` or `HMMSequenceJobDetail`)
+- Populate them in the router by loading the parent CEJ and source Region Detection Job
 
 No new endpoints. No database migration.
 
@@ -198,9 +198,9 @@ No new endpoints. No database migration.
 
 ### Modified files
 - `frontend/src/components/sequence-models/HMMSequenceDetailPage.tsx` — add new panel
-- `frontend/src/api/sequenceModels.ts` — add `region_detection_job_id` to response type
-- `src/humpback/schemas/sequence_models.py` — add `region_detection_job_id` to response schema
-- `src/humpback/api/routers/sequence_models.py` — resolve and return `region_detection_job_id`
+- `frontend/src/api/sequenceModels.ts` — add source region metadata to response type
+- `src/humpback/schemas/sequence_models.py` — add source region metadata to response schema
+- `src/humpback/api/routers/sequence_models.py` — resolve and return source region metadata
 
 ### Not modified
 - Any shared timeline component (`TimelineProvider`, `Spectrogram`, `ZoomSelector`, `PlaybackControls`, `TimelineFooter`, `TimelineHeader`)

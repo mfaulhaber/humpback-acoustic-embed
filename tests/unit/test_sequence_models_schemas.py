@@ -55,8 +55,8 @@ def test_continuous_embedding_job_manifest_round_trip():
         spans=[
             ContinuousEmbeddingSpanSummary(
                 merged_span_id=0,
-                start_time_sec=100.0,
-                end_time_sec=120.0,
+                start_timestamp=100.0,
+                end_timestamp=120.0,
                 window_count=20,
                 source_region_ids=["r1"],
             )
@@ -73,8 +73,8 @@ def test_exemplar_record_accepts_null_audio_file_id_for_hydrophone_jobs():
         merged_span_id=0,
         window_index_in_span=3,
         audio_file_id=None,
-        start_time_sec=10.0,
-        end_time_sec=15.0,
+        start_timestamp=10.0,
+        end_timestamp=15.0,
         max_state_probability=0.93,
         exemplar_type="high_confidence",
     )

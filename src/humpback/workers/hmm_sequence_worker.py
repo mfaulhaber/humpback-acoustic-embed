@@ -110,8 +110,8 @@ STATES_SCHEMA = pa.schema(
         pa.field("merged_span_id", pa.int32()),
         pa.field("window_index_in_span", pa.int32()),
         pa.field("audio_file_id", pa.int32()),
-        pa.field("start_time_sec", pa.float64()),
-        pa.field("end_time_sec", pa.float64()),
+        pa.field("start_timestamp", pa.float64()),
+        pa.field("end_timestamp", pa.float64()),
         pa.field("is_in_pad", pa.bool_()),
         pa.field("source_region_ids", pa.list_(pa.string())),
         pa.field("viterbi_state", pa.int16()),
@@ -221,10 +221,10 @@ async def run_hmm_sequence_job(
                         "audio_file_id": span_tbl.column("audio_file_id")[
                             row_idx
                         ].as_py(),
-                        "start_time_sec": span_tbl.column("start_time_sec")[
+                        "start_timestamp": span_tbl.column("start_timestamp")[
                             row_idx
                         ].as_py(),
-                        "end_time_sec": span_tbl.column("end_time_sec")[
+                        "end_timestamp": span_tbl.column("end_timestamp")[
                             row_idx
                         ].as_py(),
                         "is_in_pad": span_tbl.column("is_in_pad")[row_idx].as_py(),

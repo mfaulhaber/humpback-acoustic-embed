@@ -867,7 +867,7 @@ async def test_region_tile_rejects_out_of_range_index(
 async def test_region_audio_slice_404_for_missing_job(client: AsyncClient) -> None:
     resp = await client.get(
         f"{BASE}/region-jobs/no-such-id/audio-slice",
-        params={"start_sec": 0, "duration_sec": 2},
+        params={"start_timestamp": 1_000_000.0, "duration_sec": 2},
     )
     assert resp.status_code == 404
 
@@ -895,7 +895,7 @@ async def test_region_audio_slice_409_for_non_complete_job(
 
     resp = await client.get(
         f"{BASE}/region-jobs/{job_id}/audio-slice",
-        params={"start_sec": 0, "duration_sec": 2},
+        params={"start_timestamp": 1_000_000.0, "duration_sec": 2},
     )
     assert resp.status_code == 409
 
@@ -922,6 +922,7 @@ async def test_region_audio_slice_returns_wav(
         await engine.dispose()
 
     def _fake_resolve(**kwargs):
+        assert kwargs["start_sec"] == 1_000_010.0
         sr = kwargs.get("target_sr", 16000)
         duration = kwargs.get("duration_sec", 2.0)
         n = int(sr * duration)
@@ -935,7 +936,7 @@ async def test_region_audio_slice_returns_wav(
 
     resp = await client.get(
         f"{BASE}/region-jobs/{job_id}/audio-slice",
-        params={"start_sec": 10, "duration_sec": 2},
+        params={"start_timestamp": 1_000_010.0, "duration_sec": 2},
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "audio/wav"

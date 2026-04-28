@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 from fastapi import APIRouter, HTTPException, Query, Response
 
@@ -162,6 +163,18 @@ def _load_summary(settings: Settings, job_id: str) -> list[HMMStateSummary] | No
         return None
 
 
+def _require_columns(table: pa.Table, path: Path, columns: set[str]) -> None:
+    missing = sorted(columns.difference(table.column_names))
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{path.name} is missing canonical timestamp columns: "
+                f"{', '.join(missing)}"
+            ),
+        )
+
+
 @router.post("/hmm-sequences", status_code=201)
 async def create_hmm_sequence(
     body: HMMSequenceJobCreate,
@@ -194,6 +207,7 @@ async def get_hmm_sequence(
     session: SessionDep,
 ) -> HMMSequenceJobDetail:
     from humpback.models.sequence_models import ContinuousEmbeddingJob
+    from humpback.models.call_parsing import RegionDetectionJob
 
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
@@ -201,12 +215,19 @@ async def get_hmm_sequence(
 
     cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
     region_detection_job_id = cej.region_detection_job_id if cej else ""
+    rdj = (
+        await session.get(RegionDetectionJob, region_detection_job_id)
+        if region_detection_job_id
+        else None
+    )
 
     settings = Settings.from_repo_env()
     summary = _load_summary(settings, job_id)
     return HMMSequenceJobDetail(
         job=_hmm_to_out(job),
         region_detection_job_id=region_detection_job_id,
+        region_start_timestamp=rdj.start_timestamp if rdj else None,
+        region_end_timestamp=rdj.end_timestamp if rdj else None,
         summary=summary,
     )
 
@@ -226,6 +247,7 @@ async def get_hmm_states(
     if not states_path.exists():
         raise HTTPException(status_code=404, detail="states.parquet not found")
     table = pq.read_table(states_path)
+    _require_columns(table, states_path, {"start_timestamp", "end_timestamp"})
     total = table.num_rows
     sliced = table.slice(offset, limit)
     rows = sliced.to_pydict()
@@ -290,6 +312,7 @@ async def get_hmm_overlay(
     if not overlay_path.exists():
         raise HTTPException(status_code=404, detail="overlay not found")
     table = pq.read_table(overlay_path)
+    _require_columns(table, overlay_path, {"start_timestamp", "end_timestamp"})
     total = table.num_rows
     sliced = table.slice(offset, limit)
     rows = sliced.to_pydict()

@@ -52,7 +52,7 @@ producer parameters (`hop_seconds`, `pad_seconds`, `window_size_seconds`,
 
 `ContinuousEmbeddingJobManifest` matches the `manifest.json` sidecar
 written next to `embeddings.parquet`, with per-merged-span window-count
-summaries (`merged_span_id`, `start_time_sec`, `end_time_sec`,
+summaries (`merged_span_id`, `start_timestamp`, `end_timestamp`,
 `window_count`, `source_region_ids`).
 
 The parquet artifact stores one row per embedded window with
@@ -90,9 +90,9 @@ statistics and visualizations for latent-state discovery.
 
 - `GET /sequence-models/hmm-sequences/{id}` — return job detail plus
   `state_summary.json` sidecar (when artifacts exist). Response shape:
-  `{ job: HMMSequenceJob, region_detection_job_id: string, summary: HMMStateSummary[] | null }`.
-  `region_detection_job_id` is resolved from the parent continuous
-  embedding job. `404` if the job is missing.
+  `{ job: HMMSequenceJob, region_detection_job_id: string, region_start_timestamp: number | null, region_end_timestamp: number | null, summary: HMMStateSummary[] | null }`.
+  Source metadata is resolved from the parent continuous embedding job and
+  region detection job. `404` if the job is missing.
 
 - `GET /sequence-models/hmm-sequences/{id}/states` — paginated
   `states.parquet` rows as JSON. Query params: `offset` (default 0),
@@ -168,12 +168,12 @@ labels change over time).
 ### Interpretation Schemas
 
 `OverlayPoint`: `merged_span_id`, `window_index_in_span`,
-`start_time_sec`, `end_time_sec`, `pca_x`, `pca_y`, `umap_x`,
+`start_timestamp`, `end_timestamp`, `pca_x`, `pca_y`, `umap_x`,
 `umap_y`, `viterbi_state`, `max_state_probability`.
 
 `LabelDistributionResponse`: `n_states`, `total_windows`,
 `states` (dict of state index → dict of label → count).
 
 `ExemplarRecord`: `merged_span_id`, `window_index_in_span`,
-`audio_file_id`, `start_time_sec`, `end_time_sec`,
+`audio_file_id`, `start_timestamp`, `end_timestamp`,
 `max_state_probability`, `exemplar_type`.

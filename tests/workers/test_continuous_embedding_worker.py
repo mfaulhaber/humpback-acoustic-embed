@@ -63,12 +63,13 @@ async def _seed_region_job_with_regions(
     *,
     regions: list[Region],
     duration_sec: float = 1000.0,
+    start_timestamp: float = 1000.0,
 ) -> RegionDetectionJob:
     region_job = RegionDetectionJob(
         status=JobStatus.complete.value,
         hydrophone_id="rpi_orcasound_lab",
-        start_timestamp=0.0,
-        end_timestamp=duration_sec,
+        start_timestamp=start_timestamp,
+        end_timestamp=start_timestamp + duration_sec,
     )
     session.add(region_job)
     await session.commit()
@@ -127,8 +128,8 @@ async def test_happy_path_writes_parquet_and_manifest(session, settings):
         "merged_span_id",
         "window_index_in_span",
         "audio_file_id",
-        "start_time_sec",
-        "end_time_sec",
+        "start_timestamp",
+        "end_timestamp",
         "is_in_pad",
         "source_region_ids",
         "embedding",
@@ -150,6 +151,7 @@ async def test_happy_path_writes_parquet_and_manifest(session, settings):
     assert manifest["merged_spans"] == 2
     assert manifest["total_windows"] == job.total_windows
     assert len(manifest["spans"]) == 2
+    assert manifest["spans"][0]["start_timestamp"] >= region_job.start_timestamp
 
 
 async def test_worker_uses_raw_region_bounds_for_padding_and_membership(
@@ -168,16 +170,18 @@ async def test_worker_uses_raw_region_bounds_for_padding_and_membership(
     table = pq.read_table(
         continuous_embedding_parquet_path(settings.storage_root, job.id)
     )
-    starts = table.column("start_time_sec").to_pylist()
+    starts = table.column("start_timestamp").to_pylist()
     in_pad = table.column("is_in_pad").to_pylist()
     source_region_ids = table.column("source_region_ids").to_pylist()
+    job_start = region_job.start_timestamp
+    assert job_start is not None
 
-    assert starts[0] == 95.0
+    assert starts[0] == job_start + 95.0
     assert in_pad[0] is True
     assert source_region_ids[0] == []
 
     first_in_region = next(i for i, value in enumerate(in_pad) if value is False)
-    assert starts[first_in_region] == 98.0
+    assert starts[first_in_region] == job_start + 98.0
     assert source_region_ids[first_in_region] == ["r1"]
 
 
@@ -325,8 +329,8 @@ async def test_default_embedder_runs_with_runtime_dependencies(
         timeline=None,
     ) -> np.ndarray:
         assert provider is fake_provider
-        assert stream_start_ts == 0.0
-        assert stream_end_ts == 1000.0
+        assert stream_start_ts == region_job.start_timestamp
+        assert stream_end_ts == region_job.end_timestamp
         assert start_utc >= stream_start_ts
         assert timeline == fake_provider.build_timeline(stream_start_ts, stream_end_ts)
         sample_count = int(round(duration_sec * target_sr))

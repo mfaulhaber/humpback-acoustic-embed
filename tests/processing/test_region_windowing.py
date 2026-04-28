@@ -12,7 +12,7 @@ from humpback.processing.region_windowing import (
     merge_padded_regions,
 )
 
-ENVELOPE = AudioEnvelope(start_time_sec=0.0, end_time_sec=10_000.0)
+ENVELOPE = AudioEnvelope(start_offset_sec=0.0, end_offset_sec=10_000.0)
 
 
 def _ids(span: MergedSpan) -> list[str]:
@@ -34,8 +34,8 @@ def test_merge_padded_regions_non_overlapping():
     assert _ids(spans[0]) == ["r1"]
     assert _ids(spans[1]) == ["r2"]
     assert _ids(spans[2]) == ["r3"]
-    assert spans[0].start_time_sec == 95.0
-    assert spans[0].end_time_sec == 115.0
+    assert spans[0].start_offset_sec == 95.0
+    assert spans[0].end_offset_sec == 115.0
 
 
 def test_merge_padded_regions_two_padded_overlap():
@@ -47,8 +47,8 @@ def test_merge_padded_regions_two_padded_overlap():
     spans = merge_padded_regions(regions, pad_seconds=10.0, audio_envelope=ENVELOPE)
     assert len(spans) == 1
     assert _ids(spans[0]) == ["r1", "r2"]
-    assert spans[0].start_time_sec == 90.0
-    assert spans[0].end_time_sec == 160.0
+    assert spans[0].start_offset_sec == 90.0
+    assert spans[0].end_offset_sec == 160.0
 
 
 def test_merge_padded_regions_three_chained():
@@ -60,31 +60,31 @@ def test_merge_padded_regions_three_chained():
     spans = merge_padded_regions(regions, pad_seconds=10.0, audio_envelope=ENVELOPE)
     assert len(spans) == 1
     assert _ids(spans[0]) == ["r1", "r2", "r3"]
-    assert spans[0].start_time_sec == 90.0
-    assert spans[0].end_time_sec == 150.0
+    assert spans[0].start_offset_sec == 90.0
+    assert spans[0].end_offset_sec == 150.0
 
 
 def test_merge_padded_regions_clip_at_start():
-    envelope = AudioEnvelope(start_time_sec=100.0, end_time_sec=10_000.0)
+    envelope = AudioEnvelope(start_offset_sec=100.0, end_offset_sec=10_000.0)
     regions = [Region("r1", 105.0, 120.0)]
     spans = merge_padded_regions(regions, pad_seconds=10.0, audio_envelope=envelope)
     assert len(spans) == 1
-    assert spans[0].start_time_sec == 100.0
-    assert spans[0].end_time_sec == 130.0
-    assert spans[0].source_regions[0].start_time_sec == 105.0
+    assert spans[0].start_offset_sec == 100.0
+    assert spans[0].end_offset_sec == 130.0
+    assert spans[0].source_regions[0].start_offset_sec == 105.0
 
 
 def test_merge_padded_regions_clip_at_end():
-    envelope = AudioEnvelope(start_time_sec=0.0, end_time_sec=200.0)
+    envelope = AudioEnvelope(start_offset_sec=0.0, end_offset_sec=200.0)
     regions = [Region("r1", 180.0, 195.0)]
     spans = merge_padded_regions(regions, pad_seconds=10.0, audio_envelope=envelope)
     assert len(spans) == 1
-    assert spans[0].start_time_sec == 170.0
-    assert spans[0].end_time_sec == 200.0
+    assert spans[0].start_offset_sec == 170.0
+    assert spans[0].end_offset_sec == 200.0
 
 
 def test_merge_padded_regions_drops_fully_clipped_span():
-    envelope = AudioEnvelope(start_time_sec=0.0, end_time_sec=50.0)
+    envelope = AudioEnvelope(start_offset_sec=0.0, end_offset_sec=50.0)
     regions = [Region("r1", 100.0, 110.0)]
     spans = merge_padded_regions(regions, pad_seconds=5.0, audio_envelope=envelope)
     assert spans == []
@@ -100,8 +100,8 @@ def test_merge_padded_regions_rejects_negative_pad():
 def test_iter_windows_count_matches_floor_formula():
     span = MergedSpan(
         merged_span_id=0,
-        start_time_sec=0.0,
-        end_time_sec=20.0,
+        start_offset_sec=0.0,
+        end_offset_sec=20.0,
         source_regions=[Region("r1", 0.0, 20.0)],
     )
     windows = list(iter_windows(span, hop_seconds=1.0, window_size_seconds=5.0))
@@ -112,8 +112,8 @@ def test_iter_windows_count_matches_floor_formula():
 def test_iter_windows_too_short_yields_nothing():
     span = MergedSpan(
         merged_span_id=0,
-        start_time_sec=0.0,
-        end_time_sec=4.0,
+        start_offset_sec=0.0,
+        end_offset_sec=4.0,
         source_regions=[Region("r1", 0.0, 4.0)],
     )
     windows = list(iter_windows(span, hop_seconds=1.0, window_size_seconds=5.0))
@@ -124,15 +124,15 @@ def test_iter_windows_is_in_pad_classification():
     # Span: [0, 20]; region [10, 14]; window size 5, hop 1.
     span = MergedSpan(
         merged_span_id=0,
-        start_time_sec=0.0,
-        end_time_sec=20.0,
+        start_offset_sec=0.0,
+        end_offset_sec=20.0,
         source_regions=[Region("r1", 10.0, 14.0)],
     )
     windows = list(iter_windows(span, hop_seconds=1.0, window_size_seconds=5.0))
     in_region = [w for w in windows if not w.is_in_pad]
     assert in_region, "expected at least one in-region window"
     for w in windows:
-        center = w.start_time_sec + 2.5
+        center = w.start_offset_sec + 2.5
         in_region_expected = 10.0 <= center <= 14.0
         assert w.is_in_pad == (not in_region_expected)
         if not w.is_in_pad:
@@ -145,13 +145,13 @@ def test_iter_windows_boundary_is_inclusive():
     # window center at exactly region start counts as in-region.
     span = MergedSpan(
         merged_span_id=0,
-        start_time_sec=0.0,
-        end_time_sec=20.0,
+        start_offset_sec=0.0,
+        end_offset_sec=20.0,
         source_regions=[Region("r1", 7.5, 10.0)],
     )
     # window [5, 10] centers on 7.5 — exactly the region start.
     windows = list(iter_windows(span, hop_seconds=1.0, window_size_seconds=5.0))
-    boundary = [w for w in windows if math.isclose(w.start_time_sec, 5.0)]
+    boundary = [w for w in windows if math.isclose(w.start_offset_sec, 5.0)]
     assert boundary and not boundary[0].is_in_pad
     assert boundary[0].source_region_ids == ["r1"]
 
@@ -162,12 +162,14 @@ def test_iter_windows_multi_region_overlap():
     r2 = Region("r2", 10.0, 15.0)
     span = MergedSpan(
         merged_span_id=0,
-        start_time_sec=0.0,
-        end_time_sec=20.0,
+        start_offset_sec=0.0,
+        end_offset_sec=20.0,
         source_regions=[r1, r2],
     )
     windows = list(iter_windows(span, hop_seconds=0.5, window_size_seconds=5.0))
-    centered_at_10 = [w for w in windows if math.isclose(w.start_time_sec + 2.5, 10.0)]
+    centered_at_10 = [
+        w for w in windows if math.isclose(w.start_offset_sec + 2.5, 10.0)
+    ]
     assert centered_at_10
     assert centered_at_10[0].source_region_ids == ["r1", "r2"]
     assert not centered_at_10[0].is_in_pad

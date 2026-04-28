@@ -88,20 +88,20 @@ const STATES = {
   offset: 0,
   limit: 5000,
   items: [
-    { merged_span_id: 0, window_index_in_span: 0, viterbi_state: 0, start_time_sec: 100.0, end_time_sec: 105.0, state_posterior: [0.9, 0.05, 0.03, 0.02], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r1"] },
-    { merged_span_id: 0, window_index_in_span: 1, viterbi_state: 1, start_time_sec: 101.0, end_time_sec: 106.0, state_posterior: [0.1, 0.8, 0.05, 0.05], max_state_probability: 0.8, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r1"] },
-    { merged_span_id: 1, window_index_in_span: 0, viterbi_state: 2, start_time_sec: 200.0, end_time_sec: 205.0, state_posterior: [0.05, 0.05, 0.85, 0.05], max_state_probability: 0.85, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r2"] },
-    { merged_span_id: 1, window_index_in_span: 1, viterbi_state: 3, start_time_sec: 201.0, end_time_sec: 206.0, state_posterior: [0.02, 0.03, 0.05, 0.9], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r2"] },
+    { merged_span_id: 0, window_index_in_span: 0, viterbi_state: 0, start_timestamp: 100.0, end_timestamp: 105.0, state_posterior: [0.9, 0.05, 0.03, 0.02], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r1"] },
+    { merged_span_id: 0, window_index_in_span: 1, viterbi_state: 1, start_timestamp: 101.0, end_timestamp: 106.0, state_posterior: [0.1, 0.8, 0.05, 0.05], max_state_probability: 0.8, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r1"] },
+    { merged_span_id: 1, window_index_in_span: 0, viterbi_state: 2, start_timestamp: 200.0, end_timestamp: 205.0, state_posterior: [0.05, 0.05, 0.85, 0.05], max_state_probability: 0.85, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r2"] },
+    { merged_span_id: 1, window_index_in_span: 1, viterbi_state: 3, start_timestamp: 201.0, end_timestamp: 206.0, state_posterior: [0.02, 0.03, 0.05, 0.9], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r2"] },
   ],
 };
 
 const OVERLAY = {
   total: 4,
   items: [
-    { merged_span_id: 0, window_index_in_span: 0, start_time_sec: 100.0, end_time_sec: 105.0, pca_x: 1.0, pca_y: 2.0, umap_x: 0.5, umap_y: 0.8, viterbi_state: 0, max_state_probability: 0.9 },
-    { merged_span_id: 0, window_index_in_span: 1, start_time_sec: 101.0, end_time_sec: 106.0, pca_x: 1.5, pca_y: 2.5, umap_x: 0.6, umap_y: 0.9, viterbi_state: 1, max_state_probability: 0.8 },
-    { merged_span_id: 1, window_index_in_span: 0, start_time_sec: 200.0, end_time_sec: 205.0, pca_x: -1.0, pca_y: -0.5, umap_x: -0.3, umap_y: 0.1, viterbi_state: 2, max_state_probability: 0.85 },
-    { merged_span_id: 1, window_index_in_span: 1, start_time_sec: 201.0, end_time_sec: 206.0, pca_x: -0.8, pca_y: -0.2, umap_x: -0.1, umap_y: 0.2, viterbi_state: 3, max_state_probability: 0.9 },
+    { merged_span_id: 0, window_index_in_span: 0, start_timestamp: 100.0, end_timestamp: 105.0, pca_x: 1.0, pca_y: 2.0, umap_x: 0.5, umap_y: 0.8, viterbi_state: 0, max_state_probability: 0.9 },
+    { merged_span_id: 0, window_index_in_span: 1, start_timestamp: 101.0, end_timestamp: 106.0, pca_x: 1.5, pca_y: 2.5, umap_x: 0.6, umap_y: 0.9, viterbi_state: 1, max_state_probability: 0.8 },
+    { merged_span_id: 1, window_index_in_span: 0, start_timestamp: 200.0, end_timestamp: 205.0, pca_x: -1.0, pca_y: -0.5, umap_x: -0.3, umap_y: 0.1, viterbi_state: 2, max_state_probability: 0.85 },
+    { merged_span_id: 1, window_index_in_span: 1, start_timestamp: 201.0, end_timestamp: 206.0, pca_x: -0.8, pca_y: -0.2, umap_x: -0.1, umap_y: 0.2, viterbi_state: 3, max_state_probability: 0.9 },
   ],
 };
 
@@ -120,13 +120,13 @@ const EXEMPLARS = {
   n_states: 4,
   states: {
     "0": [
-      { merged_span_id: 0, window_index_in_span: 0, audio_file_id: 1, start_time_sec: 100.0, end_time_sec: 105.0, max_state_probability: 0.9, exemplar_type: "high_confidence" },
+      { merged_span_id: 0, window_index_in_span: 0, audio_file_id: 1, start_timestamp: 100.0, end_timestamp: 105.0, max_state_probability: 0.9, exemplar_type: "high_confidence" },
     ],
     "1": [
-      { merged_span_id: 0, window_index_in_span: 1, audio_file_id: 1, start_time_sec: 101.0, end_time_sec: 106.0, max_state_probability: 0.8, exemplar_type: "high_confidence" },
+      { merged_span_id: 0, window_index_in_span: 1, audio_file_id: 1, start_timestamp: 101.0, end_timestamp: 106.0, max_state_probability: 0.8, exemplar_type: "high_confidence" },
     ],
     "2": [
-      { merged_span_id: 1, window_index_in_span: 0, audio_file_id: 1, start_time_sec: 200.0, end_time_sec: 205.0, max_state_probability: 0.85, exemplar_type: "mean_nearest" },
+      { merged_span_id: 1, window_index_in_span: 0, audio_file_id: 1, start_timestamp: 200.0, end_timestamp: 205.0, max_state_probability: 0.85, exemplar_type: "mean_nearest" },
     ],
     "3": [],
   },
@@ -134,6 +134,8 @@ const EXEMPLARS = {
 
 interface MockState {
   hmmJobs: typeof QUEUED_JOB[];
+  regionJobId?: string;
+  audioUrls?: string[];
 }
 
 async function setupMocks(page: Page, state: MockState) {
@@ -232,7 +234,10 @@ async function setupMocks(page: Page, state: MockState) {
         contentType: "application/json",
         body: JSON.stringify({
           job,
-          region_detection_job_id: CEJ_COMPLETE.region_detection_job_id,
+          region_detection_job_id:
+            state.regionJobId ?? CEJ_COMPLETE.region_detection_job_id,
+          region_start_timestamp: 100.0,
+          region_end_timestamp: 700.0,
           summary: job.status === "complete" ? SUMMARY : null,
         }),
       });
@@ -268,19 +273,24 @@ async function setupMocks(page: Page, state: MockState) {
     return route.fulfill({ status: 200, contentType: "image/png", body: pixel });
   });
 
-  await page.route("**/call-parsing/region-jobs/*/audio-slice**", (route) =>
-    route.fulfill({ status: 200, contentType: "audio/mpeg", body: Buffer.alloc(0) }),
-  );
+  await page.route("**/call-parsing/region-jobs/*/audio-slice**", (route) => {
+    state.audioUrls?.push(route.request().url());
+    return route.fulfill({
+      status: 200,
+      contentType: "audio/mpeg",
+      body: Buffer.alloc(0),
+    });
+  });
 }
 
 test.describe("Sequence Models — HMM Sequence", () => {
   test("nav reaches the HMM Sequence page", async ({ page }) => {
-    const state: MockState = { hmmJobs: [] };
+    const state: MockState = { hmmJobs: [QUEUED_JOB, COMPLETE_JOB] };
     await setupMocks(page, state);
     await page.goto("/app/sequence-models/hmm-sequence");
     await expect(page.getByTestId("hmm-jobs-page")).toBeVisible();
-    await expect(page.getByTestId("hmm-active-section")).toBeVisible();
-    await expect(page.getByTestId("hmm-previous-section")).toBeVisible();
+    await expect(page.getByText("Active Jobs")).toBeVisible();
+    await expect(page.getByText("Previous Jobs")).toBeVisible();
   });
 
   test("create form is constrained to completed continuous-embedding jobs", async ({
@@ -346,7 +356,11 @@ test.describe("Sequence Models — HMM Sequence", () => {
 
     // Spectrogram viewport present within the panel
     const viewerPanel = page.getByTestId("hmm-timeline-viewer");
-    await expect(viewerPanel.getByTestId("spectrogram-viewport")).toBeVisible();
+    const viewport = viewerPanel.getByTestId("spectrogram-viewport");
+    await expect(viewport).toBeVisible();
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.height ?? 0)
+      .toBeGreaterThan(100);
 
     // HMMStateBar canvas present
     await expect(viewerPanel.getByTestId("hmm-state-bar")).toBeVisible();
@@ -359,9 +373,15 @@ test.describe("Sequence Models — HMM Sequence", () => {
     await expect(page.getByTestId("hmm-span-prev")).toBeDisabled();
     await expect(page.getByTestId("hmm-span-next")).toBeEnabled();
 
+    // User-selected zoom survives span navigation.
+    const zoomOneMinute = viewerPanel.getByRole("button", { name: "1m" });
+    await zoomOneMinute.click();
+    await expect(zoomOneMinute).toHaveClass(/text-primary/);
+
     // Click next span — label updates
     await page.getByTestId("hmm-span-next").click();
     await expect(page.getByTestId("hmm-span-label")).toContainText("Span 2/2");
+    await expect(zoomOneMinute).toHaveClass(/text-primary/);
 
     // Now next is disabled, prev is enabled
     await expect(page.getByTestId("hmm-span-next")).toBeDisabled();

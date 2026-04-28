@@ -10,7 +10,7 @@ from humpback.sequence_models.label_distribution import (
 
 
 def _window(start: float, end: float, state: int) -> dict:
-    return {"start_time_sec": start, "end_time_sec": end, "viterbi_state": state}
+    return {"start_timestamp": start, "end_timestamp": end, "viterbi_state": state}
 
 
 class TestComputeLabelDistribution:

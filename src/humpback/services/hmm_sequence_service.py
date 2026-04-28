@@ -209,8 +209,8 @@ def _load_overlay_inputs(
             prob = st.get("max_state_probability", 0.0)
             v_states[row_i] = st.get("viterbi_state", 0)
             m_probs[row_i] = prob
-            start = sub.column("start_time_sec")[row_i].as_py()
-            end = sub.column("end_time_sec")[row_i].as_py()
+            start = sub.column("start_timestamp")[row_i].as_py()
+            end = sub.column("end_timestamp")[row_i].as_py()
             all_span_ids.append(span_id)
             all_win_indices.append(widx)
             all_starts.append(start)
@@ -220,8 +220,8 @@ def _load_overlay_inputs(
                     merged_span_id=span_id,
                     window_index_in_span=widx,
                     audio_file_id=audio_file_by_span_win.get((span_id, widx), 0),
-                    start_time_sec=start,
-                    end_time_sec=end,
+                    start_timestamp=start,
+                    end_timestamp=end,
                     max_state_probability=prob,
                 )
             )
@@ -232,8 +232,8 @@ def _load_overlay_inputs(
     meta = OverlayMetadata(
         merged_span_ids=all_span_ids,
         window_indices=all_win_indices,
-        start_times=all_starts,
-        end_times=all_ends,
+        start_timestamps=all_starts,
+        end_timestamps=all_ends,
     )
     return pca_model, raw_sequences, viterbi_states, max_probs, meta, window_metas
 
@@ -305,19 +305,14 @@ async def generate_label_distribution(
         raise ValueError(f"RegionDetectionJob not found: {cej.region_detection_job_id}")
 
     states_table = pq.read_table(hmm_sequence_states_path(storage_root, job.id))
-    time_offset_sec = (
-        float(rdj.start_timestamp)
-        if rdj.hydrophone_id and rdj.start_timestamp is not None
-        else 0.0
-    )
     state_rows: list[dict[str, Any]] = []
     for i in range(states_table.num_rows):
-        start_time = float(states_table.column("start_time_sec")[i].as_py())
-        end_time = float(states_table.column("end_time_sec")[i].as_py())
+        start_time = float(states_table.column("start_timestamp")[i].as_py())
+        end_time = float(states_table.column("end_timestamp")[i].as_py())
         state_rows.append(
             {
-                "start_time_sec": start_time + time_offset_sec,
-                "end_time_sec": end_time + time_offset_sec,
+                "start_timestamp": start_time,
+                "end_timestamp": end_time,
                 "viterbi_state": states_table.column("viterbi_state")[i].as_py(),
             }
         )
