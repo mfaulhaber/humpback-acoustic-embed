@@ -50,8 +50,8 @@ def _make_inputs(
     meta = OverlayMetadata(
         merged_span_ids=span_ids,
         window_indices=win_indices,
-        start_times=starts,
-        end_times=ends,
+        start_timestamps=starts,
+        end_timestamps=ends,
     )
     return raw_sequences, viterbi_states, max_probs, meta
 
@@ -67,8 +67,8 @@ class TestComputeOverlay:
         expected_cols = {
             "merged_span_id",
             "window_index_in_span",
-            "start_time_sec",
-            "end_time_sec",
+            "start_timestamp",
+            "end_timestamp",
             "pca_x",
             "pca_y",
             "umap_x",

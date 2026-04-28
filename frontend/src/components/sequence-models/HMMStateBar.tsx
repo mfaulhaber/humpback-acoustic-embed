@@ -6,8 +6,8 @@ import { STATE_COLORS } from "./constants";
 const BAR_HEIGHT = 60;
 
 export interface ViterbiWindow {
-  start_time_sec: number;
-  end_time_sec: number;
+  start_timestamp: number;
+  end_timestamp: number;
   viterbi_state: number;
   max_state_probability: number;
 }
@@ -22,9 +22,9 @@ function binarySearchWindow(items: ViterbiWindow[], timeSec: number): number {
   let hi = items.length - 1;
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1;
-    if (items[mid].end_time_sec <= timeSec) {
+    if (items[mid].end_timestamp <= timeSec) {
       lo = mid + 1;
-    } else if (items[mid].start_time_sec > timeSec) {
+    } else if (items[mid].start_timestamp > timeSec) {
       hi = mid - 1;
     } else {
       return mid;
@@ -60,7 +60,7 @@ export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
   const stateHeight = nStates > 0 ? BAR_HEIGHT / nStates : BAR_HEIGHT;
 
   const sortedItems = useMemo(
-    () => [...items].sort((a, b) => a.start_time_sec - b.start_time_sec),
+    () => [...items].sort((a, b) => a.start_timestamp - b.start_timestamp),
     [items],
   );
 
@@ -76,8 +76,8 @@ export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
     g.clearRect(0, 0, canvasWidth, BAR_HEIGHT);
 
     for (const w of sortedItems) {
-      const x0 = (w.start_time_sec - ctx.viewStart) * ctx.pxPerSec;
-      const x1 = (w.end_time_sec - ctx.viewStart) * ctx.pxPerSec;
+      const x0 = (w.start_timestamp - ctx.viewStart) * ctx.pxPerSec;
+      const x1 = (w.end_timestamp - ctx.viewStart) * ctx.pxPerSec;
       if (x1 < 0 || x0 > canvasWidth) continue;
       const px = Math.max(0, x0);
       const pw = Math.min(canvasWidth, x1) - px;
@@ -116,7 +116,7 @@ export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
       setTooltip({
         x: mx + FREQ_AXIS_WIDTH_PX,
         y: ty,
-        text: `State ${w.viterbi_state} · ${w.start_time_sec.toFixed(1)}s–${w.end_time_sec.toFixed(1)}s · prob ${w.max_state_probability.toFixed(3)}`,
+        text: `State ${w.viterbi_state} · ${w.start_timestamp.toFixed(1)}s–${w.end_timestamp.toFixed(1)}s · prob ${w.max_state_probability.toFixed(3)}`,
       });
     },
     [sortedItems, ctx.viewStart, ctx.pxPerSec, nStates, stateHeight],

@@ -66,8 +66,8 @@ CONTINUOUS_EMBEDDING_SCHEMA = pa.schema(
         pa.field("merged_span_id", pa.int32(), nullable=False),
         pa.field("window_index_in_span", pa.int32(), nullable=False),
         pa.field("audio_file_id", pa.int32(), nullable=True),
-        pa.field("start_time_sec", pa.float64(), nullable=False),
-        pa.field("end_time_sec", pa.float64(), nullable=False),
+        pa.field("start_timestamp", pa.float64(), nullable=False),
+        pa.field("end_timestamp", pa.float64(), nullable=False),
         pa.field("is_in_pad", pa.bool_(), nullable=False),
         pa.field("source_region_ids", pa.list_(pa.string()), nullable=False),
         pa.field("embedding", pa.list_(pa.float32()), nullable=False),
@@ -124,8 +124,8 @@ def _regions_to_window_geometry(regions) -> list[WindowRegion]:
     return [
         WindowRegion(
             region_id=r.region_id,
-            start_time_sec=float(r.start_sec),
-            end_time_sec=float(r.end_sec),
+            start_offset_sec=float(r.start_sec),
+            end_offset_sec=float(r.end_sec),
         )
         for r in regions
     ]
@@ -135,7 +135,7 @@ def _audio_envelope(region_job: RegionDetectionJob, regions) -> AudioEnvelope:
     if region_job.start_timestamp is not None and region_job.end_timestamp is not None:
         start = float(region_job.start_timestamp)
         end = float(region_job.end_timestamp)
-        return AudioEnvelope(start_time_sec=0.0, end_time_sec=max(0.0, end - start))
+        return AudioEnvelope(start_offset_sec=0.0, end_offset_sec=max(0.0, end - start))
 
     # File-mode jobs: regions are in seconds-from-file-start. Bound the
     # envelope by the largest region end seen in regions.parquet — the
@@ -144,7 +144,7 @@ def _audio_envelope(region_job: RegionDetectionJob, regions) -> AudioEnvelope:
         max_end = max(float(r.padded_end_sec) for r in regions)
     else:
         max_end = 0.0
-    return AudioEnvelope(start_time_sec=0.0, end_time_sec=max_end)
+    return AudioEnvelope(start_offset_sec=0.0, end_offset_sec=max_end)
 
 
 def _atomic_write_parquet(table: pa.Table, dst: Path) -> None:
@@ -203,14 +203,15 @@ def _row_dict(
     span: MergedSpan,
     record: WindowRecord,
     embedding: np.ndarray,
+    timestamp_offset: float,
 ) -> dict:
     emb = np.asarray(embedding, dtype=np.float32)
     return {
         "merged_span_id": int(span.merged_span_id),
         "window_index_in_span": int(record.window_index_in_span),
         "audio_file_id": None,
-        "start_time_sec": float(record.start_time_sec),
-        "end_time_sec": float(record.end_time_sec),
+        "start_timestamp": float(record.start_offset_sec + timestamp_offset),
+        "end_timestamp": float(record.end_offset_sec + timestamp_offset),
         "is_in_pad": bool(record.is_in_pad),
         "source_region_ids": list(record.source_region_ids),
         "embedding": emb.tolist(),
@@ -220,8 +221,8 @@ def _row_dict(
 @dataclass(slots=True)
 class _SpanSummary:
     merged_span_id: int
-    start_time_sec: float
-    end_time_sec: float
+    start_timestamp: float
+    end_timestamp: float
     window_count: int
     source_region_ids: list[str]
 
@@ -265,8 +266,8 @@ class _ProductionEmbedder:
         if not window_records:
             return []
 
-        span_start_utc = self.stream_start_ts + span.start_time_sec
-        span_duration = span.end_time_sec - span.start_time_sec
+        span_start_utc = self.stream_start_ts + span.start_offset_sec
+        span_duration = span.end_offset_sec - span.start_offset_sec
         span_audio = resolve_audio_slice(
             self.provider,
             self.stream_start_ts,
@@ -314,8 +315,8 @@ def _build_manifest_payload(
         "spans": [
             {
                 "merged_span_id": s.merged_span_id,
-                "start_time_sec": s.start_time_sec,
-                "end_time_sec": s.end_time_sec,
+                "start_timestamp": s.start_timestamp,
+                "end_timestamp": s.end_timestamp,
                 "window_count": s.window_count,
                 "source_region_ids": s.source_region_ids,
             }
@@ -336,7 +337,7 @@ def _build_window_batch(
     batch = np.zeros((len(window_records), window_samples), dtype=np.float32)
 
     for idx, record in enumerate(window_records):
-        rel_start_sec = record.start_time_sec - span.start_time_sec
+        rel_start_sec = record.start_offset_sec - span.start_offset_sec
         start_sample = int(round(rel_start_sec * target_sample_rate))
         end_sample = start_sample + window_samples
         window_audio = span_audio[start_sample:end_sample]
@@ -471,6 +472,7 @@ async def run_continuous_embedding_job(
         regions_sorted = sorted(regions, key=lambda r: r.padded_start_sec)
         envelope = _audio_envelope(region_job, regions_sorted)
         window_regions = _regions_to_window_geometry(regions_sorted)
+        timestamp_offset = float(region_job.start_timestamp or 0.0)
 
         spans = merge_padded_regions(
             window_regions,
@@ -504,8 +506,8 @@ async def run_continuous_embedding_job(
                 span_summaries.append(
                     _SpanSummary(
                         merged_span_id=span.merged_span_id,
-                        start_time_sec=span.start_time_sec,
-                        end_time_sec=span.end_time_sec,
+                        start_timestamp=span.start_offset_sec + timestamp_offset,
+                        end_timestamp=span.end_offset_sec + timestamp_offset,
                         window_count=0,
                         source_region_ids=[r.region_id for r in span.source_regions],
                     )
@@ -537,13 +539,13 @@ async def run_continuous_embedding_job(
                         "embedding vector_dim mismatch: "
                         f"got {arr.shape[0]}, expected {vector_dim}"
                     )
-                rows.append(_row_dict(span, record, arr))
+                rows.append(_row_dict(span, record, arr, timestamp_offset))
 
             span_summaries.append(
                 _SpanSummary(
                     merged_span_id=span.merged_span_id,
-                    start_time_sec=span.start_time_sec,
-                    end_time_sec=span.end_time_sec,
+                    start_timestamp=span.start_offset_sec + timestamp_offset,
+                    end_timestamp=span.end_offset_sec + timestamp_offset,
                     window_count=len(window_records),
                     source_region_ids=[r.region_id for r in span.source_regions],
                 )

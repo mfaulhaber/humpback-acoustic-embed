@@ -3,8 +3,8 @@ import { formatRecordingTime } from "@/utils/format";
 
 export interface SpanInfo {
   id: number;
-  startSec: number;
-  endSec: number;
+  startTimestamp: number;
+  endTimestamp: number;
 }
 
 interface SpanNavBarProps {
@@ -40,8 +40,8 @@ export function SpanNavBar({ spans, activeIndex, onPrev, onNext }: SpanNavBarPro
       </button>
       <span className="text-muted-foreground ml-1" data-testid="hmm-span-label">
         Span {activeIndex + 1}/{spans.length} ·{" "}
-        {formatRecordingTime(0, span.startSec)} –{" "}
-        {formatRecordingTime(0, span.endSec)}
+        {formatRecordingTime(0, span.startTimestamp)} –{" "}
+        {formatRecordingTime(0, span.endTimestamp)}
       </span>
     </div>
   );

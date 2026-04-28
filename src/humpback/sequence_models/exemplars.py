@@ -19,8 +19,8 @@ class WindowMeta:
     merged_span_id: int
     window_index_in_span: int
     audio_file_id: int
-    start_time_sec: float
-    end_time_sec: float
+    start_timestamp: float
+    end_timestamp: float
     max_state_probability: float
 
 
@@ -90,8 +90,8 @@ def select_exemplars(
                         "merged_span_id": m.merged_span_id,
                         "window_index_in_span": m.window_index_in_span,
                         "audio_file_id": m.audio_file_id,
-                        "start_time_sec": m.start_time_sec,
-                        "end_time_sec": m.end_time_sec,
+                        "start_timestamp": m.start_timestamp,
+                        "end_timestamp": m.end_timestamp,
                         "max_state_probability": float(m.max_state_probability),
                         "exemplar_type": etype,
                     }

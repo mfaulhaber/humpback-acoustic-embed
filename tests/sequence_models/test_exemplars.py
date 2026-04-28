@@ -12,8 +12,8 @@ def _meta(idx: int, state_prob: float, audio_id: int = 1) -> WindowMeta:
         merged_span_id=0,
         window_index_in_span=idx,
         audio_file_id=audio_id,
-        start_time_sec=100.0 + idx,
-        end_time_sec=105.0 + idx,
+        start_timestamp=100.0 + idx,
+        end_timestamp=105.0 + idx,
         max_state_probability=state_prob,
     )
 

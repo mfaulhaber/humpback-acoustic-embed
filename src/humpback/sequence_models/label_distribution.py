@@ -35,7 +35,7 @@ def compute_label_distribution(
     Parameters
     ----------
     states
-        HMM window rows, each with ``start_time_sec``, ``end_time_sec``,
+        HMM window rows, each with ``start_timestamp``, ``end_timestamp``,
         and ``viterbi_state``.
     detection_windows
         Detection windows with ``row_id``, ``start_utc``, ``end_utc``.
@@ -57,7 +57,7 @@ def compute_label_distribution(
     per_state: dict[str, dict[str, int]] = {str(s): {} for s in range(n_states)}
 
     for window in states:
-        center = (window["start_time_sec"] + window["end_time_sec"]) / 2.0
+        center = (window["start_timestamp"] + window["end_timestamp"]) / 2.0
         state_key = str(int(window["viterbi_state"]))
 
         matched_labels: set[str] = set()

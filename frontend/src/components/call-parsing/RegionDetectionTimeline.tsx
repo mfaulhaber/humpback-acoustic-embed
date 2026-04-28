@@ -133,8 +133,7 @@ export function RegionDetectionTimeline() {
     : "";
 
   const audioUrlBuilder = (startEpoch: number, durationSec: number) => {
-    const jobRelative = startEpoch - jobStart;
-    return regionAudioSliceUrl(jobId, Math.max(0, jobRelative), durationSec);
+    return regionAudioSliceUrl(jobId, startEpoch, durationSec);
   };
 
   return (

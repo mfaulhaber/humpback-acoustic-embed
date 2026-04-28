@@ -107,8 +107,8 @@ export function ContinuousEmbeddingDetailPage() {
                 {manifest.spans.map((s) => (
                   <tr key={s.merged_span_id} className="border-t">
                     <td className="pr-2 py-1">{s.merged_span_id}</td>
-                    <td className="pr-2 py-1">{s.start_time_sec.toFixed(2)}</td>
-                    <td className="pr-2 py-1">{s.end_time_sec.toFixed(2)}</td>
+                    <td className="pr-2 py-1">{s.start_timestamp.toFixed(2)}</td>
+                    <td className="pr-2 py-1">{s.end_timestamp.toFixed(2)}</td>
                     <td className="pr-2 py-1">{s.window_count}</td>
                     <td className="py-1">{s.source_region_ids.length}</td>
                   </tr>

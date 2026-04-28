@@ -70,8 +70,8 @@ def _write_synthetic_embeddings_parquet(
                     "merged_span_id": span_id,
                     "window_index_in_span": win_idx,
                     "audio_file_id": None,
-                    "start_time_sec": t,
-                    "end_time_sec": t + 5.0,
+                    "start_timestamp": t,
+                    "end_timestamp": t + 5.0,
                     "is_in_pad": win_idx < 3,
                     "source_region_ids": [f"r{span_id}"],
                     "embedding": seq[win_idx].tolist(),
@@ -84,8 +84,8 @@ def _write_synthetic_embeddings_parquet(
             pa.field("merged_span_id", pa.int32()),
             pa.field("window_index_in_span", pa.int32()),
             pa.field("audio_file_id", pa.int32()),
-            pa.field("start_time_sec", pa.float64()),
-            pa.field("end_time_sec", pa.float64()),
+            pa.field("start_timestamp", pa.float64()),
+            pa.field("end_timestamp", pa.float64()),
             pa.field("is_in_pad", pa.bool_()),
             pa.field("source_region_ids", pa.list_(pa.string())),
             pa.field("embedding", pa.list_(pa.float32())),
@@ -105,8 +105,8 @@ async def _seed_complete_ce_job(session, settings) -> ContinuousEmbeddingJob:
     region_job = RegionDetectionJob(
         status=JobStatus.complete.value,
         hydrophone_id="rpi_orcasound_lab",
-        start_timestamp=0.0,
-        end_timestamp=3000.0,
+        start_timestamp=1000.0,
+        end_timestamp=4000.0,
     )
     session.add(region_job)
     await session.commit()
@@ -185,8 +185,8 @@ async def test_states_parquet_schema(session, settings):
         "merged_span_id",
         "window_index_in_span",
         "audio_file_id",
-        "start_time_sec",
-        "end_time_sec",
+        "start_timestamp",
+        "end_timestamp",
         "is_in_pad",
         "source_region_ids",
         "viterbi_state",

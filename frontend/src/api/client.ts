@@ -973,10 +973,10 @@ export const regionTileUrl = (
 
 export const regionAudioSliceUrl = (
   jobId: string,
-  startSec: number,
+  startTimestamp: number,
   durationSec: number,
 ) =>
-  `/call-parsing/region-jobs/${jobId}/audio-slice?start_sec=${startSec}&duration_sec=${durationSec}`;
+  `/call-parsing/region-jobs/${jobId}/audio-slice?start_timestamp=${startTimestamp}&duration_sec=${durationSec}`;
 
 export const fetchRegionJobConfidence = (jobId: string) =>
   api<TimelineConfidenceResponse>(
@@ -1186,5 +1186,4 @@ export const fetchWindowScores = (
     `/call-parsing/window-classification-jobs/${jobId}/scores${suffix}`,
   );
 };
-
 

@@ -23,8 +23,8 @@ export interface ContinuousEmbeddingJob {
 
 export interface ContinuousEmbeddingSpanSummary {
   merged_span_id: number;
-  start_time_sec: number;
-  end_time_sec: number;
+  start_timestamp: number;
+  end_timestamp: number;
   window_count: number;
   source_region_ids: string[];
 }
@@ -213,6 +213,8 @@ export interface HMMStateSummary {
 export interface HMMSequenceJobDetail {
   job: HMMSequenceJob;
   region_detection_job_id: string;
+  region_start_timestamp: number | null;
+  region_end_timestamp: number | null;
   summary: HMMStateSummary[] | null;
 }
 
@@ -397,8 +399,8 @@ export function useHMMStates(
 export interface OverlayPoint {
   merged_span_id: number;
   window_index_in_span: number;
-  start_time_sec: number;
-  end_time_sec: number;
+  start_timestamp: number;
+  end_timestamp: number;
   pca_x: number;
   pca_y: number;
   umap_x: number;
@@ -422,8 +424,8 @@ export interface ExemplarRecord {
   merged_span_id: number;
   window_index_in_span: number;
   audio_file_id: number | null;
-  start_time_sec: number;
-  end_time_sec: number;
+  start_timestamp: number;
+  end_timestamp: number;
   max_state_probability: number;
   exemplar_type: string;
 }

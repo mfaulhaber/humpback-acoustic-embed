@@ -107,7 +107,7 @@ Lands after the manual evaluation gate (ยง9) confirms PR 2 baseline is producing
 - Standalone HMM decoding job (apply trained model to a new continuous-embedding source without re-training).
 - Sweep / grid training inside one job.
 - Pomegranate + MPS path (gated on measured scaling need).
-- Future overlay visualization combining HMM states, vocal labels, and playable spectrograms on a single timeline (the union of states + labels + audio is enabled by the shared `(audio_file_id, start_time_sec, end_time_sec)` keying introduced in PR 1).
+- Future overlay visualization combining HMM states, vocal labels, and playable spectrograms on a single timeline (the union of states + labels + audio is enabled by the shared `(audio_file_id, start_timestamp, end_timestamp)` keying introduced in PR 1).
 
 ---
 
@@ -238,8 +238,8 @@ Both job types support cooperative cancellation. `POST /cancel` flips `queued` โ
 | `merged_span_id` | int32 | groups rows belonging to one contiguous padded sequence |
 | `window_index_in_span` | int32 | 0-based position within merged span; defines temporal order |
 | `audio_file_id` | int32 nullable | underlying chunk file id (informational) |
-| `start_time_sec` | float64 | UTC epoch seconds |
-| `end_time_sec` | float64 | UTC epoch seconds |
+| `start_timestamp` | float64 | UTC epoch seconds |
+| `end_timestamp` | float64 | UTC epoch seconds |
 | `is_in_pad` | bool | true if window center falls outside any source region |
 | `source_region_ids` | list<int32> | region ids whose un-padded extent contains this window's center |
 | `embedding` | list<float32>[vector_dim] | the SurfPerch embedding |
@@ -265,7 +265,7 @@ For the state-to-label distribution viz, an HMM window inherits labels from any 
 
 - **Trusted source only**: `vocalization_labels` (Vocalization Labeling workspace), human-curated multi-label.
 - **Excluded for MVP**: Pass 3 / Classify predictions (experimental); window-classification predictions (would create a self-referential loop with embedding-derived states).
-- **PR 1 / PR 2 unaffected**: producer + HMM core just emit window rows keyed by `(audio_file_id, start_time_sec, end_time_sec)`; the join lives entirely in PR 3.
+- **PR 1 / PR 2 unaffected**: producer + HMM core just emit window rows keyed by `(audio_file_id, start_timestamp, end_timestamp)`; the join lives entirely in PR 3.
 
 ### 5.5 Storage convention
 
