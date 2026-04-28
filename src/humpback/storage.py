@@ -126,6 +126,22 @@ def hmm_sequence_training_log_path(storage_root: Path, job_id: str) -> Path:
     return hmm_sequence_dir(storage_root, job_id) / "training_log.json"
 
 
+def hmm_sequence_overlay_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "pca_overlay.parquet"
+
+
+def hmm_sequence_label_distribution_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "label_distribution.json"
+
+
+def hmm_sequence_exemplars_dir(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_dir(storage_root, job_id) / "exemplars"
+
+
+def hmm_sequence_exemplars_path(storage_root: Path, job_id: str) -> Path:
+    return hmm_sequence_exemplars_dir(storage_root, job_id) / "exemplars.json"
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 

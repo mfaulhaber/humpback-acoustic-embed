@@ -358,3 +358,115 @@ export function useHMMStates(
     enabled: enabled && jobId != null,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Interpretation visualizations (PR 3)
+// ---------------------------------------------------------------------------
+
+export interface OverlayPoint {
+  merged_span_id: number;
+  window_index_in_span: number;
+  start_time_sec: number;
+  end_time_sec: number;
+  pca_x: number;
+  pca_y: number;
+  umap_x: number;
+  umap_y: number;
+  viterbi_state: number;
+  max_state_probability: number;
+}
+
+export interface OverlayResponse {
+  total: number;
+  items: OverlayPoint[];
+}
+
+export interface LabelDistribution {
+  n_states: number;
+  total_windows: number;
+  states: Record<string, Record<string, number>>;
+}
+
+export interface ExemplarRecord {
+  merged_span_id: number;
+  window_index_in_span: number;
+  audio_file_id: number;
+  start_time_sec: number;
+  end_time_sec: number;
+  max_state_probability: number;
+  exemplar_type: string;
+}
+
+export interface ExemplarsResponse {
+  n_states: number;
+  states: Record<string, ExemplarRecord[]>;
+}
+
+export function fetchHMMOverlay(
+  jobId: string,
+  offset = 0,
+  limit = 50000,
+): Promise<OverlayResponse> {
+  return request(
+    `${HMM_ROOT}/${jobId}/overlay?offset=${offset}&limit=${limit}`,
+  );
+}
+
+export function fetchHMMLabelDistribution(
+  jobId: string,
+): Promise<LabelDistribution> {
+  return request(`${HMM_ROOT}/${jobId}/label-distribution`);
+}
+
+export function fetchHMMExemplars(
+  jobId: string,
+): Promise<ExemplarsResponse> {
+  return request(`${HMM_ROOT}/${jobId}/exemplars`);
+}
+
+export function postGenerateInterpretations(
+  jobId: string,
+): Promise<{ status: string; job_id: string }> {
+  return request(`${HMM_ROOT}/${jobId}/generate-interpretations`, {
+    method: "POST",
+  });
+}
+
+export function useHMMOverlay(jobId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["hmm-overlay", jobId],
+    queryFn: () => fetchHMMOverlay(jobId as string),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useHMMLabelDistribution(
+  jobId: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["hmm-label-distribution", jobId],
+    queryFn: () => fetchHMMLabelDistribution(jobId as string),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useHMMExemplars(jobId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["hmm-exemplars", jobId],
+    queryFn: () => fetchHMMExemplars(jobId as string),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useGenerateInterpretations() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => postGenerateInterpretations(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["hmm-overlay", jobId] });
+      qc.invalidateQueries({ queryKey: ["hmm-label-distribution", jobId] });
+      qc.invalidateQueries({ queryKey: ["hmm-exemplars", jobId] });
+    },
+  });
+}

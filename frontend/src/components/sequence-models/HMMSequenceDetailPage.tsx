@@ -4,10 +4,17 @@ import Plot from "react-plotly.js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
+  type ExemplarRecord,
   type HMMSequenceJobDetail,
+  type LabelDistribution,
+  type OverlayResponse,
   isHMMSequenceJobActive,
   useCancelHMMSequenceJob,
+  useGenerateInterpretations,
   useHMMDwell,
+  useHMMExemplars,
+  useHMMLabelDistribution,
+  useHMMOverlay,
   useHMMSequenceJob,
   useHMMStates,
   useHMMTransitions,
@@ -195,6 +202,230 @@ function DwellHistogramsGrid({
   );
 }
 
+function PcaUmapScatter({
+  data,
+  nStates,
+}: {
+  data: OverlayResponse;
+  nStates: number;
+}) {
+  const [mode, setMode] = useState<"pca" | "umap">("pca");
+  const xKey = mode === "pca" ? "pca_x" : "umap_x";
+  const yKey = mode === "pca" ? "pca_y" : "umap_y";
+
+  const traces = useMemo(() => {
+    const byState: Record<number, { x: number[]; y: number[]; text: string[] }> = {};
+    for (let s = 0; s < nStates; s++) {
+      byState[s] = { x: [], y: [], text: [] };
+    }
+    for (const pt of data.items) {
+      const s = pt.viterbi_state;
+      if (!byState[s]) byState[s] = { x: [], y: [], text: [] };
+      byState[s].x.push(pt[xKey]);
+      byState[s].y.push(pt[yKey]);
+      byState[s].text.push(
+        `S${s} p=${pt.max_state_probability.toFixed(2)} t=${pt.start_time_sec.toFixed(0)}s`,
+      );
+    }
+    return Object.entries(byState).map(([s, d]) => ({
+      x: d.x,
+      y: d.y,
+      text: d.text,
+      mode: "markers" as const,
+      type: "scattergl" as const,
+      marker: {
+        color: STATE_COLORS[Number(s) % STATE_COLORS.length],
+        size: 4,
+        opacity: 0.7,
+      },
+      name: `State ${s}`,
+      hoverinfo: "text" as const,
+    }));
+  }, [data, xKey, yKey, nStates]);
+
+  return (
+    <div data-testid="hmm-pca-umap-scatter">
+      <div className="flex gap-2 mb-2">
+        <Button
+          size="sm"
+          variant={mode === "pca" ? "default" : "outline"}
+          onClick={() => setMode("pca")}
+        >
+          PCA
+        </Button>
+        <Button
+          size="sm"
+          variant={mode === "umap" ? "default" : "outline"}
+          onClick={() => setMode("umap")}
+        >
+          UMAP
+        </Button>
+      </div>
+      <Plot
+        data={traces}
+        layout={{
+          height: 400,
+          margin: { l: 50, r: 20, t: 10, b: 40 },
+          xaxis: { title: { text: `${mode.toUpperCase()} 1` } },
+          yaxis: { title: { text: `${mode.toUpperCase()} 2` } },
+          showlegend: true,
+          legend: { orientation: "h", y: 1.15 },
+        }}
+        config={{ responsive: true }}
+        style={{ width: "100%" }}
+      />
+    </div>
+  );
+}
+
+function LabelDistributionChart({
+  data,
+}: {
+  data: LabelDistribution;
+}) {
+  const traces = useMemo(() => {
+    const allLabels = new Set<string>();
+    for (const counts of Object.values(data.states)) {
+      for (const lbl of Object.keys(counts)) {
+        allLabels.add(lbl);
+      }
+    }
+    const sortedLabels = Array.from(allLabels).sort();
+    const stateKeys = Array.from({ length: data.n_states }, (_, i) => String(i));
+    const xLabels = stateKeys.map((s) => `S${s}`);
+
+    return sortedLabels.map((lbl, i) => ({
+      x: xLabels,
+      y: stateKeys.map((s) => data.states[s]?.[lbl] ?? 0),
+      name: lbl,
+      type: "bar" as const,
+      marker: {
+        color:
+          lbl === "unlabeled"
+            ? "#d1d5db"
+            : STATE_COLORS[i % STATE_COLORS.length],
+      },
+    }));
+  }, [data]);
+
+  return (
+    <div data-testid="hmm-label-distribution">
+      <Plot
+        data={traces}
+        layout={{
+          barmode: "stack",
+          height: 300,
+          margin: { l: 50, r: 20, t: 10, b: 40 },
+          xaxis: { title: { text: "State" } },
+          yaxis: { title: { text: "Count" } },
+          showlegend: true,
+          legend: { orientation: "h", y: 1.15 },
+        }}
+        config={{ responsive: true }}
+        style={{ width: "100%" }}
+      />
+    </div>
+  );
+}
+
+function ExemplarGallery({
+  states,
+  nStates,
+}: {
+  states: Record<string, ExemplarRecord[]>;
+  nStates: number;
+}) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set([0]));
+
+  const toggle = (s: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+  };
+
+  const typeLabel: Record<string, string> = {
+    high_confidence: "High Confidence",
+    mean_nearest: "Nearest to Centroid",
+    boundary: "Boundary (Low Confidence)",
+  };
+
+  return (
+    <div data-testid="hmm-exemplar-gallery" className="space-y-2">
+      {Array.from({ length: nStates }, (_, s) => {
+        const records = states[String(s)] ?? [];
+        const isOpen = expanded.has(s);
+        const grouped: Record<string, ExemplarRecord[]> = {};
+        for (const r of records) {
+          (grouped[r.exemplar_type] ??= []).push(r);
+        }
+
+        return (
+          <div key={s} className="border rounded-md">
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm font-medium flex items-center gap-2"
+              onClick={() => toggle(s)}
+            >
+              <span
+                className="w-3 h-3 rounded-full inline-block"
+                style={{
+                  backgroundColor: STATE_COLORS[s % STATE_COLORS.length],
+                }}
+              />
+              State {s}
+              <span className="text-slate-400 ml-auto">
+                {isOpen ? "▾" : "▸"}
+              </span>
+            </button>
+            {isOpen && (
+              <div className="px-3 pb-3 space-y-2">
+                {records.length === 0 && (
+                  <div className="text-xs text-slate-400">No exemplars</div>
+                )}
+                {["high_confidence", "mean_nearest", "boundary"].map(
+                  (etype) => {
+                    const items = grouped[etype];
+                    if (!items?.length) return null;
+                    return (
+                      <div key={etype}>
+                        <div className="text-xs font-medium text-slate-500 mb-1">
+                          {typeLabel[etype] ?? etype}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {items.map((ex, i) => (
+                            <div
+                              key={i}
+                              className="border rounded p-2 text-xs space-y-0.5"
+                            >
+                              <div>
+                                audio: {String(ex.audio_file_id).slice(0, 8)}
+                              </div>
+                              <div>
+                                {ex.start_time_sec.toFixed(1)}s –{" "}
+                                {ex.end_time_sec.toFixed(1)}s
+                              </div>
+                              <div>
+                                p={ex.max_state_probability.toFixed(3)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  },
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function HMMSequenceDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data, isLoading, error } = useHMMSequenceJob(jobId ?? null);
@@ -210,6 +441,10 @@ export function HMMSequenceDetailPage() {
   );
   const { data: transData } = useHMMTransitions(jobId ?? null, isComplete);
   const { data: dwellData } = useHMMDwell(jobId ?? null, isComplete);
+  const { data: overlayData } = useHMMOverlay(jobId ?? null, isComplete);
+  const { data: labelDistData } = useHMMLabelDistribution(jobId ?? null, isComplete);
+  const { data: exemplarsData } = useHMMExemplars(jobId ?? null, isComplete);
+  const generateMutation = useGenerateInterpretations();
 
   const spanIds = useMemo(() => {
     if (!statesData?.items) return [];
@@ -392,6 +627,17 @@ export function HMMSequenceDetailPage() {
         </Card>
       )}
 
+      {isComplete && overlayData && (
+        <Card>
+          <CardHeader>
+            <CardTitle>PCA / UMAP Overlay</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PcaUmapScatter data={overlayData} nStates={job.n_states} />
+          </CardContent>
+        </Card>
+      )}
+
       {isComplete && transData && (
         <Card>
           <CardHeader>
@@ -406,6 +652,34 @@ export function HMMSequenceDetailPage() {
         </Card>
       )}
 
+      {isComplete && (
+        <Card>
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <CardTitle>Label Distribution</CardTitle>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={generateMutation.isPending}
+                onClick={() => generateMutation.mutate(job.id)}
+                data-testid="hmm-generate-interpretations"
+              >
+                {generateMutation.isPending ? "Generating…" : "Refresh"}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {labelDistData ? (
+              <LabelDistributionChart data={labelDistData} />
+            ) : (
+              <div className="text-sm text-slate-500">
+                No label distribution available. Click Refresh to generate.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {isComplete && dwellData && (
         <Card>
           <CardHeader>
@@ -415,6 +689,20 @@ export function HMMSequenceDetailPage() {
             <DwellHistogramsGrid
               histograms={dwellData.histograms}
               nStates={dwellData.n_states}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {isComplete && exemplarsData && (
+        <Card>
+          <CardHeader>
+            <CardTitle>State Exemplars</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ExemplarGallery
+              states={exemplarsData.states}
+              nStates={exemplarsData.n_states}
             />
           </CardContent>
         </Card>

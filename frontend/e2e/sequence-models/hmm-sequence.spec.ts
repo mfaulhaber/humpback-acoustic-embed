@@ -95,6 +95,43 @@ const STATES = {
   ],
 };
 
+const OVERLAY = {
+  total: 4,
+  items: [
+    { merged_span_id: 0, window_index_in_span: 0, start_time_sec: 100.0, end_time_sec: 105.0, pca_x: 1.0, pca_y: 2.0, umap_x: 0.5, umap_y: 0.8, viterbi_state: 0, max_state_probability: 0.9 },
+    { merged_span_id: 0, window_index_in_span: 1, start_time_sec: 101.0, end_time_sec: 106.0, pca_x: 1.5, pca_y: 2.5, umap_x: 0.6, umap_y: 0.9, viterbi_state: 1, max_state_probability: 0.8 },
+    { merged_span_id: 1, window_index_in_span: 0, start_time_sec: 200.0, end_time_sec: 205.0, pca_x: -1.0, pca_y: -0.5, umap_x: -0.3, umap_y: 0.1, viterbi_state: 2, max_state_probability: 0.85 },
+    { merged_span_id: 1, window_index_in_span: 1, start_time_sec: 201.0, end_time_sec: 206.0, pca_x: -0.8, pca_y: -0.2, umap_x: -0.1, umap_y: 0.2, viterbi_state: 3, max_state_probability: 0.9 },
+  ],
+};
+
+const LABEL_DISTRIBUTION = {
+  n_states: 4,
+  total_windows: 4,
+  states: {
+    "0": { song: 1 },
+    "1": { call: 1 },
+    "2": { unlabeled: 1 },
+    "3": { song: 1 },
+  },
+};
+
+const EXEMPLARS = {
+  n_states: 4,
+  states: {
+    "0": [
+      { merged_span_id: 0, window_index_in_span: 0, audio_file_id: 1, start_time_sec: 100.0, end_time_sec: 105.0, max_state_probability: 0.9, exemplar_type: "high_confidence" },
+    ],
+    "1": [
+      { merged_span_id: 0, window_index_in_span: 1, audio_file_id: 1, start_time_sec: 101.0, end_time_sec: 106.0, max_state_probability: 0.8, exemplar_type: "high_confidence" },
+    ],
+    "2": [
+      { merged_span_id: 1, window_index_in_span: 0, audio_file_id: 1, start_time_sec: 200.0, end_time_sec: 205.0, max_state_probability: 0.85, exemplar_type: "mean_nearest" },
+    ],
+    "3": [],
+  },
+};
+
 interface MockState {
   hmmJobs: typeof QUEUED_JOB[];
 }
@@ -152,6 +189,38 @@ async function setupMocks(page: Page, state: MockState) {
           status: 200,
           contentType: "application/json",
           body: JSON.stringify(DWELL),
+        });
+      }
+
+      if (url.includes("/overlay")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(OVERLAY),
+        });
+      }
+
+      if (url.includes("/label-distribution")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(LABEL_DISTRIBUTION),
+        });
+      }
+
+      if (url.includes("/exemplars")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(EXEMPLARS),
+        });
+      }
+
+      if (url.includes("/generate-interpretations") && method === "POST") {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ status: "ok", job_id: id }),
         });
       }
 
@@ -214,7 +283,7 @@ test.describe("Sequence Models — HMM Sequence", () => {
     await expect(options.nth(1)).toContainText(CEJ_COMPLETE.id.slice(0, 8));
   });
 
-  test("detail page renders all three chart containers on a complete job", async ({
+  test("detail page renders all chart containers on a complete job", async ({
     page,
   }) => {
     const state: MockState = { hmmJobs: [COMPLETE_JOB] };
@@ -224,8 +293,11 @@ test.describe("Sequence Models — HMM Sequence", () => {
     await expect(page.getByTestId("hmm-detail-page")).toBeVisible();
     await expect(page.getByTestId("hmm-detail-status")).toHaveText("complete");
     await expect(page.getByTestId("hmm-state-timeline")).toBeVisible();
+    await expect(page.getByTestId("hmm-pca-umap-scatter")).toBeVisible();
     await expect(page.getByTestId("hmm-transition-heatmap")).toBeVisible();
+    await expect(page.getByTestId("hmm-label-distribution")).toBeVisible();
     await expect(page.getByTestId("hmm-dwell-histograms")).toBeVisible();
+    await expect(page.getByTestId("hmm-exemplar-gallery")).toBeVisible();
   });
 
   test("span selector switches between merged spans", async ({ page }) => {
