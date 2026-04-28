@@ -376,3 +376,4 @@ async def delete_hmm_sequence(job_id: str, session: SessionDep, settings: Settin
     deleted = await delete_hmm_sequence_job(session, job_id, settings)
     if not deleted:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
+    return None

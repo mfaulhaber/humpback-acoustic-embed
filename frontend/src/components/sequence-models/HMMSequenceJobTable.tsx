@@ -164,7 +164,7 @@ export function HMMSequenceJobTable({ jobs, mode }: TableProps) {
     </th>
   );
 
-  const colCount = mode === "active" ? 6 : 7;
+  const colCount = mode === "active" ? 6 : 8;
 
   return (
     <>

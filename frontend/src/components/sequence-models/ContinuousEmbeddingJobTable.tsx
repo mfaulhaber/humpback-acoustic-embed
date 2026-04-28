@@ -16,7 +16,6 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { BulkDeleteDialog } from "@/components/classifier/BulkDeleteDialog";
 import {
   type ContinuousEmbeddingJob,
-  isContinuousEmbeddingJobActive,
   useCancelContinuousEmbeddingJob,
   useDeleteContinuousEmbeddingJob,
 } from "@/api/sequenceModels";
@@ -150,7 +149,7 @@ export function ContinuousEmbeddingJobTable({ jobs, mode }: TableProps) {
     </th>
   );
 
-  const colCount = mode === "active" ? 7 : 7;
+  const colCount = 7;
 
   return (
     <>
