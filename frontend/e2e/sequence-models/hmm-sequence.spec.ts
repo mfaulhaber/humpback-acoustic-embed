@@ -232,6 +232,7 @@ async function setupMocks(page: Page, state: MockState) {
         contentType: "application/json",
         body: JSON.stringify({
           job,
+          region_detection_job_id: CEJ_COMPLETE.region_detection_job_id,
           summary: job.status === "complete" ? SUMMARY : null,
         }),
       });
@@ -256,6 +257,20 @@ async function setupMocks(page: Page, state: MockState) {
 
     return route.fulfill({ status: 405 });
   });
+
+  // Stub tile and audio-slice endpoints used by the timeline viewer
+  await page.route("**/call-parsing/region-jobs/*/tile**", (route) => {
+    // Return a 1x1 transparent PNG
+    const pixel = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    return route.fulfill({ status: 200, contentType: "image/png", body: pixel });
+  });
+
+  await page.route("**/call-parsing/region-jobs/*/audio-slice**", (route) =>
+    route.fulfill({ status: 200, contentType: "audio/mpeg", body: Buffer.alloc(0) }),
+  );
 }
 
 test.describe("Sequence Models — HMM Sequence", () => {
@@ -292,6 +307,7 @@ test.describe("Sequence Models — HMM Sequence", () => {
 
     await expect(page.getByTestId("hmm-detail-page")).toBeVisible();
     await expect(page.getByTestId("hmm-detail-status")).toHaveText("complete");
+    await expect(page.getByTestId("hmm-timeline-viewer")).toBeVisible();
     await expect(page.getByTestId("hmm-state-timeline")).toBeVisible();
     await expect(page.getByTestId("hmm-pca-umap-scatter")).toBeVisible();
     await expect(page.getByTestId("hmm-transition-heatmap")).toBeVisible();
@@ -316,5 +332,43 @@ test.describe("Sequence Models — HMM Sequence", () => {
     // Switch to span 1
     await selector.selectOption("1");
     await expect(page.getByTestId("hmm-state-timeline")).toBeVisible();
+  });
+
+  test("HMM State Timeline Viewer panel renders with spectrogram and state bar", async ({
+    page,
+  }) => {
+    const state: MockState = { hmmJobs: [COMPLETE_JOB] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/hmm-sequence/${COMPLETE_JOB.id}`);
+
+    // Timeline viewer panel is visible
+    await expect(page.getByTestId("hmm-timeline-viewer")).toBeVisible();
+
+    // Spectrogram viewport present within the panel
+    const viewerPanel = page.getByTestId("hmm-timeline-viewer");
+    await expect(viewerPanel.getByTestId("spectrogram-viewport")).toBeVisible();
+
+    // HMMStateBar canvas present
+    await expect(viewerPanel.getByTestId("hmm-state-bar")).toBeVisible();
+
+    // Span nav is visible with correct label
+    await expect(page.getByTestId("hmm-span-nav")).toBeVisible();
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Span 1/2");
+
+    // Prev disabled at first span, Next enabled
+    await expect(page.getByTestId("hmm-span-prev")).toBeDisabled();
+    await expect(page.getByTestId("hmm-span-next")).toBeEnabled();
+
+    // Click next span — label updates
+    await page.getByTestId("hmm-span-next").click();
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Span 2/2");
+
+    // Now next is disabled, prev is enabled
+    await expect(page.getByTestId("hmm-span-next")).toBeDisabled();
+    await expect(page.getByTestId("hmm-span-prev")).toBeEnabled();
+
+    // Zoom preset buttons are present (ZoomSelector renders buttons)
+    const zoomButtons = viewerPanel.locator("button").filter({ hasText: /^\d+[smh]$/ });
+    await expect(zoomButtons.first()).toBeVisible();
   });
 });

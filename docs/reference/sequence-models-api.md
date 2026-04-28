@@ -90,8 +90,9 @@ statistics and visualizations for latent-state discovery.
 
 - `GET /sequence-models/hmm-sequences/{id}` — return job detail plus
   `state_summary.json` sidecar (when artifacts exist). Response shape:
-  `{ job: HMMSequenceJob, summary: HMMStateSummary[] | null }`.
-  `404` if the job is missing.
+  `{ job: HMMSequenceJob, region_detection_job_id: string, summary: HMMStateSummary[] | null }`.
+  `region_detection_job_id` is resolved from the parent continuous
+  embedding job. `404` if the job is missing.
 
 - `GET /sequence-models/hmm-sequences/{id}/states` — paginated
   `states.parquet` rows as JSON. Query params: `offset` (default 0),

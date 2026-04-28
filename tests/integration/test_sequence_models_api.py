@@ -272,6 +272,48 @@ async def test_hmm_get_detail_returns_job_without_summary(client, app_settings):
     assert body["summary"] is None
 
 
+async def test_hmm_detail_includes_region_detection_job_id(client, app_settings):
+    from humpback.models.sequence_models import ContinuousEmbeddingJob
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        region_job = RegionDetectionJob(
+            status=JobStatus.complete.value,
+            hydrophone_id="rpi_orcasound_lab",
+            start_timestamp=0.0,
+            end_timestamp=600.0,
+        )
+        session.add(region_job)
+        await session.flush()
+        cej = ContinuousEmbeddingJob(
+            status=JobStatus.complete.value,
+            region_detection_job_id=region_job.id,
+            model_version="surfperch-tensorflow2",
+            window_size_seconds=5.0,
+            hop_seconds=1.0,
+            pad_seconds=10.0,
+            target_sample_rate=32000,
+            encoding_signature="test-sig-hmm-region",
+        )
+        session.add(cej)
+        await session.commit()
+        await session.refresh(cej)
+        cej_id = cej.id
+        region_job_id = region_job.id
+
+    create_resp = await client.post(
+        "/sequence-models/hmm-sequences",
+        json={"continuous_embedding_job_id": cej_id, "n_states": 4},
+    )
+    job_id = create_resp.json()["id"]
+
+    detail = await client.get(f"/sequence-models/hmm-sequences/{job_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["region_detection_job_id"] == region_job_id
+
+
 async def test_hmm_cancel_queued_returns_canceled(client, app_settings):
     cej_id = await _seed_complete_continuous_embedding_job(app_settings)
     create_resp = await client.post(

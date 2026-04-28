@@ -154,6 +154,7 @@ class HMMSequenceJobDetail(BaseModel):
     """Detail response combining the DB row with state summary stats."""
 
     job: HMMSequenceJobOut
+    region_detection_job_id: str
     summary: Optional[list[HMMStateSummary]] = None
 
 

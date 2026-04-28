@@ -212,6 +212,7 @@ export interface HMMStateSummary {
 
 export interface HMMSequenceJobDetail {
   job: HMMSequenceJob;
+  region_detection_job_id: string;
   summary: HMMStateSummary[] | null;
 }
 

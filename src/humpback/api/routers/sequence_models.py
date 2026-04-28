@@ -193,12 +193,22 @@ async def get_hmm_sequence(
     job_id: str,
     session: SessionDep,
 ) -> HMMSequenceJobDetail:
+    from humpback.models.sequence_models import ContinuousEmbeddingJob
+
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
+
+    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
+    region_detection_job_id = cej.region_detection_job_id if cej else ""
+
     settings = Settings.from_repo_env()
     summary = _load_summary(settings, job_id)
-    return HMMSequenceJobDetail(job=_hmm_to_out(job), summary=summary)
+    return HMMSequenceJobDetail(
+        job=_hmm_to_out(job),
+        region_detection_job_id=region_detection_job_id,
+        summary=summary,
+    )
 
 
 @router.get("/hmm-sequences/{job_id}/states")

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Plot from "react-plotly.js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,13 +19,15 @@ import {
   useHMMStates,
   useHMMTransitions,
 } from "@/api/sequenceModels";
-
-const STATE_COLORS = [
-  "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-  "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-  "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
-  "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5",
-];
+import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
+import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
+import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
+import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
+import { PlaybackControls } from "@/components/timeline/controls/PlaybackControls";
+import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import { STATE_COLORS } from "./constants";
+import { SpanNavBar, type SpanInfo } from "./SpanNavBar";
+import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
 
 function StateTimeline({
   items,
@@ -458,8 +460,63 @@ export function HMMSequenceDetailPage() {
     return Array.from(ids).sort((a, b) => a - b);
   }, [statesData]);
 
+  const spans: SpanInfo[] = useMemo(() => {
+    if (!statesData?.items || spanIds.length === 0) return [];
+    return spanIds.map((id) => {
+      let minT = Infinity;
+      let maxT = -Infinity;
+      for (const row of statesData.items) {
+        if ((row.merged_span_id as number) !== id) continue;
+        const s = row.start_time_sec as number;
+        const e = row.end_time_sec as number;
+        if (s < minT) minT = s;
+        if (e > maxT) maxT = e;
+      }
+      return { id, startSec: minT, endSec: maxT };
+    });
+  }, [statesData, spanIds]);
+
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
   const activeSpan = selectedSpan ?? spanIds[0] ?? 0;
+
+  const activeSpanIndex = useMemo(
+    () => Math.max(0, spanIds.indexOf(activeSpan)),
+    [spanIds, activeSpan],
+  );
+  const activeTimelineSpan = spans[activeSpanIndex] ?? null;
+
+  const handlePrevSpan = useCallback(() => {
+    const newIdx = Math.max(0, activeSpanIndex - 1);
+    setSelectedSpan(spanIds[newIdx] ?? null);
+  }, [activeSpanIndex, spanIds]);
+  const handleNextSpan = useCallback(() => {
+    const newIdx = Math.min(spanIds.length - 1, activeSpanIndex + 1);
+    setSelectedSpan(spanIds[newIdx] ?? null);
+  }, [activeSpanIndex, spanIds]);
+
+  const regionDetectionJobId = data?.region_detection_job_id ?? "";
+
+  const defaultZoom = useMemo(() => {
+    if (!activeTimelineSpan) return REVIEW_ZOOM[0].key;
+    const duration = activeTimelineSpan.endSec - activeTimelineSpan.startSec;
+    let best = REVIEW_ZOOM[0];
+    for (const preset of REVIEW_ZOOM) {
+      if (preset.span <= duration * 1.2) best = preset;
+    }
+    return best.key;
+  }, [activeTimelineSpan]);
+
+  const timelineSpanItems: ViterbiWindow[] = useMemo(() => {
+    if (!statesData?.items || !activeTimelineSpan) return [];
+    return statesData.items
+      .filter((r) => (r.merged_span_id as number) === activeTimelineSpan.id)
+      .map((r) => ({
+        start_time_sec: r.start_time_sec as number,
+        end_time_sec: r.end_time_sec as number,
+        viterbi_state: r.viterbi_state as number,
+        max_state_probability: r.max_state_probability as number,
+      }));
+  }, [statesData, activeTimelineSpan]);
 
   if (isLoading) {
     return (
@@ -597,6 +654,50 @@ export function HMMSequenceDetailPage() {
         <div className="text-sm text-slate-500" data-testid="hmm-detail-running">
           Job is running — charts will appear when complete.
         </div>
+      )}
+
+      {isComplete && statesData && activeTimelineSpan && regionDetectionJobId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>HMM State Timeline Viewer</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2" data-testid="hmm-timeline-viewer">
+            <SpanNavBar
+              spans={spans}
+              activeIndex={activeSpanIndex}
+              onPrev={handlePrevSpan}
+              onNext={handleNextSpan}
+            />
+            <TimelineProvider
+              key={`hmm-timeline-${activeTimelineSpan.id}`}
+              jobStart={activeTimelineSpan.startSec}
+              jobEnd={activeTimelineSpan.endSec}
+              zoomLevels={REVIEW_ZOOM}
+              defaultZoom={defaultZoom}
+              playback="slice"
+              audioUrlBuilder={(startEpoch, durationSec) =>
+                regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
+              }
+            >
+              <div style={{ height: 160 }}>
+                <Spectrogram
+                  jobId={regionDetectionJobId}
+                  tileUrlBuilder={(jid, zoomLevel, tileIndex, _fMin, _fMax) =>
+                    regionTileUrl(jid, zoomLevel, tileIndex)
+                  }
+                  freqRange={[0, 3000]}
+                />
+              </div>
+              <HMMStateBar items={timelineSpanItems} nStates={job.n_states} />
+              <div className="flex justify-center py-1">
+                <ZoomSelector />
+              </div>
+              <div className="flex justify-center">
+                <PlaybackControls />
+              </div>
+            </TimelineProvider>
+          </CardContent>
+        </Card>
       )}
 
       {isComplete && statesData && (
