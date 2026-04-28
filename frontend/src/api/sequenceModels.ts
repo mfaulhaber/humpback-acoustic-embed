@@ -183,7 +183,6 @@ export interface HMMSequenceJob {
   id: string;
   status: string;
   continuous_embedding_job_id: string;
-  region_detection_job_id: string | null;
   n_states: number;
   pca_dims: number;
   pca_whiten: boolean;
@@ -213,6 +212,7 @@ export interface HMMStateSummary {
 
 export interface HMMSequenceJobDetail {
   job: HMMSequenceJob;
+  region_detection_job_id: string;
   summary: HMMStateSummary[] | null;
 }
 

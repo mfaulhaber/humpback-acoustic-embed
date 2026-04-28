@@ -147,11 +147,8 @@ async def delete_continuous_embedding(
 # ---------------------------------------------------------------------------
 
 
-def _hmm_to_out(job, region_detection_job_id: str | None = None) -> HMMSequenceJobOut:
-    out = HMMSequenceJobOut.model_validate(job)
-    if region_detection_job_id is not None:
-        out.region_detection_job_id = region_detection_job_id
-    return out
+def _hmm_to_out(job) -> HMMSequenceJobOut:
+    return HMMSequenceJobOut.model_validate(job)
 
 
 def _load_summary(settings: Settings, job_id: str) -> list[HMMStateSummary] | None:
@@ -203,12 +200,13 @@ async def get_hmm_sequence(
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
 
     cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
-    region_detection_job_id = cej.region_detection_job_id if cej else None
+    region_detection_job_id = cej.region_detection_job_id if cej else ""
 
     settings = Settings.from_repo_env()
     summary = _load_summary(settings, job_id)
     return HMMSequenceJobDetail(
-        job=_hmm_to_out(job, region_detection_job_id=region_detection_job_id),
+        job=_hmm_to_out(job),
+        region_detection_job_id=region_detection_job_id,
         summary=summary,
     )
 
