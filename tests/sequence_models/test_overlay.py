@@ -60,7 +60,7 @@ class TestComputeOverlay:
     def test_output_shape_and_columns(self):
         pca = _make_pca()
         raw, vs, mp, meta = _make_inputs()
-        table = compute_overlay(pca, raw, vs, mp, meta)
+        table, _ = compute_overlay(pca, raw, vs, mp, meta)
 
         total_windows = sum(len(s) for s in raw)
         assert table.num_rows == total_windows
@@ -81,7 +81,7 @@ class TestComputeOverlay:
     def test_viterbi_states_match_input(self):
         pca = _make_pca()
         raw, vs, mp, meta = _make_inputs()
-        table = compute_overlay(pca, raw, vs, mp, meta)
+        table, _ = compute_overlay(pca, raw, vs, mp, meta)
 
         expected_states = np.concatenate(vs)
         actual_states = np.array(table.column("viterbi_state").to_pylist())
@@ -90,8 +90,8 @@ class TestComputeOverlay:
     def test_determinism_on_fixed_seed(self):
         pca = _make_pca()
         raw, vs, mp, meta = _make_inputs()
-        t1 = compute_overlay(pca, raw, vs, mp, meta, random_state=99)
-        t2 = compute_overlay(pca, raw, vs, mp, meta, random_state=99)
+        t1, _ = compute_overlay(pca, raw, vs, mp, meta, random_state=99)
+        t2, _ = compute_overlay(pca, raw, vs, mp, meta, random_state=99)
 
         np.testing.assert_array_equal(
             t1.column("umap_x").to_pylist(),
@@ -105,16 +105,43 @@ class TestComputeOverlay:
     def test_single_span(self):
         pca = _make_pca()
         raw, vs, mp, meta = _make_inputs(n_spans=1, windows_per_span=20)
-        table = compute_overlay(pca, raw, vs, mp, meta)
+        table, _ = compute_overlay(pca, raw, vs, mp, meta)
         assert table.num_rows == 20
         assert all(v == 0 for v in table.column("merged_span_id").to_pylist())
 
     def test_l2_normalize_flag(self):
         pca = _make_pca()
         raw, vs, mp, meta = _make_inputs()
-        t_norm = compute_overlay(pca, raw, vs, mp, meta, l2_normalize=True)
-        t_no_norm = compute_overlay(pca, raw, vs, mp, meta, l2_normalize=False)
+        t_norm, _ = compute_overlay(pca, raw, vs, mp, meta, l2_normalize=True)
+        t_no_norm, _ = compute_overlay(pca, raw, vs, mp, meta, l2_normalize=False)
 
         pca_x_norm = np.array(t_norm.column("pca_x").to_pylist())
         pca_x_raw = np.array(t_no_norm.column("pca_x").to_pylist())
         assert not np.allclose(pca_x_norm, pca_x_raw, atol=1e-5)
+
+    def test_single_window_skips_umap(self):
+        """UMAP requires >= 3 samples; single window should produce NaN UMAP coords."""
+        pca = _make_pca()
+        raw, vs, mp, meta = _make_inputs(n_spans=1, windows_per_span=1)
+        table, pca_full = compute_overlay(pca, raw, vs, mp, meta)
+        assert table.num_rows == 1
+        assert np.isfinite(table.column("pca_x")[0].as_py())
+        assert np.isnan(table.column("umap_x")[0].as_py())
+        assert np.isnan(table.column("umap_y")[0].as_py())
+        assert pca_full.shape == (1, 10)
+
+    def test_two_windows_skips_umap(self):
+        """UMAP requires >= 3 samples; two windows should produce NaN UMAP coords."""
+        pca = _make_pca()
+        raw, vs, mp, meta = _make_inputs(n_spans=1, windows_per_span=2)
+        table, _ = compute_overlay(pca, raw, vs, mp, meta)
+        assert table.num_rows == 2
+        for i in range(2):
+            assert np.isnan(table.column("umap_x")[i].as_py())
+
+    def test_returns_pca_full(self):
+        pca = _make_pca(n_components=10)
+        raw, vs, mp, meta = _make_inputs()
+        _, pca_full = compute_overlay(pca, raw, vs, mp, meta)
+        total = sum(len(s) for s in raw)
+        assert pca_full.shape == (total, 10)

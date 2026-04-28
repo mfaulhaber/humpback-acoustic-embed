@@ -35,8 +35,11 @@ def compute_overlay(
     umap_n_neighbors: int = 15,
     umap_min_dist: float = 0.1,
     random_state: int = 42,
-) -> pa.Table:
+) -> tuple[pa.Table, np.ndarray]:
     """Compute PCA + UMAP 2-D projections colored by HMM state.
+
+    Returns the overlay table and the full PCA-reduced embeddings so
+    callers can reuse them (e.g. for exemplar centroid distances).
 
     Parameters
     ----------
@@ -65,20 +68,25 @@ def compute_overlay(
     pca_x = pca_full[:, 0]
     pca_y = pca_full[:, 1]
 
-    reducer = UMAP(
-        n_components=2,
-        n_neighbors=min(umap_n_neighbors, len(concatenated) - 1),
-        min_dist=umap_min_dist,
-        random_state=random_state,
-    )
-    umap_2d = np.asarray(reducer.fit_transform(pca_full), dtype=np.float32)
-    umap_x = umap_2d[:, 0]
-    umap_y = umap_2d[:, 1]
+    n_samples = len(concatenated)
+    if n_samples >= 3:
+        reducer = UMAP(
+            n_components=2,
+            n_neighbors=min(umap_n_neighbors, n_samples - 1),
+            min_dist=umap_min_dist,
+            random_state=random_state,
+        )
+        umap_2d = np.asarray(reducer.fit_transform(pca_full), dtype=np.float32)
+        umap_x = umap_2d[:, 0]
+        umap_y = umap_2d[:, 1]
+    else:
+        umap_x = np.full(n_samples, np.nan, dtype=np.float32)
+        umap_y = np.full(n_samples, np.nan, dtype=np.float32)
 
     all_states = np.concatenate(viterbi_states).astype(np.int16)
     all_probs = np.concatenate(max_state_probs).astype(np.float32)
 
-    return pa.table(
+    table = pa.table(
         {
             "merged_span_id": pa.array(metadata.merged_span_ids, type=pa.int32()),
             "window_index_in_span": pa.array(metadata.window_indices, type=pa.int32()),
@@ -92,3 +100,4 @@ def compute_overlay(
             "max_state_probability": pa.array(all_probs, type=pa.float32()),
         }
     )
+    return table, pca_full

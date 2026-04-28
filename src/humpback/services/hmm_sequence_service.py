@@ -138,8 +138,15 @@ async def cancel_hmm_sequence_job(
 
 def _load_overlay_inputs(
     storage_root: Path, job: HMMSequenceJob, cej: ContinuousEmbeddingJob
-) -> tuple[Any, list[np.ndarray], list[np.ndarray], list[np.ndarray], OverlayMetadata]:
-    """Load PCA model, raw embeddings, and states for overlay + exemplar generation."""
+) -> tuple[
+    Any,
+    list[np.ndarray],
+    list[np.ndarray],
+    list[np.ndarray],
+    OverlayMetadata,
+    list[WindowMeta],
+]:
+    """Load PCA model, raw embeddings, states, and window metadata."""
     pca_model = joblib.load(hmm_sequence_pca_model_path(storage_root, job.id))
     emb_table = pq.read_table(continuous_embedding_parquet_path(storage_root, cej.id))
     states_table = pq.read_table(hmm_sequence_states_path(storage_root, job.id))
@@ -155,18 +162,20 @@ def _load_overlay_inputs(
     all_starts: list[float] = []
     all_ends: list[float] = []
 
+    states_dict = states_table.to_pydict()
     states_by_span: dict[int, dict[int, dict[str, Any]]] = {}
+    audio_file_by_span_win: dict[tuple[int, int], int] = {}
     for i in range(states_table.num_rows):
-        sid = states_table.column("merged_span_id")[i].as_py()
-        widx = states_table.column("window_index_in_span")[i].as_py()
+        sid = states_dict["merged_span_id"][i]
+        widx = states_dict["window_index_in_span"][i]
         states_by_span.setdefault(sid, {})[widx] = {
-            "viterbi_state": states_table.column("viterbi_state")[i].as_py(),
-            "max_state_probability": states_table.column("max_state_probability")[
-                i
-            ].as_py(),
+            "viterbi_state": states_dict["viterbi_state"][i],
+            "max_state_probability": states_dict["max_state_probability"][i],
         }
+        audio_file_by_span_win[(sid, widx)] = states_dict["audio_file_id"][i]
 
     emb_span_vals = emb_table.column("merged_span_id").to_pylist()
+    window_metas: list[WindowMeta] = []
     for span_id in unique_spans:
         indices = [i for i, v in enumerate(emb_span_vals) if v == span_id]
         sub = emb_table.take(indices).sort_by("window_index_in_span")
@@ -180,12 +189,25 @@ def _load_overlay_inputs(
         for row_i in range(n_rows):
             widx = sub.column("window_index_in_span")[row_i].as_py()
             st = span_states.get(widx, {})
+            prob = st.get("max_state_probability", 0.0)
             v_states[row_i] = st.get("viterbi_state", 0)
-            m_probs[row_i] = st.get("max_state_probability", 0.0)
+            m_probs[row_i] = prob
+            start = sub.column("start_time_sec")[row_i].as_py()
+            end = sub.column("end_time_sec")[row_i].as_py()
             all_span_ids.append(span_id)
             all_win_indices.append(widx)
-            all_starts.append(sub.column("start_time_sec")[row_i].as_py())
-            all_ends.append(sub.column("end_time_sec")[row_i].as_py())
+            all_starts.append(start)
+            all_ends.append(end)
+            window_metas.append(
+                WindowMeta(
+                    merged_span_id=span_id,
+                    window_index_in_span=widx,
+                    audio_file_id=audio_file_by_span_win.get((span_id, widx), 0),
+                    start_time_sec=start,
+                    end_time_sec=end,
+                    max_state_probability=prob,
+                )
+            )
 
         viterbi_states.append(v_states)
         max_probs.append(m_probs)
@@ -196,7 +218,7 @@ def _load_overlay_inputs(
         start_times=all_starts,
         end_times=all_ends,
     )
-    return pca_model, raw_sequences, viterbi_states, max_probs, meta
+    return pca_model, raw_sequences, viterbi_states, max_probs, meta, window_metas
 
 
 def generate_interpretations(
@@ -209,11 +231,11 @@ def generate_interpretations(
     Does NOT generate label distribution (that requires DB access to
     vocalization_labels, which changes over time).
     """
-    pca_model, raw_sequences, viterbi_states, max_probs, meta = _load_overlay_inputs(
-        storage_root, job, cej
+    pca_model, raw_sequences, viterbi_states, max_probs, meta, window_metas = (
+        _load_overlay_inputs(storage_root, job, cej)
     )
 
-    overlay_table = compute_overlay(
+    overlay_table, pca_full = compute_overlay(
         pca_model,
         raw_sequences,
         viterbi_states,
@@ -228,38 +250,10 @@ def generate_interpretations(
     pq.write_table(overlay_table, overlay_tmp)
     atomic_rename(overlay_tmp, overlay_dst)
 
-    from humpback.sequence_models.pca_pipeline import (
-        l2_normalize_sequences,
-        transform_sequences,
-    )
-
-    preproc = (
-        l2_normalize_sequences(raw_sequences) if job.l2_normalize else raw_sequences
-    )
-    pca_reduced = transform_sequences(pca_model, preproc)
-    all_pca = np.concatenate(pca_reduced, axis=0)
     all_states_flat = np.concatenate(viterbi_states)
 
-    states_table = pq.read_table(hmm_sequence_states_path(storage_root, job.id))
-    window_metas: list[WindowMeta] = []
-    for i in range(states_table.num_rows):
-        window_metas.append(
-            WindowMeta(
-                merged_span_id=states_table.column("merged_span_id")[i].as_py(),
-                window_index_in_span=states_table.column("window_index_in_span")[
-                    i
-                ].as_py(),
-                audio_file_id=states_table.column("audio_file_id")[i].as_py(),
-                start_time_sec=states_table.column("start_time_sec")[i].as_py(),
-                end_time_sec=states_table.column("end_time_sec")[i].as_py(),
-                max_state_probability=states_table.column("max_state_probability")[
-                    i
-                ].as_py(),
-            )
-        )
-
     exemplars_result = select_exemplars(
-        all_pca, all_states_flat, window_metas, job.n_states
+        pca_full, all_states_flat, window_metas, job.n_states
     )
     exemplars_dir = ensure_dir(hmm_sequence_exemplars_dir(storage_root, job.id))
     exemplars_dst = hmm_sequence_exemplars_path(storage_root, job.id)
