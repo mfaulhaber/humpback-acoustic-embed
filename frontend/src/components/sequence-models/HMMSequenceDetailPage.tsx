@@ -401,7 +401,10 @@ function ExemplarGallery({
                               className="border rounded p-2 text-xs space-y-0.5"
                             >
                               <div>
-                                audio: {String(ex.audio_file_id).slice(0, 8)}
+                                audio:{" "}
+                                {ex.audio_file_id == null
+                                  ? "hydrophone"
+                                  : String(ex.audio_file_id).slice(0, 8)}
                               </div>
                               <div>
                                 {ex.start_time_sec.toFixed(1)}s –{" "}

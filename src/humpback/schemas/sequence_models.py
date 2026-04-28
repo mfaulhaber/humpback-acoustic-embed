@@ -211,7 +211,7 @@ class ExemplarRecord(BaseModel):
 
     merged_span_id: int
     window_index_in_span: int
-    audio_file_id: int
+    audio_file_id: int | None
     start_time_sec: float
     end_time_sec: float
     max_state_probability: float

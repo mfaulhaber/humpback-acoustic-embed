@@ -7,6 +7,7 @@ from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobCreate,
     ContinuousEmbeddingJobManifest,
     ContinuousEmbeddingSpanSummary,
+    ExemplarRecord,
 )
 
 
@@ -65,3 +66,17 @@ def test_continuous_embedding_job_manifest_round_trip():
     restored = ContinuousEmbeddingJobManifest.model_validate(data)
     assert restored.vector_dim == 1280
     assert restored.spans[0].window_count == 20
+
+
+def test_exemplar_record_accepts_null_audio_file_id_for_hydrophone_jobs():
+    record = ExemplarRecord(
+        merged_span_id=0,
+        window_index_in_span=3,
+        audio_file_id=None,
+        start_time_sec=10.0,
+        end_time_sec=15.0,
+        max_state_probability=0.93,
+        exemplar_type="high_confidence",
+    )
+
+    assert record.audio_file_id is None

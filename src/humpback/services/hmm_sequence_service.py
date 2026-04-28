@@ -288,12 +288,19 @@ async def generate_label_distribution(
         raise ValueError(f"RegionDetectionJob not found: {cej.region_detection_job_id}")
 
     states_table = pq.read_table(hmm_sequence_states_path(storage_root, job.id))
+    time_offset_sec = (
+        float(rdj.start_timestamp)
+        if rdj.hydrophone_id and rdj.start_timestamp is not None
+        else 0.0
+    )
     state_rows: list[dict[str, Any]] = []
     for i in range(states_table.num_rows):
+        start_time = float(states_table.column("start_time_sec")[i].as_py())
+        end_time = float(states_table.column("end_time_sec")[i].as_py())
         state_rows.append(
             {
-                "start_time_sec": states_table.column("start_time_sec")[i].as_py(),
-                "end_time_sec": states_table.column("end_time_sec")[i].as_py(),
+                "start_time_sec": start_time + time_offset_sec,
+                "end_time_sec": end_time + time_offset_sec,
                 "viterbi_state": states_table.column("viterbi_state")[i].as_py(),
             }
         )
