@@ -69,6 +69,10 @@ const navItems: NavItem[] = [
         label: "Continuous Embedding",
         to: "/app/sequence-models/continuous-embedding",
       },
+      {
+        label: "HMM Sequence",
+        to: "/app/sequence-models/hmm-sequence",
+      },
     ],
   },
   { label: "Search", icon: Search, to: "/app/search" },

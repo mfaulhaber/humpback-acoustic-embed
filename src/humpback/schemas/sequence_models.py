@@ -1,7 +1,7 @@
-"""Pydantic schemas for the Sequence Models track (PR 1)."""
+"""Pydantic schemas for the Sequence Models track."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -91,3 +91,81 @@ class ContinuousEmbeddingJobDetail(BaseModel):
     job: ContinuousEmbeddingJobOut
     manifest: Optional[ContinuousEmbeddingJobManifest] = None
     extra: Optional[dict[str, Any]] = None
+
+
+# ---------------------------------------------------------------------------
+# HMM Sequence Jobs (PR 2)
+# ---------------------------------------------------------------------------
+
+
+class HMMSequenceJobCreate(BaseModel):
+    """Request body for creating an ``HMMSequenceJob``."""
+
+    continuous_embedding_job_id: str
+    n_states: int = Field(ge=2)
+    pca_dims: int = Field(default=50, ge=1)
+    pca_whiten: bool = False
+    l2_normalize: bool = True
+    covariance_type: Literal["diag", "full"] = "diag"
+    n_iter: int = Field(default=100, ge=1)
+    random_seed: int = 42
+    min_sequence_length_frames: int = Field(default=10, ge=1)
+    tol: float = Field(default=1e-4, gt=0)
+
+
+class HMMSequenceJobOut(BaseModel):
+    """HMM sequence job state returned by the API."""
+
+    id: str
+    status: str
+    continuous_embedding_job_id: str
+    n_states: int
+    pca_dims: int
+    pca_whiten: bool
+    l2_normalize: bool
+    covariance_type: str
+    n_iter: int
+    random_seed: int
+    min_sequence_length_frames: int
+    tol: float
+    library: str
+    train_log_likelihood: Optional[float] = None
+    n_train_sequences: Optional[int] = None
+    n_train_frames: Optional[int] = None
+    n_decoded_sequences: Optional[int] = None
+    artifact_dir: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class HMMStateSummary(BaseModel):
+    """Per-state summary from ``state_summary.json``."""
+
+    state: int
+    occupancy: float
+    mean_dwell_frames: float
+    dwell_histogram: list[int] = Field(default_factory=list)
+
+
+class HMMSequenceJobDetail(BaseModel):
+    """Detail response combining the DB row with state summary stats."""
+
+    job: HMMSequenceJobOut
+    summary: Optional[list[HMMStateSummary]] = None
+
+
+class TransitionMatrixResponse(BaseModel):
+    """Transition matrix as a nested list for JSON serialization."""
+
+    n_states: int
+    matrix: list[list[float]]
+
+
+class DwellHistogramResponse(BaseModel):
+    """Per-state dwell-time histograms."""
+
+    n_states: int
+    histograms: dict[str, list[int]]

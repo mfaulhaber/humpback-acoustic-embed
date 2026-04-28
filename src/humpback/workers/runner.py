@@ -413,6 +413,44 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then continuous embedding jobs
+        cejob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_continuous_embedding_job
+
+            cejob = await claim_continuous_embedding_job(session)
+        if cejob:
+            logger.info(f"Continuous embedding job {cejob.id}")
+            from humpback.workers.continuous_embedding_worker import (
+                run_continuous_embedding_job,
+            )
+
+            async with session_factory() as session:
+                await run_continuous_embedding_job(session, cejob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
+        # Then HMM sequence jobs
+        hmmjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_hmm_sequence_job
+
+            hmmjob = await claim_hmm_sequence_job(session)
+        if hmmjob:
+            logger.info(f"HMM sequence job {hmmjob.id}")
+            from humpback.workers.hmm_sequence_worker import (
+                run_hmm_sequence_job,
+            )
+
+            async with session_factory() as session:
+                await run_hmm_sequence_job(session, hmmjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

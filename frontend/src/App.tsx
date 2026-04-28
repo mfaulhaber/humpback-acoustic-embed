@@ -27,6 +27,8 @@ import { WindowClassifyPage } from "@/components/call-parsing/WindowClassifyPage
 import { RegionDetectionTimeline } from "@/components/call-parsing/RegionDetectionTimeline";
 import { ContinuousEmbeddingJobsPage } from "@/components/sequence-models/ContinuousEmbeddingJobsPage";
 import { ContinuousEmbeddingDetailPage } from "@/components/sequence-models/ContinuousEmbeddingDetailPage";
+import { HMMSequenceJobsPage } from "@/components/sequence-models/HMMSequenceJobsPage";
+import { HMMSequenceDetailPage } from "@/components/sequence-models/HMMSequenceDetailPage";
 
 export default function App() {
   return (
@@ -62,6 +64,8 @@ export default function App() {
         <Route path="/app/sequence-models" element={<Navigate to="/app/sequence-models/continuous-embedding" replace />} />
         <Route path="/app/sequence-models/continuous-embedding/:jobId" element={<ContinuousEmbeddingDetailPage />} />
         <Route path="/app/sequence-models/continuous-embedding" element={<ContinuousEmbeddingJobsPage />} />
+        <Route path="/app/sequence-models/hmm-sequence/:jobId" element={<HMMSequenceDetailPage />} />
+        <Route path="/app/sequence-models/hmm-sequence" element={<HMMSequenceJobsPage />} />
         <Route path="/app/search" element={<SearchTab />} />
         <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />

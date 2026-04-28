@@ -17,6 +17,7 @@ dependencies = [
     "librosa>=0.10",
     "umap-learn>=0.5",
     "hdbscan>=0.8",
+    "hmmlearn>=0.3.2",
     "scikit-learn>=1.5",
     "scipy>=1.14",
     "joblib>=1.5.3",

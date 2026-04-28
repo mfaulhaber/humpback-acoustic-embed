@@ -331,6 +331,38 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count17:
         logger.warning(f"Recovered {count17} stale classifier feedback training job(s)")
 
+    from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
+
+    result_cej = await session.execute(
+        update(ContinuousEmbeddingJob)
+        .where(
+            ContinuousEmbeddingJob.status == JobStatus.running.value,
+            ContinuousEmbeddingJob.updated_at < cutoff,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_cej = _rowcount(result_cej)
+    if count_cej:
+        logger.warning(f"Recovered {count_cej} stale continuous embedding job(s)")
+
+    result_hmm = await session.execute(
+        update(HMMSequenceJob)
+        .where(
+            HMMSequenceJob.status == JobStatus.running.value,
+            HMMSequenceJob.updated_at < cutoff,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_hmm = _rowcount(result_hmm)
+    if count_hmm:
+        logger.warning(f"Recovered {count_hmm} stale HMM sequence job(s)")
+
     total = (
         count
         + count2
@@ -348,6 +380,8 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count15
         + count_stj
         + count17
+        + count_cej
+        + count_hmm
     )
     if total:
         await session.commit()
@@ -889,6 +923,23 @@ async def claim_continuous_embedding_job(session: AsyncSession):
             queued_value=JobStatus.queued.value,
             running_value=JobStatus.running.value,
             order_attr=ContinuousEmbeddingJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_hmm_sequence_job(session: AsyncSession):
+    from humpback.models.sequence_models import HMMSequenceJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            HMMSequenceJob,
+            status_attr=HMMSequenceJob.status,
+            queued_value=JobStatus.queued.value,
+            running_value=JobStatus.running.value,
+            order_attr=HMMSequenceJob.created_at,
         )
         if job is not None:
             return job
