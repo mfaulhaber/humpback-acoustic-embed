@@ -57,6 +57,9 @@
   {job_id}/transition_matrix.npy   (n_states × n_states row-normalized transition matrix)
   {job_id}/state_summary.json      (per-state occupancy, mean_dwell_frames, dwell_histogram)
   {job_id}/training_log.json       (training hyperparameters and result stats)
+  {job_id}/pca_overlay.parquet     (PR 3: 2-D PCA + UMAP projections colored by viterbi_state)
+  {job_id}/label_distribution.json (PR 3: per-state vocalization-label counts from center-time join)
+  {job_id}/exemplars/exemplars.json (PR 3: per-state high-confidence, nearest-centroid, boundary exemplar windows)
 /timeline_cache/
   {job_id}/{zoom_level}/tile_{NNNN}.png   (PCEN-normalized spectrogram tiles, LRU-evicted per job)
   {job_id}/.cache_version                  (integer; current is 2. Migrations run on first access when missing or lower)

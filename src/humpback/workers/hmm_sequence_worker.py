@@ -296,6 +296,18 @@ async def run_hmm_sequence_job(
             hmm_sequence_training_log_path(settings.storage_root, job_id),
         )
 
+        # --- Generate interpretation artifacts (overlay + exemplars) ---
+        try:
+            from humpback.services.hmm_sequence_service import generate_interpretations
+
+            generate_interpretations(settings.storage_root, job, source)
+        except Exception:
+            logger.warning(
+                "hmm_sequence | job=%s | interpretation generation failed, continuing",
+                job_id,
+                exc_info=True,
+            )
+
         # --- Update job row ---
         now = datetime.now(timezone.utc)
         refreshed = await session.get(HMMSequenceJob, job_id)

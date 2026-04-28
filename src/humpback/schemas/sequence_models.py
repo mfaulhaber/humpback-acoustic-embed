@@ -169,3 +169,57 @@ class DwellHistogramResponse(BaseModel):
 
     n_states: int
     histograms: dict[str, list[int]]
+
+
+# ---------------------------------------------------------------------------
+# Interpretation visualizations (PR 3)
+# ---------------------------------------------------------------------------
+
+
+class OverlayPoint(BaseModel):
+    """Single point in the PCA/UMAP 2-D overlay."""
+
+    merged_span_id: int
+    window_index_in_span: int
+    start_time_sec: float
+    end_time_sec: float
+    pca_x: float
+    pca_y: float
+    umap_x: float
+    umap_y: float
+    viterbi_state: int
+    max_state_probability: float
+
+
+class OverlayResponse(BaseModel):
+    """Paginated PCA/UMAP overlay points."""
+
+    total: int
+    items: list[OverlayPoint]
+
+
+class LabelDistributionResponse(BaseModel):
+    """Per-state label distribution from center-time join."""
+
+    n_states: int
+    total_windows: int
+    states: dict[str, dict[str, int]]
+
+
+class ExemplarRecord(BaseModel):
+    """One exemplar window for a given HMM state."""
+
+    merged_span_id: int
+    window_index_in_span: int
+    audio_file_id: int
+    start_time_sec: float
+    end_time_sec: float
+    max_state_probability: float
+    exemplar_type: str
+
+
+class ExemplarsResponse(BaseModel):
+    """Per-state exemplar selections."""
+
+    n_states: int
+    states: dict[str, list[ExemplarRecord]]

@@ -22,10 +22,15 @@ from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobManifest,
     ContinuousEmbeddingJobOut,
     DwellHistogramResponse,
+    ExemplarRecord,
+    ExemplarsResponse,
     HMMSequenceJobCreate,
     HMMSequenceJobDetail,
     HMMSequenceJobOut,
     HMMStateSummary,
+    LabelDistributionResponse,
+    OverlayPoint,
+    OverlayResponse,
     TransitionMatrixResponse,
 )
 from humpback.services.continuous_embedding_service import (
@@ -39,10 +44,15 @@ from humpback.services.hmm_sequence_service import (
     CancelTerminalJobError as HMMCancelTerminalJobError,
     cancel_hmm_sequence_job,
     create_hmm_sequence_job,
+    generate_interpretations,
+    generate_label_distribution,
     get_hmm_sequence_job,
     list_hmm_sequence_jobs,
 )
 from humpback.storage import (
+    hmm_sequence_exemplars_path,
+    hmm_sequence_label_distribution_path,
+    hmm_sequence_overlay_path,
     hmm_sequence_states_path,
     hmm_sequence_summary_path,
     hmm_sequence_transition_matrix_path,
@@ -234,6 +244,103 @@ async def get_hmm_dwell(
         raise HTTPException(status_code=404, detail="state summary not found")
     histograms = {str(s.state): s.dwell_histogram for s in summary}
     return DwellHistogramResponse(n_states=len(summary), histograms=histograms)
+
+
+# ---------------------------------------------------------------------------
+# Interpretation visualizations (PR 3)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/hmm-sequences/{job_id}/overlay")
+async def get_hmm_overlay(
+    job_id: str,
+    session: SessionDep,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=5000, ge=1, le=50000),
+) -> OverlayResponse:
+    job = await get_hmm_sequence_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="hmm sequence job not found")
+    settings = Settings.from_repo_env()
+    overlay_path = hmm_sequence_overlay_path(settings.storage_root, job_id)
+    if not overlay_path.exists():
+        raise HTTPException(status_code=404, detail="overlay not found")
+    table = pq.read_table(overlay_path)
+    total = table.num_rows
+    sliced = table.slice(offset, limit)
+    rows = sliced.to_pydict()
+    items = [
+        OverlayPoint(**{col: rows[col][i] for col in rows})
+        for i in range(sliced.num_rows)
+    ]
+    return OverlayResponse(total=total, items=items)
+
+
+@router.get("/hmm-sequences/{job_id}/label-distribution")
+async def get_hmm_label_distribution(
+    job_id: str,
+    session: SessionDep,
+) -> LabelDistributionResponse:
+    job = await get_hmm_sequence_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="hmm sequence job not found")
+    if job.status != "complete":
+        raise HTTPException(status_code=400, detail="job not complete")
+    settings = Settings.from_repo_env()
+    dist_path = hmm_sequence_label_distribution_path(settings.storage_root, job_id)
+    if dist_path.exists():
+        payload = json.loads(dist_path.read_text(encoding="utf-8"))
+        return LabelDistributionResponse.model_validate(payload)
+    dist = await generate_label_distribution(session, settings.storage_root, job)
+    return LabelDistributionResponse.model_validate(dist)
+
+
+@router.get("/hmm-sequences/{job_id}/exemplars")
+async def get_hmm_exemplars(
+    job_id: str,
+    session: SessionDep,
+) -> ExemplarsResponse:
+    job = await get_hmm_sequence_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="hmm sequence job not found")
+    settings = Settings.from_repo_env()
+    exemplars_path = hmm_sequence_exemplars_path(settings.storage_root, job_id)
+    if not exemplars_path.exists():
+        raise HTTPException(status_code=404, detail="exemplars not found")
+    payload = json.loads(exemplars_path.read_text(encoding="utf-8"))
+    return ExemplarsResponse(
+        n_states=payload["n_states"],
+        states={
+            k: [ExemplarRecord.model_validate(r) for r in v]
+            for k, v in payload["states"].items()
+        },
+    )
+
+
+@router.post("/hmm-sequences/{job_id}/generate-interpretations")
+async def regenerate_interpretations(
+    job_id: str,
+    session: SessionDep,
+) -> dict:
+    job = await get_hmm_sequence_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="hmm sequence job not found")
+    if job.status != "complete":
+        raise HTTPException(status_code=400, detail="job not complete")
+    settings = Settings.from_repo_env()
+
+    from humpback.models.sequence_models import ContinuousEmbeddingJob
+
+    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
+    if cej is None:
+        raise HTTPException(
+            status_code=400, detail="source continuous embedding job not found"
+        )
+
+    generate_interpretations(settings.storage_root, job, cej)
+    await generate_label_distribution(session, settings.storage_root, job)
+
+    return {"status": "ok", "job_id": job_id}
 
 
 @router.post("/hmm-sequences/{job_id}/cancel")
