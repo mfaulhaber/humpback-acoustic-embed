@@ -43,6 +43,14 @@ const staticRoutes: Record<string, Crumb[]> = {
     { label: "Call Parsing", to: "/app/call-parsing" },
     { label: "Window Classify" },
   ],
+  "/app/sequence-models/continuous-embedding": [
+    { label: "Sequence Models", to: "/app/sequence-models" },
+    { label: "Continuous Embedding" },
+  ],
+  "/app/sequence-models/hmm-sequence": [
+    { label: "Sequence Models", to: "/app/sequence-models" },
+    { label: "HMM Sequence" },
+  ],
   "/app/search": [{ label: "Search" }],
   "/app/label-processing": [{ label: "Label Processing" }],
   "/app/admin": [{ label: "Admin" }],
@@ -80,6 +88,27 @@ export function Breadcrumbs() {
   } else if (jobId && pathname.startsWith("/app/clustering/")) {
     crumbs = [
       { label: "Clustering", to: "/app/clustering" },
+      { label: `Job ${jobId.slice(0, 8)}` },
+    ];
+  } else if (
+    jobId &&
+    pathname.startsWith("/app/sequence-models/continuous-embedding/")
+  ) {
+    crumbs = [
+      { label: "Sequence Models", to: "/app/sequence-models" },
+      {
+        label: "Continuous Embedding",
+        to: "/app/sequence-models/continuous-embedding",
+      },
+      { label: `Job ${jobId.slice(0, 8)}` },
+    ];
+  } else if (
+    jobId &&
+    pathname.startsWith("/app/sequence-models/hmm-sequence/")
+  ) {
+    crumbs = [
+      { label: "Sequence Models", to: "/app/sequence-models" },
+      { label: "HMM Sequence", to: "/app/sequence-models/hmm-sequence" },
       { label: `Job ${jobId.slice(0, 8)}` },
     ];
   } else {

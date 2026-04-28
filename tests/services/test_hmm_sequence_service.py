@@ -17,11 +17,16 @@ from humpback.services.hmm_sequence_service import (
     CancelTerminalJobError,
     cancel_hmm_sequence_job,
     create_hmm_sequence_job,
+    delete_hmm_sequence_job,
     generate_label_distribution,
     get_hmm_sequence_job,
     list_hmm_sequence_jobs,
 )
-from humpback.storage import detection_row_store_path, hmm_sequence_states_path
+from humpback.storage import (
+    detection_row_store_path,
+    hmm_sequence_dir,
+    hmm_sequence_states_path,
+)
 
 
 async def _seed_continuous_embedding_job(
@@ -261,3 +266,31 @@ async def test_generate_label_distribution_joins_relative_hmm_time_to_utc(
 
     assert result["states"]["0"]["whup"] == 1
     assert result["states"]["1"]["unlabeled"] == 1
+
+
+async def test_delete_removes_db_row_and_disk_artifacts(session, settings):
+    ce_job = await _seed_continuous_embedding_job(session)
+    job = await create_hmm_sequence_job(session, _make_payload(ce_job.id))
+
+    artifact_dir = hmm_sequence_dir(settings.storage_root, job.id)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "states.parquet").write_text("fake")
+
+    result = await delete_hmm_sequence_job(session, job.id, settings)
+    assert result is True
+    assert not artifact_dir.exists()
+    assert await get_hmm_sequence_job(session, job.id) is None
+
+
+async def test_delete_nonexistent_returns_false(session, settings):
+    result = await delete_hmm_sequence_job(session, "nonexistent", settings)
+    assert result is False
+
+
+async def test_delete_succeeds_when_no_disk_artifacts(session, settings):
+    ce_job = await _seed_continuous_embedding_job(session)
+    job = await create_hmm_sequence_job(session, _make_payload(ce_job.id))
+
+    result = await delete_hmm_sequence_job(session, job.id, settings)
+    assert result is True
+    assert await get_hmm_sequence_job(session, job.id) is None

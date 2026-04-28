@@ -310,3 +310,52 @@ async def test_hmm_cancel_terminal_returns_409(client, app_settings):
 
     cancel_resp = await client.post(f"/sequence-models/hmm-sequences/{job_id}/cancel")
     assert cancel_resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Delete endpoints
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_continuous_embedding_returns_204(client, app_settings):
+    region_job_id = await _seed_region_detection_job(
+        app_settings, JobStatus.complete.value
+    )
+    create_resp = await client.post(
+        "/sequence-models/continuous-embeddings",
+        json={"region_detection_job_id": region_job_id},
+    )
+    job_id = create_resp.json()["id"]
+
+    delete_resp = await client.delete(
+        f"/sequence-models/continuous-embeddings/{job_id}"
+    )
+    assert delete_resp.status_code == 204
+
+    get_resp = await client.get(f"/sequence-models/continuous-embeddings/{job_id}")
+    assert get_resp.status_code == 404
+
+
+async def test_delete_continuous_embedding_missing_returns_404(client):
+    response = await client.delete("/sequence-models/continuous-embeddings/nonexistent")
+    assert response.status_code == 404
+
+
+async def test_delete_hmm_sequence_returns_204(client, app_settings):
+    cej_id = await _seed_complete_continuous_embedding_job(app_settings)
+    create_resp = await client.post(
+        "/sequence-models/hmm-sequences",
+        json={"continuous_embedding_job_id": cej_id, "n_states": 4},
+    )
+    job_id = create_resp.json()["id"]
+
+    delete_resp = await client.delete(f"/sequence-models/hmm-sequences/{job_id}")
+    assert delete_resp.status_code == 204
+
+    get_resp = await client.get(f"/sequence-models/hmm-sequences/{job_id}")
+    assert get_resp.status_code == 404
+
+
+async def test_delete_hmm_sequence_missing_returns_404(client):
+    response = await client.delete("/sequence-models/hmm-sequences/nonexistent")
+    assert response.status_code == 404

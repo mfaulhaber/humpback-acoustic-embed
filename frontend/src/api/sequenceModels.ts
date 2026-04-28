@@ -104,6 +104,12 @@ export function cancelContinuousEmbeddingJob(
   });
 }
 
+export function deleteContinuousEmbeddingJob(
+  jobId: string,
+): Promise<void> {
+  return request<void>(`${ROOT}/${jobId}`, { method: "DELETE" });
+}
+
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 export function isContinuousEmbeddingJobActive(
@@ -153,6 +159,16 @@ export function useCancelContinuousEmbeddingJob() {
     onSuccess: (_data, jobId) => {
       qc.invalidateQueries({ queryKey: ["continuous-embedding-jobs"] });
       qc.invalidateQueries({ queryKey: ["continuous-embedding-job", jobId] });
+    },
+  });
+}
+
+export function useDeleteContinuousEmbeddingJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteContinuousEmbeddingJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["continuous-embedding-jobs"] });
     },
   });
 }
@@ -258,6 +274,10 @@ export function cancelHMMSequenceJob(
   });
 }
 
+export function deleteHMMSequenceJob(jobId: string): Promise<void> {
+  return request<void>(`${HMM_ROOT}/${jobId}`, { method: "DELETE" });
+}
+
 export function fetchHMMTransitions(
   jobId: string,
 ): Promise<TransitionMatrix> {
@@ -326,6 +346,16 @@ export function useCancelHMMSequenceJob() {
     onSuccess: (_data, jobId) => {
       qc.invalidateQueries({ queryKey: ["hmm-sequence-jobs"] });
       qc.invalidateQueries({ queryKey: ["hmm-sequence-job", jobId] });
+    },
+  });
+}
+
+export function useDeleteHMMSequenceJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteHMMSequenceJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hmm-sequence-jobs"] });
     },
   });
 }

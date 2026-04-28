@@ -4,7 +4,7 @@ import {
   useHMMSequenceJobs,
 } from "@/api/sequenceModels";
 import { HMMSequenceCreateForm } from "./HMMSequenceCreateForm";
-import { HMMSequenceJobCard } from "./HMMSequenceJobCard";
+import { HMMSequenceJobTablePanel } from "./HMMSequenceJobTable";
 
 export function HMMSequenceJobsPage() {
   const { data: jobs = [], isLoading } = useHMMSequenceJobs();
@@ -15,37 +15,28 @@ export function HMMSequenceJobsPage() {
     return { active: a, previous: p };
   }, [jobs]);
 
+  if (isLoading) {
+    return (
+      <div className="space-y-6" data-testid="hmm-jobs-page">
+        <HMMSequenceCreateForm />
+        <div className="text-sm text-slate-500">Loading…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6" data-testid="hmm-jobs-page">
       <HMMSequenceCreateForm />
-
-      <section data-testid="hmm-active-section">
-        <h2 className="text-base font-semibold mb-2">Active</h2>
-        {isLoading ? (
-          <div className="text-sm text-slate-500">Loading…</div>
-        ) : active.length === 0 ? (
-          <div className="text-sm text-slate-500">No active jobs.</div>
-        ) : (
-          <div className="grid gap-2">
-            {active.map((j) => (
-              <HMMSequenceJobCard key={j.id} job={j} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section data-testid="hmm-previous-section">
-        <h2 className="text-base font-semibold mb-2">Previous</h2>
-        {previous.length === 0 ? (
-          <div className="text-sm text-slate-500">No previous jobs.</div>
-        ) : (
-          <div className="grid gap-2">
-            {previous.map((j) => (
-              <HMMSequenceJobCard key={j.id} job={j} />
-            ))}
-          </div>
-        )}
-      </section>
+      <HMMSequenceJobTablePanel
+        title="Active Jobs"
+        jobs={active}
+        mode="active"
+      />
+      <HMMSequenceJobTablePanel
+        title="Previous Jobs"
+        jobs={previous}
+        mode="previous"
+      />
     </div>
   );
 }

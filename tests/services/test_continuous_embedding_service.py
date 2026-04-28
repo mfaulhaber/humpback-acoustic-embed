@@ -14,9 +14,11 @@ from humpback.services.continuous_embedding_service import (
     CancelTerminalJobError,
     cancel_continuous_embedding_job,
     create_continuous_embedding_job,
+    delete_continuous_embedding_job,
     get_continuous_embedding_job,
     list_continuous_embedding_jobs,
 )
+from humpback.storage import continuous_embedding_dir
 
 
 async def _seed_region_job(
@@ -236,3 +238,33 @@ async def test_get_returns_existing_job(session):
 
     missing = await get_continuous_embedding_job(session, "nonexistent")
     assert missing is None
+
+
+async def test_delete_removes_db_row_and_disk_artifacts(session, settings):
+    region_job = await _seed_region_job(session)
+    payload = ContinuousEmbeddingJobCreate(region_detection_job_id=region_job.id)
+    job, _ = await create_continuous_embedding_job(session, payload)
+
+    artifact_dir = continuous_embedding_dir(settings.storage_root, job.id)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "embeddings.parquet").write_text("fake")
+
+    result = await delete_continuous_embedding_job(session, job.id, settings)
+    assert result is True
+    assert not artifact_dir.exists()
+    assert await get_continuous_embedding_job(session, job.id) is None
+
+
+async def test_delete_nonexistent_returns_false(session, settings):
+    result = await delete_continuous_embedding_job(session, "nonexistent", settings)
+    assert result is False
+
+
+async def test_delete_succeeds_when_no_disk_artifacts(session, settings):
+    region_job = await _seed_region_job(session)
+    payload = ContinuousEmbeddingJobCreate(region_detection_job_id=region_job.id)
+    job, _ = await create_continuous_embedding_job(session, payload)
+
+    result = await delete_continuous_embedding_job(session, job.id, settings)
+    assert result is True
+    assert await get_continuous_embedding_job(session, job.id) is None

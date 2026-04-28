@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -16,10 +17,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.config import Settings
 from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.schemas.sequence_models import ContinuousEmbeddingJobCreate
+from humpback.storage import continuous_embedding_dir
 
 # Per-model_version producer constants. ``ModelConfig`` rows in the
 # registry intentionally do not yet carry ``window_size_seconds`` /
@@ -208,6 +211,20 @@ async def cancel_continuous_embedding_job(
     raise CancelTerminalJobError(
         f"continuous_embedding_job {job_id} is in terminal state {job.status!r}"
     )
+
+
+async def delete_continuous_embedding_job(
+    session: AsyncSession, job_id: str, settings: Settings
+) -> bool:
+    job = await session.get(ContinuousEmbeddingJob, job_id)
+    if job is None:
+        return False
+    artifact_dir = continuous_embedding_dir(settings.storage_root, job_id)
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+    await session.delete(job)
+    await session.commit()
+    return True
 
 
 async def _get_existing_jobs_by_signature(
