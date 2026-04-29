@@ -43,18 +43,24 @@
   classification/{job_id}/typed_events.parquet (Pass 3 per-event classification scores)
   window_classification/{job_id}/window_scores.parquet (wide format: time_sec, region_id, one float64 column per vocalization type)
 /continuous_embeddings/
-  {job_id}/embeddings.parquet  (Sequence Models PR 1 producer: merged_span_id, window_index_in_span, audio_file_id, start_timestamp, end_timestamp, is_in_pad, source_region_ids, embedding)
-  {job_id}/manifest.json       (vector_dim, hop/pad/window settings, total_regions, merged_spans, total_windows, per-span summaries)
+  {job_id}/embeddings.parquet  (Sequence Models producer; schema is source-specific)
+                                 SurfPerch source: merged_span_id, event_id, window_index_in_span, audio_file_id, start_timestamp, end_timestamp, is_in_pad, embedding
+                                 CRNN source (ADR-057): region_id, audio_file_id, hydrophone_id, chunk_index_in_region, start_timestamp, end_timestamp, is_in_pad, call_probability, event_overlap_fraction, nearest_event_id (nullable), distance_to_nearest_event_seconds (nullable), tier ∈ {event_core, near_event, background}, embedding
+  {job_id}/manifest.json       (source_kind discriminator + per-source counters)
+                                 SurfPerch: vector_dim, hop/pad/window settings, total_events, merged_spans, total_windows, per-span summaries
+                                 CRNN: vector_dim, region_detection_job_id, event_segmentation_job_id, crnn_checkpoint_sha256, chunk_size/hop, projection_kind/dim, total_regions, total_chunks, per-region summaries
 /hmm_sequences/
   {job_id}/pca_model.joblib        (fitted PCA model)
   {job_id}/hmm_model.joblib        (fitted GaussianHMM model)
-  {job_id}/states.parquet          (decoded windows: merged_span_id, window_index_in_span, audio_file_id, start_timestamp, end_timestamp, is_in_pad, source_region_ids, viterbi_state, state_posterior, max_state_probability, was_used_for_training)
+  {job_id}/states.parquet          (decoded sequences; schema is source-specific)
+                                     SurfPerch: merged_span_id, window_index_in_span, audio_file_id, start_timestamp, end_timestamp, is_in_pad, event_id, viterbi_state, state_posterior, max_state_probability, was_used_for_training
+                                     CRNN (ADR-057): region_id, chunk_index_in_region, audio_file_id (nullable), start_timestamp, end_timestamp, is_in_pad, tier, viterbi_state, state_posterior, max_state_probability, was_used_for_training
   {job_id}/transition_matrix.npy   (n_states × n_states row-normalized transition matrix)
-  {job_id}/state_summary.json      (per-state occupancy, mean_dwell_frames, dwell_histogram)
-  {job_id}/training_log.json       (training hyperparameters and result stats)
-  {job_id}/pca_overlay.parquet     (PR 3: 2-D PCA + UMAP projections colored by viterbi_state)
-  {job_id}/label_distribution.json (PR 3: per-state vocalization-label counts from center-time join)
-  {job_id}/exemplars/exemplars.json (PR 3: per-state high-confidence, nearest-centroid, boundary exemplar windows)
+  {job_id}/state_summary.json      (per-state occupancy, mean_dwell_frames, dwell_histogram; CRNN-source jobs additionally include source_kind, training_mode, tier_composition[])
+  {job_id}/training_log.json       (training hyperparameters and result stats; CRNN-source jobs include training_mode + tier_proportions + sub-sequence config)
+  {job_id}/pca_overlay.parquet     (PR 3: 2-D PCA + UMAP projections colored by viterbi_state — SurfPerch source only)
+  {job_id}/label_distribution.json (PR 3: per-state vocalization-label counts from center-time join — SurfPerch source only)
+  {job_id}/exemplars/exemplars.json (PR 3: per-state high-confidence, nearest-centroid, boundary exemplar windows — SurfPerch source only)
 /timeline_cache/
   {job_id}/{zoom_level}/tile_{NNNN}.png   (PCEN-normalized spectrogram tiles, LRU-evicted per job)
   {job_id}/.cache_version                  (integer; current is 2. Migrations run on first access when missing or lower)

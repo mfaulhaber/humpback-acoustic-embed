@@ -24,6 +24,9 @@ interface SpanNavBarProps {
   onNextEvent: () => void;
   onPrevRegion: () => void;
   onNextRegion: () => void;
+  /** Label for individual sequences. SurfPerch source uses "Event";
+   *  CRNN source uses "Region". */
+  itemLabel?: "Event" | "Region" | "Span";
 }
 
 export function SpanNavBar({
@@ -35,6 +38,7 @@ export function SpanNavBar({
   onNextEvent,
   onPrevRegion,
   onNextRegion,
+  itemLabel = "Event",
 }: SpanNavBarProps) {
   const span = spans[activeIndex];
   if (!span) return null;
@@ -75,7 +79,7 @@ export function SpanNavBar({
           className="rounded-md border p-1 hover:bg-accent disabled:opacity-30"
           disabled={activeIndex === 0}
           onClick={onPrevEvent}
-          title="Previous event (A)"
+          title={`Previous ${itemLabel.toLowerCase()} (A)`}
           data-testid="hmm-span-prev"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -84,13 +88,13 @@ export function SpanNavBar({
           className="rounded-md border p-1 hover:bg-accent disabled:opacity-30"
           disabled={activeIndex === spans.length - 1}
           onClick={onNextEvent}
-          title="Next event (D)"
+          title={`Next ${itemLabel.toLowerCase()} (D)`}
           data-testid="hmm-span-next"
         >
           <ChevronRight className="h-4 w-4" />
         </button>
         <span className="text-muted-foreground" data-testid="hmm-span-label">
-          Event {activeIndex + 1}/{spans.length} ·{" "}
+          {itemLabel} {activeIndex + 1}/{spans.length} ·{" "}
           {formatRecordingTime(0, span.startTimestamp)} –{" "}
           {formatRecordingTime(0, span.endTimestamp)}
         </span>

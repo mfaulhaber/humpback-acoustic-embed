@@ -104,7 +104,7 @@ export function ContinuousEmbeddingDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {manifest.spans.map((s) => (
+                {(manifest.spans ?? []).map((s) => (
                   <tr key={s.merged_span_id} className="border-t">
                     <td className="pr-2 py-1">{s.merged_span_id}</td>
                     <td className="pr-2 py-1">{s.start_timestamp.toFixed(2)}</td>

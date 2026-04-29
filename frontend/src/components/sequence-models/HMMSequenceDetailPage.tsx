@@ -8,6 +8,7 @@ import {
   type HMMSequenceJobDetail,
   type LabelDistribution,
   type OverlayResponse,
+  type StateTierComposition,
   isHMMSequenceJobActive,
   useCancelHMMSequenceJob,
   useContinuousEmbeddingJob,
@@ -332,6 +333,53 @@ function LabelDistributionChart({
     </div>
   );
 }
+
+function TierCompositionStrip({
+  composition,
+}: {
+  composition: StateTierComposition[];
+}) {
+  const traces = useMemo(() => {
+    const states = composition.map((c) => `S${c.state}`);
+    const tiers: { name: string; key: keyof StateTierComposition; color: string }[] =
+      [
+        { name: "event_core", key: "event_core", color: "#3b82f6" },
+        { name: "near_event", key: "near_event", color: "#fbbf24" },
+        { name: "background", key: "background", color: "#94a3b8" },
+      ];
+    return tiers.map((t) => ({
+      x: states,
+      y: composition.map((c) => Number(c[t.key])),
+      type: "bar" as const,
+      name: t.name,
+      marker: { color: t.color },
+    }));
+  }, [composition]);
+
+  return (
+    <div data-testid="hmm-tier-composition-strip">
+      <Plot
+        data={traces}
+        layout={{
+          barmode: "stack",
+          height: 220,
+          margin: { l: 50, r: 20, t: 10, b: 40 },
+          xaxis: { title: { text: "State" } },
+          yaxis: {
+            title: { text: "Tier composition" },
+            tickformat: ".0%",
+            range: [0, 1],
+          },
+          showlegend: true,
+          legend: { orientation: "h", y: 1.15 },
+        }}
+        config={{ responsive: true }}
+        style={{ width: "100%" }}
+      />
+    </div>
+  );
+}
+
 
 function ExemplarGallery({
   states,
@@ -722,6 +770,10 @@ export function HMMSequenceDetailPage() {
   }
 
   const { job, summary } = data as HMMSequenceJobDetail;
+  const sourceKind = data.source_kind ?? "surfperch";
+  const tierComposition = data.tier_composition ?? null;
+  const itemLabel: "Event" | "Region" =
+    sourceKind === "region_crnn" ? "Region" : "Event";
   const active = isHMMSequenceJobActive(job);
 
   return (
@@ -737,7 +789,15 @@ export function HMMSequenceDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle data-testid="hmm-detail-id">{job.id}</CardTitle>
+          <CardTitle data-testid="hmm-detail-id">
+            {job.id}
+            <span
+              className="ml-3 text-xs uppercase tracking-wide text-slate-500"
+              data-testid="hmm-detail-source-kind"
+            >
+              {sourceKind === "region_crnn" ? "CRNN" : "SurfPerch"}
+            </span>
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <div>
@@ -859,6 +919,7 @@ export function HMMSequenceDetailPage() {
               onNextEvent={wrappedNextEvent}
               onPrevRegion={handlePrevRegion}
               onNextRegion={handleNextRegion}
+              itemLabel={itemLabel}
             />
             <TimelineProvider
               key={`hmm-timeline-${regionDetectionJobId}`}
@@ -939,6 +1000,17 @@ export function HMMSequenceDetailPage() {
               matrix={transData.matrix}
               nStates={transData.n_states}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {isComplete && sourceKind === "region_crnn" && tierComposition && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Per-State Tier Composition</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TierCompositionStrip composition={tierComposition} />
           </CardContent>
         </Card>
       )}

@@ -73,6 +73,40 @@ async def create_hmm_sequence_job(
             f"(current status: {source.status!r})"
         )
 
+    from humpback.services.continuous_embedding_service import (
+        SOURCE_KIND_REGION_CRNN,
+        source_kind_for,
+    )
+
+    is_crnn = source_kind_for(source.model_version) == SOURCE_KIND_REGION_CRNN
+    crnn_only_fields = {
+        "training_mode": payload.training_mode,
+        "event_core_overlap_threshold": payload.event_core_overlap_threshold,
+        "near_event_window_seconds": payload.near_event_window_seconds,
+        "event_balanced_proportions": payload.event_balanced_proportions,
+        "subsequence_length_chunks": payload.subsequence_length_chunks,
+        "subsequence_stride_chunks": payload.subsequence_stride_chunks,
+        "target_train_chunks": payload.target_train_chunks,
+        "min_region_length_seconds": payload.min_region_length_seconds,
+    }
+    if not is_crnn:
+        present = [
+            name for name, value in crnn_only_fields.items() if value is not None
+        ]
+        if present:
+            raise ValueError(
+                "training_mode and tier configuration are only valid for "
+                "CRNN-source HMM jobs: " + ", ".join(present)
+            )
+
+    proportions_json: Optional[str] = None
+    if payload.event_balanced_proportions is not None:
+        proportions_json = json.dumps(
+            payload.event_balanced_proportions,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
     job = HMMSequenceJob(
         continuous_embedding_job_id=payload.continuous_embedding_job_id,
         n_states=payload.n_states,
@@ -84,6 +118,14 @@ async def create_hmm_sequence_job(
         random_seed=payload.random_seed,
         min_sequence_length_frames=payload.min_sequence_length_frames,
         tol=payload.tol,
+        training_mode=payload.training_mode,
+        event_core_overlap_threshold=payload.event_core_overlap_threshold,
+        near_event_window_seconds=payload.near_event_window_seconds,
+        event_balanced_proportions=proportions_json,
+        subsequence_length_chunks=payload.subsequence_length_chunks,
+        subsequence_stride_chunks=payload.subsequence_stride_chunks,
+        target_train_chunks=payload.target_train_chunks,
+        min_region_length_seconds=payload.min_region_length_seconds,
     )
     session.add(job)
     await session.commit()

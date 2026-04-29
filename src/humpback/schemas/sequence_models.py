@@ -3,21 +3,36 @@
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ContinuousEmbeddingJobCreate(BaseModel):
     """Request body for creating a ``ContinuousEmbeddingJob``.
 
-    ``window_size_seconds``, ``target_sample_rate``, and ``feature_config_json``
-    are derived from the registered ``ModelConfig`` for ``model_version`` at
-    submission time and are not user-supplied.
+    Carries fields for both source families (ADR-057). The SurfPerch
+    event-padded source requires only ``event_segmentation_job_id`` plus
+    the existing hop/pad knobs. The CRNN region-based source additionally
+    requires ``region_detection_job_id`` (primary), the matching
+    ``event_segmentation_job_id`` as a Pass-2 disambiguator,
+    ``crnn_segmentation_model_id``, ``chunk_*`` geometry, and projection
+    config. Source kind is derived from ``model_version`` family;
+    ``window_size_seconds``, ``target_sample_rate``, and
+    ``feature_config_json`` come from the model registry.
     """
 
-    event_segmentation_job_id: str
+    event_segmentation_job_id: Optional[str] = None
     model_version: str = "surfperch-tensorflow2"
     hop_seconds: float = 1.0
     pad_seconds: float = 2.0
+
+    # CRNN region-based source fields (populated only when
+    # ``model_version`` belongs to the CRNN family).
+    region_detection_job_id: Optional[str] = None
+    crnn_segmentation_model_id: Optional[str] = None
+    chunk_size_seconds: Optional[float] = None
+    chunk_hop_seconds: Optional[float] = None
+    projection_kind: Optional[Literal["identity", "random", "pca"]] = None
+    projection_dim: Optional[int] = None
 
     @field_validator("hop_seconds")
     @classmethod
@@ -33,17 +48,81 @@ class ContinuousEmbeddingJobCreate(BaseModel):
             raise ValueError("pad_seconds must be >= 0")
         return v
 
+    @field_validator("chunk_size_seconds", "chunk_hop_seconds")
+    @classmethod
+    def _validate_chunk_geometry(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v <= 0:
+            raise ValueError("chunk_size_seconds and chunk_hop_seconds must be > 0")
+        return v
+
+    @field_validator("projection_dim")
+    @classmethod
+    def _validate_projection_dim(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("projection_dim must be > 0")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_source_combination(self) -> "ContinuousEmbeddingJobCreate":
+        # XOR rule: ``region_detection_job_id`` flips the source kind
+        # to CRNN and *requires* ``event_segmentation_job_id`` as the
+        # disambiguator. SurfPerch source omits ``region_detection_job_id``.
+        is_crnn = self.region_detection_job_id is not None
+        if is_crnn:
+            if self.event_segmentation_job_id is None:
+                raise ValueError(
+                    "event_segmentation_job_id is required as a Pass-2 "
+                    "disambiguator when region_detection_job_id is set"
+                )
+            missing = [
+                name
+                for name, value in (
+                    ("crnn_segmentation_model_id", self.crnn_segmentation_model_id),
+                    ("chunk_size_seconds", self.chunk_size_seconds),
+                    ("chunk_hop_seconds", self.chunk_hop_seconds),
+                    ("projection_kind", self.projection_kind),
+                    ("projection_dim", self.projection_dim),
+                )
+                if value is None
+            ]
+            if missing:
+                raise ValueError(
+                    "CRNN region-based source requires: " + ", ".join(missing)
+                )
+        else:
+            if self.event_segmentation_job_id is None:
+                raise ValueError(
+                    "event_segmentation_job_id is required for the SurfPerch source"
+                )
+            crnn_only = [
+                name
+                for name, value in (
+                    ("crnn_segmentation_model_id", self.crnn_segmentation_model_id),
+                    ("chunk_size_seconds", self.chunk_size_seconds),
+                    ("chunk_hop_seconds", self.chunk_hop_seconds),
+                    ("projection_kind", self.projection_kind),
+                    ("projection_dim", self.projection_dim),
+                )
+                if value is not None
+            ]
+            if crnn_only:
+                raise ValueError(
+                    "CRNN-only fields cannot be set on the SurfPerch source: "
+                    + ", ".join(crnn_only)
+                )
+        return self
+
 
 class ContinuousEmbeddingJobOut(BaseModel):
     """Continuous embedding job state returned by the API."""
 
     id: str
     status: str
-    event_segmentation_job_id: str
+    event_segmentation_job_id: Optional[str] = None
     model_version: str
-    window_size_seconds: float
-    hop_seconds: float
-    pad_seconds: float
+    window_size_seconds: Optional[float] = None
+    hop_seconds: Optional[float] = None
+    pad_seconds: Optional[float] = None
     target_sample_rate: int
     feature_config_json: Optional[str] = None
     encoding_signature: str
@@ -53,6 +132,16 @@ class ContinuousEmbeddingJobOut(BaseModel):
     total_windows: Optional[int] = None
     parquet_path: Optional[str] = None
     error_message: Optional[str] = None
+    # CRNN region-based source fields
+    region_detection_job_id: Optional[str] = None
+    chunk_size_seconds: Optional[float] = None
+    chunk_hop_seconds: Optional[float] = None
+    crnn_checkpoint_sha256: Optional[str] = None
+    crnn_segmentation_model_id: Optional[str] = None
+    projection_kind: Optional[str] = None
+    projection_dim: Optional[int] = None
+    total_regions: Optional[int] = None
+    total_chunks: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -70,20 +159,42 @@ class ContinuousEmbeddingSpanSummary(BaseModel):
     window_count: int
 
 
+class ContinuousEmbeddingRegionSummary(BaseModel):
+    """Summary of one Pass 1 region emitted by the CRNN producer."""
+
+    region_id: str
+    start_timestamp: float
+    end_timestamp: float
+    chunk_count: int
+
+
 class ContinuousEmbeddingJobManifest(BaseModel):
     """Schema matching the JSON sidecar produced alongside ``embeddings.parquet``."""
 
     job_id: str
     model_version: str
+    source_kind: str = "surfperch"
     vector_dim: int
-    window_size_seconds: float
-    hop_seconds: float
-    pad_seconds: float
     target_sample_rate: int
-    total_events: int
-    merged_spans: int
-    total_windows: int
+    # SurfPerch-only counters
+    window_size_seconds: Optional[float] = None
+    hop_seconds: Optional[float] = None
+    pad_seconds: Optional[float] = None
+    total_events: Optional[int] = None
+    merged_spans: Optional[int] = None
+    total_windows: Optional[int] = None
     spans: list[ContinuousEmbeddingSpanSummary] = Field(default_factory=list)
+    # CRNN-only counters
+    region_detection_job_id: Optional[str] = None
+    event_segmentation_job_id: Optional[str] = None
+    crnn_checkpoint_sha256: Optional[str] = None
+    chunk_size_seconds: Optional[float] = None
+    chunk_hop_seconds: Optional[float] = None
+    projection_kind: Optional[str] = None
+    projection_dim: Optional[int] = None
+    total_regions: Optional[int] = None
+    total_chunks: Optional[int] = None
+    regions: list[ContinuousEmbeddingRegionSummary] = Field(default_factory=list)
 
 
 class ContinuousEmbeddingJobDetail(BaseModel):
@@ -99,8 +210,21 @@ class ContinuousEmbeddingJobDetail(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_TIER_PROPORTIONS: dict[str, float] = {
+    "event_core": 0.40,
+    "near_event": 0.35,
+    "background": 0.25,
+}
+
+
 class HMMSequenceJobCreate(BaseModel):
-    """Request body for creating an ``HMMSequenceJob``."""
+    """Request body for creating an ``HMMSequenceJob``.
+
+    Carries hyperparameters for both source families. CRNN-source jobs
+    additionally accept ``training_mode`` plus tier configuration; the
+    service rejects those fields when the upstream embedding job is
+    SurfPerch-source.
+    """
 
     continuous_embedding_job_id: str
     n_states: int = Field(ge=2)
@@ -112,6 +236,40 @@ class HMMSequenceJobCreate(BaseModel):
     random_seed: int = 42
     min_sequence_length_frames: int = Field(default=3, ge=1)
     tol: float = Field(default=1e-4, gt=0)
+
+    # CRNN-only training-mode + tier configuration (validated against
+    # the upstream embedding job's source kind in the service layer).
+    training_mode: Optional[Literal["full_region", "event_balanced", "event_only"]] = (
+        None
+    )
+    event_core_overlap_threshold: Optional[float] = None
+    near_event_window_seconds: Optional[float] = None
+    event_balanced_proportions: Optional[dict[str, float]] = None
+    subsequence_length_chunks: Optional[int] = None
+    subsequence_stride_chunks: Optional[int] = None
+    target_train_chunks: Optional[int] = None
+    min_region_length_seconds: Optional[float] = None
+
+    @field_validator("event_balanced_proportions")
+    @classmethod
+    def _validate_proportions(
+        cls, v: Optional[dict[str, float]]
+    ) -> Optional[dict[str, float]]:
+        if v is None:
+            return v
+        if not v:
+            raise ValueError("event_balanced_proportions cannot be empty")
+        for key in v:
+            if key not in {"event_core", "near_event", "background"}:
+                raise ValueError(
+                    f"unexpected tier key in event_balanced_proportions: {key!r}"
+                )
+        total = sum(v.values())
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(
+                f"event_balanced_proportions must sum to 1.0 ± 1e-6 (got {total})"
+            )
+        return v
 
 
 class HMMSequenceJobOut(BaseModel):
@@ -136,6 +294,15 @@ class HMMSequenceJobOut(BaseModel):
     n_decoded_sequences: Optional[int] = None
     artifact_dir: Optional[str] = None
     error_message: Optional[str] = None
+    # CRNN-only training-mode + tier configuration (null on SurfPerch jobs).
+    training_mode: Optional[str] = None
+    event_core_overlap_threshold: Optional[float] = None
+    near_event_window_seconds: Optional[float] = None
+    event_balanced_proportions: Optional[str] = None
+    subsequence_length_chunks: Optional[int] = None
+    subsequence_stride_chunks: Optional[int] = None
+    target_train_chunks: Optional[int] = None
+    min_region_length_seconds: Optional[float] = None
     created_at: datetime
     updated_at: datetime
 
@@ -151,6 +318,15 @@ class HMMStateSummary(BaseModel):
     dwell_histogram: list[int] = Field(default_factory=list)
 
 
+class StateTierComposition(BaseModel):
+    """Per-state tier-composition for CRNN-source HMM jobs."""
+
+    state: int
+    event_core: float
+    near_event: float
+    background: float
+
+
 class HMMSequenceJobDetail(BaseModel):
     """Detail response combining the DB row with state summary stats."""
 
@@ -159,6 +335,8 @@ class HMMSequenceJobDetail(BaseModel):
     region_start_timestamp: float | None = None
     region_end_timestamp: float | None = None
     summary: Optional[list[HMMStateSummary]] = None
+    tier_composition: Optional[list[StateTierComposition]] = None
+    source_kind: str = "surfperch"
 
 
 class TransitionMatrixResponse(BaseModel):

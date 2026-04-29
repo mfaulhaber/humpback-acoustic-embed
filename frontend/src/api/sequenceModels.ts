@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+export type ContinuousEmbeddingSourceKind = "surfperch" | "region_crnn";
+
 export interface ContinuousEmbeddingJob {
   id: string;
   status: string;
-  event_segmentation_job_id: string;
+  event_segmentation_job_id: string | null;
   model_version: string;
-  window_size_seconds: number;
-  hop_seconds: number;
-  pad_seconds: number;
+  window_size_seconds: number | null;
+  hop_seconds: number | null;
+  pad_seconds: number | null;
   target_sample_rate: number;
   feature_config_json: string | null;
   encoding_signature: string;
@@ -17,6 +19,16 @@ export interface ContinuousEmbeddingJob {
   total_windows: number | null;
   parquet_path: string | null;
   error_message: string | null;
+  // CRNN region-based source columns
+  region_detection_job_id: string | null;
+  chunk_size_seconds: number | null;
+  chunk_hop_seconds: number | null;
+  crnn_checkpoint_sha256: string | null;
+  crnn_segmentation_model_id: string | null;
+  projection_kind: string | null;
+  projection_dim: number | null;
+  total_regions: number | null;
+  total_chunks: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -30,18 +42,38 @@ export interface ContinuousEmbeddingSpanSummary {
   window_count: number;
 }
 
+export interface ContinuousEmbeddingRegionSummary {
+  region_id: string;
+  start_timestamp: number;
+  end_timestamp: number;
+  chunk_count: number;
+}
+
 export interface ContinuousEmbeddingJobManifest {
   job_id: string;
   model_version: string;
+  source_kind: ContinuousEmbeddingSourceKind;
   vector_dim: number;
-  window_size_seconds: number;
-  hop_seconds: number;
-  pad_seconds: number;
   target_sample_rate: number;
-  total_events: number;
-  merged_spans: number;
-  total_windows: number;
-  spans: ContinuousEmbeddingSpanSummary[];
+  // SurfPerch-only counters
+  window_size_seconds?: number | null;
+  hop_seconds?: number | null;
+  pad_seconds?: number | null;
+  total_events?: number | null;
+  merged_spans?: number | null;
+  total_windows?: number | null;
+  spans?: ContinuousEmbeddingSpanSummary[];
+  // CRNN-only counters
+  region_detection_job_id?: string | null;
+  event_segmentation_job_id?: string | null;
+  crnn_checkpoint_sha256?: string | null;
+  chunk_size_seconds?: number | null;
+  chunk_hop_seconds?: number | null;
+  projection_kind?: string | null;
+  projection_dim?: number | null;
+  total_regions?: number | null;
+  total_chunks?: number | null;
+  regions?: ContinuousEmbeddingRegionSummary[];
 }
 
 export interface ContinuousEmbeddingJobDetail {
@@ -50,10 +82,25 @@ export interface ContinuousEmbeddingJobDetail {
 }
 
 export interface CreateContinuousEmbeddingJobRequest {
-  event_segmentation_job_id: string;
+  event_segmentation_job_id?: string;
   model_version?: string;
   hop_seconds?: number;
   pad_seconds?: number;
+  // CRNN region-based source fields
+  region_detection_job_id?: string;
+  crnn_segmentation_model_id?: string;
+  chunk_size_seconds?: number;
+  chunk_hop_seconds?: number;
+  projection_kind?: "identity" | "random" | "pca";
+  projection_dim?: number;
+}
+
+export function continuousEmbeddingSourceKind(
+  job: Pick<ContinuousEmbeddingJob, "model_version" | "region_detection_job_id">,
+): ContinuousEmbeddingSourceKind {
+  if (job.region_detection_job_id) return "region_crnn";
+  if (job.model_version.startsWith("crnn-")) return "region_crnn";
+  return "surfperch";
 }
 
 const ROOT = "/sequence-models/continuous-embeddings";
@@ -200,6 +247,15 @@ export interface HMMSequenceJob {
   n_decoded_sequences: number | null;
   artifact_dir: string | null;
   error_message: string | null;
+  // CRNN-only training-mode + tier configuration
+  training_mode: string | null;
+  event_core_overlap_threshold: number | null;
+  near_event_window_seconds: number | null;
+  event_balanced_proportions: string | null;
+  subsequence_length_chunks: number | null;
+  subsequence_stride_chunks: number | null;
+  target_train_chunks: number | null;
+  min_region_length_seconds: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -211,12 +267,21 @@ export interface HMMStateSummary {
   dwell_histogram: number[];
 }
 
+export interface StateTierComposition {
+  state: number;
+  event_core: number;
+  near_event: number;
+  background: number;
+}
+
 export interface HMMSequenceJobDetail {
   job: HMMSequenceJob;
   region_detection_job_id: string;
   region_start_timestamp: number | null;
   region_end_timestamp: number | null;
   summary: HMMStateSummary[] | null;
+  tier_composition?: StateTierComposition[] | null;
+  source_kind?: ContinuousEmbeddingSourceKind;
 }
 
 export interface CreateHMMSequenceJobRequest {
@@ -230,6 +295,15 @@ export interface CreateHMMSequenceJobRequest {
   random_seed?: number;
   min_sequence_length_frames?: number;
   tol?: number;
+  // CRNN-only training-mode + tier configuration
+  training_mode?: "full_region" | "event_balanced" | "event_only";
+  event_core_overlap_threshold?: number;
+  near_event_window_seconds?: number;
+  event_balanced_proportions?: Record<string, number>;
+  subsequence_length_chunks?: number;
+  subsequence_stride_chunks?: number;
+  target_train_chunks?: number;
+  min_region_length_seconds?: number;
 }
 
 export interface TransitionMatrix {

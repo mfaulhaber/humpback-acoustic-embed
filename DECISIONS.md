@@ -322,3 +322,70 @@ The SurfPerch model invocation is structured behind an injected `EmbedderProtoco
 - The default production embedder is intentionally a stub that raises until the SurfPerch + hydrophone-streaming integration lands; the worker contract is finalized today behind the injected `EmbedderProtocol`.
 - Producer idempotency lookup is the service layer's responsibility — the worker never re-checks `encoding_signature` and assumes its job row is canonical.
 - `processing/region_windowing.py` is added to the sensitive-components list because every downstream HMM sequence consumer relies on its merge/window-center semantics.
+
+## ADR-057: CRNN region-based chunk embeddings as second Sequence Models source
+
+**Date**: 2026-04-29
+**Status**: Accepted
+**Builds on**: ADR-050 (Pass 2 segmentation), ADR-056 (Sequence Models track)
+
+**Context**: SurfPerch event-padded embeddings (ADR-056) cover only the immediate
+neighborhood of Pass 2 events. To explore latent-state structure spanning
+whole detection regions — and to leverage the segmentation CRNN's
+already-learned representations — we want a second Sequence Models embedding
+source: the Pass 2 BiGRU activations sliced into 250 ms chunks, computed per
+Pass 1 detection region, with per-chunk metadata joining against Pass 2
+events. The HMM consumer needs to keep working unchanged for SurfPerch jobs
+while gaining three training-mode options (full-region, event-balanced,
+event-only) for the new source.
+
+**Decision**:
+1. **Single-table dispatch on `model_version`**. `continuous_embedding_jobs`
+   and `hmm_sequence_jobs` grow nullable columns (Alembic 061) covering the
+   CRNN-only configuration; the worker, service, and API all dispatch on
+   the `model_version` family. SurfPerch rows leave the new columns null;
+   CRNN rows leave the SurfPerch-only columns null. Alternatives considered:
+   per-source tables (rejected — duplicates HMM consumer code), source-kind
+   discriminator column (rejected — redundant with `model_version`).
+2. **Concat-and-project chunk embeddings with `IdentityProjection` default**.
+   Eight 32 fps frames × 128-d BiGRU width = 1024-d chunk vector, passed
+   through a pluggable `ChunkProjection`. Phase 1 ships `IdentityProjection`
+   as the default (PCA + HMM consumer handles dim-reduction); the
+   abstraction also covers `RandomProjection` and `PCAProjection` for future
+   experiments. Alternative considered: average-pooling 8 frames into a
+   128-d chunk vector — rejected because it discards within-chunk temporal
+   structure that the BiGRU specifically encodes.
+3. **Shared windowing helper extracted from Pass 2 inference**. Both Pass 2
+   and the new CRNN extractor consume `iter_inference_windows()`. The
+   Pass 2 refactor is the only edit to Pass 2 source files and is
+   regression-tested for byte-identical `events.parquet` output before/after.
+
+**Consequences**:
+- Migration 061 adds nullable columns to `continuous_embedding_jobs` and
+  `hmm_sequence_jobs`; SurfPerch-only configuration columns are relaxed to
+  nullable so CRNN-source rows can leave them unset.
+- Producer worker (`_run_region_crnn`) and HMM worker (`_run_region_crnn_hmm`)
+  share the public entry points but dispatch internally on source kind.
+- New `embeddings.parquet` schema variant for CRNN source includes
+  `region_id`, `chunk_index_in_region`, `tier`, `event_overlap_fraction`,
+  `nearest_event_id`, `distance_to_nearest_event_seconds`, and
+  `call_probability` (mean per-frame sigmoid over 8 frames).
+- New `states.parquet` schema variant for CRNN-source HMM jobs adds `tier`
+  and `was_used_for_training`. `summary.json` adds per-state
+  `tier_composition` aggregates so the frontend can render a stacked-bar
+  strip without re-aggregating from `states.parquet`.
+- Encoding signature differs between source kinds (CRNN signature folds in
+  `region_detection_job_id`, `event_segmentation_job_id`,
+  `crnn_checkpoint_sha256`, chunk geometry, projection config); SurfPerch
+  signature is unchanged.
+- API: `POST /sequence-models/continuous-embeddings` and
+  `POST /sequence-models/hmm-sequences` return 422 when CRNN-only fields
+  are sent on a SurfPerch source (and vice versa) or when
+  `event_balanced_proportions` does not sum to 1.0 ± 1e-6.
+- Frontend new-job creation forms gain a source-type toggle; the list page
+  gains a `Source` badge column; the HMM detail page renders a per-state
+  `Tier Composition` stacked-bar strip for CRNN-source jobs and uses the
+  generalized `SpanNavBar` `itemLabel` prop (`Region` for CRNN source,
+  `Event` for SurfPerch).
+- Mixing SurfPerch and CRNN sources in a single HMM job is explicitly out
+  of scope for Phase 1.
