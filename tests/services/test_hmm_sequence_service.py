@@ -89,7 +89,7 @@ async def test_create_returns_queued_job(session):
     assert job.pca_whiten is False
     assert job.n_iter == 100
     assert job.random_seed == 42
-    assert job.min_sequence_length_frames == 10
+    assert job.min_sequence_length_frames == 3
 
 
 async def test_rejects_nonexistent_source(session):

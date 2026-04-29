@@ -2,13 +2,20 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useSegmentationJobs } from "@/hooks/queries/useCallParsing";
+import {
+  useSegmentationJobs,
+  useRegionDetectionJobs,
+} from "@/hooks/queries/useCallParsing";
+import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { useCreateContinuousEmbeddingJob } from "@/api/sequenceModels";
+import type { EventSegmentationJob } from "@/api/types";
 
 const DEFAULT_MODEL_VERSION = "surfperch-tensorflow2";
 
 export function ContinuousEmbeddingCreateForm() {
   const { data: segJobs = [] } = useSegmentationJobs(0);
+  const { data: regionJobs = [] } = useRegionDetectionJobs();
+  const { data: hydrophones = [] } = useHydrophones();
   const createMutation = useCreateContinuousEmbeddingJob();
 
   const [segJobId, setSegJobId] = useState<string>("");
@@ -66,8 +73,8 @@ export function ContinuousEmbeddingCreateForm() {
               <option value="">— select a completed Pass-2 job —</option>
               {completedSegJobs.map((j) => (
                 <option key={j.id} value={j.id}>
-                  {j.id.slice(0, 8)}
-                  {j.event_count != null ? ` · ${j.event_count} events` : ""}
+                  {segJobLabel(j, regionJobs, hydrophones)} —{" "}
+                  {j.event_count ?? 0} events
                 </option>
               ))}
             </select>
@@ -134,4 +141,36 @@ export function ContinuousEmbeddingCreateForm() {
       </CardContent>
     </Card>
   );
+}
+
+function formatUtcDate(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+function segJobLabel(
+  job: EventSegmentationJob,
+  regionJobs: {
+    id: string;
+    hydrophone_id: string | null;
+    audio_file_id: string | null;
+    start_timestamp: number | null;
+    end_timestamp: number | null;
+  }[],
+  hydrophones: { id: string; name: string }[],
+): string {
+  const shortId = job.id.slice(0, 8);
+  const rj = regionJobs.find((r) => r.id === job.region_detection_job_id);
+  const parts: string[] = [];
+  if (rj?.hydrophone_id) {
+    const h = hydrophones.find((hp) => hp.id === rj.hydrophone_id);
+    parts.push(h?.name ?? rj.hydrophone_id);
+  }
+  if (rj?.start_timestamp != null && rj?.end_timestamp != null) {
+    const s = formatUtcDate(rj.start_timestamp);
+    const e = formatUtcDate(rj.end_timestamp);
+    parts.push(s === e ? s : `${s} – ${e}`);
+  }
+  parts.push(shortId);
+  return parts.join(" - ");
 }

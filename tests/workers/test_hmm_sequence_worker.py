@@ -73,7 +73,7 @@ def _write_synthetic_embeddings_parquet(
                     "start_timestamp": t,
                     "end_timestamp": t + 5.0,
                     "is_in_pad": win_idx < 3,
-                    "source_region_ids": [f"r{span_id}"],
+                    "event_id": f"evt-{span_id}",
                     "embedding": seq[win_idx].tolist(),
                 }
             )
@@ -87,7 +87,7 @@ def _write_synthetic_embeddings_parquet(
             pa.field("start_timestamp", pa.float64()),
             pa.field("end_timestamp", pa.float64()),
             pa.field("is_in_pad", pa.bool_()),
-            pa.field("source_region_ids", pa.list_(pa.string())),
+            pa.field("event_id", pa.string()),
             pa.field("embedding", pa.list_(pa.float32())),
         ]
     )
@@ -195,7 +195,7 @@ async def test_states_parquet_schema(session, settings):
         "start_timestamp",
         "end_timestamp",
         "is_in_pad",
-        "source_region_ids",
+        "event_id",
         "viterbi_state",
         "state_posterior",
         "max_state_probability",

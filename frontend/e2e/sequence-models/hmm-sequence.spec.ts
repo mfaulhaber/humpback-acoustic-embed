@@ -3,16 +3,16 @@ import { expect, test, type Page } from "@playwright/test";
 const CEJ_COMPLETE = {
   id: "cej-complete-hmm",
   status: "complete",
-  region_detection_job_id: "rj-1",
+  event_segmentation_job_id: "seg-1",
   model_version: "surfperch-tensorflow2",
   window_size_seconds: 5.0,
   hop_seconds: 1.0,
-  pad_seconds: 10.0,
+  pad_seconds: 2.0,
   target_sample_rate: 32000,
   feature_config_json: null,
   encoding_signature: "cej-hmm-sig",
   vector_dim: 1280,
-  total_regions: 4,
+  total_events: 4,
   merged_spans: 2,
   total_windows: 120,
   parquet_path: "/tmp/data/continuous_embeddings/cej-complete-hmm/embeddings.parquet",
@@ -32,7 +32,7 @@ const QUEUED_JOB = {
   covariance_type: "diag",
   n_iter: 100,
   random_seed: 42,
-  min_sequence_length_frames: 10,
+  min_sequence_length_frames: 3,
   tol: 0.0001,
   library: "hmmlearn",
   train_log_likelihood: null,
@@ -88,10 +88,10 @@ const STATES = {
   offset: 0,
   limit: 5000,
   items: [
-    { merged_span_id: 0, window_index_in_span: 0, viterbi_state: 0, start_timestamp: 100.0, end_timestamp: 105.0, state_posterior: [0.9, 0.05, 0.03, 0.02], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r1"] },
-    { merged_span_id: 0, window_index_in_span: 1, viterbi_state: 1, start_timestamp: 101.0, end_timestamp: 106.0, state_posterior: [0.1, 0.8, 0.05, 0.05], max_state_probability: 0.8, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r1"] },
-    { merged_span_id: 1, window_index_in_span: 0, viterbi_state: 2, start_timestamp: 200.0, end_timestamp: 205.0, state_posterior: [0.05, 0.05, 0.85, 0.05], max_state_probability: 0.85, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r2"] },
-    { merged_span_id: 1, window_index_in_span: 1, viterbi_state: 3, start_timestamp: 201.0, end_timestamp: 206.0, state_posterior: [0.02, 0.03, 0.05, 0.9], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, source_region_ids: ["r2"] },
+    { merged_span_id: 0, window_index_in_span: 0, viterbi_state: 0, start_timestamp: 100.0, end_timestamp: 105.0, state_posterior: [0.9, 0.05, 0.03, 0.02], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, event_id: "evt-0" },
+    { merged_span_id: 0, window_index_in_span: 1, viterbi_state: 1, start_timestamp: 101.0, end_timestamp: 106.0, state_posterior: [0.1, 0.8, 0.05, 0.05], max_state_probability: 0.8, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, event_id: "evt-0" },
+    { merged_span_id: 1, window_index_in_span: 0, viterbi_state: 2, start_timestamp: 200.0, end_timestamp: 205.0, state_posterior: [0.05, 0.05, 0.85, 0.05], max_state_probability: 0.85, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, event_id: "evt-1" },
+    { merged_span_id: 1, window_index_in_span: 1, viterbi_state: 3, start_timestamp: 201.0, end_timestamp: 206.0, state_posterior: [0.02, 0.03, 0.05, 0.9], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, event_id: "evt-1" },
   ],
 };
 
@@ -367,7 +367,7 @@ test.describe("Sequence Models — HMM Sequence", () => {
 
     // Span nav is visible with correct label
     await expect(page.getByTestId("hmm-span-nav")).toBeVisible();
-    await expect(page.getByTestId("hmm-span-label")).toContainText("Span 1/2");
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Event 1/2");
 
     // Prev disabled at first span, Next enabled
     await expect(page.getByTestId("hmm-span-prev")).toBeDisabled();
@@ -380,7 +380,7 @@ test.describe("Sequence Models — HMM Sequence", () => {
 
     // Click next span — label updates
     await page.getByTestId("hmm-span-next").click();
-    await expect(page.getByTestId("hmm-span-label")).toContainText("Span 2/2");
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Event 2/2");
     await expect(zoomOneMinute).toHaveClass(/text-primary/);
 
     // Now next is disabled, prev is enabled

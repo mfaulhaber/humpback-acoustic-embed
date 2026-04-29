@@ -110,7 +110,7 @@ class HMMSequenceJobCreate(BaseModel):
     covariance_type: Literal["diag", "full"] = "diag"
     n_iter: int = Field(default=100, ge=1)
     random_seed: int = 42
-    min_sequence_length_frames: int = Field(default=10, ge=1)
+    min_sequence_length_frames: int = Field(default=3, ge=1)
     tol: float = Field(default=1e-4, gt=0)
 
 

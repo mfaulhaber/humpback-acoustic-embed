@@ -113,7 +113,7 @@ STATES_SCHEMA = pa.schema(
         pa.field("start_timestamp", pa.float64()),
         pa.field("end_timestamp", pa.float64()),
         pa.field("is_in_pad", pa.bool_()),
-        pa.field("source_region_ids", pa.list_(pa.string())),
+        pa.field("event_id", pa.string()),
         pa.field("viterbi_state", pa.int16()),
         pa.field("state_posterior", pa.list_(pa.float32())),
         pa.field("max_state_probability", pa.float32()),
@@ -228,9 +228,7 @@ async def run_hmm_sequence_job(
                             row_idx
                         ].as_py(),
                         "is_in_pad": span_tbl.column("is_in_pad")[row_idx].as_py(),
-                        "source_region_ids": span_tbl.column("source_region_ids")[
-                            row_idx
-                        ].as_py(),
+                        "event_id": span_tbl.column("event_id")[row_idx].as_py(),
                         "viterbi_state": int(dec.viterbi_states[row_idx]),
                         "state_posterior": dec.posteriors[row_idx].tolist(),
                         "max_state_probability": float(

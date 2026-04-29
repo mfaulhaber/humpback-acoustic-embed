@@ -63,7 +63,7 @@ class HMMSequenceJob(UUIDMixin, TimestampMixin, Base):
     covariance_type: Mapped[str] = mapped_column(default="diag")
     n_iter: Mapped[int] = mapped_column(Integer, default=100)
     random_seed: Mapped[int] = mapped_column(Integer, default=42)
-    min_sequence_length_frames: Mapped[int] = mapped_column(Integer, default=10)
+    min_sequence_length_frames: Mapped[int] = mapped_column(Integer, default=3)
     tol: Mapped[float] = mapped_column(Float, default=1e-4)
     library: Mapped[str] = mapped_column(default="hmmlearn")
     train_log_likelihood: Mapped[Optional[float]] = mapped_column(Float, default=None)
