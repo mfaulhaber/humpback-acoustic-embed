@@ -301,15 +301,18 @@ def _build_manifest_payload(
     vector_dim: int,
     total_events: int,
     spans: Iterable[_SpanSummary],
+    window_size_seconds: float,
+    hop_seconds: float,
+    pad_seconds: float,
 ) -> dict:
     spans_list = list(spans)
     return {
         "job_id": job.id,
         "model_version": job.model_version,
         "vector_dim": int(vector_dim),
-        "window_size_seconds": float(job.window_size_seconds),
-        "hop_seconds": float(job.hop_seconds),
-        "pad_seconds": float(job.pad_seconds),
+        "window_size_seconds": window_size_seconds,
+        "hop_seconds": hop_seconds,
+        "pad_seconds": pad_seconds,
         "target_sample_rate": int(job.target_sample_rate),
         "total_events": int(total_events),
         "merged_spans": len(spans_list),
@@ -446,6 +449,27 @@ async def run_continuous_embedding_job(
     parquet_path = continuous_embedding_parquet_path(settings.storage_root, job_id)
     manifest_path = continuous_embedding_manifest_path(settings.storage_root, job_id)
 
+    # Migration 061 made the SurfPerch-only configuration columns
+    # nullable so future CRNN-source rows can leave them unset. This
+    # worker still only services the SurfPerch path, so narrow the
+    # fields up front and fail fast if a SurfPerch row is missing them.
+    if event_segmentation_job_id is None:
+        raise ValueError(
+            f"continuous_embedding_job {job_id} missing event_segmentation_job_id"
+        )
+    if (
+        job.window_size_seconds is None
+        or job.hop_seconds is None
+        or job.pad_seconds is None
+    ):
+        raise ValueError(
+            f"continuous_embedding_job {job_id} missing required "
+            "window/hop/pad configuration"
+        )
+    window_size_seconds = float(job.window_size_seconds)
+    hop_seconds = float(job.hop_seconds)
+    pad_seconds = float(job.pad_seconds)
+
     try:
         job = await session.merge(job)
         seg_job = await session.get(EventSegmentationJob, event_segmentation_job_id)
@@ -490,7 +514,7 @@ async def run_continuous_embedding_job(
                 _event_to_span(
                     event,
                     span_id=idx,
-                    pad_seconds=float(job.pad_seconds),
+                    pad_seconds=pad_seconds,
                     envelope=envelope,
                 ),
                 event,
@@ -516,8 +540,8 @@ async def run_continuous_embedding_job(
             window_records = list(
                 iter_windows(
                     span,
-                    hop_seconds=float(job.hop_seconds),
-                    window_size_seconds=float(job.window_size_seconds),
+                    hop_seconds=hop_seconds,
+                    window_size_seconds=window_size_seconds,
                 )
             )
             if not window_records:
@@ -538,8 +562,8 @@ async def run_continuous_embedding_job(
                 span=span,
                 region_job=region_job,
                 model_version=job.model_version,
-                hop_seconds=float(job.hop_seconds),
-                window_size_seconds=float(job.window_size_seconds),
+                hop_seconds=hop_seconds,
+                window_size_seconds=window_size_seconds,
                 target_sample_rate=int(job.target_sample_rate),
                 settings=settings,
             )
@@ -585,6 +609,9 @@ async def run_continuous_embedding_job(
             vector_dim=vector_dim,
             total_events=len(events_sorted),
             spans=span_summaries,
+            window_size_seconds=window_size_seconds,
+            hop_seconds=hop_seconds,
+            pad_seconds=pad_seconds,
         )
         _atomic_write_text(
             json.dumps(manifest, sort_keys=True, indent=2), manifest_path
