@@ -2,7 +2,9 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { formatRecordingTime } from "@/utils/format";
 
 export interface SpanInfo {
-  id: number;
+  /** Group key from the states.parquet row. SurfPerch source: numeric
+   *  ``merged_span_id``. CRNN source: string ``region_id``. */
+  id: number | string;
   eventId: string;
   regionId: string;
   startTimestamp: number;

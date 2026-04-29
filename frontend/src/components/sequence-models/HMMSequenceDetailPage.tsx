@@ -34,19 +34,12 @@ import { SpanNavBar, type SpanInfo, type RegionGroup } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
 
 function StateTimeline({
-  items,
+  spanItems,
   nStates,
-  selectedSpan,
 }: {
-  items: Record<string, unknown>[];
+  spanItems: Record<string, unknown>[];
   nStates: number;
-  selectedSpan: number;
 }) {
-  const spanItems = useMemo(
-    () => items.filter((r) => r.merged_span_id === selectedSpan),
-    [items, selectedSpan],
-  );
-
   if (spanItems.length === 0) {
     return <div className="text-sm text-slate-500">No data for this span.</div>;
   }
@@ -564,29 +557,60 @@ export function HMMSequenceDetailPage() {
   const { data: exemplarsData } = useHMMExemplars(jobId ?? null, isComplete);
   const generateMutation = useGenerateInterpretations();
 
-  const spanIds = useMemo(() => {
+  const sourceKind = data?.source_kind ?? "surfperch";
+  const isCrnnSource = sourceKind === "region_crnn";
+  // CRNN states.parquet groups rows by region_id (string); SurfPerch by
+  // merged_span_id (int). Every Viterbi-state filter must dispatch on this.
+  const groupKeyCol = isCrnnSource ? "region_id" : "merged_span_id";
+
+  const spanIds = useMemo<(string | number)[]>(() => {
     if (!statesData?.items) return [];
-    const ids = new Set<number>();
+    // Track min start_timestamp per group key so CRNN region UUIDs sort
+    // chronologically (timeline order), not lexicographically.
+    const minStart = new Map<string | number, number>();
     for (const row of statesData.items) {
-      ids.add(row.merged_span_id as number);
+      const key = row[groupKeyCol] as string | number | undefined;
+      if (key == null) continue;
+      const t = row.start_timestamp as number;
+      const existing = minStart.get(key);
+      if (existing === undefined || t < existing) {
+        minStart.set(key, t);
+      }
     }
-    return Array.from(ids).sort((a, b) => a - b);
-  }, [statesData]);
+    const keys = Array.from(minStart.keys());
+    if (isCrnnSource) {
+      return keys.sort(
+        (a, b) => (minStart.get(a) ?? 0) - (minStart.get(b) ?? 0),
+      );
+    }
+    return (keys as number[]).sort((a, b) => a - b);
+  }, [statesData, groupKeyCol, isCrnnSource]);
 
   const spans: SpanInfo[] = useMemo(() => {
     if (!statesData?.items || spanIds.length === 0) return [];
     const manifestSpans = cejDetail?.manifest?.spans ?? [];
+    const manifestRegions = cejDetail?.manifest?.regions ?? [];
     return spanIds.map((id) => {
       let minT = Infinity;
       let maxT = -Infinity;
       for (const row of statesData.items) {
-        if ((row.merged_span_id as number) !== id) continue;
+        if ((row[groupKeyCol] as string | number) !== id) continue;
         const s = row.start_timestamp as number;
         const e = row.end_timestamp as number;
         if (s < minT) minT = s;
         if (e > maxT) maxT = e;
       }
-      const ms = manifestSpans.find((s) => s.merged_span_id === id);
+      if (isCrnnSource) {
+        const mr = manifestRegions.find((r) => r.region_id === id);
+        return {
+          id,
+          eventId: "",
+          regionId: String(id),
+          startTimestamp: mr?.start_timestamp ?? minT,
+          endTimestamp: mr?.end_timestamp ?? maxT,
+        };
+      }
+      const ms = manifestSpans.find((s) => s.merged_span_id === (id as number));
       return {
         id,
         eventId: ms?.event_id ?? "",
@@ -595,10 +619,12 @@ export function HMMSequenceDetailPage() {
         endTimestamp: maxT,
       };
     });
-  }, [statesData, spanIds, cejDetail]);
+  }, [statesData, spanIds, cejDetail, groupKeyCol, isCrnnSource]);
 
   const regions: RegionGroup[] = useMemo(() => {
-    if (spans.length === 0) return [];
+    // CRNN: each span IS a region — region-level nav is redundant with
+    // span-level nav, so suppress it.
+    if (isCrnnSource || spans.length === 0) return [];
     const groups: RegionGroup[] = [];
     let currentRegion = spans[0].regionId;
     let startIdx = 0;
@@ -611,14 +637,15 @@ export function HMMSequenceDetailPage() {
     }
     groups.push({ regionId: currentRegion, startIndex: startIdx, endIndex: spans.length - 1 });
     return groups;
-  }, [spans]);
+  }, [spans, isCrnnSource]);
 
-  const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
+  const [selectedSpan, setSelectedSpan] = useState<string | number | null>(null);
   const [timelineZoom, setTimelineZoom] = useState<string | null>(null);
   const activeSpan = selectedSpan ?? spanIds[0] ?? 0;
 
   useEffect(() => {
     setTimelineZoom(null);
+    setSelectedSpan(null);
   }, [jobId]);
 
   const activeSpanIndex = useMemo(
@@ -673,17 +700,23 @@ export function HMMSequenceDetailPage() {
     return best.key;
   }, [activeTimelineSpan]);
 
-  const timelineSpanItems: ViterbiWindow[] = useMemo(() => {
+  const activeSpanRows = useMemo<Record<string, unknown>[]>(() => {
     if (!statesData?.items || !activeTimelineSpan) return [];
-    return statesData.items
-      .filter((r) => (r.merged_span_id as number) === activeTimelineSpan.id)
-      .map((r) => ({
+    return statesData.items.filter(
+      (r) => (r[groupKeyCol] as string | number) === activeTimelineSpan.id,
+    );
+  }, [statesData, activeTimelineSpan, groupKeyCol]);
+
+  const timelineSpanItems: ViterbiWindow[] = useMemo(
+    () =>
+      activeSpanRows.map((r) => ({
         start_timestamp: r.start_timestamp as number,
         end_timestamp: r.end_timestamp as number,
         viterbi_state: r.viterbi_state as number,
         max_state_probability: r.max_state_probability as number,
-      }));
-  }, [statesData, activeTimelineSpan]);
+      })),
+    [activeSpanRows],
+  );
 
   const hmmTileUrlBuilder = useCallback(
     (
@@ -770,10 +803,8 @@ export function HMMSequenceDetailPage() {
   }
 
   const { job, summary } = data as HMMSequenceJobDetail;
-  const sourceKind = data.source_kind ?? "surfperch";
   const tierComposition = data.tier_composition ?? null;
-  const itemLabel: "Event" | "Region" =
-    sourceKind === "region_crnn" ? "Region" : "Event";
+  const itemLabel: "Event" | "Region" = isCrnnSource ? "Region" : "Event";
   const active = isHMMSequenceJobActive(job);
 
   return (
@@ -795,7 +826,7 @@ export function HMMSequenceDetailPage() {
               className="ml-3 text-xs uppercase tracking-wide text-slate-500"
               data-testid="hmm-detail-source-kind"
             >
-              {sourceKind === "region_crnn" ? "CRNN" : "SurfPerch"}
+              {isCrnnSource ? "CRNN" : "SurfPerch"}
             </span>
           </CardTitle>
         </CardHeader>
@@ -957,12 +988,17 @@ export function HMMSequenceDetailPage() {
                 <select
                   data-testid="hmm-span-selector"
                   className="border rounded-md px-2 py-1 text-sm"
-                  value={activeSpan}
-                  onChange={(e) => setSelectedSpan(Number(e.target.value))}
+                  value={String(activeSpan)}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setSelectedSpan(isCrnnSource ? raw : Number(raw));
+                  }}
                 >
-                  {spanIds.map((id) => (
-                    <option key={id} value={id}>
-                      Span {id}
+                  {spanIds.map((id, idx) => (
+                    <option key={String(id)} value={String(id)}>
+                      {isCrnnSource
+                        ? `Region ${idx + 1} (${String(id).slice(0, 8)})`
+                        : `Span ${id}`}
                     </option>
                   ))}
                 </select>
@@ -971,9 +1007,8 @@ export function HMMSequenceDetailPage() {
           </CardHeader>
           <CardContent>
             <StateTimeline
-              items={statesData.items}
+              spanItems={activeSpanRows}
               nStates={job.n_states}
-              selectedSpan={activeSpan}
             />
           </CardContent>
         </Card>
