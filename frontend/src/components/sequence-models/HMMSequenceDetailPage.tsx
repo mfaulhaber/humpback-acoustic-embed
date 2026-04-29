@@ -10,6 +10,7 @@ import {
   type OverlayResponse,
   isHMMSequenceJobActive,
   useCancelHMMSequenceJob,
+  useContinuousEmbeddingJob,
   useGenerateInterpretations,
   useHMMDwell,
   useHMMExemplars,
@@ -26,7 +27,7 @@ import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { PlaybackControls } from "@/components/timeline/controls/PlaybackControls";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import { STATE_COLORS } from "./constants";
-import { SpanNavBar, type SpanInfo } from "./SpanNavBar";
+import { SpanNavBar, type SpanInfo, type RegionGroup } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
 import { regionTileIndexForSpanTile } from "./timelineTileIndex";
 
@@ -438,6 +439,8 @@ export function HMMSequenceDetailPage() {
   const cancelMutation = useCancelHMMSequenceJob();
 
   const isComplete = data?.job.status === "complete";
+  const cejId = data?.job.continuous_embedding_job_id ?? null;
+  const { data: cejDetail } = useContinuousEmbeddingJob(isComplete ? cejId : null);
 
   const { data: statesData } = useHMMStates(
     jobId ?? null,
@@ -463,6 +466,7 @@ export function HMMSequenceDetailPage() {
 
   const spans: SpanInfo[] = useMemo(() => {
     if (!statesData?.items || spanIds.length === 0) return [];
+    const manifestSpans = cejDetail?.manifest?.spans ?? [];
     return spanIds.map((id) => {
       let minT = Infinity;
       let maxT = -Infinity;
@@ -473,9 +477,32 @@ export function HMMSequenceDetailPage() {
         if (s < minT) minT = s;
         if (e > maxT) maxT = e;
       }
-      return { id, startTimestamp: minT, endTimestamp: maxT };
+      const ms = manifestSpans.find((s) => s.merged_span_id === id);
+      return {
+        id,
+        eventId: ms?.event_id ?? "",
+        regionId: ms?.region_id ?? "",
+        startTimestamp: minT,
+        endTimestamp: maxT,
+      };
     });
-  }, [statesData, spanIds]);
+  }, [statesData, spanIds, cejDetail]);
+
+  const regions: RegionGroup[] = useMemo(() => {
+    if (spans.length === 0) return [];
+    const groups: RegionGroup[] = [];
+    let currentRegion = spans[0].regionId;
+    let startIdx = 0;
+    for (let i = 1; i < spans.length; i++) {
+      if (spans[i].regionId !== currentRegion) {
+        groups.push({ regionId: currentRegion, startIndex: startIdx, endIndex: i - 1 });
+        currentRegion = spans[i].regionId;
+        startIdx = i;
+      }
+    }
+    groups.push({ regionId: currentRegion, startIndex: startIdx, endIndex: spans.length - 1 });
+    return groups;
+  }, [spans]);
 
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
   const [timelineZoom, setTimelineZoom] = useState<string | null>(null);
@@ -491,14 +518,54 @@ export function HMMSequenceDetailPage() {
   );
   const activeTimelineSpan = spans[activeSpanIndex] ?? null;
 
-  const handlePrevSpan = useCallback(() => {
+  const activeRegionIndex = useMemo(() => {
+    for (let i = 0; i < regions.length; i++) {
+      if (activeSpanIndex >= regions[i].startIndex && activeSpanIndex <= regions[i].endIndex) {
+        return i;
+      }
+    }
+    return 0;
+  }, [activeSpanIndex, regions]);
+
+  const handlePrevEvent = useCallback(() => {
     const newIdx = Math.max(0, activeSpanIndex - 1);
     setSelectedSpan(spanIds[newIdx] ?? null);
   }, [activeSpanIndex, spanIds]);
-  const handleNextSpan = useCallback(() => {
+  const handleNextEvent = useCallback(() => {
     const newIdx = Math.min(spanIds.length - 1, activeSpanIndex + 1);
     setSelectedSpan(spanIds[newIdx] ?? null);
   }, [activeSpanIndex, spanIds]);
+
+  const handlePrevRegion = useCallback(() => {
+    const newRegIdx = Math.max(0, activeRegionIndex - 1);
+    const firstEventIdx = regions[newRegIdx]?.startIndex ?? 0;
+    setSelectedSpan(spanIds[firstEventIdx] ?? null);
+  }, [activeRegionIndex, regions, spanIds]);
+  const handleNextRegion = useCallback(() => {
+    const newRegIdx = Math.min(regions.length - 1, activeRegionIndex + 1);
+    const firstEventIdx = regions[newRegIdx]?.startIndex ?? 0;
+    setSelectedSpan(spanIds[firstEventIdx] ?? null);
+  }, [activeRegionIndex, regions, spanIds]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      )
+        return;
+      if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        handlePrevEvent();
+      } else if (e.key === "d" || e.key === "D") {
+        e.preventDefault();
+        handleNextEvent();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handlePrevEvent, handleNextEvent]);
 
   const regionDetectionJobId = data?.region_detection_job_id ?? "";
   const regionStartTimestamp =
@@ -696,9 +763,13 @@ export function HMMSequenceDetailPage() {
           <CardContent className="space-y-2" data-testid="hmm-timeline-viewer">
             <SpanNavBar
               spans={spans}
+              regions={regions}
               activeIndex={activeSpanIndex}
-              onPrev={handlePrevSpan}
-              onNext={handleNextSpan}
+              activeRegionIndex={activeRegionIndex}
+              onPrevEvent={handlePrevEvent}
+              onNextEvent={handleNextEvent}
+              onPrevRegion={handlePrevRegion}
+              onNextRegion={handleNextRegion}
             />
             <TimelineProvider
               key={`hmm-timeline-${activeTimelineSpan.id}`}

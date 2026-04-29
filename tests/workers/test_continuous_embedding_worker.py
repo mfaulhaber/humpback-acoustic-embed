@@ -1,13 +1,12 @@
 """End-to-end tests for the continuous-embedding worker.
 
 Uses the synthetic ``SurfPerchStub`` embedder so the worker exercises
-the full claim → run → atomic write path without depending on real
+the full claim -> run -> atomic write path without depending on real
 audio decoding or model files.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -15,9 +14,12 @@ import numpy as np
 import pyarrow.parquet as pq
 import pytest
 
-from humpback.call_parsing.storage import region_job_dir, write_regions
-from humpback.call_parsing.types import Region
-from humpback.models.call_parsing import RegionDetectionJob
+from humpback.call_parsing.storage import (
+    segmentation_job_dir,
+    write_events,
+)
+from humpback.call_parsing.types import Event
+from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.processing.inference import FakeTF2Model
@@ -37,34 +39,30 @@ from humpback.workers.continuous_embedding_worker import (
 from tests.fixtures.sequence_models.surfperch_stub import SurfPerchStub
 
 
-def _make_region(
+def _make_event(
+    event_id: str,
     region_id: str,
     start: float,
     end: float,
-    *,
-    padded_start: float | None = None,
-    padded_end: float | None = None,
-) -> Region:
-    return Region(
+) -> Event:
+    return Event(
+        event_id=event_id,
         region_id=region_id,
         start_sec=start,
         end_sec=end,
-        padded_start_sec=start if padded_start is None else padded_start,
-        padded_end_sec=end if padded_end is None else padded_end,
-        max_score=0.9,
-        mean_score=0.6,
-        n_windows=10,
+        center_sec=(start + end) / 2.0,
+        segmentation_confidence=0.9,
     )
 
 
-async def _seed_region_job_with_regions(
+async def _seed_seg_job_with_events(
     session,
     settings,
     *,
-    regions: list[Region],
+    events: list[Event],
     duration_sec: float = 1000.0,
     start_timestamp: float = 1000.0,
-) -> RegionDetectionJob:
+) -> EventSegmentationJob:
     region_job = RegionDetectionJob(
         status=JobStatus.complete.value,
         hydrophone_id="rpi_orcasound_lab",
@@ -75,21 +73,29 @@ async def _seed_region_job_with_regions(
     await session.commit()
     await session.refresh(region_job)
 
-    job_dir = region_job_dir(settings.storage_root, region_job.id)
-    job_dir.mkdir(parents=True, exist_ok=True)
-    write_regions(job_dir / "regions.parquet", regions)
-    return region_job
+    seg_job = EventSegmentationJob(
+        status=JobStatus.complete.value,
+        region_detection_job_id=region_job.id,
+    )
+    session.add(seg_job)
+    await session.commit()
+    await session.refresh(seg_job)
+
+    seg_dir = segmentation_job_dir(settings.storage_root, seg_job.id)
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    write_events(seg_dir / "events.parquet", events)
+    return seg_job
 
 
 async def _seed_continuous_job(
     session,
-    region_detection_job_id: str,
+    event_segmentation_job_id: str,
     *,
     hop: float = 1.0,
-    pad: float = 5.0,
+    pad: float = 2.0,
 ) -> ContinuousEmbeddingJob:
     payload = ContinuousEmbeddingJobCreate(
-        region_detection_job_id=region_detection_job_id,
+        event_segmentation_job_id=event_segmentation_job_id,
         hop_seconds=hop,
         pad_seconds=pad,
     )
@@ -98,12 +104,12 @@ async def _seed_continuous_job(
 
 
 async def test_happy_path_writes_parquet_and_manifest(session, settings):
-    regions = [
-        _make_region("r1", 100.0, 110.0),
-        _make_region("r2", 200.0, 215.0),
+    events = [
+        _make_event("e1", "r1", 100.0, 110.0),
+        _make_event("e2", "r1", 200.0, 215.0),
     ]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    job = await _seed_continuous_job(session, region_job.id, pad=5.0)
+    seg_job = await _seed_seg_job_with_events(session, settings, events=events)
+    job = await _seed_continuous_job(session, seg_job.id, pad=2.0)
     stub = SurfPerchStub(vector_dim=8)
 
     await run_continuous_embedding_job(session, job, settings, embedder=stub)
@@ -111,7 +117,7 @@ async def test_happy_path_writes_parquet_and_manifest(session, settings):
     await session.refresh(job)
     assert job.status == JobStatus.complete.value
     assert job.vector_dim == 8
-    assert job.total_regions == 2
+    assert job.total_events == 2
     assert job.merged_spans == 2
     assert job.total_windows is not None and job.total_windows > 0
     assert job.error_message is None
@@ -126,12 +132,12 @@ async def test_happy_path_writes_parquet_and_manifest(session, settings):
     assert table.num_rows == job.total_windows
     assert set(table.column_names) == {
         "merged_span_id",
+        "event_id",
         "window_index_in_span",
         "audio_file_id",
         "start_timestamp",
         "end_timestamp",
         "is_in_pad",
-        "source_region_ids",
         "embedding",
     }
     span_ids = table.column("merged_span_id").to_pylist()
@@ -141,27 +147,28 @@ async def test_happy_path_writes_parquet_and_manifest(session, settings):
 
     embedding_widths = {len(v) for v in table.column("embedding").to_pylist()}
     assert embedding_widths == {8}
-    source_region_ids = table.column("source_region_ids").to_pylist()
-    assert source_region_ids
-    assert all(isinstance(ids, list) for ids in source_region_ids)
-    assert any(ids == ["r1"] for ids in source_region_ids)
+    event_ids = table.column("event_id").to_pylist()
+    assert "e1" in event_ids
+    assert "e2" in event_ids
 
     manifest = json.loads(Path(manifest_path).read_text())
     assert manifest["vector_dim"] == 8
     assert manifest["merged_spans"] == 2
+    assert manifest["total_events"] == 2
     assert manifest["total_windows"] == job.total_windows
     assert len(manifest["spans"]) == 2
-    assert manifest["spans"][0]["start_timestamp"] >= region_job.start_timestamp
+    assert manifest["spans"][0]["event_id"] == "e1"
+    assert manifest["spans"][1]["event_id"] == "e2"
 
 
-async def test_worker_uses_raw_region_bounds_for_padding_and_membership(
-    session, settings
-):
-    regions = [
-        _make_region("r1", 100.0, 110.0, padded_start=95.0, padded_end=115.0),
+async def test_event_span_padding_and_clamping(session, settings):
+    events = [
+        _make_event("e1", "r1", 100.0, 110.0),
     ]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    job = await _seed_continuous_job(session, region_job.id, pad=5.0)
+    seg_job = await _seed_seg_job_with_events(
+        session, settings, events=events, start_timestamp=1000.0, duration_sec=1000.0
+    )
+    job = await _seed_continuous_job(session, seg_job.id, pad=3.0)
 
     await run_continuous_embedding_job(
         session, job, settings, embedder=SurfPerchStub(vector_dim=4)
@@ -172,23 +179,41 @@ async def test_worker_uses_raw_region_bounds_for_padding_and_membership(
     )
     starts = table.column("start_timestamp").to_pylist()
     in_pad = table.column("is_in_pad").to_pylist()
-    source_region_ids = table.column("source_region_ids").to_pylist()
-    job_start = region_job.start_timestamp
-    assert job_start is not None
 
-    assert starts[0] == job_start + 95.0
+    assert starts[0] == 1000.0 + 97.0
     assert in_pad[0] is True
-    assert source_region_ids[0] == []
 
-    first_in_region = next(i for i, value in enumerate(in_pad) if value is False)
-    assert starts[first_in_region] == job_start + 98.0
-    assert source_region_ids[first_in_region] == ["r1"]
+    first_in_event = next(i for i, v in enumerate(in_pad) if v is False)
+    assert starts[first_in_event] >= 1000.0 + 98.0
+
+
+async def test_sequential_span_ids_one_per_event(session, settings):
+    events = [
+        _make_event("e1", "r1", 100.0, 105.0),
+        _make_event("e2", "r1", 106.0, 111.0),
+        _make_event("e3", "r2", 200.0, 208.0),
+    ]
+    seg_job = await _seed_seg_job_with_events(session, settings, events=events)
+    job = await _seed_continuous_job(session, seg_job.id, pad=2.0)
+
+    await run_continuous_embedding_job(
+        session, job, settings, embedder=SurfPerchStub(vector_dim=4)
+    )
+
+    await session.refresh(job)
+    assert job.merged_spans == 3
+    assert job.total_events == 3
+
+    manifest_path = continuous_embedding_manifest_path(settings.storage_root, job.id)
+    manifest = json.loads(Path(manifest_path).read_text())
+    span_ids = [s["merged_span_id"] for s in manifest["spans"]]
+    assert span_ids == [0, 1, 2]
 
 
 async def test_failure_path_marks_failed_and_cleans_artifacts(session, settings):
-    regions = [_make_region("r1", 100.0, 120.0)]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    job = await _seed_continuous_job(session, region_job.id)
+    events = [_make_event("e1", "r1", 100.0, 120.0)]
+    seg_job = await _seed_seg_job_with_events(session, settings, events=events)
+    job = await _seed_continuous_job(session, seg_job.id)
     stub = SurfPerchStub(vector_dim=4, fail_on_span=0)
 
     await run_continuous_embedding_job(session, job, settings, embedder=stub)
@@ -204,9 +229,9 @@ async def test_failure_path_marks_failed_and_cleans_artifacts(session, settings)
 
 
 async def test_no_temp_files_left_on_success(session, settings):
-    regions = [_make_region("r1", 100.0, 115.0)]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    job = await _seed_continuous_job(session, region_job.id)
+    events = [_make_event("e1", "r1", 100.0, 115.0)]
+    seg_job = await _seed_seg_job_with_events(session, settings, events=events)
+    job = await _seed_continuous_job(session, seg_job.id)
 
     await run_continuous_embedding_job(
         session, job, settings, embedder=SurfPerchStub(vector_dim=4)
@@ -218,32 +243,13 @@ async def test_no_temp_files_left_on_success(session, settings):
 
 
 async def test_cancellation_between_spans_drops_artifacts(session, settings):
-    regions = [
-        _make_region("r1", 100.0, 110.0),
-        _make_region("r2", 200.0, 215.0),
+    events = [
+        _make_event("e1", "r1", 100.0, 110.0),
+        _make_event("e2", "r1", 200.0, 215.0),
     ]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    job = await _seed_continuous_job(session, region_job.id, pad=5.0)
+    seg_job = await _seed_seg_job_with_events(session, settings, events=events)
+    job = await _seed_continuous_job(session, seg_job.id, pad=2.0)
 
-    class CancelOnSecondSpan:
-        def __init__(self):
-            self.calls = 0
-
-        def __call__(self, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                # After first span runs, request cancellation by flipping
-                # status. The worker rechecks at the top of each span loop.
-                async def flip():
-                    refreshed = await session.get(ContinuousEmbeddingJob, job.id)
-                    if refreshed is not None:
-                        refreshed.status = JobStatus.canceled.value
-                        await session.commit()
-
-                asyncio.get_event_loop().run_until_complete(flip())
-            return SurfPerchStub(vector_dim=4)(**kwargs)
-
-    # Simpler: pre-cancel before the worker runs.
     job.status = JobStatus.canceled.value
     await session.commit()
     await run_continuous_embedding_job(
@@ -259,17 +265,30 @@ async def test_cancellation_between_spans_drops_artifacts(session, settings):
 
 
 async def test_aborts_when_source_not_complete(session, settings):
-    regions = [_make_region("r1", 100.0, 110.0)]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    region_job.status = JobStatus.running.value
+    region_job = RegionDetectionJob(
+        status=JobStatus.complete.value,
+        hydrophone_id="rpi_orcasound_lab",
+        start_timestamp=1000.0,
+        end_timestamp=2000.0,
+    )
+    session.add(region_job)
     await session.commit()
+    await session.refresh(region_job)
+
+    seg_job = EventSegmentationJob(
+        status=JobStatus.running.value,
+        region_detection_job_id=region_job.id,
+    )
+    session.add(seg_job)
+    await session.commit()
+    await session.refresh(seg_job)
 
     job = ContinuousEmbeddingJob(
-        region_detection_job_id=region_job.id,
+        event_segmentation_job_id=seg_job.id,
         model_version="surfperch-tensorflow2",
         window_size_seconds=5.0,
         hop_seconds=1.0,
-        pad_seconds=10.0,
+        pad_seconds=2.0,
         target_sample_rate=32000,
         encoding_signature="manual-test-signature",
     )
@@ -289,9 +308,9 @@ async def test_aborts_when_source_not_complete(session, settings):
 
 
 async def test_run_one_iteration_claims_and_runs(session, settings):
-    regions = [_make_region("r1", 50.0, 65.0)]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    job = await _seed_continuous_job(session, region_job.id)
+    events = [_make_event("e1", "r1", 50.0, 65.0)]
+    seg_job = await _seed_seg_job_with_events(session, settings, events=events)
+    job = await _seed_continuous_job(session, seg_job.id)
     assert job.status == JobStatus.queued.value
 
     claimed = await run_one_iteration(
@@ -307,9 +326,14 @@ async def test_run_one_iteration_claims_and_runs(session, settings):
 async def test_default_embedder_runs_with_runtime_dependencies(
     session, settings, monkeypatch
 ):
-    regions = [_make_region("r1", 100.0, 110.0)]
-    region_job = await _seed_region_job_with_regions(session, settings, regions=regions)
-    job = await _seed_continuous_job(session, region_job.id)
+    events = [_make_event("e1", "r1", 100.0, 110.0)]
+    seg_job = await _seed_seg_job_with_events(session, settings, events=events)
+    job = await _seed_continuous_job(session, seg_job.id)
+
+    seg_job_obj = await session.get(EventSegmentationJob, seg_job.id)
+    region_job = await session.get(
+        RegionDetectionJob, seg_job_obj.region_detection_job_id
+    )
 
     class FakeProvider:
         def build_timeline(self, start_ts: float, end_ts: float):

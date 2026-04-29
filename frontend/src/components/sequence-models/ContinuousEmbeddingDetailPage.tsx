@@ -44,8 +44,8 @@ export function ContinuousEmbeddingDetailPage() {
             <span data-testid="cej-detail-status">{job.status}</span>
           </div>
           <div>
-            <span className="font-medium">Region Detection Job:</span>{" "}
-            {job.region_detection_job_id}
+            <span className="font-medium">Segmentation Job:</span>{" "}
+            {job.event_segmentation_job_id}
           </div>
           <div>
             <span className="font-medium">Model:</span> {job.model_version}
@@ -77,8 +77,8 @@ export function ContinuousEmbeddingDetailPage() {
                 <div>{manifest.vector_dim}</div>
               </div>
               <div>
-                <div className="font-medium text-slate-500">regions</div>
-                <div>{manifest.total_regions}</div>
+                <div className="font-medium text-slate-500">events</div>
+                <div>{manifest.total_events}</div>
               </div>
               <div>
                 <div className="font-medium text-slate-500">spans</div>
@@ -100,7 +100,7 @@ export function ContinuousEmbeddingDetailPage() {
                   <th className="pr-2">start (UTC sec)</th>
                   <th className="pr-2">end (UTC sec)</th>
                   <th className="pr-2">windows</th>
-                  <th>source regions</th>
+                  <th>event</th>
                 </tr>
               </thead>
               <tbody>
@@ -110,7 +110,7 @@ export function ContinuousEmbeddingDetailPage() {
                     <td className="pr-2 py-1">{s.start_timestamp.toFixed(2)}</td>
                     <td className="pr-2 py-1">{s.end_timestamp.toFixed(2)}</td>
                     <td className="pr-2 py-1">{s.window_count}</td>
-                    <td className="py-1">{s.source_region_ids.length}</td>
+                    <td className="py-1">{s.event_id.slice(0, 8)}</td>
                   </tr>
                 ))}
               </tbody>

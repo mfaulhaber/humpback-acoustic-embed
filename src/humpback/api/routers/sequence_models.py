@@ -206,20 +206,21 @@ async def get_hmm_sequence(
     job_id: str,
     session: SessionDep,
 ) -> HMMSequenceJobDetail:
+    from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
     from humpback.models.sequence_models import ContinuousEmbeddingJob
-    from humpback.models.call_parsing import RegionDetectionJob
 
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
 
     cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
-    region_detection_job_id = cej.region_detection_job_id if cej else ""
-    rdj = (
-        await session.get(RegionDetectionJob, region_detection_job_id)
-        if region_detection_job_id
-        else None
-    )
+    region_detection_job_id = ""
+    rdj = None
+    if cej:
+        seg_job = await session.get(EventSegmentationJob, cej.event_segmentation_job_id)
+        if seg_job:
+            region_detection_job_id = seg_job.region_detection_job_id
+            rdj = await session.get(RegionDetectionJob, region_detection_job_id)
 
     settings = Settings.from_repo_env()
     summary = _load_summary(settings, job_id)
