@@ -7,7 +7,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from humpback.classifier.detection_rows import write_detection_row_store
-from humpback.models.call_parsing import RegionDetectionJob
+from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
 from humpback.models.classifier import DetectionJob
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.processing import JobStatus
@@ -41,17 +41,24 @@ async def _seed_continuous_embedding_job(
         end_timestamp=300.0,
     )
     session.add(region_job)
+    await session.flush()
+
+    seg_job = EventSegmentationJob(
+        status=JobStatus.complete.value,
+        region_detection_job_id=region_job.id,
+    )
+    session.add(seg_job)
     await session.commit()
-    await session.refresh(region_job)
+    await session.refresh(seg_job)
 
     ce_job = ContinuousEmbeddingJob(
-        region_detection_job_id=region_job.id,
+        event_segmentation_job_id=seg_job.id,
         model_version="surfperch-tensorflow2",
         window_size_seconds=5.0,
         hop_seconds=1.0,
-        pad_seconds=10.0,
+        pad_seconds=2.0,
         target_sample_rate=32000,
-        encoding_signature=f"test-sig-{region_job.id}",
+        encoding_signature=f"test-sig-{seg_job.id}",
         status=status,
     )
     session.add(ce_job)
@@ -82,7 +89,7 @@ async def test_create_returns_queued_job(session):
     assert job.pca_whiten is False
     assert job.n_iter == 100
     assert job.random_seed == 42
-    assert job.min_sequence_length_frames == 10
+    assert job.min_sequence_length_frames == 3
 
 
 async def test_rejects_nonexistent_source(session):
@@ -192,17 +199,24 @@ async def test_generate_label_distribution_uses_epoch_hmm_timestamps(session, tm
         end_timestamp=1_300.0,
     )
     session.add(region_job)
+    await session.flush()
+
+    seg_job = EventSegmentationJob(
+        status=JobStatus.complete.value,
+        region_detection_job_id=region_job.id,
+    )
+    session.add(seg_job)
     await session.commit()
-    await session.refresh(region_job)
+    await session.refresh(seg_job)
 
     ce_job = ContinuousEmbeddingJob(
-        region_detection_job_id=region_job.id,
+        event_segmentation_job_id=seg_job.id,
         model_version="surfperch-tensorflow2",
         window_size_seconds=5.0,
         hop_seconds=1.0,
-        pad_seconds=10.0,
+        pad_seconds=2.0,
         target_sample_rate=32000,
-        encoding_signature=f"test-sig-{region_job.id}",
+        encoding_signature=f"test-sig-{seg_job.id}",
         status=JobStatus.complete.value,
     )
     session.add(ce_job)

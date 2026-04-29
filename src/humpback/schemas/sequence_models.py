@@ -14,10 +14,10 @@ class ContinuousEmbeddingJobCreate(BaseModel):
     submission time and are not user-supplied.
     """
 
-    region_detection_job_id: str
+    event_segmentation_job_id: str
     model_version: str = "surfperch-tensorflow2"
     hop_seconds: float = 1.0
-    pad_seconds: float = 10.0
+    pad_seconds: float = 2.0
 
     @field_validator("hop_seconds")
     @classmethod
@@ -39,7 +39,7 @@ class ContinuousEmbeddingJobOut(BaseModel):
 
     id: str
     status: str
-    region_detection_job_id: str
+    event_segmentation_job_id: str
     model_version: str
     window_size_seconds: float
     hop_seconds: float
@@ -48,7 +48,7 @@ class ContinuousEmbeddingJobOut(BaseModel):
     feature_config_json: Optional[str] = None
     encoding_signature: str
     vector_dim: Optional[int] = None
-    total_regions: Optional[int] = None
+    total_events: Optional[int] = None
     merged_spans: Optional[int] = None
     total_windows: Optional[int] = None
     parquet_path: Optional[str] = None
@@ -60,13 +60,14 @@ class ContinuousEmbeddingJobOut(BaseModel):
 
 
 class ContinuousEmbeddingSpanSummary(BaseModel):
-    """Summary of a single merged padded span emitted by the worker."""
+    """Summary of a single event-scoped padded span emitted by the worker."""
 
     merged_span_id: int
+    event_id: str
+    region_id: str
     start_timestamp: float
     end_timestamp: float
     window_count: int
-    source_region_ids: list[str] = Field(default_factory=list)
 
 
 class ContinuousEmbeddingJobManifest(BaseModel):
@@ -79,7 +80,7 @@ class ContinuousEmbeddingJobManifest(BaseModel):
     hop_seconds: float
     pad_seconds: float
     target_sample_rate: int
-    total_regions: int
+    total_events: int
     merged_spans: int
     total_windows: int
     spans: list[ContinuousEmbeddingSpanSummary] = Field(default_factory=list)
@@ -109,7 +110,7 @@ class HMMSequenceJobCreate(BaseModel):
     covariance_type: Literal["diag", "full"] = "diag"
     n_iter: int = Field(default=100, ge=1)
     random_seed: int = 42
-    min_sequence_length_frames: int = Field(default=10, ge=1)
+    min_sequence_length_frames: int = Field(default=3, ge=1)
     tol: float = Field(default=1e-4, gt=0)
 
 

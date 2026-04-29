@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
-from humpback.models.call_parsing import RegionDetectionJob
+from humpback.models.call_parsing import EventSegmentationJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.schemas.sequence_models import ContinuousEmbeddingJobCreate
@@ -57,7 +57,7 @@ def _serialize_feature_config(feature_config: Any) -> Optional[str]:
 
 def compute_continuous_embedding_signature(
     *,
-    region_detection_job_id: str,
+    event_segmentation_job_id: str,
     model_version: str,
     hop_seconds: float,
     window_size_seconds: float,
@@ -65,9 +65,9 @@ def compute_continuous_embedding_signature(
     target_sample_rate: int,
     feature_config: Any,
 ) -> str:
-    """SHA-256 idempotency key over the exact inputs from spec §5.1."""
+    """SHA-256 idempotency key over the exact inputs."""
     payload = {
-        "region_detection_job_id": region_detection_job_id,
+        "event_segmentation_job_id": event_segmentation_job_id,
         "model_version": model_version,
         "hop_seconds": hop_seconds,
         "window_size_seconds": window_size_seconds,
@@ -93,23 +93,14 @@ async def create_continuous_embedding_job(
     if payload.pad_seconds < 0:
         raise ValueError("pad_seconds must be >= 0")
 
-    region_job = await session.get(RegionDetectionJob, payload.region_detection_job_id)
-    if region_job is None:
+    seg_job = await session.get(EventSegmentationJob, payload.event_segmentation_job_id)
+    if seg_job is None:
         raise ValueError(
-            f"region_detection_job not found: {payload.region_detection_job_id}"
+            f"event_segmentation_job not found: {payload.event_segmentation_job_id}"
         )
-    if region_job.status != JobStatus.complete.value:
+    if seg_job.status != JobStatus.complete.value:
         raise ValueError(
-            "continuous embedding requires a completed region_detection_job"
-        )
-    if (
-        not region_job.hydrophone_id
-        or region_job.start_timestamp is None
-        or region_job.end_timestamp is None
-    ):
-        raise ValueError(
-            "continuous embedding currently supports hydrophone-backed "
-            "region_detection_job rows only"
+            "continuous embedding requires a completed event_segmentation_job"
         )
 
     model_constants = _resolve_model_version(payload.model_version)
@@ -119,7 +110,7 @@ async def create_continuous_embedding_job(
     feature_config_json = _serialize_feature_config(feature_config)
 
     signature = compute_continuous_embedding_signature(
-        region_detection_job_id=payload.region_detection_job_id,
+        event_segmentation_job_id=payload.event_segmentation_job_id,
         model_version=payload.model_version,
         hop_seconds=payload.hop_seconds,
         window_size_seconds=window_size_seconds,
@@ -140,7 +131,7 @@ async def create_continuous_embedding_job(
         return resettable, False
 
     job = ContinuousEmbeddingJob(
-        region_detection_job_id=payload.region_detection_job_id,
+        event_segmentation_job_id=payload.event_segmentation_job_id,
         model_version=payload.model_version,
         window_size_seconds=window_size_seconds,
         hop_seconds=payload.hop_seconds,
@@ -265,7 +256,7 @@ def _reset_job_for_retry(job: ContinuousEmbeddingJob) -> None:
     now = datetime.now(timezone.utc)
     job.status = JobStatus.queued.value
     job.vector_dim = None
-    job.total_regions = None
+    job.total_events = None
     job.merged_spans = None
     job.total_windows = None
     job.parquet_path = None

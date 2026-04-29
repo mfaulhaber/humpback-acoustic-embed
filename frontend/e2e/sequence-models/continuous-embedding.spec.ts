@@ -23,19 +23,36 @@ const REGION_JOB = {
   completed_at: "2026-04-26T00:30:00Z",
 };
 
+const SEG_JOB = {
+  id: "seg-complete-1",
+  status: "complete",
+  region_detection_job_id: REGION_JOB.id,
+  segmentation_model_id: null,
+  config_json: null,
+  parent_run_id: null,
+  event_count: 12,
+  compute_device: null,
+  gpu_fallback_reason: null,
+  error_message: null,
+  created_at: "2026-04-26T01:00:00Z",
+  updated_at: "2026-04-26T01:10:00Z",
+  started_at: "2026-04-26T01:00:01Z",
+  completed_at: "2026-04-26T01:10:00Z",
+};
+
 const QUEUED_JOB = {
   id: "cej-queued-1",
   status: "queued",
-  region_detection_job_id: REGION_JOB.id,
+  event_segmentation_job_id: SEG_JOB.id,
   model_version: "surfperch-tensorflow2",
   window_size_seconds: 5.0,
   hop_seconds: 1.0,
-  pad_seconds: 10.0,
+  pad_seconds: 2.0,
   target_sample_rate: 32000,
   feature_config_json: null,
   encoding_signature: "abc123",
   vector_dim: null,
-  total_regions: null,
+  total_events: null,
   merged_spans: null,
   total_windows: null,
   parquet_path: null,
@@ -49,7 +66,7 @@ const COMPLETE_JOB = {
   id: "cej-complete-1",
   status: "complete",
   vector_dim: 1280,
-  total_regions: 4,
+  total_events: 4,
   merged_spans: 3,
   total_windows: 240,
   parquet_path:
@@ -75,7 +92,7 @@ const COMPLETE_DETAIL = {
     hop_seconds: 1.0,
     pad_seconds: 10.0,
     target_sample_rate: 32000,
-    total_regions: 4,
+    total_events: 4,
     merged_spans: 3,
     total_windows: 240,
     spans: [
@@ -84,21 +101,24 @@ const COMPLETE_DETAIL = {
         start_time_sec: 90.0,
         end_time_sec: 130.0,
         window_count: 36,
-        source_region_ids: ["r1", "r2"],
+        event_id: "evt-0",
+        region_id: "r1",
       },
       {
         merged_span_id: 1,
         start_time_sec: 200.0,
         end_time_sec: 240.0,
         window_count: 36,
-        source_region_ids: ["r3"],
+        event_id: "evt-1",
+        region_id: "r1",
       },
       {
         merged_span_id: 2,
         start_time_sec: 320.0,
         end_time_sec: 480.0,
         window_count: 168,
-        source_region_ids: ["r4"],
+        event_id: "evt-2",
+        region_id: "r2",
       },
     ],
   },
@@ -116,6 +136,22 @@ async function setupMocks(page: Page, state: MockState) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify([REGION_JOB]),
+    }),
+  );
+
+  await page.route("**/call-parsing/segmentation-jobs**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([SEG_JOB]),
+    }),
+  );
+
+  await page.route("**/hydrophones", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{ id: "rpi_orcasound_lab", name: "Orcasound Lab" }]),
     }),
   );
 
@@ -194,8 +230,8 @@ test.describe("Sequence Models — Continuous Embedding", () => {
     await page.goto("/app/sequence-models/continuous-embedding");
 
     await page
-      .getByTestId("cej-region-job-select")
-      .selectOption(REGION_JOB.id);
+      .getByTestId("cej-seg-job-select")
+      .selectOption(SEG_JOB.id);
     await page.getByTestId("cej-create-submit").click();
 
     await expect(page.getByTestId(`cej-card-${QUEUED_JOB.id}`)).toBeVisible();

@@ -59,7 +59,7 @@ export function ContinuousEmbeddingJobTable({ jobs, mode }: TableProps) {
     const q = filterText.toLowerCase();
     return jobs.filter(
       (j) =>
-        j.region_detection_job_id.toLowerCase().includes(q) ||
+        j.event_segmentation_job_id.toLowerCase().includes(q) ||
         j.model_version.toLowerCase().includes(q),
     );
   }, [jobs, filterText, mode]);
@@ -81,7 +81,7 @@ export function ContinuousEmbeddingJobTable({ jobs, mode }: TableProps) {
         case "region":
           return (
             dir *
-            a.region_detection_job_id.localeCompare(b.region_detection_job_id)
+            a.event_segmentation_job_id.localeCompare(b.event_segmentation_job_id)
           );
         case "spans":
           return dir * ((a.merged_spans ?? 0) - (b.merged_spans ?? 0));
@@ -298,7 +298,7 @@ export function ContinuousEmbeddingJobTable({ jobs, mode }: TableProps) {
                 {new Date(job.created_at).toLocaleString()}
               </td>
               <td className="px-3 py-2 text-xs">
-                {job.region_detection_job_id.slice(0, 8)}
+                {job.event_segmentation_job_id.slice(0, 8)}
               </td>
               <td className="px-3 py-2 text-xs">{job.model_version}</td>
               <td className="px-3 py-2 text-xs">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Plot from "react-plotly.js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import {
   type OverlayResponse,
   isHMMSequenceJobActive,
   useCancelHMMSequenceJob,
+  useContinuousEmbeddingJob,
   useGenerateInterpretations,
   useHMMDwell,
   useHMMExemplars,
@@ -21,14 +22,15 @@ import {
 } from "@/api/sequenceModels";
 import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
+import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { PlaybackControls } from "@/components/timeline/controls/PlaybackControls";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
 import { STATE_COLORS } from "./constants";
-import { SpanNavBar, type SpanInfo } from "./SpanNavBar";
+import { SpanNavBar, type SpanInfo, type RegionGroup } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
-import { regionTileIndexForSpanTile } from "./timelineTileIndex";
 
 function StateTimeline({
   items,
@@ -432,12 +434,74 @@ function ExemplarGallery({
   );
 }
 
+function HMMTimelineBody({
+  regionDetectionJobId,
+  tileUrlBuilder,
+  eventSpan,
+  stateItems,
+  nStates,
+  scrollToCenter,
+  onViewStartChange,
+  onViewSpanChange,
+}: {
+  regionDetectionJobId: string;
+  tileUrlBuilder: (jid: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
+  eventSpan: SpanInfo;
+  stateItems: ViterbiWindow[];
+  nStates: number;
+  scrollToCenter: { target: number; seq: number } | undefined;
+  onViewStartChange: (v: number) => void;
+  onViewSpanChange: (v: number) => void;
+}) {
+  const ctx = useTimelineContext();
+
+  const scrollSeqRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!scrollToCenter || scrollToCenter.seq === scrollSeqRef.current) return;
+    scrollSeqRef.current = scrollToCenter.seq;
+    ctx.seekTo(scrollToCenter.target);
+  }, [scrollToCenter, ctx]);
+
+  useEffect(() => {
+    onViewStartChange(ctx.viewStart);
+  }, [ctx.viewStart, onViewStartChange]);
+  useEffect(() => {
+    onViewSpanChange(ctx.viewportSpan);
+  }, [ctx.viewportSpan, onViewSpanChange]);
+
+  return (
+    <>
+      <div className="flex" style={{ height: 160 }}>
+        <Spectrogram
+          jobId={regionDetectionJobId}
+          tileUrlBuilder={tileUrlBuilder}
+          freqRange={[0, 3000]}
+        >
+          <RegionBoundaryMarkers
+            startEpoch={eventSpan.startTimestamp}
+            endEpoch={eventSpan.endTimestamp}
+          />
+        </Spectrogram>
+      </div>
+      <HMMStateBar items={stateItems} nStates={nStates} />
+      <div className="flex justify-center py-1">
+        <ZoomSelector />
+      </div>
+      <div className="flex justify-center">
+        <PlaybackControls />
+      </div>
+    </>
+  );
+}
+
 export function HMMSequenceDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data, isLoading, error } = useHMMSequenceJob(jobId ?? null);
   const cancelMutation = useCancelHMMSequenceJob();
 
   const isComplete = data?.job.status === "complete";
+  const cejId = data?.job.continuous_embedding_job_id ?? null;
+  const { data: cejDetail } = useContinuousEmbeddingJob(isComplete ? cejId : null);
 
   const { data: statesData } = useHMMStates(
     jobId ?? null,
@@ -463,6 +527,7 @@ export function HMMSequenceDetailPage() {
 
   const spans: SpanInfo[] = useMemo(() => {
     if (!statesData?.items || spanIds.length === 0) return [];
+    const manifestSpans = cejDetail?.manifest?.spans ?? [];
     return spanIds.map((id) => {
       let minT = Infinity;
       let maxT = -Infinity;
@@ -473,9 +538,32 @@ export function HMMSequenceDetailPage() {
         if (s < minT) minT = s;
         if (e > maxT) maxT = e;
       }
-      return { id, startTimestamp: minT, endTimestamp: maxT };
+      const ms = manifestSpans.find((s) => s.merged_span_id === id);
+      return {
+        id,
+        eventId: ms?.event_id ?? "",
+        regionId: ms?.region_id ?? "",
+        startTimestamp: minT,
+        endTimestamp: maxT,
+      };
     });
-  }, [statesData, spanIds]);
+  }, [statesData, spanIds, cejDetail]);
+
+  const regions: RegionGroup[] = useMemo(() => {
+    if (spans.length === 0) return [];
+    const groups: RegionGroup[] = [];
+    let currentRegion = spans[0].regionId;
+    let startIdx = 0;
+    for (let i = 1; i < spans.length; i++) {
+      if (spans[i].regionId !== currentRegion) {
+        groups.push({ regionId: currentRegion, startIndex: startIdx, endIndex: i - 1 });
+        currentRegion = spans[i].regionId;
+        startIdx = i;
+      }
+    }
+    groups.push({ regionId: currentRegion, startIndex: startIdx, endIndex: spans.length - 1 });
+    return groups;
+  }, [spans]);
 
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
   const [timelineZoom, setTimelineZoom] = useState<string | null>(null);
@@ -491,18 +579,40 @@ export function HMMSequenceDetailPage() {
   );
   const activeTimelineSpan = spans[activeSpanIndex] ?? null;
 
-  const handlePrevSpan = useCallback(() => {
+  const activeRegionIndex = useMemo(() => {
+    for (let i = 0; i < regions.length; i++) {
+      if (activeSpanIndex >= regions[i].startIndex && activeSpanIndex <= regions[i].endIndex) {
+        return i;
+      }
+    }
+    return 0;
+  }, [activeSpanIndex, regions]);
+
+  const handlePrevEvent = useCallback(() => {
     const newIdx = Math.max(0, activeSpanIndex - 1);
     setSelectedSpan(spanIds[newIdx] ?? null);
   }, [activeSpanIndex, spanIds]);
-  const handleNextSpan = useCallback(() => {
+  const handleNextEvent = useCallback(() => {
     const newIdx = Math.min(spanIds.length - 1, activeSpanIndex + 1);
     setSelectedSpan(spanIds[newIdx] ?? null);
   }, [activeSpanIndex, spanIds]);
 
+  const handlePrevRegion = useCallback(() => {
+    const newRegIdx = Math.max(0, activeRegionIndex - 1);
+    const firstEventIdx = regions[newRegIdx]?.startIndex ?? 0;
+    setSelectedSpan(spanIds[firstEventIdx] ?? null);
+  }, [activeRegionIndex, regions, spanIds]);
+  const handleNextRegion = useCallback(() => {
+    const newRegIdx = Math.min(regions.length - 1, activeRegionIndex + 1);
+    const firstEventIdx = regions[newRegIdx]?.startIndex ?? 0;
+    setSelectedSpan(spanIds[firstEventIdx] ?? null);
+  }, [activeRegionIndex, regions, spanIds]);
+
   const regionDetectionJobId = data?.region_detection_job_id ?? "";
   const regionStartTimestamp =
     data?.region_start_timestamp ?? activeTimelineSpan?.startTimestamp ?? 0;
+  const regionEndTimestamp =
+    data?.region_end_timestamp ?? activeTimelineSpan?.endTimestamp ?? 0;
 
   const defaultZoom = useMemo(() => {
     if (!activeTimelineSpan) return REVIEW_ZOOM[0].key;
@@ -529,26 +639,72 @@ export function HMMSequenceDetailPage() {
 
   const hmmTileUrlBuilder = useCallback(
     (
-      jid: string,
+      _jid: string,
       zoomLevel: string,
       tileIndex: number,
       _freqMin: number,
       _freqMax: number,
     ) => {
-      const preset = REVIEW_ZOOM.find((z) => z.key === zoomLevel);
-      const tileDuration = preset?.tileDuration ?? 10;
-      const activeStart =
-        activeTimelineSpan?.startTimestamp ?? regionStartTimestamp;
-      const regionTileIndex = regionTileIndexForSpanTile(
-        activeStart,
-        regionStartTimestamp,
-        tileIndex,
-        tileDuration,
-      );
-      return regionTileUrl(jid, zoomLevel, regionTileIndex);
+      return regionTileUrl(regionDetectionJobId, zoomLevel, tileIndex);
     },
-    [activeTimelineSpan, regionStartTimestamp],
+    [regionDetectionJobId],
   );
+
+  const navDirectionRef = useRef<"forward" | "backward">("forward");
+  const scrollSeqRef = useRef(0);
+  const [scrollToCenter, setScrollToCenter] = useState<
+    { target: number; seq: number } | undefined
+  >(undefined);
+  const [viewStart, setViewStart] = useState<number | undefined>(undefined);
+  const [viewSpan, setViewSpan] = useState(60);
+
+  const wrappedPrevEvent = useCallback(() => {
+    navDirectionRef.current = "backward";
+    handlePrevEvent();
+  }, [handlePrevEvent]);
+  const wrappedNextEvent = useCallback(() => {
+    navDirectionRef.current = "forward";
+    handleNextEvent();
+  }, [handleNextEvent]);
+
+  useEffect(() => {
+    if (!activeTimelineSpan || viewStart === undefined) return;
+    const viewEnd = viewStart + viewSpan;
+    const pad = viewSpan * 0.15;
+    const fullyVisible =
+      activeTimelineSpan.startTimestamp >= viewStart + pad &&
+      activeTimelineSpan.endTimestamp <= viewEnd - pad;
+    if (!fullyVisible) {
+      let target: number;
+      if (navDirectionRef.current === "forward") {
+        target = activeTimelineSpan.endTimestamp + pad - viewSpan / 2;
+      } else {
+        target = activeTimelineSpan.startTimestamp - pad + viewSpan / 2;
+      }
+      scrollSeqRef.current += 1;
+      setScrollToCenter({ target, seq: scrollSeqRef.current });
+    }
+  }, [activeTimelineSpan, viewStart, viewSpan]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      )
+        return;
+      if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        wrappedPrevEvent();
+      } else if (e.key === "d" || e.key === "D") {
+        e.preventDefault();
+        wrappedNextEvent();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [wrappedPrevEvent, wrappedNextEvent]);
 
   if (isLoading) {
     return (
@@ -696,14 +852,18 @@ export function HMMSequenceDetailPage() {
           <CardContent className="space-y-2" data-testid="hmm-timeline-viewer">
             <SpanNavBar
               spans={spans}
+              regions={regions}
               activeIndex={activeSpanIndex}
-              onPrev={handlePrevSpan}
-              onNext={handleNextSpan}
+              activeRegionIndex={activeRegionIndex}
+              onPrevEvent={wrappedPrevEvent}
+              onNextEvent={wrappedNextEvent}
+              onPrevRegion={handlePrevRegion}
+              onNextRegion={handleNextRegion}
             />
             <TimelineProvider
-              key={`hmm-timeline-${activeTimelineSpan.id}`}
-              jobStart={activeTimelineSpan.startTimestamp}
-              jobEnd={activeTimelineSpan.endTimestamp}
+              key={`hmm-timeline-${regionDetectionJobId}`}
+              jobStart={regionStartTimestamp}
+              jobEnd={regionEndTimestamp}
               zoomLevels={REVIEW_ZOOM}
               defaultZoom={timelineZoom ?? defaultZoom}
               onZoomChange={setTimelineZoom}
@@ -712,20 +872,16 @@ export function HMMSequenceDetailPage() {
                 regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
               }
             >
-              <div className="flex" style={{ height: 160 }}>
-                <Spectrogram
-                  jobId={regionDetectionJobId}
-                  tileUrlBuilder={hmmTileUrlBuilder}
-                  freqRange={[0, 3000]}
-                />
-              </div>
-              <HMMStateBar items={timelineSpanItems} nStates={job.n_states} />
-              <div className="flex justify-center py-1">
-                <ZoomSelector />
-              </div>
-              <div className="flex justify-center">
-                <PlaybackControls />
-              </div>
+              <HMMTimelineBody
+                regionDetectionJobId={regionDetectionJobId}
+                tileUrlBuilder={hmmTileUrlBuilder}
+                eventSpan={activeTimelineSpan}
+                stateItems={timelineSpanItems}
+                nStates={job.n_states}
+                scrollToCenter={scrollToCenter}
+                onViewStartChange={setViewStart}
+                onViewSpanChange={setViewSpan}
+              />
             </TimelineProvider>
           </CardContent>
         </Card>

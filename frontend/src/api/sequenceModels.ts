@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 export interface ContinuousEmbeddingJob {
   id: string;
   status: string;
-  region_detection_job_id: string;
+  event_segmentation_job_id: string;
   model_version: string;
   window_size_seconds: number;
   hop_seconds: number;
@@ -12,7 +12,7 @@ export interface ContinuousEmbeddingJob {
   feature_config_json: string | null;
   encoding_signature: string;
   vector_dim: number | null;
-  total_regions: number | null;
+  total_events: number | null;
   merged_spans: number | null;
   total_windows: number | null;
   parquet_path: string | null;
@@ -23,10 +23,11 @@ export interface ContinuousEmbeddingJob {
 
 export interface ContinuousEmbeddingSpanSummary {
   merged_span_id: number;
+  event_id: string;
+  region_id: string;
   start_timestamp: number;
   end_timestamp: number;
   window_count: number;
-  source_region_ids: string[];
 }
 
 export interface ContinuousEmbeddingJobManifest {
@@ -37,7 +38,7 @@ export interface ContinuousEmbeddingJobManifest {
   hop_seconds: number;
   pad_seconds: number;
   target_sample_rate: number;
-  total_regions: number;
+  total_events: number;
   merged_spans: number;
   total_windows: number;
   spans: ContinuousEmbeddingSpanSummary[];
@@ -49,7 +50,7 @@ export interface ContinuousEmbeddingJobDetail {
 }
 
 export interface CreateContinuousEmbeddingJobRequest {
-  region_detection_job_id: string;
+  event_segmentation_job_id: string;
   model_version?: string;
   hop_seconds?: number;
   pad_seconds?: number;

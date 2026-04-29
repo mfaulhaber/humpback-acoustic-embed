@@ -298,11 +298,18 @@ async def generate_label_distribution(
             f"ContinuousEmbeddingJob not found: {job.continuous_embedding_job_id}"
         )
 
-    from humpback.models.call_parsing import RegionDetectionJob
+    from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
 
-    rdj = await session.get(RegionDetectionJob, cej.region_detection_job_id)
+    seg_job = await session.get(EventSegmentationJob, cej.event_segmentation_job_id)
+    if seg_job is None:
+        raise ValueError(
+            f"EventSegmentationJob not found: {cej.event_segmentation_job_id}"
+        )
+    rdj = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
     if rdj is None:
-        raise ValueError(f"RegionDetectionJob not found: {cej.region_detection_job_id}")
+        raise ValueError(
+            f"RegionDetectionJob not found: {seg_job.region_detection_job_id}"
+        )
 
     states_table = pq.read_table(hmm_sequence_states_path(storage_root, job.id))
     state_rows: list[dict[str, Any]] = []

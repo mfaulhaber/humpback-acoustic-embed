@@ -1,16 +1,13 @@
 """Sequence Models continuous embedding worker.
 
-Reads regions from a completed Pass-1 ``RegionDetectionJob``, produces
-1-second-hop SurfPerch embeddings padded around each region, and writes
+Reads events from a completed Pass-2 ``EventSegmentationJob``, produces
+1-second-hop SurfPerch embeddings padded around each event, and writes
 ``embeddings.parquet`` + ``manifest.json`` atomically into the per-job
-storage directory.
+storage directory. Each event becomes an independent span — no merging.
 
 The actual SurfPerch model invocation lives behind an injected
 ``EmbedderProtocol`` so the worker can be exercised under tests with a
-deterministic stub. The default production embedder resolves the model
-via the registry — wiring is intentionally narrow so PR 1 lands the
-plumbing without taking a runtime dependency on hydrophone audio
-streaming code paths.
+deterministic stub.
 """
 
 from __future__ import annotations
@@ -30,12 +27,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.storage import read_events, segmentation_job_dir
+from humpback.call_parsing.types import Event
 from humpback.classifier.archive import ArchiveProvider, StreamSegment
 from humpback.classifier.providers import build_archive_detection_provider
 from humpback.classifier.s3_stream import resolve_audio_slice
-from humpback.call_parsing.storage import read_regions, region_job_dir
 from humpback.config import Settings
-from humpback.models.call_parsing import RegionDetectionJob
+from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.processing.features import extract_logmel_batch
@@ -43,10 +41,8 @@ from humpback.processing.inference import EmbeddingModel
 from humpback.processing.region_windowing import (
     AudioEnvelope,
     MergedSpan,
-    Region as WindowRegion,
     WindowRecord,
     iter_windows,
-    merge_padded_regions,
 )
 from humpback.processing.windowing import window_sample_count
 from humpback.storage import (
@@ -64,12 +60,12 @@ logger = logging.getLogger(__name__)
 CONTINUOUS_EMBEDDING_SCHEMA = pa.schema(
     [
         pa.field("merged_span_id", pa.int32(), nullable=False),
+        pa.field("event_id", pa.string(), nullable=False),
         pa.field("window_index_in_span", pa.int32(), nullable=False),
         pa.field("audio_file_id", pa.int32(), nullable=True),
         pa.field("start_timestamp", pa.float64(), nullable=False),
         pa.field("end_timestamp", pa.float64(), nullable=False),
         pa.field("is_in_pad", pa.bool_(), nullable=False),
-        pa.field("source_region_ids", pa.list_(pa.string()), nullable=False),
         pa.field("embedding", pa.list_(pa.float32()), nullable=False),
     ]
 )
@@ -120,31 +116,35 @@ def _default_embedder(
     )
 
 
-def _regions_to_window_geometry(regions) -> list[WindowRegion]:
-    return [
-        WindowRegion(
-            region_id=r.region_id,
-            start_offset_sec=float(r.start_sec),
-            end_offset_sec=float(r.end_sec),
-        )
-        for r in regions
-    ]
+def _event_to_span(
+    event: Event,
+    span_id: int,
+    pad_seconds: float,
+    envelope: AudioEnvelope,
+) -> MergedSpan:
+    raw_start = float(event.start_sec) - pad_seconds
+    raw_end = float(event.end_sec) + pad_seconds
+    clamped_start = max(envelope.start_offset_sec, raw_start)
+    clamped_end = min(envelope.end_offset_sec, raw_end)
+    from humpback.processing.region_windowing import Region as WindowRegion
+
+    region = WindowRegion(
+        region_id=event.event_id,
+        start_offset_sec=float(event.start_sec),
+        end_offset_sec=float(event.end_sec),
+    )
+    return MergedSpan(
+        merged_span_id=span_id,
+        start_offset_sec=clamped_start,
+        end_offset_sec=clamped_end,
+        source_regions=[region],
+    )
 
 
-def _audio_envelope(region_job: RegionDetectionJob, regions) -> AudioEnvelope:
-    if region_job.start_timestamp is not None and region_job.end_timestamp is not None:
-        start = float(region_job.start_timestamp)
-        end = float(region_job.end_timestamp)
-        return AudioEnvelope(start_offset_sec=0.0, end_offset_sec=max(0.0, end - start))
-
-    # File-mode jobs: regions are in seconds-from-file-start. Bound the
-    # envelope by the largest region end seen in regions.parquet — the
-    # producer never extrapolates past the file end the source job saw.
-    if regions:
-        max_end = max(float(r.padded_end_sec) for r in regions)
-    else:
-        max_end = 0.0
-    return AudioEnvelope(start_offset_sec=0.0, end_offset_sec=max_end)
+def _audio_envelope_from_region_job(region_job: RegionDetectionJob) -> AudioEnvelope:
+    start = float(region_job.start_timestamp or 0.0)
+    end = float(region_job.end_timestamp or 0.0)
+    return AudioEnvelope(start_offset_sec=0.0, end_offset_sec=max(0.0, end - start))
 
 
 def _atomic_write_parquet(table: pa.Table, dst: Path) -> None:
@@ -201,6 +201,7 @@ def _cleanup_partial_artifacts(job_dir: Path) -> None:
 
 def _row_dict(
     span: MergedSpan,
+    event_id: str,
     record: WindowRecord,
     embedding: np.ndarray,
     timestamp_offset: float,
@@ -208,12 +209,12 @@ def _row_dict(
     emb = np.asarray(embedding, dtype=np.float32)
     return {
         "merged_span_id": int(span.merged_span_id),
+        "event_id": event_id,
         "window_index_in_span": int(record.window_index_in_span),
         "audio_file_id": None,
         "start_timestamp": float(record.start_offset_sec + timestamp_offset),
         "end_timestamp": float(record.end_offset_sec + timestamp_offset),
         "is_in_pad": bool(record.is_in_pad),
-        "source_region_ids": list(record.source_region_ids),
         "embedding": emb.tolist(),
     }
 
@@ -221,10 +222,11 @@ def _row_dict(
 @dataclass(slots=True)
 class _SpanSummary:
     merged_span_id: int
+    event_id: str
+    region_id: str
     start_timestamp: float
     end_timestamp: float
     window_count: int
-    source_region_ids: list[str]
 
 
 @dataclass(slots=True)
@@ -297,7 +299,7 @@ def _build_manifest_payload(
     *,
     job: ContinuousEmbeddingJob,
     vector_dim: int,
-    total_regions: int,
+    total_events: int,
     spans: Iterable[_SpanSummary],
 ) -> dict:
     spans_list = list(spans)
@@ -309,16 +311,17 @@ def _build_manifest_payload(
         "hop_seconds": float(job.hop_seconds),
         "pad_seconds": float(job.pad_seconds),
         "target_sample_rate": int(job.target_sample_rate),
-        "total_regions": int(total_regions),
+        "total_events": int(total_events),
         "merged_spans": len(spans_list),
         "total_windows": int(sum(s.window_count for s in spans_list)),
         "spans": [
             {
                 "merged_span_id": s.merged_span_id,
+                "event_id": s.event_id,
+                "region_id": s.region_id,
                 "start_timestamp": s.start_timestamp,
                 "end_timestamp": s.end_timestamp,
                 "window_count": s.window_count,
-                "source_region_ids": s.source_region_ids,
             }
             for s in spans_list
         ],
@@ -437,7 +440,7 @@ async def run_continuous_embedding_job(
     idempotency check is the service layer's responsibility.
     """
     job_id = job.id
-    region_detection_job_id = job.region_detection_job_id
+    event_segmentation_job_id = job.event_segmentation_job_id
 
     job_dir = ensure_dir(continuous_embedding_dir(settings.storage_root, job_id))
     parquet_path = continuous_embedding_parquet_path(settings.storage_root, job_id)
@@ -445,46 +448,61 @@ async def run_continuous_embedding_job(
 
     try:
         job = await session.merge(job)
-        region_job = await session.get(RegionDetectionJob, region_detection_job_id)
+        seg_job = await session.get(EventSegmentationJob, event_segmentation_job_id)
+        if seg_job is None:
+            raise ValueError(
+                f"event_segmentation_job not found: {event_segmentation_job_id}"
+            )
+        if seg_job.status != JobStatus.complete.value:
+            raise ValueError(
+                f"event_segmentation_job {event_segmentation_job_id} not complete "
+                f"(status={seg_job.status!r})"
+            )
+        region_job = await session.get(
+            RegionDetectionJob, seg_job.region_detection_job_id
+        )
         if region_job is None:
             raise ValueError(
-                f"region_detection_job not found: {region_detection_job_id}"
+                f"region_detection_job not found via segmentation FK: "
+                f"{seg_job.region_detection_job_id}"
             )
-        if region_job.status != JobStatus.complete.value:
-            raise ValueError(
-                f"region_detection_job {region_detection_job_id} not complete "
-                f"(status={region_job.status!r})"
-            )
+
         embed = embedder or await _prepare_production_embedder(
             session, job, region_job, settings
         )
 
-        regions_path = (
-            region_job_dir(settings.storage_root, region_detection_job_id)
-            / "regions.parquet"
+        events_path = (
+            segmentation_job_dir(settings.storage_root, event_segmentation_job_id)
+            / "events.parquet"
         )
-        if not regions_path.exists():
+        if not events_path.exists():
             raise FileNotFoundError(
-                f"regions.parquet not found for {region_detection_job_id}"
+                f"events.parquet not found for {event_segmentation_job_id}"
             )
 
-        regions = read_regions(regions_path)
-        regions_sorted = sorted(regions, key=lambda r: r.padded_start_sec)
-        envelope = _audio_envelope(region_job, regions_sorted)
-        window_regions = _regions_to_window_geometry(regions_sorted)
+        events = read_events(events_path)
+        events_sorted = sorted(events, key=lambda e: e.start_sec)
+        envelope = _audio_envelope_from_region_job(region_job)
         timestamp_offset = float(region_job.start_timestamp or 0.0)
 
-        spans = merge_padded_regions(
-            window_regions,
-            pad_seconds=float(job.pad_seconds),
-            audio_envelope=envelope,
-        )
+        spans_and_events: list[tuple[MergedSpan, Event]] = [
+            (
+                _event_to_span(
+                    event,
+                    span_id=idx,
+                    pad_seconds=float(job.pad_seconds),
+                    envelope=envelope,
+                ),
+                event,
+            )
+            for idx, event in enumerate(events_sorted)
+        ]
 
         rows: list[dict] = []
         span_summaries: list[_SpanSummary] = []
         vector_dim: Optional[int] = None
 
-        for span in spans:
+        for span, event in spans_and_events:
             await session.refresh(job)
             if job.status == JobStatus.canceled.value:
                 _cleanup_partial_artifacts(job_dir)
@@ -506,10 +524,11 @@ async def run_continuous_embedding_job(
                 span_summaries.append(
                     _SpanSummary(
                         merged_span_id=span.merged_span_id,
+                        event_id=event.event_id,
+                        region_id=event.region_id,
                         start_timestamp=span.start_offset_sec + timestamp_offset,
                         end_timestamp=span.end_offset_sec + timestamp_offset,
                         window_count=0,
-                        source_region_ids=[r.region_id for r in span.source_regions],
                     )
                 )
                 continue
@@ -539,15 +558,18 @@ async def run_continuous_embedding_job(
                         "embedding vector_dim mismatch: "
                         f"got {arr.shape[0]}, expected {vector_dim}"
                     )
-                rows.append(_row_dict(span, record, arr, timestamp_offset))
+                rows.append(
+                    _row_dict(span, event.event_id, record, arr, timestamp_offset)
+                )
 
             span_summaries.append(
                 _SpanSummary(
                     merged_span_id=span.merged_span_id,
+                    event_id=event.event_id,
+                    region_id=event.region_id,
                     start_timestamp=span.start_offset_sec + timestamp_offset,
                     end_timestamp=span.end_offset_sec + timestamp_offset,
                     window_count=len(window_records),
-                    source_region_ids=[r.region_id for r in span.source_regions],
                 )
             )
 
@@ -561,7 +583,7 @@ async def run_continuous_embedding_job(
         manifest = _build_manifest_payload(
             job=job,
             vector_dim=vector_dim,
-            total_regions=len(regions_sorted),
+            total_events=len(events_sorted),
             spans=span_summaries,
         )
         _atomic_write_text(
@@ -573,7 +595,7 @@ async def run_continuous_embedding_job(
         target = refreshed if refreshed is not None else job
         target.status = JobStatus.complete.value
         target.vector_dim = vector_dim
-        target.total_regions = len(regions_sorted)
+        target.total_events = len(events_sorted)
         target.merged_spans = len(span_summaries)
         target.total_windows = len(rows)
         target.parquet_path = str(parquet_path)
@@ -582,8 +604,9 @@ async def run_continuous_embedding_job(
         await session.commit()
 
         logger.info(
-            "continuous_embedding | job=%s | complete | spans=%d windows=%d dim=%d",
+            "continuous_embedding | job=%s | complete | events=%d spans=%d windows=%d dim=%d",
             job_id,
+            len(events_sorted),
             len(span_summaries),
             len(rows),
             vector_dim,

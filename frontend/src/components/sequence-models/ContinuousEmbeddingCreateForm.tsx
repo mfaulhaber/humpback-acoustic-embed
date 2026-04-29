@@ -2,37 +2,37 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useRegionDetectionJobs } from "@/hooks/queries/useCallParsing";
+import {
+  useSegmentationJobs,
+  useRegionDetectionJobs,
+} from "@/hooks/queries/useCallParsing";
+import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { useCreateContinuousEmbeddingJob } from "@/api/sequenceModels";
+import type { EventSegmentationJob } from "@/api/types";
 
 const DEFAULT_MODEL_VERSION = "surfperch-tensorflow2";
 
 export function ContinuousEmbeddingCreateForm() {
-  const { data: regionJobs = [] } = useRegionDetectionJobs(0);
+  const { data: segJobs = [] } = useSegmentationJobs(0);
+  const { data: regionJobs = [] } = useRegionDetectionJobs();
+  const { data: hydrophones = [] } = useHydrophones();
   const createMutation = useCreateContinuousEmbeddingJob();
 
-  const [regionJobId, setRegionJobId] = useState<string>("");
+  const [segJobId, setSegJobId] = useState<string>("");
   const [hopSeconds, setHopSeconds] = useState<number>(1.0);
-  const [padSeconds, setPadSeconds] = useState<number>(10.0);
+  const [padSeconds, setPadSeconds] = useState<number>(2.0);
   const [modelVersion, setModelVersion] = useState<string>(
     DEFAULT_MODEL_VERSION,
   );
   const [error, setError] = useState<string | null>(null);
 
-  const completedRegionJobs = useMemo(
-    () =>
-      regionJobs.filter(
-        (j) =>
-          j.status === "complete" &&
-          !!j.hydrophone_id &&
-          j.start_timestamp != null &&
-          j.end_timestamp != null,
-      ),
-    [regionJobs],
+  const completedSegJobs = useMemo(
+    () => segJobs.filter((j) => j.status === "complete"),
+    [segJobs],
   );
 
   const canSubmit =
-    regionJobId !== "" &&
+    segJobId !== "" &&
     hopSeconds > 0 &&
     padSeconds >= 0 &&
     !createMutation.isPending;
@@ -42,7 +42,7 @@ export function ContinuousEmbeddingCreateForm() {
     if (!canSubmit) return;
     createMutation.mutate(
       {
-        region_detection_job_id: regionJobId,
+        event_segmentation_job_id: segJobId,
         model_version: modelVersion,
         hop_seconds: hopSeconds,
         pad_seconds: padSeconds,
@@ -62,20 +62,19 @@ export function ContinuousEmbeddingCreateForm() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-sm font-medium block mb-1">
-              Region Detection Job
+              Segmentation Job
             </label>
             <select
-              data-testid="cej-region-job-select"
+              data-testid="cej-seg-job-select"
               className="w-full border rounded-md px-2 py-1 text-sm"
-              value={regionJobId}
-              onChange={(e) => setRegionJobId(e.target.value)}
+              value={segJobId}
+              onChange={(e) => setSegJobId(e.target.value)}
             >
-              <option value="">— select a completed Pass-1 job —</option>
-              {completedRegionJobs.map((j) => (
+              <option value="">— select a completed Pass-2 job —</option>
+              {completedSegJobs.map((j) => (
                 <option key={j.id} value={j.id}>
-                  {j.id.slice(0, 8)}
-                  {j.hydrophone_id ? ` · ${j.hydrophone_id}` : ""}
-                  {j.region_count != null ? ` · ${j.region_count} regions` : ""}
+                  {segJobLabel(j, regionJobs, hydrophones)} —{" "}
+                  {j.event_count ?? 0} events
                 </option>
               ))}
             </select>
@@ -142,4 +141,36 @@ export function ContinuousEmbeddingCreateForm() {
       </CardContent>
     </Card>
   );
+}
+
+function formatUtcDate(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+function segJobLabel(
+  job: EventSegmentationJob,
+  regionJobs: {
+    id: string;
+    hydrophone_id: string | null;
+    audio_file_id: string | null;
+    start_timestamp: number | null;
+    end_timestamp: number | null;
+  }[],
+  hydrophones: { id: string; name: string }[],
+): string {
+  const shortId = job.id.slice(0, 8);
+  const rj = regionJobs.find((r) => r.id === job.region_detection_job_id);
+  const parts: string[] = [];
+  if (rj?.hydrophone_id) {
+    const h = hydrophones.find((hp) => hp.id === rj.hydrophone_id);
+    parts.push(h?.name ?? rj.hydrophone_id);
+  }
+  if (rj?.start_timestamp != null && rj?.end_timestamp != null) {
+    const s = formatUtcDate(rj.start_timestamp);
+    const e = formatUtcDate(rj.end_timestamp);
+    parts.push(s === e ? s : `${s} – ${e}`);
+  }
+  parts.push(shortId);
+  return parts.join(" - ");
 }
