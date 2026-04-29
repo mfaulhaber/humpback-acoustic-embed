@@ -95,20 +95,20 @@ def _write_embeddings(storage_root, dj_id, model_version, row_ids):
 
 
 class TestClassifierTrainingJobCreateSchema:
-    """Pydantic schema validates source-mode exclusivity."""
+    """Pydantic schema validates detection-job-only classifier training."""
 
-    def test_mixed_sources_rejected(self):
-        with pytest.raises(ValueError, match="Cannot mix"):
+    def test_embedding_set_fields_rejected(self):
+        with pytest.raises(ValueError, match="Embedding-set classifier training"):
             ClassifierTrainingJobCreate(
-                name="mixed",
+                name="legacy",
                 positive_embedding_set_ids=["es-1"],
                 negative_embedding_set_ids=["es-2"],
                 detection_job_ids=["dj-1"],
                 embedding_model_version="perch_v2",
             )
 
-    def test_empty_sources_rejected(self):
-        with pytest.raises(ValueError, match="Must provide"):
+    def test_empty_detection_jobs_rejected(self):
+        with pytest.raises(ValueError, match="detection_job_ids is required"):
             ClassifierTrainingJobCreate(name="empty")
 
     def test_detection_jobs_require_model_version(self):
@@ -118,11 +118,13 @@ class TestClassifierTrainingJobCreateSchema:
                 detection_job_ids=["dj-1"],
             )
 
-    def test_embedding_sets_require_both_pos_and_neg(self):
-        with pytest.raises(ValueError, match="negative embedding set"):
+    def test_empty_embedding_set_fields_are_still_rejected(self):
+        with pytest.raises(ValueError, match="Embedding-set classifier training"):
             ClassifierTrainingJobCreate(
                 name="pos-only",
-                positive_embedding_set_ids=["es-1"],
+                positive_embedding_set_ids=[],
+                detection_job_ids=["dj-1"],
+                embedding_model_version="perch_v2",
             )
 
     def test_valid_detection_job_input(self):
@@ -133,14 +135,6 @@ class TestClassifierTrainingJobCreateSchema:
         )
         assert req.detection_job_ids == ["dj-1"]
         assert req.embedding_model_version == "perch_v2"
-
-    def test_valid_embedding_set_input(self):
-        req = ClassifierTrainingJobCreate(
-            name="valid",
-            positive_embedding_set_ids=["es-1"],
-            negative_embedding_set_ids=["es-2"],
-        )
-        assert req.positive_embedding_set_ids == ["es-1"]
 
 
 # ---------------------------------------------------------------------------
@@ -427,8 +421,6 @@ class TestGetTrainingDataSummaryDetectionManifest:
             name="det-manifest-job",
             status="complete",
             source_mode="detection_manifest",
-            positive_embedding_set_ids="[]",
-            negative_embedding_set_ids="[]",
             model_version="perch_v2",
             window_size_seconds=5.0,
             target_sample_rate=32000,
@@ -502,8 +494,6 @@ class TestGetTrainingDataSummaryDetectionManifest:
             name="det-job",
             status="complete",
             source_mode="detection_manifest",
-            positive_embedding_set_ids="[]",
-            negative_embedding_set_ids="[]",
             model_version="perch_v2",
             window_size_seconds=5.0,
             target_sample_rate=32000,

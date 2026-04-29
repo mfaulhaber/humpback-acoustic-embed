@@ -3,13 +3,8 @@
 > Read this when working on file paths, artifact storage, or storage-related configuration.
 
 ```
-/audio/
-  raw/{audio_file_id}/original.(wav|mp3|flac)    (uploaded files only; imported files are read from source_folder)
-/embeddings/
-  {model_version}/{audio_file_id}/{encoding_signature}.parquet
-  {model_version}/{audio_file_id}/{encoding_signature}.tmp.parquet
 /clusters/
-  {clustering_job_id}/clusters.json
+  {clustering_job_id}/clusters.json              (retained Vocalization / Clustering jobs only)
   {clustering_job_id}/assignments.parquet
   {clustering_job_id}/umap_coords.parquet
   {clustering_job_id}/parameter_sweep.json
@@ -67,7 +62,19 @@
   {job_id}/.prepare_plan.json              (active prepare scope used by /prepare-status)
   {job_id}/.last_access                    (mtime sentinel for per-job LRU eviction)
   {job_id}/.prepare.lock                   (advisory flock for exclusive prepare ownership)
+/cleanup-manifests/
+  {timestamp}-legacy-workflow-removal.json (manifest written by scripts/cleanup_legacy_workflows.py)
 ```
+
+Legacy roots removed by archive-backed cleanup:
+
+- `/audio/raw/`
+- `/embeddings/`
+- `/label_processing/`
+
+Those paths may still exist in historical environments until
+`scripts/cleanup_legacy_workflows.py --apply --archive-root ...` is run, but
+they are no longer part of the active storage contract.
 
 Timeline audio endpoint supports `format=mp3` for compressed playback (128kbps mono, up to 600s segments). Playback audio is RMS-scaled to `playback_target_rms_dbfs` with a `tanh` soft-clip before encoding.
 

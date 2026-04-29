@@ -87,7 +87,6 @@ export function useDeleteVocalizationLabel() {
 export function useDetectionNeighbors(
   detectionJobId: string | null,
   rowId: string | null,
-  embeddingSetIds?: string[],
 ) {
   return useQuery({
     queryKey: [
@@ -95,12 +94,10 @@ export function useDetectionNeighbors(
       "neighbors",
       detectionJobId,
       rowId,
-      embeddingSetIds,
     ],
     queryFn: () =>
       fetchDetectionNeighbors(detectionJobId!, {
         row_id: rowId!,
-        embedding_set_ids: embeddingSetIds,
       }),
     enabled: detectionJobId !== null && rowId !== null,
     staleTime: Infinity,

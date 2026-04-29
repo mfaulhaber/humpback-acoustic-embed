@@ -15,7 +15,6 @@ from humpback.clustering.metrics import (
     compute_cluster_metrics,
     compute_detailed_category_metrics,
     compute_fragmentation_report,
-    extract_category_from_folder_path,
     run_parameter_sweep,
 )
 from humpback.clustering.pipeline import (
@@ -24,11 +23,8 @@ from humpback.clustering.pipeline import (
     run_clustering_pipeline,
 )
 from humpback.config import Settings
-from humpback.models.audio import AudioFile
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
-from humpback.models.processing import EmbeddingSet
-from humpback.processing.embeddings import read_embeddings
 from humpback.storage import cluster_dir, detection_embeddings_path, ensure_dir
 from humpback.workers.queue import complete_clustering_job, fail_clustering_job
 
@@ -42,78 +38,56 @@ async def run_clustering_job(
 ) -> None:
     """Execute a clustering job end-to-end."""
     try:
-        es_ids = json.loads(job.embedding_set_ids)
-        det_ids = json.loads(job.detection_job_ids) if job.detection_job_ids else []
+        detection_job_ids = (
+            json.loads(job.detection_job_ids) if job.detection_job_ids else []
+        )
+        if not detection_job_ids:
+            raise ValueError(
+                "Legacy embedding-set clustering jobs are no longer supported"
+            )
         params = json.loads(job.parameters) if job.parameters else None
 
         all_embeddings: list[np.ndarray] = []
-        all_es_ids: list[str] = []
+        all_detection_job_ids: list[str] = []
         all_row_indices: list[int] = []
-        es_folder_paths: dict[str, str] = {}
 
-        if det_ids:
-            for dj_id in det_ids:
-                emb_result = await session.execute(
-                    select(DetectionEmbeddingJob)
-                    .where(
-                        DetectionEmbeddingJob.detection_job_id == dj_id,
-                        DetectionEmbeddingJob.status == "complete",
-                    )
-                    .order_by(DetectionEmbeddingJob.created_at.desc())
-                    .limit(1)
+        for dj_id in detection_job_ids:
+            emb_result = await session.execute(
+                select(DetectionEmbeddingJob)
+                .where(
+                    DetectionEmbeddingJob.detection_job_id == dj_id,
+                    DetectionEmbeddingJob.status == "complete",
                 )
-                emb_job = emb_result.scalar_one_or_none()
-                if emb_job is None:
-                    raise ValueError(
-                        f"No completed embedding job for detection job {dj_id}"
-                    )
-
-                parquet_path = detection_embeddings_path(
-                    settings.storage_root, dj_id, emb_job.model_version
+                .order_by(DetectionEmbeddingJob.created_at.desc())
+                .limit(1)
+            )
+            emb_job = emb_result.scalar_one_or_none()
+            if emb_job is None:
+                raise ValueError(
+                    f"No completed embedding job for detection job {dj_id}"
                 )
-                if not parquet_path.exists():
-                    raise ValueError(
-                        f"Embeddings parquet not found for detection job {dj_id}"
-                    )
 
-                det_table = await asyncio.to_thread(pq.read_table, str(parquet_path))
-                row_ids = det_table.column("row_id").to_pylist()
-                emb_col = det_table.column("embedding").to_pylist()
-                for i, rid in enumerate(row_ids):
-                    all_embeddings.append(np.array(emb_col[i], dtype=np.float32))
-                    all_es_ids.append(dj_id)
-                    all_row_indices.append(i)
-
-                logger.info(
-                    "Loaded %d detection embeddings for job %s",
-                    len(row_ids),
-                    dj_id,
+            parquet_path = detection_embeddings_path(
+                settings.storage_root, dj_id, emb_job.model_version
+            )
+            if not parquet_path.exists():
+                raise ValueError(
+                    f"Embeddings parquet not found for detection job {dj_id}"
                 )
-        else:
-            for es_id in es_ids:
-                result = await session.execute(
-                    select(EmbeddingSet).where(EmbeddingSet.id == es_id)
-                )
-                es = result.scalar_one_or_none()
-                if es is None:
-                    raise ValueError(f"Embedding set {es_id} not found")
 
-                if es_id not in es_folder_paths:
-                    audio_result = await session.execute(
-                        select(AudioFile).where(AudioFile.id == es.audio_file_id)
-                    )
-                    audio_file = audio_result.scalar_one_or_none()
-                    es_folder_paths[es_id] = (
-                        audio_file.folder_path if audio_file else ""
-                    )
+            det_table = await asyncio.to_thread(pq.read_table, str(parquet_path))
+            row_ids = det_table.column("row_id").to_pylist()
+            emb_col = det_table.column("embedding").to_pylist()
+            for i, _rid in enumerate(row_ids):
+                all_embeddings.append(np.array(emb_col[i], dtype=np.float32))
+                all_detection_job_ids.append(dj_id)
+                all_row_indices.append(i)
 
-                indices, embeddings = await asyncio.to_thread(
-                    read_embeddings, Path(es.parquet_path)
-                )
-                for i, idx in enumerate(indices):
-                    all_embeddings.append(embeddings[i])
-                    all_es_ids.append(es_id)
-                    all_row_indices.append(int(idx))
+            logger.info(
+                "Loaded %d detection embeddings for job %s",
+                len(row_ids),
+                dj_id,
+            )
 
         if not all_embeddings:
             raise ValueError("No embeddings found")
@@ -130,13 +104,20 @@ async def run_clustering_job(
                     f"Refined embeddings not found for source job {job.refined_from_job_id}"
                 )
             refined_table = pq.read_table(str(refined_path))
-            refined_es_ids = refined_table.column("embedding_set_id").to_pylist()
+            source_id_column = (
+                "detection_job_id"
+                if "detection_job_id" in refined_table.column_names
+                else "embedding_set_id"
+            )
+            refined_detection_job_ids = refined_table.column(
+                source_id_column
+            ).to_pylist()
             refined_row_indices = refined_table.column(
                 "embedding_row_index"
             ).to_pylist()
             refined_vectors = refined_table.column("embedding").to_pylist()
             embeddings_array = np.array(refined_vectors, dtype=np.float32)
-            all_es_ids = refined_es_ids
+            all_detection_job_ids = refined_detection_job_ids
             all_row_indices = refined_row_indices
             logger.info(
                 "Loaded %d refined embeddings from job %s",
@@ -164,7 +145,9 @@ async def run_clustering_job(
                     "cluster_label": pa.array(
                         [int(lb) for lb in labels], type=pa.int32()
                     ),
-                    "embedding_set_id": pa.array(all_es_ids, type=pa.string()),
+                    "detection_job_id": pa.array(
+                        all_detection_job_ids, type=pa.string()
+                    ),
                     "embedding_row_index": pa.array(all_row_indices, type=pa.int32()),
                 }
             )
@@ -184,15 +167,9 @@ async def run_clustering_job(
 
         # Category-based supervised metrics (detailed)
         try:
-            if det_ids:
-                category_labels = await _resolve_vocalization_labels(
-                    session, settings, all_es_ids, all_row_indices
-                )
-            else:
-                category_labels = [
-                    extract_category_from_folder_path(es_folder_paths.get(es_id, ""))
-                    for es_id in all_es_ids
-                ]
+            category_labels = await _resolve_vocalization_labels(
+                session, settings, all_detection_job_ids, all_row_indices
+            )
             if any(c is not None for c in category_labels):
                 cat_metrics = compute_detailed_category_metrics(labels, category_labels)
                 metrics.update(cat_metrics)
@@ -234,7 +211,7 @@ async def run_clustering_job(
                     embeddings_array,
                     category_labels,
                     frag_report,
-                    all_es_ids,
+                    all_detection_job_ids,
                     all_row_indices,
                 )
                 if classifier_result is not None:
@@ -290,8 +267,8 @@ async def run_clustering_job(
                     if refined_emb is not None:
                         refined_table = pa.table(
                             {
-                                "embedding_set_id": pa.array(
-                                    all_es_ids, type=pa.string()
+                                "detection_job_id": pa.array(
+                                    all_detection_job_ids, type=pa.string()
                                 ),
                                 "embedding_row_index": pa.array(
                                     all_row_indices, type=pa.int32()
@@ -343,7 +320,7 @@ async def run_clustering_job(
             cluster = cluster_map[label_int]
             assignment = ClusterAssignment(
                 cluster_id=cluster.id,
-                embedding_set_id=all_es_ids[i],
+                source_id=all_detection_job_ids[i],
                 embedding_row_index=all_row_indices[i],
             )
             session.add(assignment)
@@ -351,7 +328,7 @@ async def run_clustering_job(
                 {
                     "cluster_id": cluster.id,
                     "cluster_label": label_int,
-                    "embedding_set_id": all_es_ids[i],
+                    "detection_job_id": all_detection_job_ids[i],
                     "embedding_row_index": all_row_indices[i],
                 }
             )
@@ -376,8 +353,8 @@ async def run_clustering_job(
                 {
                     "cluster_id": [a["cluster_id"] for a in assignments_data],
                     "cluster_label": [a["cluster_label"] for a in assignments_data],
-                    "embedding_set_id": [
-                        a["embedding_set_id"] for a in assignments_data
+                    "detection_job_id": [
+                        a["detection_job_id"] for a in assignments_data
                     ],
                     "embedding_row_index": [
                         a["embedding_row_index"] for a in assignments_data
@@ -403,7 +380,7 @@ async def run_clustering_job(
 async def _resolve_vocalization_labels(
     session: AsyncSession,
     settings: Settings,
-    all_es_ids: list[str],
+    detection_job_ids: list[str],
     all_row_indices: list[int],
 ) -> list[str | None]:
     """Resolve vocalization inference labels for detection-based clustering points."""
@@ -419,14 +396,14 @@ async def _resolve_vocalization_labels(
     )
     active_model = active_result.scalar_one_or_none()
     if active_model is None:
-        return [None] * len(all_es_ids)
+        return [None] * len(detection_job_ids)
 
     vocabulary: list[str] = json.loads(active_model.vocabulary_snapshot)
     thresholds: dict[str, float] = json.loads(active_model.per_class_thresholds)
 
     voc_label_map: dict[tuple[str, int], str] = {}
 
-    unique_dj_ids = list(set(all_es_ids))
+    unique_dj_ids = list(set(detection_job_ids))
     for dj_id in unique_dj_ids:
         emb_result = await session.execute(
             select(DetectionEmbeddingJob)
@@ -494,6 +471,6 @@ async def _resolve_vocalization_labels(
                 voc_label_map[(dj_id, idx)] = label
 
     return [
-        voc_label_map.get((all_es_ids[i], all_row_indices[i]))
-        for i in range(len(all_es_ids))
+        voc_label_map.get((detection_job_ids[i], all_row_indices[i]))
+        for i in range(len(detection_job_ids))
     ]

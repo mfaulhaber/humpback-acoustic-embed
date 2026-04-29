@@ -70,10 +70,10 @@ def _seed(db_path: Path) -> None:
         # Training job source
         conn.execute(
             "INSERT INTO classifier_training_jobs "
-            "(id, status, name, positive_embedding_set_ids, negative_embedding_set_ids, "
+            "(id, status, name, "
             " model_version, window_size_seconds, target_sample_rate, job_purpose, "
             " source_mode, created_at, updated_at) "
-            "VALUES ('tj1', 'complete', 'n', '[]', '[]', 'tf2_v1', 5.0, 32000, "
+            "VALUES ('tj1', 'complete', 'n', 'tf2_v1', 5.0, 32000, "
             " 'detection', 'embedding_sets', ?, ?)",
             (now, now),
         )

@@ -80,9 +80,7 @@ export function TrainingDataView() {
   const vocabulary = dataset?.vocabulary ?? [];
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [group, setGroup] = useState<"positive" | "negative">("positive");
-  const [sourceType, setSourceType] = useState<
-    "detection_job" | "embedding_set" | null
-  >(null);
+  const [sourceType, setSourceType] = useState<"detection_job" | null>(null);
   const [page, setPage] = useState(0);
 
   // Pending label state
@@ -297,17 +295,6 @@ export function TrainingDataView() {
                 }}
               >
                 Detection
-              </Button>
-              <Button
-                size="sm"
-                variant={sourceType === "embedding_set" ? "default" : "ghost"}
-                className="h-7 text-xs"
-                onClick={() => {
-                  setSourceType("embedding_set");
-                  setPage(0);
-                }}
-              >
-                Embedding
               </Button>
             </div>
 
@@ -625,7 +612,7 @@ function TrainingDataRow({
             </Badge>
           )}
           <Badge variant="secondary" className="text-[10px] h-4">
-            {row.source_type === "detection_job" ? "detection" : "embedding"}
+            {row.source_type === "detection_job" ? "detection" : "legacy"}
           </Badge>
         </div>
 

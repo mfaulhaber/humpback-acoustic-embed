@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,20 +16,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, ChevronDown, Settings2, AlertTriangle, RotateCcw, Loader2, CheckCircle2, XCircle } from "lucide-react";
-import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
-import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
-import { ModelFilter } from "@/components/shared/ModelFilter";
-import {
-  ROOT_SENTINEL,
-  buildFolderTree,
-  makeToggleChild,
-  makeToggleParent,
-  makeToggleAll,
-  makeToggleCollapse,
-  EmbeddingSetPanel,
-} from "@/components/shared/EmbeddingSetPanel";
-import type { ParentNode } from "@/components/shared/EmbeddingSetPanel";
+import { ChevronRight, ChevronDown, Settings2, RotateCcw, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import {
   useTrainingJobs,
   useClassifierModels,
@@ -53,14 +40,11 @@ import type {
   ClassifierTrainingJob,
   ClassifierModelInfo,
   DetectionSourceInfo,
-  EmbeddingSet,
   TrainingSourceInfo,
   RetrainWorkflow as RetrainWorkflowType,
 } from "@/api/types";
 
 export function TrainingTab() {
-  const { data: embeddingSets = [] } = useEmbeddingSets();
-  const { data: audioFiles = [] } = useAudioFiles();
   const { data: trainingJobs = [] } = useTrainingJobs(3000);
   const { data: models = [] } = useClassifierModels();
   const createMutation = useCreateTrainingJob();
@@ -72,18 +56,12 @@ export function TrainingTab() {
   const { data: retrainWorkflows = [] } = useRetrainWorkflows(3000);
 
   const [name, setName] = useState("");
-  const [sourceMode, setSourceMode] = useState<"embedding_sets" | "detection_jobs">("embedding_sets");
   const [detectionSource, setDetectionSource] =
     useState<DetectionSourcePickerValue>({
       selectedDetectionJobIds: [],
       embeddingModelVersion: "",
       isReady: false,
     });
-  const [modelFilter, setModelFilter] = useState("__all__");
-  const [posSelected, setPosSelected] = useState<Set<string>>(new Set());
-  const [posCollapsed, setPosCollapsed] = useState<Set<string> | null>(null);
-  const [negSelected, setNegSelected] = useState<Set<string>>(new Set());
-  const [negCollapsed, setNegCollapsed] = useState<Set<string> | null>(null);
 
   // Advanced options
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -106,57 +84,6 @@ export function TrainingTab() {
     (j) => j.status === "queued" || j.status === "running",
   );
 
-  const audioMap = useMemo(
-    () => new Map(audioFiles.map((af) => [af.id, af])),
-    [audioFiles],
-  );
-
-  const filteredSets = useMemo(
-    () => modelFilter === "__all__" ? embeddingSets : embeddingSets.filter((es) => es.model_version === modelFilter),
-    [embeddingSets, modelFilter],
-  );
-
-  // Build two-level folder tree: parent → child → embedding sets
-  const folderTree = useMemo(
-    () => buildFolderTree(filteredSets, audioMap),
-    [filteredSets, audioMap],
-  );
-
-  const allParentKeys = useMemo(
-    () => new Set(folderTree.map((n) => n.parent)),
-    [folderTree],
-  );
-
-  // Toggle helpers using shared factories
-  const togglePosChild = useCallback(makeToggleChild(setPosSelected), []);
-  const togglePosParent = useCallback(makeToggleParent(setPosSelected), []);
-  const togglePosAll = useCallback(
-    makeToggleAll(filteredSets, posSelected, setPosSelected),
-    [filteredSets, posSelected],
-  );
-  const togglePosCollapse = useCallback(
-    makeToggleCollapse(allParentKeys, posCollapsed, setPosCollapsed),
-    [allParentKeys],
-  );
-
-  const toggleNegChild = useCallback(makeToggleChild(setNegSelected), []);
-  const toggleNegParent = useCallback(makeToggleParent(setNegSelected), []);
-  const toggleNegAll = useCallback(
-    makeToggleAll(filteredSets, negSelected, setNegSelected),
-    [filteredSets, negSelected],
-  );
-  const toggleNegCollapse = useCallback(
-    makeToggleCollapse(allParentKeys, negCollapsed, setNegCollapsed),
-    [allParentKeys],
-  );
-
-  const selectedModels = useMemo(() => {
-    const ids = new Set([...posSelected, ...negSelected]);
-    return new Set(embeddingSets.filter((es) => ids.has(es.id)).map((es) => es.model_version));
-  }, [posSelected, negSelected, embeddingSets]);
-
-  const modelMismatch = selectedModels.size > 1;
-
   const handleSubmit = () => {
     if (!name) return;
     const parameters: Record<string, unknown> = {
@@ -168,48 +95,30 @@ export function TrainingTab() {
       parameters.C = regularizationC;
     }
 
-    if (sourceMode === "detection_jobs") {
-      if (
-        detectionSource.selectedDetectionJobIds.length === 0 ||
-        !detectionSource.isReady
-      )
-        return;
-      createMutation.mutate(
-        {
-          name,
-          detection_job_ids: detectionSource.selectedDetectionJobIds,
-          embedding_model_version: detectionSource.embeddingModelVersion,
-          parameters,
-        },
-        {
-          onSuccess: () => {
-            setName("");
-            setDetectionSource({
-              selectedDetectionJobIds: [],
-              embeddingModelVersion: "",
-              isReady: false,
-            });
-          },
-        },
-      );
-    } else {
-      if (posSelected.size === 0 || negSelected.size === 0) return;
-      createMutation.mutate(
-        {
-          name,
-          positive_embedding_set_ids: [...posSelected],
-          negative_embedding_set_ids: [...negSelected],
-          parameters,
-        },
-        {
-          onSuccess: () => {
-            setName("");
-            setPosSelected(new Set());
-            setNegSelected(new Set());
-          },
-        },
-      );
+    if (
+      detectionSource.selectedDetectionJobIds.length === 0 ||
+      !detectionSource.isReady
+    ) {
+      return;
     }
+    createMutation.mutate(
+      {
+        name,
+        detection_job_ids: detectionSource.selectedDetectionJobIds,
+        embedding_model_version: detectionSource.embeddingModelVersion,
+        parameters,
+      },
+      {
+        onSuccess: () => {
+          setName("");
+          setDetectionSource({
+            selectedDetectionJobIds: [],
+            embeddingModelVersion: "",
+            isReady: false,
+          });
+        },
+      },
+    );
   };
 
   // Job table helpers
@@ -251,9 +160,6 @@ export function TrainingTab() {
     else setSelectedModelIds(new Set(models.map((m) => m.id)));
   };
 
-  const displayName = (key: string) =>
-    key === ROOT_SENTINEL ? "(root)" : key;
-
   const jobsWithModels = useMemo(() => {
     const count = [...selectedJobIds].filter((id) => {
       const job = trainingJobs.find((j) => j.id === id);
@@ -281,69 +187,10 @@ export function TrainingTab() {
             />
           </div>
 
-          {/* Source Mode Radio */}
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium">Source</label>
-            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <input
-                type="radio"
-                name="sourceMode"
-                checked={sourceMode === "embedding_sets"}
-                onChange={() => setSourceMode("embedding_sets")}
-                className="accent-primary"
-              />
-              Embedding sets
-            </label>
-            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <input
-                type="radio"
-                name="sourceMode"
-                checked={sourceMode === "detection_jobs"}
-                onChange={() => setSourceMode("detection_jobs")}
-                className="accent-primary"
-              />
-              Detection jobs
-            </label>
-          </div>
-
-          {sourceMode === "embedding_sets" ? (
-            <>
-              <ModelFilter items={embeddingSets} value={modelFilter} onChange={setModelFilter} />
-
-              {/* Positive Embedding Sets */}
-              <EmbeddingSetPanel
-                label="Positive Embedding Sets"
-                selected={posSelected}
-                collapsed={posCollapsed ?? allParentKeys}
-                folderTree={folderTree}
-                embeddingSets={filteredSets}
-                onToggleChild={togglePosChild}
-                onToggleParent={togglePosParent}
-                onToggleAll={togglePosAll}
-                onToggleCollapse={togglePosCollapse}
-                displayName={displayName}
-              />
-
-              {/* Negative Embedding Sets */}
-              <EmbeddingSetPanel
-                label="Negative Embedding Sets"
-                selected={negSelected}
-                collapsed={negCollapsed ?? allParentKeys}
-                folderTree={folderTree}
-                embeddingSets={filteredSets}
-                onToggleChild={toggleNegChild}
-                onToggleParent={toggleNegParent}
-                onToggleAll={toggleNegAll}
-                onToggleCollapse={toggleNegCollapse}
-                displayName={displayName}
-              />
-            </>
-          ) : (
-            <DetectionSourcePicker
-              value={detectionSource}
-              onChange={setDetectionSource}
-            />
-          )}
+          <DetectionSourcePicker
+            value={detectionSource}
+            onChange={setDetectionSource}
+          />
 
           {/* Advanced Options */}
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -406,23 +253,12 @@ export function TrainingTab() {
             </CollapsibleContent>
           </Collapsible>
 
-          {sourceMode === "embedding_sets" && modelMismatch && (
-            <div className="flex items-center gap-2 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              Cannot train with embedding sets from different models: {[...selectedModels].join(", ")}
-            </div>
-          )}
-
           <Button
             onClick={handleSubmit}
             disabled={
               !name ||
               createMutation.isPending ||
-              (sourceMode === "embedding_sets"
-                ? posSelected.size === 0 ||
-                  negSelected.size === 0 ||
-                  modelMismatch
-                : !detectionSource.isReady)
+              !detectionSource.isReady
             }
           >
             {createMutation.isPending ? "Creating…" : "Train Classifier"}
@@ -474,9 +310,7 @@ export function TrainingTab() {
                 </th>
                 <th className="px-3 py-2 text-left font-medium">Status</th>
                 <th className="px-3 py-2 text-left font-medium">Name</th>
-                <th className="px-3 py-2 text-left font-medium">
-                  Positive Sets
-                </th>
+                <th className="px-3 py-2 text-left font-medium">Source</th>
                 <th className="px-3 py-2 text-left font-medium">Model</th>
                 <th className="px-3 py-2 text-left font-medium">Created</th>
                 <th className="px-3 py-2 text-left font-medium">Error</th>
@@ -619,6 +453,10 @@ function TrainingJobTableRow({
 }) {
   const sourceContext = job.source_comparison_context as Record<string, unknown> | null;
   const candidateName = sourceContext?.candidate_name as string | undefined;
+  const legacySourceCount =
+    (job.legacy_source_summary as Record<string, unknown> | null)?.total_sources as
+      | number
+      | undefined;
   return (
     <tr className="border-b last:border-0 hover:bg-muted/30">
       <td className="px-3 py-2">
@@ -640,6 +478,11 @@ function TrainingJobTableRow({
               detection
             </Badge>
           )}
+          {job.source_mode === "embedding_sets" && (
+            <Badge variant="outline" className="text-[10px]">
+              legacy
+            </Badge>
+          )}
         </div>
       </td>
       <td className="px-3 py-2 text-muted-foreground">
@@ -653,7 +496,7 @@ function TrainingJobTableRow({
         ) : job.source_mode === "detection_manifest" ? (
           `${(job.source_detection_job_ids ?? []).length} detection job(s)`
         ) : (
-          `${job.positive_embedding_set_ids.length} set(s)`
+          `${legacySourceCount ?? job.positive_embedding_set_ids.length} legacy set(s)`
         )}
       </td>
       <td className="px-3 py-2 text-muted-foreground">{job.model_version}</td>
@@ -697,6 +540,24 @@ function RetrainPanel({ model, workflow }: { model: ClassifierModelInfo; workflo
     return (
       <div className="mt-3 border-t pt-3 text-xs text-muted-foreground">
         Candidate-backed models do not support folder-root retrain yet.
+      </div>
+    );
+  }
+
+  if (model.training_source_mode === "embedding_sets" && !workflow) {
+    return (
+      <div className="mt-3 border-t pt-3 text-xs text-muted-foreground">
+        Legacy embedding-set models remain available for detection, but new
+        training and retraining must use labeled detection jobs.
+      </div>
+    );
+  }
+
+  if (!workflow) {
+    return (
+      <div className="mt-3 border-t pt-3 text-xs text-muted-foreground">
+        Classifier retrain is retired while we remove the legacy audio and
+        processing workflow dependencies behind it.
       </div>
     );
   }
@@ -944,6 +805,11 @@ function ModelTableRow({
                 Candidate
               </Badge>
             )}
+            {model.training_source_mode === "embedding_sets" && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+                Legacy
+              </Badge>
+            )}
           </span>
         </td>
         <td className="px-3 py-2 text-muted-foreground">
@@ -1020,7 +886,7 @@ function ModelTableRow({
                         ? `Candidate${promotedCandidateName ? `: ${promotedCandidateName}` : ""}`
                         : model.training_source_mode === "detection_manifest"
                           ? "Detection Jobs"
-                          : "Embedding Sets"}
+                          : "Legacy Embedding Sets"}
                     </span>
                   </div>
                   {model.training_source_mode === "autoresearch_candidate" && (

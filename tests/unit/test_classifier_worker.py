@@ -907,28 +907,6 @@ async def test_run_training_job_from_autoresearch_candidate_manifest(
     session.add(source_model)
     await session.flush()
 
-    from humpback.models.audio import AudioFile
-    from humpback.models.processing import EmbeddingSet
-
-    af = AudioFile(
-        id="af-pos",
-        filename="pos.wav",
-        folder_path="positive",
-        checksum_sha256="pos-checksum",
-    )
-    session.add(af)
-    session.add(
-        EmbeddingSet(
-            id="es-pos",
-            audio_file_id=af.id,
-            encoding_signature="sig",
-            model_version="perch_v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=2,
-            parquet_path=str(pos_path),
-        )
-    )
     session.add(
         DetectionJob(
             id=det_job_id,
@@ -1009,8 +987,6 @@ async def test_run_training_job_from_autoresearch_candidate_manifest(
             id="train-job-1",
             status="running",
             name="candidate-model",
-            positive_embedding_set_ids=json.dumps([]),
-            negative_embedding_set_ids=json.dumps([]),
             model_version="perch_v1",
             window_size_seconds=5.0,
             target_sample_rate=32000,
@@ -1160,28 +1136,6 @@ async def test_run_training_job_candidate_replay_with_pca_and_calibration(
     )
     session.add(source_model)
 
-    from humpback.models.audio import AudioFile
-    from humpback.models.processing import EmbeddingSet
-
-    af = AudioFile(
-        id="af-pos-pca",
-        filename="pos.wav",
-        folder_path="positive",
-        checksum_sha256="pos-checksum-pca",
-    )
-    session.add(af)
-    session.add(
-        EmbeddingSet(
-            id="es-pos-pca",
-            audio_file_id=af.id,
-            encoding_signature="sig-pca",
-            model_version="perch_v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=dim,
-            parquet_path=str(pos_path),
-        )
-    )
     session.add(
         DetectionJob(
             id=det_job_id,
@@ -1224,8 +1178,6 @@ async def test_run_training_job_candidate_replay_with_pca_and_calibration(
             id="train-job-pca",
             status="running",
             name="pca-candidate-model",
-            positive_embedding_set_ids=json.dumps([]),
-            negative_embedding_set_ids=json.dumps([]),
             model_version="perch_v1",
             window_size_seconds=5.0,
             target_sample_rate=32000,
@@ -1359,28 +1311,6 @@ async def test_run_training_job_candidate_replay_linear_svm_verified(
     )
     session.add(source_model)
 
-    from humpback.models.audio import AudioFile
-    from humpback.models.processing import EmbeddingSet
-
-    af = AudioFile(
-        id="af-pos-svm",
-        filename="pos.wav",
-        folder_path="positive",
-        checksum_sha256="pos-checksum-svm",
-    )
-    session.add(af)
-    session.add(
-        EmbeddingSet(
-            id="es-pos-svm",
-            audio_file_id=af.id,
-            encoding_signature="sig-svm",
-            model_version="perch_v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=dim,
-            parquet_path=str(pos_path),
-        )
-    )
     session.add(
         DetectionJob(
             id=det_job_id,
@@ -1437,8 +1367,6 @@ async def test_run_training_job_candidate_replay_linear_svm_verified(
             id="train-job-svm",
             status="running",
             name="svm-candidate-model",
-            positive_embedding_set_ids=json.dumps([]),
-            negative_embedding_set_ids=json.dumps([]),
             model_version="perch_v1",
             window_size_seconds=5.0,
             target_sample_rate=32000,
@@ -1632,8 +1560,6 @@ async def test_run_training_job_detection_manifest(
     job = ClassifierTrainingJob(
         status="running",
         name="detection-manifest-test",
-        positive_embedding_set_ids=json.dumps([]),
-        negative_embedding_set_ids=json.dumps([]),
         model_version=model_version,
         window_size_seconds=5.0,
         target_sample_rate=32000,
@@ -1673,6 +1599,31 @@ async def test_run_training_job_detection_manifest(
         np.array([[1.0, 1.0, 0.0, 0.0]], dtype=np.float32)
     )
     assert probs.shape == (1, 2)
+
+
+async def test_run_training_job_legacy_embedding_sets_fail_fast(
+    session,
+    settings,
+) -> None:
+    """Legacy embedding-set training jobs fail with the retirement message."""
+    job = ClassifierTrainingJob(
+        status="running",
+        name="legacy-embedding-sets",
+        model_version="perch_v2",
+        window_size_seconds=5.0,
+        target_sample_rate=32000,
+        source_mode="embedding_sets",
+    )
+    session.add(job)
+    await session.commit()
+
+    await run_training_job(session, job, settings)
+
+    await session.refresh(job)
+    assert job.status == "failed"
+    assert job.error_message is not None
+    assert "Embedding-set classifier training jobs are retired" in job.error_message
+    assert job.classifier_model_id is None
 
 
 # ---------------------------------------------------------------------------

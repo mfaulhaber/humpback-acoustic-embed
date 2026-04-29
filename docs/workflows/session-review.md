@@ -11,7 +11,7 @@ Validation gate that must pass before `session-end` can proceed.
    - If scope is empty, report "no modified files to review" and stop
 
 2. **Architecture checks**
-   - Idempotent encoding preserved? (no duplicate embedding sets)
+   - Idempotent derived artifacts preserved? (for example, no duplicate detection embeddings per `(detection_job_id, model_version)` and no duplicate continuous-embedding rows for the same `encoding_signature`)
    - Resumable workflows intact? (atomic writes, restart-safe)
    - Signal processing semantics unchanged? (unless intentional — needs ADR)
 

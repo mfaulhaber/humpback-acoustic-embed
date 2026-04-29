@@ -3,7 +3,7 @@ import tempfile
 
 import pytest
 
-from humpback.models.processing import EmbeddingSet
+from humpback.models.classifier import ClassifierTrainingJob
 from humpback.services import model_registry_service
 
 
@@ -133,27 +133,19 @@ async def test_delete_model(session, sample_model):
     assert found is None
 
 
-async def test_delete_model_rejected_when_embeddings_exist(session, sample_model):
-    """Cannot delete a model when embedding sets reference its model_version."""
-    from humpback.models.audio import AudioFile
-
-    af = AudioFile(filename="test.wav", checksum_sha256="abc123")
-    session.add(af)
-    await session.flush()
-
-    es = EmbeddingSet(
-        audio_file_id=af.id,
-        encoding_signature="sig1",
+async def test_delete_model_rejected_when_training_jobs_exist(session, sample_model):
+    """Cannot delete a model when retained training jobs reference its model_version."""
+    training_job = ClassifierTrainingJob(
+        name="legacy-compatible-job",
         model_version="test_model",
         window_size_seconds=5.0,
         target_sample_rate=32000,
-        vector_dim=1280,
-        parquet_path="/tmp/test.parquet",
+        status="queued",
     )
-    session.add(es)
+    session.add(training_job)
     await session.flush()
 
-    with pytest.raises(ValueError, match="embedding sets reference it"):
+    with pytest.raises(ValueError, match="classifier training jobs reference it"):
         await model_registry_service.delete_model(session, sample_model.id)
 
 

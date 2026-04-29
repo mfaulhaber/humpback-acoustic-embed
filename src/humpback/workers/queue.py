@@ -10,9 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from humpback.models.classifier import ClassifierTrainingJob, DetectionJob
 from humpback.models.clustering import ClusteringJob
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob  # noqa: E402
-from humpback.models.processing import JobStatus, ProcessingJob
+from humpback.models.processing import JobStatus
 from humpback.models.retrain import RetrainWorkflow
-from humpback.models.search import SearchJob
 
 logger = logging.getLogger(__name__)
 
@@ -73,21 +72,6 @@ async def _claim_next_job(
 async def recover_stale_jobs(session: AsyncSession) -> int:
     """Reset jobs stuck in 'running' past the stale timeout back to 'queued'."""
     cutoff = datetime.now(timezone.utc) - STALE_JOB_TIMEOUT
-    result = await session.execute(
-        update(ProcessingJob)
-        .where(
-            ProcessingJob.status == JobStatus.running.value,
-            ProcessingJob.updated_at < cutoff,
-        )
-        .values(
-            status=JobStatus.queued.value,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    count = _rowcount(result)
-    if count:
-        logger.warning(f"Recovered {count} stale processing job(s)")
-
     result2 = await session.execute(
         update(ClusteringJob)
         .where(
@@ -147,38 +131,6 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     count5 = _rowcount(result5)
     if count5:
         logger.warning(f"Recovered {count5} stale retrain workflow(s)")
-
-    result6 = await session.execute(
-        update(SearchJob)
-        .where(
-            SearchJob.status == "running",
-            SearchJob.updated_at < cutoff,
-        )
-        .values(
-            status="queued",
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    count6 = _rowcount(result6)
-    if count6:
-        logger.warning(f"Recovered {count6} stale search job(s)")
-
-    from humpback.models.label_processing import LabelProcessingJob
-
-    result7 = await session.execute(
-        update(LabelProcessingJob)
-        .where(
-            LabelProcessingJob.status == "running",
-            LabelProcessingJob.updated_at < cutoff,
-        )
-        .values(
-            status="queued",
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    count7 = _rowcount(result7)
-    if count7:
-        logger.warning(f"Recovered {count7} stale label processing job(s)")
 
     from humpback.models.vocalization import (
         VocalizationInferenceJob,
@@ -364,13 +316,10 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         logger.warning(f"Recovered {count_hmm} stale HMM sequence job(s)")
 
     total = (
-        count
-        + count2
+        count2
         + count3
         + count4
         + count5
-        + count6
-        + count7
         + count8
         + count9
         + count10
@@ -386,65 +335,6 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if total:
         await session.commit()
     return total
-
-
-async def claim_processing_job(session: AsyncSession) -> Optional[ProcessingJob]:
-    """Claim a queued processing job atomically.
-
-    Skips jobs whose encoding_signature already has a running job
-    (prevents concurrent processing of same config).
-    """
-    # Find encoding_signatures that are currently running
-    running_sigs = (
-        select(ProcessingJob.encoding_signature)
-        .where(ProcessingJob.status == JobStatus.running.value)
-        .scalar_subquery()
-    )
-
-    # Find a queued job not blocked by a running job with same signature
-    # Retry a few times to handle races where another worker claims our
-    # selected candidate between SELECT and UPDATE.
-    for _ in range(3):
-        job = await _claim_next_job(
-            session,
-            ProcessingJob,
-            status_attr=ProcessingJob.status,
-            queued_value=JobStatus.queued.value,
-            running_value=JobStatus.running.value,
-            order_attr=ProcessingJob.created_at,
-            extra_filters=(~ProcessingJob.encoding_signature.in_(running_sigs),),
-        )
-        if job is not None:
-            return job
-    return None
-
-
-async def complete_processing_job(
-    session: AsyncSession, job_id: str, warning_message: str | None = None
-) -> None:
-    values: dict = {
-        "status": JobStatus.complete.value,
-        "updated_at": datetime.now(timezone.utc),
-    }
-    if warning_message is not None:
-        values["warning_message"] = warning_message
-    await session.execute(
-        update(ProcessingJob).where(ProcessingJob.id == job_id).values(**values)
-    )
-    await session.commit()
-
-
-async def fail_processing_job(session: AsyncSession, job_id: str, error: str) -> None:
-    await session.execute(
-        update(ProcessingJob)
-        .where(ProcessingJob.id == job_id)
-        .values(
-            status=JobStatus.failed.value,
-            error_message=error,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    await session.commit()
 
 
 async def claim_clustering_job(session: AsyncSession) -> Optional[ClusteringJob]:
@@ -644,107 +534,6 @@ async def claim_retrain_workflow(
         if wf is not None:
             return wf
     return None
-
-
-# ---- Search Jobs ----
-
-
-async def claim_search_job(session: AsyncSession) -> Optional[SearchJob]:
-    """Claim a queued search job atomically."""
-    for _ in range(3):
-        job = await _claim_next_job(
-            session,
-            SearchJob,
-            status_attr=SearchJob.status,
-            queued_value="queued",
-            running_value="running",
-            order_attr=SearchJob.created_at,
-        )
-        if job is not None:
-            return job
-    return None
-
-
-async def complete_search_job(
-    session: AsyncSession,
-    job_id: str,
-    model_version: str,
-    embedding_vector: str,
-) -> None:
-    await session.execute(
-        update(SearchJob)
-        .where(SearchJob.id == job_id)
-        .values(
-            status="complete",
-            model_version=model_version,
-            embedding_vector=embedding_vector,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    await session.commit()
-
-
-async def fail_search_job(session: AsyncSession, job_id: str, error: str) -> None:
-    await session.execute(
-        update(SearchJob)
-        .where(SearchJob.id == job_id)
-        .values(
-            status="failed",
-            error_message=error,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    await session.commit()
-
-
-# ---- Label Processing Jobs ----
-
-
-async def claim_label_processing_job(
-    session: AsyncSession,
-) -> Optional[Any]:
-    from humpback.models.label_processing import LabelProcessingJob
-
-    for _ in range(3):
-        job = await _claim_next_job(
-            session,
-            LabelProcessingJob,
-            status_attr=LabelProcessingJob.status,
-            queued_value="queued",
-            running_value="running",
-            order_attr=LabelProcessingJob.created_at,
-        )
-        if job is not None:
-            return job
-    return None
-
-
-async def complete_label_processing_job(session: AsyncSession, job_id: str) -> None:
-    from humpback.models.label_processing import LabelProcessingJob
-
-    await session.execute(
-        update(LabelProcessingJob)
-        .where(LabelProcessingJob.id == job_id)
-        .values(status="complete", updated_at=datetime.now(timezone.utc))
-    )
-    await session.commit()
-
-
-async def fail_label_processing_job(
-    session: AsyncSession, job_id: str, error: str
-) -> None:
-    from humpback.models.label_processing import LabelProcessingJob
-
-    await session.execute(
-        update(LabelProcessingJob)
-        .where(LabelProcessingJob.id == job_id)
-        .values(
-            status="failed",
-            error_message=error,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    await session.commit()
 
 
 # ---- Vocalization Jobs ----

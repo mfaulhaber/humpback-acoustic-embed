@@ -54,4 +54,4 @@ in `docs/workflows/` — read the full file for detailed steps.
 - Frontend: npm from frontend/ directory
 - DB migrations: Alembic with op.batch_alter_table() for SQLite
 - Testing: every change needs tests (uv run pytest tests/)
-- Idempotency: never create duplicate embedding sets for same encoding_signature
+- Idempotency: preserve retained uniqueness guarantees (for example, no duplicate detection embeddings for the same `(detection_job_id, model_version)` and no duplicate continuous-embedding jobs for the same `encoding_signature`)

@@ -4,13 +4,10 @@ from sqlalchemy import func, select, text
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.models import (
     AudioFile,
-    AudioMetadata,
     Cluster,
     ClusterAssignment,
     ClusteringJob,
-    EmbeddingSet,
     ModelConfig,
-    ProcessingJob,
 )
 from humpback.schemas.model_registry import (
     AvailableModelFile,
@@ -24,10 +21,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 _MODELS = [
     ("audio_files", AudioFile),
-    ("audio_metadata", AudioMetadata),
     ("model_configs", ModelConfig),
-    ("processing_jobs", ProcessingJob),
-    ("embedding_sets", EmbeddingSet),
     ("clustering_jobs", ClusteringJob),
     ("clusters", Cluster),
     ("cluster_assignments", ClusterAssignment),

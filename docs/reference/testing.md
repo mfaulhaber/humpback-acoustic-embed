@@ -5,16 +5,16 @@
 Testing is not optional. Every meaningful change must include:
 - unit tests for new logic
 - integration tests for API endpoints
-- at least one end-to-end smoke test path that exercises the real workflows
+- at least one end-to-end smoke test path that exercises the retained workflows
 
 ## Unit Tests
 Add unit tests for:
-- encoding_signature computation (idempotency)
+- retained idempotency checks (for example, detection-embedding uniqueness and continuous-embedding `encoding_signature` handling)
 - audio window slicing logic
 - feature extraction shape correctness
 - TFLite runner batching (mock interpreter acceptable)
 - Parquet writer behavior (temp + atomic promote)
-- clustering pipeline (small synthetic embeddings)
+- clustering pipeline on detection-job embeddings (small synthetic data)
 
 Guidelines:
 - prefer deterministic tests
@@ -41,13 +41,13 @@ Document the chosen tool in README and add it to dev dependencies.
 ## End-to-End Smoke Test (E2E)
 Add a minimal E2E test that:
 1. Starts API + worker (in-process for tests or via subprocess)
-2. Uploads a small fixture audio file
-3. Queues a ProcessingJob
-4. Polls until job completes
-5. Verifies EmbeddingSet exists and parquet file is readable
-6. Queues a ClusteringJob on that embedding set
-7. Polls until complete
-8. Verifies clusters and assignments exist and are consistent
+2. Seeds or creates a tiny retained source workflow (for example, a completed detection job with a small row store and fixture audio range)
+3. Queues or verifies a detection-embedding job
+4. Polls until embeddings exist at the model-versioned detection path
+5. Creates a classifier training job from `detection_job_ids`
+6. Polls until the classifier model artifact is written
+7. Optionally queues Vocalization / Clustering on the same detection-job source
+8. Verifies the resulting model or clustering artifacts are readable and internally consistent
 
 Constraints:
 - E2E must run in under a few minutes locally

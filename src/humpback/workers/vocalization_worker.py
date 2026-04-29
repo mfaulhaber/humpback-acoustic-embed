@@ -356,30 +356,6 @@ async def _load_source_embeddings(
             confidences,
         )
 
-    elif job.source_type == "embedding_set":
-        from humpback.models.processing import EmbeddingSet
-
-        es_result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.id == job.source_id)
-        )
-        es = es_result.scalar_one_or_none()
-        if es is None:
-            raise ValueError(f"Embedding set {job.source_id} not found")
-
-        parquet_path = Path(es.parquet_path)
-        if not parquet_path.exists():
-            raise FileNotFoundError(f"Parquet not found: {parquet_path}")
-
-        table = pq.read_table(str(parquet_path))
-        filenames = table.column("filename").to_pylist()
-        start_secs = [float(s) for s in table.column("start_sec").to_pylist()]
-        end_secs = [float(s) for s in table.column("end_sec").to_pylist()]
-        embeddings = np.array(
-            [row.as_py() for row in table.column("embedding")],
-            dtype=np.float32,
-        )
-        return embeddings, [], filenames, start_secs, end_secs, [], [], None
-
     elif job.source_type == "rescore":
         # Re-score from a previous inference job's output
         prev_job_result = await session.execute(

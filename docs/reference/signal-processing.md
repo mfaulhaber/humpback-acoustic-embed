@@ -1,6 +1,6 @@
 # Signal Processing Parameters
 
-> Read this when working on audio processing, feature extraction, windowing, or clustering parameters.
+> Read this when working on audio decoding, feature extraction, windowing, detection embeddings, or clustering parameters.
 
 ## Parameters
 
@@ -54,17 +54,16 @@ Audio is sliced into fixed-length windows using an **overlap-back** strategy ins
 **Minimum audio duration** = `window_size_seconds` (default 5.0 s). Audio files shorter than this threshold are skipped by:
 - `slice_windows()` / `slice_windows_with_metadata()` — yield nothing
 - `count_windows()` — returns 0
-- Processing worker — logs warning, writes empty embedding set
 - Detection worker — logs warning, increments `n_skipped_short` in summary
-- Trainer (`embed_audio_folder`) — logs warning, skips file
+- Detection-embedding generation and downstream training/clustering flows depend on those retained detection rows rather than on standalone embedding-set jobs
 
 `WindowMetadata` carries `is_overlapped: bool` to flag overlap-back windows (replacing the former `is_padded` field).
 
-## Processing Pipeline Diagram
+## Embedding Pipeline Diagram
 
 ```mermaid
 flowchart TD
-    A["Audio File<br/>(MP3/WAV/FLAC)"] --> B["Decode Audio<br/>-> float32 mono"]
+    A["Audio File or Clip<br/>(MP3/WAV/FLAC)"] --> B["Decode Audio<br/>-> float32 mono"]
     B --> C["Resample<br/>-> 32 kHz"]
     C --> D{"Duration >= window?"}
     D -- No --> D2["Skip file<br/>(log warning)"]
@@ -76,9 +75,9 @@ flowchart TD
     G --> I["TF2 SavedModel<br/>-> N-d vector"]
     H --> J["Parquet Writer<br/>(incremental, atomic)"]
     I --> J
-    J --> K["EmbeddingSet<br/>(SQL row)"]
-    K --> L["UMAP<br/>-> 2-d coords"]
-    L --> M["HDBSCAN<br/>-> cluster labels"]
+    J --> K["Detection Embeddings<br/>detections/{job_id}/embeddings/{model_version}/"]
+    K --> L["Classifier Training / Hyperparameter Manifests"]
+    K --> M["Vocalization Clustering<br/>UMAP/PCA -> clustering labels"]
     M --> N["Metrics<br/>Silhouette / DB / CH / ARI / NMI"]
     M --> O["Outputs<br/>clusters.json, assignments.parquet,<br/>umap_coords.parquet, parameter_sweep.json"]
 ```

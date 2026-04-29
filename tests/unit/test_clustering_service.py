@@ -1,16 +1,14 @@
 """Tests for clustering service validation logic."""
 
 import json
-import uuid
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from humpback.database import Base
-from humpback.models.audio import AudioFile
 from humpback.models.classifier import DetectionJob
+from humpback.models.clustering import ClusteringJob
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
-from humpback.models.processing import EmbeddingSet
 from humpback.models.vocalization import (
     VocalizationClassifierModel,
     VocalizationInferenceJob,
@@ -34,53 +32,11 @@ async def session():
     await engine.dispose()
 
 
-async def _make_embedding_set(
-    session: AsyncSession,
-    model_version: str = "perch_v1",
-    vector_dim: int = 1280,
-) -> EmbeddingSet:
-    unique = uuid.uuid4().hex[:8]
-    af = AudioFile(filename=f"test-{unique}.wav", checksum_sha256=unique)
-    session.add(af)
-    await session.flush()
-    es = EmbeddingSet(
-        audio_file_id=af.id,
-        encoding_signature=f"sig-{af.id}-{model_version}-{unique}",
-        model_version=model_version,
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-        vector_dim=vector_dim,
-        parquet_path="/tmp/test.parquet",
-    )
-    session.add(es)
-    await session.flush()
-    return es
-
-
-async def test_clustering_rejects_mixed_model_versions(session: AsyncSession):
-    es1 = await _make_embedding_set(session, model_version="perch_v1")
-    es2 = await _make_embedding_set(session, model_version="perch_v2")
-
+async def test_clustering_rejects_legacy_embedding_set_jobs(session: AsyncSession):
     with pytest.raises(
-        ValueError, match="Cannot cluster embedding sets from different models"
+        ValueError, match="Legacy embedding-set clustering has been removed"
     ):
-        await create_clustering_job(session, [es1.id, es2.id])
-
-
-async def test_clustering_accepts_same_model_version(session: AsyncSession):
-    es1 = await _make_embedding_set(session, model_version="perch_v1")
-    es2 = await _make_embedding_set(session, model_version="perch_v1")
-
-    job = await create_clustering_job(session, [es1.id, es2.id])
-    assert job.id is not None
-
-
-async def test_clustering_rejects_mixed_vector_dims(session: AsyncSession):
-    es1 = await _make_embedding_set(session, vector_dim=1280)
-    es2 = await _make_embedding_set(session, vector_dim=512)
-
-    with pytest.raises(ValueError, match="different vector dimensions"):
-        await create_clustering_job(session, [es1.id, es2.id])
+        await create_clustering_job(session, ["es-1", "es-2"])
 
 
 # ---- Vocalization Clustering ----
@@ -141,7 +97,6 @@ async def test_vocalization_clustering_happy_path(session: AsyncSession):
     assert job.id is not None
     assert job.detection_job_ids is not None
     assert json.loads(job.detection_job_ids) == [dj.id]
-    assert json.loads(job.embedding_set_ids) == []
 
 
 async def test_vocalization_clustering_rejects_missing_inference(
@@ -178,8 +133,12 @@ async def test_list_vocalization_clustering_jobs_excludes_standard(
     dj, _model = await _setup_detection_with_inference(session)
     await create_vocalization_clustering_job(session, [dj.id])
 
-    es = await _make_embedding_set(session)
-    await create_clustering_job(session, [es.id])
+    session.add(
+        ClusteringJob(
+            detection_job_ids=None,
+        )
+    )
+    await session.commit()
 
     voc_jobs = await list_vocalization_clustering_jobs(session)
     assert len(voc_jobs) == 1

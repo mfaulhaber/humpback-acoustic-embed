@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---- Vocabulary ----
@@ -27,21 +27,19 @@ class VocalizationTypeOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class VocalizationTypeImportRequest(BaseModel):
-    embedding_set_ids: list[str]
-
-
-class VocalizationTypeImportResponse(BaseModel):
-    added: list[str]
-    skipped: list[str]
-
-
 # ---- Training ----
 
 
 class VocalizationTrainingSourceConfig(BaseModel):
-    embedding_set_ids: list[str] = Field(default_factory=list)
     detection_job_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_detection_job_ids(self):
+        if not self.detection_job_ids:
+            raise ValueError(
+                "Vocalization training source_config requires detection_job_ids"
+            )
+        return self
 
 
 class VocalizationTrainingJobCreate(BaseModel):
@@ -88,7 +86,7 @@ class VocalizationModelOut(BaseModel):
 
 class VocalizationInferenceJobCreate(BaseModel):
     vocalization_model_id: str
-    source_type: str = Field(pattern="^(detection_job|embedding_set|rescore)$")
+    source_type: str = Field(pattern="^(detection_job|rescore)$")
     source_id: str
 
 
@@ -173,5 +171,10 @@ class TrainingDatasetLabelOut(BaseModel):
 
 
 class TrainingDatasetExtendRequest(BaseModel):
-    embedding_set_ids: list[str] = Field(default_factory=list)
     detection_job_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_detection_job_ids(self):
+        if not self.detection_job_ids:
+            raise ValueError("Training dataset extension requires detection_job_ids")
+        return self

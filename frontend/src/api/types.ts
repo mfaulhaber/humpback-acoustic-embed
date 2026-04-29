@@ -21,84 +21,7 @@ export interface AudioFile {
   metadata: AudioMetadata | null;
 }
 
-export interface FolderImportResult {
-  folder_path: string;
-  imported: number;
-  skipped: number;
-  errors: string[];
-}
-
-export interface SpectrogramData {
-  window_index: number;
-  sample_rate: number;
-  window_size_seconds: number;
-  shape: number[];
-  data: number[][];
-  total_windows: number;
-  min_db: number;
-  max_db: number;
-  y_axis_hz: number[];
-  x_axis_seconds: number[];
-}
-
-export interface EmbeddingSimilarity {
-  embedding_set_id: string;
-  vector_dim: number;
-  num_windows: number;
-  row_indices: number[];
-  similarity_matrix: number[][];
-}
-
-// ---- Folder Delete ----
-
-export interface AffectedClusteringJob {
-  id: string;
-  status: string;
-  overlapping_embedding_set_ids: string[];
-}
-
-export interface FolderDeletePreview {
-  folder_path: string;
-  audio_file_count: number;
-  embedding_set_count: number;
-  processing_job_count: number;
-  affected_clustering_jobs: AffectedClusteringJob[];
-  has_clustering_conflicts: boolean;
-}
-
-export interface FolderDeleteResult {
-  folder_path: string;
-  deleted_audio_files: number;
-  deleted_embedding_sets: number;
-  deleted_processing_jobs: number;
-  deleted_clustering_jobs: number;
-}
-
-// ---- Processing ----
-
-export interface ProcessingJobCreate {
-  audio_file_id: string;
-  model_version?: string | null;
-  window_size_seconds?: number;
-  target_sample_rate?: number;
-  feature_config?: Record<string, unknown> | null;
-}
-
-export interface ProcessingJob {
-  id: string;
-  audio_file_id: string;
-  status: "queued" | "running" | "complete" | "failed" | "canceled";
-  encoding_signature: string;
-  model_version: string;
-  window_size_seconds: number;
-  target_sample_rate: number;
-  feature_config: Record<string, unknown> | null;
-  error_message: string | null;
-  warning_message: string | null;
-  created_at: string;
-  updated_at: string;
-  skipped: boolean;
-}
+// ---- Legacy Embedding Sets ----
 
 export interface EmbeddingSet {
   id: string;
@@ -112,13 +35,7 @@ export interface EmbeddingSet {
   created_at: string;
 }
 
-// ---- Clustering ----
-
-export interface ClusteringJobCreate {
-  embedding_set_ids: string[];
-  parameters?: Record<string, unknown> | null;
-  refined_from_job_id?: string | null;
-}
+// ---- Vocalization Clustering ----
 
 export interface VocalizationClusteringJobCreate {
   detection_job_ids: string[];
@@ -136,8 +53,7 @@ export interface ClusteringEligibleDetectionJob {
 export interface ClusteringJob {
   id: string;
   status: "queued" | "running" | "complete" | "failed" | "canceled";
-  embedding_set_ids: string[];
-  detection_job_ids?: string[] | null;
+  detection_job_ids: string[];
   parameters: Record<string, unknown> | null;
   error_message: string | null;
   metrics: Record<string, unknown> | null;
@@ -154,18 +70,11 @@ export interface ClusterOut {
   metadata_summary: Record<string, unknown> | null;
 }
 
-export interface ClusterAssignment {
-  id: string;
-  cluster_id: string;
-  embedding_set_id: string;
-  embedding_row_index: number;
-}
-
 export interface VisualizationData {
   x: number[];
   y: number[];
   cluster_label: number[];
-  embedding_set_id: string[];
+  detection_job_id: string[];
   embedding_row_index: number[];
   audio_filename: string[];
   audio_file_id: string[];
@@ -185,78 +94,6 @@ export interface ClusteringMetrics {
   n_categories?: number;
   category_metrics?: Record<string, unknown>;
   [key: string]: unknown;
-}
-
-export interface ParameterSweepPoint {
-  min_cluster_size?: number;
-  k?: number;
-  silhouette_score: number | null;
-  n_clusters: number;
-  algorithm?: string;
-  selection_method?: string;
-  adjusted_rand_index?: number | null;
-  normalized_mutual_info?: number | null;
-}
-
-export interface DendrogramCoords {
-  icoord: number[][];
-  dcoord: number[][];
-}
-
-export interface DendrogramData {
-  categories: string[];
-  cluster_labels: string[];
-  values: number[][];
-  raw_counts: number[][];
-  row_dendrogram: DendrogramCoords;
-  col_dendrogram: DendrogramCoords;
-}
-
-// ---- Fragmentation ----
-
-export interface CategoryFragmentation {
-  n_total: number;
-  n_non_noise: number;
-  n_noise: number;
-  noise_rate: number;
-  top1_mass: number;
-  top2_mass: number;
-  top3_mass: number;
-  entropy: number;
-  normalized_entropy: number;
-  neff: number;
-  gini: number;
-}
-
-export interface ClusterFragmentation {
-  size: number;
-  dominant_category: string;
-  dominant_mass: number;
-  cluster_entropy: number;
-  cluster_entropy_norm: number;
-}
-
-export interface GlobalFragmentation {
-  mean_entropy_norm: number;
-  mean_neff: number;
-  mean_noise_rate: number;
-  mean_cluster_entropy_norm: number;
-}
-
-export interface FragmentationSummary {
-  n_categories: number;
-  n_clusters: number;
-  n_total: number;
-  n_noise_total: number;
-  overall_noise_rate: number;
-}
-
-export interface FragmentationReport {
-  job_id: string;
-  category_fragmentation: Record<string, CategoryFragmentation>;
-  cluster_fragmentation: Record<string, ClusterFragmentation>;
-  global_fragmentation: GlobalFragmentation;
-  summary: FragmentationSummary;
 }
 
 // ---- Stability ----
@@ -287,83 +124,12 @@ export interface StabilitySummary {
   per_run: StabilityRunMetrics[];
 }
 
-// ---- Classifier Baseline ----
-
-export interface PerClassMetrics {
-  precision: number;
-  recall: number;
-  f1_score: number;
-  support: number;
-}
-
-export interface ClassifierReport {
-  n_samples: number;
-  n_categories: number;
-  n_folds: number;
-  categories_excluded: string[];
-  overall_accuracy: number;
-  per_class: Record<string, PerClassMetrics>;
-  macro_avg: PerClassMetrics;
-  weighted_avg: PerClassMetrics;
-  confusion_matrix: Record<string, Record<string, number>>;
-}
-
-export interface LabelQueueEntry {
-  rank: number;
-  global_index: number;
-  embedding_set_id: string;
-  embedding_row_index: number;
-  current_category: string | null;
-  predicted_category: string | null;
-  entropy: number | null;
-  margin: number | null;
-  max_prob: number | null;
-  fragmentation_boost: number;
-  priority: number;
-}
-
-// ---- Metric Learning Refinement ----
-
-export interface RefinementTrainingParams {
-  output_dim: number;
-  hidden_dim: number;
-  n_epochs: number;
-  lr: number;
-  margin: number;
-  batch_size: number;
-  mining_strategy: string;
-}
-
-export interface RefinementMetricComparison {
-  metric: string;
-  key: string;
-  base: number | null;
-  refined: number | null;
-  delta: number | null;
-  improved: boolean | null;
-}
-
-export interface RefinementReport {
-  training_params: RefinementTrainingParams;
-  n_labeled_samples: number;
-  n_categories: number;
-  n_total_samples: number;
-  categories_used: string[];
-  loss_history: number[];
-  final_loss: number;
-  comparison: RefinementMetricComparison[];
-  base_summary: Record<string, number | null>;
-  refined_summary: Record<string, number | null>;
-}
-
 // ---- Binary Classifier ----
 
 export interface ClassifierTrainingJobCreate {
   name: string;
-  positive_embedding_set_ids?: string[];
-  negative_embedding_set_ids?: string[];
-  detection_job_ids?: string[];
-  embedding_model_version?: string;
+  detection_job_ids: string[];
+  embedding_model_version: string;
   parameters?: Record<string, unknown> | null;
 }
 
@@ -437,6 +203,7 @@ export interface ClassifierTrainingJob {
   name: string;
   positive_embedding_set_ids: string[];
   negative_embedding_set_ids: string[];
+  legacy_source_summary: Record<string, unknown> | null;
   model_version: string;
   window_size_seconds: number;
   target_sample_rate: number;
@@ -625,7 +392,7 @@ export interface DetectionRowStateResponse {
 }
 
 export interface TrainingSourceInfo {
-  embedding_set_id: string;
+  source_id: string;
   audio_file_id: string | null;
   filename: string | null;
   folder_path: string | null;
@@ -740,113 +507,12 @@ export interface TableInfo {
   count: number;
 }
 
-// ---- Search ----
-
-export interface ScoreHistogramBin {
-  bin_start: number;
-  bin_end: number;
-  count: number;
-}
-
-export interface ScoreDistribution {
-  mean: number;
-  std: number;
-  min: number;
-  max: number;
-  p25: number;
-  p50: number;
-  p75: number;
-  histogram: ScoreHistogramBin[];
-}
-
-export interface SimilaritySearchHit {
-  score: number;
-  percentile_rank: number;
-  embedding_set_id: string;
-  row_index: number;
-  audio_file_id: string;
-  audio_filename: string;
-  audio_folder_path: string | null;
-  window_offset_seconds: number;
-}
-
-export interface SimilaritySearchResponse {
-  query_embedding_set_id: string;
-  query_row_index: number;
-  model_version: string;
-  metric: string;
-  total_candidates: number;
-  results: SimilaritySearchHit[];
-  score_distribution: ScoreDistribution;
-}
+// ---- Detection Embeddings ----
 
 export interface DetectionEmbeddingResponse {
   vector: number[];
   model_version: string;
   vector_dim: number;
-}
-
-export interface AudioSearchRequest {
-  detection_job_id: string;
-  start_utc: number;
-  end_utc: number;
-  top_k?: number;
-  metric?: string;
-  embedding_set_ids?: string[];
-  search_mode?: "raw" | "projected";
-  classifier_model_id?: string | null;
-}
-
-export interface SearchJobResponse {
-  id: string;
-  status: string;
-  error?: string | null;
-  results?: SimilaritySearchResponse | null;
-  query_vector?: number[] | null;
-  model_version?: string | null;
-}
-
-// ---- Label Processing ----
-
-export interface LabelProcessingJobCreate {
-  workflow?: "score_based" | "sample_builder";
-  classifier_model_id?: string | null;
-  annotation_folder: string;
-  audio_folder: string;
-  output_root: string;
-  parameters?: Record<string, unknown> | null;
-}
-
-export interface LabelProcessingJob {
-  id: string;
-  status: "queued" | "running" | "complete" | "failed";
-  workflow: "score_based" | "sample_builder";
-  classifier_model_id: string | null;
-  annotation_folder: string;
-  audio_folder: string;
-  output_root: string;
-  parameters: Record<string, unknown> | null;
-  files_processed: number | null;
-  files_total: number | null;
-  annotations_total: number | null;
-  result_summary: Record<string, unknown> | null;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface LabelProcessingPairedFile {
-  annotation_file: string;
-  audio_file: string;
-  annotation_count: number;
-}
-
-export interface LabelProcessingPreview {
-  paired_files: LabelProcessingPairedFile[];
-  total_annotations: number;
-  call_type_distribution: Record<string, number>;
-  unpaired_annotations: string[];
-  unpaired_audio: string[];
 }
 
 // ---- Labeling ----
@@ -884,12 +550,11 @@ export interface VocalizationLabelBatchRequest {
 
 export interface NeighborHit {
   score: number;
-  embedding_set_id: string;
-  row_index: number;
-  audio_file_id: string;
+  detection_job_id: string;
+  row_id: string;
   audio_filename: string;
-  audio_folder_path: string | null;
-  window_offset_seconds: number;
+  start_utc: number;
+  end_utc: number;
   inferred_label: string | null;
 }
 
@@ -931,17 +596,7 @@ export interface VocalizationTypeUpdate {
   description?: string | null;
 }
 
-export interface VocalizationTypeImportRequest {
-  embedding_set_ids: string[];
-}
-
-export interface VocalizationTypeImportResponse {
-  added: string[];
-  skipped: string[];
-}
-
 export interface VocalizationTrainingSourceConfig {
-  embedding_set_ids: string[];
   detection_job_ids: string[];
 }
 
@@ -979,7 +634,7 @@ export interface VocClassifierModel {
 
 export interface VocClassifierInferenceJobCreate {
   vocalization_model_id: string;
-  source_type: "detection_job" | "embedding_set" | "rescore";
+  source_type: "detection_job" | "rescore";
   source_id: string;
 }
 
@@ -1059,23 +714,10 @@ export interface VocalizationTrainingSource {
   parameters: Record<string, unknown> | null;
 }
 
-// ---- Folder Embedding Set ----
-
-export interface FolderEmbeddingSetResponse {
-  folder_path: string;
-  embedding_set_ids: string[];
-  total_files: number;
-  processed_files: number;
-  pending_files: number;
-  status: "ready" | "processing" | "queued";
-}
-
 // ---- Labeling Source ----
 
 export type LabelingSource =
-  | { type: "detection_job"; jobId: string }
-  | { type: "embedding_set"; embeddingSetId: string }
-  | { type: "local"; folderPath: string };
+  | { type: "detection_job"; jobId: string };
 
 // ---- Training Datasets ----
 
@@ -1121,8 +763,7 @@ export interface TrainingDatasetLabel {
 }
 
 export interface TrainingDatasetExtendRequest {
-  embedding_set_ids?: string[];
-  detection_job_ids?: string[];
+  detection_job_ids: string[];
 }
 
 // ---- Health ----
@@ -1597,5 +1238,3 @@ export interface WindowScoreRow {
   region_id: string;
   scores: Record<string, number>;
 }
-
-

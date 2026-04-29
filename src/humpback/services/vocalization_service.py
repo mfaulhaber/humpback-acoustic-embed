@@ -2,13 +2,10 @@
 
 import json
 import logging
-from pathlib import Path
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.models.audio import AudioFile
-from humpback.models.processing import EmbeddingSet
 from humpback.models.vocalization import (
     VocalizationClassifierModel,
     VocalizationInferenceJob,
@@ -87,67 +84,6 @@ async def delete_type(session: AsyncSession, type_id: str) -> bool:
     await session.delete(vt)
     await session.commit()
     return True
-
-
-# ---- Embedding Set Import ----
-
-
-async def import_types_from_embedding_sets(
-    session: AsyncSession, embedding_set_ids: list[str]
-) -> tuple[list[str], list[str]]:
-    """Scan embedding sets for subfolder names and import as vocalization types.
-
-    Returns (added, skipped) lists of type names.
-    """
-    # Collect unique folder leaf names across the selected embedding sets
-    discovered: set[str] = set()
-
-    for es_id in embedding_set_ids:
-        es_result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.id == es_id)
-        )
-        es = es_result.scalar_one_or_none()
-        if es is None:
-            logger.warning("Embedding set %s not found, skipping", es_id)
-            continue
-
-        # Get the audio file's folder_path to find the top-level folder
-        af_result = await session.execute(
-            select(AudioFile).where(AudioFile.id == es.audio_file_id)
-        )
-        af = af_result.scalar_one_or_none()
-        if af is None:
-            continue
-
-        # Extract the leaf folder name from the audio file's folder_path
-        if af.folder_path:
-            parts = Path(af.folder_path).parts
-            if parts:
-                leaf = parts[-1].strip().title()
-                if leaf:
-                    discovered.add(leaf)
-
-    if not discovered:
-        return [], []
-
-    # Check which names already exist
-    existing_result = await session.execute(
-        select(VocalizationType.name).where(VocalizationType.name.in_(discovered))
-    )
-    existing_names = {row[0] for row in existing_result.all()}
-
-    added: list[str] = []
-    skipped: list[str] = sorted(discovered & existing_names)
-
-    for name in sorted(discovered - existing_names):
-        vt = VocalizationType(name=name)
-        session.add(vt)
-        added.append(name)
-
-    if added:
-        await session.commit()
-
-    return added, skipped
 
 
 # ---- Active Model Management ----

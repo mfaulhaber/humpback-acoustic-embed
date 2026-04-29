@@ -15,7 +15,7 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 | Icons | lucide-react |
 | API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
 
-**Navigation**: Side nav + top nav layout with react-router-dom. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/embeddings`, `/app/classifier/tuning`, `/app/classifier/labeling`); Vocalization has sub-routes (`/app/vocalization/training`, `/app/vocalization/labeling`, `/app/vocalization/training-data`); Call Parsing has sub-routes (`/app/call-parsing/detection`, `/app/call-parsing/segment`, `/app/call-parsing/segment-training`, `/app/call-parsing/classify`, `/app/call-parsing/classify-training`); the timeline viewer is at `/app/classifier/timeline/:jobId`; the region detection timeline viewer is at `/app/call-parsing/region-timeline/:jobId`; other sections are single-route pages. The Tuning page (`TuningTab.tsx`) has three collapsible sections: Manifests (create/list/detail/delete data manifests), Searches (create/list/detail/delete hyperparameter search jobs with configurable search space), and Candidates (relocated `AutoresearchCandidatesSection` for artifact import, review, and candidate-backed promotion).
+**Navigation**: Side nav + top nav layout with react-router-dom. The default route is `/app/call-parsing/detection`. Classifier has sub-routes (`/app/classifier/training`, `/app/classifier/hydrophone`, `/app/classifier/embeddings`, `/app/classifier/tuning`, `/app/classifier/labeling`); Vocalization has sub-routes (`/app/vocalization/training`, `/app/vocalization/labeling`, `/app/vocalization/training-data`, `/app/vocalization/clustering`); Call Parsing has sub-routes (`/app/call-parsing/detection`, `/app/call-parsing/segment`, `/app/call-parsing/segment-training`, `/app/call-parsing/classify`, `/app/call-parsing/classify-training`, `/app/call-parsing/window-classify`); Sequence Models has sub-routes (`/app/sequence-models/continuous-embedding`, `/app/sequence-models/hmm-sequence`). The classifier timeline viewer is at `/app/classifier/timeline/:jobId`; the region detection timeline viewer is at `/app/call-parsing/region-timeline/:jobId`. Top-level Audio, Processing, Search, Label Processing, and standalone Clustering pages have been removed.
 
 ## Frontend Package Management
 *   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
@@ -44,17 +44,13 @@ frontend/
     ├── components/
     │   ├── ui/                  (shadcn primitives)
     │   ├── layout/              (AppShell, TopNav, SideNav, Breadcrumbs)
-    │   ├── audio/               (AudioTab, AudioUpload, AudioList, AudioDetail, AudioPlayerBar, SpectrogramPlot, SimilarityMatrix)
-    │   ├── processing/          (ProcessingTab, QueueJobForm, ProcessingJobsList, EmbeddingSetsList)
-    │   ├── clustering/          (ClusteringTab, EmbeddingSetSelector, ClusteringParamsForm, ClusteringJobCard, ClusterTable, UmapPlot, EvaluationPanel, ExportReport)
     │   ├── call-parsing/        (DetectionPage, RegionJobForm, RegionJobTable, RegionJobSummary, RegionDetectionTimeline, SegmentPage, SegmentJobForm, SegmentJobTable, SegmentJobDetail, SegmentReviewWorkspace, RegionTable, ClassifyReviewWorkspace, WindowClassifyReviewWorkspace, EventDetailPanel, RegionTable, SegmentTrainingPage, FeedbackTrainingJobTable, SegmentModelTable)
     │   ├── classifier/          (TrainingTab, AutoresearchCandidatesSection, HydrophoneTab, LabelingTab, EmbeddingsPage, DetectionTab, BulkDeleteDialog)
-    │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, SourceSelector, EmbeddingStatusPanel, InferencePanel, LabelingWorkspace, RetrainFooter, TrainingDataView)
+    │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, SourceSelector, InferencePanel, LabelingWorkspace, RetrainFooter, TrainingDataView, VocalizationClusteringPage, VocalizationClusteringDetail)
+    │   ├── sequence-models/     (ContinuousEmbeddingJobsPage, ContinuousEmbeddingDetailPage, HMMSequenceJobsPage, HMMSequenceDetailPage)
     │   ├── timeline/            (ClassifierTimeline, Spectrogram, TileCanvas, TimelineProvider, PlaybackControls, ZoomSelector, OverlayToggles, EditToggle, EditToolbar, EventNav, DetectionOverlay, VocalizationOverlay, RegionOverlay, RegionEditOverlay, EventBarOverlay, RegionBandOverlay, LabelEditor, LabelToolbar, VocLabelEditor, VocLabelPopover, VocLabelToolbar, etc.)
-    │   ├── search/              (SearchTab — standalone + detection-sourced similarity search)
-    │   ├── label-processing/    (LabelProcessingTab, LabelProcessingJobCard, LabelProcessingPreview)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
-    │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc, EmbeddingSetPanel)
+    │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc)
     └── utils/                   (format.ts, audio.ts)
 ```
 

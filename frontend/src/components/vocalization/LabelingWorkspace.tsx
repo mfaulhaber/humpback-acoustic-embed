@@ -91,14 +91,11 @@ export function LabelingWorkspace({
     job?.vocalization_model_id ?? null,
   );
   const [page, setPage] = useState(0);
-  const [sortMode, setSortMode] = useState<SortMode>(
-    source.type === "detection_job" ? "confidence_desc" : "score_desc",
-  );
+  const [sortMode, setSortMode] = useState<SortMode>("confidence_desc");
   const [saving, setSaving] = useState(false);
   const qc = useQueryClient();
 
-  const detectionJobId =
-    source.type === "detection_job" ? source.jobId : null;
+  const detectionJobId = source.jobId;
 
   // Pending label state (local accumulation)
   const [pendingAdds, setPendingAdds] = useState<Map<string, Set<string>>>(

@@ -1,4 +1,4 @@
-from humpback.models.audio import AudioFile, AudioMetadata
+from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import (
     CallParsingRun,
     EventBoundaryCorrection,
@@ -16,12 +16,9 @@ from humpback.models.hyperparameter import (
     HyperparameterManifest,
     HyperparameterSearchJob,
 )
-from humpback.models.label_processing import LabelProcessingJob
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
-from humpback.models.processing import EmbeddingSet, ProcessingJob
 from humpback.models.retrain import RetrainWorkflow
-from humpback.models.search import SearchJob
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.models.segmentation_training import (
     SegmentationTrainingDataset,
@@ -37,7 +34,6 @@ from humpback.models.vocalization import (
 
 __all__ = [
     "AudioFile",
-    "AudioMetadata",
     "CallParsingRun",
     "EventBoundaryCorrection",
     "EventClassificationJob",
@@ -45,19 +41,15 @@ __all__ = [
     "EventSegmentationJob",
     "HyperparameterManifest",
     "HyperparameterSearchJob",
-    "LabelProcessingJob",
     "ModelConfig",
     "RegionDetectionJob",
     "SegmentationModel",
     "TFLiteModelConfig",
-    "ProcessingJob",
-    "EmbeddingSet",
     "ClusteringJob",
     "Cluster",
     "ClusterAssignment",
     "ContinuousEmbeddingJob",
     "RetrainWorkflow",
-    "SearchJob",
     "SegmentationTrainingDataset",
     "SegmentationTrainingJob",
     "SegmentationTrainingSample",

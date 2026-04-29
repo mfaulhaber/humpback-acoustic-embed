@@ -25,38 +25,30 @@ class LabelEditRequest(BaseModel):
 
 class ClassifierTrainingJobCreate(BaseModel):
     name: str
-    positive_embedding_set_ids: list[str] = Field(default_factory=list)
-    negative_embedding_set_ids: list[str] = Field(default_factory=list)
     detection_job_ids: list[str] = Field(default_factory=list)
     embedding_model_version: Optional[str] = None
+    positive_embedding_set_ids: Optional[list[str]] = None
+    negative_embedding_set_ids: Optional[list[str]] = None
     parameters: Optional[dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _validate_source_mode(self):
-        has_embedding_sets = bool(
-            self.positive_embedding_set_ids or self.negative_embedding_set_ids
-        )
-        has_detection_jobs = bool(self.detection_job_ids)
-
-        if has_embedding_sets and has_detection_jobs:
+        retired_fields = {
+            "positive_embedding_set_ids",
+            "negative_embedding_set_ids",
+        } & self.model_fields_set
+        if retired_fields:
             raise ValueError(
-                "Cannot mix embedding_set sources with detection_job sources"
+                "Embedding-set classifier training inputs are retired; "
+                "create training jobs with detection_job_ids and "
+                "embedding_model_version"
             )
-        if not has_embedding_sets and not has_detection_jobs:
+        if not self.detection_job_ids:
+            raise ValueError("detection_job_ids is required")
+        if not self.embedding_model_version:
             raise ValueError(
-                "Must provide either embedding set IDs or detection_job_ids"
+                "embedding_model_version is required when submitting detection_job_ids"
             )
-        if has_embedding_sets:
-            if not self.positive_embedding_set_ids:
-                raise ValueError("At least one positive embedding set is required")
-            if not self.negative_embedding_set_ids:
-                raise ValueError("At least one negative embedding set is required")
-        else:
-            if not self.embedding_model_version:
-                raise ValueError(
-                    "embedding_model_version is required when submitting "
-                    "detection_job_ids"
-                )
         return self
 
 
@@ -66,6 +58,7 @@ class ClassifierTrainingJobOut(BaseModel):
     name: str
     positive_embedding_set_ids: list[str]
     negative_embedding_set_ids: list[str]
+    legacy_source_summary: Optional[dict[str, Any]] = None
     model_version: str
     window_size_seconds: float
     target_sample_rate: int
@@ -346,7 +339,7 @@ class DetectionJobLabelCount(BaseModel):
 
 
 class TrainingSourceInfo(BaseModel):
-    embedding_set_id: str
+    source_id: str
     audio_file_id: Optional[str] = None
     filename: Optional[str] = None
     folder_path: Optional[str] = None

@@ -43,12 +43,11 @@ class TimelineVocalizationLabel(BaseModel):
 
 class NeighborHit(BaseModel):
     score: float
-    embedding_set_id: str
-    row_index: int
-    audio_file_id: str
+    detection_job_id: str
+    row_id: str
     audio_filename: str
-    audio_folder_path: str | None = None
-    window_offset_seconds: float
+    start_utc: float
+    end_utc: float
     inferred_label: str | None = None
 
 
@@ -76,7 +75,7 @@ class DetectionNeighborsRequest(BaseModel):
     row_id: str
     top_k: int = Field(default=10, ge=1, le=100)
     metric: str = Field(default="cosine", pattern="^(cosine|euclidean)$")
-    embedding_set_ids: list[str] | None = None
+    candidate_detection_job_ids: list[str] | None = None
 
 
 class VocalizationLabelBatchEditItem(BaseModel):

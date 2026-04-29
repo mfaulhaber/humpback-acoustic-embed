@@ -54,16 +54,13 @@ def _write_detection_embeddings_parquet(
 
 async def _import_promotable_candidate(client, app_settings) -> dict:
     from humpback.database import create_engine, create_session_factory
-    from humpback.models.audio import AudioFile
     from humpback.models.classifier import ClassifierModel, DetectionJob
-    from humpback.models.processing import EmbeddingSet
 
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
     source_model_id = str(uuid.uuid4())
     detection_job_id = str(uuid.uuid4())
-    af_id = str(uuid.uuid4())
 
     pos_path = app_settings.storage_root / "candidate-fixtures" / "pos.parquet"
     det_path = (
@@ -91,26 +88,6 @@ async def _import_promotable_candidate(client, app_settings) -> dict:
                 vector_dim=2,
                 window_size_seconds=5.0,
                 target_sample_rate=32000,
-            )
-        )
-        session.add(
-            AudioFile(
-                id=af_id,
-                filename="pos.wav",
-                folder_path="positive",
-                checksum_sha256="candidate-pos",
-            )
-        )
-        session.add(
-            EmbeddingSet(
-                id=str(uuid.uuid4()),
-                audio_file_id=af_id,
-                encoding_signature="sig",
-                model_version="perch_v1",
-                window_size_seconds=5.0,
-                target_sample_rate=32000,
-                vector_dim=2,
-                parquet_path=str(pos_path),
             )
         )
         session.add(
@@ -240,8 +217,8 @@ async def _import_promotable_candidate(client, app_settings) -> dict:
     return data
 
 
-async def test_create_training_job_missing_embedding_sets(client):
-    """400 when embedding sets don't exist."""
+async def test_create_training_job_rejects_embedding_set_payload(client):
+    """Embedding-set classifier training payloads are retired."""
     resp = await client.post(
         "/classifier/training-jobs",
         json={
@@ -250,20 +227,21 @@ async def test_create_training_job_missing_embedding_sets(client):
             "negative_embedding_set_ids": ["nonexistent2"],
         },
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
+    assert "Embedding-set classifier training" in resp.text
 
 
-async def test_create_training_job_missing_negative_sets(client):
-    """400 when negative embedding sets don't exist."""
+async def test_create_training_job_requires_detection_job_ids(client):
+    """Training jobs now require detection_job_ids."""
     resp = await client.post(
         "/classifier/training-jobs",
         json={
             "name": "test",
-            "positive_embedding_set_ids": ["nonexistent"],
-            "negative_embedding_set_ids": ["also-nonexistent"],
+            "embedding_model_version": "perch_v2",
         },
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
+    assert "detection_job_ids is required" in resp.text
 
 
 async def test_list_training_jobs_empty(client):
@@ -281,6 +259,37 @@ async def test_list_models_empty(client):
     resp = await client.get("/classifier/models")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+async def test_list_models_preserves_legacy_training_source_mode(client, app_settings):
+    from humpback.database import create_engine, create_session_factory
+    from humpback.models.classifier import ClassifierModel
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        session.add(
+            ClassifierModel(
+                name="legacy-classifier",
+                model_path="/tmp/legacy-classifier.joblib",
+                model_version="surfperch-tensorflow2",
+                vector_dim=1280,
+                window_size_seconds=5.0,
+                target_sample_rate=32000,
+                training_source_mode="embedding_sets",
+            )
+        )
+        await session.commit()
+
+    resp = await client.get("/classifier/models")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "legacy-classifier"
+    assert data[0]["training_source_mode"] == "embedding_sets"
+
+    await engine.dispose()
 
 
 async def test_get_model_not_found(client):
@@ -1122,7 +1131,7 @@ async def test_extract_rejects_legacy_merged_job(client, app_settings):
 
 
 async def test_overlap_rejected(client, app_settings):
-    """Same embedding set ID in both pos and neg returns 400."""
+    """Legacy embedding set payloads are rejected before overlap validation."""
     shared_id = "shared-set-id"
     resp = await client.post(
         "/classifier/training-jobs",
@@ -1132,8 +1141,8 @@ async def test_overlap_rejected(client, app_settings):
             "negative_embedding_set_ids": [shared_id, "other-neg"],
         },
     )
-    assert resp.status_code == 400
-    assert "both positive and negative" in resp.json()["detail"]
+    assert resp.status_code == 422
+    assert "Embedding-set classifier training" in resp.text
 
 
 async def test_content_endpoint_rejects_queued_job(client, app_settings):
@@ -2287,10 +2296,13 @@ async def test_create_training_job_detection_manifest_success(client, app_settin
     assert data["status"] == "queued"
     assert data["window_size_seconds"] == 5.0
     assert data["target_sample_rate"] == 32000
+    assert data["positive_embedding_set_ids"] == []
+    assert data["negative_embedding_set_ids"] == []
+    assert data["legacy_source_summary"] is None
 
 
 async def test_create_training_job_mixed_sources_rejected(client):
-    """POST /training-jobs with both embedding sets and detection jobs -> 422."""
+    """POST /training-jobs with retired embedding-set fields -> 422."""
     resp = await client.post(
         "/classifier/training-jobs",
         json={
@@ -2302,7 +2314,7 @@ async def test_create_training_job_mixed_sources_rejected(client):
         },
     )
     assert resp.status_code == 422
-    assert "Cannot mix" in resp.text
+    assert "Embedding-set classifier training" in resp.text
 
 
 async def test_create_training_job_detection_manifest_missing_embeddings(
@@ -2408,12 +2420,20 @@ async def test_create_training_job_detection_manifest_roundtrip(client, app_sett
     detail = detail_resp.json()
     assert detail["source_mode"] == "detection_manifest"
     assert detail["source_detection_job_ids"] == [dj_id]
+    assert detail["positive_embedding_set_ids"] == []
+    assert detail["negative_embedding_set_ids"] == []
+    assert detail["legacy_source_summary"] is None
 
     # GET list
     list_resp = await client.get("/classifier/training-jobs")
     assert list_resp.status_code == 200
-    ids = [j["id"] for j in list_resp.json()]
+    jobs = list_resp.json()
+    ids = [j["id"] for j in jobs]
     assert job_id in ids
+    listed = next(job for job in jobs if job["id"] == job_id)
+    assert listed["source_mode"] == "detection_manifest"
+    assert listed["positive_embedding_set_ids"] == []
+    assert listed["negative_embedding_set_ids"] == []
 
 
 # ---- Detection Embedding Endpoint ----

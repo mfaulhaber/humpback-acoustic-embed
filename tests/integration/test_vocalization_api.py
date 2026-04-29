@@ -5,8 +5,6 @@ import json
 import pytest
 
 from humpback.database import create_engine, create_session_factory
-from humpback.models.audio import AudioFile
-from humpback.models.processing import EmbeddingSet
 from humpback.models.vocalization import VocalizationClassifierModel
 
 
@@ -79,40 +77,239 @@ async def test_vocabulary_delete_nonexistent(client):
 
 
 @pytest.mark.asyncio
-async def test_vocabulary_import(client, app_settings):
-    """Import types from embedding set folder structure."""
+async def test_vocabulary_import_route_removed(client):
+    resp = await client.post(
+        "/vocalization/types/import",
+        json={"embedding_set_ids": ["es-1"]},
+    )
+    assert resp.status_code == 405
+
+
+@pytest.mark.asyncio
+async def test_vocalization_clustering_job_lifecycle(client, app_settings):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from humpback.models.classifier import DetectionJob
+    from humpback.models.detection_embedding_job import DetectionEmbeddingJob
+    from humpback.models.vocalization import VocalizationInferenceJob
+    from humpback.storage import detection_embeddings_path
+
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
     async with sf() as session:
-        af = AudioFile(
-            filename="call.wav",
-            folder_path="curated/shriek",
-            checksum_sha256="xyz123",
+        model = VocalizationClassifierModel(
+            name="clustering-model",
+            model_dir_path="/fake/dir",
+            vocabulary_snapshot=json.dumps(["whup"]),
+            per_class_thresholds=json.dumps({"whup": 0.5}),
+            is_active=True,
         )
-        session.add(af)
+        session.add(model)
         await session.flush()
 
-        es = EmbeddingSet(
-            audio_file_id=af.id,
-            encoding_signature="sig-test",
-            model_version="v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=128,
-            parquet_path="/fake/path.parquet",
+        detection_job = DetectionJob(
+            classifier_model_id="classifier-1",
+            hydrophone_name="Test Hydrophone",
+            start_timestamp=1700000000.0,
+            end_timestamp=1700000300.0,
+            result_summary=json.dumps({"total_detections": 6}),
+            status="complete",
         )
-        session.add(es)
+        session.add(detection_job)
+        await session.flush()
+
+        session.add(
+            VocalizationInferenceJob(
+                vocalization_model_id=model.id,
+                source_type="detection_job",
+                source_id=detection_job.id,
+                status="complete",
+            )
+        )
+        session.add(
+            DetectionEmbeddingJob(
+                detection_job_id=detection_job.id,
+                model_version="tf2",
+                status="complete",
+            )
+        )
         await session.commit()
-        es_id = es.id
+        detection_job_id = detection_job.id
+
+    embeddings_path = detection_embeddings_path(
+        app_settings.storage_root, detection_job_id, "tf2"
+    )
+    embeddings_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(
+            {
+                "row_id": [f"row-{idx}" for idx in range(3)],
+                "embedding": [[1.0, 0.0], [0.0, 1.0], [0.8, 0.2]],
+            }
+        ),
+        str(embeddings_path),
+    )
 
     resp = await client.post(
-        "/vocalization/types/import",
-        json={"embedding_set_ids": [es_id]},
+        "/vocalization/clustering-jobs",
+        json={"detection_job_ids": [detection_job_id]},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["detection_job_ids"] == [detection_job_id]
+    assert "embedding_set_ids" not in data
+    job_id = data["id"]
+
+    detail = await client.get(f"/vocalization/clustering-jobs/{job_id}")
+    assert detail.status_code == 200
+    assert detail.json()["detection_job_ids"] == [detection_job_id]
+
+    listing = await client.get("/vocalization/clustering-jobs")
+    assert listing.status_code == 200
+    assert any(job["id"] == job_id for job in listing.json())
+
+
+@pytest.mark.asyncio
+async def test_vocalization_clustering_visualization_supports_legacy_artifact_columns(
+    client, app_settings
+):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from humpback.models.classifier import DetectionJob
+    from humpback.models.clustering import ClusteringJob
+    from humpback.models.detection_embedding_job import DetectionEmbeddingJob
+    from humpback.models.vocalization import VocalizationInferenceJob
+    from humpback.storage import (
+        cluster_dir,
+        detection_embeddings_path,
+        detection_row_store_path,
+    )
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    predictions_path = (
+        app_settings.storage_root
+        / "vocalization_inference"
+        / "viz-job"
+        / "predictions.parquet"
+    )
+    predictions_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(
+            {
+                "row_id": ["row-0", "row-1"],
+                "whup": [0.9, 0.1],
+            }
+        ),
+        str(predictions_path),
+    )
+
+    async with sf() as session:
+        model = VocalizationClassifierModel(
+            name="viz-model",
+            model_dir_path="/fake/dir",
+            vocabulary_snapshot=json.dumps(["whup"]),
+            per_class_thresholds=json.dumps({"whup": 0.5}),
+            is_active=True,
+        )
+        session.add(model)
+        await session.flush()
+
+        detection_job = DetectionJob(
+            classifier_model_id="classifier-1",
+            hydrophone_name="Viz Hydrophone",
+            start_timestamp=1700000000.0,
+            end_timestamp=1700000600.0,
+            result_summary=json.dumps({"total_detections": 2}),
+            status="complete",
+        )
+        session.add(detection_job)
+        await session.flush()
+
+        session.add(
+            VocalizationInferenceJob(
+                vocalization_model_id=model.id,
+                source_type="detection_job",
+                source_id=detection_job.id,
+                status="complete",
+                output_path=str(predictions_path),
+            )
+        )
+        session.add(
+            DetectionEmbeddingJob(
+                detection_job_id=detection_job.id,
+                model_version="tf2",
+                status="complete",
+            )
+        )
+        clustering_job = ClusteringJob(
+            detection_job_ids=json.dumps([detection_job.id]),
+            status="complete",
+        )
+        session.add(clustering_job)
+        await session.commit()
+        detection_job_id = detection_job.id
+        clustering_job_id = clustering_job.id
+
+    embeddings_path = detection_embeddings_path(
+        app_settings.storage_root, detection_job_id, "tf2"
+    )
+    embeddings_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(
+            {
+                "row_id": ["row-0", "row-1"],
+                "embedding": [[1.0, 0.0], [0.0, 1.0]],
+            }
+        ),
+        str(embeddings_path),
+    )
+
+    row_store_path = detection_row_store_path(
+        app_settings.storage_root, detection_job_id
+    )
+    row_store_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(
+            {
+                "row_id": ["row-0", "row-1"],
+                "start_utc": [1700000000.0, 1700000005.0],
+            }
+        ),
+        str(row_store_path),
+    )
+
+    umap_path = (
+        cluster_dir(app_settings.storage_root, clustering_job_id)
+        / "umap_coords.parquet"
+    )
+    umap_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(
+            {
+                "x": [0.1, 0.2],
+                "y": [0.3, 0.4],
+                "cluster_label": [0, 1],
+                "embedding_set_id": [detection_job_id, detection_job_id],
+                "embedding_row_index": [0, 1],
+            }
+        ),
+        str(umap_path),
+    )
+
+    resp = await client.get(
+        f"/vocalization/clustering-jobs/{clustering_job_id}/visualization"
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "Shriek" in data["added"]
+    assert data["detection_job_id"] == [detection_job_id, detection_job_id]
+    assert "embedding_set_id" not in data
+    assert data["category"] == ["whup", "unlabeled"]
+    assert data["start_utc"] == [1700000000.0, 1700000005.0]
 
 
 # ---- Models ----
@@ -171,8 +368,7 @@ async def test_training_job_lifecycle(client):
         "/vocalization/training-jobs",
         json={
             "source_config": {
-                "embedding_set_ids": ["es-1"],
-                "detection_job_ids": [],
+                "detection_job_ids": ["dj-1"],
             },
             "parameters": {"min_examples_per_type": 4},
         },
@@ -209,11 +405,39 @@ async def test_inference_job_requires_valid_model(client):
         "/vocalization/inference-jobs",
         json={
             "vocalization_model_id": "nonexistent",
+            "source_type": "detection_job",
+            "source_id": "dj-1",
+        },
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_inference_job_rejects_retired_embedding_set_source(client, app_settings):
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+
+    async with sf() as session:
+        m = VocalizationClassifierModel(
+            name="model-for-validation",
+            model_dir_path="/fake/dir",
+            vocabulary_snapshot=json.dumps(["whup"]),
+            per_class_thresholds=json.dumps({"whup": 0.5}),
+            is_active=True,
+        )
+        session.add(m)
+        await session.commit()
+        model_id = m.id
+
+    resp = await client.post(
+        "/vocalization/inference-jobs",
+        json={
+            "vocalization_model_id": model_id,
             "source_type": "embedding_set",
             "source_id": "es-1",
         },
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -238,8 +462,8 @@ async def test_inference_job_lifecycle(client, app_settings):
         "/vocalization/inference-jobs",
         json={
             "vocalization_model_id": model_id,
-            "source_type": "embedding_set",
-            "source_id": "es-1",
+            "source_type": "detection_job",
+            "source_id": "dj-1",
         },
     )
     assert resp.status_code == 201
@@ -279,8 +503,8 @@ async def test_inference_results_not_complete(client, app_settings):
         "/vocalization/inference-jobs",
         json={
             "vocalization_model_id": model_id,
-            "source_type": "embedding_set",
-            "source_id": "es-1",
+            "source_type": "detection_job",
+            "source_id": "dj-1",
         },
     )
     job_id = resp.json()["id"]
@@ -313,7 +537,6 @@ async def test_model_training_source(client, app_settings):
         tj = VocalizationTrainingJob(
             source_config=json.dumps(
                 {
-                    "embedding_set_ids": ["es-1"],
                     "detection_job_ids": ["dj-1"],
                 }
             ),
@@ -402,8 +625,8 @@ async def test_inference_results_confidence_sort(client, app_settings):
         job = VocalizationInferenceJob(
             id="conf-job",
             vocalization_model_id=model_id,
-            source_type="embedding_set",
-            source_id="es-fake",
+            source_type="detection_job",
+            source_id="dj-fake",
             status="complete",
             output_path=str(output_path),
         )
@@ -468,8 +691,8 @@ async def test_inference_results_confidence_null(client, app_settings):
         job = VocalizationInferenceJob(
             id="noconf-job",
             vocalization_model_id=model_id,
-            source_type="embedding_set",
-            source_id="es-fake",
+            source_type="detection_job",
+            source_id="dj-fake",
             status="complete",
             output_path=str(output_path),
         )

@@ -69,7 +69,6 @@ export function RetrainFooter({ source, inferenceJobId, labelCount }: Props) {
     } else {
       // Legacy flow: build source_config from scratch
       const existingConfig = trainingSource?.source_config ?? {
-        embedding_set_ids: [] as string[],
         detection_job_ids: [] as string[],
       };
 
@@ -86,7 +85,6 @@ export function RetrainFooter({ source, inferenceJobId, labelCount }: Props) {
       createTraining.mutate(
         {
           source_config: {
-            embedding_set_ids: existingConfig.embedding_set_ids ?? [],
             detection_job_ids: detJobIds,
           },
           parameters:

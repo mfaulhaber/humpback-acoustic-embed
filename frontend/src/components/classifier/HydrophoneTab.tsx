@@ -2063,24 +2063,6 @@ function HydrophoneContentTable({
                   >
                     {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                   </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate("/app/search", {
-                        state: {
-                          source: "detection",
-                          detectionJobId: jobId,
-                          startUtc: row.start_utc,
-                          endUtc: row.end_utc,
-                          clipDuration: row._clipDurationSec,
-                        },
-                      });
-                    }}
-                    className="p-0.5 rounded hover:bg-blue-100"
-                    title="Search similar"
-                  >
-                    <Search className="h-3.5 w-3.5 text-blue-600" />
-                  </button>
                 </td>
                 <td
                   className="px-3 py-1.5 max-w-80"

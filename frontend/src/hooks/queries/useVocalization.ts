@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  FolderEmbeddingSetResponse,
   TrainingDatasetExtendRequest,
   VocalizationClusteringJobCreate,
 } from "@/api/types";
@@ -9,7 +8,6 @@ import {
   createVocalizationType,
   updateVocalizationType,
   deleteVocalizationType,
-  importVocalizationTypes,
   fetchVocClassifierModels,
   fetchVocClassifierModel,
   activateVocClassifierModel,
@@ -25,7 +23,6 @@ import {
   fetchEmbeddingGenerationStatus,
   fetchEmbeddingJobs,
   fetchVocModelTrainingSource,
-  fetchFolderEmbeddingSet,
   fetchTrainingDataset,
   fetchTrainingDatasetRows,
   extendTrainingDataset,
@@ -44,7 +41,6 @@ import {
 import type {
   VocalizationTypeCreate,
   VocalizationTypeUpdate,
-  VocalizationTypeImportRequest,
   VocClassifierTrainingJobCreate,
   VocClassifierInferenceJobCreate,
 } from "@/api/types";
@@ -84,17 +80,6 @@ export function useDeleteVocalizationType() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (typeId: string) => deleteVocalizationType(typeId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["vocalization", "types"] });
-    },
-  });
-}
-
-export function useImportVocalizationTypes() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: VocalizationTypeImportRequest) =>
-      importVocalizationTypes(body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["vocalization", "types"] });
     },
@@ -273,21 +258,6 @@ export function useEmbeddingJobs(offset = 0, limit = 50) {
   });
 }
 
-// ---- Folder Embedding Set ----
-
-export function useFolderEmbeddingSet(folderPath: string | null) {
-  return useQuery({
-    queryKey: ["folder-embedding-set", folderPath],
-    queryFn: () => fetchFolderEmbeddingSet(folderPath!),
-    enabled: folderPath !== null && folderPath.length > 0,
-    refetchInterval: (query) => {
-      const status = (query.state.data as FolderEmbeddingSetResponse | undefined)?.status;
-      if (status === "ready") return false;
-      return 3000;
-    },
-  });
-}
-
 // ---- Training Source ----
 
 export function useVocModelTrainingSource(modelId: string | null) {
@@ -310,7 +280,13 @@ export function useTrainingDataset(datasetId: string | null) {
 
 export function useTrainingDatasetRows(
   datasetId: string | null,
-  params?: { type?: string; group?: string; source_type?: string; offset?: number; limit?: number },
+  params?: {
+    type?: string;
+    group?: string;
+    source_type?: "detection_job";
+    offset?: number;
+    limit?: number;
+  },
 ) {
   return useQuery({
     queryKey: ["vocalization", "training-dataset-rows", datasetId, params],

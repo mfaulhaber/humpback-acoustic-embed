@@ -1,5 +1,4 @@
 import type {
-  AudioFile,
   AutoresearchCandidateDetail,
   AutoresearchCandidateImport,
   AutoresearchCandidateSummary,
@@ -13,17 +12,12 @@ import type {
   SearchHistoryEntry,
   SearchSpaceDefaults,
   AvailableModelFile,
-  FolderImportResult,
   ClassifierModelInfo,
-  ClassifierReport,
   ClassifierTrainingJob,
   ClassifierTrainingJobCreate,
-  ClusterAssignment,
   ClusteringJob,
-  ClusteringJobCreate,
   ClusteringMetrics,
   ClusterOut,
-  DendrogramData,
   DetectionEmbeddingResponse,
   DetectionJob,
   DetectionLabelRow,
@@ -32,25 +26,11 @@ import type {
   DetectionRowStateUpdate,
   DirectoryListing,
   ExtractionSettings,
-  EmbeddingSet,
-  EmbeddingSimilarity,
-  FolderDeletePreview,
-  FolderDeleteResult,
-  FragmentationReport,
   HydrophoneDetectionJobCreate,
   HydrophoneInfo,
-  LabelQueueEntry,
-  RefinementReport,
-  SimilaritySearchResponse,
-  AudioSearchRequest,
-  SearchJobResponse,
   StabilitySummary,
   ModelConfig,
   ModelConfigCreate,
-  ParameterSweepPoint,
-  ProcessingJob,
-  ProcessingJobCreate,
-  SpectrogramData,
   TableInfo,
   RetrainFolderInfo,
   RetrainWorkflow,
@@ -58,9 +38,6 @@ import type {
   TrainingDataSummaryResponse,
   VisualizationData,
   HealthStatus,
-  LabelProcessingJob,
-  LabelProcessingJobCreate,
-  LabelProcessingPreview,
   VocalizationLabel,
   TimelineVocalizationLabel,
   VocalizationLabelBatchRequest,
@@ -72,8 +49,6 @@ import type {
   VocalizationType,
   VocalizationTypeCreate,
   VocalizationTypeUpdate,
-  VocalizationTypeImportRequest,
-  VocalizationTypeImportResponse,
   VocClassifierTrainingJobCreate,
   VocClassifierTrainingJob,
   VocClassifierModel,
@@ -86,7 +61,6 @@ import type {
   DetectionJobLabelCount,
   EmbeddingJobListItem,
   VocalizationTrainingSource,
-  FolderEmbeddingSetResponse,
   TrainingDataset,
   TrainingDatasetRowsResponse,
   TrainingDatasetLabel,
@@ -171,115 +145,6 @@ function patch<T>(path: string, body: unknown): Promise<T> {
 }
 
 const HP = "/classifier/hyperparameter";
-
-// ---- Audio ----
-
-export const importFolder = (folderPath: string) =>
-  api<FolderImportResult>(`/audio/import-folder?folder_path=${encodeURIComponent(folderPath)}`, {
-    method: "POST",
-  });
-
-export const fetchAudioFiles = () => api<AudioFile[]>("/audio/");
-
-export const fetchAudioFile = (id: string) => api<AudioFile>(`/audio/${id}`);
-
-export const fetchSpectrogram = (
-  audioId: string,
-  windowIndex: number,
-  windowSizeSeconds = 5,
-  targetSampleRate = 32000,
-) =>
-  api<SpectrogramData>(
-    `/audio/${audioId}/spectrogram?window_index=${windowIndex}&window_size_seconds=${windowSizeSeconds}&target_sample_rate=${targetSampleRate}`,
-  );
-
-export const fetchEmbeddings = (audioId: string, embeddingSetId: string) =>
-  api<EmbeddingSimilarity>(`/audio/${audioId}/embeddings?embedding_set_id=${embeddingSetId}`);
-
-export function audioDownloadUrl(audioId: string) {
-  return `/audio/${audioId}/download`;
-}
-
-export function audioWindowUrl(audioId: string, startSeconds: number, durationSeconds: number) {
-  return `/audio/${audioId}/window?start_seconds=${startSeconds}&duration_seconds=${durationSeconds}`;
-}
-
-// ---- Folder Delete ----
-
-export const fetchFolderDeletePreview = (folderPath: string) =>
-  api<FolderDeletePreview>(`/audio/folders/delete-preview?folder_path=${encodeURIComponent(folderPath)}`);
-
-export const deleteFolder = (folderPath: string, confirmClusteringDelete: boolean) =>
-  api<FolderDeleteResult>(
-    `/audio/folders?folder_path=${encodeURIComponent(folderPath)}&confirm_clustering_delete=${confirmClusteringDelete}`,
-    { method: "DELETE" },
-  );
-
-// ---- Processing ----
-
-export const fetchProcessingJobs = () => api<ProcessingJob[]>("/processing/jobs");
-
-export const createProcessingJob = (body: ProcessingJobCreate) =>
-  post<ProcessingJob>("/processing/jobs", body);
-
-export const cancelProcessingJob = (jobId: string) =>
-  api<ProcessingJob>(`/processing/jobs/${jobId}/cancel`, { method: "POST" });
-
-export const deleteProcessingJob = (jobId: string) =>
-  api<{ status: string }>(`/processing/jobs/${jobId}`, { method: "DELETE" });
-
-export const bulkDeleteProcessingJobs = (ids: string[]) =>
-  post<{ status: string; count: number }>("/processing/jobs/bulk-delete", { ids });
-
-export const fetchEmbeddingSets = () => api<EmbeddingSet[]>("/processing/embedding-sets");
-
-export const fetchFolderEmbeddingSet = (folderPath: string) =>
-  post<FolderEmbeddingSetResponse>("/processing/folder-embedding-set", {
-    folder_path: folderPath,
-  });
-
-// ---- Clustering ----
-
-export const fetchClusteringJobs = () => api<ClusteringJob[]>("/clustering/jobs");
-
-export const createClusteringJob = (body: ClusteringJobCreate) =>
-  post<ClusteringJob>("/clustering/jobs", body);
-
-export const fetchClusters = (jobId: string) =>
-  api<ClusterOut[]>(`/clustering/jobs/${jobId}/clusters`);
-
-export const fetchVisualization = (jobId: string) =>
-  api<VisualizationData>(`/clustering/jobs/${jobId}/visualization`);
-
-export const fetchMetrics = (jobId: string) =>
-  api<ClusteringMetrics>(`/clustering/jobs/${jobId}/metrics`);
-
-export const fetchParameterSweep = (jobId: string) =>
-  api<ParameterSweepPoint[]>(`/clustering/jobs/${jobId}/parameter-sweep`);
-
-export const fetchDendrogram = (jobId: string) =>
-  api<DendrogramData>(`/clustering/jobs/${jobId}/dendrogram`);
-
-export const fetchFragmentation = (jobId: string) =>
-  api<FragmentationReport>(`/clustering/jobs/${jobId}/fragmentation`);
-
-export const fetchStability = (jobId: string) =>
-  api<StabilitySummary>(`/clustering/jobs/${jobId}/stability`);
-
-export const fetchClassifier = (jobId: string) =>
-  api<ClassifierReport>(`/clustering/jobs/${jobId}/classifier`);
-
-export const fetchLabelQueue = (jobId: string) =>
-  api<LabelQueueEntry[]>(`/clustering/jobs/${jobId}/label-queue`);
-
-export const fetchRefinement = (jobId: string) =>
-  api<RefinementReport>(`/clustering/jobs/${jobId}/refinement`);
-
-export const fetchAssignments = (clusterId: string) =>
-  api<ClusterAssignment[]>(`/clustering/clusters/${clusterId}/assignments`);
-
-export const deleteClusteringJob = (jobId: string) =>
-  api<{ status: string }>(`/clustering/jobs/${jobId}`, { method: "DELETE" });
 
 // ---- Binary Classifier ----
 
@@ -403,6 +268,18 @@ export function detectionSpectrogramUrl(
   return `/classifier/detection-jobs/${jobId}/spectrogram?start_utc=${startUtc}&duration_sec=${durationSec}`;
 }
 
+export function audioWindowUrl(audioId: string, startSeconds: number, durationSeconds: number) {
+  return `/classifier/audio/${audioId}/window?start_seconds=${startSeconds}&duration_seconds=${durationSeconds}`;
+}
+
+export function audioSpectrogramPngUrl(
+  audioId: string,
+  startSeconds: number,
+  durationSeconds: number,
+) {
+  return `/classifier/audio/${audioId}/spectrogram-png?start_seconds=${startSeconds}&duration_seconds=${durationSeconds}`;
+}
+
 // ---- Hydrophone Detection ----
 
 export const fetchHydrophones = () =>
@@ -443,61 +320,12 @@ export const createRetrainWorkflow = (body: RetrainWorkflowCreate) =>
 export const fetchRetrainWorkflows = () =>
   api<RetrainWorkflow[]>("/classifier/retrain-workflows");
 
-// ---- Search ----
-
-export const searchSimilar = (body: {
-  embedding_set_id: string;
-  row_index: number;
-  top_k?: number;
-  metric?: string;
-  exclude_self?: boolean;
-  embedding_set_ids?: string[];
-}) => post<SimilaritySearchResponse>("/search/similar", body);
-
-export const searchSimilarByVector = (body: {
-  vector: number[];
-  model_version: string;
-  top_k?: number;
-  metric?: string;
-  embedding_set_ids?: string[];
-}) => post<SimilaritySearchResponse>("/search/similar-by-vector", body);
-
 export const fetchDetectionEmbedding = (
   jobId: string,
   rowId: string,
 ) =>
   api<DetectionEmbeddingResponse>(
     `/classifier/detection-jobs/${jobId}/embedding?row_id=${encodeURIComponent(rowId)}`,
-  );
-
-export const createAudioSearch = (body: AudioSearchRequest) =>
-  post<SearchJobResponse>("/search/similar-by-audio", body);
-
-export const pollSearchJob = (jobId: string) =>
-  api<SearchJobResponse>(`/search/jobs/${jobId}`);
-
-export function audioSpectrogramPngUrl(
-  audioId: string,
-  startSeconds: number,
-  durationSeconds: number,
-) {
-  return `/audio/${audioId}/spectrogram-png?start_seconds=${startSeconds}&duration_seconds=${durationSeconds}`;
-}
-
-// ---- Label Processing ----
-
-export const fetchLabelProcessingJobs = () =>
-  api<LabelProcessingJob[]>("/label-processing/jobs");
-
-export const createLabelProcessingJob = (body: LabelProcessingJobCreate) =>
-  post<LabelProcessingJob>("/label-processing/jobs", body);
-
-export const deleteLabelProcessingJob = (jobId: string) =>
-  api<{ status: string }>(`/label-processing/jobs/${jobId}`, { method: "DELETE" });
-
-export const fetchLabelProcessingPreview = (annotationFolder: string, audioFolder: string) =>
-  api<LabelProcessingPreview>(
-    `/label-processing/preview?annotation_folder=${encodeURIComponent(annotationFolder)}&audio_folder=${encodeURIComponent(audioFolder)}`,
   );
 
 // ---- Admin ----
@@ -583,7 +411,7 @@ export const fetchDetectionNeighbors = (
     row_id: string;
     top_k?: number;
     metric?: string;
-    embedding_set_ids?: string[];
+    candidate_detection_job_ids?: string[];
   },
 ) =>
   post<DetectionNeighborsResponse>(
@@ -675,9 +503,6 @@ export const deleteVocalizationType = async (typeId: string) => {
     throw new ApiError(res.status, text);
   }
 };
-
-export const importVocalizationTypes = (body: VocalizationTypeImportRequest) =>
-  post<VocalizationTypeImportResponse>("/vocalization/types/import", body);
 
 // Models
 export const fetchVocClassifierModels = () =>
@@ -810,7 +635,7 @@ export const fetchTrainingDatasetRows = (
   params?: {
     type?: string;
     group?: string;
-    source_type?: string;
+    source_type?: "detection_job";
     offset?: number;
     limit?: number;
   },
@@ -1186,4 +1011,3 @@ export const fetchWindowScores = (
     `/call-parsing/window-classification-jobs/${jobId}/scores${suffix}`,
   );
 };
-
