@@ -98,24 +98,24 @@ const COMPLETE_DETAIL = {
     spans: [
       {
         merged_span_id: 0,
-        start_time_sec: 90.0,
-        end_time_sec: 130.0,
+        start_timestamp: 90.0,
+        end_timestamp: 130.0,
         window_count: 36,
         event_id: "evt-0",
         region_id: "r1",
       },
       {
         merged_span_id: 1,
-        start_time_sec: 200.0,
-        end_time_sec: 240.0,
+        start_timestamp: 200.0,
+        end_timestamp: 240.0,
         window_count: 36,
         event_id: "evt-1",
         region_id: "r1",
       },
       {
         merged_span_id: 2,
-        start_time_sec: 320.0,
-        end_time_sec: 480.0,
+        start_timestamp: 320.0,
+        end_timestamp: 480.0,
         window_count: 168,
         event_id: "evt-2",
         region_id: "r2",
@@ -216,12 +216,12 @@ async function setupMocks(page: Page, state: MockState) {
 
 test.describe("Sequence Models — Continuous Embedding", () => {
   test("nav reaches the Continuous Embedding page", async ({ page }) => {
-    const state: MockState = { jobs: [] };
+    const state: MockState = { jobs: [QUEUED_JOB, COMPLETE_JOB] };
     await setupMocks(page, state);
     await page.goto("/app/sequence-models/continuous-embedding");
     await expect(page.getByTestId("cej-jobs-page")).toBeVisible();
-    await expect(page.getByTestId("cej-active-section")).toBeVisible();
-    await expect(page.getByTestId("cej-previous-section")).toBeVisible();
+    await expect(page.getByText("Active Jobs")).toBeVisible();
+    await expect(page.getByText("Previous Jobs")).toBeVisible();
   });
 
   test("create form posts and shows new job in Active", async ({ page }) => {
@@ -234,10 +234,11 @@ test.describe("Sequence Models — Continuous Embedding", () => {
       .selectOption(SEG_JOB.id);
     await page.getByTestId("cej-create-submit").click();
 
-    await expect(page.getByTestId(`cej-card-${QUEUED_JOB.id}`)).toBeVisible();
-    await expect(page.getByTestId(`cej-status-${QUEUED_JOB.id}`)).toHaveText(
-      "queued",
-    );
+    const queuedRow = page.locator("tr", {
+      hasText: SEG_JOB.id.slice(0, 8),
+    }).first();
+    await expect(queuedRow).toBeVisible();
+    await expect(queuedRow.getByText("queued")).toBeVisible();
   });
 
   test("complete detail page shows manifest stats", async ({ page }) => {

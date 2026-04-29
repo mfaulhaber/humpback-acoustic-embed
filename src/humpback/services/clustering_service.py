@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from humpback.models.classifier import DetectionJob
 from humpback.models.clustering import Cluster, ClusterAssignment, ClusteringJob
 from humpback.models.detection_embedding_job import DetectionEmbeddingJob
-from humpback.models.processing import EmbeddingSet
 from humpback.models.vocalization import (
     VocalizationClassifierModel,
     VocalizationInferenceJob,
@@ -25,59 +24,11 @@ async def create_clustering_job(
     refined_from_job_id: Optional[str] = None,
     storage_root: Optional[Path] = None,
 ) -> ClusteringJob:
-    if not embedding_set_ids:
-        raise ValueError("At least one embedding set is required")
-
-    # Validate that all embedding sets share the same vector_dim
-    result = await session.execute(
-        select(EmbeddingSet).where(EmbeddingSet.id.in_(embedding_set_ids))
+    del session, embedding_set_ids, parameters, refined_from_job_id, storage_root
+    raise ValueError(
+        "Legacy embedding-set clustering has been removed; use detection-job "
+        "clustering from Vocalization / Clustering instead"
     )
-    sets = list(result.scalars().all())
-    if len(sets) != len(embedding_set_ids):
-        found_ids = {s.id for s in sets}
-        missing = [eid for eid in embedding_set_ids if eid not in found_ids]
-        raise ValueError(f"Embedding sets not found: {missing}")
-    dims = {s.vector_dim for s in sets}
-    if len(dims) > 1:
-        raise ValueError(
-            f"Cannot cluster embedding sets with different vector dimensions: {dims}"
-        )
-    model_versions = {s.model_version for s in sets}
-    if len(model_versions) > 1:
-        raise ValueError(
-            f"Cannot cluster embedding sets from different models: {model_versions}"
-        )
-
-    # Validate refined_from_job_id if provided
-    if refined_from_job_id is not None:
-        source_result = await session.execute(
-            select(ClusteringJob).where(ClusteringJob.id == refined_from_job_id)
-        )
-        source_job = source_result.scalar_one_or_none()
-        if source_job is None:
-            raise ValueError(f"Source clustering job not found: {refined_from_job_id}")
-        if source_job.status != "complete":
-            raise ValueError(
-                f"Source clustering job is not complete (status={source_job.status})"
-            )
-        if storage_root is not None:
-            refined_path = (
-                cluster_dir(storage_root, refined_from_job_id)
-                / "refined_embeddings.parquet"
-            )
-            if not refined_path.exists():
-                raise ValueError(
-                    f"Source job {refined_from_job_id} has no refined embeddings"
-                )
-
-    job = ClusteringJob(
-        embedding_set_ids=json.dumps(embedding_set_ids),
-        parameters=json.dumps(parameters) if parameters else None,
-        refined_from_job_id=refined_from_job_id,
-    )
-    session.add(job)
-    await session.commit()
-    return job
 
 
 async def list_clustering_jobs(session: AsyncSession) -> list[ClusteringJob]:
@@ -192,7 +143,6 @@ async def create_vocalization_clustering_job(
                 )
 
     job = ClusteringJob(
-        embedding_set_ids=json.dumps([]),
         detection_job_ids=json.dumps(detection_job_ids),
         parameters=json.dumps(parameters) if parameters else None,
     )

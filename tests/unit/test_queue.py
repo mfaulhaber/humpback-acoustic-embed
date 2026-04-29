@@ -2,233 +2,138 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from humpback.database import create_session_factory
-from humpback.models.audio import AudioFile
 from humpback.models.clustering import ClusteringJob
-from humpback.models.processing import JobStatus, ProcessingJob
+from humpback.models.detection_embedding_job import DetectionEmbeddingJob
+from humpback.models.hyperparameter import (
+    HyperparameterManifest,
+    HyperparameterSearchJob,
+)
+from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.workers.queue import (
     STALE_JOB_TIMEOUT,
-    claim_processing_job,
-    complete_processing_job,
-    fail_processing_job,
+    claim_clustering_job,
+    claim_detection_embedding_job,
     recover_stale_jobs,
 )
 
 
-async def test_claim_queued_job(session):
-    af = AudioFile(filename="a.wav", checksum_sha256="q1")
-    session.add(af)
-    await session.flush()
-
-    job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig1",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-    )
+async def test_claim_clustering_job(session):
+    job = ClusteringJob(status="queued", detection_job_ids="[]")
     session.add(job)
     await session.commit()
 
-    claimed = await claim_processing_job(session)
+    claimed = await claim_clustering_job(session)
     assert claimed is not None
     assert claimed.id == job.id
-    assert claimed.status == JobStatus.running.value
+    assert claimed.status == "running"
 
 
-async def test_no_jobs_returns_none(session):
-    claimed = await claim_processing_job(session)
-    assert claimed is None
-
-
-async def test_complete_job(session):
-    af = AudioFile(filename="a.wav", checksum_sha256="q2")
-    session.add(af)
-    await session.flush()
-
-    job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig2",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-        status=JobStatus.running.value,
+async def test_claim_detection_embedding_job(session):
+    job = DetectionEmbeddingJob(
+        status="queued",
+        detection_job_id="det-1",
+        model_version="tf2",
     )
     session.add(job)
     await session.commit()
 
-    await complete_processing_job(session, job.id)
-    await session.refresh(job)
-    assert job.status == JobStatus.complete.value
+    claimed = await claim_detection_embedding_job(session)
+    assert claimed is not None
+    assert claimed.id == job.id
+    assert claimed.status == "running"
 
 
-async def test_fail_job(session):
-    af = AudioFile(filename="a.wav", checksum_sha256="q3")
-    session.add(af)
-    await session.flush()
-
-    job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig3",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-        status=JobStatus.running.value,
-    )
-    session.add(job)
-    await session.commit()
-
-    await fail_processing_job(session, job.id, "something broke")
-    await session.refresh(job)
-    assert job.status == JobStatus.failed.value
-    assert job.error_message == "something broke"
-
-
-async def test_skip_running_same_signature(session):
-    af = AudioFile(filename="a.wav", checksum_sha256="q4")
-    session.add(af)
-    await session.flush()
-
-    # Already running job with sig_a
-    running = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig_a",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-        status=JobStatus.running.value,
-    )
-    # Queued job with same signature
-    queued = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig_a",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-    )
-    session.add_all([running, queued])
-    await session.commit()
-
-    # Should not claim the queued job because sig_a is already running
-    claimed = await claim_processing_job(session)
-    assert claimed is None
-
-
-async def test_recover_stale_processing_job(session):
-    af = AudioFile(filename="a.wav", checksum_sha256="q5")
-    session.add(af)
-    await session.flush()
-
+async def test_recover_stale_jobs_requeues_retained_job_types(session):
     stale_time = datetime.now(timezone.utc) - STALE_JOB_TIMEOUT - timedelta(minutes=1)
-    stale_job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig_stale",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-        status=JobStatus.running.value,
+
+    manifest = HyperparameterManifest(
+        name="manifest",
+        status="running",
+        training_job_ids="[]",
+        detection_job_ids="[]",
+        embedding_model_version="tf2",
+        split_ratio="[70, 15, 15]",
+        seed=42,
         updated_at=stale_time,
     )
-    session.add(stale_job)
+    search = HyperparameterSearchJob(
+        name="search",
+        status="running",
+        manifest_id="manifest-1",
+        search_space='{"classifier":["logreg"]}',
+        n_trials=5,
+        seed=42,
+        updated_at=stale_time,
+    )
+    clustering = ClusteringJob(
+        status="running",
+        detection_job_ids="[]",
+        updated_at=stale_time,
+    )
+    detection_embedding = DetectionEmbeddingJob(
+        status="running",
+        detection_job_id="det-1",
+        model_version="tf2",
+        updated_at=stale_time,
+    )
+    continuous = ContinuousEmbeddingJob(
+        status="running",
+        event_segmentation_job_id="seg-1",
+        model_version="tf2",
+        window_size_seconds=5.0,
+        hop_seconds=1.0,
+        pad_seconds=2.0,
+        target_sample_rate=32000,
+        encoding_signature="enc-1",
+        updated_at=stale_time,
+    )
+    hmm = HMMSequenceJob(
+        status="running",
+        continuous_embedding_job_id="ce-1",
+        n_states=4,
+        pca_dims=8,
+        updated_at=stale_time,
+    )
+    session.add_all(
+        [manifest, search, clustering, detection_embedding, continuous, hmm]
+    )
     await session.commit()
 
     count = await recover_stale_jobs(session)
-    assert count == 1
+    assert count == 6
 
-    await session.refresh(stale_job)
-    assert stale_job.status == JobStatus.queued.value
+    for job in (manifest, search, clustering, detection_embedding, continuous, hmm):
+        await session.refresh(job)
+        assert job.status == "queued"
 
 
-async def test_recover_does_not_touch_recent_running_job(session):
-    af = AudioFile(filename="a.wav", checksum_sha256="q6")
-    session.add(af)
-    await session.flush()
-
-    recent_job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig_recent",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-        status=JobStatus.running.value,
-        updated_at=datetime.now(timezone.utc),
+async def test_recover_stale_jobs_ignores_recent_retained_jobs(session):
+    recent_time = datetime.now(timezone.utc)
+    clustering = ClusteringJob(
+        status="running",
+        detection_job_ids="[]",
+        updated_at=recent_time,
     )
-    session.add(recent_job)
+    detection_embedding = DetectionEmbeddingJob(
+        status="running",
+        detection_job_id="det-1",
+        model_version="tf2",
+        updated_at=recent_time,
+    )
+    session.add_all([clustering, detection_embedding])
     await session.commit()
 
     count = await recover_stale_jobs(session)
     assert count == 0
 
-    await session.refresh(recent_job)
-    assert recent_job.status == JobStatus.running.value
+    await session.refresh(clustering)
+    await session.refresh(detection_embedding)
+    assert clustering.status == "running"
+    assert detection_embedding.status == "running"
 
 
-async def test_recover_stale_clustering_job(session):
-    stale_time = datetime.now(timezone.utc) - STALE_JOB_TIMEOUT - timedelta(minutes=1)
-    cjob = ClusteringJob(
-        status="running",
-        embedding_set_ids="[]",
-        updated_at=stale_time,
-    )
-    session.add(cjob)
-    await session.commit()
-
-    count = await recover_stale_jobs(session)
-    assert count == 1
-
-    await session.refresh(cjob)
-    assert cjob.status == "queued"
-
-
-async def test_recover_stale_unblocks_queue(session):
-    """A stale running job should no longer block queued jobs with the same signature."""
-    af = AudioFile(filename="a.wav", checksum_sha256="q7")
-    session.add(af)
-    await session.flush()
-
-    stale_time = datetime.now(timezone.utc) - STALE_JOB_TIMEOUT - timedelta(minutes=1)
-    stale_job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig_block",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-        status=JobStatus.running.value,
-        updated_at=stale_time,
-    )
-    queued_job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig_block",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-    )
-    session.add_all([stale_job, queued_job])
-    await session.commit()
-
-    # Before recovery, the queued job is blocked
-    claimed = await claim_processing_job(session)
-    assert claimed is None
-
-    await recover_stale_jobs(session)
-
-    # After recovery, one of them can be claimed
-    claimed = await claim_processing_job(session)
-    assert claimed is not None
-
-
-async def test_claim_processing_job_is_atomic_across_sessions(session):
-    """Two concurrent claimers must not both claim the same queued job."""
-    af = AudioFile(filename="a.wav", checksum_sha256="q8")
-    session.add(af)
-    await session.flush()
-
-    job = ProcessingJob(
-        audio_file_id=af.id,
-        encoding_signature="sig_atomic",
-        model_version="v1",
-        window_size_seconds=5.0,
-        target_sample_rate=32000,
-    )
+async def test_claim_clustering_job_is_atomic_across_sessions(session):
+    job = ClusteringJob(status="queued", detection_job_ids="[]")
     session.add(job)
     await session.commit()
 
@@ -236,7 +141,7 @@ async def test_claim_processing_job_is_atomic_across_sessions(session):
 
     async def _claim_once() -> str | None:
         async with factory() as claim_session:
-            claimed = await claim_processing_job(claim_session)
+            claimed = await claim_clustering_job(claim_session)
             return claimed.id if claimed is not None else None
 
     c1, c2 = await asyncio.gather(_claim_once(), _claim_once())

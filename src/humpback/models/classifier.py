@@ -19,7 +19,7 @@ class ClassifierModel(UUIDMixin, TimestampMixin, Base):
     training_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     training_job_id: Mapped[Optional[str]] = mapped_column(default=None)
     classifier_purpose: Mapped[str] = mapped_column(default="detection")
-    training_source_mode: Mapped[str] = mapped_column(default="embedding_sets")
+    training_source_mode: Mapped[str] = mapped_column(default="detection_manifest")
     source_candidate_id: Mapped[Optional[str]] = mapped_column(default=None)
     source_model_id: Mapped[Optional[str]] = mapped_column(default=None)
     promotion_provenance: Mapped[Optional[str]] = mapped_column(Text, default=None)
@@ -30,8 +30,6 @@ class ClassifierTrainingJob(UUIDMixin, TimestampMixin, Base):
 
     status: Mapped[str] = mapped_column(default="queued")
     name: Mapped[str]
-    positive_embedding_set_ids: Mapped[str] = mapped_column(Text)  # JSON array
-    negative_embedding_set_ids: Mapped[str] = mapped_column(Text)  # JSON array
     model_version: Mapped[str]
     window_size_seconds: Mapped[float]
     target_sample_rate: Mapped[int]
@@ -40,8 +38,9 @@ class ClassifierTrainingJob(UUIDMixin, TimestampMixin, Base):
     classifier_model_id: Mapped[Optional[str]] = mapped_column(default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     job_purpose: Mapped[str] = mapped_column(default="detection")
+    legacy_source_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     source_detection_job_ids: Mapped[Optional[str]] = mapped_column(Text, default=None)
-    source_mode: Mapped[str] = mapped_column(default="embedding_sets")
+    source_mode: Mapped[str] = mapped_column(default="detection_manifest")
     source_candidate_id: Mapped[Optional[str]] = mapped_column(default=None)
     source_model_id: Mapped[Optional[str]] = mapped_column(default=None)
     manifest_path: Mapped[Optional[str]] = mapped_column(default=None)

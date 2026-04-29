@@ -22,7 +22,9 @@ multi-label system using binary relevance (one independent sklearn pipeline per
 vocalization type). Key design choices:
 
 1. **Managed vocabulary** — `vocalization_types` table with unique names,
-   importable from embedding set folder structure.
+   originally importable from embedding-set folder structure. Update
+   2026-04-29: the embedding-set import path is retired; vocabulary is now
+   managed directly through retained vocalization workflows.
 2. **Binary relevance** — N independent classifiers, one per type. A window
    labeled with types A and B is positive for both A and B pipelines, negative
    for neither. Types below `min_examples_per_type` are filtered out.
@@ -32,8 +34,11 @@ vocalization type). Key design choices:
 4. **Dedicated tables** — `vocalization_types`, `vocalization_models`,
    `vocalization_training_jobs`, `vocalization_inference_jobs` — fully
    independent from the binary classifier tables.
-5. **Three inference source types** — `detection_job` (with UTC), `embedding_set`
-   (from curated sets), `rescore` (re-run previous results with a new model).
+5. **Three inference source types** — originally `detection_job` (with UTC),
+   `embedding_set` (from curated sets), and `rescore` (re-run previous results
+   with a new model). Update 2026-04-29: retained sources are now
+   `detection_job` and `rescore`; `embedding_set` inference was retired in the
+   legacy workflow removal.
 6. **Remove legacy systems** — dropped sub-window annotation system
    (`labeling_annotations` table) and the old single-label vocalization
    training endpoints from `/labeling/`.

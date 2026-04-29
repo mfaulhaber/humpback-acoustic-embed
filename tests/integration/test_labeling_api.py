@@ -2,7 +2,6 @@
 
 import uuid
 
-import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -11,10 +10,8 @@ from humpback.classifier.detection_rows import (
     write_detection_row_store,
 )
 from humpback.database import create_engine, create_session_factory
-from humpback.models.audio import AudioFile
 from humpback.models.classifier import ClassifierModel, DetectionJob
-from humpback.models.processing import EmbeddingSet
-from humpback.processing.embeddings import IncrementalParquetWriter
+from humpback.models.labeling import VocalizationLabel
 from humpback.storage import (
     detection_embeddings_path,
     detection_row_store_path,
@@ -212,38 +209,86 @@ async def _seed_hydrophone_detection_job(app_settings):
     return job_id, model_id
 
 
-async def _seed_reference_embeddings(app_settings, tmp_path):
-    """Create reference embedding sets with folder-path-based labels."""
+async def _seed_reference_detection_job(app_settings):
+    """Create a labeled reference detection job for neighbor lookup."""
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
 
-    ref_path = tmp_path / "ref.parquet"
-    writer = IncrementalParquetWriter(ref_path, vector_dim=4)
-    writer.add(np.array([0.95, 0.05, 0.0, 0.0], dtype=np.float32))
-    writer.add(np.array([0.0, 0.9, 0.1, 0.0], dtype=np.float32))
-    writer.close()
-
     async with sf() as session:
-        af = AudioFile(
-            filename="call_sample.flac",
-            folder_path="emily-vierling/whup",
-            checksum_sha256=f"ref_{uuid.uuid4().hex[:8]}",
-        )
-        session.add(af)
-        await session.flush()
-
-        es = EmbeddingSet(
-            audio_file_id=af.id,
-            encoding_signature="ref_sig",
+        model_id = str(uuid.uuid4())
+        job_id = str(uuid.uuid4())
+        cm = ClassifierModel(
+            id=model_id,
+            name="reference-classifier",
+            model_path="/fake/ref-model.pkl",
             model_version="test_v1",
+            vector_dim=4,
             window_size_seconds=5.0,
             target_sample_rate=32000,
-            vector_dim=4,
-            parquet_path=str(ref_path),
         )
-        session.add(es)
+        session.add(cm)
+
+        dj = DetectionJob(
+            id=job_id,
+            status="complete",
+            classifier_model_id=model_id,
+            audio_folder="/reference/whup",
+            detection_mode="windowed",
+        )
+        session.add(dj)
+        await session.flush()
+
+        session.add(
+            VocalizationLabel(
+                detection_job_id=job_id,
+                row_id="ref-row-1",
+                label="whup",
+                source="manual",
+            )
+        )
         await session.commit()
-        return es.id
+
+    row_store = detection_row_store_path(app_settings.storage_root, job_id)
+    row_store.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "row_id": "ref-row-1",
+            "start_utc": str(BASE_EPOCH + 30.0),
+            "end_utc": str(BASE_EPOCH + 35.0),
+            "raw_start_utc": str(BASE_EPOCH + 30.0),
+            "raw_end_utc": str(BASE_EPOCH + 35.0),
+            "merged_event_count": "1",
+            "avg_confidence": "0.82",
+            "peak_confidence": "0.9",
+            "n_windows": "1",
+            "hydrophone_name": "",
+            "humpback": "",
+            "orca": "",
+            "ship": "",
+            "background": "",
+        }
+    ]
+    write_detection_row_store(row_store, rows)
+
+    emb_path = detection_embeddings_path(app_settings.storage_root, job_id, "test_v1")
+    emb_path.parent.mkdir(parents=True, exist_ok=True)
+    schema = pa.schema(
+        [
+            ("row_id", pa.string()),
+            ("embedding", pa.list_(pa.float32(), 4)),
+            ("confidence", pa.float32()),
+        ]
+    )
+    table = pa.table(
+        {
+            "row_id": ["ref-row-1"],
+            "embedding": [[0.95, 0.05, 0.0, 0.0]],
+            "confidence": [0.9],
+        },
+        schema=schema,
+    )
+    pq.write_table(table, emb_path)
+    return job_id
 
 
 # ---- CRUD tests ----
@@ -420,14 +465,14 @@ async def test_labeling_summary_nonexistent_job(client):
 async def test_detection_neighbors(client, app_settings, tmp_path):
     """Test that detection neighbors returns hits with inferred labels."""
     job_id, _ = await _seed_detection_job(app_settings, tmp_path)
-    ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
+    ref_job_id = await _seed_reference_detection_job(app_settings)
 
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
         json={
             "row_id": ROW_ID_1,
             "top_k": 5,
-            "embedding_set_ids": [ref_es_id],
+            "candidate_detection_job_ids": [ref_job_id],
         },
     )
     assert resp.status_code == 200
@@ -466,14 +511,14 @@ async def test_detection_neighbors_nonexistent_job(client):
 async def test_detection_neighbors_hydrophone(client, app_settings, tmp_path):
     """Hydrophone neighbor lookup works with row_id."""
     job_id, _model_id = await _seed_hydrophone_detection_job(app_settings)
-    ref_es_id = await _seed_reference_embeddings(app_settings, tmp_path)
+    ref_job_id = await _seed_reference_detection_job(app_settings)
 
     resp = await client.post(
         f"/labeling/detection-neighbors/{job_id}",
         json={
             "row_id": HYDRO_ROW_ID,
             "top_k": 5,
-            "embedding_set_ids": [ref_es_id],
+            "candidate_detection_job_ids": [ref_job_id],
         },
     )
     assert resp.status_code == 200

@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Music, Cpu, Network, Zap, AudioWaveform, Search, Settings, ChevronRight, FileAudio, Activity, GitBranch } from "lucide-react";
+import { Zap, AudioWaveform, Settings, ChevronRight, Activity, GitBranch } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -9,13 +9,13 @@ import {
 
 interface NavLeaf {
   label: string;
-  icon: typeof Music;
+  icon: typeof Zap;
   to: string;
 }
 
 interface NavGroup {
   label: string;
-  icon: typeof Music;
+  icon: typeof Zap;
   children: { label: string; to: string }[];
 }
 
@@ -26,9 +26,6 @@ function isGroup(item: NavItem): item is NavGroup {
 }
 
 const navItems: NavItem[] = [
-  { label: "Audio", icon: Music, to: "/app/audio" },
-  { label: "Processing", icon: Cpu, to: "/app/processing" },
-  { label: "Clustering", icon: Network, to: "/app/clustering" },
   {
     label: "Classifier",
     icon: Zap,
@@ -75,8 +72,6 @@ const navItems: NavItem[] = [
       },
     ],
   },
-  { label: "Search", icon: Search, to: "/app/search" },
-  { label: "Label Processing", icon: FileAudio, to: "/app/label-processing" },
   { label: "Admin", icon: Settings, to: "/app/admin" },
 ];
 
@@ -89,7 +84,7 @@ function LeafLink({ item }: { item: NavLeaf }) {
   return (
     <NavLink
       to={item.to}
-      end={item.to === "/app/audio"}
+      end
       className={({ isActive }) =>
         cn(linkClass, isActive ? activeClass : inactiveClass)
       }

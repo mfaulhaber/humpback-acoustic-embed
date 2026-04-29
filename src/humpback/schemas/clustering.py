@@ -38,8 +38,7 @@ class ClusteringEligibleDetectionJobOut(BaseModel):
 class ClusteringJobOut(BaseModel):
     id: str
     status: str
-    embedding_set_ids: list[str]
-    detection_job_ids: Optional[list[str]] = None
+    detection_job_ids: list[str]
     parameters: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     metrics: Optional[dict[str, Any]] = None
@@ -63,7 +62,20 @@ class ClusterOut(BaseModel):
 class ClusterAssignmentOut(BaseModel):
     id: str
     cluster_id: str
-    embedding_set_id: str
+    source_id: str
     embedding_row_index: int
 
     model_config = {"from_attributes": True}
+
+
+class VocalizationClusteringVisualizationOut(BaseModel):
+    x: list[float]
+    y: list[float]
+    cluster_label: list[int]
+    detection_job_id: list[str]
+    embedding_row_index: list[int]
+    audio_filename: list[str]
+    audio_file_id: list[str]
+    window_size_seconds: list[float]
+    category: list[str]
+    start_utc: Optional[list[float | None]] = None

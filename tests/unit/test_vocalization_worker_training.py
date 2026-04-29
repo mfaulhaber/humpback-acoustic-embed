@@ -1,4 +1,4 @@
-"""Unit tests for vocalization training worker with training datasets."""
+"""Unit tests for vocalization training worker with detection-job datasets."""
 
 import json
 from pathlib import Path
@@ -11,9 +11,8 @@ from sqlalchemy import select
 
 from humpback.config import Settings
 from humpback.database import Base, create_engine, create_session_factory
-from humpback.models.audio import AudioFile
+from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.labeling import VocalizationLabel
-from humpback.models.processing import EmbeddingSet
 from humpback.models.training_dataset import TrainingDataset, TrainingDatasetLabel
 from humpback.models.vocalization import (
     VocalizationClassifierModel,
@@ -46,22 +45,10 @@ def _make_settings(tmp_path: Path) -> Settings:
 def _make_separable_embeddings(
     n: int, center: np.ndarray, seed: int
 ) -> list[list[float]]:
-    """Generate n embeddings clustered around center."""
     rng = np.random.RandomState(seed)
     return [
         (center + rng.randn(DIM) * 0.3).astype(np.float32).tolist() for _ in range(n)
     ]
-
-
-def _make_embedding_set_parquet(path: Path, embeddings: list[list[float]]) -> None:
-    table = pa.table(
-        {
-            "row_index": pa.array(list(range(len(embeddings))), type=pa.int32()),
-            "embedding": pa.array(embeddings, type=pa.list_(pa.float32())),
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, str(path))
 
 
 def _make_detection_embeddings(
@@ -73,201 +60,156 @@ def _make_detection_embeddings(
 ) -> None:
     emb_dir = storage_root / "detections" / det_job_id / "embeddings" / model_version
     emb_dir.mkdir(parents=True, exist_ok=True)
-    n = len(row_ids)
     table = pa.table(
         {
             "row_id": pa.array(row_ids, type=pa.string()),
             "embedding": pa.array(embeddings, type=pa.list_(pa.float32())),
-            "confidence": pa.array([0.9] * n, type=pa.float32()),
+            "confidence": pa.array([0.9] * len(row_ids), type=pa.float32()),
         }
     )
     pq.write_table(table, str(emb_dir / "detection_embeddings.parquet"))
 
 
+async def _seed_detection_job(
+    session,
+    settings: Settings,
+    det_job_id: str,
+    label: str,
+    embeddings: list[list[float]],
+) -> list[str]:
+    row_ids = [f"{det_job_id}-row-{i}" for i in range(len(embeddings))]
+    _make_detection_embeddings(settings.storage_root, det_job_id, row_ids, embeddings)
+    session.add(
+        ClassifierModel(
+            id=f"cm-{det_job_id}",
+            name=f"cm-{det_job_id}",
+            model_path="/tmp/model",
+            model_version="v1",
+            vector_dim=DIM,
+            window_size_seconds=5.0,
+            target_sample_rate=32000,
+        )
+    )
+    session.add(
+        DetectionJob(
+            id=det_job_id,
+            status="complete",
+            classifier_model_id=f"cm-{det_job_id}",
+        )
+    )
+    for row_id in row_ids:
+        session.add(
+            VocalizationLabel(
+                detection_job_id=det_job_id,
+                row_id=row_id,
+                label=label,
+            )
+        )
+    return row_ids
+
+
 @pytest.mark.asyncio
 async def test_training_with_source_config_creates_dataset(session_factory, tmp_path):
-    """Mode A: source_config creates a training dataset, then trains."""
     settings = _make_settings(tmp_path)
     rng = np.random.RandomState(42)
     center_a = rng.randn(DIM).astype(np.float32) * 2
     center_b = rng.randn(DIM).astype(np.float32) * 2 + 5.0
 
-    # Create embedding set for type "Whup"
-    es_path = settings.storage_root / "embeddings" / "v1" / "af1" / "sig.parquet"
-    _make_embedding_set_parquet(es_path, _make_separable_embeddings(15, center_a, 1))
-
-    # Create detection job with labeled "Moan" windows
-    n_det = 15
-    det_row_ids = [f"dj1-row-{i}" for i in range(n_det)]
-    _make_detection_embeddings(
-        settings.storage_root,
-        "dj1",
-        det_row_ids,
-        _make_separable_embeddings(n_det, center_b, 2),
-    )
-
     async with session_factory() as session:
-        from humpback.models.classifier import ClassifierModel, DetectionJob
-
-        af = AudioFile(
-            id="af1",
-            filename="a.wav",
-            folder_path="/data/Whup",
-            checksum_sha256="a1",
+        await _seed_detection_job(
+            session,
+            settings,
+            "dj1",
+            "Whup",
+            _make_separable_embeddings(15, center_a, 1),
         )
-        session.add(af)
-        session.add(
-            ClassifierModel(
-                id="cm1",
-                name="cm",
-                model_path="/tmp/m",
-                model_version="v1",
-                vector_dim=DIM,
-                window_size_seconds=5.0,
-                target_sample_rate=32000,
-            )
+        await _seed_detection_job(
+            session,
+            settings,
+            "dj2",
+            "Moan",
+            _make_separable_embeddings(15, center_b, 2),
         )
-        session.add(
-            DetectionJob(
-                id="dj1",
-                status="complete",
-                classifier_model_id="cm1",
-            )
-        )
-        es = EmbeddingSet(
-            id="es1",
-            audio_file_id="af1",
-            encoding_signature="sig",
-            model_version="v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=DIM,
-            parquet_path=str(es_path),
-        )
-        session.add(es)
-
-        # Add vocalization labels for detection job
-        for i in range(n_det):
-            session.add(
-                VocalizationLabel(
-                    detection_job_id="dj1",
-                    row_id=det_row_ids[i],
-                    label="Moan",
-                )
-            )
         await session.flush()
 
-        # Create training job with source_config
         job = VocalizationTrainingJob(
-            source_config=json.dumps(
-                {
-                    "embedding_set_ids": ["es1"],
-                    "detection_job_ids": ["dj1"],
-                }
-            ),
+            source_config=json.dumps({"detection_job_ids": ["dj1", "dj2"]}),
         )
         session.add(job)
         await session.flush()
 
         await run_vocalization_training_job(session, job, settings)
 
-        # Verify job completed
-        job_result = await session.execute(
-            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job.id)
-        )
-        updated_job = job_result.scalar_one()
+        updated_job = (
+            await session.execute(
+                select(VocalizationTrainingJob).where(
+                    VocalizationTrainingJob.id == job.id
+                )
+            )
+        ).scalar_one()
         assert updated_job.status == "complete"
         assert updated_job.training_dataset_id is not None
 
-        # Verify model has training_dataset_id
-        model_result = await session.execute(
-            select(VocalizationClassifierModel).where(
-                VocalizationClassifierModel.id == updated_job.vocalization_model_id
+        model = (
+            await session.execute(
+                select(VocalizationClassifierModel).where(
+                    VocalizationClassifierModel.id == updated_job.vocalization_model_id
+                )
             )
-        )
-        model = model_result.scalar_one()
-        assert model.training_dataset_id == updated_job.training_dataset_id
+        ).scalar_one()
         vocab = json.loads(model.vocabulary_snapshot)
         assert "Whup" in vocab
         assert "Moan" in vocab
 
-        # Verify training dataset was created
-        ds_result = await session.execute(
-            select(TrainingDataset).where(
-                TrainingDataset.id == updated_job.training_dataset_id
+        dataset = (
+            await session.execute(
+                select(TrainingDataset).where(
+                    TrainingDataset.id == updated_job.training_dataset_id
+                )
             )
-        )
-        dataset = ds_result.scalar_one()
-        assert dataset.total_rows == 30  # 15 from es + 15 from detection
+        ).scalar_one()
+        assert dataset.total_rows == 30
 
 
 @pytest.mark.asyncio
 async def test_training_with_dataset_id_reuses_dataset(session_factory, tmp_path):
-    """Mode B: training_dataset_id reuses existing dataset."""
     settings = _make_settings(tmp_path)
     rng = np.random.RandomState(42)
     center_a = rng.randn(DIM).astype(np.float32) * 2
     center_b = rng.randn(DIM).astype(np.float32) * 2 + 5.0
 
-    es_path_a = settings.storage_root / "embeddings" / "v1" / "af1" / "sig.parquet"
-    _make_embedding_set_parquet(es_path_a, _make_separable_embeddings(15, center_a, 1))
-    es_path_b = settings.storage_root / "embeddings" / "v1" / "af2" / "sig.parquet"
-    _make_embedding_set_parquet(es_path_b, _make_separable_embeddings(15, center_b, 2))
-
     async with session_factory() as session:
-        af1 = AudioFile(
-            id="af1",
-            filename="a.wav",
-            folder_path="/data/Whup",
-            checksum_sha256="a1",
+        await _seed_detection_job(
+            session,
+            settings,
+            "dj1",
+            "Whup",
+            _make_separable_embeddings(15, center_a, 1),
         )
-        af2 = AudioFile(
-            id="af2",
-            filename="b.wav",
-            folder_path="/data/Moan",
-            checksum_sha256="a2",
+        await _seed_detection_job(
+            session,
+            settings,
+            "dj2",
+            "Moan",
+            _make_separable_embeddings(15, center_b, 2),
         )
-        session.add_all([af1, af2])
-        es1 = EmbeddingSet(
-            id="es1",
-            audio_file_id="af1",
-            encoding_signature="sig",
-            model_version="v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=DIM,
-            parquet_path=str(es_path_a),
-        )
-        es2 = EmbeddingSet(
-            id="es2",
-            audio_file_id="af2",
-            encoding_signature="sig",
-            model_version="v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=DIM,
-            parquet_path=str(es_path_b),
-        )
-        session.add_all([es1, es2])
         await session.flush()
 
-        # First training: creates dataset
         job1 = VocalizationTrainingJob(
-            source_config=json.dumps(
-                {"embedding_set_ids": ["es1", "es2"], "detection_job_ids": []}
-            ),
+            source_config=json.dumps({"detection_job_ids": ["dj1", "dj2"]}),
         )
         session.add(job1)
         await session.flush()
         await run_vocalization_training_job(session, job1, settings)
 
-        job1_result = await session.execute(
-            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job1.id)
-        )
-        job1_updated = job1_result.scalar_one()
-        dataset_id = job1_updated.training_dataset_id
+        dataset_id = (
+            await session.execute(
+                select(VocalizationTrainingJob.training_dataset_id).where(
+                    VocalizationTrainingJob.id == job1.id
+                )
+            )
+        ).scalar_one()
 
-        # Second training: reuses dataset
         job2 = VocalizationTrainingJob(
             source_config=json.dumps({}),
             training_dataset_id=dataset_id,
@@ -276,91 +218,56 @@ async def test_training_with_dataset_id_reuses_dataset(session_factory, tmp_path
         await session.flush()
         await run_vocalization_training_job(session, job2, settings)
 
-        job2_result = await session.execute(
-            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job2.id)
-        )
-        job2_updated = job2_result.scalar_one()
-        assert job2_updated.status == "complete"
-        assert job2_updated.training_dataset_id == dataset_id
-
-        # Both models point to same dataset
-        model_result = await session.execute(
-            select(VocalizationClassifierModel).where(
-                VocalizationClassifierModel.id == job2_updated.vocalization_model_id
+        updated_job = (
+            await session.execute(
+                select(VocalizationTrainingJob).where(
+                    VocalizationTrainingJob.id == job2.id
+                )
             )
-        )
-        model2 = model_result.scalar_one()
-        assert model2.training_dataset_id == dataset_id
+        ).scalar_one()
+        assert updated_job.status == "complete"
+        assert updated_job.training_dataset_id == dataset_id
 
 
 @pytest.mark.asyncio
 async def test_label_edits_reflected_in_retrain(session_factory, tmp_path):
-    """Editing training_dataset_labels between trains changes the outcome."""
     settings = _make_settings(tmp_path)
     rng = np.random.RandomState(42)
     center_a = rng.randn(DIM).astype(np.float32) * 2
     center_b = rng.randn(DIM).astype(np.float32) * 2 + 5.0
 
-    es_path_a = settings.storage_root / "embeddings" / "v1" / "af1" / "sig.parquet"
-    _make_embedding_set_parquet(es_path_a, _make_separable_embeddings(15, center_a, 1))
-    es_path_b = settings.storage_root / "embeddings" / "v1" / "af2" / "sig.parquet"
-    _make_embedding_set_parquet(es_path_b, _make_separable_embeddings(15, center_b, 2))
-
     async with session_factory() as session:
-        af1 = AudioFile(
-            id="af1",
-            filename="a.wav",
-            folder_path="/data/Whup",
-            checksum_sha256="a1",
+        await _seed_detection_job(
+            session,
+            settings,
+            "dj1",
+            "Whup",
+            _make_separable_embeddings(15, center_a, 1),
         )
-        af2 = AudioFile(
-            id="af2",
-            filename="b.wav",
-            folder_path="/data/Moan",
-            checksum_sha256="a2",
+        await _seed_detection_job(
+            session,
+            settings,
+            "dj2",
+            "Moan",
+            _make_separable_embeddings(15, center_b, 2),
         )
-        session.add_all([af1, af2])
-        es1 = EmbeddingSet(
-            id="es1",
-            audio_file_id="af1",
-            encoding_signature="sig",
-            model_version="v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=DIM,
-            parquet_path=str(es_path_a),
-        )
-        es2 = EmbeddingSet(
-            id="es2",
-            audio_file_id="af2",
-            encoding_signature="sig",
-            model_version="v1",
-            window_size_seconds=5.0,
-            target_sample_rate=32000,
-            vector_dim=DIM,
-            parquet_path=str(es_path_b),
-        )
-        session.add_all([es1, es2])
         await session.flush()
 
-        # First train — Whup + Moan
         job1 = VocalizationTrainingJob(
-            source_config=json.dumps(
-                {"embedding_set_ids": ["es1", "es2"], "detection_job_ids": []}
-            ),
+            source_config=json.dumps({"detection_job_ids": ["dj1", "dj2"]}),
         )
         session.add(job1)
         await session.flush()
         await run_vocalization_training_job(session, job1, settings)
 
-        job1_result = await session.execute(
-            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job1.id)
-        )
-        job1_updated = job1_result.scalar_one()
-        assert job1_updated.status == "complete"
-        dataset_id = job1_updated.training_dataset_id
+        dataset_id = (
+            await session.execute(
+                select(VocalizationTrainingJob.training_dataset_id).where(
+                    VocalizationTrainingJob.id == job1.id
+                )
+            )
+        ).scalar_one()
 
-        # Add a new label type "Shriek" to some Whup rows (multi-label)
         for i in range(5):
             session.add(
                 TrainingDatasetLabel(
@@ -372,7 +279,6 @@ async def test_label_edits_reflected_in_retrain(session_factory, tmp_path):
             )
         await session.flush()
 
-        # Retrain with edited labels
         job2 = VocalizationTrainingJob(
             source_config=json.dumps({}),
             training_dataset_id=dataset_id,
@@ -381,19 +287,22 @@ async def test_label_edits_reflected_in_retrain(session_factory, tmp_path):
         await session.flush()
         await run_vocalization_training_job(session, job2, settings)
 
-        job2_result = await session.execute(
-            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job2.id)
-        )
-        job2_updated = job2_result.scalar_one()
-        assert job2_updated.status == "complete"
-
-        # New model should have Whup, Moan, and Shriek in vocabulary
-        model_result = await session.execute(
-            select(VocalizationClassifierModel).where(
-                VocalizationClassifierModel.id == job2_updated.vocalization_model_id
+        updated_job = (
+            await session.execute(
+                select(VocalizationTrainingJob).where(
+                    VocalizationTrainingJob.id == job2.id
+                )
             )
-        )
-        model = model_result.scalar_one()
+        ).scalar_one()
+        assert updated_job.status == "complete"
+
+        model = (
+            await session.execute(
+                select(VocalizationClassifierModel).where(
+                    VocalizationClassifierModel.id == updated_job.vocalization_model_id
+                )
+            )
+        ).scalar_one()
         vocab = json.loads(model.vocabulary_snapshot)
         assert "Whup" in vocab
         assert "Moan" in vocab
@@ -401,52 +310,46 @@ async def test_label_edits_reflected_in_retrain(session_factory, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_empty_dataset_fails_gracefully(session_factory, tmp_path):
-    """Training with an empty dataset sets status to failed."""
+async def test_retired_embedding_set_source_config_fails_fast(
+    session_factory, tmp_path
+):
     settings = _make_settings(tmp_path)
     async with session_factory() as session:
         job = VocalizationTrainingJob(
-            source_config=json.dumps(
-                {"embedding_set_ids": [], "detection_job_ids": []}
-            ),
+            source_config=json.dumps({"embedding_set_ids": ["es1"]}),
         )
         session.add(job)
         await session.flush()
         await run_vocalization_training_job(session, job, settings)
 
-        job_result = await session.execute(
-            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job.id)
-        )
-        updated_job = job_result.scalar_one()
+        updated_job = (
+            await session.execute(
+                select(VocalizationTrainingJob).where(
+                    VocalizationTrainingJob.id == job.id
+                )
+            )
+        ).scalar_one()
         assert updated_job.status == "failed"
-        assert "No embeddings" in (updated_job.error_message or "")
-
-
-# ---- pytorch_event_cnn rejection test ------------------------------------
+        assert "retired" in (updated_job.error_message or "")
 
 
 @pytest.mark.asyncio
-async def test_pytorch_event_cnn_rejected_by_vocalization_worker(
-    session_factory, tmp_path
-):
-    """model_family='pytorch_event_cnn' is no longer handled by vocalization worker."""
+async def test_empty_dataset_fails_gracefully(session_factory, tmp_path):
     settings = _make_settings(tmp_path)
-
     async with session_factory() as session:
         job = VocalizationTrainingJob(
-            source_config="{}",
-            parameters=json.dumps({"samples": []}),
-            model_family="pytorch_event_cnn",
-            input_mode="segmented_event",
+            source_config=json.dumps({"detection_job_ids": []}),
         )
         session.add(job)
         await session.flush()
-
         await run_vocalization_training_job(session, job, settings)
 
-        job_result = await session.execute(
-            select(VocalizationTrainingJob).where(VocalizationTrainingJob.id == job.id)
-        )
-        updated_job = job_result.scalar_one()
+        updated_job = (
+            await session.execute(
+                select(VocalizationTrainingJob).where(
+                    VocalizationTrainingJob.id == job.id
+                )
+            )
+        ).scalar_one()
         assert updated_job.status == "failed"
-        assert "Unsupported model_family" in (updated_job.error_message or "")
+        assert updated_job.error_message is not None

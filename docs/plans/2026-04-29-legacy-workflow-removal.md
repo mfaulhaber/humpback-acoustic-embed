@@ -35,13 +35,13 @@
 - Delete: `frontend/src/components/clustering/DeleteClusteringJobDialog.tsx`
 
 **Acceptance criteria:**
-- [ ] `/` redirects to a retained workflow route, preferably `/app/call-parsing/detection`.
-- [ ] Wildcard route fallback redirects to the same retained default route.
-- [ ] `/app/audio`, `/app/processing`, `/app/clustering`, `/app/search`, and `/app/label-processing` routes are removed.
-- [ ] Side navigation no longer renders Audio, Processing, top-level Clustering, Search, or Label Processing.
-- [ ] Top navigation home link points to the retained default route.
-- [ ] Breadcrumbs contain no static entries for removed routes.
-- [ ] Deleted component directories have no remaining imports from retained frontend code.
+- [x] `/` redirects to a retained workflow route, preferably `/app/call-parsing/detection`.
+- [x] Wildcard route fallback redirects to the same retained default route.
+- [x] `/app/audio`, `/app/processing`, `/app/clustering`, `/app/search`, and `/app/label-processing` routes are removed.
+- [x] Side navigation no longer renders Audio, Processing, top-level Clustering, Search, or Label Processing.
+- [x] Top navigation home link points to the retained default route.
+- [x] Breadcrumbs contain no static entries for removed routes.
+- [x] Deleted component directories have no remaining imports from retained frontend code.
 
 **Tests needed:**
 - Update or add Playwright navigation smoke coverage that verifies removed labels are absent and the default route loads.
@@ -63,14 +63,14 @@
 - Modify: `src/humpback/schemas/converters.py`
 
 **Acceptance criteria:**
-- [ ] Classifier / Training has no embedding-set source mode, source radio controls, `EmbeddingSetPanel`, `ModelFilter`, or `useEmbeddingSets` dependency.
-- [ ] The create form always uses `DetectionSourcePicker`.
-- [ ] Training job creation requires `detection_job_ids` and `embedding_model_version`.
-- [ ] Payloads containing `positive_embedding_set_ids` or `negative_embedding_set_ids` are rejected with a clear API validation error during compatibility.
-- [ ] Existing legacy classifier models remain visible and are labeled or represented as legacy when their `training_source_mode` is `embedding_sets`.
-- [ ] Existing queued/running embedding-set training jobs fail fast with a clear retirement error rather than trying to train from deleted sources.
-- [ ] Candidate-backed autoresearch promotion still works and is not mistaken for embedding-set input.
-- [ ] Detection-manifest training still writes manifests and trains from detection-job embeddings.
+- [x] Classifier / Training has no embedding-set source mode, source radio controls, `EmbeddingSetPanel`, `ModelFilter`, or `useEmbeddingSets` dependency.
+- [x] The create form always uses `DetectionSourcePicker`.
+- [x] Training job creation requires `detection_job_ids` and `embedding_model_version`.
+- [x] Payloads containing `positive_embedding_set_ids` or `negative_embedding_set_ids` are rejected with a clear API validation error during compatibility.
+- [x] Existing legacy classifier models remain visible and are labeled or represented as legacy when their `training_source_mode` is `embedding_sets`.
+- [x] Existing queued/running embedding-set training jobs fail fast with a clear retirement error rather than trying to train from deleted sources.
+- [x] Candidate-backed autoresearch promotion still works and is not mistaken for embedding-set input.
+- [x] Detection-manifest training still writes manifests and trains from detection-job embeddings.
 
 **Tests needed:**
 - Backend schema/API tests for rejecting embedding-set training payloads.
@@ -95,12 +95,12 @@
 - Modify: `frontend/src/api/types.ts`
 
 **Acceptance criteria:**
-- [ ] `audio`, `processing`, `search`, and `label_processing` routers are no longer registered.
-- [ ] Unused top-level `/clustering/*` endpoints are removed rather than kept as read-only compatibility.
-- [ ] Endpoints needed by Vocalization / Clustering remain available under the retained vocalization route surface.
-- [ ] Any genuinely retained audio endpoint is moved to a retained domain router before deleting `audio.py`; unused audio endpoints are not preserved for old links.
-- [ ] Frontend API client no longer exports removed endpoint functions or removed request/response types.
-- [ ] Removed endpoints return 404 through normal router absence rather than custom compatibility shims.
+- [x] `audio`, `processing`, `search`, and `label_processing` routers are no longer registered.
+- [x] Unused top-level `/clustering/*` endpoints are removed rather than kept as read-only compatibility.
+- [x] Endpoints needed by Vocalization / Clustering remain available under the retained vocalization route surface.
+- [x] Any genuinely retained audio endpoint is moved to a retained domain router before deleting `audio.py`; unused audio endpoints are not preserved for old links.
+- [x] Frontend API client no longer exports removed endpoint functions or removed request/response types.
+- [x] Removed endpoints return 404 through normal router absence rather than custom compatibility shims.
 
 **Tests needed:**
 - API route tests confirm removed route prefixes are absent or 404.
@@ -120,11 +120,11 @@
 - Modify: `tests/unit/test_queue.py`
 
 **Acceptance criteria:**
-- [ ] Worker runner no longer imports or polls `run_processing_job`, `run_search_job`, or `run_label_processing_job`.
-- [ ] Queue helpers for processing, search, and label-processing jobs are removed after no retained code imports them.
-- [ ] Stale recovery no longer references `ProcessingJob`, `SearchJob`, or `LabelProcessingJob` once their tables are retired.
-- [ ] Retained worker polling order for detection, detection embeddings, vocalization, call parsing, hyperparameter, continuous embedding, and HMM sequence jobs remains intact.
-- [ ] No removed worker module is imported by package entrypoints or tests.
+- [x] Worker runner no longer imports or polls `run_processing_job`, `run_search_job`, or `run_label_processing_job`.
+- [x] Queue helpers for processing, search, and label-processing jobs are removed after no retained code imports them.
+- [x] Stale recovery no longer references `ProcessingJob`, `SearchJob`, or `LabelProcessingJob` once their tables are retired.
+- [x] Retained worker polling order for detection, detection embeddings, vocalization, call parsing, hyperparameter, continuous embedding, and HMM sequence jobs remains intact.
+- [x] No removed worker module is imported by package entrypoints or tests.
 
 **Tests needed:**
 - Queue tests updated to cover retained job types only.
@@ -152,14 +152,14 @@
 - Modify: `frontend/src/hooks/queries/useVocalization.ts`
 
 **Acceptance criteria:**
-- [ ] `VocalizationTrainingSourceConfig` no longer accepts `embedding_set_ids`.
-- [ ] Vocalization inference no longer accepts `source_type="embedding_set"`.
-- [ ] Vocabulary import from embedding sets is removed.
-- [ ] Local-folder labeling behavior that creates or fetches folder embedding sets is removed.
-- [ ] Vocalization training form lists completed/labeled detection jobs only.
-- [ ] Training dataset snapshot and extension logic collect from detection jobs only.
-- [ ] Training data filters no longer expose `embedding_set` as an active source type.
-- [ ] Existing legacy vocalization rows can be archived by the cleanup script before the final DB drop.
+- [x] `VocalizationTrainingSourceConfig` no longer accepts `embedding_set_ids`.
+- [x] Vocalization inference no longer accepts `source_type="embedding_set"`.
+- [x] Vocabulary import from embedding sets is removed.
+- [x] Local-folder labeling behavior that creates or fetches folder embedding sets is removed.
+- [x] Vocalization training form lists completed/labeled detection jobs only.
+- [x] Training dataset snapshot and extension logic collect from detection jobs only.
+- [x] Training data filters no longer expose `embedding_set` as an active source type.
+- [x] Existing legacy vocalization rows can be archived by the cleanup script before the final DB drop.
 
 **Tests needed:**
 - Update vocalization API tests to detection-job-only source configs.
@@ -186,13 +186,13 @@
 - Modify: `frontend/src/components/vocalization/VocalizationUmapPlot.tsx`
 
 **Acceptance criteria:**
-- [ ] New clustering jobs can only be created with `detection_job_ids`.
-- [ ] `run_clustering_job()` no longer reads `EmbeddingSet.parquet_path` or joins `AudioFile`.
-- [ ] Detection-job clustering still reads `DetectionEmbeddingJob` parquet and resolves active vocalization inference labels.
-- [ ] Legacy embedding-set clustering jobs are either archived/deleted or fail clearly before final schema cleanup.
-- [ ] API and frontend terminology uses neutral `source_id` or detection-job terminology instead of presenting `embedding_set_id` to users.
-- [ ] `/clusters/{job_id}` artifacts remain supported for retained Vocalization / Clustering jobs.
-- [ ] Pure clustering algorithm modules remain intact.
+- [x] New clustering jobs can only be created with `detection_job_ids`.
+- [x] `run_clustering_job()` no longer reads `EmbeddingSet.parquet_path` or joins `AudioFile`.
+- [x] Detection-job clustering still reads `DetectionEmbeddingJob` parquet and resolves active vocalization inference labels.
+- [x] Legacy embedding-set clustering jobs are either archived/deleted or fail clearly before final schema cleanup.
+- [x] API and frontend terminology uses neutral `source_id` or detection-job terminology instead of presenting `embedding_set_id` to users.
+- [x] `/clusters/{job_id}` artifacts remain supported for retained Vocalization / Clustering jobs.
+- [x] Pure clustering algorithm modules remain intact.
 
 **Tests needed:**
 - Service and worker tests for detection-job clustering success.
@@ -209,20 +209,20 @@
 - Modify: `src/humpback/storage.py`
 
 **Acceptance criteria:**
-- [ ] Dry-run is the default and does not modify DB rows or files.
-- [ ] `--apply` requires `--archive-root`.
-- [ ] Dry-run prints and writes the computed archive layout.
-- [ ] Script reads settings through the repo `.env` / `Settings.from_repo_env()` path.
-- [ ] Script reports counts for direct legacy tables and dependency blockers.
-- [ ] Script discovers candidates under `/audio/raw`, `/embeddings`, `/label_processing`, and legacy-only `/clusters`.
-- [ ] Script refuses to archive or delete paths outside `settings.storage_root`.
-- [ ] Script copies every deletion candidate into the archive location before deleting originals.
-- [ ] Script writes an archive/deletion manifest to `storage_root/cleanup-manifests/{timestamp}-legacy-workflow-removal.json`.
-- [ ] Script processes all legacy artifact classes in one apply operation.
-- [ ] Script verifies each directory class independently for candidate count, total bytes, archive copies, and source deletion.
-- [ ] Script is idempotent on rerun after a successful apply.
-- [ ] Script skips `/classifiers/{classifier_model_id}` artifacts so legacy models remain usable.
-- [ ] Script exits non-zero if retained rows still reference legacy data that would be dropped.
+- [x] Dry-run is the default and does not modify DB rows or files.
+- [x] `--apply` requires `--archive-root`.
+- [x] Dry-run prints and writes the computed archive layout.
+- [x] Script reads settings through the repo `.env` / `Settings.from_repo_env()` path.
+- [x] Script reports counts for direct legacy tables and dependency blockers.
+- [x] Script discovers candidates under `/audio/raw`, `/embeddings`, `/label_processing`, and legacy-only `/clusters`.
+- [x] Script refuses to archive or delete paths outside `settings.storage_root`.
+- [x] Script copies every deletion candidate into the archive location before deleting originals.
+- [x] Script writes an archive/deletion manifest to `storage_root/cleanup-manifests/{timestamp}-legacy-workflow-removal.json`.
+- [x] Script processes all legacy artifact classes in one apply operation.
+- [x] Script verifies each directory class independently for candidate count, total bytes, archive copies, and source deletion.
+- [x] Script is idempotent on rerun after a successful apply.
+- [x] Script skips `/classifiers/{classifier_model_id}` artifacts so legacy models remain usable.
+- [x] Script exits non-zero if retained rows still reference legacy data that would be dropped.
 
 **Tests needed:**
 - Unit tests for dry-run manifest generation.
@@ -248,19 +248,19 @@
 
 **Acceptance criteria:**
 - [ ] Back up the production database before applying the migration: run `DB_URL=$(grep '^HUMPBACK_DATABASE_URL=' .env | cut -d= -f2-)`, run `DB_PATH=${DB_URL#sqlite+aiosqlite:///}`, run `BACKUP="$DB_PATH.$(date -u +%Y-%m-%d-%H:%M).bak"`, run `cp "$DB_PATH" "$BACKUP"`, and run `test -s "$BACKUP"` before running `uv run alembic upgrade head`.
-- [ ] Migration refuses to proceed if preflight blockers are present, including queued/running removed job types, legacy clustering rows, or unarchived legacy source references.
-- [ ] Migration drops `search_jobs`.
-- [ ] Migration drops `label_processing_jobs`.
-- [ ] Migration drops `processing_jobs`.
-- [ ] Migration drops `embedding_sets`.
-- [ ] Migration drops `audio_metadata`.
+- [x] Migration refuses to proceed if preflight blockers are present, including queued/running removed job types, legacy clustering rows, or unarchived legacy source references.
+- [x] Migration drops `search_jobs`.
+- [x] Migration drops `label_processing_jobs`.
+- [x] Migration drops `processing_jobs`.
+- [x] Migration drops `embedding_sets`.
+- [x] Migration drops `audio_metadata`.
 - [ ] Migration drops `audio_files` after retained dependencies are removed.
-- [ ] Migration renames `cluster_assignments.embedding_set_id` to a neutral column such as `source_id` if retained clustering still needs the assignment source.
-- [ ] Migration drops or replaces `clustering_jobs.embedding_set_ids` after detection-job clustering uses the retained source field.
-- [ ] Migration preserves enough classifier model/training provenance for legacy model display before dropping `positive_embedding_set_ids` and `negative_embedding_set_ids`.
-- [ ] Migration removes `embedding_sets` as the default `source_mode` / `training_source_mode`.
-- [ ] SQLite table rewrites use `op.batch_alter_table()` where needed.
-- [ ] Downgrade is either implemented safely or explicitly documented as not reconstructing dropped user data.
+- [x] Migration renames `cluster_assignments.embedding_set_id` to a neutral column such as `source_id` if retained clustering still needs the assignment source.
+- [x] Migration drops or replaces `clustering_jobs.embedding_set_ids` after detection-job clustering uses the retained source field.
+- [x] Migration preserves enough classifier model/training provenance for legacy model display before dropping `positive_embedding_set_ids` and `negative_embedding_set_ids`.
+- [x] Migration removes `embedding_sets` as the default `source_mode` / `training_source_mode`.
+- [x] SQLite table rewrites use `op.batch_alter_table()` where needed.
+- [x] Downgrade is either implemented safely or explicitly documented as not reconstructing dropped user data.
 
 **Tests needed:**
 - Migration test applies to a representative fresh database.
@@ -295,10 +295,10 @@
 - Delete: `tests/unit/test_models.py`
 
 **Acceptance criteria:**
-- [ ] Removed services and schemas have no imports from retained code.
-- [ ] Retained lower-level audio processing utilities remain where detection, call parsing, timeline, and sequence models use them.
-- [ ] Removed tests are either deleted or replaced with retained workflow coverage.
-- [ ] `rg` for removed service/schema modules returns no retained-code imports.
+- [x] Removed services and schemas have no imports from retained code.
+- [x] Retained lower-level audio processing utilities remain where detection, call parsing, timeline, and sequence models use them.
+- [x] Removed tests are either deleted or replaced with retained workflow coverage.
+- [x] `rg` for removed service/schema modules returns no retained-code imports.
 
 **Tests needed:**
 - Full backend test run after removals.
@@ -323,15 +323,15 @@
 - Modify: `DECISIONS.md`
 
 **Acceptance criteria:**
-- [ ] `CLAUDE.md` no longer presents Audio, Processing, top-level Clustering, Search, or Label Processing as active capabilities.
-- [ ] `CLAUDE.md` table list matches the post-cleanup schema.
-- [ ] `AGENTS.md` no longer includes the retired embedding-set idempotency constraint and instead names retained idempotency constraints.
-- [ ] Reference docs describe detection-job based workflows as the active path.
-- [ ] Storage layout removes `/audio/raw`, `/embeddings`, and `/label_processing` after archive-backed cleanup is implemented, while keeping detection embeddings and vocalization clustering artifacts.
-- [ ] Classifier API docs describe detection-job-only training.
-- [ ] Testing docs replace the legacy upload/process/cluster smoke test with a retained detection-job workflow smoke test.
-- [ ] Session-review docs replace the no-duplicate-embedding-sets review check with current idempotency checks.
-- [ ] `DECISIONS.md` gets a new ADR only if implementation confirms this cleanup is an architectural direction rather than ordinary pruning.
+- [x] `CLAUDE.md` no longer presents Audio, Processing, top-level Clustering, Search, or Label Processing as active capabilities.
+- [x] `CLAUDE.md` table list matches the post-cleanup schema.
+- [x] `AGENTS.md` no longer includes the retired embedding-set idempotency constraint and instead names retained idempotency constraints.
+- [x] Reference docs describe detection-job based workflows as the active path.
+- [x] Storage layout removes `/audio/raw`, `/embeddings`, and `/label_processing` after archive-backed cleanup is implemented, while keeping detection embeddings and vocalization clustering artifacts.
+- [x] Classifier API docs describe detection-job-only training.
+- [x] Testing docs replace the legacy upload/process/cluster smoke test with a retained detection-job workflow smoke test.
+- [x] Session-review docs replace the no-duplicate-embedding-sets review check with current idempotency checks.
+- [x] `DECISIONS.md` gets a new ADR only if implementation confirms this cleanup is an architectural direction rather than ordinary pruning.
 
 **Tests needed:**
 - Documentation search gates for stale active-workflow references.
@@ -354,12 +354,12 @@
 **Acceptance criteria:**
 - [ ] `rg "Audio|Processing|Search|Label Processing" frontend/src docs CLAUDE.md AGENTS.md` has only historical or explicitly retired references.
 - [ ] `rg "EmbeddingSet|embedding_sets|processing_jobs|search_jobs|label_processing_jobs" src tests docs CLAUDE.md AGENTS.md` has only migration tests, archive manifests, legacy provenance labels, or historical ADR/spec references.
-- [ ] Retained navigation loads without removed routes.
-- [ ] Classifier training from detection jobs works.
-- [ ] Vocalization / Clustering works from detection jobs.
+- [x] Retained navigation loads without removed routes.
+- [x] Classifier training from detection jobs works.
+- [x] Vocalization / Clustering works from detection jobs.
 - [ ] Detection embedding, call parsing, sequence models, and timeline-related tests still pass.
-- [ ] Cleanup script dry-run and apply tests pass.
-- [ ] Legacy classifier models remain visible as legacy models.
+- [x] Cleanup script dry-run and apply tests pass.
+- [x] Legacy classifier models remain visible as legacy models.
 
 **Tests needed:**
 - Full backend test suite.

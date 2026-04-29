@@ -111,13 +111,13 @@ All operational timestamps in this project must use UTC end-to-end.
 
 ## 4. Core Design Principles
 
-### 4.1 Idempotent Encoding (No Reprocessing)
-Each audio file is encoded once per (model_version, window_size, target_sample_rate, feature_config).
+### 4.1 Idempotent Derived Artifacts
+Retained artifact producers must not create duplicate canonical outputs.
 
-A ProcessingJob MUST:
-- compute a stable "encoding_signature"
-- check for an existing completed embedding set with that signature
-- skip work if the embedding set exists
+Current guarantees:
+- `detection_embedding_jobs` are unique per `(detection_job_id, model_version)`
+- `continuous_embedding_jobs` are unique per `encoding_signature`
+- bootstrap/training-dataset loaders preserve sample-level uniqueness through their retained source identifiers
 
 ### 4.2 Resumable Workflow
 All steps are recorded in SQL. Workers must be restart-safe:
@@ -155,7 +155,7 @@ A PR/change is "done" only if:
 - test suite passes locally
 - E2E smoke test passes locally
 - Playwright tests added/updated for UI changes (`cd frontend && npx playwright test`)
-- idempotency rules preserved (no duplicate embedding sets)
+- retained idempotency rules preserved (for example, no duplicate detection embeddings or continuous-embedding jobs)
 
 ---
 
@@ -258,23 +258,22 @@ See [docs/reference/sequence-models-api.md](docs/reference/sequence-models-api.m
 
 ### 9.1 Implemented Capabilities
 
-- Audio upload/import, processing (TFLite + TF2), embedding search, clustering (HDBSCAN/K-Means/Agglomerative)
-- Binary classifier training (LogisticRegression/MLP), hyperparameter tuning, autoresearch candidate promotion, retrain workflow; perch_v2 registered as first-class embedding model family with detection-manifest training and model-versioned re-embedding (ADR-055)
+- Detection-job-based classifier training (LogisticRegression/MLP), hyperparameter tuning, autoresearch candidate promotion, and legacy-model visibility; perch_v2 is a first-class embedding model family with detection-manifest training and model-versioned re-embedding (ADR-055)
 - Hydrophone streaming (Orcasound HLS + NOAA), detection with configurable window selection (NMS/prominence/tiling)
-- Vocalization labeling workspace, multi-label vocalization classifier, training dataset review, label processing, vocalization clustering (detection-job embeddings via HDBSCAN)
+- Vocalization labeling workspace, managed multi-label vocalization classifier, training dataset review, and Vocalization / Clustering on detection-job embeddings
 - Timeline viewer with PCEN spectrograms, interactive labeling, gapless playback, static export
 - Four-pass call parsing pipeline (Passes 1–3 functional, Pass 4 deferred): region detection, event segmentation, event classification, human feedback training loop
 - Window classification sidecar: standalone enrichment scoring cached Pass 1 Perch embeddings through vocalization classifiers, producing dense per-window probability vectors with event-level review workspace (requires Pass 2 segmentation) and unified vocalization corrections shared with Classify review
 - Classify review boundary editing: adjust/add/delete event boundaries in Pass 3 review, corrections flow to both classification inference and classifier feedback training via read-time overlay (ADR-054); type corrections use unified vocalization_corrections table shared with Window Classify review
 - Pass 2 (event segmentation) and Pass 3 (event classification) inference run on MPS/CUDA when available with per-job load-time validation against CPU output and a fallback to CPU on validation failure; the chosen device and any fallback reason are persisted on the job row and surfaced as a UI badge
 - Sequence Models track (parallel to Call Parsing): continuous embedding producer that emits event-scoped, hydrophone-only 1-second-hop SurfPerch embeddings padded around Pass-2 segmentation events (each event is an independent span — no merging), idempotent on `encoding_signature` (ADR-056). HMM training (PCA + GaussianHMM via hmmlearn) with Viterbi decode, state timeline visualization with dual region/event navigation (A/D keyboard shortcuts), transition matrix heatmap, and dwell-time histograms. Interpretation visualizations: PCA/UMAP overlay scatter colored by HMM state, state-to-label distribution via center-time join with vocalization labels, per-state exemplar gallery (high-confidence, nearest-centroid, boundary picks). Motif mining lands in subsequent PRs.
-- Web UI: Audio, Processing, Clustering, Classifier, Vocalization (Training, Labeling, Training Data, Clustering), Call Parsing (Detection, Segment, Segment Training, Classify, Classify Training, Window Classify), Sequence Models (Continuous Embedding, HMM Sequence), Search, Label Processing, Admin
+- Web UI: Classifier (Training, Hydrophone Detection, Embeddings, Tuning, Labeling), Vocalization (Training, Labeling, Training Data, Clustering), Call Parsing (Detection, Segment, Segment Training, Classify, Classify Training, Window Classify), Sequence Models (Continuous Embedding, HMM Sequence), Admin
 
 ### 9.2 Database Schema
 
 - **Engine**: SQLite via SQLAlchemy
-- **Latest migration**: `059_continuous_embedding_event_input.py`
-- **Tables**: model_configs, audio_files, audio_metadata, processing_jobs, embedding_sets, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, label_processing_jobs, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, segmentation_models, segmentation_training_datasets, segmentation_training_samples, segmentation_training_jobs, event_boundary_corrections, vocalization_corrections, event_segmentation_training_jobs, event_classifier_training_jobs, window_classification_jobs, continuous_embedding_jobs, hmm_sequence_jobs
+- **Latest migration**: `060_legacy_workflow_removal.py`
+- **Tables**: model_configs, audio_files, clustering_jobs, clusters, cluster_assignments, classifier_models, classifier_training_jobs, autoresearch_candidates, detection_jobs, retrain_workflows, vocalization_labels, vocalization_types, vocalization_models, vocalization_training_jobs, vocalization_inference_jobs, detection_embedding_jobs, training_datasets, training_dataset_labels, hyperparameter_manifests, hyperparameter_search_jobs, call_parsing_runs, segmentation_models, region_detection_jobs, event_segmentation_jobs, event_classification_jobs, window_classification_jobs, vocalization_corrections, event_boundary_corrections, segmentation_training_datasets, segmentation_training_samples, segmentation_training_jobs, region_boundary_corrections, event_classifier_training_jobs, continuous_embedding_jobs, hmm_sequence_jobs
 
 ### 9.3 Sensitive Components
 

@@ -1,10 +1,18 @@
 # Classifier API Surface
 
-Classifier training currently has three distinct flows:
+Classifier training is now detection-job-based. Legacy embedding-set creation
+paths are retired, although legacy models and legacy training provenance remain
+readable.
 
-## Embedding-set Training
+## Detection-Job Training
 
-`POST /classifier/training-jobs` creates the original positive/negative embedding-set-backed training jobs.
+`POST /classifier/training-jobs` accepts `detection_job_ids` plus
+`embedding_model_version`. The service validates that model-versioned detection
+embeddings exist for every source job and that the selected row stores contain
+at least one positive and one negative binary label. If a requested
+model-versioned embeddings parquet is missing but the legacy-path detection
+embeddings exist and the source classifier model matches, the embeddings are
+copied forward automatically.
 
 ## Hyperparameter Tuning
 
@@ -34,9 +42,12 @@ Relocated under `/classifier/hyperparameter/candidates/*`; old `/classifier/auto
 
 Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model. After candidate-backed training completes, the training job's `source_comparison_context` and the model's `training_summary` include a `replay_verification` dict with status (`"verified"`/`"mismatch"`), per-split metric comparisons, and effective config. The candidate detail endpoint (`GET /classifier/autoresearch-candidates/{id}`) also exposes `replay_verification` when the linked model exists.
 
-## Detection-Manifest Training (ADR-055)
+## Retired Embedding-Set Training
 
-`POST /classifier/training-jobs` now accepts an alternative source mode with `detection_job_ids` + `embedding_model_version` instead of embedding set IDs. The two source shapes are mutually exclusive (422 if mixed). The service validates that embeddings exist at the model-versioned path for each detection job and that the selection includes at least one positive and one negative binary label. If the model-versioned path is missing but legacy-path embeddings exist and the source classifier model matches, they are automatically copied to the model-versioned path.
+`POST /classifier/training-jobs` rejects payloads containing
+`positive_embedding_set_ids` or `negative_embedding_set_ids` with a validation
+error. Legacy classifier models still surface their retired provenance through
+`training_source_mode="embedding_sets"` and `legacy_source_summary`.
 
 ## Detection Job Label Counts
 
@@ -48,12 +59,17 @@ Candidate-backed promotion imports reviewed autoresearch artifacts, persists a d
 - `POST /classifier/detection-jobs/{id}/generate-embeddings?mode=full|sync` — enqueue re-embedding for a detection job
 - `GET /classifier/detection-jobs/{id}/embedding-generation-status` — most recent embedding generation job
 
-## Legacy Retrain Workflow
+## Legacy Retrain Workflow Surface
 
 - `GET /classifier/models/{id}/retrain-info`
 - `POST /classifier/retrain`
 - `GET /classifier/retrain-workflows`
 - `GET /classifier/retrain-workflows/{id}`
+
+These endpoints are retained only for legacy visibility. New retrain workflow
+creation is retired: `GET /retrain-info` returns 404 for current models, and
+`POST /classifier/retrain` returns a retirement error. Existing historical
+`retrain_workflows` rows remain listable/readable.
 
 ## Timeline Export
 

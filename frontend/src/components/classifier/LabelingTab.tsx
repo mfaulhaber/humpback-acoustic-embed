@@ -6,8 +6,6 @@ import {
   fetchDetectionContent,
   detectionSpectrogramUrl,
   detectionAudioSliceUrl,
-  audioWindowUrl,
-  audioSpectrogramPngUrl,
 } from "@/api/client";
 import type { DetectionJob, DetectionRow, NeighborHit } from "@/api/types";
 import {
@@ -18,23 +16,10 @@ import {
   useDetectionNeighbors,
 } from "@/hooks/queries/useLabeling";
 import { useVocalizationTypes } from "@/hooks/queries/useVocalization";
-import { useEmbeddingSets } from "@/hooks/queries/useProcessing";
-import { useAudioFiles } from "@/hooks/queries/useAudioFiles";
-import {
-  ROOT_SENTINEL,
-  buildFolderTree,
-  makeToggleChild,
-  makeToggleParent,
-  makeToggleAll,
-  makeToggleCollapse,
-  EmbeddingSetPanel,
-} from "@/components/shared/EmbeddingSetPanel";
 import { SpectrogramPopup } from "./SpectrogramPopup";
 import {
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
-  ChevronUp,
   Play,
   Pause,
   SkipForward,
@@ -94,20 +79,6 @@ export function LabelingTab() {
       );
   }, [localJobsQuery.data, hydroJobsQuery.data]);
 
-  const selectedJob = useMemo(
-    () => allJobs.find((job) => job.id === selectedJobId) ?? null,
-    [allJobs, selectedJobId],
-  );
-
-  // ---- Embedding set filter for neighbors ----
-  const [esFilterSelected, setEsFilterSelected] = useState<Set<string>>(
-    new Set(),
-  );
-  const [esFilterCollapsed, setEsFilterCollapsed] = useState<Set<string> | null>(
-    null,
-  );
-  const [esFilterExpanded, setEsFilterExpanded] = useState(true);
-
   // ---- Detection content ----
   const contentQuery = useQuery({
     queryKey: ["detection-content", selectedJobId],
@@ -120,61 +91,6 @@ export function LabelingTab() {
   const [sortMode, setSortMode] = useState<SortMode>("confidence");
   const [currentIndex, setCurrentIndex] = useState(0);
   const summaryQuery = useLabelingSummary(selectedJobId);
-
-  // ---- Embedding sets for neighbor filter ----
-  const { data: embeddingSets = [] } = useEmbeddingSets();
-  const { data: audioFiles = [] } = useAudioFiles();
-
-  const audioMap = useMemo(
-    () => new Map(audioFiles.map((af) => [af.id, af])),
-    [audioFiles],
-  );
-
-  const esFilterTree = useMemo(
-    () => buildFolderTree(embeddingSets, audioMap),
-    [embeddingSets, audioMap],
-  );
-
-  const esFilterParentKeys = useMemo(
-    () => new Set(esFilterTree.map((n) => n.parent)),
-    [esFilterTree],
-  );
-
-  // Auto-select all embedding sets when the list loads
-  const prevEsRef = useRef<string>("");
-  useEffect(() => {
-    const key = embeddingSets
-      .map((es) => es.id)
-      .sort()
-      .join(",");
-    if (key && key !== prevEsRef.current) {
-      prevEsRef.current = key;
-      setEsFilterSelected(new Set(embeddingSets.map((es) => es.id)));
-    }
-  }, [embeddingSets]);
-
-  // Toggle callbacks for embedding set filter
-  const toggleEsChild = useCallback(makeToggleChild(setEsFilterSelected), []);
-  const toggleEsParent = useCallback(
-    makeToggleParent(setEsFilterSelected),
-    [],
-  );
-  const toggleEsAll = useCallback(
-    makeToggleAll(embeddingSets, esFilterSelected, setEsFilterSelected),
-    [embeddingSets, esFilterSelected],
-  );
-  const toggleEsCollapse = useCallback(
-    makeToggleCollapse(
-      esFilterParentKeys,
-      esFilterCollapsed,
-      setEsFilterCollapsed,
-    ),
-    [esFilterParentKeys],
-  );
-  const esDisplayName = useCallback(
-    (key: string) => (key === ROOT_SENTINEL ? "(root)" : key),
-    [],
-  );
 
   // Index predictions by UTC key for fast lookup
   const filteredRows = useMemo(() => {
@@ -292,19 +208,7 @@ export function LabelingTab() {
   );
 
   // ---- Neighbors (vector search) ----
-  // Only send embedding_set_ids when a subset is selected;
-  // omit when all are selected so the backend searches everything (avoids URL length limits).
-  const selectedEsIds = useMemo(() => {
-    if (esFilterSelected.size === 0 || esFilterSelected.size === embeddingSets.length)
-      return undefined;
-    return [...esFilterSelected];
-  }, [esFilterSelected, embeddingSets.length]);
-
-  const neighborsQuery = useDetectionNeighbors(
-    selectedJobId,
-    currentRowId,
-    selectedEsIds,
-  );
+  const neighborsQuery = useDetectionNeighbors(selectedJobId, currentRowId);
 
   // Neighbor audio playback
   const neighborAudioRef = useRef<HTMLAudioElement>(null);
@@ -321,7 +225,8 @@ export function LabelingTab() {
         setPlayingNeighborIdx(null);
         return;
       }
-      const url = audioWindowUrl(hit.audio_file_id, hit.window_offset_seconds, 5);
+      const durationSec = Math.max(hit.end_utc - hit.start_utc, 0.1);
+      const url = detectionAudioSliceUrl(hit.detection_job_id, hit.start_utc, durationSec);
       el.src = url;
       el.load();
       setPlayingNeighborIdx(idx);
@@ -735,38 +640,8 @@ export function LabelingTab() {
           {/* Similar sounds panel (35%) */}
           <div className="flex-[35] flex flex-col p-4 overflow-y-auto bg-slate-50">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-medium text-slate-700">
-                Similar Sounds
-              </div>
-              <button
-                onClick={() => setEsFilterExpanded((v) => !v)}
-                className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1"
-              >
-                {esFilterExpanded ? (
-                  <ChevronUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                )}
-                {esFilterSelected.size}/{embeddingSets.length} sets
-              </button>
+              <div className="text-sm font-medium text-slate-700">Similar Sounds</div>
             </div>
-
-            {esFilterExpanded && (
-              <div className="mb-3">
-                <EmbeddingSetPanel
-                  label="Search in"
-                  selected={esFilterSelected}
-                  collapsed={esFilterCollapsed ?? esFilterParentKeys}
-                  folderTree={esFilterTree}
-                  embeddingSets={embeddingSets}
-                  onToggleChild={toggleEsChild}
-                  onToggleParent={toggleEsParent}
-                  onToggleAll={toggleEsAll}
-                  onToggleCollapse={toggleEsCollapse}
-                  displayName={esDisplayName}
-                />
-              </div>
-            )}
 
             <audio ref={neighborAudioRef} onEnded={() => setPlayingNeighborIdx(null)} />
 
@@ -786,10 +661,15 @@ export function LabelingTab() {
 
             <div className="space-y-2">
               {(neighborsQuery.data?.hits ?? []).map((hit, idx) => {
-                const specUrl = audioSpectrogramPngUrl(hit.audio_file_id, hit.window_offset_seconds, 5);
+                const durationSec = Math.max(hit.end_utc - hit.start_utc, 0.1);
+                const specUrl = detectionSpectrogramUrl(
+                  hit.detection_job_id,
+                  hit.start_utc,
+                  durationSec,
+                );
                 return (
                 <div
-                  key={`${hit.embedding_set_id}-${hit.row_index}`}
+                  key={`${hit.detection_job_id}-${hit.row_id}`}
                   className="border rounded p-2 bg-white"
                 >
                   <div className="flex items-center justify-between mb-1">
@@ -850,7 +730,7 @@ export function LabelingTab() {
 
                   <div
                     className="text-[10px] text-slate-400 mt-1 truncate"
-                    title={hit.audio_folder_path ?? ""}
+                    title={hit.row_id}
                   >
                     {hit.audio_filename}
                   </div>

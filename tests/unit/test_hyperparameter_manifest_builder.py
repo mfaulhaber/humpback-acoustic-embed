@@ -112,7 +112,13 @@ def _add_classifier_and_detection_job(
     eng.dispose()
 
 
-def _add_training_job(sync_db_url: str, tj_id: str, model_version: str) -> None:
+def _add_training_job(
+    sync_db_url: str,
+    tj_id: str,
+    model_version: str,
+    *,
+    source_mode: str = "detection_manifest",
+) -> None:
     eng = sa_create_engine(sync_db_url)
     with Session(eng) as session:
         session.add(
@@ -120,11 +126,10 @@ def _add_training_job(sync_db_url: str, tj_id: str, model_version: str) -> None:
                 id=tj_id,
                 status="complete",
                 name="tj",
-                positive_embedding_set_ids="[]",
-                negative_embedding_set_ids="[]",
                 model_version=model_version,
                 window_size_seconds=5.0,
                 target_sample_rate=32000,
+                source_mode=source_mode,
             )
         )
         session.commit()
@@ -179,12 +184,17 @@ def test_rejects_missing_embedding_model_version(tmp_path, sync_db_url, monkeypa
         )
 
 
-def test_rejects_mismatched_training_job(tmp_path, sync_db_url, monkeypatch):
+def test_rejects_legacy_embedding_set_training_job(tmp_path, sync_db_url, monkeypatch):
     _patch_settings(monkeypatch, tmp_path)
     tj_id = str(uuid.uuid4())
-    _add_training_job(sync_db_url, tj_id, "tf2_some_model")
+    _add_training_job(
+        sync_db_url,
+        tj_id,
+        "tf2_some_model",
+        source_mode="embedding_sets",
+    )
 
-    with pytest.raises(ValueError, match="does not match the manifest"):
+    with pytest.raises(ValueError, match="retired embedding-set sources"):
         generate_manifest(
             training_job_ids=[tj_id],
             db_url=sync_db_url,

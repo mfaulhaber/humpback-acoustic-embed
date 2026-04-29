@@ -17,7 +17,6 @@ from humpback.models.classifier import (
     ClassifierModel,
     ClassifierTrainingJob,
 )
-from humpback.processing.embeddings import read_embeddings
 from humpback.storage import classifier_dir, ensure_dir
 
 logger = logging.getLogger(__name__)
@@ -83,11 +82,6 @@ async def run_training_job(
 ) -> None:
     """Execute a classifier training job end-to-end."""
     try:
-        import numpy as np
-        from sqlalchemy import select
-
-        from humpback.models.processing import EmbeddingSet
-
         # Parse parameters
         parameters = json.loads(job.parameters) if job.parameters else None
         promotion_provenance = (
@@ -252,51 +246,10 @@ async def run_training_job(
             summary["detection_job_ids"] = det_job_ids
             summary["manifest_path"] = str(manifest_path)
         else:
-            from humpback.classifier.trainer import train_binary_classifier
-
-            es_ids = json.loads(job.positive_embedding_set_ids)
-            result = await session.execute(
-                select(EmbeddingSet).where(EmbeddingSet.id.in_(es_ids))
+            raise ValueError(
+                "Embedding-set classifier training jobs are retired; create a "
+                "new training job from labeled detection jobs"
             )
-            embedding_sets = list(result.scalars().all())
-
-            positive_parts: list[np.ndarray] = []
-            for es in embedding_sets:
-                _, vectors = read_embeddings(Path(es.parquet_path))
-                positive_parts.append(vectors)
-            positive_embeddings = np.vstack(positive_parts)
-
-            neg_ids = json.loads(job.negative_embedding_set_ids)
-            neg_result = await session.execute(
-                select(EmbeddingSet).where(EmbeddingSet.id.in_(neg_ids))
-            )
-            neg_embedding_sets = list(neg_result.scalars().all())
-
-            negative_parts: list[np.ndarray] = []
-            for es in neg_embedding_sets:
-                _, vectors = read_embeddings(Path(es.parquet_path))
-                negative_parts.append(vectors)
-            negative_embeddings = np.vstack(negative_parts)
-
-            source_summary = {
-                "source_mode": "embedding_sets",
-                "positive_embedding_set_count": len(embedding_sets),
-                "negative_embedding_set_count": len(neg_embedding_sets),
-            }
-            vector_dim = int(embedding_sets[0].vector_dim)
-
-            # Train classifier (CPU-bound)
-            pipeline, train_summary = await asyncio.to_thread(
-                train_binary_classifier,
-                positive_embeddings,
-                negative_embeddings,
-                parameters,
-            )
-            summary = cast(dict[str, Any], train_summary)
-            summary["training_source_mode"] = job.source_mode
-            summary["training_data_source"] = source_summary
-            if promotion_provenance:
-                summary["promotion_provenance"] = promotion_provenance
 
         # Save model atomically
         cdir = ensure_dir(classifier_dir(settings.storage_root, job.id))

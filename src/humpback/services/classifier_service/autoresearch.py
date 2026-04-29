@@ -17,7 +17,6 @@ from humpback.models.classifier import (
     ClassifierTrainingJob,
     DetectionJob,
 )
-from humpback.models.processing import EmbeddingSet
 
 AUTORESEARCH_CANDIDATE_DIRNAME = "autoresearch_candidates"
 AUTORESEARCH_CANDIDATE_STATUS_PROMOTABLE = "promotable"
@@ -348,21 +347,6 @@ async def _resolve_candidate_training_runtime(
     parquet_paths = sorted({str(ex["parquet_path"]) for ex in train_examples})
 
     for parquet_path in parquet_paths:
-        result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.parquet_path == parquet_path)
-        )
-        embedding_set = result.scalar_one_or_none()
-        if embedding_set is not None:
-            runtimes.append(
-                {
-                    "model_version": embedding_set.model_version,
-                    "window_size_seconds": embedding_set.window_size_seconds,
-                    "target_sample_rate": embedding_set.target_sample_rate,
-                    "vector_dim": embedding_set.vector_dim,
-                }
-            )
-            continue
-
         detection_job_id = _extract_detection_job_id_from_parquet_path(parquet_path)
         if detection_job_id is None:
             continue
@@ -663,8 +647,6 @@ async def create_training_job_from_autoresearch_candidate(
 
     job = ClassifierTrainingJob(
         name=new_model_name,
-        positive_embedding_set_ids=json.dumps([]),
-        negative_embedding_set_ids=json.dumps([]),
         model_version=runtime["model_version"],
         window_size_seconds=runtime["window_size_seconds"],
         target_sample_rate=runtime["target_sample_rate"],

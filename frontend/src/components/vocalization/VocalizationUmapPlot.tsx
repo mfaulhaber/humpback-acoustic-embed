@@ -52,7 +52,7 @@ export function VocalizationUmapPlot({ jobId }: VocalizationUmapPlotProps) {
         text: indices.map((i) => viz.category[i] ?? ""),
         hoverinfo: "text+name" as const,
         customdata: indices.map((i) => ({
-          detectionJobId: viz.embedding_set_id[i],
+          detectionJobId: viz.detection_job_id[i],
           startUtc: viz.start_utc?.[i] ?? null,
           category: viz.category[i] ?? "",
         })),

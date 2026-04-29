@@ -10,7 +10,6 @@ class ClusteringJob(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "clustering_jobs"
 
     status: Mapped[str] = mapped_column(default="queued")
-    embedding_set_ids: Mapped[str] = mapped_column(Text)  # JSON array
     parameters: Mapped[Optional[str]] = mapped_column(Text, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     metrics_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
@@ -40,7 +39,7 @@ class ClusterAssignment(UUIDMixin, Base):
     __tablename__ = "cluster_assignments"
 
     cluster_id: Mapped[str] = mapped_column(ForeignKey("clusters.id"))
-    embedding_set_id: Mapped[str]
+    source_id: Mapped[str]
     embedding_row_index: Mapped[int]
 
     cluster: Mapped["Cluster"] = relationship(back_populates="assignments")

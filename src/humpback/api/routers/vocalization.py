@@ -30,8 +30,6 @@ from humpback.schemas.vocalization import (
     VocalizationTrainingJobOut,
     VocalizationTrainingSourceOut,
     VocalizationTypeCreate,
-    VocalizationTypeImportRequest,
-    VocalizationTypeImportResponse,
     VocalizationTypeOut,
     VocalizationTypeUpdate,
 )
@@ -42,12 +40,14 @@ from humpback.services.vocalization_service import (
     get_inference_job,
     get_model,
     get_training_job,
-    import_types_from_embedding_sets,
     list_types,
     update_type,
 )
 
-from humpback.schemas.clustering import VocalizationClusteringJobCreate
+from humpback.schemas.clustering import (
+    VocalizationClusteringJobCreate,
+    VocalizationClusteringVisualizationOut,
+)
 from humpback.schemas.converters import (
     cluster_to_out as _cluster_to_out,
     clustering_job_to_out as _clustering_job_to_out,
@@ -110,16 +110,6 @@ async def delete_vocalization_type(type_id: str, session: SessionDep):
         raise HTTPException(404, "Vocalization type not found")
 
 
-@router.post("/types/import", response_model=VocalizationTypeImportResponse)
-async def import_vocalization_types(
-    body: VocalizationTypeImportRequest, session: SessionDep
-):
-    added, skipped = await import_types_from_embedding_sets(
-        session, body.embedding_set_ids
-    )
-    return VocalizationTypeImportResponse(added=added, skipped=skipped)
-
-
 # ---- Models ----
 
 
@@ -170,8 +160,11 @@ async def get_model_training_source(model_id: str, session: SessionDep):
     if training_job is None:
         return VocalizationTrainingSourceOut()
 
+    raw_source_config = json.loads(training_job.source_config)
     return VocalizationTrainingSourceOut(
-        source_config=json.loads(training_job.source_config),
+        source_config={
+            "detection_job_ids": raw_source_config.get("detection_job_ids", [])
+        },
         parameters=json.loads(training_job.parameters)
         if training_job.parameters
         else None,
@@ -758,31 +751,6 @@ async def _resolve_training_row_audio(ds, row_index, session, settings):
         end_sample = int((offset_sec + duration_sec) * sr)
         return np.asarray(raw_audio[start_sample:end_sample]), sr
 
-    elif source_type == "embedding_set":
-        from humpback.models.audio import AudioFile
-        from humpback.models.processing import EmbeddingSet
-        from humpback.storage import resolve_audio_path
-
-        es_result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.id == source_id)
-        )
-        es = es_result.scalar_one_or_none()
-        if es is None:
-            raise HTTPException(404, f"Embedding set {source_id} not found")
-
-        af_result = await session.execute(
-            select(AudioFile).where(AudioFile.id == es.audio_file_id)
-        )
-        af = af_result.scalar_one_or_none()
-        if af is None:
-            raise HTTPException(404, "Audio file not found")
-
-        audio_path = resolve_audio_path(af, settings.storage_root)
-        raw_audio, sr = await asyncio.to_thread(decode_audio, audio_path)
-        start_sample = int(start_sec * sr)
-        end_sample = int(end_sec * sr)
-        return np.asarray(raw_audio[start_sample:end_sample]), sr
-
     else:
         raise HTTPException(400, f"Unknown source type: {source_type}")
 
@@ -800,10 +768,7 @@ async def extend_training_dataset_endpoint(
     updated = await extend_training_dataset(
         session,
         ds,
-        {
-            "embedding_set_ids": body.embedding_set_ids,
-            "detection_job_ids": body.detection_job_ids,
-        },
+        {"detection_job_ids": body.detection_job_ids},
         settings.storage_root,
     )
     await session.commit()
@@ -962,7 +927,10 @@ async def get_vocalization_clustering_clusters(job_id: str, session: SessionDep)
     return [_cluster_to_out(c) for c in clusters]
 
 
-@router.get("/clustering-jobs/{job_id}/visualization")
+@router.get(
+    "/clustering-jobs/{job_id}/visualization",
+    response_model=VocalizationClusteringVisualizationOut,
+)
 async def get_vocalization_clustering_visualization(
     job_id: str, session: SessionDep, settings: SettingsDep
 ):
@@ -989,12 +957,17 @@ async def get_vocalization_clustering_visualization(
         raise HTTPException(404, "UMAP coordinates not available for this job")
 
     table = pq.read_table(str(umap_path))
-    es_ids = table.column("embedding_set_id").to_pylist()
+    source_id_column = (
+        "detection_job_id"
+        if "detection_job_id" in table.column_names
+        else "embedding_set_id"
+    )
+    detection_job_ids = table.column(source_id_column).to_pylist()
     row_indices = table.column("embedding_row_index").to_pylist()
 
     from humpback.models.classifier import DetectionJob
 
-    unique_dj_ids = list(set(es_ids))
+    unique_dj_ids = list(set(detection_job_ids))
     dj_result = await session.execute(
         select(DetectionJob).where(DetectionJob.id.in_(unique_dj_ids))
     )
@@ -1103,24 +1076,25 @@ async def get_vocalization_clustering_visualization(
                 label = row_id_to_label.get(rid, "unlabeled")
                 voc_label_map[(dj_id, idx)] = label
 
-    hydrophone_names = [dj_map.get(es_id, es_id) for es_id in es_ids]
+    hydrophone_names = [dj_map.get(dj_id, dj_id) for dj_id in detection_job_ids]
     categories = [
-        voc_label_map.get((es_ids[i], row_indices[i]), "unlabeled")
-        for i in range(len(es_ids))
+        voc_label_map.get((detection_job_ids[i], row_indices[i]), "unlabeled")
+        for i in range(len(detection_job_ids))
     ]
     start_utcs = [
-        start_utc_map.get((es_ids[i], row_indices[i])) for i in range(len(es_ids))
+        start_utc_map.get((detection_job_ids[i], row_indices[i]))
+        for i in range(len(detection_job_ids))
     ]
 
     return {
         "x": table.column("x").to_pylist(),
         "y": table.column("y").to_pylist(),
         "cluster_label": table.column("cluster_label").to_pylist(),
-        "embedding_set_id": es_ids,
+        "detection_job_id": detection_job_ids,
         "embedding_row_index": row_indices,
         "audio_filename": hydrophone_names,
-        "audio_file_id": [""] * len(es_ids),
-        "window_size_seconds": [5.0] * len(es_ids),
+        "audio_file_id": [""] * len(detection_job_ids),
+        "window_size_seconds": [5.0] * len(detection_job_ids),
         "category": categories,
         "start_utc": start_utcs,
     }

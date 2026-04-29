@@ -15,19 +15,15 @@ from humpback.workers.classifier_worker import (
     run_training_job,
 )
 from humpback.workers.clustering_worker import run_clustering_job
-from humpback.workers.processing_worker import run_processing_job
 from humpback.workers.queue import (
     claim_clustering_job,
     claim_detection_job,
     claim_extraction_job,
     claim_hydrophone_detection_job,
-    claim_processing_job,
-    claim_search_job,
     claim_training_job,
     recover_stale_jobs,
 )
 from humpback.workers.retrain_worker import poll_retrain_workflows
-from humpback.workers.search_worker import run_search_job
 
 logger = logging.getLogger(__name__)
 
@@ -81,32 +77,7 @@ async def run_worker(settings: Settings | None = None) -> None:
             last_stale_check = now
 
         claimed = False
-        job = cjob = tjob = djob = None
-
-        # Try search jobs first (sub-second interactive work)
-        sjob = None
-        async with session_factory() as session:
-            sjob = await claim_search_job(session)
-        if sjob:
-            logger.info(f"Search job {sjob.id}")
-            async with session_factory() as session:
-                await run_search_job(session, sjob, settings)
-            claimed = True
-
-        if claimed:
-            continue
-
-        # Try processing jobs
-        async with session_factory() as session:
-            job = await claim_processing_job(session)
-        if job:
-            logger.info(f"Processing job {job.id} for audio {job.audio_file_id}")
-            async with session_factory() as session:
-                await run_processing_job(session, job, settings)
-            claimed = True
-
-        if claimed:
-            continue
+        cjob = tjob = djob = None
 
         # Then clustering jobs
         async with session_factory() as session:
@@ -188,25 +159,6 @@ async def run_worker(settings: Settings | None = None) -> None:
 
             async with session_factory() as session:
                 await run_detection_embedding_job(session, dejob, settings)
-            claimed = True
-
-        if claimed:
-            continue
-
-        # Then label processing jobs
-        lpjob = None
-        async with session_factory() as session:
-            from humpback.workers.queue import claim_label_processing_job
-
-            lpjob = await claim_label_processing_job(session)
-        if lpjob:
-            logger.info(f"Label processing job {lpjob.id}")
-            from humpback.workers.label_processing_worker import (
-                run_label_processing_job,
-            )
-
-            async with session_factory() as session:
-                await run_label_processing_job(session, lpjob, settings)
             claimed = True
 
         if claimed:

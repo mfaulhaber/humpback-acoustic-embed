@@ -3,6 +3,8 @@
 import logging
 from pathlib import Path
 
+import numpy as np
+import pyarrow.parquet as pq
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
@@ -416,17 +418,6 @@ async def get_training_summary(session: SessionDep):
 
 
 # ---- Detection Neighbors (Vector Search) ----
-
-
-def _infer_label_from_folder(folder_path: str | None) -> str | None:
-    if not folder_path:
-        return None
-    parts = Path(folder_path).parts
-    if not parts:
-        return None
-    return parts[-1] if parts else None
-
-
 @router.post(
     "/detection-neighbors/{detection_job_id}",
     response_model=DetectionNeighborsResponse,
@@ -437,61 +428,140 @@ async def get_detection_neighbors(
     session: SessionDep,
     settings: SettingsDep,
 ):
-    """Find similar sounds from reference embedding sets for a detection row."""
+    """Find similar labeled windows from other detection jobs."""
     from humpback.classifier.detector import read_detection_embedding
-    from humpback.models.classifier import ClassifierModel
-    from humpback.schemas.search import VectorSearchRequest
-    from humpback.services.classifier_service import get_detection_job
-    from humpback.services.search_service import similarity_search_by_vector
-    from humpback.storage import detection_embeddings_path
+    from humpback.models.classifier import ClassifierModel, DetectionJob
+    from humpback.services.classifier_service import resolve_detection_job_model_version
+    from humpback.storage import detection_embeddings_path, detection_row_store_path
 
-    job = await get_detection_job(session, detection_job_id)
-    if job is None:
-        raise HTTPException(404, "Detection job not found")
+    job = await _get_detection_job_or_404(session, detection_job_id)
+    try:
+        model_version = await resolve_detection_job_model_version(
+            session, detection_job_id
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
-    # Resolve model_version from the classifier model
-    cm_result = await session.execute(
-        select(ClassifierModel).where(ClassifierModel.id == job.classifier_model_id)
-    )
-    cm = cm_result.scalar_one_or_none()
-    if cm is None:
-        raise HTTPException(404, "Classifier model not found for detection job")
-
-    emb_path = detection_embeddings_path(
-        settings.storage_root, job.id, cm.model_version
-    )
+    emb_path = detection_embeddings_path(settings.storage_root, job.id, model_version)
     if not emb_path.exists():
         raise HTTPException(404, "No stored embeddings for this detection job")
 
-    embedding = read_detection_embedding(emb_path, body.row_id)
-    if embedding is None:
+    query_embedding = read_detection_embedding(emb_path, body.row_id)
+    if query_embedding is None:
         raise HTTPException(404, "Embedding not found for specified detection row")
+    query_vector = np.asarray(query_embedding, dtype=np.float32)
 
-    search_request = VectorSearchRequest(
-        vector=embedding,
-        model_version=cm.model_version,
-        top_k=body.top_k,
-        metric=body.metric,
-        embedding_set_ids=body.embedding_set_ids,
-    )
-
-    search_response = await similarity_search_by_vector(session, search_request)
-
-    hits = [
-        NeighborHit(
-            score=hit.score,
-            embedding_set_id=hit.embedding_set_id,
-            row_index=hit.row_index,
-            audio_file_id=hit.audio_file_id,
-            audio_filename=hit.audio_filename,
-            audio_folder_path=hit.audio_folder_path,
-            window_offset_seconds=hit.window_offset_seconds,
-            inferred_label=_infer_label_from_folder(hit.audio_folder_path),
+    stmt = (
+        select(DetectionJob, ClassifierModel)
+        .join(ClassifierModel, ClassifierModel.id == DetectionJob.classifier_model_id)
+        .where(
+            DetectionJob.status == "complete",
+            DetectionJob.id != detection_job_id,
+            ClassifierModel.model_version == model_version,
         )
-        for hit in search_response.results
-    ]
+    )
+    if body.candidate_detection_job_ids:
+        stmt = stmt.where(DetectionJob.id.in_(body.candidate_detection_job_ids))
+    candidates = (await session.execute(stmt)).all()
+
+    candidate_ids = [candidate_job.id for candidate_job, _ in candidates]
+    label_map: dict[tuple[str, str], str] = {}
+    if candidate_ids:
+        label_rows = (
+            await session.execute(
+                select(
+                    VocalizationLabel.detection_job_id,
+                    VocalizationLabel.row_id,
+                    VocalizationLabel.label,
+                ).where(VocalizationLabel.detection_job_id.in_(candidate_ids))
+            )
+        ).all()
+        grouped: dict[tuple[str, str], list[str]] = {}
+        for candidate_job_id, row_id, label in label_rows:
+            grouped.setdefault((candidate_job_id, row_id), []).append(label)
+        for key, labels in grouped.items():
+            preferred = sorted(label for label in labels if label != "(Negative)")
+            if preferred:
+                label_map[key] = preferred[0]
+
+    hit_rows: list[NeighborHit] = []
+    total_candidates = 0
+    use_cosine = body.metric == "cosine"
+    query_norm = float(np.linalg.norm(query_vector))
+
+    for candidate_job, candidate_model in candidates:
+        candidate_path = detection_embeddings_path(
+            settings.storage_root, candidate_job.id, candidate_model.model_version
+        )
+        if not candidate_path.exists():
+            continue
+
+        row_store_path = detection_row_store_path(
+            settings.storage_root, candidate_job.id
+        )
+        if not row_store_path.exists():
+            continue
+
+        table = pq.read_table(str(candidate_path))
+        if "row_id" not in table.column_names or "embedding" not in table.column_names:
+            continue
+
+        row_ids = [
+            str(value or "").strip() for value in table.column("row_id").to_pylist()
+        ]
+        embeddings = np.asarray(
+            [value.as_py() for value in table.column("embedding")],
+            dtype=np.float32,
+        )
+        if embeddings.size == 0:
+            continue
+
+        if use_cosine:
+            cand_norms = np.linalg.norm(embeddings, axis=1)
+            denom = np.maximum(cand_norms * max(query_norm, 1e-10), 1e-10)
+            scores = (embeddings @ query_vector) / denom
+        else:
+            scores = -np.linalg.norm(embeddings - query_vector, axis=1)
+
+        _fields, rows = read_detection_row_store(row_store_path)
+        row_by_id = {
+            str(row.get("row_id") or "").strip(): row
+            for row in rows
+            if str(row.get("row_id") or "").strip()
+        }
+
+        total_candidates += len(row_ids)
+        source_name = (
+            candidate_job.hydrophone_name or Path(candidate_job.audio_folder).name
+            if candidate_job.audio_folder
+            else None
+        ) or candidate_job.id[:8]
+
+        for row_id, score in zip(row_ids, scores, strict=False):
+            row = row_by_id.get(row_id)
+            if row is None:
+                continue
+            try:
+                start_utc = float(row.get("start_utc") or 0.0)
+                end_utc = float(row.get("end_utc") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            inferred_label = label_map.get((candidate_job.id, row_id))
+            hit_rows.append(
+                NeighborHit(
+                    score=float(score),
+                    detection_job_id=candidate_job.id,
+                    row_id=row_id,
+                    audio_filename=f"{source_name}:{row_id}",
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                    inferred_label=inferred_label,
+                )
+            )
+
+    hit_rows.sort(key=lambda hit: hit.score, reverse=True)
 
     return DetectionNeighborsResponse(
-        hits=hits,
-        total_candidates=search_response.total_candidates,
+        hits=hit_rows[: body.top_k],
+        total_candidates=total_candidates,
     )

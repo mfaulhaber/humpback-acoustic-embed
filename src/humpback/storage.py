@@ -32,6 +32,18 @@ def cluster_dir(storage_root: Path, clustering_job_id: str) -> Path:
     return storage_root / "clusters" / clustering_job_id
 
 
+def cleanup_manifests_dir(storage_root: Path) -> Path:
+    return storage_root / "cleanup-manifests"
+
+
+def path_within_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def atomic_rename(src: Path, dst: Path) -> None:
     """Move src to dst atomically (same filesystem). Creates parent dirs."""
     dst.parent.mkdir(parents=True, exist_ok=True)

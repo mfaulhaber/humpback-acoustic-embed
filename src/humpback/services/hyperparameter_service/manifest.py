@@ -1,8 +1,7 @@
 """Generate data manifests for hyperparameter search.
 
-Queries the database for classifier training jobs (embedding sets) and/or
-detection jobs (human-labeled windows), then builds a stable train/val/test
-split grouped by audio file.
+Queries the database for classifier training jobs and/or detection jobs, then
+builds a stable train/val/test split grouped by audio file.
 
 Only human-annotated labels are included — no unlabeled score-band negatives.
 """
@@ -35,19 +34,22 @@ def _get_sync_db_url(settings: Settings) -> str:
     return url.replace("sqlite+aiosqlite:", "sqlite:")
 
 
-def _query_job_embedding_sets(
+def _query_training_job_detection_sources(
     db_url: str, job_ids: list[int | str]
-) -> tuple[list[str], list[str]]:
-    """Query positive and negative embedding set IDs from training jobs."""
+) -> list[str]:
+    """Resolve detection-job sources from retained training jobs.
+
+    Legacy embedding-set jobs are rejected because their backing tables and
+    artifacts are retired.
+    """
     engine = create_engine(db_url)
-    positive_ids: list[str] = []
-    negative_ids: list[str] = []
+    detection_job_ids: list[str] = []
 
     with engine.connect() as conn:
         for job_id in job_ids:
             row = conn.execute(
                 text(
-                    "SELECT positive_embedding_set_ids, negative_embedding_set_ids "
+                    "SELECT source_mode, source_detection_job_ids "
                     "FROM classifier_training_jobs WHERE id = :id"
                 ),
                 {"id": str(job_id)},
@@ -55,76 +57,20 @@ def _query_job_embedding_sets(
             if row is None:
                 msg = f"Training job {job_id} not found"
                 raise ValueError(msg)
-            positive_ids.extend(json.loads(row[0]))
-            negative_ids.extend(json.loads(row[1]))
-
-    # Deduplicate while preserving order
-    positive_ids = list(dict.fromkeys(positive_ids))
-    negative_ids = list(dict.fromkeys(negative_ids))
-    engine.dispose()
-    return positive_ids, negative_ids
-
-
-def _verify_training_jobs_model_version(
-    db_url: str,
-    training_job_ids: list[int | str],
-    embedding_model_version: str,
-) -> None:
-    """Fail if any training job's ``model_version`` differs from the manifest's."""
-    engine = create_engine(db_url)
-    mismatches: list[str] = []
-    try:
-        with engine.connect() as conn:
-            for job_id in training_job_ids:
-                row = conn.execute(
-                    text(
-                        "SELECT model_version FROM classifier_training_jobs "
-                        "WHERE id = :id"
-                    ),
-                    {"id": str(job_id)},
-                ).fetchone()
-                if row is None:
-                    msg = f"Training job {job_id} not found"
-                    raise ValueError(msg)
-                if not row[0] or row[0] != embedding_model_version:
-                    mismatches.append(f"{job_id}: {row[0] or 'NULL'}")
-    finally:
-        engine.dispose()
-
-    if mismatches:
-        msg = (
-            "Training job(s) have model_version that does not match the manifest's "
-            f"embedding_model_version={embedding_model_version!r}: "
-            f"{'; '.join(mismatches)}"
-        )
-        raise ValueError(msg)
-
-
-def _query_embedding_sets(db_url: str, es_ids: list[str]) -> list[dict[str, Any]]:
-    """Query embedding set metadata."""
-    engine = create_engine(db_url)
-    results = []
-
-    with engine.connect() as conn:
-        for es_id in es_ids:
-            row = conn.execute(
-                text(
-                    "SELECT id, parquet_path, audio_file_id "
-                    "FROM embedding_sets WHERE id = :id"
-                ),
-                {"id": es_id},
-            ).fetchone()
-            if row is not None:
-                results.append(
-                    {
-                        "id": row[0],
-                        "parquet_path": row[1],
-                        "audio_file_id": row[2],
-                    }
+            source_mode = str(row[0] or "")
+            if source_mode == "embedding_sets":
+                raise ValueError(
+                    f"Training job {job_id} uses retired embedding-set sources"
                 )
+            if source_mode != "detection_manifest":
+                raise ValueError(
+                    f"Training job {job_id} is not detection-job backed: {source_mode}"
+                )
+            detection_job_ids.extend(json.loads(row[1] or "[]"))
 
+    detection_job_ids = list(dict.fromkeys(str(job_id) for job_id in detection_job_ids))
     engine.dispose()
-    return results
+    return detection_job_ids
 
 
 def _resolve_model_version_for_detection_jobs(
@@ -226,12 +172,6 @@ def _query_vocalization_labels(
 
     engine.dispose()
     return results
-
-
-def _count_parquet_rows(parquet_path: str) -> int:
-    """Count rows in a Parquet file without loading vectors."""
-    metadata = pq.read_metadata(parquet_path)
-    return metadata.num_rows
 
 
 # ---------------------------------------------------------------------------
@@ -669,55 +609,19 @@ def generate_manifest(
         raise ValueError(msg)
 
     examples: list[dict[str, Any]] = []
-    positive_ids: list[str] = []
-    negative_ids: list[str] = []
+    manifest_detection_job_ids = list(detection_job_ids or [])
 
-    # Embedding set sources
     if training_job_ids:
-        _verify_training_jobs_model_version(
-            db_url, training_job_ids, embedding_model_version
+        manifest_detection_job_ids.extend(
+            _query_training_job_detection_sources(db_url, training_job_ids)
         )
-        positive_ids, negative_ids = _query_job_embedding_sets(db_url, training_job_ids)
-        pos_sets = _query_embedding_sets(db_url, positive_ids)
-        neg_sets = _query_embedding_sets(db_url, negative_ids)
-
-        for es in pos_sets:
-            n_rows = _count_parquet_rows(es["parquet_path"])
-            for ri in range(n_rows):
-                examples.append(
-                    {
-                        "id": f"es{es['id']}_row{ri}",
-                        "split": "",
-                        "label": 1,
-                        "source_type": "embedding_set",
-                        "parquet_path": es["parquet_path"],
-                        "row_index": ri,
-                        "audio_file_id": es["audio_file_id"],
-                        "negative_group": None,
-                    }
-                )
-
-        for es in neg_sets:
-            n_rows = _count_parquet_rows(es["parquet_path"])
-            for ri in range(n_rows):
-                examples.append(
-                    {
-                        "id": f"es{es['id']}_row{ri}",
-                        "split": "",
-                        "label": 0,
-                        "source_type": "embedding_set",
-                        "parquet_path": es["parquet_path"],
-                        "row_index": ri,
-                        "audio_file_id": es["audio_file_id"],
-                        "negative_group": None,
-                    }
-                )
 
     # Detection job sources
     det_job_id_list: list[str] = []
     detection_job_summaries: dict[str, dict[str, Any]] = {}
-    if detection_job_ids:
-        detection_jobs = _query_detection_jobs(db_url, detection_job_ids)
+    if manifest_detection_job_ids:
+        manifest_detection_job_ids = list(dict.fromkeys(manifest_detection_job_ids))
+        detection_jobs = _query_detection_jobs(db_url, manifest_detection_job_ids)
         det_job_id_list = [dj["id"] for dj in detection_jobs]
         # perch_v2 sources carry only binary row-store labels — vocalization
         # labels are a TF2-side concern (see spec §4 / ADR-055).
@@ -750,8 +654,8 @@ def generate_manifest(
             "source_training_job_ids": (
                 [str(j) for j in training_job_ids] if training_job_ids else []
             ),
-            "positive_embedding_set_ids": positive_ids,
-            "negative_embedding_set_ids": negative_ids,
+            "positive_embedding_set_ids": [],
+            "negative_embedding_set_ids": [],
             "detection_job_ids": det_job_id_list,
             "detection_job_summaries": detection_job_summaries,
             "split_strategy": "by_audio_file",

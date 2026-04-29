@@ -360,6 +360,37 @@ def _get_spectrogram_cache(settings) -> SpectrogramCache:
     return SpectrogramCache(cache_dir, settings.spectrogram_cache_max_items)
 
 
+async def _resolve_audio_file_segment(
+    audio_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    start_seconds: float,
+    duration_seconds: float,
+) -> tuple[np.ndarray, int]:
+    import asyncio
+
+    from sqlalchemy import select
+
+    from humpback.models.audio import AudioFile
+    from humpback.processing.audio_io import decode_audio
+    from humpback.storage import resolve_audio_path
+
+    result = await session.execute(select(AudioFile).where(AudioFile.id == audio_id))
+    af = result.scalar_one_or_none()
+    if af is None:
+        raise HTTPException(404, "Audio file not found")
+    file_path = resolve_audio_path(af, settings.storage_root)
+    if not file_path.exists():
+        raise HTTPException(404, "Audio file not found on disk")
+
+    audio, sr = await asyncio.to_thread(decode_audio, file_path)
+    start_sample = int(start_seconds * sr)
+    end_sample = int((start_seconds + duration_seconds) * sr)
+    start_sample = min(start_sample, len(audio))
+    end_sample = min(end_sample, len(audio))
+    return np.asarray(audio[start_sample:end_sample]), sr
+
+
 # ---- Pydantic Models ----
 
 
@@ -1040,6 +1071,78 @@ async def browse_directories(root: str = Query("/")):
 
 
 # ---- Audio Slice / Spectrogram ----
+
+
+@router.get("/audio/{audio_id}/window")
+async def get_classifier_audio_window(
+    audio_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    start_seconds: float = Query(..., ge=0),
+    duration_seconds: float = Query(..., gt=0),
+    normalize: bool = Query(False),
+):
+    """Return a retained classifier-labeling WAV segment for a legacy audio row."""
+    segment, sr = await _resolve_audio_file_segment(
+        audio_id,
+        session,
+        settings,
+        start_seconds,
+        duration_seconds,
+    )
+    return _encode_wav_response(segment, sr, normalize)
+
+
+@router.get("/audio/{audio_id}/spectrogram-png")
+async def get_classifier_audio_spectrogram_png(
+    audio_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    start_seconds: float = Query(..., ge=0),
+    duration_seconds: float = Query(..., gt=0),
+):
+    """Return a retained classifier-labeling spectrogram for a legacy audio row."""
+    import asyncio
+
+    cache = _get_spectrogram_cache(settings)
+    cache_key = cache._make_key(
+        "classifier-audio",
+        audio_id,
+        start_seconds,
+        duration_seconds,
+        settings.spectrogram_hop_length,
+        settings.spectrogram_dynamic_range_db,
+        2048,
+        settings.spectrogram_width_px,
+        settings.spectrogram_height_px,
+    )
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="image/png")
+
+    segment, sr = await _resolve_audio_file_segment(
+        audio_id,
+        session,
+        settings,
+        start_seconds,
+        duration_seconds,
+    )
+
+    from humpback.processing.spectrogram import generate_spectrogram_png
+
+    png_bytes = await asyncio.to_thread(
+        generate_spectrogram_png,
+        segment,
+        sr,
+        hop_length=settings.spectrogram_hop_length,
+        dynamic_range_db=settings.spectrogram_dynamic_range_db,
+        width_px=settings.spectrogram_width_px,
+        height_px=settings.spectrogram_height_px,
+    )
+
+    cache.put(cache_key, png_bytes)
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @router.get("/detection-jobs/{job_id}/audio-slice")

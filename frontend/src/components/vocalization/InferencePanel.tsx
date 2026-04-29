@@ -21,34 +21,20 @@ import type { LabelingSource } from "@/api/types";
 interface Props {
   source: LabelingSource;
   embeddingsReady: boolean;
-  /** For local sources, the resolved embedding set ID from folder processing. */
-  localEmbeddingSetId?: string | null;
   onInferenceReady: (inferenceJobId: string) => void;
 }
 
 /** Derive the inference source_type and source_id from the LabelingSource. */
-function inferenceSourceParams(
-  source: LabelingSource,
-  localEmbeddingSetId?: string | null,
-): {
-  source_type: "detection_job" | "embedding_set";
+function inferenceSourceParams(source: LabelingSource): {
+  source_type: "detection_job";
   source_id: string;
-} | null {
-  switch (source.type) {
-    case "detection_job":
-      return { source_type: "detection_job", source_id: source.jobId };
-    case "embedding_set":
-      return { source_type: "embedding_set", source_id: source.embeddingSetId };
-    case "local":
-      if (!localEmbeddingSetId) return null;
-      return { source_type: "embedding_set", source_id: localEmbeddingSetId };
-  }
+} {
+  return { source_type: "detection_job", source_id: source.jobId };
 }
 
 export function InferencePanel({
   source,
   embeddingsReady,
-  localEmbeddingSetId,
   onInferenceReady,
 }: Props) {
   const { data: models = [] } = useVocClassifierModels();
@@ -61,9 +47,9 @@ export function InferencePanel({
   const activeModel = models.find((m) => m.is_active);
   const effectiveModelId = modelId || activeModel?.id || "";
 
-  const sourceParams = inferenceSourceParams(source, localEmbeddingSetId);
-  const source_type = sourceParams?.source_type ?? "detection_job";
-  const source_id = sourceParams?.source_id ?? "";
+  const sourceParams = inferenceSourceParams(source);
+  const source_type = sourceParams.source_type;
+  const source_id = sourceParams.source_id;
 
   // Auto-detect existing inference job for this source
   const existingJob = allInferenceJobs.find(

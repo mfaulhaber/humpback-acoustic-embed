@@ -7,8 +7,6 @@ reduce file sizes ahead of Phase 3 router splitting.
 from __future__ import annotations
 
 import json
-
-from humpback.schemas.audio import AudioFileOut, AudioMetadataOut
 from humpback.schemas.classifier import (
     AutoresearchCandidateArtifactPaths,
     AutoresearchCandidateDetailOut,
@@ -19,73 +17,12 @@ from humpback.schemas.classifier import (
     RetrainWorkflowOut,
 )
 from humpback.schemas.clustering import ClusteringJobOut, ClusterOut
-from humpback.schemas.label_processing import LabelProcessingJobOut
-from humpback.schemas.processing import ProcessingJobOut
 from humpback.schemas.vocalization import (
     TrainingDatasetOut,
     VocalizationInferenceJobOut,
     VocalizationModelOut,
     VocalizationTrainingJobOut,
 )
-
-
-# ---------------------------------------------------------------------------
-# Audio
-# ---------------------------------------------------------------------------
-
-
-def audio_file_to_out(af) -> AudioFileOut:
-    meta = None
-    if af.metadata_:
-        m = af.metadata_
-        meta = AudioMetadataOut(
-            id=m.id,
-            audio_file_id=m.audio_file_id,
-            tag_data=json.loads(m.tag_data) if m.tag_data else None,
-            visual_observations=json.loads(m.visual_observations)
-            if m.visual_observations
-            else None,
-            group_composition=json.loads(m.group_composition)
-            if m.group_composition
-            else None,
-            prey_density_proxy=json.loads(m.prey_density_proxy)
-            if m.prey_density_proxy
-            else None,
-        )
-    return AudioFileOut(
-        id=af.id,
-        filename=af.filename,
-        folder_path=af.folder_path,
-        source_folder=af.source_folder,
-        checksum_sha256=af.checksum_sha256,
-        duration_seconds=af.duration_seconds,
-        sample_rate_original=af.sample_rate_original,
-        created_at=af.created_at,
-        metadata=meta,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Processing
-# ---------------------------------------------------------------------------
-
-
-def processing_job_to_out(job, skipped: bool = False) -> ProcessingJobOut:
-    return ProcessingJobOut(
-        id=job.id,
-        audio_file_id=job.audio_file_id,
-        status=job.status,
-        encoding_signature=job.encoding_signature,
-        model_version=job.model_version,
-        window_size_seconds=job.window_size_seconds,
-        target_sample_rate=job.target_sample_rate,
-        feature_config=json.loads(job.feature_config) if job.feature_config else None,
-        error_message=job.error_message,
-        warning_message=job.warning_message,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        skipped=skipped,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +34,7 @@ def clustering_job_to_out(job) -> ClusteringJobOut:
     return ClusteringJobOut(
         id=job.id,
         status=job.status,
-        embedding_set_ids=json.loads(job.embedding_set_ids),
-        detection_job_ids=json.loads(job.detection_job_ids)
-        if job.detection_job_ids
-        else None,
+        detection_job_ids=json.loads(job.detection_job_ids or "[]"),
         parameters=json.loads(job.parameters) if job.parameters else None,
         error_message=job.error_message,
         metrics=json.loads(job.metrics_json) if job.metrics_json else None,
@@ -126,12 +60,16 @@ def cluster_to_out(c) -> ClusterOut:
 
 
 def classifier_training_job_to_out(job) -> ClassifierTrainingJobOut:
+    legacy_source_summary = (
+        json.loads(job.legacy_source_summary) if job.legacy_source_summary else None
+    )
     return ClassifierTrainingJobOut(
         id=job.id,
         status=job.status,
         name=job.name,
-        positive_embedding_set_ids=json.loads(job.positive_embedding_set_ids),
-        negative_embedding_set_ids=json.loads(job.negative_embedding_set_ids),
+        positive_embedding_set_ids=[],
+        negative_embedding_set_ids=[],
+        legacy_source_summary=legacy_source_summary,
         model_version=job.model_version,
         window_size_seconds=job.window_size_seconds,
         target_sample_rate=job.target_sample_rate,
@@ -314,32 +252,6 @@ def retrain_workflow_to_out(wf) -> RetrainWorkflowOut:
         error_message=wf.error_message,
         created_at=wf.created_at,
         updated_at=wf.updated_at,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Label Processing
-# ---------------------------------------------------------------------------
-
-
-def label_processing_job_to_out(job) -> LabelProcessingJobOut:
-    """Convert a LabelProcessingJob ORM instance to its response schema."""
-    return LabelProcessingJobOut(
-        id=job.id,
-        status=job.status,
-        workflow=job.workflow or "score_based",
-        classifier_model_id=job.classifier_model_id,
-        annotation_folder=job.annotation_folder,
-        audio_folder=job.audio_folder,
-        output_root=job.output_root,
-        parameters=json.loads(job.parameters) if job.parameters else None,
-        files_processed=job.files_processed,
-        files_total=job.files_total,
-        annotations_total=job.annotations_total,
-        result_summary=json.loads(job.result_summary) if job.result_summary else None,
-        error_message=job.error_message,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
     )
 
 

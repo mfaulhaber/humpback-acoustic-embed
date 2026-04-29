@@ -10,10 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from humpback.api.routers import (
     admin,
-    audio,
     classifier,
-    clustering,
-    processing,
 )
 from humpback.config import Settings
 from humpback.database import (
@@ -88,22 +85,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     import humpback.models.labeling  # noqa: F401 — register tables
     import humpback.models.vocalization  # noqa: F401 — register tables
 
-    app.include_router(audio.router)
-    app.include_router(processing.router)
-    app.include_router(clustering.router)
     app.include_router(classifier.router)
     app.include_router(admin.router)
     from humpback.api.routers import (
         call_parsing,
-        label_processing,
         labeling,
-        search,
         sequence_models,
         vocalization,
     )
 
-    app.include_router(search.router)
-    app.include_router(label_processing.router)
     app.include_router(labeling.router)
     app.include_router(vocalization.router)
     app.include_router(call_parsing.router)

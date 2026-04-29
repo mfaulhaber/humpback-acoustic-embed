@@ -140,7 +140,52 @@ interface MockState {
 
 async function setupMocks(page: Page, state: MockState) {
   await page.route("**/sequence-models/continuous-embeddings**", (route) => {
+    const url = route.request().url();
     const method = route.request().method();
+    const idMatch = url.match(/\/continuous-embeddings\/([^/?#]+)/);
+    if (idMatch) {
+      const id = idMatch[1];
+      if (id === CEJ_COMPLETE.id) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            job: CEJ_COMPLETE,
+            manifest: {
+              job_id: CEJ_COMPLETE.id,
+              model_version: CEJ_COMPLETE.model_version,
+              vector_dim: 1280,
+              window_size_seconds: 5.0,
+              hop_seconds: 1.0,
+              pad_seconds: 2.0,
+              target_sample_rate: 32000,
+              total_events: 4,
+              merged_spans: 2,
+              total_windows: 120,
+              spans: [
+                {
+                  merged_span_id: 0,
+                  start_timestamp: 100.0,
+                  end_timestamp: 106.0,
+                  window_count: 2,
+                  event_id: "evt-0",
+                  region_id: "r1",
+                },
+                {
+                  merged_span_id: 1,
+                  start_timestamp: 200.0,
+                  end_timestamp: 206.0,
+                  window_count: 2,
+                  event_id: "evt-1",
+                  region_id: "r1",
+                },
+              ],
+            },
+          }),
+        });
+      }
+      return route.fulfill({ status: 404 });
+    }
     if (method === "GET") {
       return route.fulfill({
         status: 200,
@@ -234,8 +279,7 @@ async function setupMocks(page: Page, state: MockState) {
         contentType: "application/json",
         body: JSON.stringify({
           job,
-          region_detection_job_id:
-            state.regionJobId ?? CEJ_COMPLETE.region_detection_job_id,
+          region_detection_job_id: state.regionJobId ?? "region-job-1",
           region_start_timestamp: 100.0,
           region_end_timestamp: 700.0,
           summary: job.status === "complete" ? SUMMARY : null,

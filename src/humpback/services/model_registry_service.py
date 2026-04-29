@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
+from humpback.models.classifier import ClassifierModel, ClassifierTrainingJob
+from humpback.models.detection_embedding_job import DetectionEmbeddingJob
 from humpback.models.model_registry import ModelConfig as ModelConfigRecord
-from humpback.models.processing import EmbeddingSet
 
 
 async def list_models(session: AsyncSession) -> list[ModelConfigRecord]:
@@ -120,19 +121,35 @@ async def set_default_model(
 
 
 async def delete_model(session: AsyncSession, model_id: str) -> None:
-    """Delete a model config. Raises ValueError if embeddings reference it."""
+    """Delete a model config. Raises ValueError if retained rows reference it."""
     model = await get_model_by_id(session, model_id)
     if model is None:
         raise ValueError("Model not found")
 
-    # Check if any embedding sets reference this model_version
-    result = await session.execute(
-        select(EmbeddingSet).where(EmbeddingSet.model_version == model.name).limit(1)
-    )
-    if result.scalar_one_or_none():
-        raise ValueError(
-            f"Cannot delete model '{model.name}': embedding sets reference it"
-        )
+    checks = [
+        (
+            select(ClassifierModel)
+            .where(ClassifierModel.model_version == model.name)
+            .limit(1),
+            "classifier models reference it",
+        ),
+        (
+            select(ClassifierTrainingJob)
+            .where(ClassifierTrainingJob.model_version == model.name)
+            .limit(1),
+            "classifier training jobs reference it",
+        ),
+        (
+            select(DetectionEmbeddingJob)
+            .where(DetectionEmbeddingJob.model_version == model.name)
+            .limit(1),
+            "detection embedding jobs reference it",
+        ),
+    ]
+    for stmt, detail in checks:
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none():
+            raise ValueError(f"Cannot delete model '{model.name}': {detail}")
 
     await session.delete(model)
     await session.commit()

@@ -1,66 +1,10 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  fetchProcessingJobs,
-  fetchEmbeddingSets,
-  createProcessingJob,
-  cancelProcessingJob,
-  deleteProcessingJob,
-  bulkDeleteProcessingJobs,
-} from "@/api/client";
-import type { ProcessingJobCreate } from "@/api/types";
-
-export function useProcessingJobs(refetchInterval?: number) {
-  return useQuery({
-    queryKey: ["processingJobs"],
-    queryFn: fetchProcessingJobs,
-    refetchInterval,
-  });
-}
+import { useQuery } from "@tanstack/react-query";
+import type { EmbeddingSet } from "@/api/types";
 
 export function useEmbeddingSets(refetchInterval?: number) {
   return useQuery({
     queryKey: ["embeddingSets"],
-    queryFn: fetchEmbeddingSets,
+    queryFn: async (): Promise<EmbeddingSet[]> => [],
     refetchInterval,
-  });
-}
-
-export function useCreateProcessingJob() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: ProcessingJobCreate) => createProcessingJob(body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["processingJobs"] });
-    },
-  });
-}
-
-export function useCancelProcessingJob() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (jobId: string) => cancelProcessingJob(jobId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["processingJobs"] });
-    },
-  });
-}
-
-export function useDeleteProcessingJob() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (jobId: string) => deleteProcessingJob(jobId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["processingJobs"] });
-    },
-  });
-}
-
-export function useBulkDeleteProcessingJobs() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (ids: string[]) => bulkDeleteProcessingJobs(ids),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["processingJobs"] });
-    },
   });
 }

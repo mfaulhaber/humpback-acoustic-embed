@@ -1,7 +1,7 @@
 # Development Backlog
 
-- Agile Modeling Phase 1b: search by uploaded audio clip by embedding the clip on the fly with a selected model, then searching existing embedding sets.
-- Agile Modeling Phase 3: connect search-result labeling into classifier training and the retrain loop.
+- Historical note: the old "search by uploaded audio clip" concept depended on the retired embedding-set/search workflow. Revisit only with a fresh detection-job-based design.
+- Future labeling-suggestion work should feed detection-job classifier training and candidate promotion, not the retired retrain workflow.
 - Agile Modeling Phase 4: prioritize labeling suggestions using model uncertainty signals such as entropy or margin.
 - Smoke-test `tf-linux-gpu` on a real Ubuntu/NVIDIA host, including `uv sync --extra tf-linux-gpu`, TensorFlow import, and GPU device visibility.
 - Generalize legacy hydrophone API and frontend naming toward archive-source terminology now that NOAA Glacier Bay shares the same backend surfaces.

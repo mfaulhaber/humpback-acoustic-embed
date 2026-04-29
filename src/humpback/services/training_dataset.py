@@ -10,9 +10,7 @@ import pyarrow.parquet as pq
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from humpback.models.audio import AudioFile
 from humpback.models.labeling import VocalizationLabel
-from humpback.models.processing import EmbeddingSet
 from humpback.models.training_dataset import TrainingDataset, TrainingDatasetLabel
 from humpback.storage import (
     detection_embeddings_path,
@@ -49,11 +47,16 @@ async def create_training_dataset_snapshot(
     Creates a TrainingDataset record, writes a unified parquet file, and copies
     labels into training_dataset_labels rows.
     """
-    embedding_set_ids: list[str] = source_config.get("embedding_set_ids", [])
     detection_job_ids: list[str] = source_config.get("detection_job_ids", [])
 
+    if source_config.get("embedding_set_ids"):
+        raise ValueError(
+            "Embedding-set vocalization training sources are retired; "
+            "use detection_job_ids"
+        )
+
     rows, label_sets = await _collect_from_sources(
-        session, embedding_set_ids, detection_job_ids, storage_root, row_offset=0
+        session, detection_job_ids, storage_root, row_offset=0
     )
 
     if not rows:
@@ -103,13 +106,18 @@ async def extend_training_dataset(
     storage_root: Path,
 ) -> TrainingDataset:
     """Append new source rows to an existing training dataset."""
-    embedding_set_ids: list[str] = extend_config.get("embedding_set_ids", [])
     detection_job_ids: list[str] = extend_config.get("detection_job_ids", [])
+
+    if extend_config.get("embedding_set_ids"):
+        raise ValueError(
+            "Embedding-set vocalization training sources are retired; "
+            "use detection_job_ids"
+        )
 
     row_offset = dataset.total_rows
 
     rows, label_sets = await _collect_from_sources(
-        session, embedding_set_ids, detection_job_ids, storage_root, row_offset
+        session, detection_job_ids, storage_root, row_offset
     )
 
     if not rows:
@@ -143,16 +151,9 @@ async def extend_training_dataset(
 
     # Merge source_config
     old_config = json.loads(dataset.source_config)
-    old_es = set(old_config.get("embedding_set_ids", []))
     old_dj = set(old_config.get("detection_job_ids", []))
-    old_es.update(embedding_set_ids)
     old_dj.update(detection_job_ids)
-    dataset.source_config = json.dumps(
-        {
-            "embedding_set_ids": sorted(old_es),
-            "detection_job_ids": sorted(old_dj),
-        }
-    )
+    dataset.source_config = json.dumps({"detection_job_ids": sorted(old_dj)})
 
     await session.flush()
     return dataset
@@ -194,7 +195,6 @@ def _rows_to_table(rows: list[dict]) -> pa.Table:
 
 async def _collect_from_sources(
     session: AsyncSession,
-    embedding_set_ids: list[str],
     detection_job_ids: list[str],
     storage_root: Path,
     row_offset: int,
@@ -208,69 +208,6 @@ async def _collect_from_sources(
     seen_keys: set[str] = set()
     next_idx = row_offset
 
-    # Source 1: Embedding sets with folder-inferred type
-    for es_id in embedding_set_ids:
-        es_result = await session.execute(
-            select(EmbeddingSet).where(EmbeddingSet.id == es_id)
-        )
-        es = es_result.scalar_one_or_none()
-        if es is None:
-            logger.warning("Embedding set %s not found, skipping", es_id)
-            continue
-
-        af_result = await session.execute(
-            select(AudioFile).where(AudioFile.id == es.audio_file_id)
-        )
-        af = af_result.scalar_one_or_none()
-        if af is None:
-            continue
-
-        # Infer type from folder path leaf
-        type_name = None
-        if af.folder_path:
-            parts = Path(af.folder_path).parts
-            if parts:
-                type_name = parts[-1].strip().title()
-
-        if not type_name:
-            logger.warning("No folder-based type for embedding set %s, skipping", es_id)
-            continue
-
-        parquet_path = Path(es.parquet_path)
-        if not parquet_path.exists():
-            logger.warning("Parquet %s not found, skipping", parquet_path)
-            continue
-
-        table = pq.read_table(str(parquet_path))
-        embeddings_col = table.column("embedding")
-        window_size = es.window_size_seconds
-
-        for i in range(table.num_rows):
-            key = f"es:{es_id}:{i}"
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-
-            vec = np.array(embeddings_col[i].as_py(), dtype=np.float32).tolist()
-            start_sec = float(i * window_size)
-            end_sec = start_sec + window_size
-
-            rows.append(
-                {
-                    "row_index": next_idx,
-                    "embedding": vec,
-                    "source_type": "embedding_set",
-                    "source_id": es_id,
-                    "filename": af.filename,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "confidence": None,
-                }
-            )
-            label_sets[next_idx] = {type_name}
-            next_idx += 1
-
-    # Source 2: Detection job vocalization labels
     from humpback.services.classifier_service.models import (
         resolve_detection_job_model_version,
     )

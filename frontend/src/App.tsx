@@ -1,15 +1,10 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
 import { AppShell } from "@/components/layout/AppShell";
-import { AudioTab } from "@/components/audio/AudioTab";
-import { ProcessingTab } from "@/components/processing/ProcessingTab";
-import { ClusteringTab } from "@/components/clustering/ClusteringTab";
 import { AdminTab } from "@/components/admin/AdminTab";
 import { TrainingTab } from "@/components/classifier/TrainingTab";
 import { HydrophoneTab } from "@/components/classifier/HydrophoneTab";
 import { LabelingTab } from "@/components/classifier/LabelingTab";
-import { SearchTab } from "@/components/search/SearchTab";
-import { LabelProcessingTab } from "@/components/label-processing/LabelProcessingTab";
 import { ClassifierTimeline } from "@/components/timeline/ClassifierTimeline";
 import { EmbeddingsPage } from "@/components/classifier/EmbeddingsPage";
 import { TuningTab } from "@/components/classifier/TuningTab";
@@ -34,12 +29,7 @@ export default function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Navigate to="/app/audio" replace />} />
-        <Route path="/app/audio/:audioId" element={<AudioTab />} />
-        <Route path="/app/audio" element={<AudioTab />} />
-        <Route path="/app/processing" element={<ProcessingTab />} />
-        <Route path="/app/clustering/:jobId" element={<ClusteringTab />} />
-        <Route path="/app/clustering" element={<ClusteringTab />} />
+        <Route path="/" element={<Navigate to="/app/call-parsing/detection" replace />} />
         <Route path="/app/classifier" element={<Navigate to="/app/classifier/training" replace />} />
         <Route path="/app/classifier/training" element={<TrainingTab />} />
         <Route path="/app/classifier/hydrophone" element={<HydrophoneTab />} />
@@ -66,10 +56,8 @@ export default function App() {
         <Route path="/app/sequence-models/continuous-embedding" element={<ContinuousEmbeddingJobsPage />} />
         <Route path="/app/sequence-models/hmm-sequence/:jobId" element={<HMMSequenceDetailPage />} />
         <Route path="/app/sequence-models/hmm-sequence" element={<HMMSequenceJobsPage />} />
-        <Route path="/app/search" element={<SearchTab />} />
-        <Route path="/app/label-processing" element={<LabelProcessingTab />} />
         <Route path="/app/admin" element={<AdminTab />} />
-        <Route path="*" element={<Navigate to="/app/audio" replace />} />
+        <Route path="*" element={<Navigate to="/app/call-parsing/detection" replace />} />
       </Routes>
       <Toaster />
     </AppShell>
