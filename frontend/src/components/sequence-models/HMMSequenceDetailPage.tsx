@@ -32,6 +32,7 @@ import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoun
 import { STATE_COLORS } from "./constants";
 import { SpanNavBar, type SpanInfo, type RegionGroup } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
+import { MotifExtractionPanel } from "./MotifExtractionPanel";
 
 function StateTimeline({
   spanItems,
@@ -739,6 +740,21 @@ export function HMMSequenceDetailPage() {
     handleNextEvent();
   }, [handleNextEvent]);
 
+  const handleJumpToTimestamp = useCallback(
+    (timestamp: number) => {
+      const target = spans.find(
+        (span) =>
+          timestamp >= span.startTimestamp && timestamp <= span.endTimestamp,
+      );
+      if (target) {
+        setSelectedSpan(target.id);
+      }
+      scrollSeqRef.current += 1;
+      setScrollToCenter({ target: timestamp, seq: scrollSeqRef.current });
+    },
+    [spans],
+  );
+
   const activeTimelineSpanKey =
     activeTimelineSpan == null ? null : String(activeTimelineSpan.id);
   const activeTimelineSpanStart = activeTimelineSpan?.startTimestamp;
@@ -963,6 +979,21 @@ export function HMMSequenceDetailPage() {
                 scrollToCenter={scrollToCenter}
               />
             </TimelineProvider>
+          </CardContent>
+        </Card>
+      )}
+
+      {isComplete && regionDetectionJobId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Motifs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MotifExtractionPanel
+              hmmSequenceJobId={job.id}
+              regionDetectionJobId={regionDetectionJobId}
+              onJumpToTimestamp={handleJumpToTimestamp}
+            />
           </CardContent>
         </Card>
       )}

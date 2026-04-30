@@ -283,7 +283,11 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count17:
         logger.warning(f"Recovered {count17} stale classifier feedback training job(s)")
 
-    from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
+    from humpback.models.sequence_models import (
+        ContinuousEmbeddingJob,
+        HMMSequenceJob,
+        MotifExtractionJob,
+    )
 
     result_cej = await session.execute(
         update(ContinuousEmbeddingJob)
@@ -315,6 +319,21 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count_hmm:
         logger.warning(f"Recovered {count_hmm} stale HMM sequence job(s)")
 
+    result_motif = await session.execute(
+        update(MotifExtractionJob)
+        .where(
+            MotifExtractionJob.status == JobStatus.running.value,
+            MotifExtractionJob.updated_at < cutoff,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_motif = _rowcount(result_motif)
+    if count_motif:
+        logger.warning(f"Recovered {count_motif} stale motif extraction job(s)")
+
     total = (
         count2
         + count3
@@ -331,6 +350,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count17
         + count_cej
         + count_hmm
+        + count_motif
     )
     if total:
         await session.commit()
@@ -729,6 +749,23 @@ async def claim_hmm_sequence_job(session: AsyncSession):
             queued_value=JobStatus.queued.value,
             running_value=JobStatus.running.value,
             order_attr=HMMSequenceJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_motif_extraction_job(session: AsyncSession):
+    from humpback.models.sequence_models import MotifExtractionJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            MotifExtractionJob,
+            status_attr=MotifExtractionJob.status,
+            queued_value=JobStatus.queued.value,
+            running_value=JobStatus.running.value,
+            order_attr=MotifExtractionJob.created_at,
         )
         if job is not None:
             return job

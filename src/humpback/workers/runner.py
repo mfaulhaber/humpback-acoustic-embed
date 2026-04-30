@@ -403,6 +403,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then motif extraction jobs
+        motifjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_motif_extraction_job
+
+            motifjob = await claim_motif_extraction_job(session)
+        if motifjob:
+            logger.info(f"Motif extraction job {motifjob.id}")
+            from humpback.workers.motif_extraction_worker import (
+                run_motif_extraction_job,
+            )
+
+            async with session_factory() as session:
+                await run_motif_extraction_job(session, motifjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

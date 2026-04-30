@@ -154,6 +154,22 @@ def hmm_sequence_exemplars_path(storage_root: Path, job_id: str) -> Path:
     return hmm_sequence_exemplars_dir(storage_root, job_id) / "exemplars.json"
 
 
+def motif_extraction_dir(storage_root: Path, job_id: str) -> Path:
+    return storage_root / "motif_extractions" / job_id
+
+
+def motif_extraction_manifest_path(storage_root: Path, job_id: str) -> Path:
+    return motif_extraction_dir(storage_root, job_id) / "manifest.json"
+
+
+def motif_extraction_motifs_path(storage_root: Path, job_id: str) -> Path:
+    return motif_extraction_dir(storage_root, job_id) / "motifs.parquet"
+
+
+def motif_extraction_occurrences_path(storage_root: Path, job_id: str) -> Path:
+    return motif_extraction_dir(storage_root, job_id) / "occurrences.parquet"
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 

@@ -8,11 +8,16 @@ from humpback.models.hyperparameter import (
     HyperparameterManifest,
     HyperparameterSearchJob,
 )
-from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
+from humpback.models.sequence_models import (
+    ContinuousEmbeddingJob,
+    HMMSequenceJob,
+    MotifExtractionJob,
+)
 from humpback.workers.queue import (
     STALE_JOB_TIMEOUT,
     claim_clustering_job,
     claim_detection_embedding_job,
+    claim_motif_extraction_job,
     recover_stale_jobs,
 )
 
@@ -38,6 +43,22 @@ async def test_claim_detection_embedding_job(session):
     await session.commit()
 
     claimed = await claim_detection_embedding_job(session)
+    assert claimed is not None
+    assert claimed.id == job.id
+    assert claimed.status == "running"
+
+
+async def test_claim_motif_extraction_job(session):
+    job = MotifExtractionJob(
+        status="queued",
+        hmm_sequence_job_id="hmm-1",
+        source_kind="surfperch",
+        config_signature="sig-1",
+    )
+    session.add(job)
+    await session.commit()
+
+    claimed = await claim_motif_extraction_job(session)
     assert claimed is not None
     assert claimed.id == job.id
     assert claimed.status == "running"
@@ -94,15 +115,30 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
         pca_dims=8,
         updated_at=stale_time,
     )
+    motif = MotifExtractionJob(
+        status="running",
+        hmm_sequence_job_id="hmm-1",
+        source_kind="surfperch",
+        config_signature="sig-1",
+        updated_at=stale_time,
+    )
     session.add_all(
-        [manifest, search, clustering, detection_embedding, continuous, hmm]
+        [manifest, search, clustering, detection_embedding, continuous, hmm, motif]
     )
     await session.commit()
 
     count = await recover_stale_jobs(session)
-    assert count == 6
+    assert count == 7
 
-    for job in (manifest, search, clustering, detection_embedding, continuous, hmm):
+    for job in (
+        manifest,
+        search,
+        clustering,
+        detection_embedding,
+        continuous,
+        hmm,
+        motif,
+    ):
         await session.refresh(job)
         assert job.status == "queued"
 

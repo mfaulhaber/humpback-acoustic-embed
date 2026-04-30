@@ -61,6 +61,10 @@
   {job_id}/pca_overlay.parquet     (PR 3: 2-D PCA + UMAP projections colored by viterbi_state — SurfPerch source only)
   {job_id}/label_distribution.json (PR 3: per-state vocalization-label counts from center-time join — SurfPerch source only)
   {job_id}/exemplars/exemplars.json (PR 3: per-state high-confidence, nearest-centroid, boundary exemplar windows — SurfPerch source only)
+/motif_extractions/
+  {job_id}/manifest.json           (schema/version, source HMM/CEJ ids, source_kind, extraction config, config_signature, counters, event_source_key_strategy)
+  {job_id}/motifs.parquet          (motif_key, states, length, occurrence_count, event_source_count, audio_source_count, group_count, event_core_fraction, background_fraction, mean_call_probability nullable, duration stats, rank_score, example_occurrence_ids)
+  {job_id}/occurrences.parquet     (occurrence_id, motif_key, states, source_kind, group_key, event_source_key, audio_source_key nullable, token/raw ranges, absolute timestamps, event/background fractions, mean_call_probability nullable, event-midpoint alignment fields)
 /timeline_cache/
   {job_id}/{zoom_level}/tile_{NNNN}.png   (PCEN-normalized spectrogram tiles, LRU-evicted per job)
   {job_id}/.cache_version                  (integer; current is 2. Migrations run on first access when missing or lower)

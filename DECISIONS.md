@@ -389,3 +389,42 @@ event-only) for the new source.
   `Event` for SurfPerch).
 - Mixing SurfPerch and CRNN sources in a single HMM job is explicitly out
   of scope for Phase 1.
+
+## ADR-058: First-class HMM motif extraction jobs
+
+**Date**: 2026-04-30
+**Status**: Accepted
+**Builds on**: ADR-056, ADR-057
+
+**Context**: ADR-056 identified motif mining as a downstream Sequence Models
+interpretation stage. After the HMM Sequence workflow gained both SurfPerch
+event-padded and CRNN region-based sources, motif extraction became important
+enough to compare, rerun, cancel, and inspect as durable analysis output rather
+than as a hidden cache behind the HMM detail page.
+
+**Decision**: Add `motif_extraction_jobs` as a first-class Sequence Models job
+type. Each job consumes one completed `hmm_sequence_jobs` row, collapses
+consecutive repeated Viterbi states into symbolic sequences, mines n-grams,
+filters by `minimum_occurrences` and `minimum_event_sources`, ranks motifs with
+configurable weights, and writes `manifest.json`, `motifs.parquet`, and
+`occurrences.parquet` under `motif_extractions/{job_id}/`.
+
+Alternatives considered:
+- On-demand motif cache keyed by config hash: rejected because motifs are a
+  durable research artifact and need status, history, cancellation, and failure
+  visibility.
+- Automatic default motif generation inside the HMM worker: rejected because
+  motif analysis should be an explicit downstream interpretation step, not an
+  implicit side effect of HMM training.
+
+**Consequences**:
+- Migration 062 adds `motif_extraction_jobs` with idempotent
+  `config_signature` lookup among queued/running/complete jobs.
+- The queue and worker runner claim motif extraction jobs after HMM Sequence
+  jobs.
+- The API exposes `/sequence-models/motif-extractions` plus motif summary and
+  occurrence endpoints.
+- The HMM detail page gains a Motifs panel with create/status controls, advanced
+  rank weights, ranked motif table, and event-midpoint aligned examples.
+- CRNN `call_probability` remains optional in ranking; the default weight is
+  null so ranking stays source-neutral unless explicitly enabled.
