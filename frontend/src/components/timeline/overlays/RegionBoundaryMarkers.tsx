@@ -3,9 +3,18 @@ import { useOverlayContext } from "./OverlayContext";
 interface RegionBoundaryMarkersProps {
   startEpoch: number;
   endEpoch: number;
+  dimOutside?: boolean;
+  lineColor?: string;
+  lineStyle?: "solid" | "dashed";
 }
 
-export function RegionBoundaryMarkers({ startEpoch, endEpoch }: RegionBoundaryMarkersProps) {
+export function RegionBoundaryMarkers({
+  startEpoch,
+  endEpoch,
+  dimOutside = true,
+  lineColor = "rgba(59, 130, 246, 0.7)",
+  lineStyle = "dashed",
+}: RegionBoundaryMarkersProps) {
   const { epochToX, canvasWidth, canvasHeight } = useOverlayContext();
 
   const startX = epochToX(startEpoch);
@@ -17,7 +26,7 @@ export function RegionBoundaryMarkers({ startEpoch, endEpoch }: RegionBoundaryMa
       data-testid="region-boundary-markers"
     >
       {/* Dimmed area before region */}
-      {startX > 0 && (
+      {dimOutside && startX > 0 && (
         <div
           style={{
             position: "absolute",
@@ -31,7 +40,7 @@ export function RegionBoundaryMarkers({ startEpoch, endEpoch }: RegionBoundaryMa
       )}
 
       {/* Dimmed area after region */}
-      {endX < canvasWidth && (
+      {dimOutside && endX < canvasWidth && (
         <div
           style={{
             position: "absolute",
@@ -53,7 +62,7 @@ export function RegionBoundaryMarkers({ startEpoch, endEpoch }: RegionBoundaryMa
             left: startX,
             width: 0,
             height: canvasHeight,
-            borderLeft: "1.5px dashed rgba(59, 130, 246, 0.7)",
+            borderLeft: `1.5px ${lineStyle} ${lineColor}`,
           }}
         />
       )}
@@ -67,7 +76,7 @@ export function RegionBoundaryMarkers({ startEpoch, endEpoch }: RegionBoundaryMa
             left: endX,
             width: 0,
             height: canvasHeight,
-            borderLeft: "1.5px dashed rgba(59, 130, 246, 0.7)",
+            borderLeft: `1.5px ${lineStyle} ${lineColor}`,
           }}
         />
       )}

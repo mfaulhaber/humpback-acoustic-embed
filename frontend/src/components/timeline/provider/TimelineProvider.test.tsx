@@ -1,10 +1,23 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { TimelineProvider } from "./TimelineProvider";
 import { useTimelineContext } from "./useTimelineContext";
 import { FULL_ZOOM, REVIEW_ZOOM } from "./types";
 import type { TimelinePlaybackHandle, ZoomPreset } from "./types";
 import { createRef, type ReactNode } from "react";
+
+beforeAll(() => {
+  vi.spyOn(window.HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+  vi.spyOn(window.HTMLMediaElement.prototype, "pause").mockReturnValue(undefined);
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+afterAll(() => {
+  vi.restoreAllMocks();
+});
 
 function wrapper(props?: {
   zoomLevels?: ZoomPreset[];
@@ -128,12 +141,71 @@ describe("pan clamping", () => {
   });
 });
 
+describe("timeline drag panning", () => {
+  it("pans from pointer delta using pxPerSec", () => {
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({ jobStart: 1000, jobEnd: 2000, defaultZoom: "1m" }),
+    });
+
+    act(() => {
+      result.current.setViewportDimensions(600, 300);
+    });
+    const startCenter = result.current.centerTimestamp;
+
+    act(() => {
+      expect(result.current.beginDragPan(300)).toBe(true);
+    });
+    act(() => {
+      result.current.updateDragPan(360);
+    });
+
+    expect(result.current.centerTimestamp).toBe(startCenter - 6);
+    expect(result.current.isDraggingTimeline).toBe(true);
+
+    act(() => {
+      result.current.endDragPan();
+    });
+    expect(result.current.isDraggingTimeline).toBe(false);
+  });
+
+  it("does not start a drag while playback is active", () => {
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({ jobStart: 1000, jobEnd: 2000 }),
+    });
+
+    act(() => {
+      result.current.play(1500, 10);
+    });
+
+    act(() => {
+      expect(result.current.beginDragPan(300)).toBe(false);
+    });
+    expect(result.current.isDraggingTimeline).toBe(false);
+  });
+});
+
 describe("usePlayback slice mode", () => {
   it("starts with isPlaying false", () => {
     const { result } = renderHook(() => useTimelineContext(), {
       wrapper: wrapper(),
     });
     expect(result.current.isPlaying).toBe(false);
+  });
+
+  it("sets playback epoch on play and clears it on pause", () => {
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper(),
+    });
+
+    act(() => {
+      result.current.play(1500, 10);
+    });
+    expect(result.current.playbackEpoch).toBe(1500);
+
+    act(() => {
+      result.current.pause();
+    });
+    expect(result.current.playbackEpoch).toBeNull();
   });
 });
 
@@ -171,14 +243,6 @@ describe("onZoomChange callback", () => {
 });
 
 describe("onPlayStateChange callback", () => {
-  beforeEach(() => {
-    vi.spyOn(window.HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
-    vi.spyOn(window.HTMLMediaElement.prototype, "pause").mockReturnValue(undefined);
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it("fires on play", () => {
     const onPlayStateChange = vi.fn();
     const { result } = renderHook(() => useTimelineContext(), {

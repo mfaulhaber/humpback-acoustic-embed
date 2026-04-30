@@ -12,12 +12,13 @@
 - Modify: `frontend/src/components/timeline/provider/types.ts`
 - Modify: `frontend/src/components/timeline/spectrogram/Spectrogram.tsx`
 - Modify: `frontend/src/components/sequence-models/HMMStateBar.tsx`
+- Modify: `frontend/src/components/timeline/provider/TimelineProvider.test.tsx`
 
 **Acceptance criteria:**
-- [ ] Timeline drag panning is exposed through the shared timeline context.
-- [ ] Dragging the spectrogram still pans horizontally.
-- [ ] Dragging the HMM state bar also pans horizontally.
-- [ ] Dragging does not start while playback is active.
+- [x] Timeline drag panning is exposed through the shared timeline context.
+- [x] Dragging the spectrogram still pans horizontally.
+- [x] Dragging the HMM state bar also pans horizontally.
+- [x] Dragging does not start while playback is active.
 
 **Tests needed:**
 - Frontend unit coverage for drag delta to center timestamp behavior.
@@ -28,15 +29,14 @@
 
 **Files:**
 - Modify: `frontend/src/components/timeline/provider/TimelineProvider.tsx`
-- Modify: `frontend/src/components/timeline/provider/usePlayback.ts`
-- Modify: `frontend/src/components/timeline/spectrogram/Playhead.tsx`
 - Modify: `frontend/src/components/sequence-models/HMMStateBar.tsx`
+- Modify: `frontend/src/components/timeline/provider/TimelineProvider.test.tsx`
 
 **Acceptance criteria:**
-- [ ] Playback time is the single source of truth for playhead position while audio is playing.
-- [ ] The timeline scrolls with playback at every zoom level.
-- [ ] The playhead remains aligned with current audio time instead of drifting to the viewport center after zoom or pan updates.
-- [ ] Playback epoch is cleared when playback ends or pauses.
+- [x] Playback time is the single source of truth for playhead position while audio is playing.
+- [x] The timeline scrolls with playback at every zoom level.
+- [x] The playhead remains aligned with current audio time instead of drifting to the viewport center after zoom or pan updates.
+- [x] Playback epoch is cleared when playback ends or pauses.
 
 **Tests needed:**
 - Frontend unit coverage for playback epoch updates and reset semantics.
@@ -46,15 +46,20 @@
 ### Task 3: All Visible Region State Bars and Region Highlighting
 
 **Files:**
+- Modify: `frontend/src/api/sequenceModels.ts`
 - Modify: `frontend/src/components/sequence-models/HMMSequenceDetailPage.tsx`
 - Modify: `frontend/src/components/sequence-models/HMMStateBar.tsx`
+- Modify: `frontend/src/components/timeline/overlays/RegionBoundaryMarkers.tsx`
+- Modify: `frontend/src/components/timeline/overlays/overlays.test.ts`
+- Modify: `src/humpback/api/routers/sequence_models.py`
+- Create: `frontend/src/components/sequence-models/HMMStateBar.test.ts`
 
 **Acceptance criteria:**
-- [ ] HMM state bar receives all decoded windows, not just the selected region/span.
-- [ ] At any zoom level, all visible regions render their state bars.
-- [ ] Current region is highlighted with white left/right bounding lines.
-- [ ] Timeline tiles outside the current region are not darkened or shaded.
-- [ ] Existing region boundary overlay no longer shades out-of-region tiles in the HMM Sequence timeline.
+- [x] HMM state bar receives all decoded windows, not just the selected region/span.
+- [x] At any zoom level, all visible regions render their state bars.
+- [x] Current region is highlighted with white left/right bounding lines.
+- [x] Timeline tiles outside the current region are not darkened or shaded.
+- [x] Existing region boundary overlay no longer shades out-of-region tiles in the HMM Sequence timeline.
 
 **Tests needed:**
 - Frontend unit coverage for visible window filtering and current-region boundary drawing helpers.
@@ -67,8 +72,8 @@
 - Create: `docs/mockups/hmm-sequence-timeline-bugs.html`
 
 **Acceptance criteria:**
-- [ ] Mockup demonstrates drag-scrollable timeline, all visible region bars, synchronized playhead, and white current-region bounds.
-- [ ] Mockup opens in the Codex in-app browser for review.
+- [x] Mockup demonstrates drag-scrollable timeline, all visible region bars, synchronized playhead, and white current-region bounds.
+- [x] Mockup opens in the Codex in-app browser for review.
 
 **Tests needed:**
 - Manual browser inspection only.

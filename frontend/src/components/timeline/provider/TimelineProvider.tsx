@@ -8,6 +8,7 @@ interface State {
   centerTimestamp: number;
   zoomLevel: number;
   isPlaying: boolean;
+  isDraggingTimeline: boolean;
   speed: number;
   viewportWidth: number;
   viewportHeight: number;
@@ -18,6 +19,7 @@ type Action =
   | { type: "PAN"; center: number }
   | { type: "SET_ZOOM"; index: number }
   | { type: "SET_PLAYING"; playing: boolean }
+  | { type: "SET_DRAGGING"; dragging: boolean }
   | { type: "SET_SPEED"; speed: number }
   | { type: "SEEK"; epoch: number }
   | { type: "SET_VIEWPORT"; width: number; height: number }
@@ -31,6 +33,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, zoomLevel: action.index };
     case "SET_PLAYING":
       return { ...state, isPlaying: action.playing };
+    case "SET_DRAGGING":
+      return { ...state, isDraggingTimeline: action.dragging };
     case "SET_SPEED":
       return { ...state, speed: action.speed };
     case "SEEK":
@@ -67,6 +71,7 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
     centerTimestamp: jobStart + (jobEnd - jobStart) / 2,
     zoomLevel: defaultIndex,
     isPlaying: false,
+    isDraggingTimeline: false,
     speed: 1,
     viewportWidth: 0,
     viewportHeight: 0,
@@ -88,6 +93,37 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
     (center: number) => dispatch({ type: "PAN", center: clampCenter(center) }),
     [clampCenter],
   );
+
+  const dragPanRef = useRef<{ startX: number; startCenter: number } | null>(null);
+
+  const beginDragPan = useCallback(
+    (clientX: number) => {
+      if (state.isPlaying) return false;
+      dragPanRef.current = {
+        startX: clientX,
+        startCenter: state.centerTimestamp,
+      };
+      dispatch({ type: "SET_DRAGGING", dragging: true });
+      return true;
+    },
+    [state.centerTimestamp, state.isPlaying],
+  );
+
+  const updateDragPan = useCallback(
+    (clientX: number) => {
+      if (!dragPanRef.current || state.isPlaying) return;
+      const dx = clientX - dragPanRef.current.startX;
+      const dt = dx / pxPerSec;
+      pan(dragPanRef.current.startCenter - dt);
+    },
+    [pan, pxPerSec, state.isPlaying],
+  );
+
+  const endDragPan = useCallback(() => {
+    if (!dragPanRef.current) return;
+    dragPanRef.current = null;
+    dispatch({ type: "SET_DRAGGING", dragging: false });
+  }, []);
 
   const onZoomChangeRef = useRef(onZoomChange);
   onZoomChangeRef.current = onZoomChange;
@@ -130,14 +166,14 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
     audioUrlBuilder,
     speed: state.speed,
     onTimeUpdate: (epoch) => {
+      dispatch({ type: "SET_PLAYBACK_EPOCH", epoch });
       if (scrollOnPlayback) {
         dispatch({ type: "PAN", center: clampCenter(epoch) });
-      } else {
-        dispatch({ type: "SET_PLAYBACK_EPOCH", epoch });
       }
     },
     onEnded: () => {
       dispatch({ type: "SET_PLAYING", playing: false });
+      dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: null });
       onPlayStateChangeRef.current?.(false);
     },
   });
@@ -147,17 +183,16 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
       const start = startEpoch ?? state.centerTimestamp;
       playbackHandle.play(start, duration);
       dispatch({ type: "SET_PLAYING", playing: true });
-      if (!scrollOnPlayback) {
-        dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: start });
-      }
+      dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: start });
       onPlayStateChangeRef.current?.(true);
     },
-    [state.centerTimestamp, playbackHandle, scrollOnPlayback],
+    [state.centerTimestamp, playbackHandle],
   );
 
   const pause = useCallback(() => {
     playbackHandle.pause();
     dispatch({ type: "SET_PLAYING", playing: false });
+    dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: null });
     onPlayStateChangeRef.current?.(false);
   }, [playbackHandle]);
 
@@ -174,6 +209,20 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
     pause,
     get isPlaying() { return state.isPlaying; },
   }), [play, pause, state.isPlaying]);
+
+  // End drag panning if the pointer is released outside the active panel.
+  useEffect(() => {
+    const handleGlobalMouseUp = () => endDragPan();
+    window.addEventListener("mouseup", handleGlobalMouseUp);
+    return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
+  }, [endDragPan]);
+
+  // Keep panning when the pointer leaves the panel during a drag.
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => updateDragPan(e.clientX);
+    window.addEventListener("mousemove", handleGlobalMouseMove);
+    return () => window.removeEventListener("mousemove", handleGlobalMouseMove);
+  }, [updateDragPan]);
 
   // Keyboard shortcuts (disabled when consumer manages its own)
   useEffect(() => {
@@ -229,6 +278,9 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
       play,
       pause,
       togglePlay,
+      beginDragPan,
+      updateDragPan,
+      endDragPan,
       seekTo,
       setSpeed,
       setViewportDimensions,
@@ -250,6 +302,9 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
       play,
       pause,
       togglePlay,
+      beginDragPan,
+      updateDragPan,
+      endDragPan,
       seekTo,
       setSpeed,
       setViewportDimensions,

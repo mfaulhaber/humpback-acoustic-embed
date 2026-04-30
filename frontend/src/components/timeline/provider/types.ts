@@ -24,6 +24,7 @@ export interface TimelineState {
   centerTimestamp: number;
   zoomLevel: number;
   isPlaying: boolean;
+  isDraggingTimeline: boolean;
   speed: number;
   viewportWidth: number;
   viewportHeight: number;
@@ -46,6 +47,9 @@ export interface TimelineActions {
   play: (startEpoch?: number, duration?: number) => void;
   pause: () => void;
   togglePlay: () => void;
+  beginDragPan: (clientX: number) => boolean;
+  updateDragPan: (clientX: number) => void;
+  endDragPan: () => void;
   seekTo: (epoch: number) => void;
   setSpeed: (speed: number) => void;
   setViewportDimensions: (width: number, height: number) => void;
