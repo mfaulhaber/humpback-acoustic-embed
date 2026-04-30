@@ -8,21 +8,54 @@ region detections. Per-job status transitions follow the standard
 
 All endpoints are mounted under `/sequence-models/`.
 
-## Continuous Embedding (PR 1)
+## Continuous Embedding (PR 1, ADR-056 + ADR-057)
+
+The producer ships in two source families discriminated on
+`model_version` (ADR-057):
+
+- **`surfperch-tensorflow2`** (event-padded SurfPerch chunks): pass an
+  `event_segmentation_job_id` from a completed Pass 2 job; the producer
+  emits 1-second-hop SurfPerch embeddings padded around each event.
+- **`crnn-call-parsing-pytorch`** (Pass 1 region-scoped chunks): pass
+  `region_detection_job_id`, `event_segmentation_job_id` (Pass 2
+  disambiguator), `crnn_segmentation_model_id`, plus chunk geometry and
+  projection config; the producer slices the segmentation CRNN's BiGRU
+  activations into 250 ms chunks per Pass 1 region.
 
 - `POST /sequence-models/continuous-embeddings` — create or reuse a
-  continuous-embedding job, idempotent on `encoding_signature`. Accepts:
-  - `region_detection_job_id` (required) — completed hydrophone-backed Pass-1 job FK
+  continuous-embedding job, idempotent on `encoding_signature`.
+
+  **SurfPerch source** accepts:
+  - `event_segmentation_job_id` (required) — completed Pass 2 job FK
   - `model_version` (default `"surfperch-tensorflow2"`)
   - `hop_seconds` (default `1.0`, must be > 0)
-  - `pad_seconds` (default `10.0`, must be >= 0)
+  - `pad_seconds` (default `2.0`, must be >= 0)
+
+  **CRNN region-based source** accepts:
+  - `region_detection_job_id` (required) — completed Pass 1 job FK
+  - `event_segmentation_job_id` (required disambiguator) — completed
+    Pass 2 job whose `region_detection_job_id` matches the submitted
+    Pass 1 job
+  - `crnn_segmentation_model_id` (required) — `segmentation_models` row
+  - `chunk_size_seconds`, `chunk_hop_seconds` (required, > 0;
+    typical `0.250` / `0.250` or `0.250` / `0.125`)
+  - `projection_kind` (required; `"identity"` | `"random"` | `"pca"`;
+    default `"identity"`)
+  - `projection_dim` (required, > 0; default `1024` for identity)
+  - `model_version` (default `"crnn-call-parsing-pytorch"`)
+
+  XOR rule (Pydantic): when `region_detection_job_id` is set the request
+  is the CRNN source; the disambiguator and CRNN-only fields are
+  required, and conversely the CRNN-only fields must be absent on
+  SurfPerch requests.
 
   Returns `ContinuousEmbeddingJob`. Status `201` when a new row is
   created; `200` when an existing complete or in-flight (`queued` /
   `running`) row with the same signature is returned, or when a failed /
   canceled row with the same signature is reset back to `queued`.
-  `400` on validation errors (missing region detection job, incomplete
-  source job, non-hydrophone source, unsupported `model_version`).
+  `422` on validation errors (missing source job, incomplete upstream
+  job, parent mismatch, unsupported `model_version`, CRNN-only fields
+  on a SurfPerch source).
 
 - `GET /sequence-models/continuous-embeddings` — list jobs newest-first
   with optional `?status=` filter.
@@ -43,22 +76,39 @@ All endpoints are mounted under `/sequence-models/`.
 
 ### Schemas
 
-`ContinuousEmbeddingJob` exposes the producer DB row: status, all
-producer parameters (`hop_seconds`, `pad_seconds`, `window_size_seconds`,
-`target_sample_rate`, `model_version`, `feature_config_json`),
-`encoding_signature`, post-completion summary stats (`vector_dim`,
-`total_regions`, `merged_spans`, `total_windows`, `parquet_path`),
-`error_message`, and UTC timestamps.
+`ContinuousEmbeddingJob` exposes the producer DB row: status,
+`model_version`, source-kind-specific parameters (SurfPerch:
+`event_segmentation_job_id`, `hop_seconds`, `pad_seconds`,
+`window_size_seconds`; CRNN: `region_detection_job_id`,
+`event_segmentation_job_id`, `chunk_size_seconds`, `chunk_hop_seconds`,
+`crnn_checkpoint_sha256`, `crnn_segmentation_model_id`,
+`projection_kind`, `projection_dim`), `target_sample_rate`,
+`feature_config_json`, `encoding_signature`, post-completion summary
+stats (SurfPerch: `vector_dim`, `total_events`, `merged_spans`,
+`total_windows`; CRNN: `total_regions`, `total_chunks`, `vector_dim`),
+`parquet_path`, `error_message`, and UTC timestamps. SurfPerch-only
+columns are null on CRNN rows and vice versa.
 
 `ContinuousEmbeddingJobManifest` matches the `manifest.json` sidecar
-written next to `embeddings.parquet`, with per-merged-span window-count
-summaries (`merged_span_id`, `start_timestamp`, `end_timestamp`,
-`window_count`, `source_region_ids`).
+written next to `embeddings.parquet`. SurfPerch-source manifests
+include `spans` with per-merged-span window summaries
+(`merged_span_id`, `start_timestamp`, `end_timestamp`, `window_count`,
+`event_id`, `region_id`); CRNN-source manifests include `regions` with
+per-region chunk-count summaries plus `crnn_checkpoint_sha256`,
+projection config, and the parent Pass 1 / Pass 2 job ids.
 
-The parquet artifact stores one row per embedded window with
-`source_region_ids` preserved as UUID strings, allowing downstream
-sequence-model consumers to trace each window back to its contributing
-Pass-1 region rows.
+The parquet artifact schema is source-specific:
+
+- **SurfPerch source** stores one row per embedded window with
+  `merged_span_id`, `event_id`, `window_index_in_span`,
+  `audio_file_id`, `start_timestamp`, `end_timestamp`, `is_in_pad`, and
+  `embedding`.
+- **CRNN source** stores one row per chunk with `region_id`,
+  `audio_file_id`, `hydrophone_id`, `chunk_index_in_region`,
+  `start_timestamp`, `end_timestamp`, `is_in_pad`, `call_probability`,
+  `event_overlap_fraction`, `nearest_event_id` (nullable),
+  `distance_to_nearest_event_seconds` (nullable), `tier`
+  (`event_core` | `near_event` | `background`), and `embedding`.
 
 See `src/humpback/schemas/sequence_models.py` for the full Pydantic
 definitions.
@@ -82,17 +132,34 @@ statistics and visualizations for latent-state discovery.
   - `min_sequence_length_frames` (default `10`, >= 1)
   - `tol` (default `1e-4`, > 0)
 
-  Returns `HMMSequenceJob`. Status `201` on creation, `400` on
-  validation errors (missing or non-complete source job).
+  **CRNN-source jobs** additionally accept (rejected with `422` on
+  SurfPerch sources):
+  - `training_mode` (`"full_region"` | `"event_balanced"` |
+    `"event_only"`; default `"event_balanced"` when source is CRNN)
+  - `event_core_overlap_threshold` (default `0.5`)
+  - `near_event_window_seconds` (default `5.0`)
+  - `event_balanced_proportions` (default
+    `{"event_core": 0.40, "near_event": 0.35, "background": 0.25}`;
+    must sum to 1.0 ± 1e-6)
+  - `subsequence_length_chunks` (default `32`)
+  - `subsequence_stride_chunks` (default `16`)
+  - `target_train_chunks` (default `200_000`)
+  - `min_region_length_seconds` (default `2.0`)
+
+  Returns `HMMSequenceJob`. Status `201` on creation, `422` on
+  validation errors (missing or non-complete source job, CRNN-only
+  fields on a SurfPerch source, `event_balanced_proportions` not
+  summing to 1.0).
 
 - `GET /sequence-models/hmm-sequences` — list jobs newest-first with
   optional `?status=` and `?continuous_embedding_job_id=` filters.
 
 - `GET /sequence-models/hmm-sequences/{id}` — return job detail plus
   `state_summary.json` sidecar (when artifacts exist). Response shape:
-  `{ job: HMMSequenceJob, region_detection_job_id: string, region_start_timestamp: number | null, region_end_timestamp: number | null, summary: HMMStateSummary[] | null }`.
+  `{ job: HMMSequenceJob, region_detection_job_id: string, region_start_timestamp: number | null, region_end_timestamp: number | null, summary: HMMStateSummary[] | null, tier_composition: StateTierComposition[] | null, source_kind: "surfperch" | "region_crnn" }`.
   Source metadata is resolved from the parent continuous embedding job and
-  region detection job. `404` if the job is missing.
+  region detection job. `tier_composition` is only populated for
+  CRNN-source jobs. `404` if the job is missing.
 
 - `GET /sequence-models/hmm-sequences/{id}/states` — paginated
   `states.parquet` rows as JSON. Query params: `offset` (default 0),

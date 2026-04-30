@@ -21,6 +21,11 @@ from humpback.call_parsing.segmentation.features import (
     extract_logmel,
     normalize_per_region_zscore,
 )
+from humpback.call_parsing.segmentation.window_iter import (
+    MAX_WINDOW_SEC as _MAX_WINDOW_SEC,
+    WINDOW_HOP_SEC as _WINDOW_HOP_SEC,
+    iter_inference_windows,
+)
 from humpback.call_parsing.types import Event
 from humpback.schemas.call_parsing import (
     SegmentationDecoderConfig,
@@ -35,14 +40,6 @@ Takes the region object, returns a 1-D float array at
 that knows how to resolve the upstream Pass 1 job's source (audio file
 vs. hydrophone range) into bytes.
 """
-
-
-# Maximum audio duration for a single forward pass. Regions longer than
-# this are processed with overlapping windows and the per-frame
-# probabilities are averaged over the overlap zone. This keeps inference
-# consistent with the 30-second crops used during feedback training.
-_MAX_WINDOW_SEC: float = 30.0
-_WINDOW_HOP_SEC: float = 15.0
 
 
 def _infer_single(
@@ -87,30 +84,19 @@ def _infer_windowed(
     prob_sum = np.zeros(total_frames, dtype=np.float64)
     weight = np.zeros(total_frames, dtype=np.float64)
 
-    window_samples = int(max_window_sec * sr)
-    hop_samples = int(window_hop_sec * sr)
-
-    offset = 0
-    while offset < total_samples:
-        end = min(offset + window_samples, total_samples)
-        # If the remaining tail is too short, extend the window backwards
-        if total_samples - offset < window_samples // 2 and offset > 0:
-            offset = max(0, total_samples - window_samples)
-            end = total_samples
-
-        chunk = audio[offset:end]
+    for chunk, frame_offset in iter_inference_windows(
+        audio,
+        sample_rate=sr,
+        frame_hop_samples=hop_length,
+        window_seconds=max_window_sec,
+        hop_seconds=window_hop_sec,
+    ):
         chunk_probs = _infer_single(model, chunk, feature_config, device)
-
-        frame_offset = int(np.round(offset / hop_length))
         n_frames = len(chunk_probs)
         frame_end = min(frame_offset + n_frames, total_frames)
         usable = frame_end - frame_offset
         prob_sum[frame_offset:frame_end] += chunk_probs[:usable]
         weight[frame_offset:frame_end] += 1.0
-
-        if end >= total_samples:
-            break
-        offset += hop_samples
 
     # Avoid division by zero for any unvisited frames.
     weight = np.maximum(weight, 1.0)

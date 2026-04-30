@@ -435,4 +435,179 @@ test.describe("Sequence Models — HMM Sequence", () => {
     const zoomButtons = viewerPanel.locator("button").filter({ hasText: /^\d+[smh]$/ });
     await expect(zoomButtons.first()).toBeVisible();
   });
+
+  test("CRNN-source detail page renders one navigable span per region", async ({
+    page,
+  }) => {
+    // Regression for: CRNN states.parquet uses region_id, not merged_span_id.
+    // Frontend must group/filter by region_id so all regions are reachable.
+    const CRNN_CEJ = {
+      ...CEJ_COMPLETE,
+      id: "cej-crnn-1",
+      model_version: "crnn-region-bigru-v1",
+      region_detection_job_id: "region-job-crnn",
+      event_segmentation_job_id: null,
+      total_regions: 3,
+      total_chunks: 6,
+    };
+    const CRNN_JOB = {
+      ...COMPLETE_JOB,
+      id: "hmm-crnn-1",
+      continuous_embedding_job_id: CRNN_CEJ.id,
+      training_mode: "event_balanced",
+    };
+    // Region IDs deliberately chosen so lexicographic order ("aaa", "mmm",
+    // "zzz") differs from chronological order ("zzz" first, "aaa" second,
+    // "mmm" third). Catches a regression where spanIds is sorted as strings.
+    const CRNN_STATES = {
+      total: 6,
+      offset: 0,
+      limit: 5000,
+      items: [
+        { region_id: "zzz-first", chunk_index_in_region: 0, viterbi_state: 0, start_timestamp: 100.0, end_timestamp: 100.25, state_posterior: [0.9, 0.05, 0.03, 0.02], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, tier: "event_core" },
+        { region_id: "zzz-first", chunk_index_in_region: 1, viterbi_state: 1, start_timestamp: 100.25, end_timestamp: 100.5, state_posterior: [0.1, 0.8, 0.05, 0.05], max_state_probability: 0.8, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, tier: "event_core" },
+        { region_id: "aaa-second", chunk_index_in_region: 0, viterbi_state: 2, start_timestamp: 200.0, end_timestamp: 200.25, state_posterior: [0.05, 0.05, 0.85, 0.05], max_state_probability: 0.85, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, tier: "near_event" },
+        { region_id: "aaa-second", chunk_index_in_region: 1, viterbi_state: 3, start_timestamp: 200.25, end_timestamp: 200.5, state_posterior: [0.02, 0.03, 0.05, 0.9], max_state_probability: 0.9, was_used_for_training: true, audio_file_id: 1, is_in_pad: false, tier: "near_event" },
+        { region_id: "mmm-third", chunk_index_in_region: 0, viterbi_state: 0, start_timestamp: 300.0, end_timestamp: 300.25, state_posterior: [0.7, 0.1, 0.1, 0.1], max_state_probability: 0.7, was_used_for_training: false, audio_file_id: 1, is_in_pad: false, tier: "background" },
+        { region_id: "mmm-third", chunk_index_in_region: 1, viterbi_state: 1, start_timestamp: 300.25, end_timestamp: 300.5, state_posterior: [0.1, 0.7, 0.1, 0.1], max_state_probability: 0.7, was_used_for_training: false, audio_file_id: 1, is_in_pad: false, tier: "background" },
+      ],
+    };
+
+    await page.route("**/sequence-models/continuous-embeddings/cej-crnn-1**", (route) => {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: CRNN_CEJ,
+          manifest: {
+            job_id: CRNN_CEJ.id,
+            model_version: CRNN_CEJ.model_version,
+            source_kind: "region_crnn",
+            vector_dim: 512,
+            target_sample_rate: 32000,
+            region_detection_job_id: CRNN_CEJ.region_detection_job_id,
+            chunk_size_seconds: 0.25,
+            chunk_hop_seconds: 0.25,
+            total_regions: 3,
+            total_chunks: 6,
+            regions: [
+              { region_id: "zzz-first", start_timestamp: 100.0, end_timestamp: 100.5, chunk_count: 2 },
+              { region_id: "aaa-second", start_timestamp: 200.0, end_timestamp: 200.5, chunk_count: 2 },
+              { region_id: "mmm-third", start_timestamp: 300.0, end_timestamp: 300.5, chunk_count: 2 },
+            ],
+          },
+        }),
+      });
+    });
+
+    await page.route("**/sequence-models/hmm-sequences/hmm-crnn-1**", (route) => {
+      const url = route.request().url();
+      if (url.includes("/states")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(CRNN_STATES),
+        });
+      }
+      if (url.includes("/transitions")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(TRANSITIONS),
+        });
+      }
+      if (url.includes("/dwell")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(DWELL),
+        });
+      }
+      if (url.includes("/overlay")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(OVERLAY),
+        });
+      }
+      if (url.includes("/label-distribution")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(LABEL_DISTRIBUTION),
+        });
+      }
+      if (url.includes("/exemplars")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(EXEMPLARS),
+        });
+      }
+      // Detail endpoint
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: CRNN_JOB,
+          region_detection_job_id: "region-job-crnn",
+          region_start_timestamp: 100.0,
+          region_end_timestamp: 300.5,
+          summary: SUMMARY,
+          source_kind: "region_crnn",
+          tier_composition: [
+            { state: 0, event_core: 0.5, near_event: 0.0, background: 0.5 },
+            { state: 1, event_core: 0.5, near_event: 0.0, background: 0.5 },
+            { state: 2, event_core: 0.0, near_event: 1.0, background: 0.0 },
+            { state: 3, event_core: 0.0, near_event: 1.0, background: 0.0 },
+          ],
+        }),
+      });
+    });
+
+    await page.route("**/call-parsing/region-jobs/*/tile**", (route) => {
+      const pixel = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      return route.fulfill({ status: 200, contentType: "image/png", body: pixel });
+    });
+    await page.route("**/call-parsing/region-jobs/*/audio-slice**", (route) => {
+      return route.fulfill({
+        status: 200,
+        contentType: "audio/mpeg",
+        body: Buffer.alloc(0),
+      });
+    });
+
+    await page.goto(`/app/sequence-models/hmm-sequence/${CRNN_JOB.id}`);
+    await expect(page.getByTestId("hmm-detail-page")).toBeVisible();
+    await expect(page.getByTestId("hmm-detail-source-kind")).toHaveText("CRNN");
+
+    // Three distinct regions → three navigable items (not one).
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Region 1/3");
+    const selector = page.getByTestId("hmm-span-selector");
+    await expect(selector).toBeVisible();
+    const options = selector.locator("option");
+    await expect(options).toHaveCount(3);
+
+    // Order is chronological (start_timestamp), not lexicographic on
+    // region_id — "zzz-first" comes before "aaa-second".
+    await expect(options.nth(0)).toContainText("zzz-firs");
+    await expect(options.nth(1)).toContainText("aaa-seco");
+    await expect(options.nth(2)).toContainText("mmm-thir");
+
+    // Stepping forward must reach the third region.
+    await page.getByTestId("hmm-span-next").click();
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Region 2/3");
+    await page.getByTestId("hmm-span-next").click();
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Region 3/3");
+    await expect(page.getByTestId("hmm-span-next")).toBeDisabled();
+
+    // Region-level nav is suppressed for CRNN (each span IS a region).
+    await expect(page.getByTestId("hmm-region-nav")).toHaveCount(0);
+
+    // Tier composition strip renders for CRNN.
+    await expect(page.getByTestId("hmm-tier-composition-strip")).toBeVisible();
+  });
 });

@@ -28,11 +28,11 @@ class ContinuousEmbeddingJob(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("encoding_signature"),)
 
     status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
-    event_segmentation_job_id: Mapped[str]
+    event_segmentation_job_id: Mapped[Optional[str]] = mapped_column(default=None)
     model_version: Mapped[str]
-    window_size_seconds: Mapped[float] = mapped_column(Float)
-    hop_seconds: Mapped[float] = mapped_column(Float)
-    pad_seconds: Mapped[float] = mapped_column(Float)
+    window_size_seconds: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    hop_seconds: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    pad_seconds: Mapped[Optional[float]] = mapped_column(Float, default=None)
     target_sample_rate: Mapped[int] = mapped_column(Integer)
     feature_config_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
     encoding_signature: Mapped[str]
@@ -42,6 +42,17 @@ class ContinuousEmbeddingJob(UUIDMixin, TimestampMixin, Base):
     total_windows: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     parquet_path: Mapped[Optional[str]] = mapped_column(default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    # CRNN region-based embedding source columns (nullable; populated only
+    # for the ``region_crnn`` source family added in migration 061).
+    region_detection_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    chunk_size_seconds: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    chunk_hop_seconds: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    crnn_checkpoint_sha256: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    crnn_segmentation_model_id: Mapped[Optional[str]] = mapped_column(default=None)
+    projection_kind: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    projection_dim: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    total_regions: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    total_chunks: Mapped[Optional[int]] = mapped_column(Integer, default=None)
 
 
 class HMMSequenceJob(UUIDMixin, TimestampMixin, Base):
@@ -72,3 +83,25 @@ class HMMSequenceJob(UUIDMixin, TimestampMixin, Base):
     n_decoded_sequences: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     artifact_dir: Mapped[Optional[str]] = mapped_column(default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    # CRNN-only training-mode + tier configuration (added in migration
+    # 061; required when the upstream embedding job is CRNN-source).
+    training_mode: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    event_core_overlap_threshold: Mapped[Optional[float]] = mapped_column(
+        Float, default=None
+    )
+    near_event_window_seconds: Mapped[Optional[float]] = mapped_column(
+        Float, default=None
+    )
+    event_balanced_proportions: Mapped[Optional[str]] = mapped_column(
+        Text, default=None
+    )
+    subsequence_length_chunks: Mapped[Optional[int]] = mapped_column(
+        Integer, default=None
+    )
+    subsequence_stride_chunks: Mapped[Optional[int]] = mapped_column(
+        Integer, default=None
+    )
+    target_train_chunks: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    min_region_length_seconds: Mapped[Optional[float]] = mapped_column(
+        Float, default=None
+    )

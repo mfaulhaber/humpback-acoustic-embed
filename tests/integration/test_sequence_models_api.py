@@ -147,7 +147,7 @@ async def test_create_rejects_missing_segmentation_job(client):
         "/sequence-models/continuous-embeddings",
         json={"event_segmentation_job_id": "nonexistent"},
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 async def test_create_rejects_non_complete_segmentation_job(client, app_settings):
@@ -156,7 +156,7 @@ async def test_create_rejects_non_complete_segmentation_job(client, app_settings
         "/sequence-models/continuous-embeddings",
         json={"event_segmentation_job_id": seg_job_id},
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ async def test_hmm_create_rejects_invalid_source(client):
         "/sequence-models/hmm-sequences",
         json={"continuous_embedding_job_id": "nonexistent", "n_states": 3},
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 async def test_hmm_list_filters_by_status(client, app_settings):

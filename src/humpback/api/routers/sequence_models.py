@@ -32,7 +32,12 @@ from humpback.schemas.sequence_models import (
     LabelDistributionResponse,
     OverlayPoint,
     OverlayResponse,
+    StateTierComposition,
     TransitionMatrixResponse,
+)
+from humpback.services.continuous_embedding_service import (
+    SOURCE_KIND_REGION_CRNN,
+    source_kind_for,
 )
 from humpback.services.continuous_embedding_service import (
     CancelTerminalJobError,
@@ -77,7 +82,7 @@ async def create_continuous_embedding(
     try:
         job, created = await create_continuous_embedding_job(session, body)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc))
     response.status_code = 201 if created else 200
     return _to_out(job)
 
@@ -163,6 +168,23 @@ def _load_summary(settings: Settings, job_id: str) -> list[HMMStateSummary] | No
         return None
 
 
+def _load_tier_composition(
+    settings: Settings, job_id: str
+) -> list[StateTierComposition] | None:
+    """Return per-state tier composition from ``state_summary.json``."""
+    summary_path = hmm_sequence_summary_path(settings.storage_root, job_id)
+    if not summary_path.exists():
+        return None
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        raw = payload.get("tier_composition")
+        if not isinstance(raw, list):
+            return None
+        return [StateTierComposition.model_validate(entry) for entry in raw]
+    except Exception:
+        return None
+
+
 def _require_columns(table: pa.Table, path: Path, columns: set[str]) -> None:
     missing = sorted(columns.difference(table.column_names))
     if missing:
@@ -183,7 +205,7 @@ async def create_hmm_sequence(
     try:
         job = await create_hmm_sequence_job(session, body)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc))
     return _hmm_to_out(job)
 
 
@@ -216,20 +238,35 @@ async def get_hmm_sequence(
     cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
     region_detection_job_id = ""
     rdj = None
+    source_kind = "surfperch"
     if cej:
-        seg_job = await session.get(EventSegmentationJob, cej.event_segmentation_job_id)
-        if seg_job:
-            region_detection_job_id = seg_job.region_detection_job_id
+        source_kind = source_kind_for(cej.model_version)
+        if source_kind == SOURCE_KIND_REGION_CRNN and cej.region_detection_job_id:
+            region_detection_job_id = cej.region_detection_job_id
             rdj = await session.get(RegionDetectionJob, region_detection_job_id)
+        elif cej.event_segmentation_job_id:
+            seg_job = await session.get(
+                EventSegmentationJob, cej.event_segmentation_job_id
+            )
+            if seg_job:
+                region_detection_job_id = seg_job.region_detection_job_id
+                rdj = await session.get(RegionDetectionJob, region_detection_job_id)
 
     settings = Settings.from_repo_env()
     summary = _load_summary(settings, job_id)
+    tier_composition = (
+        _load_tier_composition(settings, job_id)
+        if source_kind == SOURCE_KIND_REGION_CRNN
+        else None
+    )
     return HMMSequenceJobDetail(
         job=_hmm_to_out(job),
         region_detection_job_id=region_detection_job_id,
         region_start_timestamp=rdj.start_timestamp if rdj else None,
         region_end_timestamp=rdj.end_timestamp if rdj else None,
         summary=summary,
+        tier_composition=tier_composition,
+        source_kind=source_kind,
     )
 
 
