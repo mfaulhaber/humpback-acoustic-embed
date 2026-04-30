@@ -729,6 +729,7 @@ export function HMMSequenceDetailPage() {
   );
 
   const scrollSeqRef = useRef(0);
+  const pendingJumpTargetRef = useRef<number | undefined>(undefined);
   const [scrollToCenter, setScrollToCenter] = useState<
     { target: number; seq: number } | undefined
   >(undefined);
@@ -746,13 +747,15 @@ export function HMMSequenceDetailPage() {
         (span) =>
           timestamp >= span.startTimestamp && timestamp <= span.endTimestamp,
       );
+      pendingJumpTargetRef.current =
+        target && String(target.id) !== String(activeSpan) ? timestamp : undefined;
       if (target) {
         setSelectedSpan(target.id);
       }
       scrollSeqRef.current += 1;
       setScrollToCenter({ target: timestamp, seq: scrollSeqRef.current });
     },
-    [spans],
+    [activeSpan, spans],
   );
 
   const activeTimelineSpanKey =
@@ -766,6 +769,16 @@ export function HMMSequenceDetailPage() {
       activeTimelineSpanEnd == null
     )
       return;
+    const pendingJumpTarget = pendingJumpTargetRef.current;
+    if (pendingJumpTarget != null) {
+      pendingJumpTargetRef.current = undefined;
+      scrollSeqRef.current += 1;
+      setScrollToCenter({
+        target: pendingJumpTarget,
+        seq: scrollSeqRef.current,
+      });
+      return;
+    }
     scrollSeqRef.current += 1;
     setScrollToCenter({
       target: (activeTimelineSpanStart + activeTimelineSpanEnd) / 2,

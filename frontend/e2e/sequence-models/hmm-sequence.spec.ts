@@ -163,8 +163,8 @@ const MOTIFS = {
   limit: 100,
   items: [
     {
-      motif_key: "0-1",
-      states: [0, 1],
+      motif_key: "2-3",
+      states: [2, 3],
       length: 2,
       occurrence_count: 5,
       event_source_count: 2,
@@ -188,26 +188,26 @@ const MOTIF_OCCURRENCES = {
   items: [
     {
       occurrence_id: "occ-1",
-      motif_key: "0-1",
-      states: [0, 1],
+      motif_key: "2-3",
+      states: [2, 3],
       source_kind: "surfperch",
-      group_key: "0",
-      event_source_key: "evt-0",
+      group_key: "1",
+      event_source_key: "evt-1",
       audio_source_key: "1",
       token_start_index: 0,
       token_end_index: 1,
       raw_start_index: 0,
       raw_end_index: 1,
-      start_timestamp: 100.0,
-      end_timestamp: 106.0,
-      duration_seconds: 6.0,
+      start_timestamp: 202.0,
+      end_timestamp: 203.0,
+      duration_seconds: 1.0,
       event_core_fraction: 1.0,
       background_fraction: 0.0,
       mean_call_probability: null,
-      anchor_event_id: "evt-0",
-      anchor_timestamp: 103.0,
-      relative_start_seconds: -3.0,
-      relative_end_seconds: 3.0,
+      anchor_event_id: "evt-1",
+      anchor_timestamp: 203.0,
+      relative_start_seconds: -1.0,
+      relative_end_seconds: 0.0,
       anchor_strategy: "event_midpoint",
     },
   ],
@@ -530,10 +530,11 @@ test.describe("Sequence Models — HMM Sequence", () => {
     state.motifJobs = [MOTIF_JOB];
     await page.reload();
     await expect(page.getByTestId("motif-table")).toBeVisible();
-    await expect(page.getByText("0-1")).toBeVisible();
+    await expect(page.getByText("2-3")).toBeVisible();
     await expect(page.getByTestId("motif-example-alignment")).toBeVisible();
     await page.getByRole("button", { name: "Jump" }).click();
-    await expect(page.getByTestId("hmm-span-label")).toContainText("Event 1/2");
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Event 2/2");
+    await expect(page.getByTestId("timeline-center-time")).toContainText("00:03:22 UTC");
   });
 
   test("span selector switches between merged spans", async ({ page }) => {
