@@ -132,8 +132,90 @@ const EXEMPLARS = {
   },
 };
 
+const MOTIF_JOB = {
+  id: "motif-1",
+  status: "complete",
+  hmm_sequence_job_id: COMPLETE_JOB.id,
+  source_kind: "surfperch",
+  min_ngram: 2,
+  max_ngram: 8,
+  minimum_occurrences: 5,
+  minimum_event_sources: 2,
+  frequency_weight: 0.4,
+  event_source_weight: 0.3,
+  event_core_weight: 0.2,
+  low_background_weight: 0.1,
+  call_probability_weight: null,
+  config_signature: "motif-sig",
+  total_groups: 2,
+  total_collapsed_tokens: 6,
+  total_candidate_occurrences: 4,
+  total_motifs: 1,
+  artifact_dir: "/tmp/data/motif_extractions/motif-1",
+  error_message: null,
+  created_at: "2026-04-30T00:00:00Z",
+  updated_at: "2026-04-30T00:01:00Z",
+};
+
+const MOTIFS = {
+  total: 1,
+  offset: 0,
+  limit: 100,
+  items: [
+    {
+      motif_key: "2-3",
+      states: [2, 3],
+      length: 2,
+      occurrence_count: 5,
+      event_source_count: 2,
+      audio_source_count: 2,
+      group_count: 2,
+      event_core_fraction: 0.8,
+      background_fraction: 0.1,
+      mean_call_probability: null,
+      mean_duration_seconds: 2.0,
+      median_duration_seconds: 2.0,
+      rank_score: 0.95,
+      example_occurrence_ids: ["occ-1"],
+    },
+  ],
+};
+
+const MOTIF_OCCURRENCES = {
+  total: 1,
+  offset: 0,
+  limit: 100,
+  items: [
+    {
+      occurrence_id: "occ-1",
+      motif_key: "2-3",
+      states: [2, 3],
+      source_kind: "surfperch",
+      group_key: "1",
+      event_source_key: "evt-1",
+      audio_source_key: "1",
+      token_start_index: 0,
+      token_end_index: 1,
+      raw_start_index: 0,
+      raw_end_index: 1,
+      start_timestamp: 202.0,
+      end_timestamp: 203.0,
+      duration_seconds: 1.0,
+      event_core_fraction: 1.0,
+      background_fraction: 0.0,
+      mean_call_probability: null,
+      anchor_event_id: "evt-1",
+      anchor_timestamp: 203.0,
+      relative_start_seconds: -1.0,
+      relative_end_seconds: 0.0,
+      anchor_strategy: "event_midpoint",
+    },
+  ],
+};
+
 interface MockState {
   hmmJobs: typeof QUEUED_JOB[];
+  motifJobs?: typeof MOTIF_JOB[];
   regionJobId?: string;
   audioUrls?: string[];
 }
@@ -307,6 +389,69 @@ async function setupMocks(page: Page, state: MockState) {
     return route.fulfill({ status: 405 });
   });
 
+  await page.route("**/sequence-models/motif-extractions**", (route) => {
+    const url = route.request().url();
+    const method = route.request().method();
+    const idMatch = url.match(/\/motif-extractions\/([^/?#]+)/);
+    state.motifJobs ??= [];
+
+    if (idMatch) {
+      const id = idMatch[1];
+      const job = state.motifJobs.find((j) => j.id === id);
+      if (!job) return route.fulfill({ status: 404 });
+
+      if (url.includes("/occurrences")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(MOTIF_OCCURRENCES),
+        });
+      }
+      if (url.includes("/motifs")) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(MOTIFS),
+        });
+      }
+      if (url.includes("/cancel") && method === "POST") {
+        job.status = "canceled";
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(job),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ job, manifest: null }),
+      });
+    }
+
+    if (method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.motifJobs),
+      });
+    }
+    if (method === "POST") {
+      const newJob = {
+        ...MOTIF_JOB,
+        id: "motif-created",
+        status: "queued",
+      };
+      state.motifJobs = [newJob, ...state.motifJobs];
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(newJob),
+      });
+    }
+    return route.fulfill({ status: 405 });
+  });
+
   // Stub tile and audio-slice endpoints used by the timeline viewer
   await page.route("**/call-parsing/region-jobs/*/tile**", (route) => {
     // Return a 1x1 transparent PNG
@@ -362,12 +507,34 @@ test.describe("Sequence Models — HMM Sequence", () => {
     await expect(page.getByTestId("hmm-detail-page")).toBeVisible();
     await expect(page.getByTestId("hmm-detail-status")).toHaveText("complete");
     await expect(page.getByTestId("hmm-timeline-viewer")).toBeVisible();
+    await expect(page.getByTestId("motif-extraction-panel")).toBeVisible();
     await expect(page.getByTestId("hmm-state-timeline")).toBeVisible();
     await expect(page.getByTestId("hmm-pca-umap-scatter")).toBeVisible();
     await expect(page.getByTestId("hmm-transition-heatmap")).toBeVisible();
     await expect(page.getByTestId("hmm-label-distribution")).toBeVisible();
     await expect(page.getByTestId("hmm-dwell-histograms")).toBeVisible();
     await expect(page.getByTestId("hmm-exemplar-gallery")).toBeVisible();
+  });
+
+  test("motifs panel creates and renders completed motif jobs", async ({ page }) => {
+    const state: MockState = { hmmJobs: [COMPLETE_JOB], motifJobs: [] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/hmm-sequence/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("motif-create-form")).toBeVisible();
+    await page.getByText("Advanced").click();
+    await expect(page.getByLabel("frequency")).toBeVisible();
+    await page.getByTestId("motif-create-submit").click();
+    await expect(page.getByTestId("motif-running")).toContainText("queued");
+
+    state.motifJobs = [MOTIF_JOB];
+    await page.reload();
+    await expect(page.getByTestId("motif-table")).toBeVisible();
+    await expect(page.getByText("2-3")).toBeVisible();
+    await expect(page.getByTestId("motif-example-alignment")).toBeVisible();
+    await page.getByRole("button", { name: "Jump" }).click();
+    await expect(page.getByTestId("hmm-span-label")).toContainText("Event 2/2");
+    await expect(page.getByTestId("timeline-center-time")).toContainText("00:03:22 UTC");
   });
 
   test("span selector switches between merged spans", async ({ page }) => {

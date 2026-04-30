@@ -7,13 +7,18 @@ events. Idempotent on ``encoding_signature``.
 
 from typing import Optional
 
-from sqlalchemy import Boolean, Float, Integer, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from humpback.database import Base, TimestampMixin, UUIDMixin
 from humpback.models.processing import JobStatus
 
-__all__ = ["ContinuousEmbeddingJob", "HMMSequenceJob", "JobStatus"]
+__all__ = [
+    "ContinuousEmbeddingJob",
+    "HMMSequenceJob",
+    "JobStatus",
+    "MotifExtractionJob",
+]
 
 
 class ContinuousEmbeddingJob(UUIDMixin, TimestampMixin, Base):
@@ -105,3 +110,38 @@ class HMMSequenceJob(UUIDMixin, TimestampMixin, Base):
     min_region_length_seconds: Mapped[Optional[float]] = mapped_column(
         Float, default=None
     )
+
+
+class MotifExtractionJob(UUIDMixin, TimestampMixin, Base):
+    """First-class motif extraction over a completed HMM sequence job."""
+
+    __tablename__ = "motif_extraction_jobs"
+    __table_args__ = (
+        Index("ix_motif_extraction_jobs_status", "status"),
+        Index("ix_motif_extraction_jobs_hmm_sequence_job_id", "hmm_sequence_job_id"),
+        Index("ix_motif_extraction_jobs_config_signature", "config_signature"),
+    )
+
+    status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
+    hmm_sequence_job_id: Mapped[str]
+    source_kind: Mapped[str] = mapped_column(Text)
+    min_ngram: Mapped[int] = mapped_column(Integer, default=2)
+    max_ngram: Mapped[int] = mapped_column(Integer, default=8)
+    minimum_occurrences: Mapped[int] = mapped_column(Integer, default=5)
+    minimum_event_sources: Mapped[int] = mapped_column(Integer, default=2)
+    frequency_weight: Mapped[float] = mapped_column(Float, default=0.40)
+    event_source_weight: Mapped[float] = mapped_column(Float, default=0.30)
+    event_core_weight: Mapped[float] = mapped_column(Float, default=0.20)
+    low_background_weight: Mapped[float] = mapped_column(Float, default=0.10)
+    call_probability_weight: Mapped[Optional[float]] = mapped_column(
+        Float, default=None
+    )
+    config_signature: Mapped[str]
+    total_groups: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    total_collapsed_tokens: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    total_candidate_occurrences: Mapped[Optional[int]] = mapped_column(
+        Integer, default=None
+    )
+    total_motifs: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    artifact_dir: Mapped[Optional[str]] = mapped_column(default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)

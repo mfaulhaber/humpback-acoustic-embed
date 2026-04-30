@@ -468,6 +468,283 @@ export function useHMMStates(
 }
 
 // ---------------------------------------------------------------------------
+// Motif Extraction Jobs
+// ---------------------------------------------------------------------------
+
+const MOTIF_ROOT = "/sequence-models/motif-extractions";
+
+export interface MotifExtractionJob {
+  id: string;
+  status: string;
+  hmm_sequence_job_id: string;
+  source_kind: ContinuousEmbeddingSourceKind;
+  min_ngram: number;
+  max_ngram: number;
+  minimum_occurrences: number;
+  minimum_event_sources: number;
+  frequency_weight: number;
+  event_source_weight: number;
+  event_core_weight: number;
+  low_background_weight: number;
+  call_probability_weight: number | null;
+  config_signature: string;
+  total_groups: number | null;
+  total_collapsed_tokens: number | null;
+  total_candidate_occurrences: number | null;
+  total_motifs: number | null;
+  artifact_dir: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateMotifExtractionJobRequest {
+  hmm_sequence_job_id: string;
+  min_ngram?: number;
+  max_ngram?: number;
+  minimum_occurrences?: number;
+  minimum_event_sources?: number;
+  frequency_weight?: number;
+  event_source_weight?: number;
+  event_core_weight?: number;
+  low_background_weight?: number;
+  call_probability_weight?: number | null;
+}
+
+export interface MotifExtractionManifest {
+  schema_version: number;
+  motif_extraction_job_id: string;
+  hmm_sequence_job_id: string;
+  continuous_embedding_job_id: string;
+  source_kind: ContinuousEmbeddingSourceKind;
+  config: Record<string, unknown>;
+  config_signature: string;
+  generated_at: string;
+  total_groups: number;
+  total_collapsed_tokens: number;
+  total_candidate_occurrences: number;
+  total_motifs: number;
+  event_source_key_strategy: string;
+}
+
+export interface MotifExtractionJobDetail {
+  job: MotifExtractionJob;
+  manifest: MotifExtractionManifest | null;
+}
+
+export interface MotifSummary {
+  motif_key: string;
+  states: number[];
+  length: number;
+  occurrence_count: number;
+  event_source_count: number;
+  audio_source_count: number;
+  group_count: number;
+  event_core_fraction: number;
+  background_fraction: number;
+  mean_call_probability: number | null;
+  mean_duration_seconds: number;
+  median_duration_seconds: number;
+  rank_score: number;
+  example_occurrence_ids: string[];
+}
+
+export interface MotifsResponse {
+  total: number;
+  offset: number;
+  limit: number;
+  items: MotifSummary[];
+}
+
+export interface MotifOccurrence {
+  occurrence_id: string;
+  motif_key: string;
+  states: number[];
+  source_kind: ContinuousEmbeddingSourceKind;
+  group_key: string;
+  event_source_key: string;
+  audio_source_key: string | null;
+  token_start_index: number;
+  token_end_index: number;
+  raw_start_index: number;
+  raw_end_index: number;
+  start_timestamp: number;
+  end_timestamp: number;
+  duration_seconds: number;
+  event_core_fraction: number;
+  background_fraction: number;
+  mean_call_probability: number | null;
+  anchor_event_id: string | null;
+  anchor_timestamp: number;
+  relative_start_seconds: number;
+  relative_end_seconds: number;
+  anchor_strategy: string;
+}
+
+export interface MotifOccurrencesResponse {
+  total: number;
+  offset: number;
+  limit: number;
+  items: MotifOccurrence[];
+}
+
+export function fetchMotifExtractionJobs(params?: {
+  status?: string;
+  hmm_sequence_job_id?: string;
+}): Promise<MotifExtractionJob[]> {
+  const search = new URLSearchParams();
+  if (params?.status) search.set("status", params.status);
+  if (params?.hmm_sequence_job_id)
+    search.set("hmm_sequence_job_id", params.hmm_sequence_job_id);
+  const q = search.toString() ? `?${search.toString()}` : "";
+  return request<MotifExtractionJob[]>(`${MOTIF_ROOT}${q}`);
+}
+
+export function fetchMotifExtractionJob(
+  jobId: string,
+): Promise<MotifExtractionJobDetail> {
+  return request<MotifExtractionJobDetail>(`${MOTIF_ROOT}/${jobId}`);
+}
+
+export function createMotifExtractionJob(
+  body: CreateMotifExtractionJobRequest,
+): Promise<MotifExtractionJob> {
+  return request<MotifExtractionJob>(MOTIF_ROOT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function cancelMotifExtractionJob(
+  jobId: string,
+): Promise<MotifExtractionJob> {
+  return request<MotifExtractionJob>(`${MOTIF_ROOT}/${jobId}/cancel`, {
+    method: "POST",
+  });
+}
+
+export function deleteMotifExtractionJob(jobId: string): Promise<void> {
+  return request<void>(`${MOTIF_ROOT}/${jobId}`, { method: "DELETE" });
+}
+
+export function fetchMotifs(
+  jobId: string,
+  offset = 0,
+  limit = 100,
+): Promise<MotifsResponse> {
+  return request<MotifsResponse>(
+    `${MOTIF_ROOT}/${jobId}/motifs?offset=${offset}&limit=${limit}`,
+  );
+}
+
+export function fetchMotifOccurrences(
+  jobId: string,
+  motifKey: string,
+  offset = 0,
+  limit = 100,
+): Promise<MotifOccurrencesResponse> {
+  return request<MotifOccurrencesResponse>(
+    `${MOTIF_ROOT}/${jobId}/motifs/${encodeURIComponent(
+      motifKey,
+    )}/occurrences?offset=${offset}&limit=${limit}`,
+  );
+}
+
+export function useMotifExtractionJobs(
+  params?: { status?: string; hmm_sequence_job_id?: string },
+  enabled = true,
+  refetchInterval: number | false = 3000,
+) {
+  return useQuery({
+    queryKey: ["motif-extraction-jobs", params],
+    queryFn: () => fetchMotifExtractionJobs(params),
+    enabled,
+    refetchInterval,
+  });
+}
+
+export function useMotifExtractionJob(jobId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["motif-extraction-job", jobId],
+    queryFn: () => fetchMotifExtractionJob(jobId as string),
+    enabled: enabled && jobId != null,
+    refetchInterval: (query) => {
+      const data = query.state.data as MotifExtractionJobDetail | undefined;
+      if (!data) return 3000;
+      return ACTIVE_STATUSES.has(data.job.status) ? 3000 : false;
+    },
+  });
+}
+
+export function useCreateMotifExtractionJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateMotifExtractionJobRequest) =>
+      createMotifExtractionJob(body),
+    onSuccess: (job) => {
+      qc.invalidateQueries({ queryKey: ["motif-extraction-jobs"] });
+      qc.invalidateQueries({
+        queryKey: [
+          "motif-extraction-jobs",
+          { hmm_sequence_job_id: job.hmm_sequence_job_id },
+        ],
+      });
+      qc.invalidateQueries({ queryKey: ["motif-extraction-job", job.id] });
+    },
+  });
+}
+
+export function useCancelMotifExtractionJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => cancelMotifExtractionJob(jobId),
+    onSuccess: (job) => {
+      qc.invalidateQueries({ queryKey: ["motif-extraction-jobs"] });
+      qc.invalidateQueries({ queryKey: ["motif-extraction-job", job.id] });
+    },
+  });
+}
+
+export function useDeleteMotifExtractionJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteMotifExtractionJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["motif-extraction-jobs"] });
+    },
+  });
+}
+
+export function useMotifs(
+  jobId: string | null,
+  offset = 0,
+  limit = 100,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["motifs", jobId, offset, limit],
+    queryFn: () => fetchMotifs(jobId as string, offset, limit),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useMotifOccurrences(
+  jobId: string | null,
+  motifKey: string | null,
+  offset = 0,
+  limit = 100,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["motif-occurrences", jobId, motifKey, offset, limit],
+    queryFn: () =>
+      fetchMotifOccurrences(jobId as string, motifKey as string, offset, limit),
+    enabled: enabled && jobId != null && motifKey != null,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Interpretation visualizations (PR 3)
 // ---------------------------------------------------------------------------
 

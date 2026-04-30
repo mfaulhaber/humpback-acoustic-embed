@@ -244,3 +244,47 @@ labels change over time).
 `ExemplarRecord`: `merged_span_id`, `window_index_in_span`,
 `audio_file_id`, `start_timestamp`, `end_timestamp`,
 `max_state_probability`, `exemplar_type`.
+
+## Motif Extraction Jobs
+
+Motif extraction jobs consume completed HMM sequence jobs and mine recurring
+symbolic n-grams over collapsed Viterbi state sequences.
+
+- `POST /sequence-models/motif-extractions` — create or reuse a motif
+  extraction job. Body fields: `hmm_sequence_job_id`, `min_ngram`,
+  `max_ngram`, `minimum_occurrences`, `minimum_event_sources`,
+  `frequency_weight`, `event_source_weight`, `event_core_weight`,
+  `low_background_weight`, and optional `call_probability_weight`.
+  Returns `201` for a new queued job, `200` for an existing queued,
+  running, or complete job with the same config signature. Returns `422`
+  for invalid configs or non-complete source HMM jobs.
+
+- `GET /sequence-models/motif-extractions` — list motif jobs newest-first
+  with optional `?status=` and `?hmm_sequence_job_id=` filters.
+
+- `GET /sequence-models/motif-extractions/{id}` — return
+  `{ job, manifest }`, where `manifest` is null until artifacts exist.
+
+- `POST /sequence-models/motif-extractions/{id}/cancel` — cancel queued or
+  running jobs. `409` for terminal jobs.
+
+- `DELETE /sequence-models/motif-extractions/{id}` — delete the job row and
+  `motif_extractions/{id}` artifacts.
+
+- `GET /sequence-models/motif-extractions/{id}/motifs` — paginated motif
+  summary rows from `motifs.parquet`. Query params: `offset` (default 0),
+  `limit` (default 100, max 5000). Job must be complete.
+
+- `GET /sequence-models/motif-extractions/{id}/motifs/{motif_key}/occurrences`
+  — paginated occurrence rows for one motif from `occurrences.parquet`.
+
+`MotifSummary` rows include `motif_key`, `states`, `length`,
+`occurrence_count`, `event_source_count`, `audio_source_count`,
+`event_core_fraction`, `background_fraction`, nullable
+`mean_call_probability`, duration stats, `rank_score`, and
+`example_occurrence_ids`.
+
+`MotifOccurrence` rows include source/group keys, token/raw row ranges,
+absolute timestamps, event/background fractions, nullable call probability,
+and event-midpoint alignment fields (`anchor_event_id`, `anchor_timestamp`,
+`relative_start_seconds`, `relative_end_seconds`, `anchor_strategy`).

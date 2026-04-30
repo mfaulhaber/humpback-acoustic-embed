@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 
 from humpback.api.deps import SessionDep, SettingsDep
 from humpback.config import Settings
+from humpback.models.processing import JobStatus
 from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobCreate,
     ContinuousEmbeddingJobDetail,
@@ -30,6 +31,14 @@ from humpback.schemas.sequence_models import (
     HMMSequenceJobOut,
     HMMStateSummary,
     LabelDistributionResponse,
+    MotifExtractionJobCreate,
+    MotifExtractionJobDetail,
+    MotifExtractionJobOut,
+    MotifExtractionManifest,
+    MotifOccurrence,
+    MotifOccurrencesResponse,
+    MotifsResponse,
+    MotifSummary,
     OverlayPoint,
     OverlayResponse,
     StateTierComposition,
@@ -57,6 +66,14 @@ from humpback.services.hmm_sequence_service import (
     get_hmm_sequence_job,
     list_hmm_sequence_jobs,
 )
+from humpback.services.motif_extraction_service import (
+    CancelTerminalJobError as MotifCancelTerminalJobError,
+    cancel_motif_extraction_job,
+    create_motif_extraction_job,
+    delete_motif_extraction_job,
+    get_motif_extraction_job,
+    list_motif_extraction_jobs,
+)
 from humpback.storage import (
     hmm_sequence_exemplars_path,
     hmm_sequence_label_distribution_path,
@@ -64,6 +81,9 @@ from humpback.storage import (
     hmm_sequence_states_path,
     hmm_sequence_summary_path,
     hmm_sequence_transition_matrix_path,
+    motif_extraction_manifest_path,
+    motif_extraction_motifs_path,
+    motif_extraction_occurrences_path,
 )
 
 router = APIRouter(prefix="/sequence-models", tags=["sequence-models"])
@@ -155,6 +175,10 @@ async def delete_continuous_embedding(
 
 def _hmm_to_out(job) -> HMMSequenceJobOut:
     return HMMSequenceJobOut.model_validate(job)
+
+
+def _motif_to_out(job) -> MotifExtractionJobOut:
+    return MotifExtractionJobOut.model_validate(job)
 
 
 def _load_summary(settings: Settings, job_id: str) -> list[HMMStateSummary] | None:
@@ -448,3 +472,146 @@ async def delete_hmm_sequence(job_id: str, session: SessionDep, settings: Settin
     if not deleted:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Motif Extraction Jobs
+# ---------------------------------------------------------------------------
+
+
+@router.post("/motif-extractions")
+async def create_motif_extraction(
+    body: MotifExtractionJobCreate,
+    session: SessionDep,
+    response: Response,
+) -> MotifExtractionJobOut:
+    try:
+        job, created = await create_motif_extraction_job(session, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    response.status_code = 201 if created else 200
+    return _motif_to_out(job)
+
+
+@router.get("/motif-extractions")
+async def list_motif_extractions(
+    session: SessionDep,
+    status: Optional[str] = Query(default=None),
+    hmm_sequence_job_id: Optional[str] = Query(default=None),
+) -> list[MotifExtractionJobOut]:
+    jobs = await list_motif_extraction_jobs(
+        session,
+        status=status,
+        hmm_sequence_job_id=hmm_sequence_job_id,
+    )
+    return [_motif_to_out(j) for j in jobs]
+
+
+@router.get("/motif-extractions/{job_id}")
+async def get_motif_extraction(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> MotifExtractionJobDetail:
+    job = await get_motif_extraction_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="motif extraction job not found")
+    manifest = None
+    manifest_path = motif_extraction_manifest_path(settings.storage_root, job_id)
+    if manifest_path.exists():
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = MotifExtractionManifest.model_validate(payload)
+        except Exception:
+            manifest = None
+    return MotifExtractionJobDetail(job=_motif_to_out(job), manifest=manifest)
+
+
+@router.post("/motif-extractions/{job_id}/cancel")
+async def cancel_motif_extraction(
+    job_id: str,
+    session: SessionDep,
+) -> MotifExtractionJobOut:
+    try:
+        job = await cancel_motif_extraction_job(session, job_id)
+    except MotifCancelTerminalJobError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if job is None:
+        raise HTTPException(status_code=404, detail="motif extraction job not found")
+    return _motif_to_out(job)
+
+
+@router.delete("/motif-extractions/{job_id}", status_code=204)
+async def delete_motif_extraction(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    deleted = await delete_motif_extraction_job(session, job_id, settings)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="motif extraction job not found")
+    return None
+
+
+def _parquet_items(path: Path, offset: int, limit: int) -> tuple[int, list[dict]]:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"{path.name} not found")
+    table = pq.read_table(path)
+    total = table.num_rows
+    sliced = table.slice(offset, limit)
+    rows = sliced.to_pydict()
+    return total, [{col: rows[col][i] for col in rows} for i in range(sliced.num_rows)]
+
+
+@router.get("/motif-extractions/{job_id}/motifs")
+async def get_motifs(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=5000),
+) -> MotifsResponse:
+    job = await get_motif_extraction_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="motif extraction job not found")
+    if job.status != JobStatus.complete.value:
+        raise HTTPException(status_code=400, detail="job not complete")
+    total, items = _parquet_items(
+        motif_extraction_motifs_path(settings.storage_root, job_id), offset, limit
+    )
+    return MotifsResponse(
+        total=total,
+        offset=offset,
+        limit=limit,
+        items=[MotifSummary.model_validate(item) for item in items],
+    )
+
+
+@router.get("/motif-extractions/{job_id}/motifs/{motif_key}/occurrences")
+async def get_motif_occurrences(
+    job_id: str,
+    motif_key: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=5000),
+) -> MotifOccurrencesResponse:
+    job = await get_motif_extraction_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="motif extraction job not found")
+    if job.status != JobStatus.complete.value:
+        raise HTTPException(status_code=400, detail="job not complete")
+    path = motif_extraction_occurrences_path(settings.storage_root, job_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="occurrences.parquet not found")
+    table = pq.read_table(path)
+    data = table.to_pylist()
+    filtered = [row for row in data if row.get("motif_key") == motif_key]
+    total = len(filtered)
+    sliced = filtered[offset : offset + limit]
+    return MotifOccurrencesResponse(
+        total=total,
+        offset=offset,
+        limit=limit,
+        items=[MotifOccurrence.model_validate(item) for item in sliced],
+    )

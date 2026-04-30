@@ -32,6 +32,7 @@ import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoun
 import { STATE_COLORS } from "./constants";
 import { SpanNavBar, type SpanInfo, type RegionGroup } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
+import { MotifExtractionPanel } from "./MotifExtractionPanel";
 
 function StateTimeline({
   spanItems,
@@ -728,6 +729,7 @@ export function HMMSequenceDetailPage() {
   );
 
   const scrollSeqRef = useRef(0);
+  const pendingJumpTargetRef = useRef<number | undefined>(undefined);
   const [scrollToCenter, setScrollToCenter] = useState<
     { target: number; seq: number } | undefined
   >(undefined);
@@ -738,6 +740,23 @@ export function HMMSequenceDetailPage() {
   const wrappedNextEvent = useCallback(() => {
     handleNextEvent();
   }, [handleNextEvent]);
+
+  const handleJumpToTimestamp = useCallback(
+    (timestamp: number) => {
+      const target = spans.find(
+        (span) =>
+          timestamp >= span.startTimestamp && timestamp <= span.endTimestamp,
+      );
+      pendingJumpTargetRef.current =
+        target && String(target.id) !== String(activeSpan) ? timestamp : undefined;
+      if (target) {
+        setSelectedSpan(target.id);
+      }
+      scrollSeqRef.current += 1;
+      setScrollToCenter({ target: timestamp, seq: scrollSeqRef.current });
+    },
+    [activeSpan, spans],
+  );
 
   const activeTimelineSpanKey =
     activeTimelineSpan == null ? null : String(activeTimelineSpan.id);
@@ -750,6 +769,16 @@ export function HMMSequenceDetailPage() {
       activeTimelineSpanEnd == null
     )
       return;
+    const pendingJumpTarget = pendingJumpTargetRef.current;
+    if (pendingJumpTarget != null) {
+      pendingJumpTargetRef.current = undefined;
+      scrollSeqRef.current += 1;
+      setScrollToCenter({
+        target: pendingJumpTarget,
+        seq: scrollSeqRef.current,
+      });
+      return;
+    }
     scrollSeqRef.current += 1;
     setScrollToCenter({
       target: (activeTimelineSpanStart + activeTimelineSpanEnd) / 2,
@@ -963,6 +992,21 @@ export function HMMSequenceDetailPage() {
                 scrollToCenter={scrollToCenter}
               />
             </TimelineProvider>
+          </CardContent>
+        </Card>
+      )}
+
+      {isComplete && regionDetectionJobId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Motifs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MotifExtractionPanel
+              hmmSequenceJobId={job.id}
+              regionDetectionJobId={regionDetectionJobId}
+              onJumpToTimestamp={handleJumpToTimestamp}
+            />
           </CardContent>
         </Card>
       )}

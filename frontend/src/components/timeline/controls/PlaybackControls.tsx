@@ -23,7 +23,7 @@ export function PlaybackControls({ variant = "default", children }: PlaybackCont
 
   return (
     <div className="flex items-center justify-center gap-4">
-      <span className="text-[10px] font-mono" style={{ color: COLORS.textMuted }}>
+      <span className="text-[10px] font-mono" data-testid="timeline-center-time" style={{ color: COLORS.textMuted }}>
         {timeStr}
       </span>
 

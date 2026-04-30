@@ -405,3 +405,157 @@ class ExemplarsResponse(BaseModel):
 
     n_states: int
     states: dict[str, list[ExemplarRecord]]
+
+
+# ---------------------------------------------------------------------------
+# Motif Extraction Jobs
+# ---------------------------------------------------------------------------
+
+
+class MotifExtractionJobCreate(BaseModel):
+    """Request body for creating a first-class motif extraction job."""
+
+    hmm_sequence_job_id: str
+    min_ngram: int = Field(default=2, ge=1)
+    max_ngram: int = Field(default=8, ge=1, le=16)
+    minimum_occurrences: int = Field(default=5, ge=1)
+    minimum_event_sources: int = Field(default=2, ge=1)
+    frequency_weight: float = Field(default=0.40, ge=0)
+    event_source_weight: float = Field(default=0.30, ge=0)
+    event_core_weight: float = Field(default=0.20, ge=0)
+    low_background_weight: float = Field(default=0.10, ge=0)
+    call_probability_weight: Optional[float] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_ngram_and_weights(self) -> "MotifExtractionJobCreate":
+        if self.max_ngram < self.min_ngram:
+            raise ValueError("max_ngram must be >= min_ngram")
+        weights = [
+            self.frequency_weight,
+            self.event_source_weight,
+            self.event_core_weight,
+            self.low_background_weight,
+        ]
+        if self.call_probability_weight is not None:
+            weights.append(self.call_probability_weight)
+        if not any(w > 0 for w in weights):
+            raise ValueError("at least one rank weight must be > 0")
+        return self
+
+
+class MotifExtractionJobOut(BaseModel):
+    """Motif extraction job state returned by the API."""
+
+    id: str
+    status: str
+    hmm_sequence_job_id: str
+    source_kind: str
+    min_ngram: int
+    max_ngram: int
+    minimum_occurrences: int
+    minimum_event_sources: int
+    frequency_weight: float
+    event_source_weight: float
+    event_core_weight: float
+    low_background_weight: float
+    call_probability_weight: Optional[float] = None
+    config_signature: str
+    total_groups: Optional[int] = None
+    total_collapsed_tokens: Optional[int] = None
+    total_candidate_occurrences: Optional[int] = None
+    total_motifs: Optional[int] = None
+    artifact_dir: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MotifExtractionManifest(BaseModel):
+    """Manifest JSON emitted by motif extraction jobs."""
+
+    schema_version: int
+    motif_extraction_job_id: str
+    hmm_sequence_job_id: str
+    continuous_embedding_job_id: str
+    source_kind: str
+    config: dict[str, Any]
+    config_signature: str
+    generated_at: str
+    total_groups: int
+    total_collapsed_tokens: int
+    total_candidate_occurrences: int
+    total_motifs: int
+    event_source_key_strategy: str
+
+
+class MotifExtractionJobDetail(BaseModel):
+    """Motif extraction job detail response."""
+
+    job: MotifExtractionJobOut
+    manifest: Optional[MotifExtractionManifest] = None
+
+
+class MotifSummary(BaseModel):
+    """One ranked motif summary row."""
+
+    motif_key: str
+    states: list[int]
+    length: int
+    occurrence_count: int
+    event_source_count: int
+    audio_source_count: int
+    group_count: int
+    event_core_fraction: float
+    background_fraction: float
+    mean_call_probability: Optional[float] = None
+    mean_duration_seconds: float
+    median_duration_seconds: float
+    rank_score: float
+    example_occurrence_ids: list[str] = Field(default_factory=list)
+
+
+class MotifsResponse(BaseModel):
+    """Paginated motif summary response."""
+
+    total: int
+    offset: int
+    limit: int
+    items: list[MotifSummary]
+
+
+class MotifOccurrence(BaseModel):
+    """One occurrence row for a motif."""
+
+    occurrence_id: str
+    motif_key: str
+    states: list[int]
+    source_kind: str
+    group_key: str
+    event_source_key: str
+    audio_source_key: Optional[str] = None
+    token_start_index: int
+    token_end_index: int
+    raw_start_index: int
+    raw_end_index: int
+    start_timestamp: float
+    end_timestamp: float
+    duration_seconds: float
+    event_core_fraction: float
+    background_fraction: float
+    mean_call_probability: Optional[float] = None
+    anchor_event_id: Optional[str] = None
+    anchor_timestamp: float
+    relative_start_seconds: float
+    relative_end_seconds: float
+    anchor_strategy: str
+
+
+class MotifOccurrencesResponse(BaseModel):
+    """Paginated motif occurrence response."""
+
+    total: int
+    offset: int
+    limit: int
+    items: list[MotifOccurrence]
