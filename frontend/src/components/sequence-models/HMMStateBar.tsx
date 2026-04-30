@@ -15,6 +15,10 @@ export interface ViterbiWindow {
 interface HMMStateBarProps {
   items: ViterbiWindow[];
   nStates: number;
+  currentRegion?: {
+    startTimestamp: number;
+    endTimestamp: number;
+  } | null;
 }
 
 function binarySearchWindow(items: ViterbiWindow[], timeSec: number): number {
@@ -33,7 +37,28 @@ function binarySearchWindow(items: ViterbiWindow[], timeSec: number): number {
   return -1;
 }
 
-export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
+export function visibleWindows(
+  items: ViterbiWindow[],
+  viewStart: number,
+  viewEnd: number,
+): ViterbiWindow[] {
+  return items.filter(
+    (item) => item.end_timestamp >= viewStart && item.start_timestamp <= viewEnd,
+  );
+}
+
+export function regionBoundaryXPositions(
+  region: { startTimestamp: number; endTimestamp: number },
+  viewStart: number,
+  pxPerSec: number,
+): { startX: number; endX: number } {
+  return {
+    startX: (region.startTimestamp - viewStart) * pxPerSec,
+    endX: (region.endTimestamp - viewStart) * pxPerSec,
+  };
+}
+
+export function HMMStateBar({ items, nStates, currentRegion }: HMMStateBarProps) {
   const ctx = useTimelineContext();
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -75,7 +100,7 @@ export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
     g.scale(dpr, dpr);
     g.clearRect(0, 0, canvasWidth, BAR_HEIGHT);
 
-    for (const w of sortedItems) {
+    for (const w of visibleWindows(sortedItems, ctx.viewStart, ctx.viewEnd)) {
       const x0 = (w.start_timestamp - ctx.viewStart) * ctx.pxPerSec;
       const x1 = (w.end_timestamp - ctx.viewStart) * ctx.pxPerSec;
       if (x1 < 0 || x0 > canvasWidth) continue;
@@ -97,10 +122,32 @@ export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
       g.lineTo(phX, BAR_HEIGHT);
       g.stroke();
     }
-  }, [sortedItems, ctx.viewStart, ctx.viewEnd, ctx.pxPerSec, ctx.centerTimestamp, ctx.playbackEpoch, canvasWidth, nStates, stateHeight]);
+
+    if (currentRegion) {
+      const { startX, endX } = regionBoundaryXPositions(
+        currentRegion,
+        ctx.viewStart,
+        ctx.pxPerSec,
+      );
+      g.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      g.lineWidth = 2;
+      for (const x of [startX, endX]) {
+        if (x < 0 || x > canvasWidth) continue;
+        g.beginPath();
+        g.moveTo(x, 0);
+        g.lineTo(x, BAR_HEIGHT);
+        g.stroke();
+      }
+    }
+  }, [sortedItems, ctx.viewStart, ctx.viewEnd, ctx.pxPerSec, ctx.centerTimestamp, ctx.playbackEpoch, canvasWidth, nStates, stateHeight, currentRegion]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      if (ctx.isDraggingTimeline) {
+        ctx.updateDragPan(e.clientX);
+        setTooltip(null);
+        return;
+      }
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return;
       const mx = e.clientX - rect.left;
@@ -119,10 +166,25 @@ export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
         text: `State ${w.viterbi_state} · ${w.start_timestamp.toFixed(1)}s–${w.end_timestamp.toFixed(1)}s · prob ${w.max_state_probability.toFixed(3)}`,
       });
     },
-    [sortedItems, ctx.viewStart, ctx.pxPerSec, nStates, stateHeight],
+    [sortedItems, ctx, nStates, stateHeight],
   );
 
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (ctx.beginDragPan(e.clientX)) {
+        setTooltip(null);
+      }
+    },
+    [ctx],
+  );
+
+  const handleMouseUp = useCallback(() => {
+    ctx.endDragPan();
+  }, [ctx]);
+
   const handleMouseLeave = useCallback(() => setTooltip(null), []);
+
+  const cursor = ctx.isPlaying ? "default" : ctx.isDraggingTimeline ? "grabbing" : "grab";
 
   return (
     <div ref={containerRef} className="relative" data-testid="hmm-state-bar">
@@ -143,10 +205,15 @@ export function HMMStateBar({ items, nStates }: HMMStateBarProps) {
         </div>
         <canvas
           ref={canvasRef}
-          style={{ width: canvasWidth, height: BAR_HEIGHT }}
           className="block"
+          onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
+          data-testid="hmm-state-bar-canvas"
+          aria-label="HMM state timeline"
+          role="img"
+          style={{ width: canvasWidth, height: BAR_HEIGHT, cursor }}
         />
       </div>
       {tooltip && (

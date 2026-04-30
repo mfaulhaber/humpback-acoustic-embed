@@ -369,7 +369,7 @@ export function fetchHMMDwell(jobId: string): Promise<DwellHistograms> {
 export function fetchHMMStates(
   jobId: string,
   offset = 0,
-  limit = 5000,
+  limit = 50000,
 ): Promise<{
   total: number;
   offset: number;
@@ -457,7 +457,7 @@ export function useHMMDwell(jobId: string | null, enabled = true) {
 export function useHMMStates(
   jobId: string | null,
   offset = 0,
-  limit = 5000,
+  limit = 50000,
   enabled = true,
 ) {
   return useQuery({

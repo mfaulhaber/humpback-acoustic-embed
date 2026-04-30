@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HMM Sequence Timeline Mockup</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101418;
+        --panel: #151c22;
+        --ink: #e6edf3;
+        --muted: #8ea0ad;
+        --grid: rgba(255, 255, 255, 0.08);
+        --accent: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      main {
+        padding: 24px;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      button {
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: #202a32;
+        color: var(--ink);
+        height: 32px;
+        min-width: 36px;
+        padding: 0 12px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      .readout {
+        color: var(--muted);
+        font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .timeline {
+        height: 340px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: var(--panel);
+        border-radius: 8px;
+        overflow: hidden;
+        cursor: grab;
+        user-select: none;
+      }
+
+      .timeline.dragging {
+        cursor: grabbing;
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="toolbar">
+        <button id="play" aria-label="Play or pause">Play</button>
+        <button id="zoomOut" aria-label="Zoom out">-</button>
+        <button id="zoomIn" aria-label="Zoom in">+</button>
+        <span class="readout" id="readout"></span>
+      </div>
+      <div class="timeline" id="timeline">
+        <canvas id="canvas"></canvas>
+      </div>
+    </main>
+
+    <script>
+      const canvas = document.getElementById("canvas");
+      const timeline = document.getElementById("timeline");
+      const readout = document.getElementById("readout");
+      const playButton = document.getElementById("play");
+      const colors = ["#22c55e", "#3b82f6", "#eab308", "#a855f7", "#f97316"];
+      const regions = [
+        { start: 95, end: 130, state: [0, 1, 1, 3, 2, 2] },
+        { start: 145, end: 190, state: [2, 2, 4, 1, 1, 0, 3] },
+        { start: 210, end: 260, state: [1, 3, 3, 4, 0, 0, 2] },
+        { start: 285, end: 340, state: [4, 4, 2, 2, 1, 3, 0] },
+      ];
+      let center = 190;
+      let span = 190;
+      let playing = false;
+      let playhead = center;
+      let lastFrame = performance.now();
+      let drag = null;
+      const activeRegion = regions[1];
+
+      function resize() {
+        const rect = timeline.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(rect.width * dpr);
+        canvas.height = Math.floor(rect.height * dpr);
+        canvas.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+        draw();
+      }
+
+      function xFor(t) {
+        return ((t - (center - span / 2)) / span) * timeline.clientWidth;
+      }
+
+      function draw() {
+        const g = canvas.getContext("2d");
+        const w = timeline.clientWidth;
+        const h = timeline.clientHeight;
+        g.clearRect(0, 0, w, h);
+        g.fillStyle = "#0c1217";
+        g.fillRect(0, 0, w, h);
+
+        for (let x = -((center * 6) % 80); x < w; x += 80) {
+          g.fillStyle = x % 160 < 80 ? "#121a21" : "#0f171d";
+          g.fillRect(x, 0, 80, 230);
+          g.strokeStyle = "rgba(255, 255, 255, 0.08)";
+          g.beginPath();
+          g.moveTo(x, 0);
+          g.lineTo(x, h);
+          g.stroke();
+        }
+
+        regions.forEach((region, idx) => {
+          const x0 = xFor(region.start);
+          const x1 = xFor(region.end);
+          if (x1 < 0 || x0 > w) return;
+          g.fillStyle = "rgba(255,255,255,0.04)";
+          g.fillRect(x0, 34 + idx * 12, x1 - x0, 28);
+
+          const step = (region.end - region.start) / region.state.length;
+          region.state.forEach((state, i) => {
+            const sx0 = xFor(region.start + i * step);
+            const sx1 = xFor(region.start + (i + 1) * step);
+            g.fillStyle = colors[state % colors.length];
+            g.fillRect(sx0, 250 + state * 13, Math.max(1, sx1 - sx0), 12);
+          });
+        });
+
+        const left = xFor(activeRegion.start);
+        const right = xFor(activeRegion.end);
+        g.strokeStyle = "rgba(255,255,255,0.96)";
+        g.lineWidth = 2;
+        [left, right].forEach((x) => {
+          if (x < 0 || x > w) return;
+          g.beginPath();
+          g.moveTo(x, 0);
+          g.lineTo(x, h);
+          g.stroke();
+        });
+
+        const ph = xFor(playhead);
+        if (ph >= 0 && ph <= w) {
+          g.strokeStyle = "#ef4444";
+          g.lineWidth = 2;
+          g.beginPath();
+          g.moveTo(ph, 0);
+          g.lineTo(ph, h);
+          g.stroke();
+        }
+
+        readout.textContent = `center ${center.toFixed(1)}s | span ${span}s | playhead ${playhead.toFixed(1)}s`;
+      }
+
+      function tick(now) {
+        const dt = (now - lastFrame) / 1000;
+        lastFrame = now;
+        if (playing) {
+          playhead += dt;
+          center = playhead;
+          if (playhead > 360) playhead = 80;
+          draw();
+        }
+        requestAnimationFrame(tick);
+      }
+
+      timeline.addEventListener("mousedown", (event) => {
+        if (playing) return;
+        drag = { x: event.clientX, center };
+        timeline.classList.add("dragging");
+      });
+      window.addEventListener("mousemove", (event) => {
+        if (!drag) return;
+        center = drag.center - ((event.clientX - drag.x) / timeline.clientWidth) * span;
+        playhead = center;
+        draw();
+      });
+      window.addEventListener("mouseup", () => {
+        drag = null;
+        timeline.classList.remove("dragging");
+      });
+      playButton.addEventListener("click", () => {
+        playing = !playing;
+        playButton.textContent = playing ? "Pause" : "Play";
+        playhead = center;
+        lastFrame = performance.now();
+      });
+      document.getElementById("zoomOut").addEventListener("click", () => {
+        span = Math.min(280, span * 1.4);
+        draw();
+      });
+      document.getElementById("zoomIn").addEventListener("click", () => {
+        span = Math.max(45, span / 1.4);
+        draw();
+      });
+      window.addEventListener("resize", resize);
+      resize();
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>

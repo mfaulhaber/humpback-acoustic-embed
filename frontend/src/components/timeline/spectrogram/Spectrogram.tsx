@@ -70,43 +70,23 @@ export function Spectrogram({
     }
   }, [canvasWidth, canvasHeight, ctx.setViewportDimensions]);
 
-  // Drag-to-pan
-  const dragRef = useRef<{ startX: number; startCenter: number } | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (ctx.isPlaying) return;
-      dragRef.current = { startX: e.clientX, startCenter: ctx.centerTimestamp };
-      setIsDragging(true);
+      ctx.beginDragPan(e.clientX);
     },
-    [ctx.isPlaying, ctx.centerTimestamp],
+    [ctx],
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!dragRef.current || ctx.isPlaying) return;
-      const dx = e.clientX - dragRef.current.startX;
-      const dt = dx / ctx.pxPerSec;
-      const newCenter = dragRef.current.startCenter - dt;
-      ctx.pan(newCenter);
+      ctx.updateDragPan(e.clientX);
     },
-    [ctx.isPlaying, ctx.pxPerSec, ctx.pan],
+    [ctx],
   );
 
   const handleMouseUp = useCallback(() => {
-    dragRef.current = null;
-    setIsDragging(false);
-  }, []);
-
-  useEffect(() => {
-    const handleGlobalUp = () => {
-      dragRef.current = null;
-      setIsDragging(false);
-    };
-    window.addEventListener("mouseup", handleGlobalUp);
-    return () => window.removeEventListener("mouseup", handleGlobalUp);
-  }, []);
+    ctx.endDragPan();
+  }, [ctx]);
 
   const overlayValue: OverlayContextValue = useMemo(
     () => ({
@@ -121,7 +101,7 @@ export function Spectrogram({
     [ctx.viewStart, ctx.viewEnd, ctx.pxPerSec, ctx.centerTimestamp, canvasWidth, canvasHeight],
   );
 
-  const cursor = ctx.isPlaying ? "default" : isDragging ? "grabbing" : "grab";
+  const cursor = ctx.isPlaying ? "default" : ctx.isDraggingTimeline ? "grabbing" : "grab";
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col relative select-none min-h-0" data-testid="spectrogram-viewport">

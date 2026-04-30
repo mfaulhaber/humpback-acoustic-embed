@@ -1,4 +1,8 @@
+import React from "react";
+import { render } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
+import { OverlayContext } from "./OverlayContext";
+import { RegionBoundaryMarkers } from "./RegionBoundaryMarkers";
 
 describe("overlay positioning accuracy", () => {
   it("epochToX produces correct pixel positions for known values", () => {
@@ -61,5 +65,36 @@ describe("overlay positioning accuracy", () => {
 
     expect(x).toBe((1100 - 1500) * 2 + 400);
     expect(w).toBe(100 * 2);
+  });
+});
+
+describe("RegionBoundaryMarkers", () => {
+  const overlayValue = {
+    viewStart: 100,
+    viewEnd: 200,
+    pxPerSec: 10,
+    canvasWidth: 1000,
+    canvasHeight: 120,
+    epochToX: (epoch: number) => (epoch - 100) * 10,
+    xToEpoch: (x: number) => 100 + x / 10,
+  };
+
+  it("can render boundary lines without dimming outside the active region", () => {
+    const { container } = render(
+      React.createElement(
+        OverlayContext.Provider,
+        { value: overlayValue },
+        React.createElement(RegionBoundaryMarkers, {
+          startEpoch: 120,
+          endEpoch: 150,
+          dimOutside: false,
+          lineColor: "white",
+          lineStyle: "solid",
+        }),
+      ),
+    );
+
+    expect(container.querySelectorAll('[style*="rgba(0, 0, 0, 0.4)"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[style*="1.5px solid white"]')).toHaveLength(2);
   });
 });

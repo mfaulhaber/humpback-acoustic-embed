@@ -275,7 +275,7 @@ async def get_hmm_states(
     job_id: str,
     session: SessionDep,
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=500, ge=1, le=5000),
+    limit: int = Query(default=500, ge=1, le=50000),
 ) -> dict:
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:

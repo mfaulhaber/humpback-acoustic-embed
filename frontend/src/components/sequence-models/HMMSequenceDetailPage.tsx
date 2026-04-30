@@ -482,8 +482,6 @@ function HMMTimelineBody({
   stateItems,
   nStates,
   scrollToCenter,
-  onViewStartChange,
-  onViewSpanChange,
 }: {
   regionDetectionJobId: string;
   tileUrlBuilder: (jid: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
@@ -491,8 +489,6 @@ function HMMTimelineBody({
   stateItems: ViterbiWindow[];
   nStates: number;
   scrollToCenter: { target: number; seq: number } | undefined;
-  onViewStartChange: (v: number) => void;
-  onViewSpanChange: (v: number) => void;
 }) {
   const ctx = useTimelineContext();
 
@@ -502,13 +498,6 @@ function HMMTimelineBody({
     scrollSeqRef.current = scrollToCenter.seq;
     ctx.seekTo(scrollToCenter.target);
   }, [scrollToCenter, ctx]);
-
-  useEffect(() => {
-    onViewStartChange(ctx.viewStart);
-  }, [ctx.viewStart, onViewStartChange]);
-  useEffect(() => {
-    onViewSpanChange(ctx.viewportSpan);
-  }, [ctx.viewportSpan, onViewSpanChange]);
 
   return (
     <>
@@ -521,10 +510,17 @@ function HMMTimelineBody({
           <RegionBoundaryMarkers
             startEpoch={eventSpan.startTimestamp}
             endEpoch={eventSpan.endTimestamp}
+            dimOutside={false}
+            lineColor="rgba(255, 255, 255, 0.95)"
+            lineStyle="solid"
           />
         </Spectrogram>
       </div>
-      <HMMStateBar items={stateItems} nStates={nStates} />
+      <HMMStateBar
+        items={stateItems}
+        nStates={nStates}
+        currentRegion={eventSpan}
+      />
       <div className="flex justify-center py-1">
         <ZoomSelector />
       </div>
@@ -547,7 +543,7 @@ export function HMMSequenceDetailPage() {
   const { data: statesData } = useHMMStates(
     jobId ?? null,
     0,
-    5000,
+    50000,
     isComplete,
   );
   const { data: transData } = useHMMTransitions(jobId ?? null, isComplete);
@@ -707,15 +703,15 @@ export function HMMSequenceDetailPage() {
     );
   }, [statesData, activeTimelineSpan, groupKeyCol]);
 
-  const timelineSpanItems: ViterbiWindow[] = useMemo(
+  const timelineStateItems: ViterbiWindow[] = useMemo(
     () =>
-      activeSpanRows.map((r) => ({
+      (statesData?.items ?? []).map((r) => ({
         start_timestamp: r.start_timestamp as number,
         end_timestamp: r.end_timestamp as number,
         viterbi_state: r.viterbi_state as number,
         max_state_probability: r.max_state_probability as number,
       })),
-    [activeSpanRows],
+    [statesData],
   );
 
   const hmmTileUrlBuilder = useCallback(
@@ -731,41 +727,35 @@ export function HMMSequenceDetailPage() {
     [regionDetectionJobId],
   );
 
-  const navDirectionRef = useRef<"forward" | "backward">("forward");
   const scrollSeqRef = useRef(0);
   const [scrollToCenter, setScrollToCenter] = useState<
     { target: number; seq: number } | undefined
   >(undefined);
-  const [viewStart, setViewStart] = useState<number | undefined>(undefined);
-  const [viewSpan, setViewSpan] = useState(60);
 
   const wrappedPrevEvent = useCallback(() => {
-    navDirectionRef.current = "backward";
     handlePrevEvent();
   }, [handlePrevEvent]);
   const wrappedNextEvent = useCallback(() => {
-    navDirectionRef.current = "forward";
     handleNextEvent();
   }, [handleNextEvent]);
 
+  const activeTimelineSpanKey =
+    activeTimelineSpan == null ? null : String(activeTimelineSpan.id);
+  const activeTimelineSpanStart = activeTimelineSpan?.startTimestamp;
+  const activeTimelineSpanEnd = activeTimelineSpan?.endTimestamp;
   useEffect(() => {
-    if (!activeTimelineSpan || viewStart === undefined) return;
-    const viewEnd = viewStart + viewSpan;
-    const pad = viewSpan * 0.15;
-    const fullyVisible =
-      activeTimelineSpan.startTimestamp >= viewStart + pad &&
-      activeTimelineSpan.endTimestamp <= viewEnd - pad;
-    if (!fullyVisible) {
-      let target: number;
-      if (navDirectionRef.current === "forward") {
-        target = activeTimelineSpan.endTimestamp + pad - viewSpan / 2;
-      } else {
-        target = activeTimelineSpan.startTimestamp - pad + viewSpan / 2;
-      }
-      scrollSeqRef.current += 1;
-      setScrollToCenter({ target, seq: scrollSeqRef.current });
-    }
-  }, [activeTimelineSpan, viewStart, viewSpan]);
+    if (
+      activeTimelineSpanKey == null ||
+      activeTimelineSpanStart == null ||
+      activeTimelineSpanEnd == null
+    )
+      return;
+    scrollSeqRef.current += 1;
+    setScrollToCenter({
+      target: (activeTimelineSpanStart + activeTimelineSpanEnd) / 2,
+      seq: scrollSeqRef.current,
+    });
+  }, [activeTimelineSpanKey, activeTimelineSpanStart, activeTimelineSpanEnd]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -968,11 +958,9 @@ export function HMMSequenceDetailPage() {
                 regionDetectionJobId={regionDetectionJobId}
                 tileUrlBuilder={hmmTileUrlBuilder}
                 eventSpan={activeTimelineSpan}
-                stateItems={timelineSpanItems}
+                stateItems={timelineStateItems}
                 nStates={job.n_states}
                 scrollToCenter={scrollToCenter}
-                onViewStartChange={setViewStart}
-                onViewSpanChange={setViewSpan}
               />
             </TimelineProvider>
           </CardContent>
