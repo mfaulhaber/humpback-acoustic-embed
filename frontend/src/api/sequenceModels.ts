@@ -749,8 +749,8 @@ export function useMotifOccurrences(
 // ---------------------------------------------------------------------------
 
 export interface OverlayPoint {
-  merged_span_id: number;
-  window_index_in_span: number;
+  sequence_id: string;
+  position_in_sequence: number;
   start_timestamp: number;
   end_timestamp: number;
   pca_x: number;
@@ -773,13 +773,14 @@ export interface LabelDistribution {
 }
 
 export interface ExemplarRecord {
-  merged_span_id: number;
-  window_index_in_span: number;
+  sequence_id: string;
+  position_in_sequence: number;
   audio_file_id: number | null;
   start_timestamp: number;
   end_timestamp: number;
   max_state_probability: number;
   exemplar_type: string;
+  extras: Record<string, string | number | null>;
 }
 
 export interface ExemplarsResponse {

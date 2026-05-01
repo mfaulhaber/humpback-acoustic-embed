@@ -359,17 +359,36 @@ async def get_hmm_dwell(
 # ---------------------------------------------------------------------------
 
 
+def _project_legacy_overlay_row(row: dict) -> dict:
+    """Read-time adapter for pre-ADR-059 overlay parquets (transitional).
+
+    Pre-PR SurfPerch overlay parquets carry ``merged_span_id`` (int) and
+    ``window_index_in_span`` (int); the unified shape uses
+    ``sequence_id`` (string) and ``position_in_sequence`` (int). New
+    artifacts already match the unified shape so this adapter is a no-op
+    for them. Disk files are never rewritten.
+    """
+    if "sequence_id" in row and "position_in_sequence" in row:
+        return row
+    projected = {k: v for k, v in row.items()}
+    if "merged_span_id" in projected:
+        projected["sequence_id"] = str(projected.pop("merged_span_id"))
+    if "window_index_in_span" in projected:
+        projected["position_in_sequence"] = projected.pop("window_index_in_span")
+    return projected
+
+
 @router.get("/hmm-sequences/{job_id}/overlay")
 async def get_hmm_overlay(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=5000, ge=1, le=50000),
 ) -> OverlayResponse:
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
-    settings = Settings.from_repo_env()
     overlay_path = hmm_sequence_overlay_path(settings.storage_root, job_id)
     if not overlay_path.exists():
         raise HTTPException(status_code=404, detail="overlay not found")
@@ -379,7 +398,7 @@ async def get_hmm_overlay(
     sliced = table.slice(offset, limit)
     rows = sliced.to_pydict()
     items = [
-        OverlayPoint(**{col: rows[col][i] for col in rows})
+        OverlayPoint(**_project_legacy_overlay_row({col: rows[col][i] for col in rows}))
         for i in range(sliced.num_rows)
     ]
     return OverlayResponse(total=total, items=items)
@@ -404,15 +423,40 @@ async def get_hmm_label_distribution(
     return LabelDistributionResponse.model_validate(dist)
 
 
+def _project_legacy_exemplar_row(row: dict) -> dict:
+    """Read-time adapter for pre-ADR-059 exemplar JSON records (transitional).
+
+    Pre-PR SurfPerch records carry ``merged_span_id`` (int) and
+    ``window_index_in_span`` (int); the unified shape uses
+    ``sequence_id`` (string) and ``position_in_sequence`` (int) plus an
+    ``extras`` dict. New artifacts already match the unified shape so
+    this adapter is a no-op for them. Disk files are never rewritten.
+    """
+    if "sequence_id" in row and "position_in_sequence" in row:
+        if "extras" not in row:
+            projected = {k: v for k, v in row.items()}
+            projected["extras"] = {}
+            return projected
+        return row
+    projected = {k: v for k, v in row.items()}
+    if "merged_span_id" in projected:
+        projected["sequence_id"] = str(projected.pop("merged_span_id"))
+    if "window_index_in_span" in projected:
+        projected["position_in_sequence"] = projected.pop("window_index_in_span")
+    if "extras" not in projected:
+        projected["extras"] = {}
+    return projected
+
+
 @router.get("/hmm-sequences/{job_id}/exemplars")
 async def get_hmm_exemplars(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> ExemplarsResponse:
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
-    settings = Settings.from_repo_env()
     exemplars_path = hmm_sequence_exemplars_path(settings.storage_root, job_id)
     if not exemplars_path.exists():
         raise HTTPException(status_code=404, detail="exemplars not found")
@@ -420,7 +464,10 @@ async def get_hmm_exemplars(
     return ExemplarsResponse(
         n_states=payload["n_states"],
         states={
-            k: [ExemplarRecord.model_validate(r) for r in v]
+            k: [
+                ExemplarRecord.model_validate(_project_legacy_exemplar_row(r))
+                for r in v
+            ]
             for k, v in payload["states"].items()
         },
     )

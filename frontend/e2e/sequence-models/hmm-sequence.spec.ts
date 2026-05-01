@@ -98,10 +98,10 @@ const STATES = {
 const OVERLAY = {
   total: 4,
   items: [
-    { merged_span_id: 0, window_index_in_span: 0, start_timestamp: 100.0, end_timestamp: 105.0, pca_x: 1.0, pca_y: 2.0, umap_x: 0.5, umap_y: 0.8, viterbi_state: 0, max_state_probability: 0.9 },
-    { merged_span_id: 0, window_index_in_span: 1, start_timestamp: 101.0, end_timestamp: 106.0, pca_x: 1.5, pca_y: 2.5, umap_x: 0.6, umap_y: 0.9, viterbi_state: 1, max_state_probability: 0.8 },
-    { merged_span_id: 1, window_index_in_span: 0, start_timestamp: 200.0, end_timestamp: 205.0, pca_x: -1.0, pca_y: -0.5, umap_x: -0.3, umap_y: 0.1, viterbi_state: 2, max_state_probability: 0.85 },
-    { merged_span_id: 1, window_index_in_span: 1, start_timestamp: 201.0, end_timestamp: 206.0, pca_x: -0.8, pca_y: -0.2, umap_x: -0.1, umap_y: 0.2, viterbi_state: 3, max_state_probability: 0.9 },
+    { sequence_id: "0", position_in_sequence: 0, start_timestamp: 100.0, end_timestamp: 105.0, pca_x: 1.0, pca_y: 2.0, umap_x: 0.5, umap_y: 0.8, viterbi_state: 0, max_state_probability: 0.9 },
+    { sequence_id: "0", position_in_sequence: 1, start_timestamp: 101.0, end_timestamp: 106.0, pca_x: 1.5, pca_y: 2.5, umap_x: 0.6, umap_y: 0.9, viterbi_state: 1, max_state_probability: 0.8 },
+    { sequence_id: "1", position_in_sequence: 0, start_timestamp: 200.0, end_timestamp: 205.0, pca_x: -1.0, pca_y: -0.5, umap_x: -0.3, umap_y: 0.1, viterbi_state: 2, max_state_probability: 0.85 },
+    { sequence_id: "1", position_in_sequence: 1, start_timestamp: 201.0, end_timestamp: 206.0, pca_x: -0.8, pca_y: -0.2, umap_x: -0.1, umap_y: 0.2, viterbi_state: 3, max_state_probability: 0.9 },
   ],
 };
 
@@ -120,13 +120,29 @@ const EXEMPLARS = {
   n_states: 4,
   states: {
     "0": [
-      { merged_span_id: 0, window_index_in_span: 0, audio_file_id: 1, start_timestamp: 100.0, end_timestamp: 105.0, max_state_probability: 0.9, exemplar_type: "high_confidence" },
+      { sequence_id: "0", position_in_sequence: 0, audio_file_id: 1, start_timestamp: 100.0, end_timestamp: 105.0, max_state_probability: 0.9, exemplar_type: "high_confidence", extras: {} },
     ],
     "1": [
-      { merged_span_id: 0, window_index_in_span: 1, audio_file_id: 1, start_timestamp: 101.0, end_timestamp: 106.0, max_state_probability: 0.8, exemplar_type: "high_confidence" },
+      { sequence_id: "0", position_in_sequence: 1, audio_file_id: 1, start_timestamp: 101.0, end_timestamp: 106.0, max_state_probability: 0.8, exemplar_type: "high_confidence", extras: {} },
     ],
     "2": [
-      { merged_span_id: 1, window_index_in_span: 0, audio_file_id: 1, start_timestamp: 200.0, end_timestamp: 205.0, max_state_probability: 0.85, exemplar_type: "mean_nearest" },
+      { sequence_id: "1", position_in_sequence: 0, audio_file_id: 1, start_timestamp: 200.0, end_timestamp: 205.0, max_state_probability: 0.85, exemplar_type: "mean_nearest", extras: {} },
+    ],
+    "3": [],
+  },
+};
+
+const CRNN_EXEMPLARS = {
+  n_states: 4,
+  states: {
+    "0": [
+      { sequence_id: "zzz-first", position_in_sequence: 0, audio_file_id: 1, start_timestamp: 100.0, end_timestamp: 100.25, max_state_probability: 0.9, exemplar_type: "high_confidence", extras: { tier: "event_core" } },
+    ],
+    "1": [
+      { sequence_id: "aaa-second", position_in_sequence: 1, audio_file_id: 1, start_timestamp: 200.25, end_timestamp: 200.5, max_state_probability: 0.8, exemplar_type: "high_confidence", extras: { tier: "near_event" } },
+    ],
+    "2": [
+      { sequence_id: "mmm-third", position_in_sequence: 0, audio_file_id: 1, start_timestamp: 300.0, end_timestamp: 300.25, max_state_probability: 0.85, exemplar_type: "mean_nearest", extras: { tier: "background" } },
     ],
     "3": [],
   },
@@ -708,7 +724,7 @@ test.describe("Sequence Models — HMM Sequence", () => {
         return route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify(EXEMPLARS),
+          body: JSON.stringify(CRNN_EXEMPLARS),
         });
       }
       // Detail endpoint
@@ -776,5 +792,27 @@ test.describe("Sequence Models — HMM Sequence", () => {
 
     // Tier composition strip renders for CRNN.
     await expect(page.getByTestId("hmm-tier-composition-strip")).toBeVisible();
+
+    // PCA/UMAP overlay panel is visible (Phase 1 unblocks the CRNN source).
+    await expect(page.getByTestId("hmm-pca-umap-scatter")).toBeVisible();
+
+    // Exemplar gallery renders tier badges for CRNN-source records.
+    const badges = page.getByTestId("exemplar-tier-badge");
+    await expect(badges.first()).toBeVisible();
+    const badgeText = (await badges.first().textContent())?.trim();
+    expect(["event_core", "near_event", "background"]).toContain(badgeText);
+  });
+
+  test("SurfPerch detail page renders overlay and exemplar cards without tier badge", async ({
+    page,
+  }) => {
+    const state: MockState = { hmmJobs: [COMPLETE_JOB] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/hmm-sequence/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("hmm-pca-umap-scatter")).toBeVisible();
+    await expect(page.getByTestId("hmm-exemplar-gallery")).toBeVisible();
+    // SurfPerch records have no extras.tier — no badges should render.
+    await expect(page.getByTestId("exemplar-tier-badge")).toHaveCount(0);
   });
 });

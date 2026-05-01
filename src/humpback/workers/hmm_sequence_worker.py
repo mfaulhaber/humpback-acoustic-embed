@@ -698,11 +698,16 @@ async def _run_region_crnn_hmm(
         len(rows),
     )
 
-    # Silence unused-variable lint while letting future surfaces wire
-    # ``source`` into per-state interpretation artifacts (overlay/exemplars
-    # already run from the public path on SurfPerch source — CRNN-source
-    # interpretations land in subsequent PRs).
-    _ = source
+    try:
+        from humpback.services.hmm_sequence_service import generate_interpretations
+
+        generate_interpretations(settings.storage_root, job, source)
+    except Exception:
+        logger.warning(
+            "hmm_sequence | job=%s | interpretation generation failed, continuing",
+            job_id,
+            exc_info=True,
+        )
 
 
 def _l2_if_needed(seq: np.ndarray, do_l2: bool) -> np.ndarray:

@@ -18,8 +18,8 @@ from umap import UMAP
 
 @dataclass
 class OverlayMetadata:
-    merged_span_ids: list[int]
-    window_indices: list[int]
+    sequence_ids: list[str]
+    positions_in_sequence: list[int]
     start_timestamps: list[float]
     end_timestamps: list[float]
 
@@ -46,13 +46,13 @@ def compute_overlay(
     pca_model
         Fitted sklearn PCA from the HMM training pipeline.
     raw_sequences
-        Per-span raw embedding arrays, same order as Viterbi output.
+        Per-sequence raw embedding arrays, same order as Viterbi output.
     viterbi_states
-        Per-span Viterbi state arrays.
+        Per-sequence Viterbi state arrays.
     max_state_probs
-        Per-span max-state-probability arrays.
+        Per-sequence max-state-probability arrays.
     metadata
-        Window-level identifiers (span ids, indices, timestamps).
+        Per-position identifiers (sequence ids, positions, timestamps).
     l2_normalize
         Whether to L2-normalize embeddings before PCA (must match the
         HMM job's setting).
@@ -88,8 +88,10 @@ def compute_overlay(
 
     table = pa.table(
         {
-            "merged_span_id": pa.array(metadata.merged_span_ids, type=pa.int32()),
-            "window_index_in_span": pa.array(metadata.window_indices, type=pa.int32()),
+            "sequence_id": pa.array(metadata.sequence_ids, type=pa.string()),
+            "position_in_sequence": pa.array(
+                metadata.positions_in_sequence, type=pa.int32()
+            ),
             "start_timestamp": pa.array(metadata.start_timestamps, type=pa.float64()),
             "end_timestamp": pa.array(metadata.end_timestamps, type=pa.float64()),
             "pca_x": pa.array(pca_x, type=pa.float32()),
