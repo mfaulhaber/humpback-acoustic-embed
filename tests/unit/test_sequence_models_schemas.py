@@ -8,6 +8,7 @@ from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobManifest,
     ContinuousEmbeddingSpanSummary,
     ExemplarRecord,
+    OverlayPoint,
 )
 
 
@@ -71,8 +72,8 @@ def test_continuous_embedding_job_manifest_round_trip():
 
 def test_exemplar_record_accepts_null_audio_file_id_for_hydrophone_jobs():
     record = ExemplarRecord(
-        merged_span_id=0,
-        window_index_in_span=3,
+        sequence_id="0",
+        position_in_sequence=3,
         audio_file_id=None,
         start_timestamp=10.0,
         end_timestamp=15.0,
@@ -81,3 +82,47 @@ def test_exemplar_record_accepts_null_audio_file_id_for_hydrophone_jobs():
     )
 
     assert record.audio_file_id is None
+    assert record.extras == {}
+
+
+def test_exemplar_record_carries_extras_for_crnn_tier():
+    record = ExemplarRecord(
+        sequence_id="region-uuid-1",
+        position_in_sequence=17,
+        audio_file_id=42,
+        start_timestamp=10.0,
+        end_timestamp=10.25,
+        max_state_probability=0.93,
+        exemplar_type="high_confidence",
+        extras={"tier": "event_core"},
+    )
+    assert record.extras["tier"] == "event_core"
+
+
+def test_overlay_point_validates_unified_shape_and_rejects_missing_sequence_id():
+    OverlayPoint(
+        sequence_id="0",
+        position_in_sequence=1,
+        start_timestamp=10.0,
+        end_timestamp=15.0,
+        pca_x=0.0,
+        pca_y=0.0,
+        umap_x=0.0,
+        umap_y=0.0,
+        viterbi_state=2,
+        max_state_probability=0.5,
+    )
+    with pytest.raises(ValidationError):
+        OverlayPoint.model_validate(
+            {
+                "position_in_sequence": 1,
+                "start_timestamp": 10.0,
+                "end_timestamp": 15.0,
+                "pca_x": 0.0,
+                "pca_y": 0.0,
+                "umap_x": 0.0,
+                "umap_y": 0.0,
+                "viterbi_state": 2,
+                "max_state_probability": 0.5,
+            }
+        )

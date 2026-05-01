@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pyarrow as pa
 from sklearn.decomposition import PCA
 
 from humpback.sequence_models.overlay import OverlayMetadata, compute_overlay
@@ -29,8 +30,8 @@ def _make_inputs(
     raw_sequences = []
     viterbi_states = []
     max_probs = []
-    span_ids = []
-    win_indices = []
+    sequence_ids: list[str] = []
+    positions: list[int] = []
     starts = []
     ends = []
 
@@ -42,14 +43,14 @@ def _make_inputs(
         viterbi_states.append(states)
         max_probs.append(probs)
         for w in range(windows_per_span):
-            span_ids.append(span)
-            win_indices.append(w)
+            sequence_ids.append(str(span))
+            positions.append(w)
             starts.append(100.0 + span * 200 + w * 1.0)
             ends.append(105.0 + span * 200 + w * 1.0)
 
     meta = OverlayMetadata(
-        merged_span_ids=span_ids,
-        window_indices=win_indices,
+        sequence_ids=sequence_ids,
+        positions_in_sequence=positions,
         start_timestamps=starts,
         end_timestamps=ends,
     )
@@ -65,8 +66,8 @@ class TestComputeOverlay:
         total_windows = sum(len(s) for s in raw)
         assert table.num_rows == total_windows
         expected_cols = {
-            "merged_span_id",
-            "window_index_in_span",
+            "sequence_id",
+            "position_in_sequence",
             "start_timestamp",
             "end_timestamp",
             "pca_x",
@@ -77,6 +78,8 @@ class TestComputeOverlay:
             "max_state_probability",
         }
         assert set(table.column_names) == expected_cols
+        assert table.schema.field("sequence_id").type == pa.string()
+        assert table.schema.field("position_in_sequence").type == pa.int32()
 
     def test_viterbi_states_match_input(self):
         pca = _make_pca()
@@ -107,7 +110,7 @@ class TestComputeOverlay:
         raw, vs, mp, meta = _make_inputs(n_spans=1, windows_per_span=20)
         table, _ = compute_overlay(pca, raw, vs, mp, meta)
         assert table.num_rows == 20
-        assert all(v == 0 for v in table.column("merged_span_id").to_pylist())
+        assert all(v == "0" for v in table.column("sequence_id").to_pylist())
 
     def test_l2_normalize_flag(self):
         pca = _make_pca()

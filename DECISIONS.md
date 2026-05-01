@@ -428,3 +428,59 @@ Alternatives considered:
   rank weights, ranked motif table, and event-midpoint aligned examples.
 - CRNN `call_probability` remains optional in ranking; the default weight is
   null so ranking stays source-neutral unless explicitly enabled.
+
+## ADR-059: Source-agnostic HMM interpretation loader Protocol
+
+**Date**: 2026-05-01
+**Status**: Accepted
+**Builds on**: ADR-056, ADR-057
+
+**Context**: ADR-057 deferred PCA/UMAP overlay, exemplars, and label
+distribution for CRNN-source HMM jobs as Phase 2 of that source's spec. The
+deferred path left `_load_overlay_inputs()` hardcoded to the SurfPerch
+parquet schema, the worker's `_run_region_crnn_hmm()` skipping the
+interpretation call, and the `OverlayPoint` / `ExemplarRecord` schemas
+requiring SurfPerch's `merged_span_id` / `window_index_in_span` int fields —
+none of which fit CRNN region UUIDs and chunk indices. Adding a third
+source family later would compound the dispatch.
+
+**Decision**: Introduce a `SequenceArtifactLoader` Protocol with a single
+implementation per embedding source family (SurfPerch event-padded, CRNN
+region-based). `generate_interpretations()` resolves the right loader at
+runtime via `get_loader(source_kind)`; downstream pure functions
+(`compute_overlay`, `select_exemplars`) consume a generic `OverlayInputs`
+shape and never branch on source kind. The identifier model unifies on
+`(sequence_id: str, position_in_sequence: int)` — SurfPerch stringifies its
+int span id; CRNN passes its region UUID. Source-specific metadata flows
+through `extras: dict[str, str | int | float | None]` on `WindowMeta` and
+`ExemplarRecord` (CRNN populates `extras["tier"]`).
+
+Alternatives considered:
+- Schema-dispatch inside a single `_load_overlay_inputs()`: rejected because
+  the conditional grows with each new source family and bleeds source
+  knowledge into downstream code.
+- Discriminated-union typing of `extras` per source kind: rejected as YAGNI
+  for two source families; the dict shape is documented and extensible
+  without a type tax.
+
+**Consequences**:
+- New module `src/humpback/sequence_models/loaders/` with `__init__.py`
+  (Protocol + registry), `surfperch.py`, and `crnn_region.py`. Adding a
+  new source family is one new loader file plus one registry entry.
+- `overlay.parquet` and `exemplars.json` written by new jobs use the
+  unified column / key names (`sequence_id`, `position_in_sequence`, plus
+  `extras` on exemplars). Pre-PR SurfPerch artifacts on disk remain in the
+  legacy shape; a transitional read-time adapter on `GET /overlay` and
+  `GET /exemplars` translates legacy column / key names in-memory before
+  serializing the response. Disk files are not rewritten by the adapter;
+  the existing Refresh button rewrites them in unified form on demand.
+- `_run_region_crnn_hmm()` now calls `generate_interpretations()` after
+  `summary.json` is written, with the same `try/except` + `logger.warning`
+  swallow pattern the SurfPerch path uses. Interpretation failure is
+  non-fatal; HMM job status remains `complete`.
+- Frontend `ExemplarRecord` interface gains `extras`; the gallery row
+  renders a small tier badge when `record.extras?.tier` is a non-null
+  string. SurfPerch records leave `extras` empty and render no badge.
+  `PcaUmapScatter` is unchanged — it never read identifier columns.
+- Label distribution remains SurfPerch-only pending Phase 2; the loader
+  Protocol does not yet cover the label-distribution flow.

@@ -8,7 +8,7 @@ Picks representative windows for each HMM state:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -16,12 +16,13 @@ import numpy as np
 
 @dataclass
 class WindowMeta:
-    merged_span_id: int
-    window_index_in_span: int
-    audio_file_id: int
+    sequence_id: str
+    position_in_sequence: int
+    audio_file_id: int | None
     start_timestamp: float
     end_timestamp: float
     max_state_probability: float
+    extras: dict[str, str | int | float | None] = field(default_factory=dict)
 
 
 def select_exemplars(
@@ -87,13 +88,14 @@ def select_exemplars(
                 m = metadata[global_idx]
                 records.append(
                     {
-                        "merged_span_id": m.merged_span_id,
-                        "window_index_in_span": m.window_index_in_span,
+                        "sequence_id": m.sequence_id,
+                        "position_in_sequence": m.position_in_sequence,
                         "audio_file_id": m.audio_file_id,
                         "start_timestamp": m.start_timestamp,
                         "end_timestamp": m.end_timestamp,
                         "max_state_probability": float(m.max_state_probability),
                         "exemplar_type": etype,
+                        "extras": dict(m.extras),
                     }
                 )
 

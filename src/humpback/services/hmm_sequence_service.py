@@ -16,7 +16,6 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
-import joblib
 import numpy as np
 import pyarrow.parquet as pq
 from sqlalchemy import select
@@ -28,16 +27,17 @@ from humpback.models.labeling import VocalizationLabel
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.schemas.sequence_models import HMMSequenceJobCreate
-from humpback.sequence_models.exemplars import WindowMeta, select_exemplars
+from humpback.sequence_models.exemplars import select_exemplars
 from humpback.sequence_models.label_distribution import (
     DetectionWindow,
     LabelRecord,
     compute_label_distribution,
 )
-from humpback.sequence_models.overlay import OverlayMetadata, compute_overlay
+from humpback.sequence_models.loaders import get_loader
+from humpback.sequence_models.overlay import compute_overlay
+from humpback.services.continuous_embedding_service import source_kind_for
 from humpback.storage import (
     atomic_rename,
-    continuous_embedding_parquet_path,
     detection_row_store_path,
     ensure_dir,
     hmm_sequence_dir,
@@ -45,7 +45,6 @@ from humpback.storage import (
     hmm_sequence_exemplars_path,
     hmm_sequence_label_distribution_path,
     hmm_sequence_overlay_path,
-    hmm_sequence_pca_model_path,
     hmm_sequence_states_path,
 )
 
@@ -195,91 +194,6 @@ async def delete_hmm_sequence_job(
 # ---------------------------------------------------------------------------
 
 
-def _load_overlay_inputs(
-    storage_root: Path, job: HMMSequenceJob, cej: ContinuousEmbeddingJob
-) -> tuple[
-    Any,
-    list[np.ndarray],
-    list[np.ndarray],
-    list[np.ndarray],
-    OverlayMetadata,
-    list[WindowMeta],
-]:
-    """Load PCA model, raw embeddings, states, and window metadata."""
-    pca_model = joblib.load(hmm_sequence_pca_model_path(storage_root, job.id))
-    emb_table = pq.read_table(continuous_embedding_parquet_path(storage_root, cej.id))
-    states_table = pq.read_table(hmm_sequence_states_path(storage_root, job.id))
-
-    span_col = emb_table.column("merged_span_id").to_pylist()
-    unique_spans = sorted(set(span_col))
-
-    raw_sequences: list[np.ndarray] = []
-    viterbi_states: list[np.ndarray] = []
-    max_probs: list[np.ndarray] = []
-    all_span_ids: list[int] = []
-    all_win_indices: list[int] = []
-    all_starts: list[float] = []
-    all_ends: list[float] = []
-
-    states_dict = states_table.to_pydict()
-    states_by_span: dict[int, dict[int, dict[str, Any]]] = {}
-    audio_file_by_span_win: dict[tuple[int, int], int] = {}
-    for i in range(states_table.num_rows):
-        sid = states_dict["merged_span_id"][i]
-        widx = states_dict["window_index_in_span"][i]
-        states_by_span.setdefault(sid, {})[widx] = {
-            "viterbi_state": states_dict["viterbi_state"][i],
-            "max_state_probability": states_dict["max_state_probability"][i],
-        }
-        audio_file_by_span_win[(sid, widx)] = states_dict["audio_file_id"][i]
-
-    emb_span_vals = emb_table.column("merged_span_id").to_pylist()
-    window_metas: list[WindowMeta] = []
-    for span_id in unique_spans:
-        indices = [i for i, v in enumerate(emb_span_vals) if v == span_id]
-        sub = emb_table.take(indices).sort_by("window_index_in_span")
-        embeddings = np.array(sub.column("embedding").to_pylist(), dtype=np.float32)
-        raw_sequences.append(embeddings)
-
-        span_states = states_by_span.get(span_id, {})
-        n_rows = sub.num_rows
-        v_states = np.zeros(n_rows, dtype=np.int16)
-        m_probs = np.zeros(n_rows, dtype=np.float32)
-        for row_i in range(n_rows):
-            widx = sub.column("window_index_in_span")[row_i].as_py()
-            st = span_states.get(widx, {})
-            prob = st.get("max_state_probability", 0.0)
-            v_states[row_i] = st.get("viterbi_state", 0)
-            m_probs[row_i] = prob
-            start = sub.column("start_timestamp")[row_i].as_py()
-            end = sub.column("end_timestamp")[row_i].as_py()
-            all_span_ids.append(span_id)
-            all_win_indices.append(widx)
-            all_starts.append(start)
-            all_ends.append(end)
-            window_metas.append(
-                WindowMeta(
-                    merged_span_id=span_id,
-                    window_index_in_span=widx,
-                    audio_file_id=audio_file_by_span_win.get((span_id, widx), 0),
-                    start_timestamp=start,
-                    end_timestamp=end,
-                    max_state_probability=prob,
-                )
-            )
-
-        viterbi_states.append(v_states)
-        max_probs.append(m_probs)
-
-    meta = OverlayMetadata(
-        merged_span_ids=all_span_ids,
-        window_indices=all_win_indices,
-        start_timestamps=all_starts,
-        end_timestamps=all_ends,
-    )
-    return pca_model, raw_sequences, viterbi_states, max_probs, meta, window_metas
-
-
 def generate_interpretations(
     storage_root: Path,
     job: HMMSequenceJob,
@@ -287,19 +201,20 @@ def generate_interpretations(
 ) -> None:
     """Generate PCA/UMAP overlay and state exemplars for a completed HMM job.
 
-    Does NOT generate label distribution (that requires DB access to
-    vocalization_labels, which changes over time).
+    Source-agnostic: dispatches to the registered loader for the upstream
+    embedding source family (SurfPerch event-padded vs. CRNN region-based;
+    see ADR-059). Does NOT generate label distribution (that requires DB
+    access to vocalization_labels, which changes over time).
     """
-    pca_model, raw_sequences, viterbi_states, max_probs, meta, window_metas = (
-        _load_overlay_inputs(storage_root, job, cej)
-    )
+    loader = get_loader(source_kind_for(cej.model_version))
+    inputs = loader.load(storage_root, job, cej)
 
     overlay_table, pca_full = compute_overlay(
-        pca_model,
-        raw_sequences,
-        viterbi_states,
-        max_probs,
-        meta,
+        inputs.pca_model,
+        inputs.raw_sequences,
+        inputs.viterbi_states,
+        inputs.max_probs,
+        inputs.metadata,
         l2_normalize=job.l2_normalize,
         random_state=job.random_seed,
     )
@@ -309,10 +224,10 @@ def generate_interpretations(
     pq.write_table(overlay_table, overlay_tmp)
     atomic_rename(overlay_tmp, overlay_dst)
 
-    all_states_flat = np.concatenate(viterbi_states)
+    all_states_flat = np.concatenate(inputs.viterbi_states)
 
     exemplars_result = select_exemplars(
-        pca_full, all_states_flat, window_metas, job.n_states
+        pca_full, all_states_flat, inputs.window_metas, job.n_states
     )
     exemplars_dir = ensure_dir(hmm_sequence_exemplars_dir(storage_root, job.id))
     exemplars_dst = hmm_sequence_exemplars_path(storage_root, job.id)

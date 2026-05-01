@@ -232,18 +232,35 @@ labels change over time).
   `{ status: "ok", job_id }`. `400` if job not complete. `404` if
   not found.
 
-### Interpretation Schemas
+### Interpretation Schemas (ADR-059, source-agnostic)
 
-`OverlayPoint`: `merged_span_id`, `window_index_in_span`,
-`start_timestamp`, `end_timestamp`, `pca_x`, `pca_y`, `umap_x`,
-`umap_y`, `viterbi_state`, `max_state_probability`.
+`OverlayPoint`: `sequence_id` (string; SurfPerch stringifies its int span
+id, CRNN passes its region UUID), `position_in_sequence` (int; window
+index for SurfPerch, chunk index for CRNN), `start_timestamp`,
+`end_timestamp`, `pca_x`, `pca_y`, `umap_x`, `umap_y`, `viterbi_state`,
+`max_state_probability`.
 
-`LabelDistributionResponse`: `n_states`, `total_windows`,
-`states` (dict of state index → dict of label → count).
+`LabelDistributionResponse`: `n_states`, `total_windows`, `states` (dict
+of state index → dict of label → count). Label distribution remains
+SurfPerch-only pending Phase 2.
 
-`ExemplarRecord`: `merged_span_id`, `window_index_in_span`,
-`audio_file_id`, `start_timestamp`, `end_timestamp`,
-`max_state_probability`, `exemplar_type`.
+`ExemplarRecord`: `sequence_id`, `position_in_sequence`,
+`audio_file_id` (nullable for hydrophone-only jobs), `start_timestamp`,
+`end_timestamp`, `max_state_probability`, `exemplar_type`, plus an
+`extras: dict[str, str | int | float | None]` channel for
+source-specific metadata. CRNN-source records populate `extras["tier"]`
+with one of `"event_core"` / `"near_event"` / `"background"`; SurfPerch
+records leave `extras` empty.
+
+**Legacy read-time adapter (transitional).** Pre-ADR-059 SurfPerch
+overlay parquets and exemplars JSON files remain on disk with the old
+`merged_span_id` (int) / `window_index_in_span` (int) field names. The
+overlay and exemplars GET endpoints translate those legacy column / key
+names in-memory to the unified shape before serializing the response;
+disk files are not rewritten by the adapter. The existing Refresh
+button (POST `/generate-interpretations/{id}`) rewrites them in unified
+form on demand. The adapter is a structural no-op when the on-disk
+artifact is already in unified shape.
 
 ## Motif Extraction Jobs
 

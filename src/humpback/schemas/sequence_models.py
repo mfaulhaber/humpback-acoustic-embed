@@ -359,10 +359,10 @@ class DwellHistogramResponse(BaseModel):
 
 
 class OverlayPoint(BaseModel):
-    """Single point in the PCA/UMAP 2-D overlay."""
+    """Single point in the PCA/UMAP 2-D overlay (ADR-059, source-agnostic)."""
 
-    merged_span_id: int
-    window_index_in_span: int
+    sequence_id: str
+    position_in_sequence: int
     start_timestamp: float
     end_timestamp: float
     pca_x: float
@@ -389,15 +389,16 @@ class LabelDistributionResponse(BaseModel):
 
 
 class ExemplarRecord(BaseModel):
-    """One exemplar window for a given HMM state."""
+    """One exemplar window for a given HMM state (ADR-059, source-agnostic)."""
 
-    merged_span_id: int
-    window_index_in_span: int
+    sequence_id: str
+    position_in_sequence: int
     audio_file_id: int | None
     start_timestamp: float
     end_timestamp: float
     max_state_probability: float
     exemplar_type: str
+    extras: dict[str, str | int | float | None] = Field(default_factory=dict)
 
 
 class ExemplarsResponse(BaseModel):

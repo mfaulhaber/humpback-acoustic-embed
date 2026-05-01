@@ -442,26 +442,37 @@ function ExemplarGallery({
                           {typeLabel[etype] ?? etype}
                         </div>
                         <div className="grid grid-cols-3 gap-2">
-                          {items.map((ex, i) => (
-                            <div
-                              key={i}
-                              className="border rounded p-2 text-xs space-y-0.5"
-                            >
-                              <div>
-                                audio:{" "}
-                                {ex.audio_file_id == null
-                                  ? "hydrophone"
-                                  : String(ex.audio_file_id).slice(0, 8)}
+                          {items.map((ex, i) => {
+                            const tier = ex.extras?.tier;
+                            return (
+                              <div
+                                key={i}
+                                className="border rounded p-2 text-xs space-y-0.5"
+                              >
+                                <div>
+                                  audio:{" "}
+                                  {ex.audio_file_id == null
+                                    ? "hydrophone"
+                                    : String(ex.audio_file_id).slice(0, 8)}
+                                </div>
+                                <div>
+                                  {ex.start_timestamp.toFixed(1)}s –{" "}
+                                  {ex.end_timestamp.toFixed(1)}s
+                                </div>
+                                <div>
+                                  p={ex.max_state_probability.toFixed(3)}
+                                </div>
+                                {typeof tier === "string" && tier.length > 0 && (
+                                  <div
+                                    data-testid="exemplar-tier-badge"
+                                    className="inline-block mt-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium"
+                                  >
+                                    {tier}
+                                  </div>
+                                )}
                               </div>
-                              <div>
-                                {ex.start_timestamp.toFixed(1)}s –{" "}
-                                {ex.end_timestamp.toFixed(1)}s
-                              </div>
-                              <div>
-                                p={ex.max_state_probability.toFixed(3)}
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -1082,7 +1093,7 @@ export function HMMSequenceDetailPage() {
         </Card>
       )}
 
-      {isComplete && (
+      {isComplete && !isCrnnSource && (
         <Card>
           <CardHeader>
             <div className="flex justify-between items-center">
