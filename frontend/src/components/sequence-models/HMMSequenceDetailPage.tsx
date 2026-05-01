@@ -284,8 +284,22 @@ function LabelDistributionChart({
   data: LabelDistribution;
 }) {
   const traces = useMemo(() => {
+    // Collapse the tier dimension: sum counts across all tier keys per
+    // label, per state. Preserves existing single-stack chart visual for
+    // both SurfPerch (single "all" tier) and CRNN (multiple tiers).
+    const collapsedByState: Record<string, Record<string, number>> = {};
+    for (const [stateKey, tierBuckets] of Object.entries(data.states)) {
+      const collapsed: Record<string, number> = {};
+      for (const labelCounts of Object.values(tierBuckets)) {
+        for (const [lbl, count] of Object.entries(labelCounts)) {
+          collapsed[lbl] = (collapsed[lbl] ?? 0) + count;
+        }
+      }
+      collapsedByState[stateKey] = collapsed;
+    }
+
     const allLabels = new Set<string>();
-    for (const counts of Object.values(data.states)) {
+    for (const counts of Object.values(collapsedByState)) {
       for (const lbl of Object.keys(counts)) {
         allLabels.add(lbl);
       }
@@ -296,7 +310,7 @@ function LabelDistributionChart({
 
     return sortedLabels.map((lbl, i) => ({
       x: xLabels,
-      y: stateKeys.map((s) => data.states[s]?.[lbl] ?? 0),
+      y: stateKeys.map((s) => collapsedByState[s]?.[lbl] ?? 0),
       name: lbl,
       type: "bar" as const,
       marker: {
@@ -1093,7 +1107,7 @@ export function HMMSequenceDetailPage() {
         </Card>
       )}
 
-      {isComplete && !isCrnnSource && (
+      {isComplete && (
         <Card>
           <CardHeader>
             <div className="flex justify-between items-center">

@@ -29,6 +29,7 @@ def compute_label_distribution(
     detection_windows: list[DetectionWindow],
     labels: list[LabelRecord],
     n_states: int,
+    tier_per_row: list[str] | None = None,
 ) -> dict[str, Any]:
     """Compute per-state label distributions via center-time join.
 
@@ -43,22 +44,38 @@ def compute_label_distribution(
         Vocalization labels with ``row_id`` and ``label``.
     n_states
         Number of HMM states.
+    tier_per_row
+        Optional tier label per state row, parallel to ``states``. When
+        ``None``, every row buckets to a synthetic ``"all"`` tier key
+        (used by sources without a tier dimension, e.g. SurfPerch). When
+        provided, each row buckets to its own tier value (used by CRNN's
+        ``event_core`` / ``near_event`` / ``background``). Must be the
+        same length as ``states``.
 
     Returns
     -------
     dict
         ``{ "n_states": int, "total_windows": int,
-            "states": { "0": { "label_a": count, ... }, ... } }``
+            "states": { "0": { "tier": { "label_a": count, ... } }, ... } }``
     """
+    if tier_per_row is not None and len(tier_per_row) != len(states):
+        raise ValueError(
+            f"tier_per_row length {len(tier_per_row)} does not match "
+            f"states length {len(states)}"
+        )
+
     labels_by_row: dict[str, list[str]] = {}
     for rec in labels:
         labels_by_row.setdefault(rec.row_id, []).append(rec.label)
 
-    per_state: dict[str, dict[str, int]] = {str(s): {} for s in range(n_states)}
+    per_state: dict[str, dict[str, dict[str, int]]] = {
+        str(s): {} for s in range(n_states)
+    }
 
-    for window in states:
+    for i, window in enumerate(states):
         center = (window["start_timestamp"] + window["end_timestamp"]) / 2.0
         state_key = str(int(window["viterbi_state"]))
+        tier_key = tier_per_row[i] if tier_per_row is not None else "all"
 
         matched_labels: set[str] = set()
         for dw in detection_windows:
@@ -66,13 +83,12 @@ def compute_label_distribution(
                 for lbl in labels_by_row.get(dw.row_id, []):
                     matched_labels.add(lbl)
 
+        tier_bucket = per_state[state_key].setdefault(tier_key, {})
         if matched_labels:
             for lbl in matched_labels:
-                per_state[state_key][lbl] = per_state[state_key].get(lbl, 0) + 1
+                tier_bucket[lbl] = tier_bucket.get(lbl, 0) + 1
         else:
-            per_state[state_key]["unlabeled"] = (
-                per_state[state_key].get("unlabeled", 0) + 1
-            )
+            tier_bucket["unlabeled"] = tier_bucket.get("unlabeled", 0) + 1
 
     return {
         "n_states": n_states,

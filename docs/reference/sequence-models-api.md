@@ -214,10 +214,14 @@ labels change over time).
 
 - `GET /sequence-models/hmm-sequences/{id}/label-distribution` —
   per-state label distribution from center-time join with
-  `vocalization_labels`. Returns `{ n_states, total_windows,
-  states: { "0": { "label_a": count, ... }, ... } }`. Computed
-  on-demand if no cached `label_distribution.json` exists. `400` if
-  job not complete. `404` if job not found.
+  `vocalization_labels`. Returns the unified nested shape
+  `{ n_states, total_windows,
+  states: { "0": { "tier": { "label_a": count, ... } }, ... } }`
+  (ADR-060). SurfPerch jobs use the synthetic `"all"` tier key; CRNN
+  jobs use the per-chunk tier values (`event_core` / `near_event` /
+  `background`). Computed on-demand if no cached
+  `label_distribution.json` exists. `400` if job not complete. `404` if
+  job not found.
 
 - `GET /sequence-models/hmm-sequences/{id}/exemplars` — per-state
   exemplar windows (high-confidence, nearest-to-centroid,
@@ -228,9 +232,10 @@ labels change over time).
 
 - `POST /sequence-models/hmm-sequences/{id}/generate-interpretations`
   — regenerate all three interpretation artifacts (overlay, label
-  distribution, exemplars) for a completed job. Returns
-  `{ status: "ok", job_id }`. `400` if job not complete. `404` if
-  not found.
+  distribution, exemplars) for a completed job. Runs unconditionally
+  for both source kinds (ADR-060). Returns
+  `{ status: "ok", job_id, label_distribution_generated: true }`.
+  `400` if job not complete. `404` if not found.
 
 ### Interpretation Schemas (ADR-059, source-agnostic)
 
@@ -241,8 +246,13 @@ index for SurfPerch, chunk index for CRNN), `start_timestamp`,
 `max_state_probability`.
 
 `LabelDistributionResponse`: `n_states`, `total_windows`, `states` (dict
-of state index → dict of label → count). Label distribution remains
-SurfPerch-only pending Phase 2.
+of state index → dict of tier key → dict of label → count). Unified
+across sources under ADR-060: SurfPerch jobs collapse the tier dimension
+to a single synthetic `"all"` key on disk; CRNN jobs persist real tier
+keys (`event_core` / `near_event` / `background`). The frontend chart
+collapses the tier dimension in `useMemo` so the visual is identical for
+both sources; the tier-stratified data is preserved on disk for a future
+tier-aware UI.
 
 `ExemplarRecord`: `sequence_id`, `position_in_sequence`,
 `audio_file_id` (nullable for hydrophone-only jobs), `start_timestamp`,
@@ -261,6 +271,12 @@ disk files are not rewritten by the adapter. The existing Refresh
 button (POST `/generate-interpretations/{id}`) rewrites them in unified
 form on demand. The adapter is a structural no-op when the on-disk
 artifact is already in unified shape.
+
+The same transitional pattern covers pre-ADR-060 flat
+`label_distribution.json` files (`states[state] = {label: count}`): the
+GET `/label-distribution` endpoint projects them to
+`states[state] = {"all": {label: count}}` in-memory; the file on disk is
+unchanged until a Refresh rewrites it in unified form.
 
 ## Motif Extraction Jobs
 
