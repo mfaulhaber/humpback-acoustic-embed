@@ -564,3 +564,94 @@ async def test_exemplars_endpoint_unified_format_is_no_op(client, app_settings):
     assert record["sequence_id"] == "region-A"
     assert record["position_in_sequence"] == 17
     assert record["extras"] == {"tier": "event_core"}
+
+
+async def _create_complete_crnn_hmm_job(client, app_settings) -> str:
+    """Create a CRNN-source HMM job in the ``complete`` state for endpoint tests."""
+    from humpback.models.sequence_models import (
+        ContinuousEmbeddingJob,
+        HMMSequenceJob,
+    )
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        region_job = RegionDetectionJob(
+            status=JobStatus.complete.value,
+            hydrophone_id="rpi_orcasound_lab",
+            start_timestamp=1000.0,
+            end_timestamp=1600.0,
+        )
+        session.add(region_job)
+        await session.flush()
+        cej = ContinuousEmbeddingJob(
+            status=JobStatus.complete.value,
+            region_detection_job_id=region_job.id,
+            model_version="crnn-call-parsing-pytorch",
+            window_size_seconds=0.25,
+            hop_seconds=0.25,
+            pad_seconds=0.0,
+            target_sample_rate=16000,
+            encoding_signature="test-sig-crnn-refresh",
+        )
+        session.add(cej)
+        await session.commit()
+        await session.refresh(cej)
+        cej_id = cej.id
+
+    create_resp = await client.post(
+        "/sequence-models/hmm-sequences",
+        json={"continuous_embedding_job_id": cej_id, "n_states": 3},
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    job_id = create_resp.json()["id"]
+
+    async with sf() as session:
+        job = await session.get(HMMSequenceJob, job_id)
+        assert job is not None
+        job.status = JobStatus.complete.value
+        await session.commit()
+    return job_id
+
+
+async def test_regenerate_interpretations_skips_label_distribution_for_crnn(
+    client, app_settings, monkeypatch
+):
+    """ADR-059: CRNN-source HMM jobs must NOT trigger generate_label_distribution
+    in the Refresh path (label distribution is SurfPerch-only pending Phase 2).
+    """
+    job_id = await _create_complete_crnn_hmm_job(client, app_settings)
+
+    # Stub generate_interpretations to a no-op so we don't need real artifacts
+    # on disk for this test.
+    import humpback.api.routers.sequence_models as router_mod
+
+    calls: dict[str, int] = {"generate_interpretations": 0, "label_distribution": 0}
+
+    def _fake_generate_interpretations(*_args, **_kwargs):
+        calls["generate_interpretations"] += 1
+
+    async def _fake_label_distribution(*_args, **_kwargs):
+        calls["label_distribution"] += 1
+        # Mirror the real failure mode for CRNN: missing
+        # event_segmentation_job_id raises a ValueError. If the router
+        # mistakenly invokes us, the assertions below will catch the call
+        # count, and we still surface the bug as a 500.
+        raise ValueError("CRNN sources have no event_segmentation_job_id")
+
+    monkeypatch.setattr(
+        router_mod, "generate_interpretations", _fake_generate_interpretations
+    )
+    monkeypatch.setattr(
+        router_mod, "generate_label_distribution", _fake_label_distribution
+    )
+
+    resp = await client.post(
+        f"/sequence-models/hmm-sequences/{job_id}/generate-interpretations"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["label_distribution_generated"] is False
+    assert calls["generate_interpretations"] == 1
+    assert calls["label_distribution"] == 0

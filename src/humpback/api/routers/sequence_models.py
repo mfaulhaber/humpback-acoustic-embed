@@ -494,9 +494,19 @@ async def regenerate_interpretations(
         )
 
     generate_interpretations(settings.storage_root, job, cej)
-    await generate_label_distribution(session, settings.storage_root, job)
+    # Label distribution is SurfPerch-only pending Phase 2 (ADR-059):
+    # CRNN sources lack the SurfPerch event-segmentation join path that
+    # generate_label_distribution() requires, so skip it for CRNN to avoid 500s.
+    label_distribution_generated = False
+    if source_kind_for(cej.model_version) != SOURCE_KIND_REGION_CRNN:
+        await generate_label_distribution(session, settings.storage_root, job)
+        label_distribution_generated = True
 
-    return {"status": "ok", "job_id": job_id}
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "label_distribution_generated": label_distribution_generated,
+    }
 
 
 @router.post("/hmm-sequences/{job_id}/cancel")

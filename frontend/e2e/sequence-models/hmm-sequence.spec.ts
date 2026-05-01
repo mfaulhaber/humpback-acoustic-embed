@@ -801,6 +801,12 @@ test.describe("Sequence Models — HMM Sequence", () => {
     await expect(badges.first()).toBeVisible();
     const badgeText = (await badges.first().textContent())?.trim();
     expect(["event_core", "near_event", "background"]).toContain(badgeText);
+
+    // Label Distribution card (and its Refresh button) is hidden on CRNN
+    // sources — the SurfPerch-only join would 500 if invoked (ADR-059
+    // defers CRNN label distribution to Phase 2).
+    await expect(page.getByTestId("hmm-generate-interpretations")).toHaveCount(0);
+    await expect(page.getByTestId("hmm-label-distribution")).toHaveCount(0);
   });
 
   test("SurfPerch detail page renders overlay and exemplar cards without tier badge", async ({

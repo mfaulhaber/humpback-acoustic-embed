@@ -677,6 +677,21 @@ async def _run_region_crnn_hmm(
         hmm_sequence_training_log_path(settings.storage_root, job_id),
     )
 
+    # --- Generate interpretation artifacts (overlay + exemplars) ---
+    # Run BEFORE the status flip so a UI poll that sees status=complete
+    # never 404s on GET /overlay or /exemplars. Failure is non-fatal:
+    # the job still completes.
+    try:
+        from humpback.services.hmm_sequence_service import generate_interpretations
+
+        generate_interpretations(settings.storage_root, job, source)
+    except Exception:
+        logger.warning(
+            "hmm_sequence | job=%s | interpretation generation failed, continuing",
+            job_id,
+            exc_info=True,
+        )
+
     now = datetime.now(timezone.utc)
     refreshed = await session.get(HMMSequenceJob, job_id)
     target = refreshed if refreshed is not None else job
@@ -697,17 +712,6 @@ async def _run_region_crnn_hmm(
         len(region_ids),
         len(rows),
     )
-
-    try:
-        from humpback.services.hmm_sequence_service import generate_interpretations
-
-        generate_interpretations(settings.storage_root, job, source)
-    except Exception:
-        logger.warning(
-            "hmm_sequence | job=%s | interpretation generation failed, continuing",
-            job_id,
-            exc_info=True,
-        )
 
 
 def _l2_if_needed(seq: np.ndarray, do_l2: bool) -> np.ndarray:

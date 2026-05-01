@@ -1093,7 +1093,7 @@ export function HMMSequenceDetailPage() {
         </Card>
       )}
 
-      {isComplete && (
+      {isComplete && !isCrnnSource && (
         <Card>
           <CardHeader>
             <div className="flex justify-between items-center">
