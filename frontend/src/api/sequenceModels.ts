@@ -769,7 +769,10 @@ export interface OverlayResponse {
 export interface LabelDistribution {
   n_states: number;
   total_windows: number;
-  states: Record<string, Record<string, number>>;
+  // Unified nested shape (ADR-060): outer = state, middle = tier bucket,
+  // inner = label. SurfPerch jobs use the synthetic "all" tier; CRNN jobs
+  // use real tier keys ("event_core" / "near_event" / "background").
+  states: Record<string, Record<string, Record<string, number>>>;
 }
 
 export interface ExemplarRecord {

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.sequence_models.exemplars import WindowMeta
@@ -33,6 +34,22 @@ class OverlayInputs:
     window_metas: list[WindowMeta]
 
 
+@dataclass
+class LabelDistributionInputs:
+    """Source-agnostic bundle consumed by label-distribution computation.
+
+    ``hydrophone_id`` resolves the DetectionJob/VocalizationLabel SQL fetch
+    that lives in the service. ``state_rows`` carries the same shape across
+    sources (``start_timestamp``, ``end_timestamp``, ``viterbi_state``);
+    ``tier_per_row`` is parallel to ``state_rows`` and ``None`` for sources
+    without a tier dimension (SurfPerch).
+    """
+
+    hydrophone_id: str | None
+    state_rows: list[dict[str, Any]]
+    tier_per_row: list[str] | None
+
+
 class SequenceArtifactLoader(Protocol):
     """Loader Protocol — one impl per embedding source family."""
 
@@ -42,6 +59,14 @@ class SequenceArtifactLoader(Protocol):
         hmm_job: HMMSequenceJob,
         cej: ContinuousEmbeddingJob,
     ) -> OverlayInputs: ...
+
+    async def load_label_distribution_inputs(
+        self,
+        session: AsyncSession,
+        storage_root: Path,
+        hmm_job: HMMSequenceJob,
+        cej: ContinuousEmbeddingJob,
+    ) -> LabelDistributionInputs: ...
 
 
 from humpback.sequence_models.loaders.crnn_region import CrnnRegionLoader  # noqa: E402
@@ -73,6 +98,7 @@ def get_loader(source_kind: str) -> SequenceArtifactLoader:
 
 __all__ = [
     "CrnnRegionLoader",
+    "LabelDistributionInputs",
     "OverlayInputs",
     "SequenceArtifactLoader",
     "SurfPerchLoader",

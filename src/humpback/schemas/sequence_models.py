@@ -381,11 +381,17 @@ class OverlayResponse(BaseModel):
 
 
 class LabelDistributionResponse(BaseModel):
-    """Per-state label distribution from center-time join."""
+    """Per-state label distribution from center-time join.
+
+    Unified nested shape (ADR-060): outer key is state, middle key is the
+    tier bucket, inner key is the label. SurfPerch jobs use the synthetic
+    ``"all"`` tier; CRNN jobs use real tier keys (``event_core`` /
+    ``near_event`` / ``background``).
+    """
 
     n_states: int
     total_windows: int
-    states: dict[str, dict[str, int]]
+    states: dict[str, dict[str, dict[str, int]]]
 
 
 class ExemplarRecord(BaseModel):

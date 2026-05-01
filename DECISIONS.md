@@ -484,3 +484,74 @@ Alternatives considered:
   `PcaUmapScatter` is unchanged — it never read identifier columns.
 - Label distribution remains SurfPerch-only pending Phase 2; the loader
   Protocol does not yet cover the label-distribution flow.
+
+## ADR-060: Source-agnostic HMM label distribution with tier-aware storage
+
+**Date**: 2026-05-01
+**Status**: Accepted
+**Builds on**: ADR-057, ADR-059
+
+**Context**: ADR-059 unified PCA/UMAP overlay and exemplar generation
+across SurfPerch and CRNN HMM jobs but explicitly deferred label
+distribution as Phase 2. The deferred surfaces were:
+`generate_label_distribution()` traversing `cej → EventSegmentationJob →
+RegionDetectionJob → hydrophone_id` (a path that does not exist for CRNN
+CEJs, which carry `region_detection_job_id` directly), the CRNN skip in
+`POST /generate-interpretations/{id}`, and a flat
+`states[state] = {label: count}` JSON shape that left no room to surface
+the per-chunk tier classification CRNN already records on its
+`states.parquet`.
+
+**Decision**: Extend the existing `SequenceArtifactLoader` Protocol with
+`load_label_distribution_inputs()` returning a generic
+`LabelDistributionInputs` (`hydrophone_id`, `state_rows`,
+`tier_per_row`). Each loader owns its source-specific traversal — the
+service keeps the shared DetectionJob + VocalizationLabel SQL fetch and
+the pure compute call. The on-disk shape becomes always-tiered:
+SurfPerch buckets every row to a synthetic `"all"` tier key, CRNN
+buckets each row to its own `event_core` / `near_event` / `background`
+tier. The frontend chart collapses the tier dimension in `useMemo`
+before building Plotly traces — identical visual to today, with the
+richer tier-stratified data preserved on disk for a future tier-aware
+UI.
+
+Alternatives considered:
+- A sibling `LabelDistributionLoader` Protocol: rejected — the same
+  source-resolution knowledge already lives in the Phase 1 loader files,
+  and a parallel Protocol would split that knowledge across two
+  registries.
+- Source-discriminated payload (flat for SurfPerch, nested for CRNN):
+  rejected — two readers, two schemas, two TS types, and frontend code
+  that must branch on source kind. The synthetic `"all"` bucket pays a
+  tiny structural tax for a single reader on both sides.
+- Forced one-shot regeneration of pre-PR SurfPerch files: rejected —
+  Phase 1 already established the read-time legacy adapter pattern; the
+  Refresh button rewrites in unified form on demand.
+
+**Consequences**:
+- New `LabelDistributionInputs` dataclass and Protocol method in
+  `src/humpback/sequence_models/loaders/__init__.py`. Each loader file
+  gains an async method that owns its source's hydrophone-traversal +
+  tier-extraction logic.
+- `compute_label_distribution()` gains a `tier_per_row: list[str] |
+  None` parameter and emits the unified nested shape unconditionally.
+  Length mismatch with `states` raises `ValueError`.
+- `LabelDistributionResponse` becomes
+  `dict[str, dict[str, dict[str, int]]]` and the frontend
+  `LabelDistribution` TS type matches.
+- The CRNN skip in `POST /generate-interpretations/{id}` is removed;
+  `label_distribution_generated` becomes a constant `true` in the
+  response. CRNN HMM jobs now produce label-distribution artifacts via
+  Refresh and on first GET, identical to SurfPerch.
+- A read-time legacy adapter on `GET /label-distribution` projects
+  pre-PR flat-shape SurfPerch JSON to the unified nested shape
+  in-memory; disk files are unchanged until the Refresh button rewrites
+  them. Mirrors the Phase 1 overlay/exemplar adapter pattern; the
+  comment names the adapter as transitional.
+- Frontend `LabelDistributionChart` collapses the tier dimension in
+  `useMemo`. SurfPerch jobs render unchanged; CRNN jobs render the same
+  single-stack chart with bars summed across tiers. The
+  `data-testid="hmm-label-distribution"` attribute and Plotly layout are
+  preserved.
+- The `"all"` tier key is reserved for sources without a tier dimension;
+  future sources with a real tier dimension must pick distinct keys.

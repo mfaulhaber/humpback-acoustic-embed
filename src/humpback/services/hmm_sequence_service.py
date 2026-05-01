@@ -45,7 +45,6 @@ from humpback.storage import (
     hmm_sequence_exemplars_path,
     hmm_sequence_label_distribution_path,
     hmm_sequence_overlay_path,
-    hmm_sequence_states_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -245,9 +244,12 @@ async def generate_label_distribution(
 ) -> dict[str, Any]:
     """Compute and persist state-to-label distribution for a completed HMM job.
 
-    Traces HMM → CEJ → RegionDetectionJob → hydrophone source, finds
-    overlapping DetectionJobs with vocalization labels, and joins via
-    center-time-in-window semantics.
+    Source-agnostic: dispatches to the registered loader for the upstream
+    embedding source (SurfPerch event-padded vs. CRNN region-based; see
+    ADR-060) for hydrophone resolution and per-row tier extraction. The
+    DetectionJob + VocalizationLabel SQL fetch is shared across sources.
+    Joins HMM window timestamps with detection-window extents and labels
+    via center-time-in-window semantics.
     """
     cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
     if cej is None:
@@ -255,49 +257,29 @@ async def generate_label_distribution(
             f"ContinuousEmbeddingJob not found: {job.continuous_embedding_job_id}"
         )
 
-    from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
-
-    seg_job = await session.get(EventSegmentationJob, cej.event_segmentation_job_id)
-    if seg_job is None:
-        raise ValueError(
-            f"EventSegmentationJob not found: {cej.event_segmentation_job_id}"
-        )
-    rdj = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
-    if rdj is None:
-        raise ValueError(
-            f"RegionDetectionJob not found: {seg_job.region_detection_job_id}"
-        )
-
-    states_table = pq.read_table(hmm_sequence_states_path(storage_root, job.id))
-    state_rows: list[dict[str, Any]] = []
-    for i in range(states_table.num_rows):
-        start_time = float(states_table.column("start_timestamp")[i].as_py())
-        end_time = float(states_table.column("end_timestamp")[i].as_py())
-        state_rows.append(
-            {
-                "start_timestamp": start_time,
-                "end_timestamp": end_time,
-                "viterbi_state": states_table.column("viterbi_state")[i].as_py(),
-            }
-        )
+    loader = get_loader(source_kind_for(cej.model_version))
+    inputs = await loader.load_label_distribution_inputs(
+        session, storage_root, job, cej
+    )
 
     detection_windows: list[DetectionWindow] = []
     label_records: list[LabelRecord] = []
 
-    if rdj.hydrophone_id:
+    if inputs.hydrophone_id:
         stmt = (
             select(DetectionJob)
-            .where(DetectionJob.hydrophone_id == rdj.hydrophone_id)
+            .where(DetectionJob.hydrophone_id == inputs.hydrophone_id)
             .where(DetectionJob.status == "complete")
         )
         result = await session.execute(stmt)
         det_jobs = list(result.scalars().all())
 
+        from humpback.classifier.detection_rows import read_detection_row_store
+
         for dj in det_jobs:
             rs_path = detection_row_store_path(storage_root, dj.id)
             if not rs_path.exists():
                 continue
-            from humpback.classifier.detection_rows import read_detection_row_store
 
             _, rows = read_detection_row_store(rs_path)
             for r in rows:
@@ -323,7 +305,11 @@ async def generate_label_distribution(
                 label_records.append(LabelRecord(row_id=lbl.row_id, label=lbl.label))
 
     dist = compute_label_distribution(
-        state_rows, detection_windows, label_records, job.n_states
+        inputs.state_rows,
+        detection_windows,
+        label_records,
+        job.n_states,
+        tier_per_row=inputs.tier_per_row,
     )
 
     dist_dst = hmm_sequence_label_distribution_path(storage_root, job.id)

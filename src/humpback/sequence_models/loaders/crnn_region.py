@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import joblib
 import numpy as np
 import pyarrow.parquet as pq
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.sequence_models.exemplars import WindowMeta
@@ -19,7 +20,10 @@ from humpback.storage import (
 )
 
 if TYPE_CHECKING:
-    from humpback.sequence_models.loaders import OverlayInputs
+    from humpback.sequence_models.loaders import (
+        LabelDistributionInputs,
+        OverlayInputs,
+    )
 
 
 class CrnnRegionLoader:
@@ -133,4 +137,47 @@ class CrnnRegionLoader:
             max_probs=max_probs,
             metadata=meta,
             window_metas=window_metas,
+        )
+
+    async def load_label_distribution_inputs(
+        self,
+        session: AsyncSession,
+        storage_root: Path,
+        hmm_job: HMMSequenceJob,
+        cej: ContinuousEmbeddingJob,
+    ) -> "LabelDistributionInputs":
+        from humpback.models.call_parsing import RegionDetectionJob
+        from humpback.sequence_models.loaders import LabelDistributionInputs
+
+        if cej.region_detection_job_id is None:
+            raise ValueError(
+                "CRNN-source ContinuousEmbeddingJob is missing region_detection_job_id"
+            )
+        rdj = await session.get(RegionDetectionJob, cej.region_detection_job_id)
+        if rdj is None:
+            raise ValueError(
+                f"RegionDetectionJob not found: {cej.region_detection_job_id}"
+            )
+
+        states_table = pq.read_table(hmm_sequence_states_path(storage_root, hmm_job.id))
+        state_rows: list[dict[str, Any]] = []
+        tier_per_row: list[str] = []
+        for i in range(states_table.num_rows):
+            state_rows.append(
+                {
+                    "start_timestamp": float(
+                        states_table.column("start_timestamp")[i].as_py()
+                    ),
+                    "end_timestamp": float(
+                        states_table.column("end_timestamp")[i].as_py()
+                    ),
+                    "viterbi_state": states_table.column("viterbi_state")[i].as_py(),
+                }
+            )
+            tier_per_row.append(str(states_table.column("tier")[i].as_py()))
+
+        return LabelDistributionInputs(
+            hydrophone_id=rdj.hydrophone_id,
+            state_rows=state_rows,
+            tier_per_row=tier_per_row,
         )

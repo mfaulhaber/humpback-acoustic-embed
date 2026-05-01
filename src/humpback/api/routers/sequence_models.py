@@ -404,21 +404,51 @@ async def get_hmm_overlay(
     return OverlayResponse(total=total, items=items)
 
 
+def _project_legacy_label_distribution(payload: dict) -> dict:
+    """Read-time adapter for pre-ADR-060 flat label-distribution JSON (transitional).
+
+    Pre-PR SurfPerch label-distribution files have the shape
+    ``states[state] = {label: count}``; the unified shape (ADR-060) is
+    ``states[state] = {tier: {label: count}}``. New artifacts already match
+    the unified shape so this adapter is a no-op for them. Disk files are
+    never rewritten by this code path; the Refresh button rewrites them in
+    unified format on demand.
+    """
+    states = payload.get("states")
+    if not isinstance(states, dict):
+        return payload
+    projected_states: dict[str, dict[str, dict[str, int]]] = {}
+    for state_key, inner in states.items():
+        if not isinstance(inner, dict) or not inner:
+            projected_states[state_key] = inner if isinstance(inner, dict) else {}
+            continue
+        # Detection rule: legacy flat shape's first inner value is int;
+        # unified nested shape's first inner value is dict.
+        first_value = next(iter(inner.values()))
+        if isinstance(first_value, dict):
+            projected_states[state_key] = inner
+        else:
+            projected_states[state_key] = {"all": inner}
+    return {**payload, "states": projected_states}
+
+
 @router.get("/hmm-sequences/{job_id}/label-distribution")
 async def get_hmm_label_distribution(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> LabelDistributionResponse:
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
     if job.status != "complete":
         raise HTTPException(status_code=400, detail="job not complete")
-    settings = Settings.from_repo_env()
     dist_path = hmm_sequence_label_distribution_path(settings.storage_root, job_id)
     if dist_path.exists():
         payload = json.loads(dist_path.read_text(encoding="utf-8"))
-        return LabelDistributionResponse.model_validate(payload)
+        return LabelDistributionResponse.model_validate(
+            _project_legacy_label_distribution(payload)
+        )
     dist = await generate_label_distribution(session, settings.storage_root, job)
     return LabelDistributionResponse.model_validate(dist)
 
@@ -477,13 +507,13 @@ async def get_hmm_exemplars(
 async def regenerate_interpretations(
     job_id: str,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> dict:
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
     if job.status != "complete":
         raise HTTPException(status_code=400, detail="job not complete")
-    settings = Settings.from_repo_env()
 
     from humpback.models.sequence_models import ContinuousEmbeddingJob
 
@@ -494,18 +524,12 @@ async def regenerate_interpretations(
         )
 
     generate_interpretations(settings.storage_root, job, cej)
-    # Label distribution is SurfPerch-only pending Phase 2 (ADR-059):
-    # CRNN sources lack the SurfPerch event-segmentation join path that
-    # generate_label_distribution() requires, so skip it for CRNN to avoid 500s.
-    label_distribution_generated = False
-    if source_kind_for(cej.model_version) != SOURCE_KIND_REGION_CRNN:
-        await generate_label_distribution(session, settings.storage_root, job)
-        label_distribution_generated = True
+    await generate_label_distribution(session, settings.storage_root, job)
 
     return {
         "status": "ok",
         "job_id": job_id,
-        "label_distribution_generated": label_distribution_generated,
+        "label_distribution_generated": True,
     }
 
 

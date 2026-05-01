@@ -109,10 +109,10 @@ const LABEL_DISTRIBUTION = {
   n_states: 4,
   total_windows: 4,
   states: {
-    "0": { song: 1 },
-    "1": { call: 1 },
-    "2": { unlabeled: 1 },
-    "3": { song: 1 },
+    "0": { all: { song: 1 } },
+    "1": { all: { call: 1 } },
+    "2": { all: { unlabeled: 1 } },
+    "3": { all: { song: 1 } },
   },
 };
 
@@ -802,11 +802,11 @@ test.describe("Sequence Models — HMM Sequence", () => {
     const badgeText = (await badges.first().textContent())?.trim();
     expect(["event_core", "near_event", "background"]).toContain(badgeText);
 
-    // Label Distribution card (and its Refresh button) is hidden on CRNN
-    // sources — the SurfPerch-only join would 500 if invoked (ADR-059
-    // defers CRNN label distribution to Phase 2).
-    await expect(page.getByTestId("hmm-generate-interpretations")).toHaveCount(0);
-    await expect(page.getByTestId("hmm-label-distribution")).toHaveCount(0);
+    // Label Distribution card renders for CRNN sources under ADR-060.
+    // The mock returns unified-shape JSON (state → tier → label → count);
+    // the chart's useMemo collapses tiers before plotting.
+    await expect(page.getByTestId("hmm-generate-interpretations")).toBeVisible();
+    await expect(page.getByTestId("hmm-label-distribution")).toBeVisible();
   });
 
   test("SurfPerch detail page renders overlay and exemplar cards without tier badge", async ({
