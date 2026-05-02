@@ -64,6 +64,7 @@ export interface TimelineContextValue extends TimelineState, TimelineDerived, Ti
 export interface TimelinePlaybackHandle {
   play: (startEpoch: number, duration?: number) => void;
   pause: () => void;
+  seekTo: (epoch: number) => void;
   isPlaying: boolean;
 }
 

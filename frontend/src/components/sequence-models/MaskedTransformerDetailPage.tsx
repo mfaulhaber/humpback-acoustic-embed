@@ -19,6 +19,7 @@ import {
 import { DiscreteSequenceBar, type DiscreteSequenceItem } from "./DiscreteSequenceBar";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
+import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
 import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { PlaybackControls } from "@/components/timeline/controls/PlaybackControls";
@@ -37,6 +38,7 @@ import { labelColor } from "./constants";
 export function MaskedTransformerDetailPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const { data, isLoading } = useMaskedTransformerJob(jobId);
+  const timelineHandleRef = useRef<TimelinePlaybackHandle>(null!);
 
   if (isLoading || !data) {
     return (
@@ -105,6 +107,7 @@ export function MaskedTransformerDetailPage() {
           regionDetectionJobId={region_detection_job_id}
           regionStartTimestamp={region_start_timestamp}
           regionEndTimestamp={region_end_timestamp}
+          timelineHandleRef={timelineHandleRef}
         />
       )}
 
@@ -126,7 +129,12 @@ export function MaskedTransformerDetailPage() {
             <CardTitle className="text-base">Motifs</CardTitle>
           </CardHeader>
           <CardContent>
-            <MotifSection jobId={jobId} kValues={kValues} />
+            <MotifSection
+              jobId={jobId}
+              kValues={kValues}
+              regionDetectionJobId={region_detection_job_id}
+              timelineHandleRef={timelineHandleRef}
+            />
           </CardContent>
         </Card>
       )}
@@ -357,12 +365,14 @@ function TimelineSection({
   regionDetectionJobId,
   regionStartTimestamp,
   regionEndTimestamp,
+  timelineHandleRef,
 }: {
   jobId: string;
   kValues: number[];
   regionDetectionJobId: string | null;
   regionStartTimestamp: number | null;
   regionEndTimestamp: number | null;
+  timelineHandleRef: React.RefObject<TimelinePlaybackHandle>;
 }) {
   const k = useSelectedK(kValues);
   const { data: tokensData } = useMaskedTransformerTokens(
@@ -420,6 +430,7 @@ function TimelineSection({
           <div data-testid="mt-timeline-viewer">
             <TimelineProvider
               key={`mt-timeline-${jobId}-${k}`}
+              ref={timelineHandleRef}
               jobStart={regionStartTimestamp}
               jobEnd={regionEndTimestamp}
               zoomLevels={REVIEW_ZOOM}
@@ -642,13 +653,32 @@ function LabelDistributionSection({
   );
 }
 
-function MotifSection({ jobId, kValues }: { jobId: string; kValues: number[] }) {
+function MotifSection({
+  jobId,
+  kValues,
+  regionDetectionJobId,
+  timelineHandleRef,
+}: {
+  jobId: string;
+  kValues: number[];
+  regionDetectionJobId: string | null;
+  timelineHandleRef: React.RefObject<TimelinePlaybackHandle>;
+}) {
   const k = useSelectedK(kValues);
   if (k == null) return null;
+  if (!regionDetectionJobId) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        Region context unavailable; motif Play/Jump disabled.
+      </div>
+    );
+  }
   return (
     <MotifExtractionPanel
-      regionDetectionJobId=""
-      onJumpToTimestamp={() => {}}
+      regionDetectionJobId={regionDetectionJobId}
+      onJumpToTimestamp={(timestamp) =>
+        timelineHandleRef.current?.seekTo(timestamp)
+      }
       parent={{
         kind: "masked_transformer",
         maskedTransformerJobId: jobId,
