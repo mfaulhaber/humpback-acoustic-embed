@@ -199,6 +199,28 @@ async def test_idempotency_for_masked_transformer_parent(session):
     assert third.id != first.id
 
 
+async def test_list_masked_transformer_jobs_filters_by_k(session):
+    _, mt = await _masked_transformer_jobs(session)
+    job100, _ = await create_motif_extraction_job(session, _mt_payload(mt.id, k=100))
+    job50, _ = await create_motif_extraction_job(session, _mt_payload(mt.id, k=50))
+
+    jobs100 = await list_motif_extraction_jobs(
+        session,
+        masked_transformer_job_id=mt.id,
+        parent_kind="masked_transformer",
+        k=100,
+    )
+    jobs50 = await list_motif_extraction_jobs(
+        session,
+        masked_transformer_job_id=mt.id,
+        parent_kind="masked_transformer",
+        k=50,
+    )
+
+    assert [j.id for j in jobs100] == [job100.id]
+    assert [j.id for j in jobs50] == [job50.id]
+
+
 async def test_list_cancel_and_delete(session, settings):
     _, hmm = await _source_jobs(session)
     job, _ = await create_motif_extraction_job(session, _payload(hmm.id))

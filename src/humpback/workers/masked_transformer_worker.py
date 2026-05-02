@@ -70,6 +70,11 @@ from humpback.storage import (
     masked_transformer_dir,
     masked_transformer_k_decoded_path,
     masked_transformer_k_dir,
+    masked_transformer_k_exemplars_path,
+    masked_transformer_k_kmeans_path,
+    masked_transformer_k_label_distribution_path,
+    masked_transformer_k_overlay_path,
+    masked_transformer_k_run_lengths_path,
     masked_transformer_k_tmp_dir,
     masked_transformer_loss_curve_path,
     masked_transformer_model_path,
@@ -465,7 +470,15 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
 def _previously_done_k(storage_root: Path, job_id: str, k_list: list[int]) -> set[int]:
     done: set[int] = set()
     for k in k_list:
-        if masked_transformer_k_decoded_path(storage_root, job_id, k).exists():
+        required = (
+            masked_transformer_k_decoded_path(storage_root, job_id, k),
+            masked_transformer_k_kmeans_path(storage_root, job_id, k),
+            masked_transformer_k_run_lengths_path(storage_root, job_id, k),
+            masked_transformer_k_overlay_path(storage_root, job_id, k),
+            masked_transformer_k_exemplars_path(storage_root, job_id, k),
+            masked_transformer_k_label_distribution_path(storage_root, job_id, k),
+        )
+        if all(path.exists() for path in required):
             done.add(k)
     return done
 

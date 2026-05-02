@@ -286,6 +286,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     from humpback.models.sequence_models import (
         ContinuousEmbeddingJob,
         HMMSequenceJob,
+        MaskedTransformerJob,
         MotifExtractionJob,
     )
 
@@ -334,6 +335,21 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count_motif:
         logger.warning(f"Recovered {count_motif} stale motif extraction job(s)")
 
+    result_mt = await session.execute(
+        update(MaskedTransformerJob)
+        .where(
+            MaskedTransformerJob.status == JobStatus.running.value,
+            MaskedTransformerJob.updated_at < cutoff,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_mt = _rowcount(result_mt)
+    if count_mt:
+        logger.warning(f"Recovered {count_mt} stale masked-transformer job(s)")
+
     total = (
         count2
         + count3
@@ -351,6 +367,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count_cej
         + count_hmm
         + count_motif
+        + count_mt
     )
     if total:
         await session.commit()

@@ -216,7 +216,9 @@ async def test_terminal_cancel_returns_409(client, app_settings):
     assert second.status_code == 409
 
 
-async def _seed_masked_transformer(app_settings) -> str:
+async def _seed_masked_transformer(
+    app_settings, *, k_values: list[int] | None = None
+) -> str:
     from humpback.models.sequence_models import MaskedTransformerJob
     from humpback.services.masked_transformer_service import serialize_k_values
 
@@ -237,7 +239,7 @@ async def _seed_masked_transformer(app_settings) -> str:
             status=JobStatus.complete.value,
             continuous_embedding_job_id=cej.id,
             training_signature="sig-mt-api",
-            k_values=serialize_k_values([100]),
+            k_values=serialize_k_values(k_values or [100]),
         )
         session.add(mt)
         await session.commit()
@@ -263,6 +265,41 @@ async def test_motif_create_with_masked_transformer_parent(client, app_settings)
     assert body["k"] == 100
     assert body["hmm_sequence_job_id"] is None
     assert body["source_kind"] == "region_crnn"
+
+
+async def test_motif_list_filters_masked_transformer_parent_by_k(client, app_settings):
+    mt_id = await _seed_masked_transformer(app_settings, k_values=[50, 100])
+
+    created_50 = await client.post(
+        "/sequence-models/motif-extractions",
+        json={
+            "parent_kind": "masked_transformer",
+            "masked_transformer_job_id": mt_id,
+            "k": 50,
+        },
+    )
+    assert created_50.status_code == 201, created_50.text
+    created_100 = await client.post(
+        "/sequence-models/motif-extractions",
+        json={
+            "parent_kind": "masked_transformer",
+            "masked_transformer_job_id": mt_id,
+            "k": 100,
+        },
+    )
+    assert created_100.status_code == 201, created_100.text
+
+    listed = await client.get(
+        "/sequence-models/motif-extractions",
+        params={
+            "parent_kind": "masked_transformer",
+            "masked_transformer_job_id": mt_id,
+            "k": 100,
+        },
+    )
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert [job["id"] for job in body] == [created_100.json()["id"]]
 
 
 async def test_motif_create_xor_violation_returns_422(client, app_settings):
