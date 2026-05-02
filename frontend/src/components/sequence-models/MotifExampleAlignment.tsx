@@ -11,13 +11,20 @@ export function MotifExampleAlignment({
   occurrences,
   regionDetectionJobId,
   onJumpToTimestamp,
+  onPlayMotif,
   activeOccurrenceIndex,
   onActiveOccurrenceChange,
   numLabels,
+  maxRows = 20,
 }: {
   occurrences: MotifOccurrence[];
   regionDetectionJobId: string;
   onJumpToTimestamp: (timestamp: number) => void;
+  /** Optional motif-bounded playback handler. When supplied, the Play
+   *  button calls this instead of constructing a standalone ``<audio>``.
+   *  Lets the masked-transformer page route playback through the shared
+   *  ``TimelinePlaybackHandle``; HMM keeps the standalone-audio fallback. */
+  onPlayMotif?: (occurrence: MotifOccurrence, idx: number) => void;
   activeOccurrenceIndex?: number;
   onActiveOccurrenceChange?: (idx: number) => void;
   /** Total label count (HMM ``n_states`` or masked-transformer ``k``).
@@ -26,6 +33,10 @@ export function MotifExampleAlignment({
    *  ramp ``labelColor`` provides.
    */
   numLabels?: number;
+  /** Maximum occurrence rows to render. Defaults to 20 (per
+   *  2026-05-02-masked-transformer-motif-ux-design).
+   */
+  maxRows?: number;
 }) {
   if (occurrences.length === 0) {
     return (
@@ -35,7 +46,7 @@ export function MotifExampleAlignment({
     );
   }
 
-  const rows = occurrences.slice(0, 10);
+  const rows = occurrences.slice(0, maxRows);
   const minRel = Math.min(...rows.map((o) => o.relative_start_seconds), -1);
   const maxRel = Math.max(...rows.map((o) => o.relative_end_seconds), 1);
   const span = Math.max(0.001, maxRel - minRel);
@@ -105,6 +116,10 @@ export function MotifExampleAlignment({
                 size="sm"
                 variant="outline"
                 onClick={() => {
+                  if (onPlayMotif) {
+                    onPlayMotif(occ, idx);
+                    return;
+                  }
                   const start = Math.max(0, occ.start_timestamp - 1);
                   const duration = Math.max(
                     1,

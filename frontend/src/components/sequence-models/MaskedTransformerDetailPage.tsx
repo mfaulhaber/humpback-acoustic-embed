@@ -21,9 +21,11 @@ import { TimelineProvider } from "@/components/timeline/provider/TimelineProvide
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
 import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
+import { MotifHighlightOverlay } from "@/components/timeline/overlays/MotifHighlightOverlay";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { PlaybackControls } from "@/components/timeline/controls/PlaybackControls";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import type { MotifOccurrence } from "@/api/sequenceModels";
 import {
   CONFIDENCE_GRADIENT,
   COLORS,
@@ -98,6 +100,20 @@ export function MaskedTransformerDetailPage() {
   const handleActiveOccurrenceChange = useCallback((idx: number) => {
     setMotifSelection((prev) => ({ ...prev, activeOccurrenceIndex: idx }));
   }, []);
+  const handlePlayMotif = useCallback(
+    (occ: MotifOccurrence, idx: number) => {
+      const handle = timelineHandleRef.current;
+      if (!handle) return;
+      const duration = Math.max(
+        0.05,
+        occ.end_timestamp - occ.start_timestamp,
+      );
+      handle.seekTo(occ.start_timestamp);
+      handle.play(occ.start_timestamp, duration);
+      setMotifSelection((prev) => ({ ...prev, activeOccurrenceIndex: idx }));
+    },
+    [],
+  );
 
   if (isLoading || !data) {
     return (
@@ -185,6 +201,7 @@ export function MaskedTransformerDetailPage() {
             onSelectionChange={handleMotifSelectionChange}
             activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
             onActiveOccurrenceChange={handleActiveOccurrenceChange}
+            onPlayMotif={handlePlayMotif}
           />
         </CollapsiblePanelCard>
       )}
@@ -272,6 +289,11 @@ interface ChunkScore {
 // API caps the per-page limit at 50000; jobs typically have 15-30k chunks.
 const CHUNK_FETCH_LIMIT = 50000;
 const CONFIDENCE_STRIP_HEIGHT = 24;
+
+// Hides the per-token confidence and reconstruction-error strips below the
+// token bar. Per 2026-05-02-masked-transformer-motif-ux-design we are
+// deferring these until they are needed; flip to ``true`` to restore.
+const SHOW_CONFIDENCE_STRIPS = false;
 
 function lerpHexColor(a: string, b: string, t: number): string {
   const pa = [
@@ -393,6 +415,7 @@ function TimelineBody({
   reconstructionScores,
   reconstructionMax,
   k,
+  motifSelection,
 }: {
   regionDetectionJobId: string;
   tokenItems: DiscreteSequenceItem[];
@@ -400,6 +423,7 @@ function TimelineBody({
   reconstructionScores: ChunkScore[];
   reconstructionMax: number;
   k: number | null;
+  motifSelection: MotifPanelSelection;
 }) {
   const ctx = useTimelineContext();
 
@@ -434,6 +458,10 @@ function TimelineBody({
     [reconstructionMax],
   );
 
+  const motifColorIndex = motifSelection.motif?.states[0] ?? 0;
+  const showMotifOverlay =
+    motifSelection.motifKey != null && motifSelection.occurrences.length > 0;
+
   return (
     <>
       <div className="flex" style={{ height: 200 }}>
@@ -441,7 +469,16 @@ function TimelineBody({
           jobId={regionDetectionJobId}
           tileUrlBuilder={tileUrlBuilder}
           freqRange={[0, 3000]}
-        />
+        >
+          {showMotifOverlay && (
+            <MotifHighlightOverlay
+              occurrences={motifSelection.occurrences}
+              activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
+              colorIndex={motifColorIndex}
+              numLabels={k ?? 0}
+            />
+          )}
+        </Spectrogram>
       </div>
       <DiscreteSequenceBar
         items={tokenItems}
@@ -453,17 +490,21 @@ function TimelineBody({
           `Token ${item.label} · ${item.start_timestamp.toFixed(2)}s–${item.end_timestamp.toFixed(2)}s · conf ${(item.confidence ?? 0).toFixed(2)}`
         }
       />
-      <ChunkConfidenceStrip
-        items={tokenScores}
-        label="conf"
-        testId="mt-token-confidence-strip"
-      />
-      <ChunkConfidenceStrip
-        items={reconstructionScores}
-        label="recon"
-        testId="mt-reconstruction-error-strip"
-        scoreNormalizer={reconstructionNormalizer}
-      />
+      {SHOW_CONFIDENCE_STRIPS && (
+        <>
+          <ChunkConfidenceStrip
+            items={tokenScores}
+            label="conf"
+            testId="mt-token-confidence-strip"
+          />
+          <ChunkConfidenceStrip
+            items={reconstructionScores}
+            label="recon"
+            testId="mt-reconstruction-error-strip"
+            scoreNormalizer={reconstructionNormalizer}
+          />
+        </>
+      )}
       <div className="flex justify-center py-1">
         <ZoomSelector />
       </div>
@@ -577,6 +618,7 @@ function TimelineSection({
                 reconstructionScores={reconstructionScores}
                 reconstructionMax={reconstructionMax}
                 k={k}
+                motifSelection={motifSelection}
               />
             </TimelineProvider>
           </div>
@@ -770,6 +812,7 @@ function MotifSection({
   onSelectionChange,
   activeOccurrenceIndex,
   onActiveOccurrenceChange,
+  onPlayMotif,
 }: {
   jobId: string;
   kValues: number[];
@@ -778,6 +821,7 @@ function MotifSection({
   onSelectionChange: (selection: MotifPanelSelection) => void;
   activeOccurrenceIndex: number;
   onActiveOccurrenceChange: (idx: number) => void;
+  onPlayMotif: (occurrence: MotifOccurrence, idx: number) => void;
 }) {
   const k = useSelectedK(kValues);
   if (k == null) return null;
@@ -794,6 +838,7 @@ function MotifSection({
       onJumpToTimestamp={(timestamp) =>
         timelineHandleRef.current?.seekTo(timestamp)
       }
+      onPlayMotif={onPlayMotif}
       parent={{
         kind: "masked_transformer",
         maskedTransformerJobId: jobId,

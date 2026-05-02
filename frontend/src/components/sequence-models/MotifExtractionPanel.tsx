@@ -47,6 +47,7 @@ export function MotifExtractionPanel({
   hmmSequenceJobId,
   regionDetectionJobId,
   onJumpToTimestamp,
+  onPlayMotif,
   parent,
   onSelectionChange,
   activeOccurrenceIndex: controlledActiveIndex,
@@ -57,6 +58,11 @@ export function MotifExtractionPanel({
   hmmSequenceJobId?: string;
   regionDetectionJobId: string;
   onJumpToTimestamp: (timestamp: number) => void;
+  /** Optional motif-bounded playback handler forwarded to
+   *  ``MotifExampleAlignment``. The masked-transformer page supplies this
+   *  to route Play through the shared ``TimelinePlaybackHandle``; HMM
+   *  callers omit it to keep the standalone-audio fallback. */
+  onPlayMotif?: (occurrence: MotifOccurrence, idx: number) => void;
   parent?: MotifExtractionPanelParent;
   onSelectionChange?: (selection: MotifPanelSelection) => void;
   activeOccurrenceIndex?: number;
@@ -334,14 +340,20 @@ export function MotifExtractionPanel({
               </tbody>
             </table>
           </div>
-          <MotifExampleAlignment
-            occurrences={occurrences}
-            regionDetectionJobId={regionDetectionJobId}
-            onJumpToTimestamp={onJumpToTimestamp}
-            activeOccurrenceIndex={activeOccurrenceIndex}
-            onActiveOccurrenceChange={setActiveOccurrenceIndex}
-            numLabels={numLabels}
-          />
+          <div
+            className="max-h-[640px] overflow-y-auto"
+            data-testid="motif-example-list"
+          >
+            <MotifExampleAlignment
+              occurrences={occurrences}
+              regionDetectionJobId={regionDetectionJobId}
+              onJumpToTimestamp={onJumpToTimestamp}
+              onPlayMotif={onPlayMotif}
+              activeOccurrenceIndex={activeOccurrenceIndex}
+              onActiveOccurrenceChange={setActiveOccurrenceIndex}
+              numLabels={numLabels}
+            />
+          </div>
         </div>
       )}
     </div>
