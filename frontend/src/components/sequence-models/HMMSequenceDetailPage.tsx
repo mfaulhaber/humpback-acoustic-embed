@@ -30,9 +30,30 @@ import { PlaybackControls } from "@/components/timeline/controls/PlaybackControl
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
 import { LABEL_COLORS } from "./constants";
+import { CollapsiblePanelCard } from "./CollapsiblePanelCard";
 import { SpanNavBar, type SpanInfo, type RegionGroup } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
-import { MotifExtractionPanel } from "./MotifExtractionPanel";
+import {
+  MotifExtractionPanel,
+  type MotifPanelSelection,
+} from "./MotifExtractionPanel";
+import { MotifTimelineLegend } from "./MotifTimelineLegend";
+
+const EMPTY_MOTIF_SELECTION: MotifPanelSelection = {
+  motifKey: null,
+  motif: null,
+  occurrences: [],
+  occurrencesTotal: 0,
+  activeOccurrenceIndex: 0,
+};
+
+function parseMotifKeyToStates(motifKey: string | null): number[] {
+  if (motifKey == null) return [];
+  return motifKey
+    .split("-")
+    .map((s) => Number.parseInt(s, 10))
+    .filter((n) => Number.isFinite(n));
+}
 
 function StateTimeline({
   spanItems,
@@ -783,6 +804,43 @@ export function HMMSequenceDetailPage() {
     [activeSpan, spans],
   );
 
+  const [motifSelection, setMotifSelection] = useState<MotifPanelSelection>(
+    EMPTY_MOTIF_SELECTION,
+  );
+  const handleMotifSelectionChange = useCallback((sel: MotifPanelSelection) => {
+    setMotifSelection(sel);
+  }, []);
+  const handleMotifActiveOccurrenceChange = useCallback((idx: number) => {
+    setMotifSelection((prev) => ({ ...prev, activeOccurrenceIndex: idx }));
+  }, []);
+  const seekToOccurrence = useCallback(
+    (sel: MotifPanelSelection, idx: number) => {
+      const occ = sel.occurrences[idx];
+      if (!occ) return;
+      handleJumpToTimestamp((occ.start_timestamp + occ.end_timestamp) / 2);
+    },
+    [handleJumpToTimestamp],
+  );
+  const handleMotifPrev = useCallback(() => {
+    setMotifSelection((prev) => {
+      if (prev.occurrencesTotal === 0) return prev;
+      const nextIdx = Math.max(0, prev.activeOccurrenceIndex - 1);
+      seekToOccurrence(prev, nextIdx);
+      return { ...prev, activeOccurrenceIndex: nextIdx };
+    });
+  }, [seekToOccurrence]);
+  const handleMotifNext = useCallback(() => {
+    setMotifSelection((prev) => {
+      if (prev.occurrencesTotal === 0) return prev;
+      const nextIdx = Math.min(
+        prev.occurrencesTotal - 1,
+        prev.activeOccurrenceIndex + 1,
+      );
+      seekToOccurrence(prev, nextIdx);
+      return { ...prev, activeOccurrenceIndex: nextIdx };
+    });
+  }, [seekToOccurrence]);
+
   const activeTimelineSpanKey =
     activeTimelineSpan == null ? null : String(activeTimelineSpan.id);
   const activeTimelineSpanStart = activeTimelineSpan?.startTimestamp;
@@ -996,6 +1054,15 @@ export function HMMSequenceDetailPage() {
               onNextRegion={handleNextRegion}
               itemLabel={itemLabel}
             />
+            <MotifTimelineLegend
+              selectedMotifKey={motifSelection.motifKey}
+              selectedStates={parseMotifKeyToStates(motifSelection.motifKey)}
+              numLabels={job.n_states}
+              occurrencesTotal={motifSelection.occurrencesTotal}
+              activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
+              onPrev={handleMotifPrev}
+              onNext={handleMotifNext}
+            />
             <TimelineProvider
               key={`hmm-timeline-${regionDetectionJobId}`}
               jobStart={regionStartTimestamp}
@@ -1022,178 +1089,173 @@ export function HMMSequenceDetailPage() {
       )}
 
       {isComplete && regionDetectionJobId && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Motifs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <MotifExtractionPanel
-              hmmSequenceJobId={job.id}
-              regionDetectionJobId={regionDetectionJobId}
-              onJumpToTimestamp={handleJumpToTimestamp}
-            />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="Motifs"
+          storageKey="hmm:motifs"
+          testId="hmm-motifs-panel"
+        >
+          <MotifExtractionPanel
+            hmmSequenceJobId={job.id}
+            regionDetectionJobId={regionDetectionJobId}
+            onJumpToTimestamp={handleJumpToTimestamp}
+            onSelectionChange={handleMotifSelectionChange}
+            activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
+            onActiveOccurrenceChange={handleMotifActiveOccurrenceChange}
+            numLabels={job.n_states}
+          />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && statesData && (
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle>State Timeline</CardTitle>
-              {spanIds.length > 1 && (
-                <select
-                  data-testid="hmm-span-selector"
-                  className="border rounded-md px-2 py-1 text-sm"
-                  value={String(activeSpan)}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setSelectedSpan(isCrnnSource ? raw : Number(raw));
-                  }}
-                >
-                  {spanIds.map((id, idx) => (
-                    <option key={String(id)} value={String(id)}>
-                      {isCrnnSource
-                        ? `Region ${idx + 1} (${String(id).slice(0, 8)})`
-                        : `Span ${id}`}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <StateTimeline
-              spanItems={activeSpanRows}
-              nStates={job.n_states}
-            />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="State Timeline"
+          storageKey="hmm:state-timeline-per-span"
+          testId="hmm-state-timeline-per-span-panel"
+          headerExtra={
+            spanIds.length > 1 ? (
+              <select
+                data-testid="hmm-span-selector"
+                className="border rounded-md px-2 py-1 text-sm"
+                value={String(activeSpan)}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setSelectedSpan(isCrnnSource ? raw : Number(raw));
+                }}
+              >
+                {spanIds.map((id, idx) => (
+                  <option key={String(id)} value={String(id)}>
+                    {isCrnnSource
+                      ? `Region ${idx + 1} (${String(id).slice(0, 8)})`
+                      : `Span ${id}`}
+                  </option>
+                ))}
+              </select>
+            ) : undefined
+          }
+        >
+          <StateTimeline
+            spanItems={activeSpanRows}
+            nStates={job.n_states}
+          />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && overlayData && (
-        <Card>
-          <CardHeader>
-            <CardTitle>PCA / UMAP Overlay</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <PcaUmapScatter data={overlayData} nStates={job.n_states} />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="PCA / UMAP Overlay"
+          storageKey="hmm:overlay"
+          testId="hmm-overlay-panel"
+        >
+          <PcaUmapScatter data={overlayData} nStates={job.n_states} />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && transData && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Transition Matrix</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TransitionHeatmap
-              matrix={transData.matrix}
-              nStates={transData.n_states}
-            />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="Transition Matrix"
+          storageKey="hmm:transition-matrix"
+          testId="hmm-transition-matrix-panel"
+        >
+          <TransitionHeatmap
+            matrix={transData.matrix}
+            nStates={transData.n_states}
+          />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && sourceKind === "region_crnn" && tierComposition && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Per-State Tier Composition</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TierCompositionStrip composition={tierComposition} />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="Per-State Tier Composition"
+          storageKey="hmm:tier-composition"
+          testId="hmm-tier-composition-panel"
+        >
+          <TierCompositionStrip composition={tierComposition} />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && (
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle>Label Distribution</CardTitle>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={generateMutation.isPending}
-                onClick={() => generateMutation.mutate(job.id)}
-                data-testid="hmm-generate-interpretations"
-              >
-                {generateMutation.isPending ? "Generating…" : "Refresh"}
-              </Button>
+        <CollapsiblePanelCard
+          title="Label Distribution"
+          storageKey="hmm:label-distribution"
+          testId="hmm-label-distribution-panel"
+          headerExtra={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={generateMutation.isPending}
+              onClick={() => generateMutation.mutate(job.id)}
+              data-testid="hmm-generate-interpretations"
+            >
+              {generateMutation.isPending ? "Generating…" : "Refresh"}
+            </Button>
+          }
+        >
+          {labelDistData ? (
+            <LabelDistributionChart data={labelDistData} />
+          ) : (
+            <div className="text-sm text-slate-500">
+              No label distribution available. Click Refresh to generate.
             </div>
-          </CardHeader>
-          <CardContent>
-            {labelDistData ? (
-              <LabelDistributionChart data={labelDistData} />
-            ) : (
-              <div className="text-sm text-slate-500">
-                No label distribution available. Click Refresh to generate.
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && dwellData && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Dwell-Time Histograms</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <DwellHistogramsGrid
-              histograms={dwellData.histograms}
-              nStates={dwellData.n_states}
-            />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="Dwell-Time Histograms"
+          storageKey="hmm:dwell"
+          testId="hmm-dwell-panel"
+        >
+          <DwellHistogramsGrid
+            histograms={dwellData.histograms}
+            nStates={dwellData.n_states}
+          />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && exemplarsData && (
-        <Card>
-          <CardHeader>
-            <CardTitle>State Exemplars</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ExemplarGallery
-              states={exemplarsData.states}
-              nStates={exemplarsData.n_states}
-            />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="State Exemplars"
+          storageKey="hmm:exemplars"
+          testId="hmm-exemplars-panel"
+        >
+          <ExemplarGallery
+            states={exemplarsData.states}
+            nStates={exemplarsData.n_states}
+          />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && summary && (
-        <Card>
-          <CardHeader>
-            <CardTitle>State Summary</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <table
-              className="w-full text-xs"
-              data-testid="hmm-state-summary-table"
-            >
-              <thead>
-                <tr className="text-left">
-                  <th className="pr-2">State</th>
-                  <th className="pr-2">Occupancy</th>
-                  <th className="pr-2">Mean Dwell (frames)</th>
+        <CollapsiblePanelCard
+          title="State Summary"
+          storageKey="hmm:state-summary"
+          testId="hmm-state-summary-panel"
+        >
+          <table
+            className="w-full text-xs"
+            data-testid="hmm-state-summary-table"
+          >
+            <thead>
+              <tr className="text-left">
+                <th className="pr-2">State</th>
+                <th className="pr-2">Occupancy</th>
+                <th className="pr-2">Mean Dwell (frames)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.map((s) => (
+                <tr key={s.state} className="border-t">
+                  <td className="pr-2 py-1">{s.state}</td>
+                  <td className="pr-2 py-1">
+                    {(s.occupancy * 100).toFixed(1)}%
+                  </td>
+                  <td className="pr-2 py-1">{s.mean_dwell_frames.toFixed(1)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {summary.map((s) => (
-                  <tr key={s.state} className="border-t">
-                    <td className="pr-2 py-1">{s.state}</td>
-                    <td className="pr-2 py-1">
-                      {(s.occupancy * 100).toFixed(1)}%
-                    </td>
-                    <td className="pr-2 py-1">{s.mean_dwell_frames.toFixed(1)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+              ))}
+            </tbody>
+          </table>
+        </CollapsiblePanelCard>
       )}
     </div>
   );

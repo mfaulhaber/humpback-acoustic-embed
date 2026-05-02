@@ -14,6 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.call_parsing.storage import segmentation_job_dir
 from humpback.config import Settings
+from humpback.models.call_parsing import (
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
@@ -62,7 +66,21 @@ def _config_from_job(job: MotifExtractionJob) -> MotifExtractionConfig:
     )
 
 
-def _load_event_lookup(storage_root: Path, cej: ContinuousEmbeddingJob) -> dict:
+def _load_event_lookup(
+    storage_root: Path,
+    cej: ContinuousEmbeddingJob,
+    *,
+    timestamp_offset: float = 0.0,
+) -> dict:
+    """Load events keyed by id with bounds expressed as absolute UTC seconds.
+
+    ``events.parquet`` stores ``start_sec`` / ``end_sec`` in source-audio
+    relative seconds, but ``decoded.parquet`` ``start_timestamp`` is
+    epoch UTC. ``timestamp_offset`` (the upstream
+    ``region_detection_job.start_timestamp``) bridges the two domains so
+    motif occurrences' ``relative_start_seconds`` stay sub-second instead
+    of rendering as absolute epoch values.
+    """
     if not cej.event_segmentation_job_id:
         return {}
     events_path = (
@@ -76,10 +94,28 @@ def _load_event_lookup(storage_root: Path, cej: ContinuousEmbeddingJob) -> dict:
         return {}
     rows = table.to_pylist()
     return {
-        str(row["event_id"]): (float(row["start_sec"]), float(row["end_sec"]))
+        str(row["event_id"]): (
+            float(row["start_sec"]) + timestamp_offset,
+            float(row["end_sec"]) + timestamp_offset,
+        )
         for row in rows
         if row.get("event_id") is not None
     }
+
+
+async def _resolve_timestamp_offset(
+    session: AsyncSession, cej: ContinuousEmbeddingJob
+) -> float:
+    """Look up the audio-source UTC start that aligns events with states."""
+    if not cej.event_segmentation_job_id:
+        return 0.0
+    esj = await session.get(EventSegmentationJob, cej.event_segmentation_job_id)
+    if esj is None or not esj.region_detection_job_id:
+        return 0.0
+    rdj = await session.get(RegionDetectionJob, esj.region_detection_job_id)
+    if rdj is None or rdj.start_timestamp is None:
+        return 0.0
+    return float(rdj.start_timestamp)
 
 
 async def _raise_if_canceled(
@@ -204,7 +240,10 @@ async def run_motif_extraction_job(
                 )
             embedding_table = pq.read_table(embeddings_path)
 
-        event_lookup = _load_event_lookup(settings.storage_root, cej)
+        timestamp_offset = await _resolve_timestamp_offset(session, cej)
+        event_lookup = _load_event_lookup(
+            settings.storage_root, cej, timestamp_offset=timestamp_offset
+        )
         if await _raise_if_canceled(session, job, job_dir):
             return
 

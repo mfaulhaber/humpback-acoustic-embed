@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  type MotifOccurrence,
   type MotifSummary,
   useCancelMotifExtractionJob,
   useCreateMotifExtractionJob,
@@ -9,6 +10,14 @@ import {
   useMotifs,
 } from "@/api/sequenceModels";
 import { MotifExampleAlignment } from "./MotifExampleAlignment";
+
+export interface MotifPanelSelection {
+  motifKey: string | null;
+  motif: MotifSummary | null;
+  occurrences: MotifOccurrence[];
+  occurrencesTotal: number;
+  activeOccurrenceIndex: number;
+}
 
 function pct(v: number): string {
   return `${(v * 100).toFixed(0)}%`;
@@ -39,12 +48,23 @@ export function MotifExtractionPanel({
   regionDetectionJobId,
   onJumpToTimestamp,
   parent,
+  onSelectionChange,
+  activeOccurrenceIndex: controlledActiveIndex,
+  onActiveOccurrenceChange,
+  numLabels,
 }: {
   /** @deprecated — pass ``parent`` instead. Kept for backwards compatibility. */
   hmmSequenceJobId?: string;
   regionDetectionJobId: string;
   onJumpToTimestamp: (timestamp: number) => void;
   parent?: MotifExtractionPanelParent;
+  onSelectionChange?: (selection: MotifPanelSelection) => void;
+  activeOccurrenceIndex?: number;
+  onActiveOccurrenceChange?: (idx: number) => void;
+  /** Total label count (HMM ``n_states`` or masked-transformer ``k``).
+   *  Forwarded to ``MotifExampleAlignment`` so its swatches use the
+   *  same palette the main timeline does. */
+  numLabels?: number;
 }) {
   const resolvedParent: MotifExtractionPanelParent = parent ??
     (hmmSequenceJobId
@@ -53,6 +73,15 @@ export function MotifExtractionPanel({
 
   const [form, setForm] = useState(DEFAULT_FORM);
   const [selectedMotif, setSelectedMotif] = useState<string | null>(null);
+  const [internalActiveIndex, setInternalActiveIndex] = useState<number>(0);
+  const isControlled = controlledActiveIndex != null;
+  const activeOccurrenceIndex = isControlled
+    ? controlledActiveIndex
+    : internalActiveIndex;
+  const setActiveOccurrenceIndex = (idx: number) => {
+    if (!isControlled) setInternalActiveIndex(idx);
+    onActiveOccurrenceChange?.(idx);
+  };
   const { data: jobs = [] } = useMotifExtractionJobs(
     resolvedParent.kind === "hmm"
       ? { hmm_sequence_job_id: resolvedParent.hmmSequenceJobId }
@@ -85,6 +114,26 @@ export function MotifExtractionPanel({
       setSelectedMotif(motifs[0].motif_key);
     }
   }, [motifs, selectedMotif]);
+
+  useEffect(() => {
+    if (!isControlled) setInternalActiveIndex(0);
+  }, [selected?.motif_key, isControlled]);
+
+  const occurrences = occurrencesData?.items ?? [];
+  const occurrencesTotal = occurrencesData?.total ?? occurrences.length;
+
+  useEffect(() => {
+    onSelectionChange?.({
+      motifKey: selected?.motif_key ?? null,
+      motif: selected,
+      occurrences,
+      occurrencesTotal,
+      activeOccurrenceIndex,
+    });
+    // We intentionally include the data identity (occurrences) so callers
+    // see fresh occurrence arrays after a refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.motif_key, occurrencesData, activeOccurrenceIndex]);
 
   const updateNumber = (key: keyof typeof DEFAULT_FORM, value: string) => {
     setForm((prev) => ({
@@ -286,9 +335,12 @@ export function MotifExtractionPanel({
             </table>
           </div>
           <MotifExampleAlignment
-            occurrences={occurrencesData?.items ?? []}
+            occurrences={occurrences}
             regionDetectionJobId={regionDetectionJobId}
             onJumpToTimestamp={onJumpToTimestamp}
+            activeOccurrenceIndex={activeOccurrenceIndex}
+            onActiveOccurrenceChange={setActiveOccurrenceIndex}
+            numLabels={numLabels}
           />
         </div>
       )}

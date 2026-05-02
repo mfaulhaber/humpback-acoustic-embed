@@ -4,6 +4,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from humpback.call_parsing.storage import segmentation_job_dir
+from humpback.models.call_parsing import (
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
@@ -349,3 +353,133 @@ async def test_worker_with_masked_transformer_parent(session, settings):
     assert motif.status == JobStatus.complete.value
     assert motif.source_kind == "region_crnn"
     assert motif_extraction_motifs_path(settings.storage_root, motif.id).exists()
+
+
+async def test_worker_relative_seconds_use_audio_source_offset(session, settings):
+    """Regression: ``relative_*_seconds`` must be sub-second offsets, not epoch.
+
+    Before the fix, ``_load_event_lookup`` returned audio-relative event
+    bounds while decoded ``start_timestamp`` values were absolute UTC, so
+    ``start - anchor`` produced epoch-scale numbers (e.g. ~1.6e9). After
+    the fix, the upstream ``region_detection_job.start_timestamp`` is
+    added to event bounds, and offsets stay sub-second.
+    """
+    epoch_anchor = 1_700_000_000.0
+
+    rdj = RegionDetectionJob(
+        status=JobStatus.complete.value,
+        start_timestamp=epoch_anchor,
+        end_timestamp=epoch_anchor + 60.0,
+    )
+    session.add(rdj)
+    await session.commit()
+    await session.refresh(rdj)
+
+    esj = EventSegmentationJob(
+        status=JobStatus.complete.value,
+        region_detection_job_id=rdj.id,
+    )
+    session.add(esj)
+    await session.commit()
+    await session.refresh(esj)
+
+    cej = ContinuousEmbeddingJob(
+        status=JobStatus.complete.value,
+        event_segmentation_job_id=esj.id,
+        model_version="surfperch-tensorflow2",
+        window_size_seconds=5.0,
+        hop_seconds=1.0,
+        pad_seconds=2.0,
+        target_sample_rate=32000,
+        encoding_signature="enc-rel-sec",
+    )
+    session.add(cej)
+    await session.commit()
+    await session.refresh(cej)
+
+    hmm = HMMSequenceJob(
+        status=JobStatus.complete.value,
+        continuous_embedding_job_id=cej.id,
+        n_states=4,
+        pca_dims=8,
+    )
+    session.add(hmm)
+    await session.commit()
+    await session.refresh(hmm)
+
+    motif = MotifExtractionJob(
+        status=JobStatus.running.value,
+        hmm_sequence_job_id=hmm.id,
+        source_kind="surfperch",
+        min_ngram=2,
+        max_ngram=2,
+        minimum_occurrences=2,
+        minimum_event_sources=2,
+        config_signature="sig-rel-sec",
+    )
+    session.add(motif)
+    await session.commit()
+    await session.refresh(motif)
+
+    states = pa.Table.from_pylist(
+        [
+            {
+                "merged_span_id": idx // 3,
+                "window_index_in_span": idx % 3,
+                "audio_file_id": 10 + idx // 3,
+                "start_timestamp": epoch_anchor + 0.4 + idx * 0.5,
+                "end_timestamp": epoch_anchor + 0.4 + idx * 0.5 + 0.5,
+                "is_in_pad": False,
+                "event_id": "e1" if idx < 3 else "e2",
+                "viterbi_state": (1, 2, 3, 1, 2, 3)[idx],
+                "state_posterior": [0.9],
+                "max_state_probability": 0.9,
+                "was_used_for_training": True,
+            }
+            for idx in range(6)
+        ]
+    )
+    hmm_sequence_dir(settings.storage_root, hmm.id).mkdir(parents=True)
+    pq.write_table(states, hmm_sequence_states_path(settings.storage_root, hmm.id))
+
+    seg_dir = segmentation_job_dir(settings.storage_root, esj.id)
+    seg_dir.mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "event_id": "e1",
+                    "region_id": "r1",
+                    "start_sec": 0.4,
+                    "end_sec": 1.4,
+                    "peak_score": 0.9,
+                    "segmentation_confidence": 0.9,
+                },
+                {
+                    "event_id": "e2",
+                    "region_id": "r2",
+                    "start_sec": 1.9,
+                    "end_sec": 2.9,
+                    "peak_score": 0.9,
+                    "segmentation_confidence": 0.9,
+                },
+            ]
+        ),
+        seg_dir / "events.parquet",
+    )
+
+    await run_motif_extraction_job(session, motif, settings)
+    await session.refresh(motif)
+    assert motif.status == JobStatus.complete.value
+
+    occurrences = pq.read_table(
+        motif_extraction_occurrences_path(settings.storage_root, motif.id)
+    ).to_pylist()
+    assert occurrences, "expected at least one motif occurrence"
+    for occ in occurrences:
+        assert abs(occ["anchor_timestamp"] - epoch_anchor) < 5.0, (
+            f"anchor_timestamp {occ['anchor_timestamp']} not aligned with "
+            f"epoch_anchor {epoch_anchor}"
+        )
+        assert abs(occ["relative_start_seconds"]) < 5.0
+        assert abs(occ["relative_end_seconds"]) < 5.0
