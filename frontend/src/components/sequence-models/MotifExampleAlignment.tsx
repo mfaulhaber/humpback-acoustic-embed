@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { regionAudioSliceUrl } from "@/api/client";
 import { type MotifOccurrence } from "@/api/sequenceModels";
-import { STATE_COLORS } from "./constants";
+import { LABEL_COLORS } from "./constants";
 
 function fmt(sec: number): string {
   return `${sec >= 0 ? "+" : ""}${sec.toFixed(2)}s`;
@@ -74,7 +74,7 @@ export function MotifExampleAlignment({
                       className="h-full flex-1"
                       title={`State ${state}`}
                       style={{
-                        background: STATE_COLORS[state % STATE_COLORS.length],
+                        background: LABEL_COLORS[state % LABEL_COLORS.length],
                       }}
                     />
                   ))}

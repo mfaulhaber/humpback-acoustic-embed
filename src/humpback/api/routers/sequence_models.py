@@ -26,11 +26,17 @@ from humpback.schemas.sequence_models import (
     DwellHistogramResponse,
     ExemplarRecord,
     ExemplarsResponse,
+    ExtendKSweepRequest,
+    GenerateInterpretationsRequest,
     HMMSequenceJobCreate,
     HMMSequenceJobDetail,
     HMMSequenceJobOut,
     HMMStateSummary,
     LabelDistributionResponse,
+    LossCurveResponse,
+    MaskedTransformerJobCreate,
+    MaskedTransformerJobDetail,
+    MaskedTransformerJobOut,
     MotifExtractionJobCreate,
     MotifExtractionJobDetail,
     MotifExtractionJobOut,
@@ -41,7 +47,12 @@ from humpback.schemas.sequence_models import (
     MotifSummary,
     OverlayPoint,
     OverlayResponse,
+    ReconstructionErrorResponse,
+    ReconstructionErrorRow,
+    RunLengthsResponse,
     StateTierComposition,
+    TokenRow,
+    TokensResponse,
     TransitionMatrixResponse,
 )
 from humpback.services.continuous_embedding_service import (
@@ -66,6 +77,18 @@ from humpback.services.hmm_sequence_service import (
     get_hmm_sequence_job,
     list_hmm_sequence_jobs,
 )
+from humpback.services.masked_transformer_service import (
+    CancelTerminalJobError as MTCancelTerminalJobError,
+    ExtendKSweepError,
+    cancel_masked_transformer_job,
+    create_masked_transformer_job,
+    delete_masked_transformer_job,
+    extend_k_sweep_job,
+    generate_interpretations as mt_generate_interpretations,
+    get_masked_transformer_job,
+    list_masked_transformer_jobs,
+    parse_k_values,
+)
 from humpback.services.motif_extraction_service import (
     CancelTerminalJobError as MotifCancelTerminalJobError,
     cancel_motif_extraction_job,
@@ -81,6 +104,13 @@ from humpback.storage import (
     hmm_sequence_states_path,
     hmm_sequence_summary_path,
     hmm_sequence_transition_matrix_path,
+    masked_transformer_k_decoded_path,
+    masked_transformer_k_exemplars_path,
+    masked_transformer_k_label_distribution_path,
+    masked_transformer_k_overlay_path,
+    masked_transformer_k_run_lengths_path,
+    masked_transformer_loss_curve_path,
+    masked_transformer_reconstruction_error_path,
     motif_extraction_manifest_path,
     motif_extraction_motifs_path,
     motif_extraction_occurrences_path,
@@ -586,11 +616,15 @@ async def list_motif_extractions(
     session: SessionDep,
     status: Optional[str] = Query(default=None),
     hmm_sequence_job_id: Optional[str] = Query(default=None),
+    masked_transformer_job_id: Optional[str] = Query(default=None),
+    parent_kind: Optional[str] = Query(default=None),
 ) -> list[MotifExtractionJobOut]:
     jobs = await list_motif_extraction_jobs(
         session,
         status=status,
         hmm_sequence_job_id=hmm_sequence_job_id,
+        masked_transformer_job_id=masked_transformer_job_id,
+        parent_kind=parent_kind,
     )
     return [_motif_to_out(j) for j in jobs]
 
@@ -703,3 +737,344 @@ async def get_motif_occurrences(
         limit=limit,
         items=[MotifOccurrence.model_validate(item) for item in sliced],
     )
+
+
+# ---------------------------------------------------------------------------
+# Masked Transformer Jobs (ADR-061)
+# ---------------------------------------------------------------------------
+
+
+def _mt_to_out(job) -> MaskedTransformerJobOut:
+    return MaskedTransformerJobOut.model_validate(job)
+
+
+def _resolve_k(job, k_query: Optional[int]) -> int:
+    """Resolve the k query parameter, defaulting to first k_values entry."""
+    try:
+        configured = parse_k_values(job.k_values)
+    except (ValueError, json.JSONDecodeError):
+        raise HTTPException(status_code=409, detail="invalid k_values payload")
+    if not configured:
+        raise HTTPException(status_code=409, detail="job has no configured k_values")
+    if k_query is None:
+        return configured[0]
+    if int(k_query) not in configured:
+        raise HTTPException(
+            status_code=404, detail=f"k={k_query} is not in this job's k_values"
+        )
+    return int(k_query)
+
+
+@router.post("/masked-transformers", status_code=201)
+async def create_masked_transformer(
+    body: MaskedTransformerJobCreate,
+    session: SessionDep,
+    response: Response,
+) -> MaskedTransformerJobOut:
+    try:
+        job, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=body.continuous_embedding_job_id,
+            preset=body.preset,
+            mask_fraction=body.mask_fraction,
+            span_length_min=body.span_length_min,
+            span_length_max=body.span_length_max,
+            dropout=body.dropout,
+            mask_weight_bias=body.mask_weight_bias,
+            cosine_loss_weight=body.cosine_loss_weight,
+            max_epochs=body.max_epochs,
+            early_stop_patience=body.early_stop_patience,
+            val_split=body.val_split,
+            seed=body.seed,
+            k_values=body.k_values,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    response.status_code = 201 if created else 200
+    return _mt_to_out(job)
+
+
+@router.get("/masked-transformers")
+async def list_masked_transformers(
+    session: SessionDep,
+    status: Optional[str] = Query(default=None),
+    continuous_embedding_job_id: Optional[str] = Query(default=None),
+) -> list[MaskedTransformerJobOut]:
+    jobs = await list_masked_transformer_jobs(
+        session,
+        status=status,
+        continuous_embedding_job_id=continuous_embedding_job_id,
+    )
+    return [_mt_to_out(j) for j in jobs]
+
+
+@router.get("/masked-transformers/{job_id}")
+async def get_masked_transformer(
+    job_id: str,
+    session: SessionDep,
+) -> MaskedTransformerJobDetail:
+    from humpback.models.call_parsing import RegionDetectionJob
+    from humpback.models.sequence_models import ContinuousEmbeddingJob
+
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+
+    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
+    region_detection_job_id: Optional[str] = None
+    region_start: Optional[float] = None
+    region_end: Optional[float] = None
+    if cej is not None and cej.region_detection_job_id:
+        region_detection_job_id = cej.region_detection_job_id
+        rdj = await session.get(RegionDetectionJob, region_detection_job_id)
+        if rdj is not None:
+            region_start = rdj.start_timestamp
+            region_end = rdj.end_timestamp
+
+    return MaskedTransformerJobDetail(
+        job=_mt_to_out(job),
+        region_detection_job_id=region_detection_job_id,
+        region_start_timestamp=region_start,
+        region_end_timestamp=region_end,
+        tier_composition=None,
+        source_kind=SOURCE_KIND_REGION_CRNN,
+    )
+
+
+@router.post("/masked-transformers/{job_id}/cancel")
+async def cancel_masked_transformer(
+    job_id: str,
+    session: SessionDep,
+) -> MaskedTransformerJobOut:
+    try:
+        job = await cancel_masked_transformer_job(session, job_id)
+    except MTCancelTerminalJobError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    return _mt_to_out(job)
+
+
+@router.delete("/masked-transformers/{job_id}", status_code=204)
+async def delete_masked_transformer(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+):
+    deleted = await delete_masked_transformer_job(session, job_id, settings)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    return None
+
+
+@router.post("/masked-transformers/{job_id}/extend-k-sweep")
+async def extend_k_sweep(
+    job_id: str,
+    body: ExtendKSweepRequest,
+    session: SessionDep,
+) -> MaskedTransformerJobOut:
+    try:
+        job = await extend_k_sweep_job(session, job_id, body.additional_k)
+    except ExtendKSweepError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _mt_to_out(job)
+
+
+@router.post("/masked-transformers/{job_id}/generate-interpretations")
+async def generate_masked_transformer_interpretations(
+    job_id: str,
+    body: GenerateInterpretationsRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> dict:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    if job.status != JobStatus.complete.value:
+        raise HTTPException(status_code=400, detail="job not complete")
+
+    configured = parse_k_values(job.k_values)
+    requested = body.k_values or configured
+    invalid = [k for k in requested if k not in configured]
+    if invalid:
+        raise HTTPException(
+            status_code=422, detail=f"k values not in job's k_values: {invalid}"
+        )
+
+    for k in requested:
+        await mt_generate_interpretations(session, settings.storage_root, job, int(k))
+
+    return {"status": "ok", "job_id": job_id, "k_values": requested}
+
+
+@router.get("/masked-transformers/{job_id}/loss-curve")
+async def get_loss_curve(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> LossCurveResponse:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    path = masked_transformer_loss_curve_path(settings.storage_root, job_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="loss_curve.json not found")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return LossCurveResponse.model_validate(payload)
+
+
+@router.get("/masked-transformers/{job_id}/reconstruction-error")
+async def get_reconstruction_error(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=5000, ge=1, le=50000),
+) -> ReconstructionErrorResponse:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    path = masked_transformer_reconstruction_error_path(settings.storage_root, job_id)
+    if not path.exists():
+        raise HTTPException(
+            status_code=404, detail="reconstruction_error.parquet not found"
+        )
+    table = pq.read_table(path)
+    total = table.num_rows
+    sliced = table.slice(offset, limit)
+    rows = sliced.to_pydict()
+    items = [
+        ReconstructionErrorRow(**{col: rows[col][i] for col in rows})
+        for i in range(sliced.num_rows)
+    ]
+    return ReconstructionErrorResponse(
+        total=total, offset=offset, limit=limit, items=items
+    )
+
+
+@router.get("/masked-transformers/{job_id}/tokens")
+async def get_tokens(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    k: Optional[int] = Query(default=None, ge=2),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=5000, ge=1, le=50000),
+) -> TokensResponse:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    resolved_k = _resolve_k(job, k)
+    path = masked_transformer_k_decoded_path(settings.storage_root, job_id, resolved_k)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="decoded.parquet not found")
+    table = pq.read_table(path)
+    total = table.num_rows
+    sliced = table.slice(offset, limit)
+    rows = sliced.to_pydict()
+    items = [
+        TokenRow(**{col: rows[col][i] for col in rows if col in TokenRow.model_fields})
+        for i in range(sliced.num_rows)
+    ]
+    return TokensResponse(total=total, offset=offset, limit=limit, items=items)
+
+
+@router.get("/masked-transformers/{job_id}/overlay")
+async def get_mt_overlay(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    k: Optional[int] = Query(default=None, ge=2),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=5000, ge=1, le=50000),
+) -> OverlayResponse:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    resolved_k = _resolve_k(job, k)
+    path = masked_transformer_k_overlay_path(settings.storage_root, job_id, resolved_k)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="overlay.parquet not found")
+    table = pq.read_table(path)
+    _require_columns(table, path, {"start_timestamp", "end_timestamp"})
+    total = table.num_rows
+    sliced = table.slice(offset, limit)
+    rows = sliced.to_pydict()
+    items = [
+        OverlayPoint(**_project_legacy_overlay_row({col: rows[col][i] for col in rows}))
+        for i in range(sliced.num_rows)
+    ]
+    return OverlayResponse(total=total, items=items)
+
+
+@router.get("/masked-transformers/{job_id}/exemplars")
+async def get_mt_exemplars(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    k: Optional[int] = Query(default=None, ge=2),
+) -> ExemplarsResponse:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    resolved_k = _resolve_k(job, k)
+    path = masked_transformer_k_exemplars_path(
+        settings.storage_root, job_id, resolved_k
+    )
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="exemplars.json not found")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return ExemplarsResponse(
+        n_states=payload["n_states"],
+        states={
+            key: [
+                ExemplarRecord.model_validate(_project_legacy_exemplar_row(r))
+                for r in records
+            ]
+            for key, records in payload["states"].items()
+        },
+    )
+
+
+@router.get("/masked-transformers/{job_id}/label-distribution")
+async def get_mt_label_distribution(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    k: Optional[int] = Query(default=None, ge=2),
+) -> LabelDistributionResponse:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    resolved_k = _resolve_k(job, k)
+    path = masked_transformer_k_label_distribution_path(
+        settings.storage_root, job_id, resolved_k
+    )
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="label_distribution.json not found")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return LabelDistributionResponse.model_validate(
+        _project_legacy_label_distribution(payload)
+    )
+
+
+@router.get("/masked-transformers/{job_id}/run-lengths")
+async def get_run_lengths(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    k: Optional[int] = Query(default=None, ge=2),
+) -> RunLengthsResponse:
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    resolved_k = _resolve_k(job, k)
+    path = masked_transformer_k_run_lengths_path(
+        settings.storage_root, job_id, resolved_k
+    )
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="run_lengths.json not found")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return RunLengthsResponse.model_validate(payload)

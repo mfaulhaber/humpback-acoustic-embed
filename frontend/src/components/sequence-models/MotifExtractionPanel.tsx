@@ -26,20 +26,41 @@ const DEFAULT_FORM = {
   call_probability_weight: "",
 };
 
+export type MotifExtractionPanelParent =
+  | { kind: "hmm"; hmmSequenceJobId: string }
+  | {
+      kind: "masked_transformer";
+      maskedTransformerJobId: string;
+      k: number;
+    };
+
 export function MotifExtractionPanel({
   hmmSequenceJobId,
   regionDetectionJobId,
   onJumpToTimestamp,
+  parent,
 }: {
-  hmmSequenceJobId: string;
+  /** @deprecated — pass ``parent`` instead. Kept for backwards compatibility. */
+  hmmSequenceJobId?: string;
   regionDetectionJobId: string;
   onJumpToTimestamp: (timestamp: number) => void;
+  parent?: MotifExtractionPanelParent;
 }) {
+  const resolvedParent: MotifExtractionPanelParent = parent ??
+    (hmmSequenceJobId
+      ? { kind: "hmm", hmmSequenceJobId }
+      : ({ kind: "hmm", hmmSequenceJobId: "" } as const));
+
   const [form, setForm] = useState(DEFAULT_FORM);
   const [selectedMotif, setSelectedMotif] = useState<string | null>(null);
-  const { data: jobs = [] } = useMotifExtractionJobs({
-    hmm_sequence_job_id: hmmSequenceJobId,
-  });
+  const { data: jobs = [] } = useMotifExtractionJobs(
+    resolvedParent.kind === "hmm"
+      ? { hmm_sequence_job_id: resolvedParent.hmmSequenceJobId }
+      : {
+          masked_transformer_job_id: resolvedParent.maskedTransformerJobId,
+          parent_kind: "masked_transformer",
+        },
+  );
   const createMutation = useCreateMotifExtractionJob();
   const cancelMutation = useCancelMotifExtractionJob();
   const activeJob = jobs[0] ?? null;
@@ -72,8 +93,7 @@ export function MotifExtractionPanel({
   };
 
   const create = () => {
-    createMutation.mutate({
-      hmm_sequence_job_id: hmmSequenceJobId,
+    const baseConfig = {
       min_ngram: Number(form.min_ngram),
       max_ngram: Number(form.max_ngram),
       minimum_occurrences: Number(form.minimum_occurrences),
@@ -86,7 +106,21 @@ export function MotifExtractionPanel({
         form.call_probability_weight === ""
           ? null
           : Number(form.call_probability_weight),
-    });
+    };
+    if (resolvedParent.kind === "hmm") {
+      createMutation.mutate({
+        ...baseConfig,
+        parent_kind: "hmm",
+        hmm_sequence_job_id: resolvedParent.hmmSequenceJobId,
+      });
+    } else {
+      createMutation.mutate({
+        ...baseConfig,
+        parent_kind: "masked_transformer",
+        masked_transformer_job_id: resolvedParent.maskedTransformerJobId,
+        k: resolvedParent.k,
+      });
+    }
   };
 
   return (

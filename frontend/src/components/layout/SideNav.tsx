@@ -70,6 +70,10 @@ const navItems: NavItem[] = [
         label: "HMM Sequence",
         to: "/app/sequence-models/hmm-sequence",
       },
+      {
+        label: "Masked Transformer",
+        to: "/app/sequence-models/masked-transformer",
+      },
     ],
   },
   { label: "Admin", icon: Settings, to: "/app/admin" },
