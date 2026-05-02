@@ -29,9 +29,16 @@
 
 ### Task 2: Fix the alignment-strip bug
 
+**Task 1 finding (D):** Time-domain mismatch in the motif worker.
+- `decoded.parquet` `start_timestamp` is **absolute UTC epoch seconds** (built by adding `region_detection_job.start_timestamp` as `timestamp_offset` to chunk-relative starts; see `continuous_embedding_worker.py:990-1052`).
+- `events.parquet` `start_sec` / `end_sec` are in the **source-audio relative timeline** (per `call_parsing/types.py:88-95`, despite the docstring saying "absolute"; the worker stores them region-local).
+- `_load_event_lookup` in `motif_extraction_worker.py:65-82` builds the lookup straight from `events.parquet` without applying the offset, so `_anchor_for_occurrence` mixes domains and `start_timestamp - anchor_timestamp ≈ start_timestamp`. Float32 precision in `relative_*_seconds` then snaps the value to the nearest representable epoch (e.g. `1635638400.0`).
+- Verified on disk for masked-transformer job `f0ae9b24-…`: `start_timestamp=1635646521.0`, `anchor_timestamp=8124.392`, `relative_start_seconds=1635638400.0`. Same shape on HMM job `62ce2445-…`. The audio file's UTC start is `region_detection_job.start_timestamp = 1635638400.0`.
+- Fix: in the worker, look up `region_detection_job.start_timestamp` via `cej.event_segmentation_job_id → event_segmentation_job.region_detection_job_id` and pass it to `_load_event_lookup` as a `timestamp_offset` so the returned `(ev_start, ev_end)` are absolute UTC.
+
 **Files:**
-- Modify: one of `src/humpback/sequence_models/motifs.py`, `src/humpback/schemas/sequence_models.py`, `src/humpback/api/routers/sequence_models.py` (depending on Task 1 finding).
-- Modify: `tests/integration/test_motif_extraction_api.py` or `tests/sequence_models/test_motifs.py` (whichever is closer to the bug surface).
+- Modify: `src/humpback/workers/motif_extraction_worker.py` (compute and apply `timestamp_offset` in `_load_event_lookup`).
+- Modify: `tests/workers/test_motif_extraction_worker.py` (regression test).
 
 **Acceptance criteria:**
 - [ ] Code change addresses the root cause identified in Task 1. If Task 1 finding is (A) (stale parquet only), no production code change is required for this task — go straight to Task 3 and rely on the release note. If finding is (B), (C), or (D), make the targeted fix.

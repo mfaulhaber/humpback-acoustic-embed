@@ -29,16 +29,75 @@ import {
   COLORS,
   FREQ_AXIS_WIDTH_PX,
 } from "@/components/timeline/constants";
+import { CollapsiblePanelCard } from "./CollapsiblePanelCard";
 import { KPicker, useSelectedK } from "./KPicker";
 import { LossCurveChart } from "./LossCurveChart";
-import { MotifExtractionPanel } from "./MotifExtractionPanel";
+import {
+  MotifExtractionPanel,
+  type MotifPanelSelection,
+} from "./MotifExtractionPanel";
+import { MotifTimelineLegend } from "./MotifTimelineLegend";
 import { TokenRunLengthHistograms } from "./TokenRunLengthHistograms";
 import { labelColor } from "./constants";
+
+const EMPTY_MOTIF_SELECTION: MotifPanelSelection = {
+  motifKey: null,
+  motif: null,
+  occurrences: [],
+  occurrencesTotal: 0,
+  activeOccurrenceIndex: 0,
+};
+
+function parseMotifKeyToStates(motifKey: string | null): number[] {
+  if (motifKey == null) return [];
+  return motifKey
+    .split("-")
+    .map((s) => Number.parseInt(s, 10))
+    .filter((n) => Number.isFinite(n));
+}
 
 export function MaskedTransformerDetailPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const { data, isLoading } = useMaskedTransformerJob(jobId);
   const timelineHandleRef = useRef<TimelinePlaybackHandle>(null!);
+  const [motifSelection, setMotifSelection] = useState<MotifPanelSelection>(
+    EMPTY_MOTIF_SELECTION,
+  );
+  const handleMotifPrev = useCallback(() => {
+    setMotifSelection((prev) => {
+      if (prev.occurrencesTotal === 0) return prev;
+      const nextIdx = Math.max(0, prev.activeOccurrenceIndex - 1);
+      const occ = prev.occurrences[nextIdx];
+      if (occ) {
+        timelineHandleRef.current?.seekTo(
+          (occ.start_timestamp + occ.end_timestamp) / 2,
+        );
+      }
+      return { ...prev, activeOccurrenceIndex: nextIdx };
+    });
+  }, []);
+  const handleMotifNext = useCallback(() => {
+    setMotifSelection((prev) => {
+      if (prev.occurrencesTotal === 0) return prev;
+      const nextIdx = Math.min(
+        prev.occurrencesTotal - 1,
+        prev.activeOccurrenceIndex + 1,
+      );
+      const occ = prev.occurrences[nextIdx];
+      if (occ) {
+        timelineHandleRef.current?.seekTo(
+          (occ.start_timestamp + occ.end_timestamp) / 2,
+        );
+      }
+      return { ...prev, activeOccurrenceIndex: nextIdx };
+    });
+  }, []);
+  const handleMotifSelectionChange = useCallback((sel: MotifPanelSelection) => {
+    setMotifSelection(sel);
+  }, []);
+  const handleActiveOccurrenceChange = useCallback((idx: number) => {
+    setMotifSelection((prev) => ({ ...prev, activeOccurrenceIndex: idx }));
+  }, []);
 
   if (isLoading || !data) {
     return (
@@ -98,8 +157,6 @@ export function MaskedTransformerDetailPage() {
         <KPicker kValues={kValues} />
       )}
 
-      {isComplete && <LossCurveSection jobId={jobId} />}
-
       {isComplete && kValues.length > 0 && (
         <TimelineSection
           jobId={jobId}
@@ -108,38 +165,96 @@ export function MaskedTransformerDetailPage() {
           regionStartTimestamp={region_start_timestamp}
           regionEndTimestamp={region_end_timestamp}
           timelineHandleRef={timelineHandleRef}
+          motifSelection={motifSelection}
+          onMotifPrev={handleMotifPrev}
+          onMotifNext={handleMotifNext}
         />
       )}
 
       {isComplete && kValues.length > 0 && (
-        <RunLengthsSection jobId={jobId} kValues={kValues} />
+        <CollapsiblePanelCard
+          title="Motifs"
+          storageKey="mt:motifs"
+          testId="mt-motifs-panel"
+        >
+          <MotifSection
+            jobId={jobId}
+            kValues={kValues}
+            regionDetectionJobId={region_detection_job_id}
+            timelineHandleRef={timelineHandleRef}
+            onSelectionChange={handleMotifSelectionChange}
+            activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
+            onActiveOccurrenceChange={handleActiveOccurrenceChange}
+          />
+        </CollapsiblePanelCard>
       )}
 
-      {isComplete && kValues.length > 0 && <OverlaySection jobId={jobId} kValues={kValues} />}
-
-      {isComplete && kValues.length > 0 && <ExemplarsSection jobId={jobId} kValues={kValues} />}
-
-      {isComplete && kValues.length > 0 && (
-        <LabelDistributionSection jobId={jobId} kValues={kValues} />
+      {isComplete && (
+        <CollapsiblePanelCard
+          title="Loss Curve"
+          storageKey="mt:loss-curve"
+          testId="mt-loss-curve-panel"
+        >
+          <LossCurveSection jobId={jobId} />
+        </CollapsiblePanelCard>
       )}
 
       {isComplete && kValues.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Motifs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <MotifSection
-              jobId={jobId}
-              kValues={kValues}
-              regionDetectionJobId={region_detection_job_id}
-              timelineHandleRef={timelineHandleRef}
-            />
-          </CardContent>
-        </Card>
+        <CollapsiblePanelCard
+          title="Run-Length Histograms"
+          storageKey="mt:run-lengths"
+          testId="mt-run-lengths-panel"
+        >
+          <RunLengthsSection jobId={jobId} kValues={kValues} />
+        </CollapsiblePanelCard>
+      )}
+
+      {isComplete && kValues.length > 0 && (
+        <CollapsiblePanelCard
+          title={<OverlayTitle kValues={kValues} />}
+          storageKey="mt:overlay"
+          testId="mt-overlay-panel"
+        >
+          <OverlaySection jobId={jobId} kValues={kValues} />
+        </CollapsiblePanelCard>
+      )}
+
+      {isComplete && kValues.length > 0 && (
+        <CollapsiblePanelCard
+          title={<ExemplarsTitle kValues={kValues} />}
+          storageKey="mt:exemplars"
+          testId="mt-exemplars-panel"
+        >
+          <ExemplarsSection jobId={jobId} kValues={kValues} />
+        </CollapsiblePanelCard>
+      )}
+
+      {isComplete && kValues.length > 0 && (
+        <CollapsiblePanelCard
+          title={<LabelDistributionTitle kValues={kValues} />}
+          storageKey="mt:label-distribution"
+          testId="mt-label-distribution-panel"
+        >
+          <LabelDistributionSection jobId={jobId} kValues={kValues} />
+        </CollapsiblePanelCard>
       )}
     </div>
   );
+}
+
+function OverlayTitle({ kValues }: { kValues: number[] }) {
+  const k = useSelectedK(kValues);
+  return <>Overlay (UMAP, k={k})</>;
+}
+
+function ExemplarsTitle({ kValues }: { kValues: number[] }) {
+  const k = useSelectedK(kValues);
+  return <>Exemplars (k={k})</>;
+}
+
+function LabelDistributionTitle({ kValues }: { kValues: number[] }) {
+  const k = useSelectedK(kValues);
+  return <>Label Distribution (k={k})</>;
 }
 
 function LossCurveSection({ jobId }: { jobId: string }) {
@@ -366,6 +481,9 @@ function TimelineSection({
   regionStartTimestamp,
   regionEndTimestamp,
   timelineHandleRef,
+  motifSelection,
+  onMotifPrev,
+  onMotifNext,
 }: {
   jobId: string;
   kValues: number[];
@@ -373,6 +491,9 @@ function TimelineSection({
   regionStartTimestamp: number | null;
   regionEndTimestamp: number | null;
   timelineHandleRef: React.RefObject<TimelinePlaybackHandle>;
+  motifSelection: MotifPanelSelection;
+  onMotifPrev: () => void;
+  onMotifNext: () => void;
 }) {
   const k = useSelectedK(kValues);
   const { data: tokensData } = useMaskedTransformerTokens(
@@ -425,7 +546,16 @@ function TimelineSection({
       <CardHeader>
         <CardTitle className="text-base">Token Timeline (k={k ?? "?"})</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-2">
+        <MotifTimelineLegend
+          selectedMotifKey={motifSelection.motifKey}
+          selectedStates={parseMotifKeyToStates(motifSelection.motifKey)}
+          numLabels={k ?? 0}
+          occurrencesTotal={motifSelection.occurrencesTotal}
+          activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
+          onPrev={onMotifPrev}
+          onNext={onMotifNext}
+        />
         {regionDetectionJobId && regionStartTimestamp != null && regionEndTimestamp != null ? (
           <div data-testid="mt-timeline-viewer">
             <TimelineProvider
@@ -504,27 +634,20 @@ function OverlaySection({
     };
   });
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Overlay (UMAP, k={k})</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Plot
-          data={traces}
-          layout={{
-            autosize: true,
-            height: 360,
-            margin: { l: 32, r: 8, t: 8, b: 32 },
-            xaxis: { title: { text: "UMAP-x" } },
-            yaxis: { title: { text: "UMAP-y" } },
-            legend: { orientation: "h", y: -0.2 },
-          }}
-          config={{ displayModeBar: false, responsive: true }}
-          style={{ width: "100%" }}
-          useResizeHandler
-        />
-      </CardContent>
-    </Card>
+    <Plot
+      data={traces}
+      layout={{
+        autosize: true,
+        height: 360,
+        margin: { l: 32, r: 8, t: 8, b: 32 },
+        xaxis: { title: { text: "UMAP-x" } },
+        yaxis: { title: { text: "UMAP-y" } },
+        legend: { orientation: "h", y: -0.2 },
+      }}
+      config={{ displayModeBar: false, responsive: true }}
+      style={{ width: "100%" }}
+      useResizeHandler
+    />
   );
 }
 
@@ -539,25 +662,18 @@ function ExemplarsSection({
   const { data } = useMaskedTransformerExemplars(jobId, k);
   if (!data) return null;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Exemplars (k={k})</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div
-          className="grid gap-2"
-          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}
-          data-testid="mt-exemplar-gallery"
-        >
-          {Object.entries(data.states).map(([labelKey, records]) => (
-            <div key={labelKey} className="border rounded-md p-2 text-xs">
-              <div className="font-semibold mb-1">Token {labelKey}</div>
-              <ExemplarList records={records} />
-            </div>
-          ))}
+    <div
+      className="grid gap-2"
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}
+      data-testid="mt-exemplar-gallery"
+    >
+      {Object.entries(data.states).map(([labelKey, records]) => (
+        <div key={labelKey} className="border rounded-md p-2 text-xs">
+          <div className="font-semibold mb-1">Token {labelKey}</div>
+          <ExemplarList records={records} />
         </div>
-      </CardContent>
-    </Card>
+      ))}
+    </div>
   );
 }
 
@@ -612,44 +728,37 @@ function LabelDistributionSection({
   }, [data]);
   if (!data) return null;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Label Distribution (k={k})</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <table className="text-xs" data-testid="mt-label-distribution">
-          <thead>
-            <tr>
-              <th className="px-2 py-1 text-left">Token</th>
-              <th className="px-2 py-1 text-left">Top labels</th>
+    <table className="text-xs" data-testid="mt-label-distribution">
+      <thead>
+        <tr>
+          <th className="px-2 py-1 text-left">Token</th>
+          <th className="px-2 py-1 text-left">Top labels</th>
+        </tr>
+      </thead>
+      <tbody>
+        {Object.entries(collapsed).map(([stateKey, counts]) => {
+          const sorted = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5);
+          return (
+            <tr key={stateKey} className="border-t">
+              <td className="px-2 py-1 font-mono">{stateKey}</td>
+              <td className="px-2 py-1">
+                {sorted.length === 0 ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  sorted.map(([label, count]) => (
+                    <span key={label} className="mr-2">
+                      {label}: {count}
+                    </span>
+                  ))
+                )}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {Object.entries(collapsed).map(([stateKey, counts]) => {
-              const sorted = Object.entries(counts)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 5);
-              return (
-                <tr key={stateKey} className="border-t">
-                  <td className="px-2 py-1 font-mono">{stateKey}</td>
-                  <td className="px-2 py-1">
-                    {sorted.length === 0 ? (
-                      <span className="text-muted-foreground">—</span>
-                    ) : (
-                      sorted.map(([label, count]) => (
-                        <span key={label} className="mr-2">
-                          {label}: {count}
-                        </span>
-                      ))
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -658,11 +767,17 @@ function MotifSection({
   kValues,
   regionDetectionJobId,
   timelineHandleRef,
+  onSelectionChange,
+  activeOccurrenceIndex,
+  onActiveOccurrenceChange,
 }: {
   jobId: string;
   kValues: number[];
   regionDetectionJobId: string | null;
   timelineHandleRef: React.RefObject<TimelinePlaybackHandle>;
+  onSelectionChange: (selection: MotifPanelSelection) => void;
+  activeOccurrenceIndex: number;
+  onActiveOccurrenceChange: (idx: number) => void;
 }) {
   const k = useSelectedK(kValues);
   if (k == null) return null;
@@ -684,6 +799,10 @@ function MotifSection({
         maskedTransformerJobId: jobId,
         k,
       }}
+      onSelectionChange={onSelectionChange}
+      activeOccurrenceIndex={activeOccurrenceIndex}
+      onActiveOccurrenceChange={onActiveOccurrenceChange}
+      numLabels={k}
     />
   );
 }

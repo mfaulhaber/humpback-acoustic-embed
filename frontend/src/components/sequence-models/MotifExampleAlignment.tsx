@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { regionAudioSliceUrl } from "@/api/client";
 import { type MotifOccurrence } from "@/api/sequenceModels";
-import { LABEL_COLORS } from "./constants";
+import { labelColor } from "./constants";
 
 function fmt(sec: number): string {
   return `${sec >= 0 ? "+" : ""}${sec.toFixed(2)}s`;
@@ -11,10 +11,21 @@ export function MotifExampleAlignment({
   occurrences,
   regionDetectionJobId,
   onJumpToTimestamp,
+  activeOccurrenceIndex,
+  onActiveOccurrenceChange,
+  numLabels,
 }: {
   occurrences: MotifOccurrence[];
   regionDetectionJobId: string;
   onJumpToTimestamp: (timestamp: number) => void;
+  activeOccurrenceIndex?: number;
+  onActiveOccurrenceChange?: (idx: number) => void;
+  /** Total label count (HMM ``n_states`` or masked-transformer ``k``).
+   *  Required to match the main timeline's coloring — the categorical
+   *  palette wraps at 20 entries, so for >20 labels we need the HSL
+   *  ramp ``labelColor`` provides.
+   */
+  numLabels?: number;
 }) {
   if (occurrences.length === 0) {
     return (
@@ -46,14 +57,19 @@ export function MotifExampleAlignment({
         </span>
         <span className="absolute right-0">{fmt(maxRel)}</span>
       </div>
-      {rows.map((occ) => {
+      {rows.map((occ, idx) => {
         const left = ((occ.relative_start_seconds - minRel) / span) * 100;
         const width =
           ((occ.relative_end_seconds - occ.relative_start_seconds) / span) * 100;
+        const isActive = activeOccurrenceIndex === idx;
         return (
           <div
             key={occ.occurrence_id}
-            className="grid grid-cols-[180px_1fr_150px] gap-3 items-center text-xs"
+            data-testid={`motif-example-row-${idx}`}
+            data-active={isActive ? "true" : "false"}
+            className={`grid grid-cols-[180px_1fr_150px] gap-3 items-center text-xs rounded ${
+              isActive ? "bg-blue-50 ring-1 ring-blue-300" : ""
+            }`}
           >
             <div className="truncate">
               {occ.event_source_key} / {occ.anchor_strategy}
@@ -74,7 +90,10 @@ export function MotifExampleAlignment({
                       className="h-full flex-1"
                       title={`State ${state}`}
                       style={{
-                        background: LABEL_COLORS[state % LABEL_COLORS.length],
+                        background: labelColor(
+                          state,
+                          Math.max(numLabels ?? 1, 1),
+                        ),
                       }}
                     />
                   ))}
@@ -101,11 +120,12 @@ export function MotifExampleAlignment({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() =>
+                onClick={() => {
+                  onActiveOccurrenceChange?.(idx);
                   onJumpToTimestamp(
                     (occ.start_timestamp + occ.end_timestamp) / 2,
-                  )
-                }
+                  );
+                }}
               >
                 Jump
               </Button>
