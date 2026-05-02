@@ -178,7 +178,7 @@ class OceanDepthRenderer(TimelineTileRenderer):
 
 
 class LiftedOceanRenderer(TimelineTileRenderer):
-    """Default renderer with a brighter Ocean Depth-derived display mapping."""
+    """Renderer with a brighter Ocean Depth-derived display mapping."""
 
     renderer_id = "lifted-ocean"
     version = 1
@@ -203,7 +203,62 @@ class LiftedOceanRenderer(TimelineTileRenderer):
         return normalized**self.display_gamma
 
 
-DEFAULT_TIMELINE_RENDERER = LiftedOceanRenderer()
+class PerFrequencyWhitenedOceanRenderer(LiftedOceanRenderer):
+    """Lifted Ocean plus per-frequency background whitening detail."""
+
+    renderer_id = "per-frequency-whitened-ocean"
+    version = 3
+    background_percentile = 25.0
+    foreground_percentile = 95.0
+    detail_ceiling = 0.86
+    detail_gamma = 0.72
+    scale_multiplier = 0.55
+
+    def cache_metadata(self, settings) -> dict[str, object]:
+        metadata = super().cache_metadata(settings)
+        metadata["whitening"] = {
+            "background_percentile": self.background_percentile,
+            "foreground_percentile": self.foreground_percentile,
+            "detail_ceiling": self.detail_ceiling,
+            "detail_gamma": self.detail_gamma,
+            "scale_multiplier": self.scale_multiplier,
+        }
+        return metadata
+
+    def display_values(
+        self,
+        values: np.ndarray,
+        *,
+        vmin: float,
+        vmax: float,
+    ) -> np.ndarray:
+        base = super().display_values(values, vmin=vmin, vmax=vmax)
+        clean = np.nan_to_num(
+            values,
+            nan=vmin,
+            posinf=self.display_ceiling,
+            neginf=vmin,
+        )
+        background = np.percentile(
+            clean,
+            self.background_percentile,
+            axis=1,
+            keepdims=True,
+        )
+        foreground = np.percentile(
+            clean,
+            self.foreground_percentile,
+            axis=1,
+            keepdims=True,
+        )
+        min_scale = max((vmax - vmin) * 0.03, 1e-6)
+        scale = np.maximum((foreground - background) * self.scale_multiplier, min_scale)
+        detail = np.clip((clean - background) / scale, 0.0, 1.0)
+        detail = (detail**self.detail_gamma) * self.detail_ceiling
+        return np.maximum(base, detail)
+
+
+DEFAULT_TIMELINE_RENDERER = PerFrequencyWhitenedOceanRenderer()
 
 
 def get_ocean_depth_colormap() -> mcolors.LinearSegmentedColormap:

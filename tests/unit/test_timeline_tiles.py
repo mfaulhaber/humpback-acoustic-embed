@@ -113,10 +113,10 @@ def test_generate_timeline_tile_returns_png():
     assert len(result) > 100
 
 
-def test_generate_timeline_tile_uses_lifted_ocean_default():
+def test_generate_timeline_tile_uses_per_frequency_whitened_default():
     from humpback.processing.timeline_renderers import DEFAULT_TIMELINE_RENDERER
 
-    assert DEFAULT_TIMELINE_RENDERER.renderer_id == "lifted-ocean"
+    assert DEFAULT_TIMELINE_RENDERER.renderer_id == "per-frequency-whitened-ocean"
 
 
 def test_generate_timeline_tile_custom_freq_range():
