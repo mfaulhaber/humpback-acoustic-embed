@@ -71,8 +71,8 @@ Non-obvious constraints that are not immediately derivable from code.
 
 ## Timeline Compound-Component Architecture
 
-- **TimelineProvider owns all playback, zoom, pan, and viewport state.** No consumer may create parallel audio elements or duplicate zoom/playback state. External play/pause triggers go through the provider's ref handle (`TimelinePlaybackHandle`).
-- **Parent-to-provider communication** uses a forwarded ref (`TimelinePlaybackHandle`). Parents hold a ref to trigger play/pause — they never create their own `<audio>` elements.
+- **TimelineProvider owns all playback, zoom, pan, and viewport state.** No consumer may create parallel audio elements or duplicate zoom/playback state. External play/pause/seek triggers go through the provider's ref handle (`TimelinePlaybackHandle`).
+- **Parent-to-provider communication** uses a forwarded ref (`TimelinePlaybackHandle`, exposing `play` / `pause` / `seekTo` / `isPlaying`). Parents hold a ref to drive playback or recenter the viewport — they never create their own `<audio>` elements. `seekTo` lets siblings outside the provider subtree (e.g., a motif example panel in a separate Card) recenter the timeline without duplicating state.
 - **Child-to-provider communication** uses `useTimelineContext()`. Overlays, controls, and viewer bodies consume context — they never receive `centerTimestamp`, `zoomLevel`, `width`, `height`, or `jobStart` as props.
 - **Keyboard shortcuts are opt-out per consumer.** Generic viewers use the provider's built-in shortcuts. Workspaces that manage their own key handlers set `disableKeyboardShortcuts={true}` and call provider methods via context or ref.
 - **Overlays are children of Spectrogram**, receiving coordinates from `useOverlayContext()`. They never position themselves relative to external containers.
