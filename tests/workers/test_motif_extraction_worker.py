@@ -220,4 +220,4 @@ async def test_worker_failure_marks_job_failed(session, settings):
     await session.refresh(motif)
 
     assert motif.status == JobStatus.failed.value
-    assert "states.parquet" in (motif.error_message or "")
+    assert "decoded.parquet" in (motif.error_message or "")

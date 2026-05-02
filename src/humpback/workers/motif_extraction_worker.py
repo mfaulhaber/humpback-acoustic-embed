@@ -19,6 +19,7 @@ from humpback.models.sequence_models import (
     HMMSequenceJob,
     MotifExtractionJob,
 )
+from humpback.sequence_models.loaders import read_decoded_parquet
 from humpback.sequence_models.motifs import (
     MotifExtractionConfig,
     extract_motifs,
@@ -30,7 +31,8 @@ from humpback.services.continuous_embedding_service import (
 )
 from humpback.storage import (
     continuous_embedding_parquet_path,
-    hmm_sequence_states_path,
+    hmm_sequence_decoded_path,
+    hmm_sequence_legacy_states_path,
     motif_extraction_dir,
 )
 from humpback.workers.queue import claim_motif_extraction_job
@@ -116,13 +118,16 @@ async def run_motif_extraction_job(
             )
 
         source_kind = source_kind_for(cej.model_version)
-        states_path = hmm_sequence_states_path(settings.storage_root, hmm_job.id)
-        if not states_path.exists():
+        decoded_path = hmm_sequence_decoded_path(settings.storage_root, hmm_job.id)
+        legacy_path = hmm_sequence_legacy_states_path(settings.storage_root, hmm_job.id)
+        if not decoded_path.exists() and not legacy_path.exists():
             raise FileNotFoundError(
-                f"states.parquet not found for HMM job {hmm_job.id}"
+                f"decoded.parquet not found for HMM job {hmm_job.id}"
             )
 
-        states_table = pq.read_table(states_path)
+        # ``read_decoded_parquet`` applies the legacy backwards shim and
+        # always returns a table whose label column is named ``label``.
+        states_table = read_decoded_parquet(decoded_path)
         if await _raise_if_canceled(session, job, job_dir):
             return
 

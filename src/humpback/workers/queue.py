@@ -772,6 +772,23 @@ async def claim_motif_extraction_job(session: AsyncSession):
     return None
 
 
+async def claim_masked_transformer_job(session: AsyncSession):
+    from humpback.models.sequence_models import MaskedTransformerJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            MaskedTransformerJob,
+            status_attr=MaskedTransformerJob.status,
+            queued_value=JobStatus.queued.value,
+            running_value=JobStatus.running.value,
+            order_attr=MaskedTransformerJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
 async def claim_window_classification_job(session: AsyncSession):
     from humpback.models.call_parsing import WindowClassificationJob
 

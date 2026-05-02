@@ -307,15 +307,22 @@ async def get_hmm_states(
     settings = Settings.from_repo_env()
     states_path = hmm_sequence_states_path(settings.storage_root, job_id)
     if not states_path.exists():
-        raise HTTPException(status_code=404, detail="states.parquet not found")
+        raise HTTPException(status_code=404, detail="decoded.parquet not found")
     table = pq.read_table(states_path)
     _require_columns(table, states_path, {"start_timestamp", "end_timestamp"})
     total = table.num_rows
     sliced = table.slice(offset, limit)
     rows = sliced.to_pydict()
     items = []
+    # API contract preserved: surface the canonical decoded label as
+    # ``viterbi_state`` regardless of whether the on-disk column is the
+    # new ``label`` (post-ADR-061) or the legacy ``viterbi_state`` name.
     for i in range(sliced.num_rows):
-        items.append({col: rows[col][i] for col in rows})
+        item: dict[str, object] = {}
+        for col, values in rows.items():
+            out_col = "viterbi_state" if col == "label" else col
+            item[out_col] = values[i]
+        items.append(item)
     return {"total": total, "offset": offset, "limit": limit, "items": items}
 
 

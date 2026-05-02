@@ -287,12 +287,25 @@ def collapse_state_runs(
     source_kind: str,
     embedding_table: pa.Table | None = None,
 ) -> tuple[list[CollapsedSequence], str]:
-    """Collapse consecutive repeated states for each decoded source sequence."""
-    if "viterbi_state" not in states_table.column_names:
-        raise ValueError("states table must include viterbi_state")
+    """Collapse consecutive repeated states for each decoded source sequence.
+
+    Reads the canonical ``label`` column post-ADR-061; the legacy
+    ``viterbi_state`` name is accepted in-memory for callers that have not
+    yet renamed (column-name fallback so existing fixtures still work).
+    """
+    columns = states_table.column_names
+    if "label" not in columns and "viterbi_state" in columns:
+        states_table = states_table.rename_columns(
+            ["label" if c == "viterbi_state" else c for c in columns]
+        )
+        columns = states_table.column_names
+    if "label" not in columns:
+        raise ValueError(
+            "states table must include a `label` (or `viterbi_state`) column"
+        )
     group_col, sort_col = _source_columns(source_kind)
     required = {group_col, sort_col, "start_timestamp", "end_timestamp"}
-    missing = required.difference(states_table.column_names)
+    missing = required.difference(columns)
     if missing:
         raise ValueError(f"states table missing required columns: {sorted(missing)}")
 
@@ -354,7 +367,7 @@ def collapse_state_runs(
             )
 
         for row in rows:
-            state = int(row["viterbi_state"])
+            state = int(row["label"])
             if run_state is None:
                 run_state = state
             if state != run_state:

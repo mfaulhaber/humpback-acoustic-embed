@@ -29,6 +29,7 @@ from humpback.storage import (
     hmm_sequence_hmm_model_path,
     hmm_sequence_overlay_path,
     hmm_sequence_pca_model_path,
+    hmm_sequence_decoded_path,
     hmm_sequence_states_path,
     hmm_sequence_summary_path,
     hmm_sequence_training_log_path,
@@ -183,13 +184,15 @@ async def test_happy_path_produces_all_artifacts(session, settings):
     assert hmm_sequence_training_log_path(sr, job_id).exists()
 
 
-async def test_states_parquet_schema(session, settings):
+async def test_decoded_parquet_schema(session, settings):
     ce_job = await _seed_complete_ce_job(session, settings)
     job = await _create_hmm_job(session, ce_job.id)
 
     await run_hmm_sequence_job(session, job, settings)
 
-    states = pq.read_table(hmm_sequence_states_path(settings.storage_root, job.id))
+    decoded_path = hmm_sequence_decoded_path(settings.storage_root, job.id)
+    assert decoded_path.exists()
+    states = pq.read_table(decoded_path)
     expected_cols = {
         "merged_span_id",
         "window_index_in_span",
@@ -198,7 +201,7 @@ async def test_states_parquet_schema(session, settings):
         "end_timestamp",
         "is_in_pad",
         "event_id",
-        "viterbi_state",
+        "label",
         "state_posterior",
         "max_state_probability",
         "was_used_for_training",

@@ -40,10 +40,12 @@ from humpback.storage import (
     atomic_rename,
     detection_row_store_path,
     ensure_dir,
+    hmm_sequence_decoded_path,
     hmm_sequence_dir,
     hmm_sequence_exemplars_dir,
     hmm_sequence_exemplars_path,
     hmm_sequence_label_distribution_path,
+    hmm_sequence_legacy_states_path,
     hmm_sequence_overlay_path,
 )
 
@@ -193,6 +195,22 @@ async def delete_hmm_sequence_job(
 # ---------------------------------------------------------------------------
 
 
+def _hmm_decoded_path_for_read(storage_root: Path, job_id: str) -> Path:
+    """Return the path the loader should read for an HMM job.
+
+    Prefers the canonical ``decoded.parquet``; falls back to the legacy
+    ``states.parquet`` for jobs persisted before ADR-061 so they remain
+    readable without manual migration.
+    """
+    decoded = hmm_sequence_decoded_path(storage_root, job_id)
+    if decoded.exists():
+        return decoded
+    legacy = hmm_sequence_legacy_states_path(storage_root, job_id)
+    if legacy.exists():
+        return legacy
+    return decoded
+
+
 def generate_interpretations(
     storage_root: Path,
     job: HMMSequenceJob,
@@ -205,7 +223,8 @@ def generate_interpretations(
     see ADR-059). Does NOT generate label distribution (that requires DB
     access to vocalization_labels, which changes over time).
     """
-    loader = get_loader(source_kind_for(cej.model_version))
+    decoded_path = _hmm_decoded_path_for_read(storage_root, job.id)
+    loader = get_loader(source_kind_for(cej.model_version), decoded_path)
     inputs = loader.load(storage_root, job, cej)
 
     overlay_table, pca_full = compute_overlay(
@@ -257,7 +276,8 @@ async def generate_label_distribution(
             f"ContinuousEmbeddingJob not found: {job.continuous_embedding_job_id}"
         )
 
-    loader = get_loader(source_kind_for(cej.model_version))
+    decoded_path = _hmm_decoded_path_for_read(storage_root, job.id)
+    loader = get_loader(source_kind_for(cej.model_version), decoded_path)
     inputs = await loader.load_label_distribution_inputs(
         session, storage_root, job, cej
     )

@@ -45,10 +45,10 @@ from humpback.storage import (
     atomic_rename,
     continuous_embedding_parquet_path,
     ensure_dir,
+    hmm_sequence_decoded_path,
     hmm_sequence_dir,
     hmm_sequence_hmm_model_path,
     hmm_sequence_pca_model_path,
-    hmm_sequence_states_path,
     hmm_sequence_summary_path,
     hmm_sequence_training_log_path,
     hmm_sequence_transition_matrix_path,
@@ -129,7 +129,7 @@ STATES_SCHEMA = pa.schema(
         pa.field("end_timestamp", pa.float64()),
         pa.field("is_in_pad", pa.bool_()),
         pa.field("event_id", pa.string()),
-        pa.field("viterbi_state", pa.int16()),
+        pa.field("label", pa.int16()),
         pa.field("state_posterior", pa.list_(pa.float32())),
         pa.field("max_state_probability", pa.float32()),
         pa.field("was_used_for_training", pa.bool_()),
@@ -146,7 +146,7 @@ REGION_STATES_SCHEMA = pa.schema(
         pa.field("end_timestamp", pa.float64()),
         pa.field("is_in_pad", pa.bool_()),
         pa.field("tier", pa.string()),
-        pa.field("viterbi_state", pa.int16()),
+        pa.field("label", pa.int16()),
         pa.field("state_posterior", pa.list_(pa.float32())),
         pa.field("max_state_probability", pa.float32()),
         pa.field("was_used_for_training", pa.bool_()),
@@ -199,7 +199,7 @@ def _compute_tier_composition(rows: list[dict], n_states: int) -> list[dict]:
         s: {"event_core": 0, "near_event": 0, "background": 0} for s in range(n_states)
     }
     for row in rows:
-        s = int(row["viterbi_state"])
+        s = int(row["label"])
         tier = str(row["tier"])
         if tier not in counts[s]:
             counts[s][tier] = 0
@@ -358,7 +358,7 @@ async def run_hmm_sequence_job(
                         ].as_py(),
                         "is_in_pad": span_tbl.column("is_in_pad")[row_idx].as_py(),
                         "event_id": span_tbl.column("event_id")[row_idx].as_py(),
-                        "viterbi_state": int(dec.viterbi_states[row_idx]),
+                        "label": int(dec.viterbi_states[row_idx]),
                         "state_posterior": dec.posteriors[row_idx].tolist(),
                         "max_state_probability": float(
                             dec.max_state_probability[row_idx]
@@ -371,7 +371,7 @@ async def run_hmm_sequence_job(
 
         # --- Persist artifacts atomically ---
         _atomic_write_parquet(
-            states_table, hmm_sequence_states_path(settings.storage_root, job_id)
+            states_table, hmm_sequence_decoded_path(settings.storage_root, job_id)
         )
         _atomic_write_joblib(
             pca_model, hmm_sequence_pca_model_path(settings.storage_root, job_id)
@@ -606,7 +606,7 @@ async def _run_region_crnn_hmm(
                     ].as_py(),
                     "is_in_pad": region_tbl.column("is_in_pad")[row_idx].as_py(),
                     "tier": region_tbl.column("tier")[row_idx].as_py(),
-                    "viterbi_state": int(dec.viterbi_states[row_idx]),
+                    "label": int(dec.viterbi_states[row_idx]),
                     "state_posterior": dec.posteriors[row_idx].tolist(),
                     "max_state_probability": float(dec.max_state_probability[row_idx]),
                     "was_used_for_training": bool(was_used[row_idx]),
@@ -616,7 +616,7 @@ async def _run_region_crnn_hmm(
     states_table = pa.Table.from_pylist(rows, schema=REGION_STATES_SCHEMA)
 
     _atomic_write_parquet(
-        states_table, hmm_sequence_states_path(settings.storage_root, job_id)
+        states_table, hmm_sequence_decoded_path(settings.storage_root, job_id)
     )
     _atomic_write_joblib(
         pca_model, hmm_sequence_pca_model_path(settings.storage_root, job_id)
