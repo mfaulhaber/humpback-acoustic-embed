@@ -148,6 +148,22 @@ def test_lru_eviction_preserves_recently_accessed(cache_dir: Path):
     assert cache.get("job_c", "1h", 0) == b"c-data"
 
 
+def test_lru_eviction_ignores_shared_spans_directory(cache_dir: Path):
+    """Legacy job-cache eviction should not remove shared span repository data."""
+    from humpback.processing.timeline_cache import TimelineTileCache
+
+    shared_tile = cache_dir / "spans" / "span-key" / "renderer" / "tile.png"
+    shared_tile.parent.mkdir(parents=True)
+    shared_tile.write_bytes(b"shared")
+
+    cache = TimelineTileCache(cache_dir=cache_dir, max_jobs=1)
+    cache.put("job_a", "1h", 0, b"a-data")
+    time.sleep(0.05)
+    cache.put("job_b", "1h", 0, b"b-data")
+
+    assert shared_tile.read_bytes() == b"shared"
+
+
 def test_job_count_returns_cached_job_count(cache_dir: Path):
     """job_count() should return the number of job directories in the cache."""
     from humpback.processing.timeline_cache import TimelineTileCache
@@ -156,6 +172,7 @@ def test_job_count_returns_cached_job_count(cache_dir: Path):
     assert cache.job_count() == 0
     cache.put("job_a", "1h", 0, b"data")
     cache.put("job_b", "1h", 0, b"data")
+    (cache_dir / "spans" / "span-key").mkdir(parents=True)
     assert cache.job_count() == 2
 
 

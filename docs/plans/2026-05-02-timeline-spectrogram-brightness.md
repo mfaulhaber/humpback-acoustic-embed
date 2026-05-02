@@ -14,13 +14,13 @@
 - Create: `tests/unit/test_timeline_renderers.py`
 
 **Acceptance criteria:**
-- [ ] `TimelineTileRenderer` abstract base class exposes stable `renderer_id`, `version`, and `render(...) -> bytes` behavior for timeline PNG tiles
-- [ ] `OceanDepthRenderer` preserves the current Ocean Depth palette and value mapping as an unused compatibility renderer
-- [ ] `LiftedOceanRenderer` is the default renderer and uses the approved lifted palette and value transform
-- [ ] Lifted Ocean keeps the current PCEN parameters unchanged
-- [ ] `generate_timeline_tile` remains available as a backward-compatible wrapper around the default renderer, or all call sites are migrated in the same task
-- [ ] Renderer output is marker-free PNG bytes with no axes, labels, or padding
-- [ ] Renderer id and version are deterministic and suitable for cache keys
+- [x] `TimelineTileRenderer` abstract base class exposes stable `renderer_id`, `version`, and `render(...) -> bytes` behavior for timeline PNG tiles
+- [x] `OceanDepthRenderer` preserves the current Ocean Depth palette and value mapping as an unused compatibility renderer
+- [x] `LiftedOceanRenderer` is the default renderer and uses the approved lifted palette and value transform
+- [x] Lifted Ocean keeps the current PCEN parameters unchanged
+- [x] `generate_timeline_tile` remains available as a backward-compatible wrapper around the default renderer, or all call sites are migrated in the same task
+- [x] Renderer output is marker-free PNG bytes with no axes, labels, or padding
+- [x] Renderer id and version are deterministic and suitable for cache keys
 
 **Tests needed:**
 - Ocean Depth low, midpoint, and high color behavior remains covered for compatibility
@@ -40,14 +40,14 @@
 - Modify: `tests/unit/test_timeline_cache_migration.py`
 
 **Acceptance criteria:**
-- [ ] `TimelineSourceRef` captures hydrophone id, archive/cache source identity, job start timestamp, and job end timestamp for both detection jobs and region detection jobs
-- [ ] Repository paths are keyed by a deterministic hydrophone-span key rather than consumer job id
-- [ ] Repository paths include renderer id, renderer version, zoom level, frequency range, and tile pixel dimensions
-- [ ] Classifier and region source refs for the same hydrophone/source/time span resolve to the same span key
-- [ ] Different renderer ids, renderer versions, frequency ranges, or tile dimensions resolve to different tile paths
-- [ ] Existing job-id cache paths remain readable only where needed for migration or export compatibility; new writes go to the shared span repository
-- [ ] Audio manifest persistence is keyed by the same hydrophone-span identity so compatible consumers do not duplicate manifests
-- [ ] Cache version handling is renderer-aware and does not require deleting unrelated renderer outputs
+- [x] `TimelineSourceRef` captures hydrophone id, archive/cache source identity, job start timestamp, and job end timestamp for both detection jobs and region detection jobs
+- [x] Repository paths are keyed by a deterministic hydrophone-span key rather than consumer job id
+- [x] Repository paths include renderer id, renderer version, zoom level, frequency range, and tile pixel dimensions
+- [x] Classifier and region source refs for the same hydrophone/source/time span resolve to the same span key
+- [x] Different renderer ids, renderer versions, frequency ranges, or tile dimensions resolve to different tile paths
+- [x] Existing job-id cache paths remain readable only where needed for migration or export compatibility; new writes go to the shared span repository
+- [x] Audio manifest persistence is keyed by the same hydrophone-span identity so compatible consumers do not duplicate manifests
+- [x] Cache version handling is renderer-aware and does not require deleting unrelated renderer outputs
 
 **Tests needed:**
 - Same hydrophone/source/time-span refs produce identical span keys across classifier and region-style fixtures
@@ -66,17 +66,18 @@
 - Modify: `src/humpback/api/routers/call_parsing.py`
 - Modify: `tests/integration/test_timeline_api.py`
 - Create: `tests/integration/test_region_timeline_cache.py`
+- Create: `tests/unit/test_timeline_tile_service.py`
 
 **Acceptance criteria:**
-- [ ] Shared service exposes `get_or_render_tile` for any `TimelineSourceRef`
-- [ ] Classifier detection tile endpoint uses the shared service and shared repository
-- [ ] Region detection tile endpoint uses the shared service and shared repository
-- [ ] Region tile endpoint checks disk cache before rendering
-- [ ] First region tile miss renders and stores the tile; repeated request returns cached bytes
-- [ ] Tile rendering passes timeline cache/repository context into `resolve_timeline_audio` so HLS manifests and decoded PCM caches can be reused
-- [ ] Same-tile concurrent cache misses are guarded by an in-process or advisory lock so only one render writes a given tile when practical
-- [ ] Existing frontend URL contracts remain unchanged
-- [ ] Existing audio-slice and playback behavior is unchanged
+- [x] Shared service exposes `get_or_render_tile` for any `TimelineSourceRef`
+- [x] Classifier detection tile endpoint uses the shared service and shared repository
+- [x] Region detection tile endpoint uses the shared service and shared repository
+- [x] Region tile endpoint checks disk cache before rendering
+- [x] First region tile miss renders and stores the tile; repeated request returns cached bytes
+- [x] Tile rendering passes timeline cache/repository context into `resolve_timeline_audio` so HLS manifests and decoded PCM caches can be reused
+- [x] Same-tile concurrent cache misses are guarded by an in-process or advisory lock so only one render writes a given tile when practical
+- [x] Existing frontend URL contracts remain unchanged
+- [x] Existing audio-slice and playback behavior is unchanged
 
 **Tests needed:**
 - Classifier tile endpoint still returns PNG bytes for valid tile requests
@@ -98,13 +99,13 @@
 - Modify: `tests/unit/test_timeline_export.py`
 
 **Acceptance criteria:**
-- [ ] Existing classifier prepare endpoint delegates to the shared service while preserving response shape
-- [ ] Existing classifier prepare-status endpoint reads shared repository progress for the source span
-- [ ] Neighbor prefetch still launches after classifier tile misses
-- [ ] Region tile misses can use the same neighbor-prefetch mechanism, even if no public region prepare endpoint is added yet
-- [ ] `timeline_prepare_workers` remains the single setting controlling multi-threaded tile preparation
-- [ ] Export prepares and copies tiles from the shared repository path
-- [ ] Export remains compatible with classifier detection jobs and does not require frontend changes
+- [x] Existing classifier prepare endpoint delegates to the shared service while preserving response shape
+- [x] Existing classifier prepare-status endpoint reads shared repository progress for the source span
+- [x] Neighbor prefetch still launches after classifier tile misses
+- [x] Region tile misses can use the same neighbor-prefetch mechanism, even if no public region prepare endpoint is added yet
+- [x] `timeline_prepare_workers` remains the single setting controlling multi-threaded tile preparation
+- [x] Export prepares and copies tiles from the shared repository path
+- [x] Export remains compatible with classifier detection jobs and does not require frontend changes
 
 **Tests needed:**
 - Classifier startup prepare and prepare-status integration tests still pass
@@ -124,12 +125,12 @@
 - Create: `tests/performance/test_timeline_rendering_performance.py`
 
 **Acceptance criteria:**
-- [ ] Renderer avoids per-tile Matplotlib figure creation for marker-free tiles, using direct NumPy/Pillow color mapping and PNG encoding where feasible
-- [ ] Output dimensions exactly match configured tile width and height
-- [ ] Frequency axis orientation remains visually compatible with current `origin="lower"` behavior
-- [ ] Bicubic or equivalent resize/interpolation behavior is preserved closely enough for visual review
-- [ ] Performance benchmark can compare current-style rendering and optimized rendering on a small fixed sample without requiring network access
-- [ ] If direct rendering causes unacceptable visual differences, the code keeps Matplotlib behind a renderer implementation and records benchmark results in comments or test naming
+- [x] Renderer avoids per-tile Matplotlib figure creation for marker-free tiles, using direct NumPy/Pillow color mapping and PNG encoding where feasible
+- [x] Output dimensions exactly match configured tile width and height
+- [x] Frequency axis orientation remains visually compatible with current `origin="lower"` behavior
+- [x] Bicubic or equivalent resize/interpolation behavior is preserved closely enough for visual review
+- [x] Performance benchmark can compare current-style rendering and optimized rendering on a small fixed sample without requiring network access
+- [x] If direct rendering causes unacceptable visual differences, the code keeps Matplotlib behind a renderer implementation and records benchmark results in comments or test naming
 
 **Tests needed:**
 - Renderer output has exact requested dimensions
@@ -148,11 +149,11 @@
 - Modify: `docs/specs/2026-05-02-timeline-spectrogram-brightness-design.md`
 
 **Acceptance criteria:**
-- [ ] Storage layout documents shared span-keyed tile repository paths and renderer-versioned subdirectories
-- [ ] Signal processing reference documents Lifted Ocean as the default timeline display renderer and Ocean Depth as compatibility renderer
-- [ ] Frontend reference notes that timeline consumers keep existing URL contracts while backend tile storage is shared by hydrophone span
-- [ ] Spec status is updated from Draft to Implemented or Accepted as appropriate after implementation
-- [ ] Documentation mentions that renderer id/version are part of cache identity
+- [x] Storage layout documents shared span-keyed tile repository paths and renderer-versioned subdirectories
+- [x] Signal processing reference documents Lifted Ocean as the default timeline display renderer and Ocean Depth as compatibility renderer
+- [x] Frontend reference notes that timeline consumers keep existing URL contracts while backend tile storage is shared by hydrophone span
+- [x] Spec status is updated from Draft to Implemented or Accepted as appropriate after implementation
+- [x] Documentation mentions that renderer id/version are part of cache identity
 
 **Tests needed:**
 - Documentation links resolve locally
@@ -164,12 +165,21 @@
 
 Run in order after all tasks:
 
-1. `uv run ruff format --check src/humpback/processing/timeline_tiles.py src/humpback/processing/timeline_renderers.py src/humpback/processing/timeline_cache.py src/humpback/processing/timeline_repository.py src/humpback/services/timeline_tile_service.py src/humpback/api/routers/timeline.py src/humpback/api/routers/call_parsing.py src/humpback/services/timeline_export.py tests/unit/test_timeline_tiles.py tests/unit/test_timeline_renderers.py tests/unit/test_timeline_cache.py tests/unit/test_timeline_repository.py tests/integration/test_timeline_api.py tests/integration/test_region_timeline_cache.py tests/unit/test_timeline_export.py`
-2. `uv run ruff check src/humpback/processing/timeline_tiles.py src/humpback/processing/timeline_renderers.py src/humpback/processing/timeline_cache.py src/humpback/processing/timeline_repository.py src/humpback/services/timeline_tile_service.py src/humpback/api/routers/timeline.py src/humpback/api/routers/call_parsing.py src/humpback/services/timeline_export.py tests/unit/test_timeline_tiles.py tests/unit/test_timeline_renderers.py tests/unit/test_timeline_cache.py tests/unit/test_timeline_repository.py tests/integration/test_timeline_api.py tests/integration/test_region_timeline_cache.py tests/unit/test_timeline_export.py`
+1. `uv run ruff format --check src/humpback/processing/timeline_tiles.py src/humpback/processing/timeline_renderers.py src/humpback/processing/timeline_cache.py src/humpback/processing/timeline_repository.py src/humpback/services/timeline_tile_service.py src/humpback/api/routers/timeline.py src/humpback/api/routers/call_parsing.py src/humpback/services/timeline_export.py tests/unit/test_timeline_tiles.py tests/unit/test_timeline_renderers.py tests/unit/test_timeline_cache.py tests/unit/test_timeline_repository.py tests/unit/test_timeline_tile_service.py tests/integration/test_timeline_api.py tests/integration/test_region_timeline_cache.py tests/unit/test_timeline_export.py tests/performance/test_timeline_rendering_performance.py`
+2. `uv run ruff check src/humpback/processing/timeline_tiles.py src/humpback/processing/timeline_renderers.py src/humpback/processing/timeline_cache.py src/humpback/processing/timeline_repository.py src/humpback/services/timeline_tile_service.py src/humpback/api/routers/timeline.py src/humpback/api/routers/call_parsing.py src/humpback/services/timeline_export.py tests/unit/test_timeline_tiles.py tests/unit/test_timeline_renderers.py tests/unit/test_timeline_cache.py tests/unit/test_timeline_repository.py tests/unit/test_timeline_tile_service.py tests/integration/test_timeline_api.py tests/integration/test_region_timeline_cache.py tests/unit/test_timeline_export.py tests/performance/test_timeline_rendering_performance.py`
 3. `uv run pyright src/humpback/processing/timeline_tiles.py src/humpback/processing/timeline_renderers.py src/humpback/processing/timeline_cache.py src/humpback/processing/timeline_repository.py src/humpback/services/timeline_tile_service.py src/humpback/api/routers/timeline.py src/humpback/api/routers/call_parsing.py src/humpback/services/timeline_export.py`
-4. `uv run pytest tests/unit/test_timeline_tiles.py tests/unit/test_timeline_renderers.py tests/unit/test_timeline_cache.py tests/unit/test_timeline_repository.py tests/unit/test_timeline_cache_migration.py tests/integration/test_timeline_api.py tests/integration/test_region_timeline_cache.py tests/unit/test_timeline_export.py`
+4. `uv run pytest tests/unit/test_timeline_tiles.py tests/unit/test_timeline_renderers.py tests/unit/test_timeline_cache.py tests/unit/test_timeline_repository.py tests/unit/test_timeline_tile_service.py tests/unit/test_timeline_cache_migration.py tests/integration/test_timeline_api.py tests/integration/test_region_timeline_cache.py tests/unit/test_timeline_export.py tests/performance/test_timeline_rendering_performance.py`
 5. `uv run pytest tests/`
 6. `cd frontend && npx tsc --noEmit`
+
+Verification results:
+
+- `uv run ruff format --check ...` passed
+- `uv run ruff check ...` passed
+- `uv run pyright ...` passed
+- `uv run pytest ...` focused timeline/export suite passed: 99 passed, 1 skipped
+- `uv run pytest tests/` passed: 2342 passed, 2 skipped
+- `cd frontend && npx tsc --noEmit` passed
 
 Manual verification:
 
@@ -178,4 +188,3 @@ Manual verification:
 3. Check `5m`, `1m`, `30s`, and `10s` zooms for Lifted Ocean brightness and overlay readability.
 4. Reload the page and confirm region tiles return from shared disk cache.
 5. Inspect `data/timeline_cache/spans/` and confirm compatible classifier and region consumers share one span cache per renderer/version/frequency/zoom geometry.
-

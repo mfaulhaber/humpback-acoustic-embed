@@ -5,7 +5,7 @@ import pytest
 
 
 def test_ocean_depth_colormap_endpoints():
-    """Ocean Depth colormap should map 0.0 to near-black and 1.0 to near-white."""
+    """Ocean Depth compatibility colormap maps 0.0 to near-black and 1.0 to near-white."""
     from humpback.processing.timeline_tiles import get_ocean_depth_colormap
 
     cmap = get_ocean_depth_colormap()
@@ -111,6 +111,12 @@ def test_generate_timeline_tile_returns_png():
     )
     assert result[:8] == b"\x89PNG\r\n\x1a\n"
     assert len(result) > 100
+
+
+def test_generate_timeline_tile_uses_lifted_ocean_default():
+    from humpback.processing.timeline_renderers import DEFAULT_TIMELINE_RENDERER
+
+    assert DEFAULT_TIMELINE_RENDERER.renderer_id == "lifted-ocean"
 
 
 def test_generate_timeline_tile_custom_freq_range():

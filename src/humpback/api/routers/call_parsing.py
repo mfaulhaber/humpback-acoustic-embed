@@ -293,6 +293,8 @@ async def get_region_tile(
         ..., description="Zoom level (e.g. 24h, 6h, 1h, 15m, 5m, 1m)"
     ),
     tile_index: int = Query(..., ge=0, description="Tile index within the zoom level"),
+    freq_min: int = Query(0, ge=0),
+    freq_max: int = Query(3000, gt=0),
 ) -> Response:
     """Return a PCEN spectrogram PNG tile for a region detection job."""
     from humpback.processing.timeline_tiles import ZOOM_LEVELS, tile_count
@@ -321,14 +323,43 @@ async def get_region_tile(
             f"Tile index {tile_index} out of range (max {max_tiles - 1} for {zoom_level})",
         )
 
-    tile_bytes = await asyncio.to_thread(
-        _render_region_tile_sync,
+    from humpback.services.timeline_tile_service import (
+        get_or_render_tile,
+        repository_from_settings,
+    )
+
+    result = await asyncio.to_thread(
+        get_or_render_tile,
         job=job,
+        settings=settings,
         zoom_level=zoom_level,
         tile_index=tile_index,
-        settings=settings,
+        freq_min=freq_min,
+        freq_max=freq_max,
+        repository=repository_from_settings(settings),
     )
-    return Response(content=tile_bytes, media_type="image/png")
+    if not result.cache_hit:
+        from humpback.api.routers.timeline import (
+            _neighbor_prepare_targets,
+            _timeline_cache,
+            _try_launch_prepare,
+        )
+
+        neighbor_targets = _neighbor_prepare_targets(
+            job=job,
+            zoom_level=zoom_level,
+            tile_index=tile_index,
+            settings=settings,
+        )
+        if neighbor_targets is not None:
+            _try_launch_prepare(
+                job=job,
+                settings=settings,
+                cache=_timeline_cache(settings),
+                targets=neighbor_targets,
+                status_payload=None,
+            )
+    return Response(content=result.data, media_type="image/png")
 
 
 def _render_region_tile_sync(

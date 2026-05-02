@@ -59,6 +59,25 @@ Audio is sliced into fixed-length windows using an **overlap-back** strategy ins
 
 `WindowMetadata` carries `is_overlapped: bool` to flag overlap-back windows (replacing the former `is_padded` field).
 
+## Timeline Spectrogram Rendering
+
+Shared timeline PNG tiles are rendered from PCEN-normalized STFT magnitude.
+The default display renderer is `LiftedOceanRenderer` (`renderer_id =
+"lifted-ocean"`, version `1`). It keeps the same PCEN parameters as the
+previous timeline renderer, then applies a brighter value-to-color mapping with
+a lifted dark-blue floor, gamma compression, and a lower display ceiling before
+encoding marker-free PNG tiles.
+
+`OceanDepthRenderer` (`renderer_id = "ocean-depth"`, version `7`) remains in the
+codebase as an unused compatibility renderer for side-by-side experiments or
+rollback. Renderer id and version are part of the tile cache identity, along
+with zoom, frequency range, and output pixel geometry.
+
+Timeline rendering uses direct NumPy/Pillow color mapping and PNG encoding for
+marker-free tiles. Low frequencies are flipped to the bottom of the encoded
+image to match the previous `imshow(origin="lower")` orientation, and bicubic
+resizing is preserved for tile-size normalization.
+
 ## Embedding Pipeline Diagram
 
 ```mermaid

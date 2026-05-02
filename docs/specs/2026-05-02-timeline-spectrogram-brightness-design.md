@@ -1,7 +1,7 @@
 # Timeline Spectrogram Brightness Alternatives
 
 **Date:** 2026-05-02
-**Status:** Draft
+**Status:** Implemented
 
 ## Problem
 
@@ -14,7 +14,7 @@ Reference view for evaluation:
 - Center time: `2021-10-31 03:17:00 UTC` (`1635650220`)
 - Zooms checked: `5m`, `1m`, `30s`, `10s`
 
-## Current Rendering
+## Baseline Before Implementation
 
 Backend:
 
@@ -31,12 +31,12 @@ Backend:
   - filter state is initialized from the first magnitude frame to avoid dark left-edge cold starts
 - `src/humpback/api/routers/timeline.py` and `src/humpback/api/routers/call_parsing.py`
   - both classifier and region-detection timelines feed the same `generate_timeline_tile`
-- Cache behavior is not currently standardized:
+- Cache behavior was not standardized:
   - classifier detection timelines use `TimelineTileCache` rooted at `data/timeline_cache/{detection_job_id}/{zoom}/tile_####.png`
   - classifier tile misses render once, persist to disk, and launch neighbor prepare work
   - region-detection timelines render through `/call-parsing/region-jobs/{job_id}/tile`
-  - region-detection tile misses are every request because `_render_region_tile_sync` bypasses `TimelineTileCache`
-  - HMM, masked-transformer, segment review, classify review, and window-classify review all use `regionTileUrl`, so they share this uncached region path today
+  - region-detection tile misses rendered every request because `_render_region_tile_sync` bypassed `TimelineTileCache`
+  - HMM, masked-transformer, segment review, classify review, and window-classify review all used `regionTileUrl`, so they shared that previously render-on-demand region path
 
 Frontend:
 
@@ -67,7 +67,7 @@ Proposed repository identity:
 
 The repository should expose a stable cache key such as:
 
-- `data/timeline_cache/spans/{span_key}/{renderer_id}/v{renderer_version}/{zoom}/f{freq_min}-{freq_max}/tile_####.png`
+- `data/timeline_cache/spans/{span_key}/{renderer_id}/v{renderer_version}/{zoom}/f{freq_min}-{freq_max}/w{width}_h{height}/tile_####.png`
 
 `span_key` should be deterministic from the hydrophone/source/time-span fields, for example a short SHA-256 digest. This lets a classifier detection job, region detection job, HMM detail page, masked-transformer detail page, and review workspace reuse the same tile bytes when they point at the same hydrophone/time range.
 
@@ -224,11 +224,11 @@ If Option A still feels too conservative after manual review, Option C is the be
 
 ## Rendering Performance Opportunities
 
-Current performance observations:
+Baseline performance observations before implementation:
 
 - classifier timeline preparation already uses `ThreadPoolExecutor` controlled by `settings.timeline_prepare_workers`
 - classifier tile misses persist to disk and launch neighbor prefetch
-- region-detection tile requests do neither; every request recomputes audio resolution, STFT, PCEN, colormap, and PNG encoding
+- region-detection tile requests did neither; repeated requests recomputed audio resolution, STFT, PCEN, colormap, and PNG encoding
 - `generate_timeline_tile` uses Matplotlib figure creation for every tile, which is convenient but expensive for marker-free image tiles
 - `timeline_audio` already has reusable HLS manifests and decoded PCM memory caching, but region rendering does not pass `timeline_cache`, `job_id`, or PCM cache limits into `resolve_timeline_audio`, so it misses some reuse available to classifier tiles
 
@@ -240,7 +240,7 @@ Performance changes to include in implementation:
 4. **Avoid duplicate same-tile renders.** Add a per-tile advisory lock or in-process in-flight set keyed by repository tile path. Today simultaneous cache misses can compute the same tile before one write wins.
 5. **Use audio manifest and PCM caches for region jobs.** Pass the shared repository/cache plus source key into `resolve_timeline_audio` so HLS manifests and decoded PCM are reused.
 6. **Replace Matplotlib tile encoding with direct NumPy/Pillow rendering.** For marker-free tiles, the pipeline can map normalized scalar values through a `ListedColormap` lookup table and encode with PIL. This avoids per-tile `plt.subplots`, `imshow`, and `savefig` overhead. Keep output pixel-equivalent enough for tests but allow small interpolation differences if documented.
-7. **Benchmark before changing PCEN/STFT.** STFT and PCEN are likely real CPU costs, but Matplotlib overhead and repeated uncached region renders are lower-risk wins. Do not tune PCEN parameters for speed unless profiling shows they dominate.
+7. **Benchmark before changing PCEN/STFT.** STFT and PCEN are likely real CPU costs, but Matplotlib overhead and repeated region renders are lower-risk wins. Do not tune PCEN parameters for speed unless profiling shows they dominate.
 8. **Keep process-level parallelism conservative.** STFT/librosa/scipy may use native libraries that release the GIL in places, but over-threading can contend with audio decode and backend request handling. Default worker count should remain small and configurable.
 
 Suggested performance benchmark:

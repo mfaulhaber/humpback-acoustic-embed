@@ -480,6 +480,8 @@ def test_prepare_tiles_sync_renders_each_requested_tile_once(
         (),
         {
             "id": "job-a",
+            "hydrophone_id": "test_hydrophone",
+            "local_cache_path": "/fake/cache",
             "start_timestamp": 1000.0,
             "end_timestamp": 3000.0,
         },
@@ -487,12 +489,32 @@ def test_prepare_tiles_sync_renders_each_requested_tile_once(
     cache = timeline_router.TimelineTileCache(tmp_path / "tile_cache", max_jobs=5)
     seen_targets: list[tuple[str, int]] = []
 
-    def fake_render_tile_sync(*, job, zoom_level, tile_index, settings, cache):
-        seen_targets.append((zoom_level, tile_index))
-        cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
-        return b"\x89PNG"
+    def fake_get_or_render_tile(
+        *, job, zoom_level, tile_index, settings, repository, renderer=None, **kwargs
+    ):
+        from humpback.processing.timeline_renderers import DEFAULT_TIMELINE_RENDERER
+        from humpback.services.timeline_tile_service import (
+            TimelineTileResult,
+            source_ref_from_job,
+            tile_request_from_settings,
+        )
 
-    monkeypatch.setattr(timeline_router, "_render_tile_sync", fake_render_tile_sync)
+        renderer = renderer or DEFAULT_TIMELINE_RENDERER
+        seen_targets.append((zoom_level, tile_index))
+        source_ref = source_ref_from_job(job, settings)
+        request = tile_request_from_settings(
+            zoom_level=zoom_level,
+            tile_index=tile_index,
+            freq_min=kwargs.get("freq_min", 0),
+            freq_max=kwargs.get("freq_max", 3000),
+            settings=settings,
+        )
+        repository.put(
+            source_ref, renderer.renderer_id, renderer.version, request, b"\x89PNG"
+        )
+        return TimelineTileResult(data=b"\x89PNG", cache_hit=False)
+
+    monkeypatch.setattr(timeline_router, "get_or_render_tile", fake_get_or_render_tile)
 
     rendered = timeline_router._prepare_tiles_sync(
         job=job,
@@ -514,16 +536,36 @@ async def test_tile_endpoint_miss_launches_neighbor_prepare(
     job_id = await _create_completed_hydrophone_job(app_settings, num_windows=400)
     launched: dict[str, object] = {}
 
-    def fake_render_tile_sync(*, job, zoom_level, tile_index, settings, cache):
-        cache.put(job.id, zoom_level, tile_index, b"\x89PNG")
-        return b"\x89PNG"
+    def fake_get_or_render_tile(
+        *, job, zoom_level, tile_index, settings, repository, renderer=None, **kwargs
+    ):
+        from humpback.processing.timeline_renderers import DEFAULT_TIMELINE_RENDERER
+        from humpback.services.timeline_tile_service import (
+            TimelineTileResult,
+            source_ref_from_job,
+            tile_request_from_settings,
+        )
+
+        renderer = renderer or DEFAULT_TIMELINE_RENDERER
+        source_ref = source_ref_from_job(job, settings)
+        request = tile_request_from_settings(
+            zoom_level=zoom_level,
+            tile_index=tile_index,
+            freq_min=kwargs.get("freq_min", 0),
+            freq_max=kwargs.get("freq_max", 3000),
+            settings=settings,
+        )
+        repository.put(
+            source_ref, renderer.renderer_id, renderer.version, request, b"\x89PNG"
+        )
+        return TimelineTileResult(data=b"\x89PNG", cache_hit=False)
 
     def fake_launch_prepare_thread(*, job, settings, cache, prepare_lock, targets=None):
         launched["targets"] = targets
         prepare_lock.release()
         timeline_router._release_prepare_slot(job.id)
 
-    monkeypatch.setattr(timeline_router, "_render_tile_sync", fake_render_tile_sync)
+    monkeypatch.setattr(timeline_router, "get_or_render_tile", fake_get_or_render_tile)
     monkeypatch.setattr(
         timeline_router, "_launch_prepare_thread", fake_launch_prepare_thread
     )

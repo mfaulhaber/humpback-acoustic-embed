@@ -28,10 +28,17 @@ from humpback.models.vocalization import (
     VocalizationType,
 )
 from humpback.processing.timeline_cache import TimelineTileCache
+from humpback.processing.timeline_renderers import DEFAULT_TIMELINE_RENDERER
+from humpback.processing.timeline_repository import TimelineTileRequest
 from humpback.processing.timeline_tiles import (
     ZOOM_LEVELS,
     tile_count,
     tile_duration_sec,
+)
+from humpback.services.timeline_tile_service import (
+    pcm_cache_bytes_limit,
+    repository_from_settings,
+    source_ref_from_job,
 )
 from humpback.storage import detection_diagnostics_path, detection_row_store_path
 
@@ -102,13 +109,25 @@ async def export_timeline(
         max_jobs=settings.timeline_cache_max_jobs,
         memory_cache_max_items=0,  # No memory cache needed for export
     )
+    repository = repository_from_settings(settings)
+    source_ref = source_ref_from_job(job, settings)
+    renderer = DEFAULT_TIMELINE_RENDERER
 
     # Check all tiles are rendered; prepare if needed
     expected_tiles = 0
     needs_prepare = False
     for zoom in ZOOM_LEVELS:
         expected = tile_count(zoom, job_duration_sec=job_duration)
-        actual = cache.tile_count_for_zoom(job_id, zoom)
+        actual = repository.tile_count_for_zoom(
+            source_ref,
+            renderer.renderer_id,
+            renderer.version,
+            zoom,
+            freq_min=0,
+            freq_max=3000,
+            width_px=settings.timeline_tile_width_px,
+            height_px=settings.timeline_tile_height_px,
+        )
         if actual < expected:
             needs_prepare = True
         expected_tiles += expected
@@ -131,7 +150,16 @@ async def export_timeline(
         # Verify all tiles now exist
         for zoom in ZOOM_LEVELS:
             expected = tile_count(zoom, job_duration_sec=job_duration)
-            actual = cache.tile_count_for_zoom(job_id, zoom)
+            actual = repository.tile_count_for_zoom(
+                source_ref,
+                renderer.renderer_id,
+                renderer.version,
+                zoom,
+                freq_min=0,
+                freq_max=3000,
+                width_px=settings.timeline_tile_width_px,
+                height_px=settings.timeline_tile_height_px,
+            )
             if actual < expected:
                 raise ExportError(
                     f"Tile preparation incomplete at {zoom}: {actual}/{expected}"
@@ -152,10 +180,21 @@ async def export_timeline(
     total_copied = 0
     for zoom in ZOOM_LEVELS:
         n_tiles = tile_count(zoom, job_duration_sec=job_duration)
-        src_dir = settings.storage_root / "timeline_cache" / job_id / zoom
         dst_dir = tiles_dir / zoom
         for i in range(n_tiles):
-            src = src_dir / f"tile_{i:04d}.png"
+            src = repository.tile_path(
+                source_ref,
+                renderer.renderer_id,
+                renderer.version,
+                TimelineTileRequest(
+                    zoom_level=zoom,
+                    tile_index=i,
+                    freq_min=0,
+                    freq_max=3000,
+                    width_px=settings.timeline_tile_width_px,
+                    height_px=settings.timeline_tile_height_px,
+                ),
+            )
             dst = dst_dir / f"tile_{i:04d}.png"
             shutil.copy2(src, dst)
             total_copied += 1
@@ -180,8 +219,10 @@ async def export_timeline(
             duration_sec=chunk_duration,
             target_sr=_AUDIO_SAMPLE_RATE,
             noaa_cache_path=settings.noaa_cache_path,
-            timeline_cache=cache,
-            job_id=job_id,
+            timeline_cache=repository,
+            job_id=source_ref.span_key,
+            manifest_cache_items=settings.timeline_manifest_memory_cache_items,
+            pcm_cache_max_bytes=pcm_cache_bytes_limit(settings),
         )
         audio = normalize_for_playback(
             audio,
