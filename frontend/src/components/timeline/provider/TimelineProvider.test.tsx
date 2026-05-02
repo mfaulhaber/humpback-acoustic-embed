@@ -209,6 +209,34 @@ describe("usePlayback slice mode", () => {
   });
 });
 
+describe("imperative ref handle", () => {
+  it("exposes seekTo so consumers outside the provider can drive the timeline", () => {
+    const ref = createRef<TimelinePlaybackHandle>();
+    function Host({ children }: { children: ReactNode }) {
+      return (
+        <TimelineProvider
+          ref={ref}
+          jobStart={1000}
+          jobEnd={87400}
+          zoomLevels={FULL_ZOOM}
+          playback="slice"
+          audioUrlBuilder={() => ""}
+        >
+          {children}
+        </TimelineProvider>
+      );
+    }
+    const { result } = renderHook(() => useTimelineContext(), { wrapper: Host });
+
+    expect(typeof ref.current?.seekTo).toBe("function");
+
+    act(() => {
+      ref.current!.seekTo(42000);
+    });
+    expect(result.current.centerTimestamp).toBe(42000);
+  });
+});
+
 describe("useTimelineContext throws outside provider", () => {
   it("throws when used outside TimelineProvider", () => {
     expect(() => {

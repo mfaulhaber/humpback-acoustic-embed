@@ -207,8 +207,9 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
   useImperativeHandle(ref, () => ({
     play: (startEpoch: number, duration?: number) => play(startEpoch, duration),
     pause,
+    seekTo,
     get isPlaying() { return state.isPlaying; },
-  }), [play, pause, state.isPlaying]);
+  }), [play, pause, seekTo, state.isPlaying]);
 
   // End drag panning if the pointer is released outside the active panel.
   useEffect(() => {
