@@ -1,4 +1,4 @@
-"""Tests for the source-agnostic HMM interpretation loaders (ADR-059, ADR-060)."""
+"""Tests for the source-agnostic HMM interpretation loaders (ADR-059, ADR-060, ADR-061)."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from humpback.sequence_models.loaders import (
     OverlayInputs,
     SurfPerchLoader,
     get_loader,
+    read_decoded_parquet,
 )
 from humpback.services.continuous_embedding_service import (
     SOURCE_KIND_REGION_CRNN,
@@ -27,8 +28,9 @@ from humpback.services.continuous_embedding_service import (
 )
 from humpback.storage import (
     continuous_embedding_parquet_path,
+    hmm_sequence_decoded_path,
+    hmm_sequence_legacy_states_path,
     hmm_sequence_pca_model_path,
-    hmm_sequence_states_path,
 )
 
 
@@ -82,8 +84,20 @@ def _make_cej_crnn(cej_id: str = "cej-1") -> ContinuousEmbeddingJob:
     )
 
 
-def _write_surfperch_fixtures(storage_root: Path, hmm_job_id: str, cej_id: str) -> None:
-    """Write a SurfPerch embeddings.parquet + states.parquet fixture."""
+def _write_surfperch_fixtures(
+    storage_root: Path,
+    hmm_job_id: str,
+    cej_id: str,
+    *,
+    label_column: str = "label",
+    decoded_filename: str = "decoded.parquet",
+) -> None:
+    """Write a SurfPerch embeddings.parquet + decoded sequence parquet fixture.
+
+    ``label_column`` and ``decoded_filename`` allow exercising the legacy
+    backwards-read shim (legacy on-disk layout uses ``viterbi_state`` +
+    ``states.parquet``).
+    """
     rng = np.random.RandomState(0)
     spans = [(0, 5), (1, 4), (2, 3)]  # span_id, n_windows
     emb_rows: list[dict] = []
@@ -108,7 +122,7 @@ def _write_surfperch_fixtures(storage_root: Path, hmm_job_id: str, cej_id: str) 
                     "audio_file_id": 100 + span_id,
                     "start_timestamp": 1000.0 + span_id * 100 + w,
                     "end_timestamp": 1005.0 + span_id * 100 + w,
-                    "viterbi_state": (span_id + w) % 3,
+                    label_column: (span_id + w) % 3,
                     "max_state_probability": 0.5 + 0.05 * w,
                 }
             )
@@ -117,15 +131,27 @@ def _write_surfperch_fixtures(storage_root: Path, hmm_job_id: str, cej_id: str) 
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(emb_rows), emb_path)
 
-    states_path = hmm_sequence_states_path(storage_root, hmm_job_id)
-    states_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pylist(state_rows), states_path)
+    decoded_path = hmm_sequence_decoded_path(storage_root, hmm_job_id).with_name(
+        decoded_filename
+    )
+    decoded_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(state_rows), decoded_path)
 
 
 def _write_crnn_fixtures(
-    storage_root: Path, hmm_job_id: str, cej_id: str, *, single_region: bool = False
-) -> None:
-    """Write a CRNN region-based embeddings.parquet + states.parquet fixture."""
+    storage_root: Path,
+    hmm_job_id: str,
+    cej_id: str,
+    *,
+    single_region: bool = False,
+    label_column: str = "label",
+    decoded_filename: str = "decoded.parquet",
+) -> Path:
+    """Write a CRNN region-based embeddings.parquet + decoded fixture.
+
+    Returns the path to the decoded parquet so per-test variants (e.g.
+    masked-transformer per-k paths) can read it explicitly.
+    """
     rng = np.random.RandomState(1)
     if single_region:
         regions = [("region-A", 50.0, 4)]
@@ -162,7 +188,7 @@ def _write_crnn_fixtures(
                     "start_timestamp": base + c * 0.25,
                     "end_timestamp": base + c * 0.25 + 0.25,
                     "tier": tier,
-                    "viterbi_state": c % 3,
+                    label_column: c % 3,
                     "max_state_probability": 0.5 + 0.05 * c,
                 }
             )
@@ -171,23 +197,26 @@ def _write_crnn_fixtures(
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(emb_rows), emb_path)
 
-    states_path = hmm_sequence_states_path(storage_root, hmm_job_id)
-    states_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pylist(state_rows), states_path)
+    decoded_path = hmm_sequence_decoded_path(storage_root, hmm_job_id).with_name(
+        decoded_filename
+    )
+    decoded_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(state_rows), decoded_path)
+    return decoded_path
 
 
 class TestRegistry:
-    def test_get_loader_returns_surfperch(self):
-        loader = get_loader(SOURCE_KIND_SURFPERCH)
+    def test_get_loader_returns_surfperch(self, tmp_path):
+        loader = get_loader(SOURCE_KIND_SURFPERCH, tmp_path / "decoded.parquet")
         assert isinstance(loader, SurfPerchLoader)
 
-    def test_get_loader_returns_crnn(self):
-        loader = get_loader(SOURCE_KIND_REGION_CRNN)
+    def test_get_loader_returns_crnn(self, tmp_path):
+        loader = get_loader(SOURCE_KIND_REGION_CRNN, tmp_path / "decoded.parquet")
         assert isinstance(loader, CrnnRegionLoader)
 
-    def test_get_loader_unknown_raises(self):
+    def test_get_loader_unknown_raises(self, tmp_path):
         with pytest.raises(ValueError, match="unknown sequence-models source kind"):
-            get_loader("totally-made-up-source")
+            get_loader("totally-made-up-source", tmp_path / "decoded.parquet")
 
 
 class TestSurfPerchLoader:
@@ -197,7 +226,10 @@ class TestSurfPerchLoader:
         _persist_pca(tmp_path, hmm_job.id, _fit_pca())
         _write_surfperch_fixtures(tmp_path, hmm_job.id, cej.id)
 
-        result = SurfPerchLoader().load(tmp_path, hmm_job, cej)
+        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
+        result = SurfPerchLoader(decoded_artifact_path=str(decoded_path)).load(
+            tmp_path, hmm_job, cej
+        )
 
         assert isinstance(result, OverlayInputs)
         # 3 spans → 3 sequences.
@@ -223,9 +255,11 @@ class TestCrnnRegionLoader:
         hmm_job = _make_hmm_job("hmm-2")
         cej = _make_cej_crnn()
         _persist_pca(tmp_path, hmm_job.id, _fit_pca())
-        _write_crnn_fixtures(tmp_path, hmm_job.id, cej.id)
+        decoded_path = _write_crnn_fixtures(tmp_path, hmm_job.id, cej.id)
 
-        result = CrnnRegionLoader().load(tmp_path, hmm_job, cej)
+        result = CrnnRegionLoader(decoded_artifact_path=str(decoded_path)).load(
+            tmp_path, hmm_job, cej
+        )
 
         # Regions are seeded with start times alpha=50, zeta=100, mu=200.
         unique_ids = list(dict.fromkeys(result.metadata.sequence_ids))
@@ -246,14 +280,111 @@ class TestCrnnRegionLoader:
         hmm_job = _make_hmm_job("hmm-3")
         cej = _make_cej_crnn(cej_id="cej-3")
         _persist_pca(tmp_path, hmm_job.id, _fit_pca())
-        _write_crnn_fixtures(tmp_path, hmm_job.id, cej.id, single_region=True)
+        decoded_path = _write_crnn_fixtures(
+            tmp_path, hmm_job.id, cej.id, single_region=True
+        )
 
-        result = CrnnRegionLoader().load(tmp_path, hmm_job, cej)
+        result = CrnnRegionLoader(decoded_artifact_path=str(decoded_path)).load(
+            tmp_path, hmm_job, cej
+        )
 
         assert len(result.raw_sequences) == 1
         assert result.raw_sequences[0].shape[0] == 4
         # All chunks share one region id.
         assert set(result.metadata.sequence_ids) == {"region-A"}
+
+    def test_loader_reads_explicit_per_k_decoded_path(self, tmp_path):
+        """The loader honors an explicit ``decoded_artifact_path`` so a
+        masked-transformer per-k bundle can plug in without faking an HMM
+        directory layout.
+        """
+        hmm_job = _make_hmm_job("hmm-mt-pseudo")
+        cej = _make_cej_crnn(cej_id="cej-mt")
+        _persist_pca(tmp_path, hmm_job.id, _fit_pca())
+        # Write a "per-k" decoded.parquet to a custom path under tmp_path.
+        per_k_dir = tmp_path / "masked_transformer_jobs" / "mt-1" / "k50"
+        per_k_dir.mkdir(parents=True, exist_ok=True)
+        per_k_decoded = per_k_dir / "decoded.parquet"
+        # Reuse the writer but override target filename via a custom dir;
+        # construct a synthetic table directly so we hit the explicit path.
+        rng = np.random.RandomState(2)
+        rows = []
+        for c in range(4):
+            rng.randn(4)  # advance rng for determinism
+            rows.append(
+                {
+                    "region_id": "region-mt",
+                    "chunk_index_in_region": c,
+                    "audio_file_id": 200,
+                    "start_timestamp": 50.0 + c * 0.25,
+                    "end_timestamp": 50.0 + c * 0.25 + 0.25,
+                    "tier": "event_core",
+                    "label": c % 3,
+                    "max_state_probability": 0.7,
+                }
+            )
+        pq.write_table(pa.Table.from_pylist(rows), per_k_decoded)
+
+        # Embeddings live at the standard CEJ path so the loader can find
+        # them without trickery.
+        emb_path = continuous_embedding_parquet_path(tmp_path, cej.id)
+        emb_path.parent.mkdir(parents=True, exist_ok=True)
+        emb_rows = []
+        for c in range(4):
+            emb_rows.append(
+                {
+                    "region_id": "region-mt",
+                    "audio_file_id": 200,
+                    "chunk_index_in_region": c,
+                    "start_timestamp": 50.0 + c * 0.25,
+                    "end_timestamp": 50.0 + c * 0.25 + 0.25,
+                    "embedding": np.random.RandomState(3 + c)
+                    .randn(8)
+                    .astype(np.float32)
+                    .tolist(),
+                }
+            )
+        pq.write_table(pa.Table.from_pylist(emb_rows), emb_path)
+
+        result = CrnnRegionLoader(decoded_artifact_path=str(per_k_decoded)).load(
+            tmp_path, hmm_job, cej
+        )
+        assert len(result.raw_sequences) == 1
+        assert set(result.metadata.sequence_ids) == {"region-mt"}
+
+    def test_loader_backwards_read_shim_reads_legacy_states_parquet(self, tmp_path):
+        """Pre-ADR-061 jobs have ``states.parquet`` with a
+        ``viterbi_state`` column. The loader's read shim must transparently
+        rename to ``label`` without rewriting the file."""
+        hmm_job = _make_hmm_job("hmm-legacy")
+        cej = _make_cej_crnn(cej_id="cej-legacy")
+        _persist_pca(tmp_path, hmm_job.id, _fit_pca())
+        # Simulate legacy on-disk layout: states.parquet w/ viterbi_state.
+        _write_crnn_fixtures(
+            tmp_path,
+            hmm_job.id,
+            cej.id,
+            label_column="viterbi_state",
+            decoded_filename="states.parquet",
+        )
+        # Caller still asks for decoded.parquet — file does not exist on
+        # disk, so the shim falls back to the legacy states.parquet.
+        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
+        legacy_path = hmm_sequence_legacy_states_path(tmp_path, hmm_job.id)
+        assert not decoded_path.exists()
+        assert legacy_path.exists()
+
+        # Direct shim test: returns a label-renamed table.
+        table = read_decoded_parquet(decoded_path)
+        assert "label" in table.column_names
+        assert "viterbi_state" not in table.column_names
+
+        # Loader uses the shim under the hood and produces overlay inputs
+        # without raising.
+        result = CrnnRegionLoader(decoded_artifact_path=str(decoded_path)).load(
+            tmp_path, hmm_job, cej
+        )
+        assert len(result.viterbi_states) > 0
 
 
 class TestSurfPerchLabelDistributionLoader:
@@ -289,22 +420,22 @@ class TestSurfPerchLabelDistributionLoader:
         await session.refresh(cej)
 
         hmm_job = _make_hmm_job("hmm-sp-ld")
-        states_path = hmm_sequence_states_path(tmp_path, hmm_job.id)
-        states_path.parent.mkdir(parents=True, exist_ok=True)
+        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
+        decoded_path.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(
             pa.table(
                 {
                     "start_timestamp": pa.array([1010.0, 1100.0], type=pa.float64()),
                     "end_timestamp": pa.array([1015.0, 1105.0], type=pa.float64()),
-                    "viterbi_state": pa.array([0, 1], type=pa.int16()),
+                    "label": pa.array([0, 1], type=pa.int16()),
                 }
             ),
-            states_path,
+            decoded_path,
         )
 
-        result = await SurfPerchLoader().load_label_distribution_inputs(
-            session, tmp_path, hmm_job, cej
-        )
+        result = await SurfPerchLoader(
+            decoded_artifact_path=str(decoded_path)
+        ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
 
         assert isinstance(result, LabelDistributionInputs)
         assert result.hydrophone_id == "rpi_orcasound_lab"
@@ -330,10 +461,11 @@ class TestSurfPerchLabelDistributionLoader:
         await session.refresh(cej)
 
         hmm_job = _make_hmm_job("hmm-sp-missing")
+        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
         with pytest.raises(ValueError, match="EventSegmentationJob not found"):
-            await SurfPerchLoader().load_label_distribution_inputs(
-                session, tmp_path, hmm_job, cej
-            )
+            await SurfPerchLoader(
+                decoded_artifact_path=str(decoded_path)
+            ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
 
 
 class TestCrnnRegionLabelDistributionLoader:
@@ -366,8 +498,8 @@ class TestCrnnRegionLabelDistributionLoader:
         await session.refresh(cej)
 
         hmm_job = _make_hmm_job("hmm-crnn-ld")
-        states_path = hmm_sequence_states_path(tmp_path, hmm_job.id)
-        states_path.parent.mkdir(parents=True, exist_ok=True)
+        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
+        decoded_path.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(
             pa.table(
                 {
@@ -377,18 +509,18 @@ class TestCrnnRegionLabelDistributionLoader:
                     "end_timestamp": pa.array(
                         [1000.5, 1001.0, 1001.5], type=pa.float64()
                     ),
-                    "viterbi_state": pa.array([0, 1, 0], type=pa.int16()),
+                    "label": pa.array([0, 1, 0], type=pa.int16()),
                     "tier": pa.array(
                         ["event_core", "near_event", "background"], type=pa.string()
                     ),
                 }
             ),
-            states_path,
+            decoded_path,
         )
 
-        result = await CrnnRegionLoader().load_label_distribution_inputs(
-            session, tmp_path, hmm_job, cej
-        )
+        result = await CrnnRegionLoader(
+            decoded_artifact_path=str(decoded_path)
+        ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
 
         assert isinstance(result, LabelDistributionInputs)
         assert result.hydrophone_id == "rpi_orcasound_lab"
@@ -416,10 +548,11 @@ class TestCrnnRegionLabelDistributionLoader:
         await session.refresh(cej)
 
         hmm_job = _make_hmm_job("hmm-crnn-missing")
+        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
         with pytest.raises(ValueError, match="RegionDetectionJob not found"):
-            await CrnnRegionLoader().load_label_distribution_inputs(
-                session, tmp_path, hmm_job, cej
-            )
+            await CrnnRegionLoader(
+                decoded_artifact_path=str(decoded_path)
+            ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
 
     async def test_null_region_detection_job_id_raises(self, session, tmp_path):
         cej = ContinuousEmbeddingJob(
@@ -438,7 +571,8 @@ class TestCrnnRegionLabelDistributionLoader:
         await session.refresh(cej)
 
         hmm_job = _make_hmm_job("hmm-crnn-null")
+        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
         with pytest.raises(ValueError, match="missing region_detection_job_id"):
-            await CrnnRegionLoader().load_label_distribution_inputs(
-                session, tmp_path, hmm_job, cej
-            )
+            await CrnnRegionLoader(
+                decoded_artifact_path=str(decoded_path)
+            ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)

@@ -555,3 +555,133 @@ Alternatives considered:
   preserved.
 - The `"all"` tier key is reserved for sources without a tier dimension;
   future sources with a real tier dimension must pick distinct keys.
+
+---
+
+## ADR-061: Masked-transformer sequence model parallel to HMM
+
+**Date**: 2026-05-01
+**Status**: Accepted
+**Builds on**: ADR-056, ADR-057, ADR-058, ADR-059, ADR-060
+
+**Context**: The Sequence Models track shipped HMM-based latent-state
+discovery over CRNN region-based and SurfPerch event-padded continuous
+embeddings, plus motif extraction over collapsed Viterbi-state n-grams
+(ADR-056 through ADR-060). The Event-Conditioned Motif Discovery
+reference pipeline calls for a second consumer parallel to the HMM: a
+masked-span transformer encoder trained on the same continuous
+embeddings, producing contextualized embeddings (Z) that are then
+tokenized via k-means with a softmax-temperature confidence and fed to
+the same motif-extraction pipeline. The k-sweep is intrinsic to the
+workflow — researchers want to explore vocabulary sizes — and one
+training pass should support multiple k-means tokenizers without
+retraining the transformer. The HMM "state" naming is HMM-specific; a
+generalized "label" naming makes the loader/interpretation/motif stack
+source-agnostic across HMM and masked-transformer parents.
+
+**Decision**: Add a `masked_transformer_jobs` table (one row per
+upstream + training config), persist multiple per-k tokenization
+artifacts under `k<N>/` subdirs of the job dir, generalize the existing
+HMM loader stack to read a normalized `decoded.parquet` with column
+`label` (renamed from `state`), and generalize `motif_extraction_jobs`
+to point at either parent kind via a `parent_kind` discriminator + XOR
+parent FKs + a parent-kind-conditional `k` column. Training-signature
+idempotency excludes `k_values` so a completed job can extend its
+k-sweep without retraining. Mask-weight bias scales the loss higher on
+event-adjacent positions when the upstream source carries tier metadata.
+K-means confidence uses softmax with τ auto-fit per job from the median
+pairwise centroid distance, dropping into the existing
+`max_state_probability` UI slots without bespoke chart code. Training
+runs on MPS/CUDA with synthetic-batch validation against CPU and a
+fallback to CPU on validation failure, mirroring Pass 2/3 inference.
+The frontend extracts a generic `DiscreteSequenceBar` (modes `rows` |
+`single-row`) from the existing `HMMStateBar` so both detail pages share
+a single timeline strip implementation.
+
+Alternatives considered:
+- **Separate motif-extraction tables per parent kind**: rejected —
+  duplicates the entire ranking/storage/UI surface for a workflow that
+  is genuinely parent-agnostic at the algorithm level. The XOR + check
+  constraint adds a few lines of schema for one shared codepath.
+- **Per-k separate jobs (one row per (upstream, training, k))**:
+  rejected — forces a full transformer retrain per k, prevents the
+  extend-k-sweep follow-up flow, and clutters the jobs list with many
+  near-duplicate rows.
+- **Custom transformer-token-only motif consumer**: rejected — the
+  motif extraction algorithm is already loader-driven and needs only
+  per-chunk `(label, confidence)` rows + tier metadata. Sharing the
+  loader is the smaller change.
+- **Keep the `state` column name**: rejected — the column is now
+  consumed by both HMM Viterbi states and k-means tokens, and "label"
+  is the right cross-source noun. The HMM API serialization layer maps
+  `label` → `viterbi_state` so the existing HMM API contract and
+  frontend are unchanged.
+- **Token-bigram heatmap on the masked-transformer detail page**:
+  rejected for v1 — k-means tokens are not a Markov chain, so transition
+  matrices are semantically wrong; the existing motif n-gram view is the
+  right semantic surface for token co-occurrence.
+
+**Consequences**:
+- New `masked_transformer_jobs` table (migration 063); new
+  `MaskedTransformer` PyTorch module + `train_masked_transformer` +
+  `extract_contextual_embeddings` (`src/humpback/sequence_models/masked_transformer.py`).
+- New `tokenization.py` module with `fit_kmeans_token_model`,
+  `decode_tokens`, `compute_run_lengths`. τ auto-fit per job; confidence
+  is softmax over `−‖z − μ‖² / τ` and lives in `max_state_probability`
+  on disk for UI parity.
+- Per-k artifact fan-out under `k<N>/` (decoded.parquet, kmeans.joblib,
+  overlay.parquet, exemplars.json, label_distribution.json,
+  run_lengths.json). Atomic write via `k<N>.tmp/` → rename so a failed
+  per-k pass leaves no half-written subdir.
+- Training-signature idempotency excludes `k_values`; a completed job
+  exposes `POST /extend-k-sweep` to add new k values without retraining.
+  The follow-up worker pass writes only the new `k<N>/` subdirs and
+  leaves `transformer.pt` + `contextual_embeddings.parquet` untouched.
+- HMM worker writes `decoded.parquet` with column `label` (renamed from
+  the old `states.parquet` / `state` column). A read-time legacy adapter
+  in the loader stack falls back to the old filename + column on
+  pre-migration HMM job dirs so existing completed jobs remain
+  functional without manual migration. The HMM API serialization layer
+  continues to expose `viterbi_state` field names, and the frontend is
+  unchanged.
+- `motif_extraction_jobs` generalization (migration 064) adds
+  `parent_kind text NOT NULL`, nullable `masked_transformer_job_id` FK,
+  nullable `k`, and makes `hmm_sequence_job_id` nullable. CHECK
+  constraint enforces XOR between parent FKs + consistency with
+  `parent_kind`, and `k IS NOT NULL` iff `parent_kind =
+  "masked_transformer"`. Existing HMM-parent rows backfill with
+  `parent_kind = "hmm"`.
+- `MotifExtractionConfig.config_signature()` gains `parent_kind`, parent
+  FK, and `k`; the worker constructs the loader with the appropriate
+  `decoded_artifact_path` (HMM → `<hmm_job_dir>/decoded.parquet`;
+  masked-transformer → `<mt_job_dir>/k<N>/decoded.parquet`). The
+  extraction algorithm is parent-agnostic.
+- Mask-weight bias scales per-position loss by tier weight (event_core
+  1.5, near_event 1.2, background 0.5) when the source carries tier
+  metadata. Default on for CRNN sources; SurfPerch sources without tier
+  metadata fall back to uniform weighting.
+- Device validation runs forward+backward on a fixed synthetic batch on
+  both CPU and the chosen accelerator before training; outside a
+  tolerance band the worker records `fallback_reason` and proceeds on
+  CPU. `chosen_device` and `fallback_reason` persist on the job row and
+  surface as a UI badge, mirroring Pass 2/3 inference.
+- Frontend extracts a generic `DiscreteSequenceBar` (props add `mode:
+  "rows" | "single-row"`, `numLabels`, `colorPalette`,
+  `tooltipFormatter?`) and a `RegionNavBar` from the existing
+  `HMMSequenceDetailPage`. HMM detail page swaps to
+  `DiscreteSequenceBar mode="rows"` and the extracted region nav, no
+  visual change. `STATE_COLORS` renames to `LABEL_COLORS`; new
+  `labelColor(idx, total)` helper covers `total > 30` via an HSL ramp.
+- A third Sequence Models nav card "Masked Transformer" routes to
+  `/app/sequence-models/masked-transformer` (jobs list) and
+  `/app/sequence-models/masked-transformer/:jobId` (detail). The detail
+  page reads `?k=` from the URL via `useSearchParams`; per-k panels key
+  cache on `(jobId, k)` so KPicker switches don't remount the page.
+- `decoded.parquet` with column `label` becomes the behavioral contract
+  for any future sequence-model consumer — the loader Protocol
+  (ADR-059) reads it from an explicit path so new sources can plug in
+  without touching downstream interpretation or motif code.
+- SurfPerch source for the masked transformer is deferred to a
+  follow-up; the loader and config abstractions stay shaped to allow
+  it. Multi-GPU / distributed training, pretrained transformer
+  initialization, and token-bigram heatmaps are out of scope for v1.

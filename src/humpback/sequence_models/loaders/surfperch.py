@@ -16,7 +16,6 @@ from humpback.sequence_models.overlay import OverlayMetadata
 from humpback.storage import (
     continuous_embedding_parquet_path,
     hmm_sequence_pca_model_path,
-    hmm_sequence_states_path,
 )
 
 if TYPE_CHECKING:
@@ -33,7 +32,15 @@ class SurfPerchLoader:
     matches the historical ordering ``_load_overlay_inputs()`` produced.
     The unified identifier pair stringifies the int span id so downstream
     code is source-agnostic. ``extras`` is empty for SurfPerch rows.
+
+    ``decoded_artifact_path`` is the explicit path to the decoded sequence
+    parquet (post-ADR-061: ``decoded.parquet``). At v1, only the HMM path
+    exercises this loader; the masked-transformer track does not yet have
+    a SurfPerch source variant.
     """
+
+    def __init__(self, decoded_artifact_path: str) -> None:
+        self.decoded_artifact_path = decoded_artifact_path
 
     def load(
         self,
@@ -41,13 +48,13 @@ class SurfPerchLoader:
         hmm_job: HMMSequenceJob,
         cej: ContinuousEmbeddingJob,
     ) -> "OverlayInputs":
-        from humpback.sequence_models.loaders import OverlayInputs
+        from humpback.sequence_models.loaders import OverlayInputs, read_decoded_parquet
 
         pca_model = joblib.load(hmm_sequence_pca_model_path(storage_root, hmm_job.id))
         emb_table = pq.read_table(
             continuous_embedding_parquet_path(storage_root, cej.id)
         )
-        states_table = pq.read_table(hmm_sequence_states_path(storage_root, hmm_job.id))
+        states_table = read_decoded_parquet(self.decoded_artifact_path)
 
         emb_span_vals = emb_table.column("merged_span_id").to_pylist()
         unique_spans = sorted(set(emb_span_vals))
@@ -59,7 +66,7 @@ class SurfPerchLoader:
             sid = states_dict["merged_span_id"][i]
             widx = states_dict["window_index_in_span"][i]
             states_by_span.setdefault(sid, {})[widx] = {
-                "viterbi_state": states_dict["viterbi_state"][i],
+                "viterbi_state": states_dict["label"][i],
                 "max_state_probability": states_dict["max_state_probability"][i],
             }
             audio_file_by_span_win[(sid, widx)] = states_dict["audio_file_id"][i]
@@ -137,7 +144,10 @@ class SurfPerchLoader:
             EventSegmentationJob,
             RegionDetectionJob,
         )
-        from humpback.sequence_models.loaders import LabelDistributionInputs
+        from humpback.sequence_models.loaders import (
+            LabelDistributionInputs,
+            read_decoded_parquet,
+        )
 
         seg_job = await session.get(EventSegmentationJob, cej.event_segmentation_job_id)
         if seg_job is None:
@@ -150,7 +160,7 @@ class SurfPerchLoader:
                 f"RegionDetectionJob not found: {seg_job.region_detection_job_id}"
             )
 
-        states_table = pq.read_table(hmm_sequence_states_path(storage_root, hmm_job.id))
+        states_table = read_decoded_parquet(self.decoded_artifact_path)
         state_rows: list[dict[str, Any]] = []
         for i in range(states_table.num_rows):
             state_rows.append(
@@ -161,7 +171,7 @@ class SurfPerchLoader:
                     "end_timestamp": float(
                         states_table.column("end_timestamp")[i].as_py()
                     ),
-                    "viterbi_state": states_table.column("viterbi_state")[i].as_py(),
+                    "viterbi_state": states_table.column("label")[i].as_py(),
                 }
             )
 

@@ -46,6 +46,10 @@ const staticRoutes: Record<string, Crumb[]> = {
     { label: "Sequence Models", to: "/app/sequence-models" },
     { label: "HMM Sequence" },
   ],
+  "/app/sequence-models/masked-transformer": [
+    { label: "Sequence Models", to: "/app/sequence-models" },
+    { label: "Masked Transformer" },
+  ],
   "/app/admin": [{ label: "Admin" }],
 };
 
@@ -74,6 +78,18 @@ export function Breadcrumbs() {
     crumbs = [
       { label: "Sequence Models", to: "/app/sequence-models" },
       { label: "HMM Sequence", to: "/app/sequence-models/hmm-sequence" },
+      { label: `Job ${jobId.slice(0, 8)}` },
+    ];
+  } else if (
+    jobId &&
+    pathname.startsWith("/app/sequence-models/masked-transformer/")
+  ) {
+    crumbs = [
+      { label: "Sequence Models", to: "/app/sequence-models" },
+      {
+        label: "Masked Transformer",
+        to: "/app/sequence-models/masked-transformer",
+      },
       { label: `Job ${jobId.slice(0, 8)}` },
     ];
   } else {

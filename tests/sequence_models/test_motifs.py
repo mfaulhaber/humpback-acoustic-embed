@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pyarrow as pa
+import pytest
 
 from humpback.sequence_models.motifs import (
     MotifExtractionConfig,
@@ -298,6 +299,131 @@ def test_signature_is_stable_and_changes_with_config() -> None:
 
     assert config_signature("hmm-1", base) == config_signature("hmm-1", same)
     assert config_signature("hmm-1", base) != config_signature("hmm-1", other)
+
+
+def test_signature_distinguishes_parent_kind_and_k() -> None:
+    base = MotifExtractionConfig()
+
+    hmm_sig = config_signature("hmm-1", base)
+    mt_sig_k50 = config_signature(
+        "",
+        base,
+        parent_kind="masked_transformer",
+        masked_transformer_job_id="mt-1",
+        k=50,
+    )
+    mt_sig_k100 = config_signature(
+        "",
+        base,
+        parent_kind="masked_transformer",
+        masked_transformer_job_id="mt-1",
+        k=100,
+    )
+
+    assert hmm_sig != mt_sig_k50
+    assert mt_sig_k50 != mt_sig_k100
+
+    # Different masked-transformer jobs collide only on FK identity.
+    other_mt = config_signature(
+        "",
+        base,
+        parent_kind="masked_transformer",
+        masked_transformer_job_id="mt-2",
+        k=50,
+    )
+    assert mt_sig_k50 != other_mt
+
+
+def test_signature_rejects_missing_masked_transformer_fields() -> None:
+    base = MotifExtractionConfig()
+
+    with pytest.raises(ValueError, match="masked_transformer_job_id"):
+        config_signature("", base, parent_kind="masked_transformer", k=100)
+    with pytest.raises(ValueError, match="^k is required"):
+        config_signature(
+            "",
+            base,
+            parent_kind="masked_transformer",
+            masked_transformer_job_id="mt-1",
+        )
+
+
+def test_extract_motifs_with_masked_transformer_parent() -> None:
+    states = pa.Table.from_pylist(
+        [
+            {
+                "region_id": "r1",
+                "chunk_index_in_region": 0,
+                "audio_file_id": 1,
+                "start_timestamp": 0.0,
+                "end_timestamp": 0.25,
+                "is_in_pad": False,
+                "tier": "event_core",
+                "label": 1,
+            },
+            {
+                "region_id": "r1",
+                "chunk_index_in_region": 1,
+                "audio_file_id": 1,
+                "start_timestamp": 0.25,
+                "end_timestamp": 0.5,
+                "is_in_pad": False,
+                "tier": "background",
+                "label": 2,
+            },
+            {
+                "region_id": "r2",
+                "chunk_index_in_region": 0,
+                "audio_file_id": 2,
+                "start_timestamp": 10.0,
+                "end_timestamp": 10.25,
+                "is_in_pad": False,
+                "tier": "event_core",
+                "label": 1,
+            },
+            {
+                "region_id": "r2",
+                "chunk_index_in_region": 1,
+                "audio_file_id": 2,
+                "start_timestamp": 10.25,
+                "end_timestamp": 10.5,
+                "is_in_pad": False,
+                "tier": "background",
+                "label": 2,
+            },
+        ]
+    )
+
+    result = extract_motifs(
+        states,
+        source_kind="region_crnn",
+        config=MotifExtractionConfig(
+            min_ngram=2,
+            max_ngram=2,
+            minimum_occurrences=2,
+            minimum_event_sources=1,
+        ),
+        continuous_embedding_job_id="ce-1",
+        parent_kind="masked_transformer",
+        masked_transformer_job_id="mt-1",
+        k=100,
+    )
+
+    assert result.parent_kind == "masked_transformer"
+    assert result.masked_transformer_job_id == "mt-1"
+    assert result.k == 100
+    assert result.config_signature == config_signature(
+        "",
+        result.config,
+        parent_kind="masked_transformer",
+        masked_transformer_job_id="mt-1",
+        k=100,
+    )
+    # Tier-aware weighting still applies through the standard CRNN code
+    # path: event_core / background fractions populate.
+    motif = result.motifs[0]
+    assert motif.event_core_fraction == 0.5
+    assert motif.background_fraction == 0.5
 
 
 def test_artifact_round_trip(tmp_path: Path) -> None:

@@ -16,7 +16,6 @@ from humpback.sequence_models.overlay import OverlayMetadata
 from humpback.storage import (
     continuous_embedding_parquet_path,
     hmm_sequence_pca_model_path,
-    hmm_sequence_states_path,
 )
 
 if TYPE_CHECKING:
@@ -34,7 +33,14 @@ class CrnnRegionLoader:
     timeline navigation order the frontend uses for CRNN HMM jobs. Each
     :class:`WindowMeta` carries ``extras["tier"]`` so the frontend can
     badge exemplars with the chunk's tier classification.
+
+    ``decoded_artifact_path`` is the explicit path to the decoded sequence
+    parquet (post-ADR-061: ``decoded.parquet``). Masked-transformer jobs
+    pass their per-k decoded path here.
     """
+
+    def __init__(self, decoded_artifact_path: str) -> None:
+        self.decoded_artifact_path = decoded_artifact_path
 
     def load(
         self,
@@ -42,13 +48,13 @@ class CrnnRegionLoader:
         hmm_job: HMMSequenceJob,
         cej: ContinuousEmbeddingJob,
     ) -> "OverlayInputs":
-        from humpback.sequence_models.loaders import OverlayInputs
+        from humpback.sequence_models.loaders import OverlayInputs, read_decoded_parquet
 
         pca_model = joblib.load(hmm_sequence_pca_model_path(storage_root, hmm_job.id))
         emb_table = pq.read_table(
             continuous_embedding_parquet_path(storage_root, cej.id)
         )
-        states_table = pq.read_table(hmm_sequence_states_path(storage_root, hmm_job.id))
+        states_table = read_decoded_parquet(self.decoded_artifact_path)
 
         emb_region_vals = emb_table.column("region_id").to_pylist()
         emb_starts = emb_table.column("start_timestamp").to_pylist()
@@ -71,7 +77,7 @@ class CrnnRegionLoader:
             rid = states_dict["region_id"][i]
             cidx = states_dict["chunk_index_in_region"][i]
             states_by_region.setdefault(rid, {})[cidx] = {
-                "viterbi_state": states_dict["viterbi_state"][i],
+                "viterbi_state": states_dict["label"][i],
                 "max_state_probability": states_dict["max_state_probability"][i],
             }
             audio_file_by_region_chunk[(rid, cidx)] = states_dict["audio_file_id"][i]
@@ -147,7 +153,10 @@ class CrnnRegionLoader:
         cej: ContinuousEmbeddingJob,
     ) -> "LabelDistributionInputs":
         from humpback.models.call_parsing import RegionDetectionJob
-        from humpback.sequence_models.loaders import LabelDistributionInputs
+        from humpback.sequence_models.loaders import (
+            LabelDistributionInputs,
+            read_decoded_parquet,
+        )
 
         if cej.region_detection_job_id is None:
             raise ValueError(
@@ -159,7 +168,7 @@ class CrnnRegionLoader:
                 f"RegionDetectionJob not found: {cej.region_detection_job_id}"
             )
 
-        states_table = pq.read_table(hmm_sequence_states_path(storage_root, hmm_job.id))
+        states_table = read_decoded_parquet(self.decoded_artifact_path)
         state_rows: list[dict[str, Any]] = []
         tier_per_row: list[str] = []
         for i in range(states_table.num_rows):
@@ -171,7 +180,7 @@ class CrnnRegionLoader:
                     "end_timestamp": float(
                         states_table.column("end_timestamp")[i].as_py()
                     ),
-                    "viterbi_state": states_table.column("viterbi_state")[i].as_py(),
+                    "viterbi_state": states_table.column("label")[i].as_py(),
                 }
             )
             tier_per_row.append(str(states_table.column("tier")[i].as_py()))

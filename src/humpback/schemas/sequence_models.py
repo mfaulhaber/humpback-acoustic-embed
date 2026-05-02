@@ -420,9 +420,18 @@ class ExemplarsResponse(BaseModel):
 
 
 class MotifExtractionJobCreate(BaseModel):
-    """Request body for creating a first-class motif extraction job."""
+    """Request body for creating a first-class motif extraction job.
 
-    hmm_sequence_job_id: str
+    ADR-061 generalized the parent: ``parent_kind`` discriminates between
+    HMM and masked-transformer sources. Exactly one parent FK must be
+    set, consistent with ``parent_kind``; ``k`` is required iff
+    ``parent_kind == "masked_transformer"``.
+    """
+
+    parent_kind: Literal["hmm", "masked_transformer"] = "hmm"
+    hmm_sequence_job_id: Optional[str] = None
+    masked_transformer_job_id: Optional[str] = None
+    k: Optional[int] = Field(default=None, ge=2)
     min_ngram: int = Field(default=2, ge=1)
     max_ngram: int = Field(default=8, ge=1, le=16)
     minimum_occurrences: int = Field(default=5, ge=1)
@@ -432,6 +441,34 @@ class MotifExtractionJobCreate(BaseModel):
     event_core_weight: float = Field(default=0.20, ge=0)
     low_background_weight: float = Field(default=0.10, ge=0)
     call_probability_weight: Optional[float] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_parent_xor(self) -> "MotifExtractionJobCreate":
+        if self.parent_kind == "hmm":
+            if not self.hmm_sequence_job_id:
+                raise ValueError(
+                    "hmm_sequence_job_id is required for parent_kind='hmm'"
+                )
+            if self.masked_transformer_job_id is not None:
+                raise ValueError(
+                    "masked_transformer_job_id must be null for parent_kind='hmm'"
+                )
+            if self.k is not None:
+                raise ValueError("k must be null for parent_kind='hmm'")
+        else:
+            if not self.masked_transformer_job_id:
+                raise ValueError(
+                    "masked_transformer_job_id is required for "
+                    "parent_kind='masked_transformer'"
+                )
+            if self.hmm_sequence_job_id is not None:
+                raise ValueError(
+                    "hmm_sequence_job_id must be null for "
+                    "parent_kind='masked_transformer'"
+                )
+            if self.k is None:
+                raise ValueError("k is required for parent_kind='masked_transformer'")
+        return self
 
     @model_validator(mode="after")
     def _validate_ngram_and_weights(self) -> "MotifExtractionJobCreate":
@@ -455,7 +492,10 @@ class MotifExtractionJobOut(BaseModel):
 
     id: str
     status: str
-    hmm_sequence_job_id: str
+    parent_kind: str = "hmm"
+    hmm_sequence_job_id: Optional[str] = None
+    masked_transformer_job_id: Optional[str] = None
+    k: Optional[int] = None
     source_kind: str
     min_ngram: int
     max_ngram: int
@@ -484,7 +524,10 @@ class MotifExtractionManifest(BaseModel):
 
     schema_version: int
     motif_extraction_job_id: str
-    hmm_sequence_job_id: str
+    parent_kind: str = "hmm"
+    hmm_sequence_job_id: Optional[str] = None
+    masked_transformer_job_id: Optional[str] = None
+    k: Optional[int] = None
     continuous_embedding_job_id: str
     source_kind: str
     config: dict[str, Any]
@@ -566,3 +609,185 @@ class MotifOccurrencesResponse(BaseModel):
     offset: int
     limit: int
     items: list[MotifOccurrence]
+
+
+# ---------------------------------------------------------------------------
+# Masked Transformer Jobs (ADR-061)
+# ---------------------------------------------------------------------------
+
+
+class MaskedTransformerJobCreate(BaseModel):
+    """Request body for creating a ``MaskedTransformerJob``."""
+
+    continuous_embedding_job_id: str
+    preset: Literal["small", "default", "large"] = "default"
+    k_values: list[int] = Field(default_factory=lambda: [100])
+    mask_fraction: float = Field(default=0.20, ge=0.0, le=1.0)
+    span_length_min: int = Field(default=2, ge=1)
+    span_length_max: int = Field(default=6, ge=1)
+    dropout: float = Field(default=0.1, ge=0.0, le=1.0)
+    mask_weight_bias: bool = True
+    cosine_loss_weight: float = Field(default=0.0, ge=0.0)
+    max_epochs: int = Field(default=30, ge=1)
+    early_stop_patience: int = Field(default=3, ge=1)
+    val_split: float = Field(default=0.1, ge=0.0, lt=1.0)
+    seed: int = 42
+
+    @field_validator("k_values")
+    @classmethod
+    def _validate_k_values(cls, v: list[int]) -> list[int]:
+        if not v:
+            raise ValueError("k_values must be a non-empty list")
+        for item in v:
+            if int(item) < 2:
+                raise ValueError("each k must be >= 2")
+        return [int(x) for x in v]
+
+    @model_validator(mode="after")
+    def _validate_span(self) -> "MaskedTransformerJobCreate":
+        if self.span_length_max < self.span_length_min:
+            raise ValueError("span_length_max must be >= span_length_min")
+        return self
+
+
+class MaskedTransformerJobOut(BaseModel):
+    """Masked-transformer job state returned by the API."""
+
+    id: str
+    status: str
+    status_reason: Optional[str] = None
+    continuous_embedding_job_id: str
+    training_signature: str
+    preset: str
+    mask_fraction: float
+    span_length_min: int
+    span_length_max: int
+    dropout: float
+    mask_weight_bias: bool
+    cosine_loss_weight: float
+    max_epochs: int
+    early_stop_patience: int
+    val_split: float
+    seed: int
+    k_values: list[int] = Field(default_factory=list)
+    chosen_device: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    final_train_loss: Optional[float] = None
+    final_val_loss: Optional[float] = None
+    total_epochs: Optional[int] = None
+    job_dir: Optional[str] = None
+    total_sequences: Optional[int] = None
+    total_chunks: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("k_values", mode="before")
+    @classmethod
+    def _parse_k_values(cls, v: Any) -> list[int]:
+        if isinstance(v, list):
+            return [int(x) for x in v]
+        if isinstance(v, str):
+            import json as _json
+
+            try:
+                parsed = _json.loads(v)
+            except _json.JSONDecodeError:
+                return []
+            if not isinstance(parsed, list):
+                return []
+            return [int(x) for x in parsed]
+        return []
+
+
+class MaskedTransformerJobDetail(BaseModel):
+    """Detail response for a masked-transformer job."""
+
+    job: MaskedTransformerJobOut
+    region_detection_job_id: Optional[str] = None
+    region_start_timestamp: Optional[float] = None
+    region_end_timestamp: Optional[float] = None
+    tier_composition: Optional[list[StateTierComposition]] = None
+    source_kind: str = "region_crnn"
+
+
+class ExtendKSweepRequest(BaseModel):
+    """Body for the extend-k-sweep endpoint."""
+
+    additional_k: list[int]
+
+    @field_validator("additional_k")
+    @classmethod
+    def _validate_additional_k(cls, v: list[int]) -> list[int]:
+        if not v:
+            raise ValueError("additional_k must be a non-empty list")
+        for item in v:
+            if int(item) < 2:
+                raise ValueError("each k must be >= 2")
+        return [int(x) for x in v]
+
+
+class GenerateInterpretationsRequest(BaseModel):
+    """Body for the generate-interpretations endpoint."""
+
+    k_values: Optional[list[int]] = None
+
+
+class LossCurveResponse(BaseModel):
+    """Loss-curve payload from ``loss_curve.json``."""
+
+    epochs: list[int] = Field(default_factory=list)
+    train_loss: list[float] = Field(default_factory=list)
+    val_loss: list[Optional[float]] = Field(default_factory=list)
+    val_metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReconstructionErrorRow(BaseModel):
+    """One row from ``reconstruction_error.parquet``."""
+
+    sequence_id: str
+    position: int
+    score: float
+    start_timestamp: float
+    end_timestamp: float
+
+
+class ReconstructionErrorResponse(BaseModel):
+    """Paginated reconstruction-error timeline strip."""
+
+    total: int
+    offset: int
+    limit: int
+    items: list[ReconstructionErrorRow]
+
+
+class TokenRow(BaseModel):
+    """One decoded-token row from ``k<N>/decoded.parquet``."""
+
+    sequence_id: str
+    position: int
+    label: int
+    confidence: float
+    start_timestamp: float
+    end_timestamp: float
+    tier: Optional[str] = None
+    audio_file_id: Optional[int] = None
+
+
+class TokensResponse(BaseModel):
+    """Paginated decoded-token strip."""
+
+    total: int
+    offset: int
+    limit: int
+    items: list[TokenRow]
+
+
+class RunLengthsResponse(BaseModel):
+    """Per-token run-length histogram payload."""
+
+    k: int
+    tau: float
+    run_lengths: dict[str, list[int]] = Field(default_factory=dict)

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,8 +18,10 @@ from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
     HMMSequenceJob,
+    MaskedTransformerJob,
     MotifExtractionJob,
 )
+from humpback.sequence_models.loaders import read_decoded_parquet
 from humpback.sequence_models.motifs import (
     MotifExtractionConfig,
     extract_motifs,
@@ -30,7 +33,9 @@ from humpback.services.continuous_embedding_service import (
 )
 from humpback.storage import (
     continuous_embedding_parquet_path,
-    hmm_sequence_states_path,
+    hmm_sequence_decoded_path,
+    hmm_sequence_legacy_states_path,
+    masked_transformer_k_decoded_path,
     motif_extraction_dir,
 )
 from humpback.workers.queue import claim_motif_extraction_job
@@ -89,6 +94,41 @@ async def _raise_if_canceled(
     return False
 
 
+def _resolve_decoded_path(
+    storage_root: Path,
+    job: MotifExtractionJob,
+    hmm_job: Optional[HMMSequenceJob],
+    mt_job: Optional[MaskedTransformerJob],
+) -> Path:
+    """Resolve the decoded.parquet path based on parent_kind.
+
+    HMM parent: prefers ``decoded.parquet`` and falls back to the legacy
+    ``states.parquet`` for jobs that completed before ADR-061.
+    Masked-transformer parent: reads ``k<N>/decoded.parquet`` from the
+    masked-transformer job dir.
+    """
+    if job.parent_kind == "masked_transformer":
+        if mt_job is None or job.k is None:
+            raise ValueError(
+                "masked-transformer parent requires masked_transformer_job_id and k"
+            )
+        path = masked_transformer_k_decoded_path(storage_root, mt_job.id, int(job.k))
+        if not path.exists():
+            raise FileNotFoundError(
+                f"decoded.parquet not found for masked_transformer_job "
+                f"{mt_job.id} k={int(job.k)}"
+            )
+        return path
+
+    if hmm_job is None:
+        raise ValueError("HMM parent requires hmm_sequence_job_id")
+    decoded_path = hmm_sequence_decoded_path(storage_root, hmm_job.id)
+    legacy_path = hmm_sequence_legacy_states_path(storage_root, hmm_job.id)
+    if not decoded_path.exists() and not legacy_path.exists():
+        raise FileNotFoundError(f"decoded.parquet not found for HMM job {hmm_job.id}")
+    return decoded_path
+
+
 async def run_motif_extraction_job(
     session: AsyncSession,
     job: MotifExtractionJob,
@@ -100,33 +140,60 @@ async def run_motif_extraction_job(
 
     try:
         job = await session.merge(job)
-        hmm_job = await session.get(HMMSequenceJob, job.hmm_sequence_job_id)
-        if hmm_job is None or hmm_job.status != JobStatus.complete.value:
-            raise ValueError(
-                f"source hmm_sequence_job {job.hmm_sequence_job_id} is not complete"
-            )
+        hmm_job: Optional[HMMSequenceJob] = None
+        mt_job: Optional[MaskedTransformerJob] = None
+        cej: Optional[ContinuousEmbeddingJob] = None
 
-        cej = await session.get(
-            ContinuousEmbeddingJob, hmm_job.continuous_embedding_job_id
-        )
-        if cej is None:
-            raise ValueError(
-                "source continuous_embedding_job not found: "
-                f"{hmm_job.continuous_embedding_job_id}"
+        if job.parent_kind == "masked_transformer":
+            if not job.masked_transformer_job_id:
+                raise ValueError(
+                    "masked-transformer parent missing masked_transformer_job_id"
+                )
+            mt_job = await session.get(
+                MaskedTransformerJob, job.masked_transformer_job_id
             )
+            if mt_job is None or mt_job.status != JobStatus.complete.value:
+                raise ValueError(
+                    f"source masked_transformer_job {job.masked_transformer_job_id}"
+                    " is not complete"
+                )
+            cej = await session.get(
+                ContinuousEmbeddingJob, mt_job.continuous_embedding_job_id
+            )
+            if cej is None:
+                raise ValueError(
+                    "source continuous_embedding_job not found: "
+                    f"{mt_job.continuous_embedding_job_id}"
+                )
+        else:
+            if not job.hmm_sequence_job_id:
+                raise ValueError("HMM parent missing hmm_sequence_job_id")
+            hmm_job = await session.get(HMMSequenceJob, job.hmm_sequence_job_id)
+            if hmm_job is None or hmm_job.status != JobStatus.complete.value:
+                raise ValueError(
+                    f"source hmm_sequence_job {job.hmm_sequence_job_id} is not complete"
+                )
+            cej = await session.get(
+                ContinuousEmbeddingJob, hmm_job.continuous_embedding_job_id
+            )
+            if cej is None:
+                raise ValueError(
+                    "source continuous_embedding_job not found: "
+                    f"{hmm_job.continuous_embedding_job_id}"
+                )
 
         source_kind = source_kind_for(cej.model_version)
-        states_path = hmm_sequence_states_path(settings.storage_root, hmm_job.id)
-        if not states_path.exists():
-            raise FileNotFoundError(
-                f"states.parquet not found for HMM job {hmm_job.id}"
-            )
+        decoded_path = _resolve_decoded_path(
+            settings.storage_root, job, hmm_job, mt_job
+        )
 
-        states_table = pq.read_table(states_path)
+        # ``read_decoded_parquet`` applies the legacy backwards shim and
+        # always returns a table whose label column is named ``label``.
+        states_table = read_decoded_parquet(decoded_path)
         if await _raise_if_canceled(session, job, job_dir):
             return
 
-        embedding_table = None
+        embedding_table: Optional[pa.Table] = None
         if source_kind == SOURCE_KIND_REGION_CRNN:
             embeddings_path = continuous_embedding_parquet_path(
                 settings.storage_root, cej.id
@@ -145,10 +212,13 @@ async def run_motif_extraction_job(
             states_table,
             source_kind=source_kind,
             config=_config_from_job(job),
-            hmm_sequence_job_id=hmm_job.id,
+            hmm_sequence_job_id=(hmm_job.id if hmm_job else ""),
             continuous_embedding_job_id=cej.id,
             event_lookup=event_lookup,
             embedding_table=embedding_table,
+            parent_kind=job.parent_kind,
+            masked_transformer_job_id=(mt_job.id if mt_job else ""),
+            k=int(job.k) if job.k is not None else None,
         )
 
         if await _raise_if_canceled(session, job, job_dir):

@@ -6,8 +6,10 @@ from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
     HMMSequenceJob,
+    MaskedTransformerJob,
     MotifExtractionJob,
 )
+from humpback.services.masked_transformer_service import serialize_k_values
 from humpback.services.motif_extraction_service import (
     CancelTerminalJobError,
     cancel_motif_extraction_job,
@@ -99,6 +101,102 @@ async def test_failed_and_canceled_jobs_do_not_block_retry(session):
     third, created_third = await create_motif_extraction_job(session, _payload(hmm.id))
     assert created_third is True
     assert third.id not in {first.id, second.id}
+
+
+async def _masked_transformer_jobs(
+    session,
+    *,
+    mt_status: str = JobStatus.complete.value,
+    k_values: list[int] | None = None,
+):
+    cej = ContinuousEmbeddingJob(
+        status=JobStatus.complete.value,
+        event_segmentation_job_id="seg-2",
+        model_version="crnn-call-parsing-pytorch",
+        target_sample_rate=32000,
+        encoding_signature="enc-mt-1",
+    )
+    session.add(cej)
+    await session.commit()
+    await session.refresh(cej)
+    mt = MaskedTransformerJob(
+        status=mt_status,
+        continuous_embedding_job_id=cej.id,
+        training_signature="sig-1",
+        k_values=serialize_k_values(k_values or [50, 100]),
+    )
+    session.add(mt)
+    await session.commit()
+    await session.refresh(mt)
+    return cej, mt
+
+
+def _mt_payload(mt_id: str, k: int | None, **overrides):
+    defaults = {
+        "parent_kind": "masked_transformer",
+        "hmm_sequence_job_id": None,
+        "masked_transformer_job_id": mt_id,
+        "k": k,
+        "min_ngram": 2,
+        "max_ngram": 4,
+        "minimum_occurrences": 2,
+        "minimum_event_sources": 1,
+        "frequency_weight": 0.4,
+        "event_source_weight": 0.3,
+        "event_core_weight": 0.2,
+        "low_background_weight": 0.1,
+        "call_probability_weight": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+async def test_create_with_masked_transformer_parent(session):
+    _, mt = await _masked_transformer_jobs(session)
+
+    job, created = await create_motif_extraction_job(session, _mt_payload(mt.id, k=100))
+    assert created is True
+    assert job.parent_kind == "masked_transformer"
+    assert job.masked_transformer_job_id == mt.id
+    assert job.k == 100
+    assert job.hmm_sequence_job_id is None
+    assert job.source_kind == "region_crnn"
+
+
+async def test_create_masked_transformer_requires_completed_job(session):
+    _, mt = await _masked_transformer_jobs(session, mt_status=JobStatus.running.value)
+
+    with pytest.raises(ValueError, match="completed masked_transformer_job"):
+        await create_motif_extraction_job(session, _mt_payload(mt.id, k=100))
+
+
+async def test_create_masked_transformer_rejects_k_not_in_k_values(session):
+    _, mt = await _masked_transformer_jobs(session, k_values=[100])
+
+    with pytest.raises(ValueError, match="not in the masked_transformer_job"):
+        await create_motif_extraction_job(session, _mt_payload(mt.id, k=200))
+
+
+async def test_create_masked_transformer_requires_k(session):
+    _, mt = await _masked_transformer_jobs(session)
+
+    with pytest.raises(ValueError, match="k is required"):
+        await create_motif_extraction_job(session, _mt_payload(mt.id, k=None))
+
+
+async def test_idempotency_for_masked_transformer_parent(session):
+    _, mt = await _masked_transformer_jobs(session)
+
+    first, c1 = await create_motif_extraction_job(session, _mt_payload(mt.id, k=100))
+    second, c2 = await create_motif_extraction_job(session, _mt_payload(mt.id, k=100))
+    third, c3 = await create_motif_extraction_job(session, _mt_payload(mt.id, k=50))
+
+    assert c1 is True
+    assert c2 is False
+    assert second.id == first.id
+    # Different k → different signature → different job.
+    assert c3 is True
+    assert third.id != first.id
 
 
 async def test_list_cancel_and_delete(session, settings):

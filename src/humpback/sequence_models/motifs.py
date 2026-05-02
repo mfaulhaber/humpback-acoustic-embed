@@ -162,6 +162,9 @@ class MotifExtractionResult:
     event_source_key_strategy: str
     motifs: list[MotifSummary]
     occurrences: list[MotifOccurrence]
+    parent_kind: str = "hmm"
+    masked_transformer_job_id: str = ""
+    k: int | None = None
     generated_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -170,7 +173,10 @@ class MotifExtractionResult:
         return {
             "schema_version": SCHEMA_VERSION,
             "motif_extraction_job_id": motif_extraction_job_id,
+            "parent_kind": self.parent_kind,
             "hmm_sequence_job_id": self.hmm_sequence_job_id,
+            "masked_transformer_job_id": self.masked_transformer_job_id,
+            "k": self.k,
             "continuous_embedding_job_id": self.continuous_embedding_job_id,
             "source_kind": self.source_kind,
             "config": self.config.to_signature_dict(),
@@ -184,13 +190,45 @@ class MotifExtractionResult:
         }
 
 
-def config_signature(hmm_sequence_job_id: str, config: MotifExtractionConfig) -> str:
-    """Return a stable signature for source job + extraction config."""
+def config_signature(
+    hmm_sequence_job_id: str,
+    config: MotifExtractionConfig,
+    *,
+    parent_kind: str = "hmm",
+    masked_transformer_job_id: str | None = None,
+    k: int | None = None,
+) -> str:
+    """Return a stable signature for parent + extraction config (ADR-061).
+
+    For ``parent_kind == "hmm"`` the legacy single-arg form is preserved
+    (signature depends on ``hmm_sequence_job_id`` + config). For
+    ``parent_kind == "masked_transformer"`` the signature additionally
+    includes ``masked_transformer_job_id`` and ``k``.
+    """
     config.validate()
-    payload = {
-        "hmm_sequence_job_id": hmm_sequence_job_id,
-        "config": config.to_signature_dict(),
-    }
+    if parent_kind not in {"hmm", "masked_transformer"}:
+        raise ValueError(f"unknown parent_kind: {parent_kind!r}")
+    payload: dict[str, Any]
+    if parent_kind == "hmm":
+        # Preserve the legacy signature shape so existing HMM-parent rows
+        # remain idempotent under re-create after ADR-061.
+        payload = {
+            "hmm_sequence_job_id": hmm_sequence_job_id,
+            "config": config.to_signature_dict(),
+        }
+    else:
+        if not masked_transformer_job_id:
+            raise ValueError(
+                "masked_transformer_job_id is required for parent_kind=masked_transformer"
+            )
+        if k is None:
+            raise ValueError("k is required for parent_kind=masked_transformer")
+        payload = {
+            "parent_kind": "masked_transformer",
+            "masked_transformer_job_id": masked_transformer_job_id,
+            "k": int(k),
+            "config": config.to_signature_dict(),
+        }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -287,12 +325,25 @@ def collapse_state_runs(
     source_kind: str,
     embedding_table: pa.Table | None = None,
 ) -> tuple[list[CollapsedSequence], str]:
-    """Collapse consecutive repeated states for each decoded source sequence."""
-    if "viterbi_state" not in states_table.column_names:
-        raise ValueError("states table must include viterbi_state")
+    """Collapse consecutive repeated states for each decoded source sequence.
+
+    Reads the canonical ``label`` column post-ADR-061; the legacy
+    ``viterbi_state`` name is accepted in-memory for callers that have not
+    yet renamed (column-name fallback so existing fixtures still work).
+    """
+    columns = states_table.column_names
+    if "label" not in columns and "viterbi_state" in columns:
+        states_table = states_table.rename_columns(
+            ["label" if c == "viterbi_state" else c for c in columns]
+        )
+        columns = states_table.column_names
+    if "label" not in columns:
+        raise ValueError(
+            "states table must include a `label` (or `viterbi_state`) column"
+        )
     group_col, sort_col = _source_columns(source_kind)
     required = {group_col, sort_col, "start_timestamp", "end_timestamp"}
-    missing = required.difference(states_table.column_names)
+    missing = required.difference(columns)
     if missing:
         raise ValueError(f"states table missing required columns: {sorted(missing)}")
 
@@ -354,7 +405,7 @@ def collapse_state_runs(
             )
 
         for row in rows:
-            state = int(row["viterbi_state"])
+            state = int(row["label"])
             if run_state is None:
                 run_state = state
             if state != run_state:
@@ -507,8 +558,17 @@ def extract_motifs(
     continuous_embedding_job_id: str = "",
     event_lookup: dict[str, tuple[float, float]] | None = None,
     embedding_table: pa.Table | None = None,
+    parent_kind: str = "hmm",
+    masked_transformer_job_id: str = "",
+    k: int | None = None,
 ) -> MotifExtractionResult:
-    """Extract ranked motifs from a decoded HMM states table."""
+    """Extract ranked motifs from a decoded sequence states table.
+
+    ADR-061 generalized the parent: ``parent_kind`` discriminates between
+    HMM and masked-transformer sources. The decoded-sequence schema is the
+    same for both (column ``label`` post-rename); only the signature
+    payload differs.
+    """
     config.validate()
     sequences, strategy = collapse_state_runs(
         states_table, source_kind=source_kind, embedding_table=embedding_table
@@ -595,7 +655,22 @@ def extract_motifs(
         kept_occurrences.extend(occs)
 
     summaries = _rank_summaries(summaries, config)
-    sig = config_signature(hmm_sequence_job_id, config) if hmm_sequence_job_id else ""
+    if parent_kind == "hmm":
+        sig = (
+            config_signature(hmm_sequence_job_id, config) if hmm_sequence_job_id else ""
+        )
+    else:
+        sig = (
+            config_signature(
+                "",
+                config,
+                parent_kind="masked_transformer",
+                masked_transformer_job_id=masked_transformer_job_id,
+                k=k,
+            )
+            if masked_transformer_job_id and k is not None
+            else ""
+        )
     return MotifExtractionResult(
         hmm_sequence_job_id=hmm_sequence_job_id,
         continuous_embedding_job_id=continuous_embedding_job_id,
@@ -609,6 +684,9 @@ def extract_motifs(
         event_source_key_strategy=strategy,
         motifs=summaries,
         occurrences=kept_occurrences,
+        parent_kind=parent_kind,
+        masked_transformer_job_id=masked_transformer_job_id,
+        k=k,
     )
 
 

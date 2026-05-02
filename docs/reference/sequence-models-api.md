@@ -321,3 +321,180 @@ symbolic n-grams over collapsed Viterbi state sequences.
 absolute timestamps, event/background fractions, nullable call probability,
 and event-midpoint alignment fields (`anchor_event_id`, `anchor_timestamp`,
 `relative_start_seconds`, `relative_end_seconds`, `anchor_strategy`).
+
+### Generalized parent (ADR-061)
+
+Motif extraction now accepts either an HMM job or a masked-transformer
+job as the parent. `MotifExtractionJobCreate` carries:
+
+- `parent_kind` (required, `"hmm"` | `"masked_transformer"`)
+- `hmm_sequence_job_id` (required when `parent_kind="hmm"`, must be
+  null otherwise)
+- `masked_transformer_job_id` (required when
+  `parent_kind="masked_transformer"`, must be null otherwise)
+- `k` (required when `parent_kind="masked_transformer"`, must be in the
+  parent job's `k_values`; must be null otherwise)
+
+XOR is enforced at the Pydantic level and again by a SQL CHECK
+constraint. `config_signature()` includes `parent_kind`, the parent FK,
+and `k` so masked-transformer motif jobs are idempotent per `(parent
+job, k, config)` tuple.
+
+The worker constructs the source-agnostic loader (ADR-059) with the
+appropriate decoded-artifact path: HMM →
+`<hmm_job_dir>/decoded.parquet`; masked-transformer →
+`<mt_job_dir>/k<N>/decoded.parquet`. The extraction algorithm,
+ranking, and on-disk artifact shape are parent-agnostic — existing
+HMM-parent motif jobs render unchanged after the generalization.
+
+`?hmm_sequence_job_id=` and `?masked_transformer_job_id=` filters on
+`GET /motif-extractions` are mutually exclusive in practice (each motif
+job has exactly one parent FK populated).
+
+## Masked Transformer Jobs (ADR-061)
+
+Masked-transformer jobs train a masked-span transformer encoder on a
+completed CRNN region-based continuous-embedding job, extract
+contextualized embeddings (Z), and fit one k-means tokenizer per k in
+the configured `k_values` sweep. Per-k artifacts (decoded tokens,
+overlay, exemplars, label distribution, run-lengths) live under `k<N>/`
+subdirs of the job dir; the detail page selects k via the URL `?k=`
+parameter.
+
+- `POST /sequence-models/masked-transformers` — create or reuse a
+  masked-transformer job. Idempotent on `training_signature` (which
+  excludes `k_values` so the k-sweep can be extended without
+  retraining). Body fields:
+
+  - `continuous_embedding_job_id` (required) — must reference a
+    completed `continuous_embedding_jobs` row with
+    `model_version="crnn-call-parsing-pytorch"` (CRNN region-based
+    source); SurfPerch sources are rejected with `422` at v1.
+  - `preset` (default `"default"`, one of `"small"` | `"default"` |
+    `"large"`) — selects `(d_model, num_layers, num_heads, ff_dim)`.
+  - `k_values` (default `[100]`) — non-empty list of ints ≥ 2;
+    deduplicated.
+  - `mask_fraction` (default `0.20`)
+  - `span_length_min` (default `2`), `span_length_max` (default `6`)
+  - `dropout` (default `0.1`)
+  - `mask_weight_bias` (default `true`) — when set and the source
+    carries tier metadata, scales the per-position loss by tier weight
+    (event_core 1.5, near_event 1.2, background 0.5).
+  - `cosine_loss_weight` (default `0.0`) — MSE-only when zero.
+  - `max_epochs`, `early_stop_patience` (default `3`), `val_split`
+    (default `0.1`), `seed` (default `42`).
+
+  Returns `MaskedTransformerJob`. Status `201` for new rows; `200` when
+  an existing row with the same `training_signature` is returned. `422`
+  on validation errors (missing or non-completed upstream, non-CRNN
+  upstream, empty `k_values`, k below 2, unknown `preset`).
+
+- `GET /sequence-models/masked-transformers` — list jobs newest-first
+  with optional `?status=` and `?continuous_embedding_job_id=` filters.
+
+- `GET /sequence-models/masked-transformers/{id}` — return job detail
+  plus tier-composition strip (CRNN sources only) and resolved upstream
+  region/embedding metadata. Response shape mirrors the HMM detail
+  shape with masked-transformer-specific fields (`k_values`,
+  `chosen_device`, `fallback_reason`, `final_train_loss`,
+  `final_val_loss`, `total_epochs`, `total_sequences`, `total_chunks`).
+
+- `POST /sequence-models/masked-transformers/{id}/extend-k-sweep` —
+  body `{ "additional_k": list[int] }`. Only valid for
+  `status="completed"` (`409` otherwise). Dedupes against the existing
+  `k_values`; queues a follow-up worker pass that fits + decodes only
+  the new k values and triggers `generate_interpretations` per new k.
+  `transformer.pt` and `contextual_embeddings.parquet` are not
+  retrained.
+
+- `POST /sequence-models/masked-transformers/{id}/cancel` — flip a
+  `queued` or `running` job to `cancelled`. `409` for terminal jobs.
+
+- `DELETE /sequence-models/masked-transformers/{id}` — permanently
+  delete the job row and `masked_transformer_jobs/{id}/` artifacts
+  (transformer, contextual embeddings, all per-k subdirs). `204` on
+  success.
+
+- `POST /sequence-models/masked-transformers/{id}/generate-interpretations`
+  — body `{ "k_values": list[int] | null }`. Null regenerates per-k
+  interpretation artifacts (overlay, exemplars, label distribution) for
+  every configured k; a list scopes regeneration to the listed k. Only
+  valid for `status="completed"`.
+
+- `GET /sequence-models/masked-transformers/{id}/loss-curve` — returns
+  `{ "epochs": list[int], "train_loss": list[float], "val_loss":
+  list[float | null] }` from `loss_curve.json`.
+
+- `GET /sequence-models/masked-transformers/{id}/reconstruction-error`
+  — paginated `(sequence_id, position, score)` rows from
+  `reconstruction_error.parquet`; same response shape as the
+  `ConfidenceStrip` consumer expects.
+
+Per-k endpoints take a required `?k=` query param (default = first
+entry of `k_values`); `404` on unknown k:
+
+- `GET /sequence-models/masked-transformers/{id}/tokens?k=N` —
+  paginated `decoded.parquet` rows: `(sequence_id, position, label,
+  confidence)`.
+- `GET /sequence-models/masked-transformers/{id}/overlay?k=N` —
+  paginated 2-D PCA + UMAP projection rows colored by token label.
+  Same `OverlayPoint` shape as HMM (`label` reuses the
+  `viterbi_state` field for serialization parity).
+- `GET /sequence-models/masked-transformers/{id}/exemplars?k=N` —
+  per-token exemplar windows. Same `ExemplarRecord` shape as HMM.
+- `GET /sequence-models/masked-transformers/{id}/label-distribution?k=N`
+  — per-token vocabulary distribution. Same nested
+  `states[token][tier][label] = count` shape as HMM (ADR-060).
+- `GET /sequence-models/masked-transformers/{id}/run-lengths?k=N` —
+  per-token run-length arrays from `run_lengths.json`. Same shape as
+  HMM dwell histograms.
+
+### Schemas
+
+`MaskedTransformerJob` exposes the DB row: status, status_reason,
+`continuous_embedding_job_id` FK, `training_signature`, all training
+hyperparameters (`preset`, `mask_fraction`, `span_length_min`,
+`span_length_max`, `dropout`, `mask_weight_bias`, `cosine_loss_weight`,
+`max_epochs`, `early_stop_patience`, `val_split`, `seed`), tokenization
+config (`k_values`), device + outcomes (`chosen_device`,
+`fallback_reason`, `final_train_loss`, `final_val_loss`,
+`total_epochs`), storage (`job_dir`, `total_sequences`, `total_chunks`),
+and UTC timestamps.
+
+`MaskedTransformerJobDetail` adds the tier-composition strip (CRNN
+only) and resolved upstream region metadata, mirroring
+`HMMSequenceDetail`.
+
+`LossCurveResponse`: `{ epochs: list[int], train_loss: list[float],
+val_loss: list[float | null] }`.
+
+`ReconstructionErrorResponse`: paginated `{ total, items:
+ReconstructionErrorPoint[] }` where `ReconstructionErrorPoint` is
+`(sequence_id, position, score)` for direct consumption by
+`ConfidenceStrip`.
+
+`ExtendKSweepRequest`: `{ additional_k: list[int] }`.
+
+Reused across HMM and masked-transformer detail pages: `OverlayResponse`,
+`ExemplarsResponse`, `LabelDistribution`, `StateTierComposition`.
+
+### Behavioral notes
+
+- `training_signature` is computed from
+  `(continuous_embedding_job_id, preset, mask_fraction,
+  span_length_min, span_length_max, dropout, mask_weight_bias,
+  cosine_loss_weight, max_epochs, early_stop_patience, val_split,
+  seed)` — `k_values` is intentionally excluded so a completed job can
+  extend its k-sweep.
+- Device validation runs forward+backward on a fixed synthetic batch on
+  both CPU and the chosen accelerator before training. On tolerance
+  failure the worker records `fallback_reason` and proceeds on CPU.
+  `chosen_device` and `fallback_reason` surface as a UI badge.
+- K-means token confidence is `max(softmax(−‖z − μ‖² / τ))` with τ
+  auto-fit per job from the median pairwise centroid distance. The
+  confidence value is persisted in the same `max_state_probability`
+  column the HMM uses, so the confidence-strip and overlay-color UI
+  components are reused without bespoke code paths.
+- Per-k subdirs are written atomically: the worker stages to
+  `k<N>.tmp/` and renames to `k<N>/` only after every per-k artifact
+  is on disk. A failure mid-write leaves no half-written `k<N>/`.

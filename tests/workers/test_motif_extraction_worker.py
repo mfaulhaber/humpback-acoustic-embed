@@ -8,13 +8,17 @@ from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
     HMMSequenceJob,
+    MaskedTransformerJob,
     MotifExtractionJob,
 )
+from humpback.services.masked_transformer_service import serialize_k_values
 from humpback.storage import (
     continuous_embedding_dir,
     continuous_embedding_parquet_path,
     hmm_sequence_dir,
     hmm_sequence_states_path,
+    masked_transformer_k_decoded_path,
+    masked_transformer_k_dir,
     motif_extraction_dir,
     motif_extraction_manifest_path,
     motif_extraction_motifs_path,
@@ -220,4 +224,128 @@ async def test_worker_failure_marks_job_failed(session, settings):
     await session.refresh(motif)
 
     assert motif.status == JobStatus.failed.value
-    assert "states.parquet" in (motif.error_message or "")
+    assert "decoded.parquet" in (motif.error_message or "")
+
+
+async def test_worker_with_masked_transformer_parent(session, settings):
+    cej = ContinuousEmbeddingJob(
+        status=JobStatus.complete.value,
+        event_segmentation_job_id="seg-mt",
+        model_version="crnn-call-parsing-pytorch",
+        target_sample_rate=32000,
+        encoding_signature="enc-mt-worker",
+    )
+    session.add(cej)
+    await session.commit()
+    await session.refresh(cej)
+
+    mt = MaskedTransformerJob(
+        status=JobStatus.complete.value,
+        continuous_embedding_job_id=cej.id,
+        training_signature="sig-mt-worker",
+        k_values=serialize_k_values([100]),
+    )
+    session.add(mt)
+    await session.commit()
+    await session.refresh(mt)
+
+    motif = MotifExtractionJob(
+        status=JobStatus.running.value,
+        parent_kind="masked_transformer",
+        hmm_sequence_job_id=None,
+        masked_transformer_job_id=mt.id,
+        k=100,
+        source_kind="region_crnn",
+        min_ngram=2,
+        max_ngram=2,
+        minimum_occurrences=2,
+        minimum_event_sources=1,
+        config_signature="sig-motif-mt-worker",
+    )
+    session.add(motif)
+    await session.commit()
+    await session.refresh(motif)
+
+    # Write the per-k decoded.parquet that the worker should read.
+    k_dir = masked_transformer_k_dir(settings.storage_root, mt.id, 100)
+    k_dir.mkdir(parents=True)
+    decoded = pa.Table.from_pylist(
+        [
+            {
+                "region_id": "r1",
+                "chunk_index_in_region": 0,
+                "audio_file_id": 1,
+                "start_timestamp": 0.0,
+                "end_timestamp": 0.25,
+                "tier": "event_core",
+                "label": 1,
+            },
+            {
+                "region_id": "r1",
+                "chunk_index_in_region": 1,
+                "audio_file_id": 1,
+                "start_timestamp": 0.25,
+                "end_timestamp": 0.5,
+                "tier": "background",
+                "label": 2,
+            },
+            {
+                "region_id": "r2",
+                "chunk_index_in_region": 0,
+                "audio_file_id": 2,
+                "start_timestamp": 10.0,
+                "end_timestamp": 10.25,
+                "tier": "event_core",
+                "label": 1,
+            },
+            {
+                "region_id": "r2",
+                "chunk_index_in_region": 1,
+                "audio_file_id": 2,
+                "start_timestamp": 10.25,
+                "end_timestamp": 10.5,
+                "tier": "background",
+                "label": 2,
+            },
+        ]
+    )
+    pq.write_table(
+        decoded, masked_transformer_k_decoded_path(settings.storage_root, mt.id, 100)
+    )
+
+    # Upstream embeddings parquet (CRNN source).
+    continuous_embedding_dir(settings.storage_root, cej.id).mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "region_id": "r1",
+                    "chunk_index_in_region": 0,
+                    "nearest_event_id": "e1",
+                },
+                {
+                    "region_id": "r1",
+                    "chunk_index_in_region": 1,
+                    "nearest_event_id": "e1",
+                },
+                {
+                    "region_id": "r2",
+                    "chunk_index_in_region": 0,
+                    "nearest_event_id": "e2",
+                },
+                {
+                    "region_id": "r2",
+                    "chunk_index_in_region": 1,
+                    "nearest_event_id": "e2",
+                },
+            ]
+        ),
+        continuous_embedding_parquet_path(settings.storage_root, cej.id),
+    )
+
+    await run_motif_extraction_job(session, motif, settings)
+    await session.refresh(motif)
+
+    assert motif.status == JobStatus.complete.value
+    assert motif.source_kind == "region_crnn"
+    assert motif_extraction_motifs_path(settings.storage_root, motif.id).exists()

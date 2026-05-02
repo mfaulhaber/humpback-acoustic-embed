@@ -17,6 +17,7 @@ __all__ = [
     "ContinuousEmbeddingJob",
     "HMMSequenceJob",
     "JobStatus",
+    "MaskedTransformerJob",
     "MotifExtractionJob",
 ]
 
@@ -112,18 +113,88 @@ class HMMSequenceJob(UUIDMixin, TimestampMixin, Base):
     )
 
 
+class MaskedTransformerJob(UUIDMixin, TimestampMixin, Base):
+    """ADR-061 — masked-span transformer training job.
+
+    Trains a context encoder over a completed CRNN region-based
+    ``ContinuousEmbeddingJob`` and produces per-k k-means tokenization
+    bundles under the job directory. Idempotent on
+    ``training_signature``; ``k_values`` may be extended after completion
+    via the extend-k-sweep service entry point.
+    """
+
+    __tablename__ = "masked_transformer_jobs"
+    __table_args__ = (
+        Index("ix_masked_transformer_jobs_status", "status"),
+        Index(
+            "ix_masked_transformer_jobs_continuous_embedding_job_id",
+            "continuous_embedding_job_id",
+        ),
+        Index(
+            "ix_masked_transformer_jobs_training_signature",
+            "training_signature",
+            unique=True,
+        ),
+    )
+
+    status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
+    status_reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    continuous_embedding_job_id: Mapped[str]
+    training_signature: Mapped[str]
+    # Training config
+    preset: Mapped[str] = mapped_column(Text, default="default")
+    mask_fraction: Mapped[float] = mapped_column(Float, default=0.20)
+    span_length_min: Mapped[int] = mapped_column(Integer, default=2)
+    span_length_max: Mapped[int] = mapped_column(Integer, default=6)
+    dropout: Mapped[float] = mapped_column(Float, default=0.1)
+    mask_weight_bias: Mapped[bool] = mapped_column(Boolean, default=True)
+    cosine_loss_weight: Mapped[float] = mapped_column(Float, default=0.0)
+    max_epochs: Mapped[int] = mapped_column(Integer, default=30)
+    early_stop_patience: Mapped[int] = mapped_column(Integer, default=3)
+    val_split: Mapped[float] = mapped_column(Float, default=0.1)
+    seed: Mapped[int] = mapped_column(Integer, default=42)
+    # Tokenization config — JSON-encoded list of ints to preserve order
+    # and allow extension without a schema migration.
+    k_values: Mapped[str] = mapped_column(Text)
+    # Device + outcomes
+    chosen_device: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    fallback_reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    final_train_loss: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    final_val_loss: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    total_epochs: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    # Storage
+    job_dir: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    total_sequences: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    total_chunks: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+
+
 class MotifExtractionJob(UUIDMixin, TimestampMixin, Base):
-    """First-class motif extraction over a completed HMM sequence job."""
+    """First-class motif extraction over a completed sequence-models parent.
+
+    ADR-061 generalized the parent: ``parent_kind`` discriminates between
+    HMM and masked-transformer parents, with corresponding nullable FK
+    columns. ``k`` is required for masked-transformer parents and null
+    otherwise; the SQL CHECK constraint enforces these invariants.
+    """
 
     __tablename__ = "motif_extraction_jobs"
     __table_args__ = (
         Index("ix_motif_extraction_jobs_status", "status"),
         Index("ix_motif_extraction_jobs_hmm_sequence_job_id", "hmm_sequence_job_id"),
         Index("ix_motif_extraction_jobs_config_signature", "config_signature"),
+        Index("ix_motif_extraction_jobs_parent_kind", "parent_kind"),
+        Index(
+            "ix_motif_extraction_jobs_masked_transformer_job_id",
+            "masked_transformer_job_id",
+        ),
     )
 
     status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
-    hmm_sequence_job_id: Mapped[str]
+    parent_kind: Mapped[str] = mapped_column(Text, default="hmm")
+    hmm_sequence_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    masked_transformer_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    k: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     source_kind: Mapped[str] = mapped_column(Text)
     min_ngram: Mapped[int] = mapped_column(Integer, default=2)
     max_ngram: Mapped[int] = mapped_column(Integer, default=8)

@@ -422,6 +422,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then masked-transformer jobs (ADR-061)
+        mtjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_masked_transformer_job
+
+            mtjob = await claim_masked_transformer_job(session)
+        if mtjob:
+            logger.info(f"Masked-transformer job {mtjob.id}")
+            from humpback.workers.masked_transformer_worker import (
+                run_masked_transformer_job,
+            )
+
+            async with session_factory() as session:
+                await run_masked_transformer_job(session, mtjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

@@ -214,3 +214,89 @@ async def test_terminal_cancel_returns_409(client, app_settings):
     await client.post(f"/sequence-models/motif-extractions/{job_id}/cancel")
     second = await client.post(f"/sequence-models/motif-extractions/{job_id}/cancel")
     assert second.status_code == 409
+
+
+async def _seed_masked_transformer(app_settings) -> str:
+    from humpback.models.sequence_models import MaskedTransformerJob
+    from humpback.services.masked_transformer_service import serialize_k_values
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        cej = ContinuousEmbeddingJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id="seg-mt",
+            model_version="crnn-call-parsing-pytorch",
+            target_sample_rate=32000,
+            encoding_signature="enc-mt-api",
+        )
+        session.add(cej)
+        await session.commit()
+        await session.refresh(cej)
+        mt = MaskedTransformerJob(
+            status=JobStatus.complete.value,
+            continuous_embedding_job_id=cej.id,
+            training_signature="sig-mt-api",
+            k_values=serialize_k_values([100]),
+        )
+        session.add(mt)
+        await session.commit()
+        await session.refresh(mt)
+        return mt.id
+
+
+async def test_motif_create_with_masked_transformer_parent(client, app_settings):
+    mt_id = await _seed_masked_transformer(app_settings)
+
+    created = await client.post(
+        "/sequence-models/motif-extractions",
+        json={
+            "parent_kind": "masked_transformer",
+            "masked_transformer_job_id": mt_id,
+            "k": 100,
+        },
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["parent_kind"] == "masked_transformer"
+    assert body["masked_transformer_job_id"] == mt_id
+    assert body["k"] == 100
+    assert body["hmm_sequence_job_id"] is None
+    assert body["source_kind"] == "region_crnn"
+
+
+async def test_motif_create_xor_violation_returns_422(client, app_settings):
+    hmm_id = await _seed_hmm(app_settings)
+    mt_id = await _seed_masked_transformer(app_settings)
+
+    response = await client.post(
+        "/sequence-models/motif-extractions",
+        json={
+            "parent_kind": "masked_transformer",
+            "hmm_sequence_job_id": hmm_id,
+            "masked_transformer_job_id": mt_id,
+            "k": 100,
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_motif_create_masked_transformer_requires_k(client, app_settings):
+    mt_id = await _seed_masked_transformer(app_settings)
+    response = await client.post(
+        "/sequence-models/motif-extractions",
+        json={
+            "parent_kind": "masked_transformer",
+            "masked_transformer_job_id": mt_id,
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_motif_create_hmm_with_k_returns_422(client, app_settings):
+    hmm_id = await _seed_hmm(app_settings)
+    response = await client.post(
+        "/sequence-models/motif-extractions",
+        json={"hmm_sequence_job_id": hmm_id, "k": 100},
+    )
+    assert response.status_code == 422

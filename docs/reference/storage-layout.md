@@ -52,17 +52,29 @@
 /hmm_sequences/
   {job_id}/pca_model.joblib        (fitted PCA model)
   {job_id}/hmm_model.joblib        (fitted GaussianHMM model)
-  {job_id}/states.parquet          (decoded sequences; schema is source-specific)
-                                     SurfPerch: merged_span_id, window_index_in_span, audio_file_id, start_timestamp, end_timestamp, is_in_pad, event_id, viterbi_state, state_posterior, max_state_probability, was_used_for_training
-                                     CRNN (ADR-057): region_id, chunk_index_in_region, audio_file_id (nullable), start_timestamp, end_timestamp, is_in_pad, tier, viterbi_state, state_posterior, max_state_probability, was_used_for_training
+  {job_id}/decoded.parquet         (decoded sequences; renamed from `states.parquet` and column `state` → `label` in migration 063 per ADR-061. A read-time loader shim falls back to legacy `states.parquet`/`state` for pre-migration job dirs. Schema is source-specific):
+                                     SurfPerch: merged_span_id, window_index_in_span, audio_file_id, start_timestamp, end_timestamp, is_in_pad, event_id, label, state_posterior, max_state_probability, was_used_for_training
+                                     CRNN (ADR-057): region_id, chunk_index_in_region, audio_file_id (nullable), start_timestamp, end_timestamp, is_in_pad, tier, label, state_posterior, max_state_probability, was_used_for_training
   {job_id}/transition_matrix.npy   (n_states × n_states row-normalized transition matrix)
   {job_id}/state_summary.json      (per-state occupancy, mean_dwell_frames, dwell_histogram; CRNN-source jobs additionally include source_kind, training_mode, tier_composition[])
   {job_id}/training_log.json       (training hyperparameters and result stats; CRNN-source jobs include training_mode + tier_proportions + sub-sequence config)
-  {job_id}/pca_overlay.parquet     (PR 3: 2-D PCA + UMAP projections colored by viterbi_state — SurfPerch source only)
-  {job_id}/label_distribution.json (PR 3: per-state vocalization-label counts from center-time join — SurfPerch source only)
-  {job_id}/exemplars/exemplars.json (PR 3: per-state high-confidence, nearest-centroid, boundary exemplar windows — SurfPerch source only)
+  {job_id}/pca_overlay.parquet     (PR 3: 2-D PCA + UMAP projections colored by label)
+  {job_id}/label_distribution.json (PR 3: per-state vocalization-label counts from center-time join; ADR-060 nested `state[tier][label] = count` shape, SurfPerch buckets to synthetic `"all"` tier)
+  {job_id}/exemplars/exemplars.json (PR 3: per-state high-confidence, nearest-centroid, boundary exemplar windows; CRNN records carry `extras.tier`)
+/masked_transformer_jobs/
+  {job_id}/transformer.pt              (PyTorch state_dict for the trained MaskedTransformer module)
+  {job_id}/contextual_embeddings.parquet (Z extracted from the trained encoder; per-chunk contextual embedding vectors)
+  {job_id}/loss_curve.json             (per-epoch train + val loss history)
+  {job_id}/reconstruction_error.parquet (per-chunk reconstruction MSE; consumed by the timeline ConfidenceStrip)
+  {job_id}/k<N>/decoded.parquet        (per-chunk k-means tokens: sequence_id, position, label, confidence; confidence is softmax-temperature, drops into the same `max_state_probability` UI slot as HMM)
+  {job_id}/k<N>/kmeans.joblib          (fitted KMeans + τ for that k)
+  {job_id}/k<N>/overlay.parquet        (2-D PCA + UMAP projections colored by token label; OverlayPoint shape)
+  {job_id}/k<N>/exemplars.json         (per-token high-confidence, nearest-centroid, boundary exemplars)
+  {job_id}/k<N>/label_distribution.json (per-token vocalization-label counts; ADR-060 nested shape)
+  {job_id}/k<N>/run_lengths.json       (per-token run-length arrays)
+                                       Per-k subdirs are written atomically: the worker stages to `k<N>.tmp/` and renames to `k<N>/` only after every per-k artifact is written.
 /motif_extractions/
-  {job_id}/manifest.json           (schema/version, source HMM/CEJ ids, source_kind, extraction config, config_signature, counters, event_source_key_strategy)
+  {job_id}/manifest.json           (schema/version, parent_kind ∈ {hmm, masked_transformer}, parent FK + k for masked-transformer parent, source HMM/CEJ ids, source_kind, extraction config, config_signature, counters, event_source_key_strategy)
   {job_id}/motifs.parquet          (motif_key, states, length, occurrence_count, event_source_count, audio_source_count, group_count, event_core_fraction, background_fraction, mean_call_probability nullable, duration stats, rank_score, example_occurrence_ids)
   {job_id}/occurrences.parquet     (occurrence_id, motif_key, states, source_kind, group_key, event_source_key, audio_source_key nullable, token/raw ranges, absolute timestamps, event/background fractions, mean_call_probability nullable, event-midpoint alignment fields)
 /timeline_cache/

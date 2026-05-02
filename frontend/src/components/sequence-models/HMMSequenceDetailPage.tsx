@@ -29,7 +29,7 @@ import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { PlaybackControls } from "@/components/timeline/controls/PlaybackControls";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
-import { STATE_COLORS } from "./constants";
+import { LABEL_COLORS } from "./constants";
 import { SpanNavBar, type SpanInfo, type RegionGroup } from "./SpanNavBar";
 import { HMMStateBar, type ViterbiWindow } from "./HMMStateBar";
 import { MotifExtractionPanel } from "./MotifExtractionPanel";
@@ -61,7 +61,7 @@ function StateTimeline({
       x: byState[s].x,
       y: byState[s].y,
       mode: "lines" as const,
-      line: { color: STATE_COLORS[s % STATE_COLORS.length], width: 8 },
+      line: { color: LABEL_COLORS[s % LABEL_COLORS.length], width: 8 },
       name: `State ${s}`,
       connectgaps: false,
     }));
@@ -181,7 +181,7 @@ function DwellHistogramsGrid({
                   y: binned.y,
                   type: "bar",
                   marker: {
-                    color: STATE_COLORS[s % STATE_COLORS.length],
+                    color: LABEL_COLORS[s % LABEL_COLORS.length],
                   },
                 },
               ]}
@@ -234,7 +234,7 @@ function PcaUmapScatter({
       mode: "markers" as const,
       type: "scattergl" as const,
       marker: {
-        color: STATE_COLORS[Number(s) % STATE_COLORS.length],
+        color: LABEL_COLORS[Number(s) % LABEL_COLORS.length],
         size: 4,
         opacity: 0.7,
       },
@@ -317,7 +317,7 @@ function LabelDistributionChart({
         color:
           lbl === "unlabeled"
             ? "#d1d5db"
-            : STATE_COLORS[i % STATE_COLORS.length],
+            : LABEL_COLORS[i % LABEL_COLORS.length],
       },
     }));
   }, [data]);
@@ -433,7 +433,7 @@ function ExemplarGallery({
               <span
                 className="w-3 h-3 rounded-full inline-block"
                 style={{
-                  backgroundColor: STATE_COLORS[s % STATE_COLORS.length],
+                  backgroundColor: LABEL_COLORS[s % LABEL_COLORS.length],
                 }}
               />
               State {s}

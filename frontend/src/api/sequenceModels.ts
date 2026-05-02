@@ -473,10 +473,15 @@ export function useHMMStates(
 
 const MOTIF_ROOT = "/sequence-models/motif-extractions";
 
+export type MotifParentKind = "hmm" | "masked_transformer";
+
 export interface MotifExtractionJob {
   id: string;
   status: string;
-  hmm_sequence_job_id: string;
+  parent_kind: MotifParentKind;
+  hmm_sequence_job_id: string | null;
+  masked_transformer_job_id: string | null;
+  k: number | null;
   source_kind: ContinuousEmbeddingSourceKind;
   min_ngram: number;
   max_ngram: number;
@@ -499,7 +504,10 @@ export interface MotifExtractionJob {
 }
 
 export interface CreateMotifExtractionJobRequest {
-  hmm_sequence_job_id: string;
+  parent_kind?: MotifParentKind;
+  hmm_sequence_job_id?: string | null;
+  masked_transformer_job_id?: string | null;
+  k?: number | null;
   min_ngram?: number;
   max_ngram?: number;
   minimum_occurrences?: number;
@@ -514,7 +522,10 @@ export interface CreateMotifExtractionJobRequest {
 export interface MotifExtractionManifest {
   schema_version: number;
   motif_extraction_job_id: string;
-  hmm_sequence_job_id: string;
+  parent_kind: MotifParentKind;
+  hmm_sequence_job_id: string | null;
+  masked_transformer_job_id: string | null;
+  k: number | null;
   continuous_embedding_job_id: string;
   source_kind: ContinuousEmbeddingSourceKind;
   config: Record<string, unknown>;
@@ -591,11 +602,16 @@ export interface MotifOccurrencesResponse {
 export function fetchMotifExtractionJobs(params?: {
   status?: string;
   hmm_sequence_job_id?: string;
+  masked_transformer_job_id?: string;
+  parent_kind?: MotifParentKind;
 }): Promise<MotifExtractionJob[]> {
   const search = new URLSearchParams();
   if (params?.status) search.set("status", params.status);
   if (params?.hmm_sequence_job_id)
     search.set("hmm_sequence_job_id", params.hmm_sequence_job_id);
+  if (params?.masked_transformer_job_id)
+    search.set("masked_transformer_job_id", params.masked_transformer_job_id);
+  if (params?.parent_kind) search.set("parent_kind", params.parent_kind);
   const q = search.toString() ? `?${search.toString()}` : "";
   return request<MotifExtractionJob[]>(`${MOTIF_ROOT}${q}`);
 }
@@ -652,7 +668,12 @@ export function fetchMotifOccurrences(
 }
 
 export function useMotifExtractionJobs(
-  params?: { status?: string; hmm_sequence_job_id?: string },
+  params?: {
+    status?: string;
+    hmm_sequence_job_id?: string;
+    masked_transformer_job_id?: string;
+    parent_kind?: MotifParentKind;
+  },
   enabled = true,
   refetchInterval: number | false = 3000,
 ) {
@@ -684,12 +705,22 @@ export function useCreateMotifExtractionJob() {
       createMotifExtractionJob(body),
     onSuccess: (job) => {
       qc.invalidateQueries({ queryKey: ["motif-extraction-jobs"] });
-      qc.invalidateQueries({
-        queryKey: [
-          "motif-extraction-jobs",
-          { hmm_sequence_job_id: job.hmm_sequence_job_id },
-        ],
-      });
+      if (job.hmm_sequence_job_id) {
+        qc.invalidateQueries({
+          queryKey: [
+            "motif-extraction-jobs",
+            { hmm_sequence_job_id: job.hmm_sequence_job_id },
+          ],
+        });
+      }
+      if (job.masked_transformer_job_id) {
+        qc.invalidateQueries({
+          queryKey: [
+            "motif-extraction-jobs",
+            { masked_transformer_job_id: job.masked_transformer_job_id },
+          ],
+        });
+      }
       qc.invalidateQueries({ queryKey: ["motif-extraction-job", job.id] });
     },
   });
@@ -857,5 +888,447 @@ export function useGenerateInterpretations() {
       qc.invalidateQueries({ queryKey: ["hmm-label-distribution", jobId] });
       qc.invalidateQueries({ queryKey: ["hmm-exemplars", jobId] });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Masked Transformer Jobs (ADR-061)
+// ---------------------------------------------------------------------------
+
+const MT_ROOT = "/sequence-models/masked-transformers";
+
+export type MaskedTransformerPreset = "small" | "default" | "large";
+
+export interface MaskedTransformerJob {
+  id: string;
+  status: string;
+  status_reason: string | null;
+  continuous_embedding_job_id: string;
+  training_signature: string;
+  preset: MaskedTransformerPreset;
+  mask_fraction: number;
+  span_length_min: number;
+  span_length_max: number;
+  dropout: number;
+  mask_weight_bias: boolean;
+  cosine_loss_weight: number;
+  max_epochs: number;
+  early_stop_patience: number;
+  val_split: number;
+  seed: number;
+  k_values: number[];
+  chosen_device: string | null;
+  fallback_reason: string | null;
+  final_train_loss: number | null;
+  final_val_loss: number | null;
+  total_epochs: number | null;
+  job_dir: string | null;
+  total_sequences: number | null;
+  total_chunks: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaskedTransformerJobDetail {
+  job: MaskedTransformerJob;
+  region_detection_job_id: string | null;
+  region_start_timestamp: number | null;
+  region_end_timestamp: number | null;
+  tier_composition: StateTierComposition[] | null;
+  source_kind: ContinuousEmbeddingSourceKind;
+}
+
+export interface MaskedTransformerJobCreate {
+  continuous_embedding_job_id: string;
+  preset?: MaskedTransformerPreset;
+  k_values?: number[];
+  mask_fraction?: number;
+  span_length_min?: number;
+  span_length_max?: number;
+  dropout?: number;
+  mask_weight_bias?: boolean;
+  cosine_loss_weight?: number;
+  max_epochs?: number;
+  early_stop_patience?: number;
+  val_split?: number;
+  seed?: number;
+}
+
+export interface ExtendKSweepRequest {
+  additional_k: number[];
+}
+
+export interface LossCurveResponse {
+  epochs: number[];
+  train_loss: number[];
+  val_loss: (number | null)[];
+  val_metrics: Record<string, unknown>;
+}
+
+export interface ReconstructionErrorRow {
+  sequence_id: string;
+  position: number;
+  score: number;
+  start_timestamp: number;
+  end_timestamp: number;
+}
+
+export interface ReconstructionErrorResponse {
+  total: number;
+  offset: number;
+  limit: number;
+  items: ReconstructionErrorRow[];
+}
+
+export interface TokenRow {
+  sequence_id: string;
+  position: number;
+  label: number;
+  confidence: number;
+  start_timestamp: number;
+  end_timestamp: number;
+  tier: string | null;
+  audio_file_id: number | null;
+}
+
+export interface TokensResponse {
+  total: number;
+  offset: number;
+  limit: number;
+  items: TokenRow[];
+}
+
+export interface RunLengthsResponse {
+  k: number;
+  tau: number;
+  run_lengths: Record<string, number[]>;
+}
+
+export interface GenerateMaskedTransformerInterpretationsRequest {
+  k_values?: number[] | null;
+}
+
+export function fetchMaskedTransformerJobs(params?: {
+  status?: string;
+  continuous_embedding_job_id?: string;
+}): Promise<MaskedTransformerJob[]> {
+  const search = new URLSearchParams();
+  if (params?.status) search.set("status", params.status);
+  if (params?.continuous_embedding_job_id)
+    search.set("continuous_embedding_job_id", params.continuous_embedding_job_id);
+  const q = search.toString() ? `?${search.toString()}` : "";
+  return request<MaskedTransformerJob[]>(`${MT_ROOT}${q}`);
+}
+
+export function fetchMaskedTransformerJob(
+  jobId: string,
+): Promise<MaskedTransformerJobDetail> {
+  return request<MaskedTransformerJobDetail>(`${MT_ROOT}/${jobId}`);
+}
+
+export function createMaskedTransformerJob(
+  body: MaskedTransformerJobCreate,
+): Promise<MaskedTransformerJob> {
+  return request<MaskedTransformerJob>(MT_ROOT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function cancelMaskedTransformerJob(
+  jobId: string,
+): Promise<MaskedTransformerJob> {
+  return request<MaskedTransformerJob>(`${MT_ROOT}/${jobId}/cancel`, {
+    method: "POST",
+  });
+}
+
+export function deleteMaskedTransformerJob(jobId: string): Promise<void> {
+  return request<void>(`${MT_ROOT}/${jobId}`, { method: "DELETE" });
+}
+
+export function postExtendKSweep(
+  jobId: string,
+  body: ExtendKSweepRequest,
+): Promise<MaskedTransformerJob> {
+  return request<MaskedTransformerJob>(`${MT_ROOT}/${jobId}/extend-k-sweep`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function postGenerateMaskedTransformerInterpretations(
+  jobId: string,
+  body: GenerateMaskedTransformerInterpretationsRequest,
+): Promise<{ status: string; job_id: string; k_values: number[] }> {
+  return request(`${MT_ROOT}/${jobId}/generate-interpretations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchMaskedTransformerLossCurve(
+  jobId: string,
+): Promise<LossCurveResponse> {
+  return request(`${MT_ROOT}/${jobId}/loss-curve`);
+}
+
+export function fetchMaskedTransformerReconstructionError(
+  jobId: string,
+  offset = 0,
+  limit = 5000,
+): Promise<ReconstructionErrorResponse> {
+  return request(
+    `${MT_ROOT}/${jobId}/reconstruction-error?offset=${offset}&limit=${limit}`,
+  );
+}
+
+export function fetchMaskedTransformerTokens(
+  jobId: string,
+  k: number | null,
+  offset = 0,
+  limit = 5000,
+): Promise<TokensResponse> {
+  const params = new URLSearchParams();
+  if (k != null) params.set("k", String(k));
+  params.set("offset", String(offset));
+  params.set("limit", String(limit));
+  return request(`${MT_ROOT}/${jobId}/tokens?${params.toString()}`);
+}
+
+export function fetchMaskedTransformerOverlay(
+  jobId: string,
+  k: number | null,
+  offset = 0,
+  limit = 5000,
+): Promise<OverlayResponse> {
+  const params = new URLSearchParams();
+  if (k != null) params.set("k", String(k));
+  params.set("offset", String(offset));
+  params.set("limit", String(limit));
+  return request(`${MT_ROOT}/${jobId}/overlay?${params.toString()}`);
+}
+
+export function fetchMaskedTransformerExemplars(
+  jobId: string,
+  k: number | null,
+): Promise<ExemplarsResponse> {
+  const params = new URLSearchParams();
+  if (k != null) params.set("k", String(k));
+  return request(`${MT_ROOT}/${jobId}/exemplars?${params.toString()}`);
+}
+
+export function fetchMaskedTransformerLabelDistribution(
+  jobId: string,
+  k: number | null,
+): Promise<LabelDistribution> {
+  const params = new URLSearchParams();
+  if (k != null) params.set("k", String(k));
+  return request(`${MT_ROOT}/${jobId}/label-distribution?${params.toString()}`);
+}
+
+export function fetchMaskedTransformerRunLengths(
+  jobId: string,
+  k: number | null,
+): Promise<RunLengthsResponse> {
+  const params = new URLSearchParams();
+  if (k != null) params.set("k", String(k));
+  return request(`${MT_ROOT}/${jobId}/run-lengths?${params.toString()}`);
+}
+
+export function isMaskedTransformerJobActive(
+  job: Pick<MaskedTransformerJob, "status">,
+): boolean {
+  return ACTIVE_STATUSES.has(job.status);
+}
+
+export function useMaskedTransformerJobs(
+  params?: { status?: string; continuous_embedding_job_id?: string },
+  enabled = true,
+  refetchInterval: number | false = 3000,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-jobs", params],
+    queryFn: () => fetchMaskedTransformerJobs(params),
+    enabled,
+    refetchInterval,
+  });
+}
+
+export function useMaskedTransformerJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["masked-transformer-job", jobId],
+    queryFn: () => fetchMaskedTransformerJob(jobId as string),
+    enabled: jobId != null,
+    refetchInterval: (query) => {
+      const data = query.state.data as MaskedTransformerJobDetail | undefined;
+      if (!data) return 3000;
+      return isMaskedTransformerJobActive(data.job) ? 3000 : false;
+    },
+  });
+}
+
+export function useCreateMaskedTransformerJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MaskedTransformerJobCreate) =>
+      createMaskedTransformerJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["masked-transformer-jobs"] });
+    },
+  });
+}
+
+export function useCancelMaskedTransformerJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => cancelMaskedTransformerJob(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["masked-transformer-jobs"] });
+      qc.invalidateQueries({ queryKey: ["masked-transformer-job", jobId] });
+    },
+  });
+}
+
+export function useDeleteMaskedTransformerJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteMaskedTransformerJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["masked-transformer-jobs"] });
+    },
+  });
+}
+
+export function useExtendKSweep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, body }: { jobId: string; body: ExtendKSweepRequest }) =>
+      postExtendKSweep(jobId, body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-job", vars.jobId],
+      });
+      qc.invalidateQueries({ queryKey: ["masked-transformer-jobs"] });
+    },
+  });
+}
+
+export function useGenerateMaskedTransformerInterpretations() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      body,
+    }: {
+      jobId: string;
+      body: GenerateMaskedTransformerInterpretationsRequest;
+    }) => postGenerateMaskedTransformerInterpretations(jobId, body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-overlay", vars.jobId],
+      });
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-exemplars", vars.jobId],
+      });
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-label-distribution", vars.jobId],
+      });
+    },
+  });
+}
+
+export function useMaskedTransformerLossCurve(
+  jobId: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-loss-curve", jobId],
+    queryFn: () => fetchMaskedTransformerLossCurve(jobId as string),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useMaskedTransformerReconstructionError(
+  jobId: string | null,
+  offset = 0,
+  limit = 5000,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-reconstruction-error", jobId, offset, limit],
+    queryFn: () =>
+      fetchMaskedTransformerReconstructionError(jobId as string, offset, limit),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useMaskedTransformerTokens(
+  jobId: string | null,
+  k: number | null,
+  offset = 0,
+  limit = 5000,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-tokens", jobId, k, offset, limit],
+    queryFn: () =>
+      fetchMaskedTransformerTokens(jobId as string, k, offset, limit),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useMaskedTransformerOverlay(
+  jobId: string | null,
+  k: number | null,
+  offset = 0,
+  limit = 5000,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-overlay", jobId, k, offset, limit],
+    queryFn: () =>
+      fetchMaskedTransformerOverlay(jobId as string, k, offset, limit),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useMaskedTransformerExemplars(
+  jobId: string | null,
+  k: number | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-exemplars", jobId, k],
+    queryFn: () => fetchMaskedTransformerExemplars(jobId as string, k),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useMaskedTransformerLabelDistribution(
+  jobId: string | null,
+  k: number | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-label-distribution", jobId, k],
+    queryFn: () => fetchMaskedTransformerLabelDistribution(jobId as string, k),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useMaskedTransformerRunLengths(
+  jobId: string | null,
+  k: number | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-run-lengths", jobId, k],
+    queryFn: () => fetchMaskedTransformerRunLengths(jobId as string, k),
+    enabled: enabled && jobId != null,
   });
 }

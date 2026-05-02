@@ -114,8 +114,28 @@ def hmm_sequence_dir(storage_root: Path, job_id: str) -> Path:
     return storage_root / "hmm_sequences" / job_id
 
 
-def hmm_sequence_states_path(storage_root: Path, job_id: str) -> Path:
+def hmm_sequence_decoded_path(storage_root: Path, job_id: str) -> Path:
+    """Canonical decoded-sequence parquet path (renamed from states.parquet)."""
+    return hmm_sequence_dir(storage_root, job_id) / "decoded.parquet"
+
+
+def hmm_sequence_legacy_states_path(storage_root: Path, job_id: str) -> Path:
+    """Legacy states.parquet path used by jobs persisted before ADR-061."""
     return hmm_sequence_dir(storage_root, job_id) / "states.parquet"
+
+
+def hmm_sequence_states_path(storage_root: Path, job_id: str) -> Path:
+    """Backwards-compatible accessor: returns ``decoded.parquet`` if it exists,
+    otherwise falls back to the legacy ``states.parquet`` so completed pre-rename
+    jobs continue to be readable.
+    """
+    decoded = hmm_sequence_decoded_path(storage_root, job_id)
+    if decoded.exists():
+        return decoded
+    legacy = hmm_sequence_legacy_states_path(storage_root, job_id)
+    if legacy.exists():
+        return legacy
+    return decoded
 
 
 def hmm_sequence_pca_model_path(storage_root: Path, job_id: str) -> Path:
@@ -152,6 +172,74 @@ def hmm_sequence_exemplars_dir(storage_root: Path, job_id: str) -> Path:
 
 def hmm_sequence_exemplars_path(storage_root: Path, job_id: str) -> Path:
     return hmm_sequence_exemplars_dir(storage_root, job_id) / "exemplars.json"
+
+
+def masked_transformer_dir(storage_root: Path, job_id: str) -> Path:
+    return storage_root / "masked_transformer_jobs" / job_id
+
+
+def masked_transformer_manifest_path(storage_root: Path, job_id: str) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / "manifest.json"
+
+
+def masked_transformer_model_path(storage_root: Path, job_id: str) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / "transformer.pt"
+
+
+def masked_transformer_loss_curve_path(storage_root: Path, job_id: str) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / "loss_curve.json"
+
+
+def masked_transformer_reconstruction_error_path(
+    storage_root: Path, job_id: str
+) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / "reconstruction_error.parquet"
+
+
+def masked_transformer_contextual_embeddings_path(
+    storage_root: Path, job_id: str
+) -> Path:
+    return (
+        masked_transformer_dir(storage_root, job_id) / "contextual_embeddings.parquet"
+    )
+
+
+def masked_transformer_k_dir(storage_root: Path, job_id: str, k: int) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / f"k{int(k)}"
+
+
+def masked_transformer_k_tmp_dir(storage_root: Path, job_id: str, k: int) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / f"k{int(k)}.tmp"
+
+
+def masked_transformer_k_decoded_path(storage_root: Path, job_id: str, k: int) -> Path:
+    return masked_transformer_k_dir(storage_root, job_id, k) / "decoded.parquet"
+
+
+def masked_transformer_k_kmeans_path(storage_root: Path, job_id: str, k: int) -> Path:
+    return masked_transformer_k_dir(storage_root, job_id, k) / "kmeans.joblib"
+
+
+def masked_transformer_k_run_lengths_path(
+    storage_root: Path, job_id: str, k: int
+) -> Path:
+    return masked_transformer_k_dir(storage_root, job_id, k) / "run_lengths.json"
+
+
+def masked_transformer_k_overlay_path(storage_root: Path, job_id: str, k: int) -> Path:
+    return masked_transformer_k_dir(storage_root, job_id, k) / "overlay.parquet"
+
+
+def masked_transformer_k_exemplars_path(
+    storage_root: Path, job_id: str, k: int
+) -> Path:
+    return masked_transformer_k_dir(storage_root, job_id, k) / "exemplars.json"
+
+
+def masked_transformer_k_label_distribution_path(
+    storage_root: Path, job_id: str, k: int
+) -> Path:
+    return masked_transformer_k_dir(storage_root, job_id, k) / "label_distribution.json"
 
 
 def motif_extraction_dir(storage_root: Path, job_id: str) -> Path:
