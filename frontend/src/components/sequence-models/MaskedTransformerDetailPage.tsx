@@ -1,10 +1,10 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Plot from "react-plotly.js";
 import { Link, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { regionAudioSliceUrl } from "@/api/client";
+import { regionAudioSliceUrl, regionTileUrl } from "@/api/client";
 import {
   type ExemplarRecord,
   useMaskedTransformerExemplars,
@@ -12,12 +12,22 @@ import {
   useMaskedTransformerLabelDistribution,
   useMaskedTransformerLossCurve,
   useMaskedTransformerOverlay,
+  useMaskedTransformerReconstructionError,
   useMaskedTransformerRunLengths,
   useMaskedTransformerTokens,
 } from "@/api/sequenceModels";
 import { DiscreteSequenceBar, type DiscreteSequenceItem } from "./DiscreteSequenceBar";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
+import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
+import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
+import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
+import { PlaybackControls } from "@/components/timeline/controls/PlaybackControls";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
+import {
+  CONFIDENCE_GRADIENT,
+  COLORS,
+  FREQ_AXIS_WIDTH_PX,
+} from "@/components/timeline/constants";
 import { KPicker, useSelectedK } from "./KPicker";
 import { LossCurveChart } from "./LossCurveChart";
 import { MotifExtractionPanel } from "./MotifExtractionPanel";
@@ -130,6 +140,217 @@ function LossCurveSection({ jobId }: { jobId: string }) {
   return <LossCurveChart data={data} />;
 }
 
+interface ChunkScore {
+  start_timestamp: number;
+  end_timestamp: number;
+  score: number;
+}
+
+// API caps the per-page limit at 50000; jobs typically have 15-30k chunks.
+const CHUNK_FETCH_LIMIT = 50000;
+const CONFIDENCE_STRIP_HEIGHT = 24;
+
+function lerpHexColor(a: string, b: string, t: number): string {
+  const pa = [
+    parseInt(a.slice(1, 3), 16),
+    parseInt(a.slice(3, 5), 16),
+    parseInt(a.slice(5, 7), 16),
+  ];
+  const pb = [
+    parseInt(b.slice(1, 3), 16),
+    parseInt(b.slice(3, 5), 16),
+    parseInt(b.slice(5, 7), 16),
+  ];
+  const r = Math.round(pa[0] + (pb[0] - pa[0]) * t);
+  const g = Math.round(pa[1] + (pb[1] - pa[1]) * t);
+  const bl = Math.round(pa[2] + (pb[2] - pa[2]) * t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+function gradientColor(score: number): string {
+  const s = Math.max(0, Math.min(1, score));
+  const grad = CONFIDENCE_GRADIENT;
+  for (let i = 1; i < grad.length; i++) {
+    const [prevT, prevC] = grad[i - 1];
+    const [curT, curC] = grad[i];
+    if (s <= curT) {
+      const t = (s - prevT) / (curT - prevT);
+      return lerpHexColor(prevC, curC, t);
+    }
+  }
+  return grad[grad.length - 1][1];
+}
+
+/**
+ * Per-chunk confidence strip aligned to the timeline viewport. Iterates the
+ * actual chunk items rather than a uniform-bin score array so it stays cheap
+ * for sparse chunk coverage over long region-detection job spans.
+ */
+function ChunkConfidenceStrip({
+  items,
+  height = CONFIDENCE_STRIP_HEIGHT,
+  label,
+  testId,
+  scoreNormalizer,
+}: {
+  items: ChunkScore[];
+  height?: number;
+  label: string;
+  testId: string;
+  /** Optional normalizer mapping raw score → [0, 1]. Defaults to identity. */
+  scoreNormalizer?: (score: number) => number;
+}) {
+  const ctx = useTimelineContext();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(Math.floor(entry.contentRect.width));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const canvasWidth = Math.max(0, containerWidth - FREQ_AXIS_WIDTH_PX);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || canvasWidth <= 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvasWidth * dpr;
+    canvas.height = height * dpr;
+    const g = canvas.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.fillStyle = COLORS.bgDark;
+    g.fillRect(0, 0, canvasWidth, height);
+    for (const item of items) {
+      if (item.end_timestamp < ctx.viewStart || item.start_timestamp > ctx.viewEnd) {
+        continue;
+      }
+      const x0 = (item.start_timestamp - ctx.viewStart) * ctx.pxPerSec;
+      const x1 = (item.end_timestamp - ctx.viewStart) * ctx.pxPerSec;
+      const px = Math.max(0, x0);
+      const pw = Math.max(1, Math.min(canvasWidth, x1) - px);
+      const norm = scoreNormalizer ? scoreNormalizer(item.score) : item.score;
+      g.fillStyle = gradientColor(norm);
+      g.fillRect(px, 0, pw, height);
+    }
+  }, [items, canvasWidth, height, ctx.viewStart, ctx.viewEnd, ctx.pxPerSec, scoreNormalizer]);
+
+  return (
+    <div ref={containerRef} className="relative" data-testid={testId}>
+      <div className="flex">
+        <div
+          className="flex items-center justify-end pr-1 text-[9px] text-muted-foreground shrink-0"
+          style={{ width: FREQ_AXIS_WIDTH_PX, height }}
+        >
+          {label}
+        </div>
+        <canvas
+          ref={canvasRef}
+          className="block"
+          style={{ width: canvasWidth, height }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TimelineBody({
+  regionDetectionJobId,
+  tokenItems,
+  tokenScores,
+  reconstructionScores,
+  reconstructionMax,
+  k,
+}: {
+  regionDetectionJobId: string;
+  tokenItems: DiscreteSequenceItem[];
+  tokenScores: ChunkScore[];
+  reconstructionScores: ChunkScore[];
+  reconstructionMax: number;
+  k: number | null;
+}) {
+  const ctx = useTimelineContext();
+
+  // Region-detection jobs typically span 24h while CRNN chunks only cover the
+  // few minutes inside detected regions. Without seeking, the default
+  // mid-job center sits in empty space. Seek once to the first chunk so the
+  // viewer lands on data.
+  const seekedRef = useRef(false);
+  useEffect(() => {
+    if (seekedRef.current) return;
+    if (tokenItems.length === 0) return;
+    const first = tokenItems.reduce((min, item) =>
+      item.start_timestamp < min.start_timestamp ? item : min,
+    );
+    seekedRef.current = true;
+    ctx.seekTo(first.start_timestamp);
+  }, [tokenItems, ctx]);
+
+  const tileUrlBuilder = useCallback(
+    (
+      _jid: string,
+      zoomLevel: string,
+      tileIndex: number,
+      _freqMin: number,
+      _freqMax: number,
+    ) => regionTileUrl(regionDetectionJobId, zoomLevel, tileIndex),
+    [regionDetectionJobId],
+  );
+
+  const reconstructionNormalizer = useCallback(
+    (score: number) => (reconstructionMax > 0 ? score / reconstructionMax : 0),
+    [reconstructionMax],
+  );
+
+  return (
+    <>
+      <div className="flex" style={{ height: 200 }}>
+        <Spectrogram
+          jobId={regionDetectionJobId}
+          tileUrlBuilder={tileUrlBuilder}
+          freqRange={[0, 3000]}
+        />
+      </div>
+      <DiscreteSequenceBar
+        items={tokenItems}
+        numLabels={k ?? 0}
+        mode="single-row"
+        testId="mt-token-strip"
+        ariaLabel="Masked-transformer token timeline"
+        tooltipFormatter={(item) =>
+          `Token ${item.label} · ${item.start_timestamp.toFixed(2)}s–${item.end_timestamp.toFixed(2)}s · conf ${(item.confidence ?? 0).toFixed(2)}`
+        }
+      />
+      <ChunkConfidenceStrip
+        items={tokenScores}
+        label="conf"
+        testId="mt-token-confidence-strip"
+      />
+      <ChunkConfidenceStrip
+        items={reconstructionScores}
+        label="recon"
+        testId="mt-reconstruction-error-strip"
+        scoreNormalizer={reconstructionNormalizer}
+      />
+      <div className="flex justify-center py-1">
+        <ZoomSelector />
+      </div>
+      <div className="flex justify-center">
+        <PlaybackControls />
+      </div>
+    </>
+  );
+}
+
 function TimelineSection({
   jobId,
   kValues,
@@ -144,15 +365,50 @@ function TimelineSection({
   regionEndTimestamp: number | null;
 }) {
   const k = useSelectedK(kValues);
-  const { data } = useMaskedTransformerTokens(jobId, k);
-  const items: DiscreteSequenceItem[] = useMemo(() => {
-    return (data?.items ?? []).map((row) => ({
+  const { data: tokensData } = useMaskedTransformerTokens(
+    jobId,
+    k,
+    0,
+    CHUNK_FETCH_LIMIT,
+  );
+  const { data: reconstructionData } = useMaskedTransformerReconstructionError(
+    jobId,
+    0,
+    CHUNK_FETCH_LIMIT,
+  );
+
+  const tokenItems: DiscreteSequenceItem[] = useMemo(() => {
+    return (tokensData?.items ?? []).map((row) => ({
       start_timestamp: row.start_timestamp,
       end_timestamp: row.end_timestamp,
       label: row.label,
       confidence: row.confidence,
     }));
-  }, [data]);
+  }, [tokensData]);
+
+  const tokenScores: ChunkScore[] = useMemo(() => {
+    return (tokensData?.items ?? []).map((row) => ({
+      start_timestamp: row.start_timestamp,
+      end_timestamp: row.end_timestamp,
+      score: row.confidence,
+    }));
+  }, [tokensData]);
+
+  const reconstructionScores: ChunkScore[] = useMemo(() => {
+    return (reconstructionData?.items ?? []).map((row) => ({
+      start_timestamp: row.start_timestamp,
+      end_timestamp: row.end_timestamp,
+      score: row.score,
+    }));
+  }, [reconstructionData]);
+
+  const reconstructionMax = useMemo(() => {
+    let m = 0;
+    for (const r of reconstructionScores) {
+      if (r.score > m) m = r.score;
+    }
+    return m;
+  }, [reconstructionScores]);
 
   return (
     <Card>
@@ -161,31 +417,31 @@ function TimelineSection({
       </CardHeader>
       <CardContent>
         {regionDetectionJobId && regionStartTimestamp != null && regionEndTimestamp != null ? (
-          <TimelineProvider
-            key={`mt-timeline-${jobId}-${k}`}
-            jobStart={regionStartTimestamp}
-            jobEnd={regionEndTimestamp}
-            zoomLevels={REVIEW_ZOOM}
-            defaultZoom={REVIEW_ZOOM[0].key}
-            playback="slice"
-            audioUrlBuilder={(startEpoch, durationSec) =>
-              regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
-            }
-          >
-            <DiscreteSequenceBar
-              items={items}
-              numLabels={k ?? 0}
-              mode="single-row"
-              testId="mt-token-strip"
-              ariaLabel="Masked-transformer token timeline"
-              tooltipFormatter={(item) =>
-                `Token ${item.label} · ${item.start_timestamp.toFixed(2)}s–${item.end_timestamp.toFixed(2)}s · conf ${(item.confidence ?? 0).toFixed(2)}`
+          <div data-testid="mt-timeline-viewer">
+            <TimelineProvider
+              key={`mt-timeline-${jobId}-${k}`}
+              jobStart={regionStartTimestamp}
+              jobEnd={regionEndTimestamp}
+              zoomLevels={REVIEW_ZOOM}
+              defaultZoom={REVIEW_ZOOM[0].key}
+              playback="slice"
+              audioUrlBuilder={(startEpoch, durationSec) =>
+                regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
               }
-            />
-          </TimelineProvider>
+            >
+              <TimelineBody
+                regionDetectionJobId={regionDetectionJobId}
+                tokenItems={tokenItems}
+                tokenScores={tokenScores}
+                reconstructionScores={reconstructionScores}
+                reconstructionMax={reconstructionMax}
+                k={k}
+              />
+            </TimelineProvider>
+          </div>
         ) : (
           <div className="text-xs text-muted-foreground">
-            Token strip preview ({items.length} chunks). Region context unavailable.
+            Token strip preview ({tokenItems.length} chunks). Region context unavailable.
           </div>
         )}
       </CardContent>

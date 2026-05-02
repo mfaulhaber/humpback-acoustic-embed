@@ -59,6 +59,7 @@ from humpback.services.continuous_embedding_service import (
     source_kind_for,
 )
 from humpback.services.masked_transformer_service import (
+    generate_interpretations,
     parse_k_values,
 )
 from humpback.storage import (
@@ -630,6 +631,11 @@ async def run_masked_transformer_job(
                 audio_ids=audio_ids,
                 seed=int(job.seed),
             )
+            # Spec §4.2: produce overlay/exemplars/label-distribution per k so
+            # the detail page is fully populated when the job lands in
+            # `complete`. Without this, frontend reads 404 until the user hits
+            # POST /generate-interpretations manually.
+            await generate_interpretations(session, settings.storage_root, job, int(k))
 
         # Mark completed.
         now = datetime.now(timezone.utc)

@@ -197,6 +197,11 @@ async def test_happy_path_persists_all_artifacts(session, settings, monkeypatch)
     assert (k_dir / "decoded.parquet").exists()
     assert (k_dir / "kmeans.joblib").exists()
     assert (k_dir / "run_lengths.json").exists()
+    # Worker triggers generate_interpretations per k so the detail page is
+    # fully populated when the job completes (spec §4.2).
+    assert (k_dir / "overlay.parquet").exists()
+    assert (k_dir / "exemplars.json").exists()
+    assert (k_dir / "label_distribution.json").exists()
 
     # Decoded parquet has the canonical schema columns.
     decoded = pq.read_table(masked_transformer_k_decoded_path(sr, job.id, k))
@@ -323,6 +328,10 @@ async def test_extend_k_sweep_skips_retraining(session, settings, monkeypatch):
     assert masked_transformer_k_decoded_path(sr, job.id, 12).exists()
     assert masked_transformer_k_kmeans_path(sr, job.id, 12).exists()
     assert masked_transformer_k_run_lengths_path(sr, job.id, 12).exists()
+    k12_dir = masked_transformer_k_dir(sr, job.id, 12)
+    assert (k12_dir / "overlay.parquet").exists()
+    assert (k12_dir / "exemplars.json").exists()
+    assert (k12_dir / "label_distribution.json").exists()
 
 
 async def test_idempotency_via_service_signature(session, settings, monkeypatch):
