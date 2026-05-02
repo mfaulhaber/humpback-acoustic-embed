@@ -23,6 +23,9 @@ from humpback.storage import (
     masked_transformer_dir,
     masked_transformer_k_decoded_path,
     masked_transformer_k_dir,
+    masked_transformer_k_exemplars_path,
+    masked_transformer_k_label_distribution_path,
+    masked_transformer_k_overlay_path,
     masked_transformer_k_kmeans_path,
     masked_transformer_k_run_lengths_path,
     masked_transformer_loss_curve_path,
@@ -332,6 +335,52 @@ async def test_extend_k_sweep_skips_retraining(session, settings, monkeypatch):
     assert (k12_dir / "overlay.parquet").exists()
     assert (k12_dir / "exemplars.json").exists()
     assert (k12_dir / "label_distribution.json").exists()
+
+
+async def test_requeued_partial_k_bundle_regenerates_missing_interpretations(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session, continuous_embedding_job_id=cej.id, **_tiny_config()
+    )
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+    assert job.status == JobStatus.complete.value, job.error_message
+
+    sr = settings.storage_root
+    k = 10
+    transformer_path = masked_transformer_model_path(sr, job.id)
+    z_path = masked_transformer_contextual_embeddings_path(sr, job.id)
+    transformer_mtime = transformer_path.stat().st_mtime_ns
+    z_mtime = z_path.stat().st_mtime_ns
+
+    for artifact_path in (
+        masked_transformer_k_overlay_path(sr, job.id, k),
+        masked_transformer_k_exemplars_path(sr, job.id, k),
+        masked_transformer_k_label_distribution_path(sr, job.id, k),
+    ):
+        artifact_path.unlink()
+
+    # Simulate stale recovery/manual requeue after the k directory was
+    # finalized but before interpretations were all present.
+    job.status = JobStatus.queued.value
+    await session.commit()
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+    assert job.status == JobStatus.complete.value, job.error_message
+
+    assert transformer_path.stat().st_mtime_ns == transformer_mtime
+    assert z_path.stat().st_mtime_ns == z_mtime
+    assert masked_transformer_k_decoded_path(sr, job.id, k).exists()
+    assert masked_transformer_k_kmeans_path(sr, job.id, k).exists()
+    assert masked_transformer_k_run_lengths_path(sr, job.id, k).exists()
+    assert masked_transformer_k_overlay_path(sr, job.id, k).exists()
+    assert masked_transformer_k_exemplars_path(sr, job.id, k).exists()
+    assert masked_transformer_k_label_distribution_path(sr, job.id, k).exists()
 
 
 async def test_idempotency_via_service_signature(session, settings, monkeypatch):

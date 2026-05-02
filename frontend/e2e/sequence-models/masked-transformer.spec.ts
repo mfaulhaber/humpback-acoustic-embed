@@ -258,6 +258,7 @@ const MOTIF_JOB_HMM = {
 interface MockState {
   jobs: typeof COMPLETE_JOB[];
   motifJobs?: typeof MOTIF_JOB_HMM[];
+  capturedMotifListUrls?: string[];
   capturedMotifCreates?: Array<Record<string, unknown>>;
 }
 
@@ -392,6 +393,7 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
   await page.route("**/sequence-models/motif-extractions**", async (route: Route) => {
     const method = route.request().method();
     if (method === "GET") {
+      state.capturedMotifListUrls?.push(route.request().url());
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -533,6 +535,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     const state: MockState = {
       jobs: [COMPLETE_JOB],
       motifJobs: [],
+      capturedMotifListUrls: [],
       capturedMotifCreates: [],
     };
     await setupMocks(page, state);
@@ -548,5 +551,15 @@ test.describe("Sequence Models — Masked Transformer", () => {
     expect(body?.parent_kind).toBe("masked_transformer");
     expect(body?.masked_transformer_job_id).toBe(COMPLETE_JOB.id);
     expect(body?.k).toBe(100);
+    expect(
+      state.capturedMotifListUrls?.some((url) => {
+        const parsed = new URL(url);
+        return (
+          parsed.searchParams.get("parent_kind") === "masked_transformer" &&
+          parsed.searchParams.get("masked_transformer_job_id") === COMPLETE_JOB.id &&
+          parsed.searchParams.get("k") === "100"
+        );
+      }),
+    ).toBe(true);
   });
 });

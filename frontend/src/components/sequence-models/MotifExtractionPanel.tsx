@@ -59,6 +59,7 @@ export function MotifExtractionPanel({
       : {
           masked_transformer_job_id: resolvedParent.maskedTransformerJobId,
           parent_kind: "masked_transformer",
+          k: resolvedParent.k,
         },
   );
   const createMutation = useCreateMotifExtractionJob();

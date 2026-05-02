@@ -618,6 +618,7 @@ async def list_motif_extractions(
     hmm_sequence_job_id: Optional[str] = Query(default=None),
     masked_transformer_job_id: Optional[str] = Query(default=None),
     parent_kind: Optional[str] = Query(default=None),
+    k: Optional[int] = Query(default=None, ge=2),
 ) -> list[MotifExtractionJobOut]:
     jobs = await list_motif_extraction_jobs(
         session,
@@ -625,6 +626,7 @@ async def list_motif_extractions(
         hmm_sequence_job_id=hmm_sequence_job_id,
         masked_transformer_job_id=masked_transformer_job_id,
         parent_kind=parent_kind,
+        k=k,
     )
     return [_motif_to_out(j) for j in jobs]
 

@@ -604,6 +604,7 @@ export function fetchMotifExtractionJobs(params?: {
   hmm_sequence_job_id?: string;
   masked_transformer_job_id?: string;
   parent_kind?: MotifParentKind;
+  k?: number;
 }): Promise<MotifExtractionJob[]> {
   const search = new URLSearchParams();
   if (params?.status) search.set("status", params.status);
@@ -612,6 +613,7 @@ export function fetchMotifExtractionJobs(params?: {
   if (params?.masked_transformer_job_id)
     search.set("masked_transformer_job_id", params.masked_transformer_job_id);
   if (params?.parent_kind) search.set("parent_kind", params.parent_kind);
+  if (params?.k != null) search.set("k", String(params.k));
   const q = search.toString() ? `?${search.toString()}` : "";
   return request<MotifExtractionJob[]>(`${MOTIF_ROOT}${q}`);
 }
@@ -673,6 +675,7 @@ export function useMotifExtractionJobs(
     hmm_sequence_job_id?: string;
     masked_transformer_job_id?: string;
     parent_kind?: MotifParentKind;
+    k?: number;
   },
   enabled = true,
   refetchInterval: number | false = 3000,

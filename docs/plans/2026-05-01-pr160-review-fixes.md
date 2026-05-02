@@ -12,10 +12,10 @@
 - Modify: `tests/workers/test_masked_transformer_worker.py` or relevant queue recovery test file
 
 **Acceptance criteria:**
-- [ ] `recover_stale_jobs()` imports `MaskedTransformerJob`.
-- [ ] Stale `masked_transformer_jobs.status == "running"` rows older than the stale timeout are reset to `queued`.
-- [ ] Recovery count includes masked-transformer rows.
-- [ ] A regression test covers stale masked-transformer recovery.
+- [x] `recover_stale_jobs()` imports `MaskedTransformerJob`.
+- [x] Stale `masked_transformer_jobs.status == "running"` rows older than the stale timeout are reset to `queued`.
+- [x] Recovery count includes masked-transformer rows.
+- [x] A regression test covers stale masked-transformer recovery.
 
 **Tests needed:**
 - Targeted pytest coverage for `recover_stale_jobs()` with a running masked-transformer job older than the stale timeout.
@@ -29,9 +29,9 @@
 - Modify: `tests/workers/test_masked_transformer_worker.py`
 
 **Acceptance criteria:**
-- [ ] `_previously_done_k()` requires all six per-k artifacts before skipping a k value.
-- [ ] Requeued jobs regenerate missing interpretation artifacts when only `decoded.parquet`, `kmeans.joblib`, and `run_lengths.json` exist.
-- [ ] Regression tests cover partial per-k artifact recovery.
+- [x] `_previously_done_k()` requires all six per-k artifacts before skipping a k value.
+- [x] Requeued jobs regenerate missing interpretation artifacts when only `decoded.parquet`, `kmeans.joblib`, and `run_lengths.json` exist.
+- [x] Regression tests cover partial per-k artifact recovery.
 
 **Tests needed:**
 - Targeted worker pytest that creates a completed tokenization-only k directory, requeues the job, and asserts missing overlay, exemplars, and label distribution are generated.
@@ -48,11 +48,11 @@
 - Modify: relevant backend and frontend tests
 
 **Acceptance criteria:**
-- [ ] Motif extraction list filtering accepts `k`.
-- [ ] Backend service filters masked-transformer motif jobs by `k` when provided.
-- [ ] Frontend motif API includes `k` in list query parameters.
-- [ ] `MotifExtractionPanel` passes the selected masked-transformer `k` when listing motif jobs.
-- [ ] Regression tests cover same masked-transformer job with different k values.
+- [x] Motif extraction list filtering accepts `k`.
+- [x] Backend service filters masked-transformer motif jobs by `k` when provided.
+- [x] Frontend motif API includes `k` in list query parameters.
+- [x] `MotifExtractionPanel` passes the selected masked-transformer `k` when listing motif jobs.
+- [x] Regression tests cover same masked-transformer job with different k values.
 
 **Tests needed:**
 - Backend service or integration pytest for `k` filtering.

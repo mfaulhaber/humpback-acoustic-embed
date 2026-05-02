@@ -11,6 +11,7 @@ from humpback.models.hyperparameter import (
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
     HMMSequenceJob,
+    MaskedTransformerJob,
     MotifExtractionJob,
 )
 from humpback.workers.queue import (
@@ -122,13 +123,29 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
         config_signature="sig-1",
         updated_at=stale_time,
     )
+    masked_transformer = MaskedTransformerJob(
+        status="running",
+        continuous_embedding_job_id="ce-1",
+        training_signature="mt-sig-1",
+        k_values="[100]",
+        updated_at=stale_time,
+    )
     session.add_all(
-        [manifest, search, clustering, detection_embedding, continuous, hmm, motif]
+        [
+            manifest,
+            search,
+            clustering,
+            detection_embedding,
+            continuous,
+            hmm,
+            motif,
+            masked_transformer,
+        ]
     )
     await session.commit()
 
     count = await recover_stale_jobs(session)
-    assert count == 7
+    assert count == 8
 
     for job in (
         manifest,
@@ -138,6 +155,7 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
         continuous,
         hmm,
         motif,
+        masked_transformer,
     ):
         await session.refresh(job)
         assert job.status == "queued"

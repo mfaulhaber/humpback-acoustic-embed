@@ -187,6 +187,7 @@ async def list_motif_extraction_jobs(
     hmm_sequence_job_id: Optional[str] = None,
     masked_transformer_job_id: Optional[str] = None,
     parent_kind: Optional[str] = None,
+    k: Optional[int] = None,
 ) -> list[MotifExtractionJob]:
     stmt = select(MotifExtractionJob).order_by(MotifExtractionJob.created_at.desc())
     if status is not None:
@@ -199,6 +200,8 @@ async def list_motif_extraction_jobs(
         )
     if parent_kind is not None:
         stmt = stmt.where(MotifExtractionJob.parent_kind == parent_kind)
+    if k is not None:
+        stmt = stmt.where(MotifExtractionJob.k == int(k))
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
