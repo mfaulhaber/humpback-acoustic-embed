@@ -9,7 +9,7 @@ After clicking a motif in the Motif panel today, the only visible feedback is th
 
 ## Goals
 
-1. **Motif occurrence highlights in the timeline.** When a motif is selected in the Motif panel, every visible occurrence of that motif type in the current timeline viewport is shaded with a vertical band (left border + light fill) spanning the full timeline column (spectrogram + token bar). The active occurrence (the one the user last Jumped/Played) is rendered with a stronger fill and bolder left border.
+1. **Motif occurrence highlights in the timeline.** When a motif is selected in the Motif panel, every visible occurrence of that motif type in the current timeline viewport is shaded with a vertical band (left border + light fill) drawn on the spectrogram canvas. The active occurrence (the one the user last Jumped/Played) is rendered with a stronger fill and bolder left border. (The band sits on the spectrogram only, not the token bar below; both share the same `pxPerSec`, so the band visually points at the corresponding tokens. See "Detailed Design" §1 for why this is mounted inside `<Spectrogram>` rather than spanning the full column.)
 2. **Motif-bounded playback.** The Motif panel's "Play" button plays the audio interval bounded *exactly* by the motif's `start_timestamp`/`end_timestamp` (no padding), routed through the shared `TimelinePlaybackHandle` so the timeline playhead tracks playback and stops at motif end.
 3. **Hide conf and recon heatmap strips** in the masked-transformer timeline control. Reversible via a single constant.
 4. **Show 20 motif occurrences** (up from 10) in the right-hand alignment list, single column, scrollable.
@@ -62,7 +62,7 @@ The overlay is a sibling of the spectrogram canvas inside the timeline column, m
 
 **Color index source:** Motif occurrences carry a `states: number[]` array (the n-gram). The hue used for the band is the color of the motif's first state — this matches the leftmost-cell color the user sees in the legend strip and the alignment-list mini-spectrogram. (If the user later wants per-cell color blending in the band, that is a follow-up.)
 
-**Mounting:** `TimelineBody` in `MaskedTransformerDetailPage.tsx` already wraps spectrogram + bar inside `<TimelineProvider>`. We add an `<OverlayProvider>` wrapper if one is not already present (mirroring how Pass 3 review composes overlays) and mount `<MotifHighlightOverlay …/>` inside it. The component is conditionally rendered when `motifSelection.motifKey != null` and `motifSelection.occurrences.length > 0`.
+**Mounting:** `OverlayContext` is provided by `<Spectrogram>` and is bound to its own canvas (see `Spectrogram.tsx`'s `OverlayContext.Provider` at the overlay container — `width: canvasWidth, height: canvasHeight`). The overlay is therefore mounted as a child of `<Spectrogram>` (matching every other overlay's pattern: `RegionBandOverlay`, `EventBarOverlay`, etc.). This means the band covers the spectrogram canvas only — not the `DiscreteSequenceBar` below. Extending coverage into the bar would require either lifting `OverlayContext` out of `Spectrogram` (a breaking change to a shared component) or duplicating viewport math; both violate compose-safety. The bar and spectrogram share the same `pxPerSec` from `TimelineProvider`, so the band aligns with the tokens beneath it visually. The component is conditionally rendered when `motifSelection.motifKey != null` and `motifSelection.occurrences.length > 0`.
 
 ### 2. Motif-Bounded Playback
 
