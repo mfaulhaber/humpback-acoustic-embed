@@ -53,6 +53,8 @@ export function MotifExtractionPanel({
   activeOccurrenceIndex: controlledActiveIndex,
   onActiveOccurrenceChange,
   numLabels,
+  hideRowHighlight,
+  onUserSelectMotif,
 }: {
   /** @deprecated — pass ``parent`` instead. Kept for backwards compatibility. */
   hmmSequenceJobId?: string;
@@ -71,6 +73,21 @@ export function MotifExtractionPanel({
    *  Forwarded to ``MotifExampleAlignment`` so its swatches use the
    *  same palette the main timeline does. */
   numLabels?: number;
+  /**
+   * When ``true``, the row-highlight class is suppressed so the table
+   * looks unselected even though an internal ``selectedMotif`` may
+   * exist. Used by the masked-transformer page when its Token Count
+   * (byLength) mode owns the timeline highlight.
+   */
+  hideRowHighlight?: boolean;
+  /**
+   * Fires every time the user clicks a motif row (regardless of whether
+   * the selected motif key changed). The masked-transformer page uses
+   * this to exit byLength mode when the reviewer picks a single motif
+   * directly. Distinct from ``onSelectionChange``, which is driven by
+   * derived state and may fire on initial load / refetch.
+   */
+  onUserSelectMotif?: (motifKey: string) => void;
 }) {
   const resolvedParent: MotifExtractionPanelParent = parent ??
     (hmmSequenceJobId
@@ -317,9 +334,14 @@ export function MotifExtractionPanel({
                   <tr
                     key={motif.motif_key}
                     className={`cursor-pointer border-t ${
-                      selected?.motif_key === motif.motif_key ? "bg-blue-50" : ""
+                      !hideRowHighlight && selected?.motif_key === motif.motif_key
+                        ? "bg-blue-50"
+                        : ""
                     }`}
-                    onClick={() => setSelectedMotif(motif.motif_key)}
+                    onClick={() => {
+                      setSelectedMotif(motif.motif_key);
+                      onUserSelectMotif?.(motif.motif_key);
+                    }}
                   >
                     <td className="px-2 py-1 font-mono">{motif.motif_key}</td>
                     <td className="px-2 py-1">{motif.occurrence_count}</td>

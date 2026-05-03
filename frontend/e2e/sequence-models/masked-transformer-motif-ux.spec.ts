@@ -108,11 +108,31 @@ const MOTIF_JOB = {
   updated_at: "2026-04-29T02:01:00Z",
 };
 
+function summary(motif_key: string, length: number, rank: number) {
+  return {
+    motif_key,
+    states: motif_key.split("-").map((s) => Number.parseInt(s, 10)),
+    length,
+    occurrence_count: 8,
+    event_source_count: 3,
+    audio_source_count: 2,
+    group_count: 1,
+    event_core_fraction: 0.8,
+    background_fraction: 0.1,
+    mean_call_probability: null,
+    mean_duration_seconds: 0.5,
+    median_duration_seconds: 0.5,
+    rank_score: rank,
+    example_occurrence_ids: [],
+  };
+}
+
 const MOTIFS = {
-  total: 1,
+  total: 4,
   offset: 0,
   limit: 100,
   items: [
+    // Primary length-2 motif used by the legacy single-mode tests below.
     {
       motif_key: "5-7",
       states: [5, 7],
@@ -129,6 +149,11 @@ const MOTIFS = {
       rank_score: 0.95,
       example_occurrence_ids: ["occ-0"],
     },
+    // Additional length-2 / length-3 / length-4 motifs feed the Token
+    // Count selector tests.
+    summary("2-9", 2, 0.85),
+    summary("5-7-2", 3, 0.9),
+    summary("5-7-2-9", 4, 0.88),
   ],
 };
 
@@ -167,6 +192,54 @@ const MOTIF_OCCURRENCES = {
       anchor_strategy: "event_midpoint",
     };
   }),
+};
+
+/**
+ * Smaller per-motif occurrence fixtures keyed by motif_key. Used by the
+ * Token Count selector tests so different motifs of the same length
+ * carry different colors and different time ranges.
+ */
+function makeOccurrences(motifKey: string, count: number, baseStart: number) {
+  return {
+    total: count,
+    offset: 0,
+    limit: 100,
+    items: Array.from({ length: count }, (_, i) => {
+      const start = baseStart + i * 8;
+      const end = start + 0.6;
+      return {
+        occurrence_id: `${motifKey}-occ-${i}`,
+        motif_key: motifKey,
+        states: motifKey.split("-").map((s) => Number.parseInt(s, 10)),
+        source_kind: "region_crnn",
+        group_key: "g0",
+        event_source_key: `${motifKey}-evt-${i}`,
+        audio_source_key: "1",
+        token_start_index: i,
+        token_end_index: i + 1,
+        raw_start_index: i,
+        raw_end_index: i + 1,
+        start_timestamp: start,
+        end_timestamp: end,
+        duration_seconds: end - start,
+        event_core_fraction: 1.0,
+        background_fraction: 0.0,
+        mean_call_probability: null,
+        anchor_event_id: `${motifKey}-evt-${i}`,
+        anchor_timestamp: (start + end) / 2,
+        relative_start_seconds: -0.3,
+        relative_end_seconds: 0.3,
+        anchor_strategy: "event_midpoint",
+      };
+    }),
+  };
+}
+
+const PER_MOTIF_OCCURRENCES: Record<string, ReturnType<typeof makeOccurrences>> = {
+  "5-7": MOTIF_OCCURRENCES,
+  "2-9": makeOccurrences("2-9", 4, 70),
+  "5-7-2": makeOccurrences("5-7-2", 4, 80),
+  "5-7-2-9": makeOccurrences("5-7-2-9", 4, 90),
 };
 
 interface MockState {
@@ -250,11 +323,15 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
   await page.route("**/sequence-models/motif-extractions**", (route: Route) => {
     const url = route.request().url();
     const method = route.request().method();
-    if (url.includes("/occurrences")) {
+    const occMatch = url.match(/\/motifs\/([^/]+)\/occurrences/);
+    if (occMatch) {
+      const motifKey = decodeURIComponent(occMatch[1]);
+      const body =
+        PER_MOTIF_OCCURRENCES[motifKey] ?? MOTIF_OCCURRENCES;
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(MOTIF_OCCURRENCES),
+        body: JSON.stringify(body),
       });
     }
     if (url.match(/\/motif-extractions\/[^/?]+\/motifs/)) {
@@ -373,6 +450,99 @@ test.describe("Masked Transformer Motif UX", () => {
     await expect(page.getByTestId("masked-transformer-detail-page")).toBeVisible();
     await expect(page.getByTestId("mt-token-confidence-strip")).toHaveCount(0);
     await expect(page.getByTestId("mt-reconstruction-error-strip")).toHaveCount(0);
+  });
+
+  test("Token Count selector starts unset and toggles byLength mode", async ({ page }) => {
+    const state: MockState = { audioSliceUrls: [] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("motif-token-count-selector")).toBeVisible();
+    // Selector starts unset; single-mode highlight should be active for
+    // the auto-picked first motif.
+    await expect(page.getByTestId("motif-token-count-2")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(page.getByTestId("motif-token-count-3")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+
+    // Click length-3 → byLength mode renders highlight bands for the
+    // length-3 motif's occurrences (per the per-motif fixture).
+    await page.getByTestId("motif-token-count-3").click();
+    await expect(page.getByTestId("motif-token-count-3")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const bands = page.getByTestId("mt-motif-highlight-band");
+    await expect.poll(() => bands.count()).toBeGreaterThan(0);
+    // Every byLength-mode band carries a data-motif-key attribute.
+    const firstBandKey = await bands
+      .first()
+      .getAttribute("data-motif-key");
+    expect(firstBandKey).toBe("5-7-2");
+
+    // Clicking the active value again returns to single-motif mode.
+    await page.getByTestId("motif-token-count-3").click();
+    await expect(page.getByTestId("motif-token-count-3")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  test("byLength mode prev/next walks the visible occurrence set", async ({ page }) => {
+    const state: MockState = { audioSliceUrls: [] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("motif-token-count-selector")).toBeVisible();
+    await page.getByTestId("motif-token-count-2").click();
+
+    // Active occurrence should start at index 0; clicking next bumps it.
+    const activeBand = page.locator(
+      '[data-testid="mt-motif-highlight-band"][data-active="true"]',
+    );
+    await expect(activeBand).toHaveCount(1);
+    const initialIdx = await activeBand.getAttribute("data-occurrence-index");
+    await page.getByTestId("motif-timeline-legend-next").click();
+    const nextIdx = await page
+      .locator('[data-testid="mt-motif-highlight-band"][data-active="true"]')
+      .getAttribute("data-occurrence-index");
+    expect(nextIdx).not.toBe(initialIdx);
+  });
+
+  test("Picking a motif row exits byLength mode", async ({ page }) => {
+    const state: MockState = { audioSliceUrls: [] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+
+    await page.getByTestId("motif-token-count-3").click();
+    await expect(page.getByTestId("motif-token-count-3")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    // Click any row in the motif table; selector should clear.
+    await page.locator('[data-testid="motif-table"] tbody tr').first().click();
+    await expect(page.getByTestId("motif-token-count-3")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  test("byLength legend Play requests audio for the active occurrence", async ({ page }) => {
+    const state: MockState = { audioSliceUrls: [] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+
+    await page.getByTestId("motif-token-count-2").click();
+    await expect(page.getByTestId("motif-timeline-legend-play")).toBeVisible();
+    state.audioSliceUrls.length = 0;
+    await page.getByTestId("motif-timeline-legend-play").click();
+
+    await expect.poll(() => state.audioSliceUrls.length).toBeGreaterThan(0);
   });
 
   test("alignment list shows up to 20 rows and scrolls", async ({ page }) => {
