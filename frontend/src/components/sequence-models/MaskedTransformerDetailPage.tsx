@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { regionAudioSliceUrl, regionTileUrl } from "@/api/client";
 import {
   type ExemplarRecord,
+  type MotifSummary,
   useMaskedTransformerExemplars,
   useMaskedTransformerJob,
   useMaskedTransformerLabelDistribution,
@@ -15,6 +16,9 @@ import {
   useMaskedTransformerReconstructionError,
   useMaskedTransformerRunLengths,
   useMaskedTransformerTokens,
+  useMotifExtractionJobs,
+  useMotifs,
+  useMotifsByLength,
 } from "@/api/sequenceModels";
 import { DiscreteSequenceBar, type DiscreteSequenceItem } from "./DiscreteSequenceBar";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
@@ -31,6 +35,7 @@ import {
   COLORS,
   FREQ_AXIS_WIDTH_PX,
 } from "@/components/timeline/constants";
+import { colorForMotifKey } from "@/lib/motifColor";
 import { CollapsiblePanelCard } from "./CollapsiblePanelCard";
 import { KPicker, useSelectedK } from "./KPicker";
 import { LossCurveChart } from "./LossCurveChart";
@@ -39,6 +44,10 @@ import {
   type MotifPanelSelection,
 } from "./MotifExtractionPanel";
 import { MotifTimelineLegend } from "./MotifTimelineLegend";
+import {
+  MotifTokenCountSelector,
+  type MotifTokenCount,
+} from "./MotifTokenCountSelector";
 import { TokenRunLengthHistograms } from "./TokenRunLengthHistograms";
 import { labelColor } from "./constants";
 
@@ -65,6 +74,52 @@ export function MaskedTransformerDetailPage() {
   const [motifSelection, setMotifSelection] = useState<MotifPanelSelection>(
     EMPTY_MOTIF_SELECTION,
   );
+  // byLength mode (Token Count selector). When ``byLengthLength`` is null
+  // the page is in single-motif mode and the panel's row selection drives
+  // the timeline overlay (existing behavior). When non-null, the page
+  // overrides the overlay with all length-N motifs and hides the panel's
+  // row highlight.
+  const [byLengthLength, setByLengthLength] = useState<MotifTokenCount | null>(null);
+  const [byLengthActiveIndex, setByLengthActiveIndex] = useState(0);
+  const isByLengthMode = byLengthLength != null;
+
+  // Lift the motif-extraction queries to the page level so byLength mode
+  // can compute its own occurrences without duplicating fetches. The
+  // panel makes the same calls below; React Query dedupes via shared
+  // query keys.
+  const kValues = data?.job.k_values ?? [];
+  const k = useSelectedK(kValues);
+  const motifJobsParams = k != null
+    ? {
+        masked_transformer_job_id: jobId,
+        parent_kind: "masked_transformer" as const,
+        k,
+      }
+    : undefined;
+  const { data: motifJobs } = useMotifExtractionJobs(
+    motifJobsParams,
+    k != null && jobId !== "",
+  );
+  const activeMotifJob = motifJobs?.[0] ?? null;
+  const isMotifJobComplete = activeMotifJob?.status === "complete";
+  const { data: motifsResp, isLoading: motifsLoadingState } = useMotifs(
+    activeMotifJob?.id ?? null,
+    0,
+    100,
+    isMotifJobComplete,
+  );
+  const motifList: MotifSummary[] = motifsResp?.items ?? [];
+  const motifsLoading = motifsLoadingState && activeMotifJob != null;
+  const byLengthData = useMotifsByLength(
+    activeMotifJob?.id ?? null,
+    motifList,
+    byLengthLength,
+  );
+  const availableLengths = useMemo(
+    () => new Set(motifList.map((m) => m.length)),
+    [motifList],
+  );
+
   const handleMotifPrev = useCallback(() => {
     setMotifSelection((prev) => {
       if (prev.occurrencesTotal === 0) return prev;
@@ -114,6 +169,19 @@ export function MaskedTransformerDetailPage() {
     },
     [],
   );
+  const handleSelectByLength = useCallback(
+    (next: MotifTokenCount | null) => {
+      setByLengthLength(next);
+      setByLengthActiveIndex(0);
+    },
+    [],
+  );
+  const handleUserSelectMotif = useCallback((_motifKey: string) => {
+    // Picking a row in the panel exits byLength mode — single-motif
+    // selection takes precedence per the discriminated-union design.
+    setByLengthLength(null);
+    setByLengthActiveIndex(0);
+  }, []);
 
   if (isLoading || !data) {
     return (
@@ -125,7 +193,9 @@ export function MaskedTransformerDetailPage() {
 
   const { job, region_detection_job_id, region_start_timestamp, region_end_timestamp, source_kind } = data;
   const isComplete = job.status === "complete";
-  const kValues = job.k_values ?? [];
+  // ``kValues`` and ``k`` were resolved above (before the early return)
+  // because hooks must run unconditionally on every render. Re-aliased
+  // here so the JSX below reads the same as before.
 
   return (
     <div className="space-y-4 p-2" data-testid="masked-transformer-detail-page">
@@ -184,6 +254,14 @@ export function MaskedTransformerDetailPage() {
           motifSelection={motifSelection}
           onMotifPrev={handleMotifPrev}
           onMotifNext={handleMotifNext}
+          onPlayMotif={handlePlayMotif}
+          byLengthLength={byLengthLength}
+          onSelectByLength={handleSelectByLength}
+          byLengthOccurrences={byLengthData.occurrences}
+          byLengthActiveIndex={byLengthActiveIndex}
+          onByLengthActiveIndexChange={setByLengthActiveIndex}
+          availableLengths={availableLengths}
+          motifsLoading={motifsLoading}
         />
       )}
 
@@ -202,6 +280,8 @@ export function MaskedTransformerDetailPage() {
             activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
             onActiveOccurrenceChange={handleActiveOccurrenceChange}
             onPlayMotif={handlePlayMotif}
+            hideRowHighlight={isByLengthMode}
+            onUserSelectMotif={handleUserSelectMotif}
           />
         </CollapsiblePanelCard>
       )}
@@ -416,6 +496,17 @@ function TimelineBody({
   reconstructionMax,
   k,
   motifSelection,
+  byLengthLength,
+  byLengthOccurrences,
+  byLengthActiveIndex,
+  onByLengthActiveIndexChange,
+  onSelectByLength,
+  availableLengths,
+  motifsLoading,
+  onMotifPrev,
+  onMotifNext,
+  onPlayMotif,
+  timelineHandleRef,
 }: {
   regionDetectionJobId: string;
   tokenItems: DiscreteSequenceItem[];
@@ -424,6 +515,17 @@ function TimelineBody({
   reconstructionMax: number;
   k: number | null;
   motifSelection: MotifPanelSelection;
+  byLengthLength: MotifTokenCount | null;
+  byLengthOccurrences: MotifOccurrence[];
+  byLengthActiveIndex: number;
+  onByLengthActiveIndexChange: (idx: number) => void;
+  onSelectByLength: (next: MotifTokenCount | null) => void;
+  availableLengths: ReadonlySet<number>;
+  motifsLoading: boolean;
+  onMotifPrev: () => void;
+  onMotifNext: () => void;
+  onPlayMotif: (occ: MotifOccurrence, idx: number) => void;
+  timelineHandleRef: React.RefObject<TimelinePlaybackHandle>;
 }) {
   const ctx = useTimelineContext();
 
@@ -458,24 +560,143 @@ function TimelineBody({
     [reconstructionMax],
   );
 
+  const isByLengthMode = byLengthLength != null;
   const motifColorIndex = motifSelection.motif?.states[0] ?? 0;
-  const showMotifOverlay =
-    motifSelection.motifKey != null && motifSelection.occurrences.length > 0;
+  const showSingleOverlay =
+    !isByLengthMode &&
+    motifSelection.motifKey != null &&
+    motifSelection.occurrences.length > 0;
+  // ``visibleByLengthOccurrences`` is computed below; gate on the full
+  // list here, then the overlay filters again by viewport at render time.
+
+  // byLength visible-set + clamp + handlers. Lives here (inside the
+  // TimelineProvider) so it can read view bounds from
+  // ``useTimelineContext`` for the prev/next/Play handlers.
+  const visibleByLengthOccurrences = useMemo(
+    () =>
+      byLengthOccurrences.filter(
+        (o) =>
+          o.end_timestamp >= ctx.viewStart && o.start_timestamp <= ctx.viewEnd,
+      ),
+    [byLengthOccurrences, ctx.viewStart, ctx.viewEnd],
+  );
+
+  // Keep the active index in range as the visible set changes.
+  useEffect(() => {
+    if (!isByLengthMode) return;
+    if (visibleByLengthOccurrences.length === 0) return;
+    if (byLengthActiveIndex >= visibleByLengthOccurrences.length) {
+      onByLengthActiveIndexChange(0);
+    }
+  }, [
+    isByLengthMode,
+    visibleByLengthOccurrences,
+    byLengthActiveIndex,
+    onByLengthActiveIndexChange,
+  ]);
+
+  const handleByLengthPrev = useCallback(() => {
+    if (visibleByLengthOccurrences.length === 0) return;
+    const nextIdx = Math.max(0, byLengthActiveIndex - 1);
+    const occ = visibleByLengthOccurrences[nextIdx];
+    if (occ) {
+      timelineHandleRef.current?.seekTo(
+        (occ.start_timestamp + occ.end_timestamp) / 2,
+      );
+    }
+    onByLengthActiveIndexChange(nextIdx);
+  }, [
+    visibleByLengthOccurrences,
+    byLengthActiveIndex,
+    onByLengthActiveIndexChange,
+    timelineHandleRef,
+  ]);
+
+  const handleByLengthNext = useCallback(() => {
+    if (visibleByLengthOccurrences.length === 0) return;
+    const nextIdx = Math.min(
+      visibleByLengthOccurrences.length - 1,
+      byLengthActiveIndex + 1,
+    );
+    const occ = visibleByLengthOccurrences[nextIdx];
+    if (occ) {
+      timelineHandleRef.current?.seekTo(
+        (occ.start_timestamp + occ.end_timestamp) / 2,
+      );
+    }
+    onByLengthActiveIndexChange(nextIdx);
+  }, [
+    visibleByLengthOccurrences,
+    byLengthActiveIndex,
+    onByLengthActiveIndexChange,
+    timelineHandleRef,
+  ]);
+
+  const handleByLengthPlay = useCallback(() => {
+    const occ = visibleByLengthOccurrences[byLengthActiveIndex];
+    if (occ) onPlayMotif(occ, byLengthActiveIndex);
+  }, [visibleByLengthOccurrences, byLengthActiveIndex, onPlayMotif]);
+
+  const tokenSelector = (
+    <MotifTokenCountSelector
+      value={byLengthLength}
+      onChange={onSelectByLength}
+      availableLengths={availableLengths}
+      isMotifsLoading={motifsLoading}
+    />
+  );
+
+  // Pick the legend's data source by mode. In byLength mode the legend
+  // navigates the visible occurrence set. In single mode it preserves
+  // existing behavior (full per-motif occurrence list, unfiltered).
+  const legendOccurrencesTotal = isByLengthMode
+    ? visibleByLengthOccurrences.length
+    : motifSelection.occurrencesTotal;
+  const legendActiveIndex = isByLengthMode
+    ? Math.min(
+        byLengthActiveIndex,
+        Math.max(0, visibleByLengthOccurrences.length - 1),
+      )
+    : motifSelection.activeOccurrenceIndex;
+  const legendSelectedMotifKey = isByLengthMode ? null : motifSelection.motifKey;
+  const legendSelectedStates = isByLengthMode
+    ? []
+    : parseMotifKeyToStates(motifSelection.motifKey);
 
   return (
     <>
+      <MotifTimelineLegend
+        selectedMotifKey={legendSelectedMotifKey}
+        selectedStates={legendSelectedStates}
+        numLabels={k ?? 0}
+        occurrencesTotal={legendOccurrencesTotal}
+        activeOccurrenceIndex={legendActiveIndex}
+        onPrev={isByLengthMode ? handleByLengthPrev : onMotifPrev}
+        onNext={isByLengthMode ? handleByLengthNext : onMotifNext}
+        tokenSelector={tokenSelector}
+        onPlay={isByLengthMode ? handleByLengthPlay : undefined}
+      />
       <div className="flex" style={{ height: 200 }}>
         <Spectrogram
           jobId={regionDetectionJobId}
           tileUrlBuilder={tileUrlBuilder}
           freqRange={[0, 3000]}
         >
-          {showMotifOverlay && (
+          {showSingleOverlay && (
             <MotifHighlightOverlay
               occurrences={motifSelection.occurrences}
               activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
               colorIndex={motifColorIndex}
               numLabels={k ?? 0}
+            />
+          )}
+          {isByLengthMode && visibleByLengthOccurrences.length > 0 && (
+            <MotifHighlightOverlay
+              occurrences={visibleByLengthOccurrences}
+              activeOccurrenceIndex={legendActiveIndex}
+              colorIndex={0}
+              numLabels={k ?? 0}
+              colorForMotifKey={colorForMotifKey}
             />
           )}
         </Spectrogram>
@@ -525,6 +746,14 @@ function TimelineSection({
   motifSelection,
   onMotifPrev,
   onMotifNext,
+  onPlayMotif,
+  byLengthLength,
+  onSelectByLength,
+  byLengthOccurrences,
+  byLengthActiveIndex,
+  onByLengthActiveIndexChange,
+  availableLengths,
+  motifsLoading,
 }: {
   jobId: string;
   kValues: number[];
@@ -535,6 +764,14 @@ function TimelineSection({
   motifSelection: MotifPanelSelection;
   onMotifPrev: () => void;
   onMotifNext: () => void;
+  onPlayMotif: (occ: MotifOccurrence, idx: number) => void;
+  byLengthLength: MotifTokenCount | null;
+  onSelectByLength: (next: MotifTokenCount | null) => void;
+  byLengthOccurrences: MotifOccurrence[];
+  byLengthActiveIndex: number;
+  onByLengthActiveIndexChange: (idx: number) => void;
+  availableLengths: ReadonlySet<number>;
+  motifsLoading: boolean;
 }) {
   const k = useSelectedK(kValues);
   const { data: tokensData } = useMaskedTransformerTokens(
@@ -588,15 +825,6 @@ function TimelineSection({
         <CardTitle className="text-base">Token Timeline (k={k ?? "?"})</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        <MotifTimelineLegend
-          selectedMotifKey={motifSelection.motifKey}
-          selectedStates={parseMotifKeyToStates(motifSelection.motifKey)}
-          numLabels={k ?? 0}
-          occurrencesTotal={motifSelection.occurrencesTotal}
-          activeOccurrenceIndex={motifSelection.activeOccurrenceIndex}
-          onPrev={onMotifPrev}
-          onNext={onMotifNext}
-        />
         {regionDetectionJobId && regionStartTimestamp != null && regionEndTimestamp != null ? (
           <div data-testid="mt-timeline-viewer">
             <TimelineProvider
@@ -619,6 +847,17 @@ function TimelineSection({
                 reconstructionMax={reconstructionMax}
                 k={k}
                 motifSelection={motifSelection}
+                byLengthLength={byLengthLength}
+                byLengthOccurrences={byLengthOccurrences}
+                byLengthActiveIndex={byLengthActiveIndex}
+                onByLengthActiveIndexChange={onByLengthActiveIndexChange}
+                onSelectByLength={onSelectByLength}
+                availableLengths={availableLengths}
+                motifsLoading={motifsLoading}
+                onMotifPrev={onMotifPrev}
+                onMotifNext={onMotifNext}
+                onPlayMotif={onPlayMotif}
+                timelineHandleRef={timelineHandleRef}
               />
             </TimelineProvider>
           </div>
@@ -813,6 +1052,8 @@ function MotifSection({
   activeOccurrenceIndex,
   onActiveOccurrenceChange,
   onPlayMotif,
+  hideRowHighlight,
+  onUserSelectMotif,
 }: {
   jobId: string;
   kValues: number[];
@@ -822,6 +1063,8 @@ function MotifSection({
   activeOccurrenceIndex: number;
   onActiveOccurrenceChange: (idx: number) => void;
   onPlayMotif: (occurrence: MotifOccurrence, idx: number) => void;
+  hideRowHighlight?: boolean;
+  onUserSelectMotif?: (motifKey: string) => void;
 }) {
   const k = useSelectedK(kValues);
   if (k == null) return null;
@@ -848,6 +1091,8 @@ function MotifSection({
       activeOccurrenceIndex={activeOccurrenceIndex}
       onActiveOccurrenceChange={onActiveOccurrenceChange}
       numLabels={k}
+      hideRowHighlight={hideRowHighlight}
+      onUserSelectMotif={onUserSelectMotif}
     />
   );
 }

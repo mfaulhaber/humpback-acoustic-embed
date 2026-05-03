@@ -1,12 +1,23 @@
 import { type MotifOccurrence } from "@/api/sequenceModels";
 import { labelColor } from "@/components/sequence-models/constants";
+import type { MotifColor } from "@/lib/motifColor";
 import { useOverlayContext } from "./OverlayContext";
 
 interface MotifHighlightOverlayProps {
   occurrences: MotifOccurrence[];
   activeOccurrenceIndex: number;
+  /** Used only when ``colorForMotifKey`` is not supplied (single-motif mode). */
   colorIndex: number;
+  /** Used only when ``colorForMotifKey`` is not supplied (single-motif mode). */
   numLabels: number;
+  /**
+   * When provided, each occurrence is colored by its ``motif_key`` using
+   * the supplied mapper — used by the masked-transformer page to render
+   * many length-N motifs at once with distinct hues. When omitted, the
+   * overlay falls back to the legacy single-color behavior driven by
+   * ``colorIndex``/``numLabels``.
+   */
+  colorForMotifKey?: (motifKey: string) => MotifColor;
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -30,16 +41,15 @@ export function MotifHighlightOverlay({
   activeOccurrenceIndex,
   colorIndex,
   numLabels,
+  colorForMotifKey,
 }: MotifHighlightOverlayProps) {
   const { viewStart, viewEnd, pxPerSec, canvasHeight } = useOverlayContext();
 
   if (occurrences.length === 0) return null;
 
-  const baseColor = labelColor(colorIndex, Math.max(numLabels, 1));
-  const inactiveFill = withAlpha(baseColor, 0.15);
-  const inactiveBorder = withAlpha(baseColor, 0.4);
-  const activeFill = withAlpha(baseColor, 0.35);
-  const activeBorder = withAlpha(baseColor, 0.8);
+  const fallbackBase = labelColor(colorIndex, Math.max(numLabels, 1));
+  const fallbackFill = withAlpha(fallbackBase, 0.15);
+  const fallbackBorder = withAlpha(fallbackBase, 0.4);
 
   return (
     <div
@@ -55,22 +65,45 @@ export function MotifHighlightOverlay({
         const w = Math.max(1, (end - start) * pxPerSec);
         const isActive = idx === activeOccurrenceIndex;
 
+        const color = colorForMotifKey?.(occ.motif_key);
+        const fill = color ? color.fill : fallbackFill;
+        const border = color ? color.border : fallbackBorder;
+
+        // Active-occurrence indicator. With a per-motif color mapper we
+        // keep the fill at the same uniform alpha across all rectangles
+        // and indicate the active occurrence with a separate dashed
+        // outline ring drawn outside the box. Without a mapper we
+        // preserve the legacy two-level fill emphasis so single-motif
+        // mode keeps its existing appearance.
+        const fillForRender = color
+          ? fill
+          : isActive
+            ? withAlpha(fallbackBase, 0.35)
+            : fill;
+        const borderForRender = color
+          ? `1px solid ${border}`
+          : isActive
+            ? `2px solid ${withAlpha(fallbackBase, 0.8)}`
+            : `1px solid ${border}`;
+
         return (
           <div
             key={occ.occurrence_id}
             data-testid="mt-motif-highlight-band"
             data-active={isActive ? "true" : "false"}
             data-occurrence-index={idx}
+            data-motif-key={occ.motif_key}
             style={{
               position: "absolute",
               left: x,
               top: 0,
               width: w,
               height: canvasHeight,
-              background: isActive ? activeFill : inactiveFill,
-              borderLeft: isActive
-                ? `2px solid ${activeBorder}`
-                : `1px solid ${inactiveBorder}`,
+              background: fillForRender,
+              borderLeft: borderForRender,
+              outline:
+                color && isActive ? "2px dashed rgba(15, 23, 42, 0.85)" : "none",
+              outlineOffset: color && isActive ? 1 : 0,
               pointerEvents: "none",
               zIndex: 1,
             }}

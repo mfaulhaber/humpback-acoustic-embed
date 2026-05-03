@@ -4,19 +4,55 @@ import { LABEL_COLORS, labelColor } from "./constants";
 import { MotifTimelineLegend } from "./MotifTimelineLegend";
 
 describe("MotifTimelineLegend", () => {
-  it("returns null when selectedMotifKey is null", () => {
+  it("returns null when there is nothing to render (no motif, no nav, no slot)", () => {
     const { container } = render(
       <MotifTimelineLegend
         selectedMotifKey={null}
-        selectedStates={[1, 2]}
+        selectedStates={[]}
         numLabels={4}
-        occurrencesTotal={5}
+        occurrencesTotal={0}
         activeOccurrenceIndex={0}
         onPrev={() => {}}
         onNext={() => {}}
       />,
     );
     expect(container.firstChild).toBeNull();
+  });
+
+  it("renders the tokenSelector slot when supplied with no motif/nav (HMM-style consumers see no slot)", () => {
+    render(
+      <MotifTimelineLegend
+        selectedMotifKey={null}
+        selectedStates={[]}
+        numLabels={4}
+        occurrencesTotal={0}
+        activeOccurrenceIndex={0}
+        onPrev={() => {}}
+        onNext={() => {}}
+        tokenSelector={<span data-testid="slot-content">slot</span>}
+      />,
+    );
+    expect(screen.getByTestId("motif-timeline-legend-token-selector")).toBeTruthy();
+    expect(screen.getByTestId("slot-content").textContent).toBe("slot");
+  });
+
+  it("renders nav over occurrences without a single-motif selection (byLength mode)", () => {
+    render(
+      <MotifTimelineLegend
+        selectedMotifKey={null}
+        selectedStates={[]}
+        numLabels={4}
+        occurrencesTotal={5}
+        activeOccurrenceIndex={2}
+        onPrev={() => {}}
+        onNext={() => {}}
+      />,
+    );
+    expect(
+      screen.getByTestId("motif-timeline-legend-counter").textContent,
+    ).toBe("3 / 5");
+    // No selected-motif swatches in byLength mode.
+    expect(screen.queryByTestId("motif-timeline-legend-swatch-0")).toBeNull();
   });
 
   it("renders one swatch per state with palette-derived background colors", () => {

@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export type ContinuousEmbeddingSourceKind = "surfperch" | "region_crnn";
 
@@ -776,6 +777,83 @@ export function useMotifOccurrences(
       fetchMotifOccurrences(jobId as string, motifKey as string, offset, limit),
     enabled: enabled && jobId != null && motifKey != null,
   });
+}
+
+/**
+ * Pure helper: filter the motif list to the requested ``length``. Returns
+ * an empty array when ``length`` is null. Exported for unit testing.
+ */
+export function filterMotifsByLength(
+  motifs: MotifSummary[],
+  length: number | null,
+): MotifSummary[] {
+  if (length == null) return [];
+  return motifs.filter((m) => m.length === length);
+}
+
+/**
+ * Pure helper: flatten per-motif occurrence arrays into a single
+ * time-sorted array. Undefined entries (queries still pending) are
+ * skipped. Exported for unit testing.
+ */
+export function mergeOccurrencesByStart(
+  perMotif: Array<MotifOccurrence[] | undefined>,
+): MotifOccurrence[] {
+  const merged: MotifOccurrence[] = [];
+  for (const items of perMotif) {
+    if (items) merged.push(...items);
+  }
+  merged.sort((a, b) => a.start_timestamp - b.start_timestamp);
+  return merged;
+}
+
+/**
+ * Filter the cached motif list to the requested ``length`` and fan out
+ * per-motif occurrence fetches. Returns a flat, time-sorted array of
+ * occurrences across every length-N motif. Reuses the same query keys as
+ * ``useMotifOccurrences`` so single-motif mode and byLength mode share
+ * the React Query cache (no redundant fetches when toggling between
+ * modes for an already-loaded motif).
+ */
+export function useMotifsByLength(
+  motifJobId: string | null,
+  motifs: MotifSummary[],
+  length: number | null,
+  enabled = true,
+): {
+  motifs: MotifSummary[];
+  occurrences: MotifOccurrence[];
+  isLoading: boolean;
+} {
+  const motifsOfLength = useMemo(
+    () => filterMotifsByLength(motifs, length),
+    [motifs, length],
+  );
+
+  const queries = useQueries({
+    queries: motifsOfLength.map((m) => ({
+      queryKey: ["motif-occurrences", motifJobId, m.motif_key, 0, 100],
+      queryFn: () =>
+        fetchMotifOccurrences(motifJobId as string, m.motif_key, 0, 100),
+      enabled: enabled && motifJobId != null && length != null,
+    })),
+  });
+
+  const isLoading = queries.some((q) => q.isLoading || q.isFetching);
+
+  // Memo key derived from per-query ``dataUpdatedAt`` (a stable timestamp
+  // React Query bumps only when the underlying data changes). This keeps
+  // the merged array's reference stable between renders so downstream
+  // consumers (e.g. ``visibleByLengthOccurrences`` in TimelineBody) don't
+  // recompute on every render.
+  const dataKey = queries.map((q) => q.dataUpdatedAt).join("|");
+  const occurrences = useMemo(
+    () => mergeOccurrencesByStart(queries.map((q) => q.data?.items)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dataKey],
+  );
+
+  return { motifs: motifsOfLength, occurrences, isLoading };
 }
 
 // ---------------------------------------------------------------------------
