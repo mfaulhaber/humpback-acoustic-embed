@@ -15,7 +15,16 @@ from sqlalchemy import insert
 from humpback.classifier.detection_rows import ROW_STORE_FIELDNAMES
 from humpback.models.classifier import ClassifierModel, DetectionJob
 from humpback.models.vocalization import VocalizationType
+from humpback.processing.timeline_renderers import DEFAULT_TIMELINE_RENDERER
+from humpback.processing.timeline_repository import (
+    TimelineSourceRef,
+    TimelineTileRequest,
+)
 from humpback.processing.timeline_tiles import ZOOM_LEVELS, tile_count
+from humpback.services.timeline_tile_service import (
+    repository_from_settings,
+    source_ref_from_job,
+)
 from humpback.services.timeline_export import (
     ExportError,
     _flatten_label,
@@ -118,15 +127,35 @@ async def completed_job(session, settings, engine, model_id, job_id, job_duratio
 @pytest.fixture
 def populated_tile_cache(settings, job_id, job_duration):
     """Create fake tile PNGs in the timeline cache directory."""
-    cache_dir = settings.storage_root / "timeline_cache" / job_id
+    source_ref = TimelineSourceRef(
+        hydrophone_id="test_hydro",
+        source_identity="/fake/cache",
+        job_start_timestamp=1000.0,
+        job_end_timestamp=1000.0 + job_duration,
+    )
+    _populate_shared_tiles(settings, source_ref, job_duration)
+
+
+def _populate_shared_tiles(settings, source_ref, job_duration):
+    repository = repository_from_settings(settings)
+    renderer = DEFAULT_TIMELINE_RENDERER
     for zoom in ZOOM_LEVELS:
         n = tile_count(zoom, job_duration_sec=job_duration)
-        zoom_dir = cache_dir / zoom
-        zoom_dir.mkdir(parents=True, exist_ok=True)
         for i in range(n):
-            # Minimal valid PNG (1x1 pixel)
-            (zoom_dir / f"tile_{i:04d}.png").write_bytes(
-                b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+            request = TimelineTileRequest(
+                zoom_level=zoom,
+                tile_index=i,
+                freq_min=0,
+                freq_max=3000,
+                width_px=settings.timeline_tile_width_px,
+                height_px=settings.timeline_tile_height_px,
+            )
+            repository.put(
+                source_ref,
+                renderer.renderer_id,
+                renderer.version,
+                request,
+                b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
             )
 
 
@@ -253,16 +282,12 @@ async def test_export_auto_prepares_tiles(
     output_dir = tmp_path / "export_output"
     fake_audio = np.zeros(int(32000 * 300), dtype=np.float32)
 
-    # _prepare_tiles_sync is called to render tiles; we mock it to populate the cache
+    # _prepare_tiles_sync is called to render tiles; mock it to populate the
+    # shared span repository.
     def fake_prepare(*, job, settings, cache):
-        for zoom in ZOOM_LEVELS:
-            n = tile_count(zoom, job_duration_sec=job_duration)
-            zoom_dir = cache.cache_dir / job.id / zoom
-            zoom_dir.mkdir(parents=True, exist_ok=True)
-            for i in range(n):
-                (zoom_dir / f"tile_{i:04d}.png").write_bytes(
-                    b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
-                )
+        _populate_shared_tiles(
+            settings, source_ref_from_job(job, settings), job_duration
+        )
         return 0
 
     with (
@@ -424,14 +449,7 @@ async def test_export_writes_cache_version_marker(
         job_dir = cache.cache_dir / job.id
         job_dir.mkdir(parents=True, exist_ok=True)
         cache.ensure_job_cache_current(job.id)
-        for zoom in ZOOM_LEVELS:
-            n = tile_count(zoom, job_duration_sec=100.0)
-            zoom_dir = job_dir / zoom
-            zoom_dir.mkdir(parents=True, exist_ok=True)
-            for i in range(n):
-                (zoom_dir / f"tile_{i:04d}.png").write_bytes(
-                    b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
-                )
+        _populate_shared_tiles(settings, source_ref_from_job(job, settings), 100.0)
         return 0
 
     with (

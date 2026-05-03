@@ -130,3 +130,27 @@ def test_migration_drops_in_memory_cache_entries(tmp_path: Path):
     # lookup; since the tile file was deleted, the result should be
     # ``None``.
     assert cache.get(job_id, "1h", 0) is None
+
+
+def test_migration_does_not_touch_shared_span_repository(tmp_path: Path):
+    cache_dir = tmp_path / "timeline_cache"
+    job_id = "job-legacy"
+    _legacy_cache_layout(cache_dir, job_id)
+    shared_tile = (
+        cache_dir
+        / "spans"
+        / "span-key"
+        / "lifted-ocean"
+        / "v1"
+        / "1m"
+        / "f0-3000"
+        / "w512_h256"
+        / "tile_0000.png"
+    )
+    shared_tile.parent.mkdir(parents=True)
+    shared_tile.write_bytes(b"shared")
+
+    cache = TimelineTileCache(cache_dir, max_jobs=5)
+    cache.ensure_job_cache_current(job_id)
+
+    assert shared_tile.read_bytes() == b"shared"

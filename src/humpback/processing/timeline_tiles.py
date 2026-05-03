@@ -1,42 +1,29 @@
 """Multi-resolution spectrogram tile renderer for the timeline viewer.
 
-Uses the Ocean Depth colormap (navy -> teal -> seafoam -> white) and renders
-marker-free PNG tiles at fixed pixel dimensions.
+Renders marker-free PNG tiles at fixed pixel dimensions.
 """
 
-import io
 import math
 
-import matplotlib
 import numpy as np
 
 from humpback.processing.pcen_rendering import PcenParams, render_tile_pcen
-
-matplotlib.use("Agg")
-
-import matplotlib.colors as mcolors  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
+from humpback.processing.timeline_renderers import (
+    DEFAULT_TIMELINE_RENDERER,
+    TimelineTileRenderInput,
+    get_ocean_depth_colormap,
+)
 
 # ---- Ocean Depth Colormap ----
 
-_OCEAN_DEPTH_COLORS = [
-    (0.0, "#000510"),
-    (0.2, "#051530"),
-    (0.4, "#0a3050"),
-    (0.6, "#108070"),
-    (0.8, "#50c8a0"),
-    (1.0, "#d0fff0"),
+__all__ = [
+    "ZOOM_LEVELS",
+    "generate_timeline_tile",
+    "get_ocean_depth_colormap",
+    "tile_count",
+    "tile_duration_sec",
+    "tile_time_range",
 ]
-
-
-def get_ocean_depth_colormap() -> mcolors.LinearSegmentedColormap:
-    """Return the Ocean Depth colormap for timeline spectrograms."""
-    positions = [p for p, _ in _OCEAN_DEPTH_COLORS]
-    hex_colors = [c for _, c in _OCEAN_DEPTH_COLORS]
-    rgb_colors = [mcolors.to_rgb(c) for c in hex_colors]
-    return mcolors.LinearSegmentedColormap.from_list(
-        "ocean_depth", list(zip(positions, rgb_colors))
-    )
 
 
 # ---- Zoom Level Grid Math ----
@@ -92,7 +79,7 @@ def generate_timeline_tile(
     width_px: int = 512,
     height_px: int = 256,
 ) -> bytes:
-    """Render a marker-free spectrogram PNG tile with Ocean Depth colormap.
+    """Render a marker-free spectrogram PNG tile with the default renderer.
 
     The input ``audio`` is expected to begin with ``warmup_samples`` of
     pre-tile audio so the PCEN filter state can settle before the first
@@ -101,7 +88,34 @@ def generate_timeline_tile(
 
     Returns raw PNG bytes with no axes, labels, or padding — just pixels.
     """
-    freqs, pcen_power = render_tile_pcen(
+    return DEFAULT_TIMELINE_RENDERER.render(
+        TimelineTileRenderInput(
+            audio=audio,
+            sample_rate=sample_rate,
+            freq_min=freq_min,
+            freq_max=freq_max,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            warmup_samples=warmup_samples,
+            pcen_params=pcen_params,
+            vmin=vmin,
+            vmax=vmax,
+            width_px=width_px,
+            height_px=height_px,
+        )
+    )
+
+
+def compute_timeline_pcen(
+    audio: np.ndarray,
+    sample_rate: int,
+    n_fft: int,
+    hop_length: int,
+    warmup_samples: int = 0,
+    pcen_params: PcenParams | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return PCEN frequencies and values for diagnostics/tests."""
+    return render_tile_pcen(
         audio=audio,
         sample_rate=sample_rate,
         n_fft=n_fft,
@@ -109,37 +123,3 @@ def generate_timeline_tile(
         warmup_samples=warmup_samples,
         params=pcen_params,
     )
-
-    if pcen_power.shape[1] == 0:
-        # Empty tile (no audio available) — render a flat vmin-valued
-        # image at the requested pixel size so downstream code still gets
-        # a valid PNG.
-        pcen_power = np.full((len(freqs), max(1, width_px)), vmin, dtype=np.float32)
-
-    freq_mask = (freqs >= freq_min) & (freqs <= freq_max)
-    pcen_cropped = pcen_power[freq_mask, :]
-    if pcen_cropped.shape[0] == 0:
-        pcen_cropped = pcen_power
-
-    cmap = get_ocean_depth_colormap()
-
-    dpi = 100
-    fig, ax = plt.subplots(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
-    ax.set_axis_off()
-
-    ax.imshow(
-        pcen_cropped,
-        aspect="auto",
-        origin="lower",
-        vmin=vmin,
-        vmax=vmax,
-        cmap=cmap,
-        interpolation="bicubic",
-    )
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi, pad_inches=0)
-    plt.close(fig)
-    buf.seek(0)
-    return buf.read()

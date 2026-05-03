@@ -98,7 +98,7 @@ class TimelineTileCache:
         return sum(
             1
             for p in self.cache_dir.iterdir()
-            if p.is_dir() and not p.name.startswith(".")
+            if p.is_dir() and not p.name.startswith(".") and p.name != "spans"
         )
 
     def has(self, job_id: str, zoom_level: str, tile_index: int) -> bool:
@@ -241,7 +241,7 @@ class TimelineTileCache:
         job_dirs = [
             p
             for p in self.cache_dir.iterdir()
-            if p.is_dir() and not p.name.startswith(".")
+            if p.is_dir() and not p.name.startswith(".") and p.name != "spans"
         ]
         if len(job_dirs) <= self.max_jobs:
             return

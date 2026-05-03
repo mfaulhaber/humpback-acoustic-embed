@@ -22,12 +22,19 @@ from humpback.processing.audio_encoding import (
 )
 from humpback.processing.pcen_rendering import PcenParams
 from humpback.processing.timeline_cache import TimelinePrepareLock, TimelineTileCache
+from humpback.processing.timeline_renderers import DEFAULT_TIMELINE_RENDERER
 from humpback.processing.timeline_tiles import (
     ZOOM_LEVELS,
     generate_timeline_tile,
     tile_count,
     tile_duration_sec,
     tile_time_range,
+)
+from humpback.services.timeline_tile_service import (
+    get_or_render_tile,
+    repository_from_settings,
+    source_ref_from_job,
+    tile_request_from_settings,
 )
 from humpback.services import classifier_service
 from humpback.storage import detection_diagnostics_path
@@ -348,6 +355,9 @@ def _prepare_tiles_sync(
         return 0
 
     prepare_targets = targets or _build_full_prepare_targets(job)
+    repository = repository_from_settings(settings)
+    source_ref = source_ref_from_job(job, settings)
+    renderer = DEFAULT_TIMELINE_RENDERER
 
     def _iter_targets():
         for zoom, indices in prepare_targets.items():
@@ -362,17 +372,25 @@ def _prepare_tiles_sync(
 
     def _render_target(target: tuple[str, int]) -> int:
         zoom, idx = target
-        if cache.has(job.id, zoom, idx):
+        request = tile_request_from_settings(
+            zoom_level=zoom,
+            tile_index=idx,
+            freq_min=0,
+            freq_max=3000,
+            settings=settings,
+        )
+        if repository.has(source_ref, renderer.renderer_id, renderer.version, request):
             return 0
         try:
-            _render_tile_sync(
+            result = get_or_render_tile(
                 job=job,
+                settings=settings,
                 zoom_level=zoom,
                 tile_index=idx,
-                settings=settings,
-                cache=cache,
+                repository=repository,
+                renderer=renderer,
             )
-            return 1
+            return 0 if result.cache_hit else 1
         except Exception:
             logger.exception(
                 "Failed to render tile %s/%d for job %s",
@@ -441,6 +459,10 @@ def _try_launch_prepare(
 
     if status_payload is not None:
         cache.put_prepare_plan(job.id, status_payload)
+        repository_from_settings(settings).put_prepare_plan(
+            source_ref_from_job(job, settings),
+            status_payload,
+        )
 
     _launch_prepare_thread(
         job=job,
@@ -490,6 +512,8 @@ async def get_tile(
         ..., description="Zoom level (e.g. 24h, 6h, 1h, 15m, 5m, 1m)"
     ),
     tile_index: int = Query(..., ge=0, description="Tile index within the zoom level"),
+    freq_min: int = Query(0, ge=0),
+    freq_max: int = Query(3000, gt=0),
 ) -> Response:
     """Return a spectrogram PNG tile for the given zoom level and index."""
     job = await _get_job_or_404(session, job_id)
@@ -507,39 +531,34 @@ async def get_tile(
             f"Tile index {tile_index} out of range (max {max_tiles - 1} for {zoom_level})",
         )
 
-    cache = _timeline_cache(settings)
-    await asyncio.to_thread(cache.ensure_job_cache_current, job.id)
-
-    # Check cache first
-    cached = cache.get(job.id, zoom_level, tile_index)
-    if cached is not None:
-        return Response(content=cached, media_type="image/png")
-
-    # Render on miss (CPU-bound -> thread)
-    tile_bytes = await asyncio.to_thread(
-        _render_tile_sync,
+    repository = repository_from_settings(settings)
+    result = await asyncio.to_thread(
+        get_or_render_tile,
         job=job,
+        settings=settings,
         zoom_level=zoom_level,
         tile_index=tile_index,
-        settings=settings,
-        cache=cache,
+        freq_min=freq_min,
+        freq_max=freq_max,
+        repository=repository,
     )
 
-    neighbor_targets = _neighbor_prepare_targets(
-        job=job,
-        zoom_level=zoom_level,
-        tile_index=tile_index,
-        settings=settings,
-    )
-    if neighbor_targets is not None:
-        _try_launch_prepare(
+    if not result.cache_hit:
+        neighbor_targets = _neighbor_prepare_targets(
             job=job,
+            zoom_level=zoom_level,
+            tile_index=tile_index,
             settings=settings,
-            cache=cache,
-            targets=neighbor_targets,
-            status_payload=None,
         )
-    return Response(content=tile_bytes, media_type="image/png")
+        if neighbor_targets is not None:
+            _try_launch_prepare(
+                job=job,
+                settings=settings,
+                cache=_timeline_cache(settings),
+                targets=neighbor_targets,
+                status_payload=None,
+            )
+    return Response(content=result.data, media_type="image/png")
 
 
 def _parse_filename_epoch(filename: str) -> float | None:
@@ -752,7 +771,10 @@ async def prepare_status(
     job = await _get_job_or_404(session, job_id)
     duration = _job_duration(job)
     cache = _timeline_cache(settings)
-    plan = cache.get_prepare_plan(job.id)
+    repository = repository_from_settings(settings)
+    source_ref = source_ref_from_job(job, settings)
+    renderer = DEFAULT_TIMELINE_RENDERER
+    plan = repository.get_prepare_plan(source_ref) or cache.get_prepare_plan(job.id)
 
     if isinstance(plan, dict):
         zoom_payload = plan.get("zooms")
@@ -763,7 +785,16 @@ async def prepare_status(
                     continue
                 if plan_value == _ALL_TILES:
                     total = tile_count(zoom, job_duration_sec=duration)
-                    rendered = cache.tile_count_for_zoom(job.id, zoom)
+                    rendered = repository.tile_count_for_zoom(
+                        source_ref,
+                        renderer.renderer_id,
+                        renderer.version,
+                        zoom,
+                        freq_min=0,
+                        freq_max=3000,
+                        width_px=settings.timeline_tile_width_px,
+                        height_px=settings.timeline_tile_height_px,
+                    )
                 elif isinstance(plan_value, list):
                     indices = [
                         int(item)
@@ -772,7 +803,22 @@ async def prepare_status(
                         or (isinstance(item, float) and item.is_integer())
                     ]
                     total = len(indices)
-                    rendered = cache.count_cached_tiles(job.id, zoom, indices)
+                    requests = [
+                        tile_request_from_settings(
+                            zoom_level=zoom,
+                            tile_index=idx,
+                            freq_min=0,
+                            freq_max=3000,
+                            settings=settings,
+                        )
+                        for idx in indices
+                    ]
+                    rendered = repository.count_cached_tiles(
+                        source_ref,
+                        renderer.renderer_id,
+                        renderer.version,
+                        requests,
+                    )
                 else:
                     continue
                 status[zoom] = {"total": total, "rendered": min(rendered, total)}
@@ -782,7 +828,16 @@ async def prepare_status(
     status: dict[str, dict[str, int]] = {}
     for zoom in ZOOM_LEVELS:
         total = tile_count(zoom, job_duration_sec=duration)
-        rendered = cache.tile_count_for_zoom(job.id, zoom)
+        rendered = repository.tile_count_for_zoom(
+            source_ref,
+            renderer.renderer_id,
+            renderer.version,
+            zoom,
+            freq_min=0,
+            freq_max=3000,
+            width_px=settings.timeline_tile_width_px,
+            height_px=settings.timeline_tile_height_px,
+        )
         status[zoom] = {"total": total, "rendered": min(rendered, total)}
     return status
 

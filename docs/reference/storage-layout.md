@@ -78,15 +78,25 @@
   {job_id}/motifs.parquet          (motif_key, states, length, occurrence_count, event_source_count, audio_source_count, group_count, event_core_fraction, background_fraction, mean_call_probability nullable, duration stats, rank_score, example_occurrence_ids)
   {job_id}/occurrences.parquet     (occurrence_id, motif_key, states, source_kind, group_key, event_source_key, audio_source_key nullable, token/raw ranges, absolute timestamps, event/background fractions, mean_call_probability nullable, event-midpoint alignment fields)
 /timeline_cache/
-  {job_id}/{zoom_level}/tile_{NNNN}.png   (PCEN-normalized spectrogram tiles, LRU-evicted per job)
-  {job_id}/.cache_version                  (integer; current is 2. Migrations run on first access when missing or lower)
-  {job_id}/.audio_manifest.json            (optional persisted HLS segment manifest for reuse across resampling rates)
-  {job_id}/.prepare_plan.json              (active prepare scope used by /prepare-status)
-  {job_id}/.last_access                    (mtime sentinel for per-job LRU eviction)
-  {job_id}/.prepare.lock                   (advisory flock for exclusive prepare ownership)
+  spans/{span_key}/.source.json            (hydrophone id, source identity, start/end timestamps, deterministic span key)
+  spans/{span_key}/.audio_manifest.json    (optional persisted HLS segment manifest shared by compatible timeline consumers)
+  spans/{span_key}/.prepare_plan.json      (active prepare scope used by /prepare-status)
+  spans/{span_key}/.last_access            (mtime sentinel for span access)
+  spans/{span_key}/{renderer_id}/v{renderer_version}/{zoom_level}/f{min}-{max}/w{width}_h{height}/tile_{NNNN}.png
+                                           (PCEN-normalized spectrogram tiles; renderer id/version and tile geometry are cache identity)
+  {job_id}/.cache_version                  (legacy per-job cache marker; current is 2. Migrations run on first legacy access)
+  {job_id}/.prepare.lock                   (advisory flock for exclusive classifier prepare ownership)
 /cleanup-manifests/
   {timestamp}-legacy-workflow-removal.json (manifest written by scripts/cleanup_legacy_workflows.py)
 ```
+
+Timeline tile image writes now use the shared `spans/{span_key}/...`
+repository. The `span_key` is derived from hydrophone id, source identity
+(`local_cache_path` or configured archive/cache root), and the job start/end
+timestamps. Classifier timelines, region timelines, HMM detail pages, masked
+transformer detail pages, and review workspaces therefore share one tile set
+when they point at the same hydrophone span. The legacy `{job_id}/...` layout is
+kept only for migration/version-marker compatibility.
 
 Legacy roots removed by archive-backed cleanup:
 

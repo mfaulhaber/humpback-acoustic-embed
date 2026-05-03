@@ -27,6 +27,14 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 
 **Masked Transformer detail page panel order** (top → bottom, after the metadata Card and KPicker): Token Timeline (plain Card with the legend inside), Motifs, Loss Curve, Run-Length Histograms, Overlay, Exemplars, Label Distribution. Motifs sits directly under the timeline so the legend, prev/next, and the alignment-strip are all visible without scrolling.
 
+**Timeline tiles**: Frontend consumers keep the existing URL contracts:
+classifier timelines request `timelineTileUrl`, and region-backed timelines
+request `regionTileUrl`. The backend stores and reuses PNG tiles through a
+shared hydrophone-span repository keyed by source span, renderer id/version,
+zoom, frequency range, and pixel geometry, so classifier, region, HMM, masked
+transformer, and review views can share the same disk tiles without frontend
+prop changes.
+
 ## Frontend Package Management
 *   Use `npm` for all frontend package operations. Run commands from the `frontend/` directory.
 *   `npm install` — install dependencies
