@@ -14,11 +14,11 @@
 - Create: `tests/unit/test_migration_065_effective_event_identity.py`
 
 **Acceptance criteria:**
-- [ ] Before running Alembic against the local database, back up the SQLite file from `.env` with `DB=/Volumes/External_2TB/data/whale/humpback-acoustic-embed/data/humpback.db`, `TS=$(date -u +%Y%m%dT%H%M%SZ)`, `cp "$DB" "${DB}.${TS}.bak"`, and `test -s "${DB}.${TS}.bak"`.
-- [ ] `event_boundary_corrections` has nullable `event_segmentation_job_id` and `source_event_id` columns.
-- [ ] New indexes exist for region detection job, segmentation job, and source event lookup.
-- [ ] Existing rows are not backfilled or semantically repaired by the migration.
-- [ ] Request and response schemas expose optional correction `id`, `event_segmentation_job_id`, and `source_event_id` fields needed by modern clients.
+- [x] Before running Alembic against the local database, back up the SQLite file from `.env` with `DB=/Volumes/External_2TB/data/whale/humpback-acoustic-embed/data/humpback.db`, `TS=$(date -u +%Y%m%dT%H%M%SZ)`, `cp "$DB" "${DB}.${TS}.bak"`, and `test -s "${DB}.${TS}.bak"`.
+- [x] `event_boundary_corrections` has nullable `event_segmentation_job_id` and `source_event_id` columns.
+- [x] New indexes exist for region detection job, segmentation job, and source event lookup.
+- [x] Existing rows are not backfilled or semantically repaired by the migration.
+- [x] Request and response schemas expose optional correction `id`, `event_segmentation_job_id`, and `source_event_id` fields needed by modern clients.
 
 **Tests needed:**
 - Migration test verifies columns and indexes are added without requiring historical data backfill.
@@ -35,14 +35,14 @@
 - Modify: `tests/integration/test_call_parsing_router.py`
 
 **Acceptance criteria:**
-- [ ] Add `load_effective_events()` keyed by `event_segmentation_job_id`.
-- [ ] Raw events loaded from `events.parquet` remain unchanged.
-- [ ] Adjust corrections preserve the source event ID while replacing bounds.
-- [ ] Delete corrections remove only their source event.
-- [ ] Add corrections synthesize stable event IDs from the correction row ID.
-- [ ] Corrections scoped to another segmentation job are ignored.
-- [ ] Legacy region-scoped correction rows are ignored by segmentation-scoped reads unless a compatibility path explicitly opts in.
-- [ ] Keep `load_corrected_events()` as a compatibility wrapper during the transition.
+- [x] Add `load_effective_events()` keyed by `event_segmentation_job_id`.
+- [x] Raw events loaded from `events.parquet` remain unchanged.
+- [x] Adjust corrections preserve the source event ID while replacing bounds.
+- [x] Delete corrections remove only their source event.
+- [x] Add corrections synthesize stable event IDs from the correction row ID.
+- [x] Corrections scoped to another segmentation job are ignored.
+- [x] Legacy region-scoped correction rows are ignored by segmentation-scoped reads unless a compatibility path explicitly opts in.
+- [x] Keep `load_corrected_events()` as a compatibility wrapper during the transition.
 
 **Tests needed:**
 - Unit tests for raw, adjusted, deleted, added, and cross-segmentation correction behavior.
@@ -60,14 +60,14 @@
 - Modify: `tests/integration/test_call_parsing_router.py`
 
 **Acceptance criteria:**
-- [ ] `adjust` and `delete` upsert by `(event_segmentation_job_id, source_event_id)` for modern clients.
-- [ ] Older adjust/delete clients can still fall back to original bounds within the selected segmentation job.
-- [ ] Saved add edits update by correction row `id` instead of creating a new add row.
-- [ ] New add requests without `id` create one stable correction row.
-- [ ] Add and adjust writes are rejected when the final effective event set would overlap another event in the same segmentation job and region.
-- [ ] Overlap checks treat event intervals as half-open ranges and tolerate float noise.
-- [ ] Batch validation rejects two proposed corrections that would overlap each other.
-- [ ] Conflict responses include the conflicting event ID, region ID, and bounds.
+- [x] `adjust` and `delete` upsert by `(event_segmentation_job_id, source_event_id)` for modern clients.
+- [x] Older adjust/delete clients can still fall back to original bounds within the selected segmentation job.
+- [x] Saved add edits update by correction row `id` instead of creating a new add row.
+- [x] New add requests without `id` create one stable correction row.
+- [x] Add and adjust writes are rejected when the final effective event set would overlap another event in the same segmentation job and region.
+- [x] Overlap checks treat event intervals as half-open ranges and tolerate float noise.
+- [x] Batch validation rejects two proposed corrections that would overlap each other.
+- [x] Conflict responses include the conflicting event ID, region ID, and bounds.
 
 **Tests needed:**
 - Service tests for modern upsert identity, legacy fallback, saved add updates, and new adds.
@@ -83,12 +83,12 @@
 - Modify: `tests/integration/test_call_parsing_router.py`
 
 **Acceptance criteria:**
-- [ ] Event-boundary correction POST accepts and validates `event_segmentation_job_id`.
-- [ ] Event-boundary correction GET prefers `event_segmentation_job_id` and keeps region job filtering only where compatibility is needed.
-- [ ] Segmentation events endpoint can return raw events by default and effective events when requested.
-- [ ] Classification typed-events endpoint uses the canonical effective-event path for reviewed/added event identity.
-- [ ] Classification typed-events endpoint resolves `region_id` from raw segmentation events first, then effective events, so adjusted-after-classification rows still render.
-- [ ] Typed events never return empty `region_id` when their raw source event ID exists upstream.
+- [x] Event-boundary correction POST accepts and validates `event_segmentation_job_id`.
+- [x] Event-boundary correction GET prefers `event_segmentation_job_id` and keeps region job filtering only where compatibility is needed.
+- [x] Segmentation events endpoint can return raw events by default and effective events when requested.
+- [x] Classification typed-events endpoint uses the canonical effective-event path for reviewed/added event identity.
+- [x] Classification typed-events endpoint resolves `region_id` from raw segmentation events first, then effective events, so adjusted-after-classification rows still render.
+- [x] Typed events never return empty `region_id` when their raw source event ID exists upstream.
 
 **Tests needed:**
 - API tests for raw versus effective segmentation events.
@@ -108,14 +108,14 @@
 - Modify: `frontend/e2e/call-parsing-classify-review.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Segment Review fetches and saves boundary corrections with the selected `event_segmentation_job_id`.
-- [ ] Segment Review sends `source_event_id` for adjust/delete saves.
-- [ ] Segment Review retains saved add correction IDs and sends `id` for later drags or deletes.
-- [ ] Segment Review locally detects obvious overlaps before save where practical.
-- [ ] Backend conflict responses are surfaced without losing the user's current event context.
-- [ ] Classify Review uses the classification job's `event_segmentation_job_id` for boundary correction operations.
-- [ ] Classify Review continues resolving vocalization labels against effective event bounds.
-- [ ] Classify Review renders spectrogram content for adjusted-after-classification events whose `region_id` is resolved from raw source events.
+- [x] Segment Review fetches and saves boundary corrections with the selected `event_segmentation_job_id`.
+- [x] Segment Review sends `source_event_id` for adjust/delete saves.
+- [x] Segment Review retains saved add correction IDs and sends `id` for later drags or deletes.
+- [x] Segment Review locally detects obvious overlaps before save where practical.
+- [x] Backend conflict responses are surfaced without losing the user's current event context.
+- [x] Classify Review uses the classification job's `event_segmentation_job_id` for boundary correction operations.
+- [x] Classify Review continues resolving vocalization labels against effective event bounds.
+- [x] Classify Review renders spectrogram content for adjusted-after-classification events whose `region_id` is resolved from raw source events.
 
 **Tests needed:**
 - E2E regression for a saved add being dragged and reloaded without duplication.
@@ -140,13 +140,13 @@
 - Modify: `tests/sequence_models/test_loaders.py`
 
 **Acceptance criteria:**
-- [ ] Pass 3 classification reads effective events through `load_effective_events()`.
-- [ ] Event classifier feedback uses the same effective event loader for crops and label resolution.
-- [ ] Continuous embedding jobs that depend on Pass 2 events expose `event_source_mode` with `raw` as the default.
-- [ ] `event_source_mode = "raw"` preserves current `events.parquet` behavior.
-- [ ] `event_source_mode = "effective"` reads canonical effective events.
-- [ ] Event-aware continuous embedding encoding signatures include event source mode and an effective-correction revision fingerprint.
-- [ ] Motif extraction follows the parent continuous embedding job's event source mode.
+- [x] Pass 3 classification reads effective events through `load_effective_events()`.
+- [x] Event classifier feedback uses the same effective event loader for crops and label resolution.
+- [x] Continuous embedding jobs that depend on Pass 2 events expose `event_source_mode` with `raw` as the default.
+- [x] `event_source_mode = "raw"` preserves current `events.parquet` behavior.
+- [x] `event_source_mode = "effective"` reads canonical effective events.
+- [x] Event-aware continuous embedding encoding signatures include event source mode and an effective-correction revision fingerprint.
+- [x] Motif extraction follows the parent continuous embedding job's event source mode.
 
 **Tests needed:**
 - Worker tests for Pass 3 effective event consumption.
@@ -164,10 +164,10 @@
 - Modify: `docs/reference/behavioral-constraints.md`
 
 **Acceptance criteria:**
-- [ ] Add an ADR entry superseding ADR-054 for event boundary correction ownership.
-- [ ] Call Parsing API docs define segmentation-scoped correction fields and effective events query behavior.
-- [ ] Sequence Models API docs define `event_source_mode` and correction fingerprint behavior.
-- [ ] Behavioral constraints distinguish raw event artifacts from reviewed effective event sets.
+- [x] Add an ADR entry superseding ADR-054 for event boundary correction ownership.
+- [x] Call Parsing API docs define segmentation-scoped correction fields and effective events query behavior.
+- [x] Sequence Models API docs define `event_source_mode` and correction fingerprint behavior.
+- [x] Behavioral constraints distinguish raw event artifacts from reviewed effective event sets.
 
 **Tests needed:**
 - Documentation review for consistency with implemented request/response fields and job metadata.

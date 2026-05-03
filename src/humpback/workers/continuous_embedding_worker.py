@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.call_parsing.audio_loader import build_region_audio_loader
 from humpback.call_parsing.regions_overlay import load_corrected_regions
+from humpback.call_parsing.segmentation.extraction import load_effective_events
 from humpback.call_parsing.storage import (
     read_events,
     region_job_dir,
@@ -350,6 +351,7 @@ def _build_manifest_payload(
         "job_id": job.id,
         "model_version": job.model_version,
         "source_kind": "surfperch",
+        "event_source_mode": job.event_source_mode,
         "vector_dim": int(vector_dim),
         "window_size_seconds": window_size_seconds,
         "hop_seconds": hop_seconds,
@@ -560,7 +562,14 @@ async def _run_event_padded_surfperch(
                 f"events.parquet not found for {event_segmentation_job_id}"
             )
 
-        events = read_events(events_path)
+        if job.event_source_mode == "effective":
+            events = await load_effective_events(
+                session,
+                event_segmentation_job_id=event_segmentation_job_id,
+                storage_root=settings.storage_root,
+            )
+        else:
+            events = read_events(events_path)
         events_sorted = sorted(events, key=lambda e: e.start_sec)
         envelope = _audio_envelope_from_region_job(region_job)
         timestamp_offset = float(region_job.start_timestamp or 0.0)
@@ -839,6 +848,7 @@ def _build_region_crnn_manifest(
         "job_id": job.id,
         "model_version": job.model_version,
         "source_kind": "region_crnn",
+        "event_source_mode": job.event_source_mode,
         "vector_dim": int(vector_dim),
         "target_sample_rate": int(job.target_sample_rate),
         "region_detection_job_id": job.region_detection_job_id,

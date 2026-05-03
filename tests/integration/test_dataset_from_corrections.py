@@ -126,7 +126,9 @@ async def _seed_job_with_corrections(app_settings, *, with_corrections: bool = T
                 session.add(
                     EventBoundaryCorrection(
                         region_detection_job_id=rd.id,
+                        event_segmentation_job_id=seg_job.id,
                         region_id="r1",
+                        source_event_id="e1",
                         correction_type="adjust",
                         original_start_sec=105.0,
                         original_end_sec=107.0,
@@ -137,6 +139,7 @@ async def _seed_job_with_corrections(app_settings, *, with_corrections: bool = T
                 session.add(
                     EventBoundaryCorrection(
                         region_detection_job_id=rd.id,
+                        event_segmentation_job_id=seg_job.id,
                         region_id="r1",
                         correction_type="add",
                         corrected_start_sec=110.0,

@@ -51,6 +51,10 @@ export function ContinuousEmbeddingDetailPage() {
             <span className="font-medium">Model:</span> {job.model_version}
           </div>
           <div>
+            <span className="font-medium">Event Source:</span>{" "}
+            {job.event_source_mode}
+          </div>
+          <div>
             <span className="font-medium">hop / window / pad (s):</span>{" "}
             {job.hop_seconds} / {job.window_size_seconds} / {job.pad_seconds}
           </div>

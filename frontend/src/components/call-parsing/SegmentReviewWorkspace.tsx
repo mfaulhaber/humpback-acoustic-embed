@@ -63,7 +63,10 @@ export function SegmentReviewWorkspace({
 
   const { data: regions = [] } = useRegionJobRegions(regionDetectionJobId);
   const { data: events = [] } = useSegmentationJobEvents(selectedJobId);
-  const { data: savedCorrections = [] } = useEventBoundaryCorrections(regionDetectionJobId);
+  const { data: savedCorrections = [] } = useEventBoundaryCorrections(
+    regionDetectionJobId,
+    selectedJobId,
+  );
 
   const timelineExtent = useMemo(() => {
     if (regions.length === 0) return undefined;
@@ -121,10 +124,12 @@ export function SegmentReviewWorkspace({
   const effectiveEvents: EffectiveEvent[] = useMemo(() => {
     // Index saved corrections by (region_id, original_start, original_end) for adjust/delete
     const savedByKey = new Map<string, EventBoundaryCorrectionResponse>();
+    const savedByEventId = new Map<string, EventBoundaryCorrectionResponse>();
     for (const c of savedCorrections) {
       if (c.correction_type !== "add") {
         const key = `${c.region_id}:${c.original_start_sec}:${c.original_end_sec}`;
         savedByKey.set(key, c);
+        if (c.source_event_id) savedByEventId.set(c.source_event_id, c);
       }
     }
 
@@ -133,7 +138,7 @@ export function SegmentReviewWorkspace({
     const result: EffectiveEvent[] = events.map((ev) => {
       const pending = pendingCorrections.get(ev.event_id);
       const savedKey = `${ev.region_id}:${ev.start_sec}:${ev.end_sec}`;
-      const saved = savedByKey.get(savedKey);
+      const saved = savedByEventId.get(ev.event_id) ?? savedByKey.get(savedKey);
 
       if (pending) {
         return {
@@ -334,8 +339,12 @@ export function SegmentReviewWorkspace({
         const effectiveEv = effectiveEvents.find((e) => e.eventId === eventId);
         const isAdd = existing?.correction_type === "add" || effectiveEv?.correctionType === "add";
         const regionId = ev?.region_id ?? existing?.region_id ?? selectedRegionId ?? "";
+        const savedAddId = eventId.startsWith("saved-add-")
+          ? eventId.slice("saved-add-".length)
+          : null;
         if (isAdd) {
           next.set(eventId, {
+            id: existing?.id ?? savedAddId,
             region_id: regionId,
             correction_type: "add",
             original_start_sec: null,
@@ -346,6 +355,7 @@ export function SegmentReviewWorkspace({
         } else {
           next.set(eventId, {
             region_id: regionId,
+            source_event_id: ev?.event_id ?? eventId,
             correction_type: "adjust",
             original_start_sec: ev?.start_sec ?? effectiveEv?.originalStartSec ?? startSec,
             original_end_sec: ev?.end_sec ?? effectiveEv?.originalEndSec ?? endSec,
@@ -388,10 +398,21 @@ export function SegmentReviewWorkspace({
           next.delete(eventId);
         } else if (existing?.correction_type === "add") {
           next.delete(eventId);
+        } else if (eventId.startsWith("saved-add-")) {
+          next.set(eventId, {
+            id: eventId.slice("saved-add-".length),
+            region_id: selectedRegionId ?? "",
+            correction_type: "delete",
+            original_start_sec: null,
+            original_end_sec: null,
+            corrected_start_sec: null,
+            corrected_end_sec: null,
+          });
         } else {
           const ev = events.find((e) => e.event_id === eventId);
           next.set(eventId, {
             region_id: ev?.region_id ?? selectedRegionId ?? "",
+            source_event_id: ev?.event_id ?? eventId,
             correction_type: "delete",
             original_start_sec: ev?.start_sec ?? null,
             original_end_sec: ev?.end_sec ?? null,
@@ -413,9 +434,29 @@ export function SegmentReviewWorkspace({
 
   const handleSave = useCallback(() => {
     if (!regionDetectionJobId || pendingCorrections.size === 0) return;
+    const activeEvents = effectiveEvents
+      .filter((event) => event.correctionType !== "delete")
+      .sort((a, b) =>
+        a.regionId === b.regionId
+          ? a.startSec - b.startSec || a.endSec - b.endSec
+          : a.regionId.localeCompare(b.regionId),
+      );
+    for (let i = 1; i < activeEvents.length; i += 1) {
+      const prev = activeEvents[i - 1];
+      const current = activeEvents[i];
+      if (prev.regionId === current.regionId && prev.endSec > current.startSec) {
+        toast({
+          title: "Overlapping events",
+          description: "Adjust the event boundaries before saving.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     const corrections = Array.from(pendingCorrections.values());
+    if (!selectedJobId) return;
     saveMutation.mutate(
-      { regionDetectionJobId, corrections },
+      { regionDetectionJobId, eventSegmentationJobId: selectedJobId, corrections },
       {
         onSuccess: () => {
           setPendingCorrections(new Map());
@@ -423,7 +464,13 @@ export function SegmentReviewWorkspace({
         },
       },
     );
-  }, [regionDetectionJobId, pendingCorrections, saveMutation]);
+  }, [
+    effectiveEvents,
+    regionDetectionJobId,
+    selectedJobId,
+    pendingCorrections,
+    saveMutation,
+  ]);
 
   const handleCancel = useCallback(() => {
     setPendingCorrections(new Map());

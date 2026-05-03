@@ -837,23 +837,35 @@ export const deleteSegmentationJob = (jobId: string) =>
     method: "DELETE",
   });
 
-export const fetchSegmentationJobEvents = (jobId: string) =>
-  api<SegmentationEvent[]>(`/call-parsing/segmentation-jobs/${jobId}/events`);
+export const fetchSegmentationJobEvents = (jobId: string, effective = false) =>
+  api<SegmentationEvent[]>(
+    `/call-parsing/segmentation-jobs/${jobId}/events${effective ? "?effective=true" : ""}`,
+  );
 
 // ---- Call Parsing (Event Boundary Corrections) ----
 
-export const fetchEventBoundaryCorrections = (regionDetectionJobId: string) =>
+export const fetchEventBoundaryCorrections = (
+  regionDetectionJobId: string,
+  eventSegmentationJobId?: string | null,
+) =>
   api<EventBoundaryCorrectionResponse[]>(
-    `/call-parsing/event-boundary-corrections?region_detection_job_id=${regionDetectionJobId}`,
+    eventSegmentationJobId
+      ? `/call-parsing/event-boundary-corrections?event_segmentation_job_id=${eventSegmentationJobId}`
+      : `/call-parsing/event-boundary-corrections?region_detection_job_id=${regionDetectionJobId}`,
   );
 
 export const upsertEventBoundaryCorrections = (
   regionDetectionJobId: string,
+  eventSegmentationJobId: string | null | undefined,
   corrections: EventBoundaryCorrectionItem[],
 ) =>
   post<EventBoundaryCorrectionResponse[]>(
     `/call-parsing/event-boundary-corrections`,
-    { region_detection_job_id: regionDetectionJobId, corrections },
+    {
+      region_detection_job_id: regionDetectionJobId,
+      event_segmentation_job_id: eventSegmentationJobId,
+      corrections,
+    },
   );
 
 export const clearEventBoundaryCorrections = (regionDetectionJobId: string) =>

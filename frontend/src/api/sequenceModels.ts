@@ -7,6 +7,7 @@ export interface ContinuousEmbeddingJob {
   id: string;
   status: string;
   event_segmentation_job_id: string | null;
+  event_source_mode: "raw" | "effective";
   model_version: string;
   window_size_seconds: number | null;
   hop_seconds: number | null;
@@ -54,6 +55,7 @@ export interface ContinuousEmbeddingJobManifest {
   job_id: string;
   model_version: string;
   source_kind: ContinuousEmbeddingSourceKind;
+  event_source_mode?: "raw" | "effective";
   vector_dim: number;
   target_sample_rate: number;
   // SurfPerch-only counters
@@ -84,6 +86,7 @@ export interface ContinuousEmbeddingJobDetail {
 
 export interface CreateContinuousEmbeddingJobRequest {
   event_segmentation_job_id?: string;
+  event_source_mode?: "raw" | "effective";
   model_version?: string;
   hop_seconds?: number;
   pad_seconds?: number;

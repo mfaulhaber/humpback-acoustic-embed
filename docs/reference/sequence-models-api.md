@@ -27,6 +27,9 @@ The producer ships in two source families discriminated on
 
   **SurfPerch source** accepts:
   - `event_segmentation_job_id` (required) — completed Pass 2 job FK
+  - `event_source_mode` (default `"raw"`) — `"raw"` reads immutable
+    `events.parquet`; `"effective"` reads canonical reviewed events via
+    `load_effective_events()`
   - `model_version` (default `"surfperch-tensorflow2"`)
   - `hop_seconds` (default `1.0`, must be > 0)
   - `pad_seconds` (default `2.0`, must be >= 0)
@@ -48,6 +51,9 @@ The producer ships in two source families discriminated on
   is the CRNN source; the disambiguator and CRNN-only fields are
   required, and conversely the CRNN-only fields must be absent on
   SurfPerch requests.
+
+  `event_source_mode="effective"` is rejected for the CRNN region-based
+  source because that producer is region-scoped rather than event-padded.
 
   Returns `ContinuousEmbeddingJob`. Status `201` when a new row is
   created; `200` when an existing complete or in-flight (`queued` /
@@ -77,7 +83,7 @@ The producer ships in two source families discriminated on
 ### Schemas
 
 `ContinuousEmbeddingJob` exposes the producer DB row: status,
-`model_version`, source-kind-specific parameters (SurfPerch:
+`model_version`, `event_source_mode`, source-kind-specific parameters (SurfPerch:
 `event_segmentation_job_id`, `hop_seconds`, `pad_seconds`,
 `window_size_seconds`; CRNN: `region_detection_job_id`,
 `event_segmentation_job_id`, `chunk_size_seconds`, `chunk_hop_seconds`,
@@ -88,6 +94,13 @@ stats (SurfPerch: `vector_dim`, `total_events`, `merged_spans`,
 `total_windows`; CRNN: `total_regions`, `total_chunks`, `vector_dim`),
 `parquet_path`, `error_message`, and UTC timestamps. SurfPerch-only
 columns are null on CRNN rows and vice versa.
+
+SurfPerch idempotency includes `event_source_mode`. Effective-mode
+signatures also include a correction revision fingerprint computed from
+correction row IDs and `updated_at` values for the selected segmentation
+job, so changing reviewed event boundaries produces a distinct continuous
+embedding job while raw mode preserves the existing `events.parquet`
+signature behavior.
 
 `ContinuousEmbeddingJobManifest` matches the `manifest.json` sidecar
 written next to `embeddings.parquet`. SurfPerch-source manifests

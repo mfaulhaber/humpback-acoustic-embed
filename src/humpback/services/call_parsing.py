@@ -10,17 +10,21 @@ deletion across the four child tables.
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    from humpback.call_parsing.types import Event
     from humpback.models.segmentation_training import SegmentationTrainingDataset
     from humpback.schemas.call_parsing import SegmentationTrainingConfig
 
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.segmentation.extraction import build_effective_events
 from humpback.call_parsing.storage import (
     classification_job_dir,
+    read_events,
     region_job_dir,
     segmentation_job_dir,
     window_classification_job_dir,
@@ -596,6 +600,14 @@ class CallParsingValidationError(Exception):
         super().__init__(detail)
 
 
+class CallParsingCorrectionConflict(Exception):
+    """Raised when an event boundary correction would overlap another event."""
+
+    def __init__(self, detail: dict) -> None:
+        self.detail = detail
+        super().__init__(str(detail))
+
+
 async def create_segmentation_job(session, request):
     """Create a queued Pass 2 event segmentation job.
 
@@ -831,17 +843,12 @@ async def clear_region_corrections(
 async def upsert_event_boundary_corrections(
     session: AsyncSession,
     region_detection_job_id: str,
+    event_segmentation_job_id: Optional[str],
     corrections: list,
+    *,
+    storage_root: Optional[Path] = None,
 ) -> list:
-    """Batch upsert event boundary corrections for a region detection job.
-
-    Validates the detection job exists and is complete. Upserts by
-    ``(region_detection_job_id, region_id, original_start_sec, original_end_sec)``
-    for adjust/delete, or
-    ``(region_detection_job_id, region_id, corrected_start_sec, corrected_end_sec)``
-    for add.
-    Returns the full list of corrections for the detection job after upsert.
-    """
+    """Batch upsert event boundary corrections for a segmentation job."""
     from humpback.models.call_parsing import EventBoundaryCorrection
 
     rd = await session.get(RegionDetectionJob, region_detection_job_id)
@@ -852,10 +859,47 @@ async def upsert_event_boundary_corrections(
             f"Region detection job status is {rd.status!r}, not 'complete'"
         )
 
+    if event_segmentation_job_id is not None:
+        seg = await session.get(EventSegmentationJob, event_segmentation_job_id)
+        if seg is None:
+            raise CallParsingFKError(
+                "event_segmentation_job_id", event_segmentation_job_id
+            )
+        if seg.region_detection_job_id != region_detection_job_id:
+            raise CallParsingValidationError(
+                "event_segmentation_job_id does not belong to region_detection_job_id"
+            )
+        if seg.status != "complete":
+            raise CallParsingStateError(
+                f"Event segmentation job status is {seg.status!r}, not 'complete'"
+            )
+
     for c in corrections:
-        if c.correction_type in ("adjust", "delete"):
+        correction_id = getattr(c, "id", None)
+        source_event_id = getattr(c, "source_event_id", None)
+        existing = None
+
+        if correction_id:
             existing = await session.execute(
                 select(EventBoundaryCorrection).where(
+                    EventBoundaryCorrection.id == correction_id,
+                    EventBoundaryCorrection.region_detection_job_id
+                    == region_detection_job_id,
+                )
+            )
+        elif c.correction_type in ("adjust", "delete") and source_event_id:
+            existing = await session.execute(
+                select(EventBoundaryCorrection).where(
+                    EventBoundaryCorrection.event_segmentation_job_id
+                    == event_segmentation_job_id,
+                    EventBoundaryCorrection.source_event_id == source_event_id,
+                )
+            )
+        elif c.correction_type in ("adjust", "delete"):
+            existing = await session.execute(
+                select(EventBoundaryCorrection).where(
+                    EventBoundaryCorrection.event_segmentation_job_id
+                    == event_segmentation_job_id,
                     EventBoundaryCorrection.region_detection_job_id
                     == region_detection_job_id,
                     EventBoundaryCorrection.region_id == c.region_id,
@@ -866,17 +910,29 @@ async def upsert_event_boundary_corrections(
         else:
             existing = await session.execute(
                 select(EventBoundaryCorrection).where(
-                    EventBoundaryCorrection.region_detection_job_id
-                    == region_detection_job_id,
+                    EventBoundaryCorrection.event_segmentation_job_id
+                    == event_segmentation_job_id,
                     EventBoundaryCorrection.region_id == c.region_id,
                     EventBoundaryCorrection.corrected_start_sec
                     == c.corrected_start_sec,
                     EventBoundaryCorrection.corrected_end_sec == c.corrected_end_sec,
                 )
             )
-        row = existing.scalar_one_or_none()
+
+        row = existing.scalars().first() if existing is not None else None
+        if (
+            row is not None
+            and c.correction_type == "delete"
+            and row.correction_type == "add"
+            and correction_id
+        ):
+            await session.delete(row)
+            continue
         if row is not None:
+            row.event_segmentation_job_id = event_segmentation_job_id
+            row.source_event_id = source_event_id
             row.correction_type = c.correction_type
+            row.region_id = c.region_id
             row.original_start_sec = c.original_start_sec
             row.original_end_sec = c.original_end_sec
             row.corrected_start_sec = c.corrected_start_sec
@@ -885,7 +941,9 @@ async def upsert_event_boundary_corrections(
             session.add(
                 EventBoundaryCorrection(
                     region_detection_job_id=region_detection_job_id,
+                    event_segmentation_job_id=event_segmentation_job_id,
                     region_id=c.region_id,
+                    source_event_id=source_event_id,
                     correction_type=c.correction_type,
                     original_start_sec=c.original_start_sec,
                     original_end_sec=c.original_end_sec,
@@ -894,39 +952,140 @@ async def upsert_event_boundary_corrections(
                 )
             )
 
-    await session.commit()
-    return await list_event_boundary_corrections(session, region_detection_job_id)
+    try:
+        await session.flush()
+        if event_segmentation_job_id is not None and storage_root is not None:
+            await _validate_no_overlapping_effective_events(
+                session,
+                event_segmentation_job_id=event_segmentation_job_id,
+                storage_root=storage_root,
+            )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    return await list_event_boundary_corrections(
+        session,
+        region_detection_job_id=region_detection_job_id,
+        event_segmentation_job_id=event_segmentation_job_id,
+    )
+
+
+async def _validate_no_overlapping_effective_events(
+    session: AsyncSession,
+    *,
+    event_segmentation_job_id: str,
+    storage_root: Path,
+) -> None:
+    from humpback.models.call_parsing import EventBoundaryCorrection
+
+    events_path = (
+        segmentation_job_dir(storage_root, event_segmentation_job_id) / "events.parquet"
+    )
+    if not events_path.exists():
+        raise CallParsingStateError(
+            f"events.parquet not found for segmentation job {event_segmentation_job_id}"
+        )
+
+    original_events = read_events(events_path)
+    corr_result = await session.execute(
+        select(EventBoundaryCorrection)
+        .where(
+            EventBoundaryCorrection.event_segmentation_job_id
+            == event_segmentation_job_id
+        )
+        .order_by(EventBoundaryCorrection.created_at, EventBoundaryCorrection.id)
+    )
+    corrections = list(corr_result.scalars().all())
+    effective_events = build_effective_events(original_events, corrections)
+    _raise_for_overlapping_events(effective_events)
+
+
+def _raise_for_overlapping_events(events: list["Event"]) -> None:
+    epsilon = 1e-6
+    events_by_region: dict[str, list["Event"]] = {}
+    for event in events:
+        if event.end_sec <= event.start_sec + epsilon:
+            raise CallParsingCorrectionConflict(
+                {
+                    "message": "Event boundary correction creates a non-positive event duration",
+                    "event_id": event.event_id,
+                    "region_id": event.region_id,
+                    "start_sec": event.start_sec,
+                    "end_sec": event.end_sec,
+                }
+            )
+        events_by_region.setdefault(event.region_id, []).append(event)
+
+    for region_id, region_events in events_by_region.items():
+        ordered = sorted(region_events, key=lambda e: (e.start_sec, e.end_sec))
+        for previous, current in zip(ordered, ordered[1:]):
+            if previous.end_sec - current.start_sec > epsilon:
+                raise CallParsingCorrectionConflict(
+                    {
+                        "message": "Event boundary correction creates overlapping events",
+                        "region_id": region_id,
+                        "event_id": previous.event_id,
+                        "start_sec": previous.start_sec,
+                        "end_sec": previous.end_sec,
+                        "conflicting_event_id": current.event_id,
+                        "conflicting_start_sec": current.start_sec,
+                        "conflicting_end_sec": current.end_sec,
+                    }
+                )
 
 
 async def list_event_boundary_corrections(
     session: AsyncSession,
-    region_detection_job_id: str,
+    region_detection_job_id: Optional[str] = None,
+    event_segmentation_job_id: Optional[str] = None,
 ) -> list:
-    """List all event boundary corrections for a region detection job."""
+    """List event boundary corrections by segmentation or region job."""
     from humpback.models.call_parsing import EventBoundaryCorrection
 
-    result = await session.execute(
-        select(EventBoundaryCorrection)
-        .where(
+    stmt = select(EventBoundaryCorrection)
+    if event_segmentation_job_id is not None:
+        stmt = stmt.where(
+            EventBoundaryCorrection.event_segmentation_job_id
+            == event_segmentation_job_id
+        )
+    elif region_detection_job_id is not None:
+        stmt = stmt.where(
             EventBoundaryCorrection.region_detection_job_id == region_detection_job_id
         )
-        .order_by(EventBoundaryCorrection.created_at)
-    )
+    else:
+        raise CallParsingValidationError(
+            "event_segmentation_job_id or region_detection_job_id is required"
+        )
+
+    result = await session.execute(stmt.order_by(EventBoundaryCorrection.created_at))
     return list(result.scalars().all())
 
 
 async def clear_event_boundary_corrections(
     session: AsyncSession,
-    region_detection_job_id: str,
+    region_detection_job_id: Optional[str] = None,
+    event_segmentation_job_id: Optional[str] = None,
 ) -> None:
-    """Delete all event boundary corrections for a region detection job."""
+    """Delete event boundary corrections for a region or segmentation job."""
     from humpback.models.call_parsing import EventBoundaryCorrection
 
-    await session.execute(
-        sa_delete(EventBoundaryCorrection).where(
+    stmt = sa_delete(EventBoundaryCorrection)
+    if event_segmentation_job_id is not None:
+        stmt = stmt.where(
+            EventBoundaryCorrection.event_segmentation_job_id
+            == event_segmentation_job_id
+        )
+    elif region_detection_job_id is not None:
+        stmt = stmt.where(
             EventBoundaryCorrection.region_detection_job_id == region_detection_job_id
         )
-    )
+    else:
+        raise CallParsingValidationError(
+            "event_segmentation_job_id or region_detection_job_id is required"
+        )
+
+    await session.execute(stmt)
     await session.commit()
 
 

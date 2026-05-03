@@ -22,9 +22,10 @@ import {
 } from "@/api/sequenceModels";
 
 function sourceLabel(job: ContinuousEmbeddingJob): string {
-  return continuousEmbeddingSourceKind(job) === "region_crnn"
-    ? "CRNN"
-    : "SurfPerch";
+  if (continuousEmbeddingSourceKind(job) === "region_crnn") return "CRNN";
+  return job.event_source_mode === "effective"
+    ? "SurfPerch effective"
+    : "SurfPerch raw";
 }
 
 function upstreamShortId(job: ContinuousEmbeddingJob): string {

@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
 from humpback.models.call_parsing import (
+    EventBoundaryCorrection,
     EventSegmentationJob,
     RegionDetectionJob,
     SegmentationModel,
@@ -93,6 +94,8 @@ def _serialize_feature_config(feature_config: Any) -> Optional[str]:
 def compute_continuous_embedding_signature(
     *,
     event_segmentation_job_id: str,
+    event_source_mode: str,
+    correction_revision: Optional[str],
     model_version: str,
     hop_seconds: float,
     window_size_seconds: float,
@@ -103,6 +106,8 @@ def compute_continuous_embedding_signature(
     """SHA-256 idempotency key for the SurfPerch event-padded source."""
     payload = {
         "event_segmentation_job_id": event_segmentation_job_id,
+        "event_source_mode": event_source_mode,
+        "correction_revision": correction_revision,
         "model_version": model_version,
         "hop_seconds": hop_seconds,
         "window_size_seconds": window_size_seconds,
@@ -111,6 +116,32 @@ def compute_continuous_embedding_signature(
         "feature_config": feature_config,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def compute_effective_event_correction_revision(
+    session: AsyncSession, event_segmentation_job_id: str
+) -> str:
+    """Hash correction row identity for an effective event source."""
+    result = await session.execute(
+        select(
+            EventBoundaryCorrection.id,
+            EventBoundaryCorrection.updated_at,
+        )
+        .where(
+            EventBoundaryCorrection.event_segmentation_job_id
+            == event_segmentation_job_id
+        )
+        .order_by(EventBoundaryCorrection.id)
+    )
+    rows = [
+        {
+            "id": row.id,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+        for row in result
+    ]
+    canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -174,6 +205,8 @@ async def _create_surfperch_job(
         raise ValueError(
             "region_detection_job_id must not be set for the SurfPerch source"
         )
+    if payload.event_source_mode not in ("raw", "effective"):
+        raise ValueError("event_source_mode must be 'raw' or 'effective'")
     if payload.hop_seconds <= 0:
         raise ValueError("hop_seconds must be > 0")
     if payload.pad_seconds < 0:
@@ -194,8 +227,16 @@ async def _create_surfperch_job(
     feature_config = model_constants["feature_config"]
     feature_config_json = _serialize_feature_config(feature_config)
 
+    correction_revision = None
+    if payload.event_source_mode == "effective":
+        correction_revision = await compute_effective_event_correction_revision(
+            session, payload.event_segmentation_job_id
+        )
+
     signature = compute_continuous_embedding_signature(
         event_segmentation_job_id=payload.event_segmentation_job_id,
+        event_source_mode=payload.event_source_mode,
+        correction_revision=correction_revision,
         model_version=payload.model_version,
         hop_seconds=payload.hop_seconds,
         window_size_seconds=window_size_seconds,
@@ -210,6 +251,7 @@ async def _create_surfperch_job(
 
     job = ContinuousEmbeddingJob(
         event_segmentation_job_id=payload.event_segmentation_job_id,
+        event_source_mode=payload.event_source_mode,
         model_version=payload.model_version,
         window_size_seconds=window_size_seconds,
         hop_seconds=payload.hop_seconds,
@@ -230,6 +272,8 @@ async def _create_region_crnn_job(
         raise ValueError(
             "region_detection_job_id is required for the CRNN region source"
         )
+    if payload.event_source_mode != "raw":
+        raise ValueError("event_source_mode='effective' is only supported by SurfPerch")
     if payload.event_segmentation_job_id is None:
         raise ValueError(
             "event_segmentation_job_id is required as a Pass-2 disambiguator "
@@ -305,6 +349,7 @@ async def _create_region_crnn_job(
 
     job = ContinuousEmbeddingJob(
         event_segmentation_job_id=payload.event_segmentation_job_id,
+        event_source_mode=payload.event_source_mode,
         region_detection_job_id=payload.region_detection_job_id,
         crnn_segmentation_model_id=payload.crnn_segmentation_model_id,
         crnn_checkpoint_sha256=crnn_sha,

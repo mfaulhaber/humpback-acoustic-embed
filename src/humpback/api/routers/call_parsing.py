@@ -17,8 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 
 from humpback.api.deps import SessionDep, SettingsDep
-from humpback.call_parsing.segmentation.extraction import load_corrected_events
-from humpback.models.call_parsing import EventSegmentationJob
+from humpback.call_parsing.segmentation.extraction import load_effective_events
 from humpback.call_parsing.storage import (
     classification_job_dir,
     read_events,
@@ -622,7 +621,10 @@ async def delete_segmentation_job(
 
 @router.get("/segmentation-jobs/{job_id}/events")
 async def get_segmentation_events(
-    job_id: str, session: SessionDep, settings: SettingsDep
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    effective: bool = Query(False),
 ):
     job = await service.get_event_segmentation_job(session, job_id)
     if job is None:
@@ -632,10 +634,22 @@ async def get_segmentation_events(
             status_code=409,
             detail=(f"Event segmentation job status is {job.status!r}, not 'complete'"),
         )
-    events_path = segmentation_job_dir(settings.storage_root, job_id) / "events.parquet"
-    if not events_path.exists():
-        raise HTTPException(status_code=404, detail="events.parquet not found")
-    events = read_events(events_path)
+    if effective:
+        try:
+            events = await load_effective_events(
+                session,
+                event_segmentation_job_id=job_id,
+                storage_root=settings.storage_root,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    else:
+        events_path = (
+            segmentation_job_dir(settings.storage_root, job_id) / "events.parquet"
+        )
+        if not events_path.exists():
+            raise HTTPException(status_code=404, detail="events.parquet not found")
+        events = read_events(events_path)
     return [
         {
             "event_id": e.event_id,
@@ -864,31 +878,38 @@ async def get_classification_typed_events(
         raise HTTPException(status_code=404, detail="typed_events.parquet not found")
     typed_events = read_typed_events(typed_path)
 
-    # Build event_id → region_id lookup from the upstream segmentation job's
-    # corrected event list so the frontend can group events by region. Using
-    # load_corrected_events (rather than reading events.parquet directly)
-    # ensures user-added events from event_boundary_corrections get their
-    # synthesized region_id, matching the read-time correction overlay used
-    # by downstream consumers (ADR-054).
-    event_region_map: dict[str, str] = {}
+    # Raw identity is checked first so older typed_events.parquet rows
+    # remain renderable after later boundary adjustments. Effective events
+    # are checked second for reviewed/added event IDs.
     try:
-        seg_job = await session.get(EventSegmentationJob, job.event_segmentation_job_id)
-        rd_job_id = seg_job.region_detection_job_id if seg_job else ""
-        corrected_events = await load_corrected_events(
-            session, rd_job_id, job.event_segmentation_job_id, settings.storage_root
+        raw_events_path = (
+            segmentation_job_dir(settings.storage_root, job.event_segmentation_job_id)
+            / "events.parquet"
+        )
+        raw_events = read_events(raw_events_path) if raw_events_path.exists() else []
+        effective_events = await load_effective_events(
+            session,
+            event_segmentation_job_id=job.event_segmentation_job_id,
+            storage_root=settings.storage_root,
         )
     except ValueError:
-        corrected_events = []
-    event_region_map = {e.event_id: e.region_id for e in corrected_events}
-    bounds_region_map = {
-        (e.start_sec, e.end_sec): e.region_id for e in corrected_events
+        raw_events = []
+        effective_events = []
+    raw_event_region_map = {e.event_id: e.region_id for e in raw_events}
+    effective_event_region_map = {e.event_id: e.region_id for e in effective_events}
+    raw_bounds_region_map = {(e.start_sec, e.end_sec): e.region_id for e in raw_events}
+    effective_bounds_region_map = {
+        (e.start_sec, e.end_sec): e.region_id for e in effective_events
     }
 
     def _region_for(te) -> str:  # type: ignore[no-untyped-def]
-        r = event_region_map.get(te.event_id)
-        if r:
-            return r
-        return bounds_region_map.get((te.start_sec, te.end_sec), "")
+        return (
+            raw_event_region_map.get(te.event_id)
+            or effective_event_region_map.get(te.event_id)
+            or raw_bounds_region_map.get((te.start_sec, te.end_sec))
+            or effective_bounds_region_map.get((te.start_sec, te.end_sec))
+            or ""
+        )
 
     return sorted(
         [
@@ -915,15 +936,23 @@ async def get_classification_typed_events(
     response_model=list[EventBoundaryCorrectionResponse],
 )
 async def upsert_event_boundary_corrections(
-    body: EventBoundaryCorrectionRequest, session: SessionDep
+    body: EventBoundaryCorrectionRequest, session: SessionDep, settings: SettingsDep
 ):
     try:
         rows = await service.upsert_event_boundary_corrections(
-            session, body.region_detection_job_id, body.corrections
+            session,
+            body.region_detection_job_id,
+            body.event_segmentation_job_id,
+            body.corrections,
+            storage_root=settings.storage_root,
         )
     except service.CallParsingFKError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    except service.CallParsingValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+    except service.CallParsingCorrectionConflict as exc:
         raise HTTPException(status_code=409, detail=exc.detail) from exc
     return [EventBoundaryCorrectionResponse.model_validate(r) for r in rows]
 
@@ -934,20 +963,34 @@ async def upsert_event_boundary_corrections(
 )
 async def list_event_boundary_corrections(
     session: SessionDep,
-    region_detection_job_id: str = Query(...),
+    region_detection_job_id: str | None = Query(None),
+    event_segmentation_job_id: str | None = Query(None),
 ):
-    rows = await service.list_event_boundary_corrections(
-        session, region_detection_job_id
-    )
+    try:
+        rows = await service.list_event_boundary_corrections(
+            session,
+            region_detection_job_id=region_detection_job_id,
+            event_segmentation_job_id=event_segmentation_job_id,
+        )
+    except service.CallParsingValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
     return [EventBoundaryCorrectionResponse.model_validate(r) for r in rows]
 
 
 @router.delete("/event-boundary-corrections", status_code=204)
 async def clear_event_boundary_corrections(
     session: SessionDep,
-    region_detection_job_id: str = Query(...),
+    region_detection_job_id: str | None = Query(None),
+    event_segmentation_job_id: str | None = Query(None),
 ):
-    await service.clear_event_boundary_corrections(session, region_detection_job_id)
+    try:
+        await service.clear_event_boundary_corrections(
+            session,
+            region_detection_job_id=region_detection_job_id,
+            event_segmentation_job_id=event_segmentation_job_id,
+        )
+    except service.CallParsingValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
     return None
 
 

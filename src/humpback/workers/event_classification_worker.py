@@ -27,7 +27,7 @@ from humpback.call_parsing.event_classifier.inference import (
     load_event_classifier,
 )
 from humpback.call_parsing.event_classifier.model import EventClassifierCNN
-from humpback.call_parsing.segmentation.extraction import load_corrected_events
+from humpback.call_parsing.segmentation.extraction import load_effective_events
 from humpback.call_parsing.storage import (
     classification_job_dir,
     write_typed_events,
@@ -204,8 +204,10 @@ async def run_event_classification_job(
         if upstream_region is None:
             raise ValueError(f"RegionDetectionJob {upstream_region_id} not found")
 
-        events = await load_corrected_events(
-            session, upstream_region_id, upstream_seg_id, settings.storage_root
+        events = await load_effective_events(
+            session,
+            event_segmentation_job_id=upstream_seg_id,
+            storage_root=settings.storage_root,
         )
 
         audio_file_id = upstream_region.audio_file_id
