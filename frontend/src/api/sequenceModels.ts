@@ -840,7 +840,18 @@ export function useMotifsByLength(
   });
 
   const isLoading = queries.some((q) => q.isLoading || q.isFetching);
-  const occurrences = mergeOccurrencesByStart(queries.map((q) => q.data?.items));
+
+  // Memo key derived from per-query ``dataUpdatedAt`` (a stable timestamp
+  // React Query bumps only when the underlying data changes). This keeps
+  // the merged array's reference stable between renders so downstream
+  // consumers (e.g. ``visibleByLengthOccurrences`` in TimelineBody) don't
+  // recompute on every render.
+  const dataKey = queries.map((q) => q.dataUpdatedAt).join("|");
+  const occurrences = useMemo(
+    () => mergeOccurrencesByStart(queries.map((q) => q.data?.items)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dataKey],
+  );
 
   return { motifs: motifsOfLength, occurrences, isLoading };
 }
