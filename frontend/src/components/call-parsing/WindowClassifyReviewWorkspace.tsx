@@ -12,7 +12,7 @@ import {
 } from "@/hooks/queries/useCallParsing";
 import { useVocClassifierModel } from "@/hooks/queries/useVocalization";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
-import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
+import { regionTileUrl } from "@/api/client";
 import type {
   Region,
   WindowClassificationJob,
@@ -36,7 +36,6 @@ import {
   MousePointerClick,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
-import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
@@ -51,6 +50,8 @@ import {
   APPROVED_RING_COLOR,
   CORRECTED_RING_COLOR,
 } from "@/components/timeline/overlays/EventBarOverlay";
+import { RegionAudioTimeline } from "./RegionAudioTimeline";
+import { useRegionEpoch, type RegionEpoch } from "./useRegionEpoch";
 
 const WINDOW_SIZE_SEC = 5.0;
 const HOP_SEC = 1.0;
@@ -116,6 +117,7 @@ export function WindowClassifyReviewWorkspace({
     completeJobs.find((j) => j.id === selectedJobId) ?? null;
 
   const regionDetectionJobId = selectedJob?.region_detection_job_id ?? null;
+  const regionEpoch = useRegionEpoch(regionDetectionJobId);
   const { data: regions = [] } = useRegionJobRegions(regionDetectionJobId);
   const { data: allScoreRows = [] } = useWindowScores(
     selectedJobId ?? undefined,
@@ -499,14 +501,20 @@ export function WindowClassifyReviewWorkspace({
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
       playbackRef.current?.pause();
-    } else if (selectedEvent) {
+    } else if (selectedEvent && regionEpoch) {
       const duration = selectedEvent.end_sec - selectedEvent.start_sec;
-      playbackRef.current?.play(selectedEvent.start_sec, duration);
-    } else if (selectedAddedEvent) {
+      playbackRef.current?.play(
+        regionEpoch.toEpoch(selectedEvent.start_sec),
+        duration,
+      );
+    } else if (selectedAddedEvent && regionEpoch) {
       const duration = selectedAddedEvent.endSec - selectedAddedEvent.startSec;
-      playbackRef.current?.play(selectedAddedEvent.startSec, duration);
+      playbackRef.current?.play(
+        regionEpoch.toEpoch(selectedAddedEvent.startSec),
+        duration,
+      );
     }
-  }, [isPlaying, selectedEvent, selectedAddedEvent]);
+  }, [isPlaying, selectedEvent, selectedAddedEvent, regionEpoch]);
 
   // Badge click: toggle add/remove correction for event
   const handleBadgeClick = useCallback(
@@ -1063,22 +1071,14 @@ export function WindowClassifyReviewWorkspace({
           </div>
 
           {/* Spectrogram + strip */}
-          {currentRegion && regionDetectionJobId ? (
-            <TimelineProvider
+          {currentRegion && regionDetectionJobId && regionEpoch ? (
+            <RegionAudioTimeline
               ref={playbackRef}
-              key={selectedJobId}
-              jobStart={0}
-              jobEnd={timelineEnd}
+              regionDetectionJobId={regionDetectionJobId}
+              regionEpoch={regionEpoch}
+              resetKey={selectedJobId ?? undefined}
               zoomLevels={REVIEW_ZOOM}
               defaultZoom={userZoom}
-              playback="slice"
-              audioUrlBuilder={(startEpoch, durationSec) =>
-                regionAudioSliceUrl(
-                  regionDetectionJobId,
-                  startEpoch,
-                  durationSec,
-                )
-              }
               disableKeyboardShortcuts
               scrollOnPlayback={false}
               onZoomChange={setUserZoom}
@@ -1103,8 +1103,13 @@ export function WindowClassifyReviewWorkspace({
                 onAdjust={handleBoundaryAdjust}
                 onAdd={handleBoundaryAdd}
                 addMode={addMode}
+                regionEpoch={regionEpoch}
               />
-            </TimelineProvider>
+            </RegionAudioTimeline>
+          ) : currentRegion && regionDetectionJobId ? (
+            <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
+              Loading region…
+            </div>
           ) : (
             <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
               No regions to display
@@ -1119,7 +1124,7 @@ export function WindowClassifyReviewWorkspace({
             onBadgeClick={handleBadgeClick}
             onAddType={handleAddType}
             vocabulary={vocabulary}
-            jobStartEpoch={0}
+            jobStartEpoch={regionEpoch?.regionStartTimestamp ?? 0}
             boundaryCorrection={
               selectedEventId
                 ? regionEffectiveEvents.find((e) => e.eventId === selectedEventId) ?? null
@@ -1153,6 +1158,7 @@ interface WindowClassifyViewerBodyProps {
   onAdjust: (eventId: string, startSec: number, endSec: number) => void;
   onAdd: (regionId: string, startSec: number, endSec: number) => void;
   addMode: boolean;
+  regionEpoch: RegionEpoch;
 }
 
 function WindowClassifyViewerBody({
@@ -1169,8 +1175,10 @@ function WindowClassifyViewerBody({
   onAdjust,
   onAdd,
   addMode,
+  regionEpoch,
 }: WindowClassifyViewerBodyProps) {
   const ctx = useTimelineContext();
+  const regionStart = regionEpoch.regionStartTimestamp;
 
   // Re-center when region changes
   const prevRegionRef = useRef<string>(region.region_id);
@@ -1179,9 +1187,17 @@ function WindowClassifyViewerBody({
       prevRegionRef.current = region.region_id;
       const dur = region.padded_end_sec - region.padded_start_sec;
       const span = ctx.activePreset.span;
-      ctx.seekTo(region.padded_start_sec + Math.min(dur, span) / 2);
+      ctx.seekTo(
+        regionStart + region.padded_start_sec + Math.min(dur, span) / 2,
+      );
     }
-  }, [region.region_id, region.padded_start_sec, region.padded_end_sec, ctx]);
+  }, [
+    region.region_id,
+    region.padded_start_sec,
+    region.padded_end_sec,
+    ctx,
+    regionStart,
+  ]);
 
   // Center on selected event (works for both original and added events)
   const selectedEffective = useMemo(
@@ -1190,10 +1206,12 @@ function WindowClassifyViewerBody({
   );
   useEffect(() => {
     if (selectedEffective) {
-      const evtCenter = (selectedEffective.startSec + selectedEffective.endSec) / 2;
+      const evtCenter =
+        regionStart +
+        (selectedEffective.startSec + selectedEffective.endSec) / 2;
       ctx.seekTo(evtCenter);
     }
-  }, [selectedEffective?.startSec, selectedEffective?.endSec]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedEffective?.startSec, selectedEffective?.endSec, regionStart]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Zoom/pan keyboard shortcuts (provider shortcuts disabled)
   const {
@@ -1235,6 +1253,44 @@ function WindowClassifyViewerBody({
     [regionDetectionJobId],
   );
 
+  // Translate region/event coordinates to absolute epoch before passing
+  // them to overlays (which operate in the timeline provider's epoch
+  // coordinate space). Convert overlay callbacks back to relative.
+  const allRegionsEpoch = useMemo<Region[]>(
+    () =>
+      allRegions.map((r) => ({
+        ...r,
+        start_sec: regionStart + r.start_sec,
+        end_sec: regionStart + r.end_sec,
+        padded_start_sec: regionStart + r.padded_start_sec,
+        padded_end_sec: regionStart + r.padded_end_sec,
+      })),
+    [allRegions, regionStart],
+  );
+  const regionEffectiveEventsEpoch = useMemo<EffectiveEvent[]>(
+    () =>
+      regionEffectiveEvents.map((e) => ({
+        ...e,
+        startSec: regionStart + e.startSec,
+        endSec: regionStart + e.endSec,
+        originalStartSec: regionStart + e.originalStartSec,
+        originalEndSec: regionStart + e.originalEndSec,
+      })),
+    [regionEffectiveEvents, regionStart],
+  );
+  const handleAdjustEpoch = useCallback(
+    (eventId: string, startEpoch: number, endEpoch: number) => {
+      onAdjust(eventId, startEpoch - regionStart, endEpoch - regionStart);
+    },
+    [onAdjust, regionStart],
+  );
+  const handleAddEpoch = useCallback(
+    (regionId: string, startEpoch: number, endEpoch: number) => {
+      onAdd(regionId, startEpoch - regionStart, endEpoch - regionStart);
+    },
+    [onAdd, regionStart],
+  );
+
   return (
     <div className="w-full select-none">
       <div className="flex flex-col" style={{ height: 200 }}>
@@ -1248,11 +1304,11 @@ function WindowClassifyViewerBody({
           stripGradient={HEATMAP_GRADIENT}
         >
           <AllRegionLines
-            regions={allRegions}
+            regions={allRegionsEpoch}
             activeRegionId={region.region_id}
           />
           <EventBarOverlay
-            events={regionEffectiveEvents}
+            events={regionEffectiveEventsEpoch}
             selectedEventId={selectedEventId}
             onSelectEvent={(eventId) => {
               if (!eventId) return;
@@ -1263,8 +1319,8 @@ function WindowClassifyViewerBody({
                 onSelectAddedEvent(eventId);
               }
             }}
-            onAdjust={onAdjust}
-            onAdd={onAdd}
+            onAdjust={handleAdjustEpoch}
+            onAdd={handleAddEpoch}
             addMode={addMode}
             activeRegionId={region.region_id}
           />
