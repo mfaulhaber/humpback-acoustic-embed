@@ -116,13 +116,8 @@ export function VocalizationOverlay({ labels, visible }: VocalizationOverlayProp
       data-testid="vocalization-overlay"
       style={{
         position: "absolute",
-        top: 0,
-        left: 0,
-        width: canvasWidth,
-        height: canvasHeight,
+        inset: 0,
         pointerEvents: "none",
-        zIndex: 5,
-        overflow: "hidden",
       }}
     >
       {bars.map(({ group, key, x, w }) => {

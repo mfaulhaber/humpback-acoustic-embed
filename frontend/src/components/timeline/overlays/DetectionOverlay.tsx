@@ -156,13 +156,8 @@ export function DetectionOverlay({
       data-testid="detection-overlay"
       style={{
         position: "absolute",
-        top: 0,
-        left: 0,
-        width: canvasWidth,
-        height: canvasHeight,
+        inset: 0,
         pointerEvents: "none",
-        zIndex: 5,
-        overflow: "hidden",
       }}
     >
       {bars.map(({ row, label, x, w, idx, color, hoverColor }) => (

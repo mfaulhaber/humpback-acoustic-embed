@@ -156,6 +156,14 @@ export function Spectrogram({
               {children}
             </OverlayContext.Provider>
           </div>
+          {/*
+            Tooltip layer must NOT set its own z-index. A positioned element
+            without z-index does not create a new stacking context, so the
+            portaled tooltip's internal `zIndex: 20` is evaluated in the
+            canvas-wrapper's stacking context and paints above the
+            Playhead's `zIndex: 10`. Setting a z-index here would scope the
+            tooltip's z-index locally and cause Playhead to paint over it.
+          */}
           <div
             ref={setTooltipLayer}
             data-testid="overlay-tooltip-layer"
@@ -163,7 +171,6 @@ export function Spectrogram({
               position: "absolute",
               inset: 0,
               pointerEvents: "none",
-              zIndex: 5,
             }}
           />
 

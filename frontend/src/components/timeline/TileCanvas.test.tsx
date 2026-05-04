@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { render } from "@testing-library/react";
 import {
   __notifyTileLoadedForTest,
   subscribeTileLoaded,
+  TileCanvas,
 } from "./TileCanvas";
 
 describe("subscribeTileLoaded", () => {
@@ -125,5 +128,124 @@ describe("rAF dedup pattern (consumer contract)", () => {
     cancel();
 
     expect(cafSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("TileCanvas component wires the loader subscription", () => {
+  let rafSpy: ReturnType<typeof vi.fn>;
+  let rafCallbacks: Array<() => void>;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafSpy = vi.fn((cb: () => void) => {
+      rafCallbacks.push(cb);
+      return rafCallbacks.length;
+    });
+    vi.stubGlobal("requestAnimationFrame", rafSpy);
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderTileCanvas(jobIdSuffix = "") {
+    return render(
+      createElement(TileCanvas, {
+        jobId: `j${jobIdSuffix}`,
+        jobStart: 0,
+        jobEnd: 1000,
+        centerTimestamp: 100,
+        zoomLevel: "5m",
+        freqRange: [0, 3000] as [number, number],
+        width: 800,
+        height: 200,
+        tileDurationOverride: 60,
+        viewportSpanOverride: 300,
+        tileUrlBuilder: () => `tile-${jobIdSuffix}-${Math.random()}`,
+      }),
+    );
+  }
+
+  it("schedules a redraw on a tile-loaded notification while mounted", () => {
+    const view = renderTileCanvas("-mount");
+    rafSpy.mockClear();
+    rafCallbacks.length = 0;
+
+    __notifyTileLoadedForTest();
+    expect(rafSpy).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+  });
+
+  it("does not schedule a redraw after unmount (subscription removed)", () => {
+    const view = renderTileCanvas("-unmount");
+    view.unmount();
+
+    rafSpy.mockClear();
+    rafCallbacks.length = 0;
+
+    __notifyTileLoadedForTest();
+    expect(rafSpy).not.toHaveBeenCalled();
+  });
+
+  it("two notifications in the same frame schedule exactly one redraw", () => {
+    const view = renderTileCanvas("-dedup");
+    rafSpy.mockClear();
+    rafCallbacks.length = 0;
+
+    __notifyTileLoadedForTest();
+    __notifyTileLoadedForTest();
+    expect(rafSpy).toHaveBeenCalledTimes(1);
+
+    rafCallbacks[0]();
+    __notifyTileLoadedForTest();
+    expect(rafSpy).toHaveBeenCalledTimes(2);
+
+    view.unmount();
+  });
+});
+
+describe("loader Image.onerror does not notify subscribers", () => {
+  it("captures Image, drives onerror, and verifies subscribers are not called", () => {
+    type FakeImage = {
+      crossOrigin?: string;
+      onload?: () => void;
+      onerror?: () => void;
+      src?: string;
+    };
+    let last: FakeImage | null = null;
+    const ImageStub = vi.fn(function (this: FakeImage) {
+      last = this;
+    }) as unknown as typeof Image;
+    vi.stubGlobal("Image", ImageStub);
+
+    const cb = vi.fn();
+    const unsub = subscribeTileLoaded(cb);
+
+    render(
+      createElement(TileCanvas, {
+        jobId: "err",
+        jobStart: 0,
+        jobEnd: 1000,
+        centerTimestamp: 100,
+        zoomLevel: "5m",
+        freqRange: [0, 3000] as [number, number],
+        width: 800,
+        height: 200,
+        tileDurationOverride: 60,
+        viewportSpanOverride: 300,
+        tileUrlBuilder: () => `err-${Math.random()}`,
+      }),
+    );
+
+    expect(last).not.toBeNull();
+    cb.mockClear();
+
+    last!.onerror?.();
+    expect(cb).not.toHaveBeenCalled();
+
+    unsub();
+    vi.unstubAllGlobals();
   });
 });
