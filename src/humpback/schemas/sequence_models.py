@@ -415,7 +415,7 @@ class ExemplarRecord(BaseModel):
     end_timestamp: float
     max_state_probability: float
     exemplar_type: str
-    extras: dict[str, str | int | float | None] = Field(default_factory=dict)
+    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExemplarsResponse(BaseModel):
