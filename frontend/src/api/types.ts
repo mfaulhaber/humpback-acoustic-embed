@@ -1004,6 +1004,8 @@ export interface RegionCorrectionResponse {
 }
 
 export interface EventBoundaryCorrectionItem {
+  id?: string | null;
+  source_event_id?: string | null;
   region_id: string;
   correction_type: "adjust" | "add" | "delete";
   original_start_sec: number | null;
@@ -1014,13 +1016,16 @@ export interface EventBoundaryCorrectionItem {
 
 export interface EventBoundaryCorrectionRequest {
   region_detection_job_id: string;
+  event_segmentation_job_id?: string | null;
   corrections: EventBoundaryCorrectionItem[];
 }
 
 export interface EventBoundaryCorrectionResponse {
   id: string;
   region_detection_job_id: string;
+  event_segmentation_job_id: string | null;
   region_id: string;
+  source_event_id: string | null;
   correction_type: "adjust" | "add" | "delete";
   original_start_sec: number | null;
   original_end_sec: number | null;

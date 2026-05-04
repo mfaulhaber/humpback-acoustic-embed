@@ -30,6 +30,8 @@ export function ContinuousEmbeddingCreateForm() {
 
   // SurfPerch fields
   const [segJobId, setSegJobId] = useState<string>("");
+  const [eventSourceMode, setEventSourceMode] =
+    useState<"raw" | "effective">("raw");
   const [hopSeconds, setHopSeconds] = useState<number>(1.0);
   const [padSeconds, setPadSeconds] = useState<number>(2.0);
 
@@ -89,6 +91,7 @@ export function ContinuousEmbeddingCreateForm() {
       sourceKind === "surfperch"
         ? {
             event_segmentation_job_id: segJobId,
+            event_source_mode: eventSourceMode,
             model_version: DEFAULT_MODEL_VERSION,
             hop_seconds: hopSeconds,
             pad_seconds: padSeconds,
@@ -169,6 +172,22 @@ export function ContinuousEmbeddingCreateForm() {
                 value={hopSeconds}
                 onChange={(e) => setHopSeconds(Number(e.target.value))}
               />
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1">
+                Event Source
+              </label>
+              <select
+                data-testid="cej-event-source-mode"
+                className="w-full border rounded-md px-2 py-1 text-sm"
+                value={eventSourceMode}
+                onChange={(e) =>
+                  setEventSourceMode(e.target.value as "raw" | "effective")
+                }
+              >
+                <option value="raw">Raw segmentation events</option>
+                <option value="effective">Reviewed effective events</option>
+              </select>
             </div>
             <div>
               <label className="text-sm font-medium block mb-1">

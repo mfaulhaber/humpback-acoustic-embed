@@ -425,6 +425,8 @@ class RegionCorrectionResponse(BaseModel):
 class EventBoundaryCorrectionItem(BaseModel):
     """A single event boundary correction in a batch upsert request."""
 
+    id: Optional[str] = None
+    source_event_id: Optional[str] = None
     region_id: str
     correction_type: str = Field(pattern=r"^(adjust|add|delete)$")
     original_start_sec: Optional[float] = None
@@ -479,6 +481,7 @@ class EventBoundaryCorrectionRequest(BaseModel):
     """Batch upsert request for event boundary corrections."""
 
     region_detection_job_id: str
+    event_segmentation_job_id: str
     corrections: list[EventBoundaryCorrectionItem]
 
 
@@ -487,7 +490,9 @@ class EventBoundaryCorrectionResponse(BaseModel):
 
     id: str
     region_detection_job_id: str
+    event_segmentation_job_id: Optional[str] = None
     region_id: str
+    source_event_id: Optional[str] = None
     correction_type: str
     original_start_sec: Optional[float] = None
     original_end_sec: Optional[float] = None

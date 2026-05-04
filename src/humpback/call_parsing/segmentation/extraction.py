@@ -25,6 +25,7 @@ from humpback.call_parsing.storage import (
 from humpback.call_parsing.types import Event, Region
 from humpback.models.call_parsing import (
     EventBoundaryCorrection,
+    EventSegmentationJob,
     RegionDetectionJob,
 )
 
@@ -96,19 +97,154 @@ def apply_corrections(
     return events
 
 
+def _find_source_event(
+    events_by_id: dict[str, Event],
+    events: list[Event],
+    correction: EventBoundaryCorrection,
+) -> Event | None:
+    if correction.source_event_id:
+        return events_by_id.get(correction.source_event_id)
+    if correction.original_start_sec is None or correction.original_end_sec is None:
+        return None
+    for event in events:
+        if (
+            event.region_id == correction.region_id
+            and event.start_sec == correction.original_start_sec
+            and event.end_sec == correction.original_end_sec
+        ):
+            return event
+    return None
+
+
+def build_effective_events(
+    original_events: list[Event],
+    corrections: list[EventBoundaryCorrection],
+) -> list[Event]:
+    """Overlay scoped boundary corrections onto raw event rows."""
+    if not corrections:
+        return sorted(
+            original_events, key=lambda e: (e.start_sec, e.end_sec, e.event_id)
+        )
+
+    events_by_id: dict[str, Event] = {
+        event.event_id: event for event in original_events
+    }
+    effective_by_id: dict[str, Event] = dict(events_by_id)
+
+    for correction in corrections:
+        if correction.correction_type == "delete":
+            source = _find_source_event(events_by_id, original_events, correction)
+            if source is not None:
+                effective_by_id.pop(source.event_id, None)
+        elif correction.correction_type == "adjust":
+            source = _find_source_event(events_by_id, original_events, correction)
+            if (
+                source is not None
+                and correction.corrected_start_sec is not None
+                and correction.corrected_end_sec is not None
+            ):
+                effective_by_id[source.event_id] = Event(
+                    event_id=source.event_id,
+                    region_id=source.region_id,
+                    start_sec=correction.corrected_start_sec,
+                    end_sec=correction.corrected_end_sec,
+                    center_sec=(
+                        correction.corrected_start_sec + correction.corrected_end_sec
+                    )
+                    / 2.0,
+                    segmentation_confidence=source.segmentation_confidence,
+                )
+        elif (
+            correction.correction_type == "add"
+            and correction.corrected_start_sec is not None
+            and correction.corrected_end_sec is not None
+        ):
+            event_id = f"added-{correction.id}"
+            effective_by_id[event_id] = Event(
+                event_id=event_id,
+                region_id=correction.region_id,
+                start_sec=correction.corrected_start_sec,
+                end_sec=correction.corrected_end_sec,
+                center_sec=(
+                    correction.corrected_start_sec + correction.corrected_end_sec
+                )
+                / 2.0,
+                segmentation_confidence=0.0,
+            )
+
+    return sorted(
+        effective_by_id.values(), key=lambda e: (e.start_sec, e.end_sec, e.event_id)
+    )
+
+
+async def load_effective_events(
+    session: AsyncSession,
+    *,
+    event_segmentation_job_id: str,
+    storage_root: Path,
+    include_boundary_corrections: bool = True,
+) -> list[Event]:
+    """Load canonical effective events for one segmentation job.
+
+    Raw ``events.parquet`` rows are immutable. Boundary corrections are
+    overlaid at read time, scoped to the selected segmentation job.
+    Adjusted events keep their source ``event_id``; added events receive
+    a stable synthetic ID based on the correction row.
+    """
+    seg_job = await session.get(EventSegmentationJob, event_segmentation_job_id)
+    if seg_job is None:
+        raise ValueError(f"EventSegmentationJob {event_segmentation_job_id} not found")
+
+    seg_dir = segmentation_job_dir(storage_root, event_segmentation_job_id)
+    events_path = seg_dir / "events.parquet"
+    if not events_path.exists():
+        raise ValueError(
+            f"events.parquet not found for segmentation job {event_segmentation_job_id}"
+        )
+
+    original_events = read_events(events_path)
+    if not include_boundary_corrections:
+        return sorted(
+            original_events, key=lambda e: (e.start_sec, e.end_sec, e.event_id)
+        )
+
+    corr_result = await session.execute(
+        select(EventBoundaryCorrection)
+        .where(
+            EventBoundaryCorrection.event_segmentation_job_id
+            == event_segmentation_job_id
+        )
+        .order_by(EventBoundaryCorrection.created_at, EventBoundaryCorrection.id)
+    )
+    corrections = list(corr_result.scalars().all())
+    return build_effective_events(original_events, corrections)
+
+
 async def load_corrected_events(
     session: AsyncSession,
     region_detection_job_id: str,
     segmentation_job_id: str,
     storage_root: Path,
 ) -> list[Event]:
-    """Load events for a segmentation job with boundary corrections applied.
+    """Compatibility wrapper for legacy region-scoped correction overlays.
 
-    Reads ``events.parquet`` (located via *segmentation_job_id*), queries
-    ``event_boundary_corrections`` by *region_detection_job_id*, merges via
-    :func:`apply_corrections`, and returns full ``Event`` objects.  When no
-    corrections exist the original events are returned unchanged.
+    New code should call :func:`load_effective_events` with
+    ``event_segmentation_job_id``. If scoped correction rows exist for the
+    segmentation job, this wrapper delegates to the canonical loader.
+    Otherwise it preserves the old region-scoped behavior for older callers.
     """
+    scoped_result = await session.execute(
+        select(EventBoundaryCorrection.id)
+        .where(EventBoundaryCorrection.event_segmentation_job_id == segmentation_job_id)
+        .limit(1)
+    )
+    if scoped_result.scalar_one_or_none() is not None:
+        return await load_effective_events(
+            session,
+            event_segmentation_job_id=segmentation_job_id,
+            storage_root=storage_root,
+        )
+
     seg_dir = segmentation_job_dir(storage_root, segmentation_job_id)
     events_path = seg_dir / "events.parquet"
     if not events_path.exists():
@@ -120,7 +256,8 @@ async def load_corrected_events(
 
     corr_result = await session.execute(
         select(EventBoundaryCorrection).where(
-            EventBoundaryCorrection.region_detection_job_id == region_detection_job_id
+            EventBoundaryCorrection.region_detection_job_id == region_detection_job_id,
+            EventBoundaryCorrection.event_segmentation_job_id.is_(None),
         )
     )
     corrections = list(corr_result.scalars().all())
@@ -141,9 +278,8 @@ async def load_corrected_events(
         else:
             uncorrected_events.append(e)
 
-    # Build lookup for original event metadata keyed by (start_sec, end_sec)
-    originals_by_bounds: dict[tuple[float, float], Event] = {
-        (e.start_sec, e.end_sec): e for e in original_events
+    originals_by_bounds: dict[tuple[str, float, float], Event] = {
+        (e.region_id, e.start_sec, e.end_sec): e for e in original_events
     }
 
     result: list[Event] = list(uncorrected_events)
@@ -155,7 +291,7 @@ async def load_corrected_events(
         for bounds in corrected:
             start = bounds["start_sec"]
             end = bounds["end_sec"]
-            orig = originals_by_bounds.get((start, end))
+            orig = originals_by_bounds.get((region_id, start, end))
             result.append(
                 Event(
                     event_id=orig.event_id if orig else f"added-{start:.3f}-{end:.3f}",
@@ -276,7 +412,7 @@ async def collect_corrected_samples(
 
     corr_result = await session.execute(
         select(EventBoundaryCorrection).where(
-            EventBoundaryCorrection.region_detection_job_id == region_detection_job_id
+            EventBoundaryCorrection.event_segmentation_job_id == segmentation_job_id
         )
     )
     corrections = list(corr_result.scalars().all())

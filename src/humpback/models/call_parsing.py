@@ -200,15 +200,17 @@ class VocalizationCorrection(UUIDMixin, TimestampMixin, Base):
 class EventBoundaryCorrection(UUIDMixin, TimestampMixin, Base):
     """Unified human correction to event boundaries.
 
-    Anchored to ``region_detection_job_id`` (Pass 1) so corrections are
-    shared across Pass 2, Pass 3, and Window Classify review surfaces.
-    Uses explicit original/corrected time pairs for time-range identity.
+    New correction writes are scoped to ``event_segmentation_job_id`` so
+    boundary edits apply to one immutable Pass 2 artifact. The
+    ``region_detection_job_id`` remains for compatibility and cleanup.
     """
 
     __tablename__ = "event_boundary_corrections"
 
     region_detection_job_id: Mapped[str]
+    event_segmentation_job_id: Mapped[Optional[str]] = mapped_column(default=None)
     region_id: Mapped[str]
+    source_event_id: Mapped[Optional[str]] = mapped_column(default=None)
     correction_type: Mapped[str]
     original_start_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
     original_end_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)

@@ -255,7 +255,7 @@ export function ClassifyReviewWorkspace({
     useVocalizationCorrections(regionDetectionJobId);
 
   const { data: savedBoundaryCorrections = [] } =
-    useEventBoundaryCorrections(regionDetectionJobId);
+    useEventBoundaryCorrections(regionDetectionJobId, segJob?.id);
 
   // Pending type corrections: Map<eventId, typeName | null>
   const [pendingCorrections, setPendingCorrections] = useState<
@@ -451,8 +451,12 @@ export function ClassifyReviewWorkspace({
         const isAdd = existing?.correction_type === "add" || eventId.startsWith("saved-add-") || eventId.startsWith("add-");
         const regionId =
           ev?.regionId ?? existing?.region_id ?? currentRegion?.region_id ?? "";
+        const savedAddId = eventId.startsWith("saved-add-")
+          ? eventId.slice("saved-add-".length)
+          : null;
         if (isAdd) {
           next.set(eventId, {
+            id: existing?.id ?? savedAddId,
             region_id: regionId,
             correction_type: "add",
             original_start_sec: null,
@@ -463,6 +467,7 @@ export function ClassifyReviewWorkspace({
         } else {
           next.set(eventId, {
             region_id: regionId,
+            source_event_id: ev?.eventId ?? eventId,
             correction_type: "adjust",
             original_start_sec: ev?.startSec ?? startSec,
             original_end_sec: ev?.endSec ?? endSec,
@@ -482,10 +487,12 @@ export function ClassifyReviewWorkspace({
     if (!currentRegion) return [];
     // Index saved boundary corrections by (region_id, original_start, original_end) for adjust/delete
     const savedBoundaryByKey = new Map<string, EventBoundaryCorrectionResponse>();
+    const savedBoundaryByEventId = new Map<string, EventBoundaryCorrectionResponse>();
     for (const c of savedBoundaryCorrections) {
       if (c.correction_type !== "add") {
         const key = `${c.region_id}:${c.original_start_sec}:${c.original_end_sec}`;
         savedBoundaryByKey.set(key, c);
+        if (c.source_event_id) savedBoundaryByEventId.set(c.source_event_id, c);
       }
     }
 
@@ -494,7 +501,8 @@ export function ClassifyReviewWorkspace({
       .map((e) => {
         const pending = pendingBoundaryCorrections.get(e.eventId);
         const savedKey = `${e.regionId}:${e.startSec}:${e.endSec}`;
-        const saved = savedBoundaryByKey.get(savedKey);
+        const saved =
+          savedBoundaryByEventId.get(e.eventId) ?? savedBoundaryByKey.get(savedKey);
         const types = resolveEventType(e.predictedType, e.correctedType);
 
         if (pending) {
@@ -698,9 +706,20 @@ export function ClassifyReviewWorkspace({
       const existing = next.get(currentEvent.eventId);
       if (existing?.correction_type === "add") {
         next.delete(currentEvent.eventId);
+      } else if (currentEvent.eventId.startsWith("saved-add-")) {
+        next.set(currentEvent.eventId, {
+          id: currentEvent.eventId.slice("saved-add-".length),
+          region_id: currentEvent.regionId,
+          correction_type: "delete",
+          original_start_sec: null,
+          original_end_sec: null,
+          corrected_start_sec: null,
+          corrected_end_sec: null,
+        });
       } else {
         next.set(currentEvent.eventId, {
           region_id: currentEvent.regionId,
+          source_event_id: currentEvent.eventId,
           correction_type: "delete",
           original_start_sec: currentEvent.startSec,
           original_end_sec: currentEvent.endSec,
@@ -866,7 +885,11 @@ export function ClassifyReviewWorkspace({
     if (hasBoundaryCorrections) {
       const corrections = Array.from(pendingBoundaryCorrections.values());
       saveBoundaryMutation.mutate(
-        { regionDetectionJobId, corrections },
+        {
+          regionDetectionJobId,
+          eventSegmentationJobId: segJob?.id,
+          corrections,
+        },
         {
           onSuccess: () => {
             setPendingBoundaryCorrections(new Map());
@@ -889,6 +912,7 @@ export function ClassifyReviewWorkspace({
     pendingCorrections,
     pendingBoundaryCorrections,
     navigableEvents,
+    segJob,
     saveMutation,
     saveBoundaryMutation,
   ]);

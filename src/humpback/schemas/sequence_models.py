@@ -21,6 +21,7 @@ class ContinuousEmbeddingJobCreate(BaseModel):
     """
 
     event_segmentation_job_id: Optional[str] = None
+    event_source_mode: Literal["raw", "effective"] = "raw"
     model_version: str = "surfperch-tensorflow2"
     hop_seconds: float = 1.0
     pad_seconds: float = 2.0
@@ -119,6 +120,7 @@ class ContinuousEmbeddingJobOut(BaseModel):
     id: str
     status: str
     event_segmentation_job_id: Optional[str] = None
+    event_source_mode: str = "raw"
     model_version: str
     window_size_seconds: Optional[float] = None
     hop_seconds: Optional[float] = None
@@ -174,6 +176,7 @@ class ContinuousEmbeddingJobManifest(BaseModel):
     job_id: str
     model_version: str
     source_kind: str = "surfperch"
+    event_source_mode: str = "raw"
     vector_dim: int
     target_sample_rate: int
     # SurfPerch-only counters

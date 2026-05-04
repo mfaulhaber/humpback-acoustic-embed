@@ -12,6 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.segmentation.extraction import load_effective_events
 from humpback.call_parsing.storage import segmentation_job_dir
 from humpback.config import Settings
 from humpback.models.call_parsing import (
@@ -66,7 +67,8 @@ def _config_from_job(job: MotifExtractionJob) -> MotifExtractionConfig:
     )
 
 
-def _load_event_lookup(
+async def _load_event_lookup(
+    session: AsyncSession,
     storage_root: Path,
     cej: ContinuousEmbeddingJob,
     *,
@@ -83,6 +85,22 @@ def _load_event_lookup(
     """
     if not cej.event_segmentation_job_id:
         return {}
+    if cej.event_source_mode == "effective":
+        try:
+            events = await load_effective_events(
+                session,
+                event_segmentation_job_id=cej.event_segmentation_job_id,
+                storage_root=storage_root,
+            )
+        except ValueError:
+            return {}
+        return {
+            event.event_id: (
+                float(event.start_sec) + timestamp_offset,
+                float(event.end_sec) + timestamp_offset,
+            )
+            for event in events
+        }
     events_path = (
         segmentation_job_dir(storage_root, cej.event_segmentation_job_id)
         / "events.parquet"
@@ -241,8 +259,11 @@ async def run_motif_extraction_job(
             embedding_table = pq.read_table(embeddings_path)
 
         timestamp_offset = await _resolve_timestamp_offset(session, cej)
-        event_lookup = _load_event_lookup(
-            settings.storage_root, cej, timestamp_offset=timestamp_offset
+        event_lookup = await _load_event_lookup(
+            session,
+            settings.storage_root,
+            cej,
+            timestamp_offset=timestamp_offset,
         )
         if await _raise_if_canceled(session, job, job_dir):
             return

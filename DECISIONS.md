@@ -685,3 +685,50 @@ Alternatives considered:
   follow-up; the loader and config abstractions stay shaped to allow
   it. Multi-GPU / distributed training, pretrained transformer
   initialization, and token-bigram heatmaps are out of scope for v1.
+
+## ADR-062: Segmentation-scoped effective event identity
+
+**Date**: 2026-05-03
+
+**Status**: Accepted
+
+**Supersedes**: ADR-054 for event boundary correction ownership and
+downstream event loading.
+
+**Context**: ADR-054 introduced a shared read-time correction overlay, but
+boundary corrections were still anchored only to `region_detection_job_id`.
+That made corrections ambiguous when multiple Pass 2 segmentation jobs shared
+one Pass 1 region job, and it allowed stale saved `add` corrections to appear
+beside adjusted raw events. A retained classify-review job also exposed a
+region lookup failure: a typed event produced before a later boundary adjustment
+could no longer resolve a `region_id` from the corrected event list, leaving the
+timeline spectrogram empty.
+
+**Decision**: Boundary corrections are now scoped to the Pass 2 artifact they
+edit via nullable `event_segmentation_job_id` and `source_event_id` columns on
+`event_boundary_corrections`. New review clients populate those fields. A
+canonical `load_effective_events()` utility reads immutable `events.parquet`
+rows and overlays only corrections for the selected segmentation job. Adjusted
+events preserve their source `event_id`; added events use stable synthetic IDs
+derived from the correction row ID. The correction write service rejects add or
+adjust batches whose final effective event set would overlap within the same
+segmentation job and region.
+
+Classification typed-event APIs still return persisted `typed_events.parquet`
+rows, but resolve `region_id` from raw segmentation events first and effective
+events second. This keeps older classification artifacts renderable after later
+boundary edits while still supporting effective added-event IDs. Sequence Models
+continuous embedding jobs now carry `event_source_mode`: `raw` preserves the
+old `events.parquet` behavior, while `effective` consumes
+`load_effective_events()` and includes a correction revision fingerprint in the
+encoding signature.
+
+**Consequences**:
+- Historical correction intent is not automatically backfilled or repaired.
+  Existing ambiguous rows are cleaned manually.
+- `events.parquet` and `typed_events.parquet` remain immutable inference
+  artifacts; reviewed event state is a read-time contract.
+- Region-scoped vocalization corrections remain time-range labels and are
+  resolved by overlap against the effective event set.
+- Future event-aware consumers must explicitly choose raw versus effective
+  event semantics and include that choice in provenance or idempotency keys.

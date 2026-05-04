@@ -24,7 +24,7 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 
 - `POST /call-parsing/segmentation-jobs` — create a queued Pass 2 job; validates `region_detection_job_id` (404) and `segmentation_model_id` (404); 409 if upstream Pass 1 job is not `complete`
 - `GET /call-parsing/segmentation-jobs`, `GET /call-parsing/segmentation-jobs/{id}`, `DELETE /call-parsing/segmentation-jobs/{id}` — list / detail / delete
-- `GET /call-parsing/segmentation-jobs/{id}/events` — return `events.parquet` as JSON; 409 while job is not `complete`, 404 if parquet file is missing
+- `GET /call-parsing/segmentation-jobs/{id}/events` — return raw `events.parquet` as JSON by default; pass `?effective=true` to return canonical effective events with segmentation-scoped boundary corrections applied. 409 while job is not `complete`, 404 if parquet file is missing.
 - Job response payloads include `compute_device` (`"mps"` / `"cuda"` / `"cpu"`, NULL on pre-migration rows) and `gpu_fallback_reason` (non-NULL only when GPU was attempted and rejected at load-time validation, e.g. `"mps_output_mismatch"`, `"cuda_load_error"`).
 
 ## Pass 2 — Segmentation Training Datasets
@@ -41,17 +41,18 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 - `GET /call-parsing/segmentation-models/{id}` — full detail
 - `DELETE /call-parsing/segmentation-models/{id}` — removes row + checkpoint directory on disk; 409 if referenced by an in-flight segmentation job
 
-## Pass 2 — Boundary Corrections
+## Event Boundary Corrections
 
-- `POST /call-parsing/segmentation-jobs/{id}/corrections` — batch upsert boundary corrections; validates job exists (404) and is complete (409); returns correction count
-- `GET /call-parsing/segmentation-jobs/{id}/corrections` — list all corrections for a segmentation job
-- `DELETE /call-parsing/segmentation-jobs/{id}/corrections` — clear all corrections; 204
+- `POST /call-parsing/event-boundary-corrections` — batch upsert event boundary corrections. Request body includes `region_detection_job_id`, `event_segmentation_job_id`, and `corrections`. Modern adjust/delete items include `source_event_id`; saved add updates/deletes include the correction row `id`. The service validates both jobs, rejects incomplete upstreams, and returns 409 with conflict details if the final effective event set would overlap within the same segmentation job and region.
+- `GET /call-parsing/event-boundary-corrections?event_segmentation_job_id={id}` — preferred correction list for Segment Review and Classify Review.
+- `GET /call-parsing/event-boundary-corrections?region_detection_job_id={id}` — compatibility listing for older region-scoped views and counts.
+- `DELETE /call-parsing/event-boundary-corrections?event_segmentation_job_id={id}` — clear corrections for a segmentation job; `region_detection_job_id` remains available for compatibility cleanup.
 
 ## Pass 3 — Event Classification
 
 - `POST /call-parsing/classification-jobs` — create a queued Pass 3 job; validates `vocalization_model_id` exists (404) and has `model_family='pytorch_event_cnn'` + `input_mode='segmented_event'` (422); validates `event_segmentation_job_id` exists (404) and is `complete` (409)
 - `GET /call-parsing/classification-jobs`, `GET /call-parsing/classification-jobs/{id}`, `DELETE /call-parsing/classification-jobs/{id}` — list / detail / delete
-- `GET /call-parsing/classification-jobs/{id}/typed-events` — return `typed_events.parquet` as JSON sorted by `start_sec`; 409 while job is not `complete`, 404 if parquet file is missing
+- `GET /call-parsing/classification-jobs/{id}/typed-events` — return persisted `typed_events.parquet` rows as JSON sorted by `start_sec`; `region_id` is resolved from raw segmentation events first and effective events second so older typed rows remain renderable after later boundary edits. 409 while job is not `complete`, 404 if parquet file is missing.
 - Job response payloads include `compute_device` and `gpu_fallback_reason` with the same conventions as Pass 2 segmentation jobs.
 
 ## Pass 3 — Type Corrections

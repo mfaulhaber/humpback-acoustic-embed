@@ -31,7 +31,9 @@ describe("buildMergedCorrections", () => {
         {
           id: "boundary-add-1",
           region_detection_job_id: "rd-1",
+          event_segmentation_job_id: null,
           region_id: "region-2",
+          source_event_id: null,
           correction_type: "add",
           original_start_sec: null,
           original_end_sec: null,

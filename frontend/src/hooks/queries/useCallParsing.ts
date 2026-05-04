@@ -174,10 +174,10 @@ export function useDeleteSegmentationJob() {
   });
 }
 
-export function useSegmentationJobEvents(jobId: string | null) {
+export function useSegmentationJobEvents(jobId: string | null, effective = false) {
   return useQuery({
-    queryKey: ["segmentation-job-events", jobId],
-    queryFn: () => fetchSegmentationJobEvents(jobId!),
+    queryKey: ["segmentation-job-events", jobId, effective],
+    queryFn: () => fetchSegmentationJobEvents(jobId!, effective),
     enabled: !!jobId,
   });
 }
@@ -188,11 +188,17 @@ const EVENT_BOUNDARY_CORRECTIONS_KEY = "event-boundary-corrections";
 
 export function useEventBoundaryCorrections(
   regionDetectionJobId: string | null,
+  eventSegmentationJobId?: string | null,
 ) {
   return useQuery({
-    queryKey: [EVENT_BOUNDARY_CORRECTIONS_KEY, regionDetectionJobId],
-    queryFn: () => fetchEventBoundaryCorrections(regionDetectionJobId!),
-    enabled: !!regionDetectionJobId,
+    queryKey: [
+      EVENT_BOUNDARY_CORRECTIONS_KEY,
+      regionDetectionJobId,
+      eventSegmentationJobId,
+    ],
+    queryFn: () =>
+      fetchEventBoundaryCorrections(regionDetectionJobId!, eventSegmentationJobId),
+    enabled: !!regionDetectionJobId || !!eventSegmentationJobId,
   });
 }
 
@@ -201,16 +207,24 @@ export function useUpsertEventBoundaryCorrections() {
   return useMutation({
     mutationFn: ({
       regionDetectionJobId,
+      eventSegmentationJobId,
       corrections,
     }: {
       regionDetectionJobId: string;
+      eventSegmentationJobId?: string | null;
       corrections: EventBoundaryCorrectionItem[];
-    }) => upsertEventBoundaryCorrections(regionDetectionJobId, corrections),
+    }) =>
+      upsertEventBoundaryCorrections(
+        regionDetectionJobId,
+        eventSegmentationJobId,
+        corrections,
+      ),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({
         queryKey: [
           EVENT_BOUNDARY_CORRECTIONS_KEY,
           variables.regionDetectionJobId,
+          variables.eventSegmentationJobId,
         ],
       });
     },
@@ -495,5 +509,4 @@ export function useWindowScores(
     enabled: !!jobId,
   });
 }
-
 

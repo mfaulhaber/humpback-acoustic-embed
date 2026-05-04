@@ -1563,8 +1563,9 @@ async def test_get_typed_events_fills_region_id_for_add_corrections(
         # Add-type boundary correction introduces a new event not present
         # in events.parquet.
         session.add(
-            EventBoundaryCorrection(
+            correction := EventBoundaryCorrection(
                 region_detection_job_id=rd.id,
+                event_segmentation_job_id=es.id,
                 region_id="r-added",
                 correction_type="add",
                 corrected_start_sec=10.0,
@@ -1572,7 +1573,7 @@ async def test_get_typed_events_fills_region_id_for_add_corrections(
             )
         )
         await session.commit()
-        ec_id, es_id = ec.id, es.id
+        ec_id, es_id, correction_id = ec.id, es.id, correction.id
     await engine.dispose()
 
     # events.parquet only contains the original event.
@@ -1592,7 +1593,7 @@ async def test_get_typed_events_fills_region_id_for_add_corrections(
         job_dir / "typed_events.parquet",
         [
             TypedEvent("e-orig", 1.0, 3.0, "moan", 0.8, True),
-            TypedEvent("add-new-1", 10.0, 11.0, "buzz", 0.6, True),
+            TypedEvent(f"added-{correction_id}", 10.0, 11.0, "buzz", 0.6, True),
         ],
     )
 
@@ -1602,7 +1603,75 @@ async def test_get_typed_events_fills_region_id_for_add_corrections(
     assert len(rows) == 2
     region_map = {r["event_id"]: r["region_id"] for r in rows}
     assert region_map["e-orig"] == "r-orig"
-    assert region_map["add-new-1"] == "r-added"
+    assert region_map[f"added-{correction_id}"] == "r-added"
+
+
+@pytest.mark.asyncio
+async def test_get_typed_events_uses_raw_region_for_adjusted_source_event(
+    client: AsyncClient, app_settings
+) -> None:
+    from humpback.call_parsing.storage import (
+        classification_job_dir,
+        segmentation_job_dir,
+        write_events,
+        write_typed_events,
+    )
+    from humpback.call_parsing.types import Event, TypedEvent
+    from humpback.models.call_parsing import (
+        EventBoundaryCorrection,
+        EventClassificationJob,
+    )
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        rd = RegionDetectionJob(audio_file_id="a1", status="complete")
+        session.add(rd)
+        await session.flush()
+        es = EventSegmentationJob(region_detection_job_id=rd.id, status="complete")
+        session.add(es)
+        await session.flush()
+        ec = EventClassificationJob(
+            event_segmentation_job_id=es.id,
+            vocalization_model_id="vm-fake",
+            status="complete",
+            typed_event_count=1,
+        )
+        session.add(ec)
+        session.add(
+            EventBoundaryCorrection(
+                region_detection_job_id=rd.id,
+                event_segmentation_job_id=es.id,
+                region_id="r-raw",
+                source_event_id="event-raw",
+                correction_type="adjust",
+                original_start_sec=8.0,
+                original_end_sec=9.0,
+                corrected_start_sec=8.1,
+                corrected_end_sec=9.1,
+            )
+        )
+        await session.commit()
+        ec_id, es_id = ec.id, es.id
+    await engine.dispose()
+
+    seg_dir = segmentation_job_dir(app_settings.storage_root, es_id)
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    write_events(
+        seg_dir / "events.parquet",
+        [Event("event-raw", "r-raw", 8.0, 9.0, 8.5, 0.9)],
+    )
+
+    job_dir = classification_job_dir(app_settings.storage_root, ec_id)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        job_dir / "typed_events.parquet",
+        [TypedEvent("event-raw", 8.0, 9.0, "moan", 0.8, True)],
+    )
+
+    resp = await client.get(f"{BASE}/classification-jobs/{ec_id}/typed-events")
+    assert resp.status_code == 200
+    assert resp.json()[0]["region_id"] == "r-raw"
 
 
 @pytest.mark.asyncio
@@ -1684,6 +1753,11 @@ async def _seed_complete_segmentation_job(app_settings) -> tuple[str, str]:
         await session.commit()
         rd_id, es_id = rd.id, es.id
     await engine.dispose()
+    from humpback.call_parsing.storage import segmentation_job_dir, write_events
+
+    seg_dir = segmentation_job_dir(app_settings.storage_root, es_id)
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    write_events(seg_dir / "events.parquet", [])
     return rd_id, es_id
 
 
@@ -1711,11 +1785,12 @@ async def _seed_complete_classification_job(app_settings) -> str:
 async def test_event_boundary_corrections_post_happy(
     client: AsyncClient, app_settings
 ) -> None:
-    rd_id, _es_id = await _seed_complete_segmentation_job(app_settings)
+    rd_id, es_id = await _seed_complete_segmentation_job(app_settings)
     resp = await client.post(
         f"{BASE}/event-boundary-corrections",
         json={
             "region_detection_job_id": rd_id,
+            "event_segmentation_job_id": es_id,
             "corrections": [
                 {
                     "region_id": "r1",
@@ -1738,6 +1813,7 @@ async def test_event_boundary_corrections_post_404(client: AsyncClient) -> None:
         f"{BASE}/event-boundary-corrections",
         json={
             "region_detection_job_id": "nonexistent",
+            "event_segmentation_job_id": "nonexistent",
             "corrections": [
                 {
                     "region_id": "r1",
@@ -1755,11 +1831,12 @@ async def test_event_boundary_corrections_post_404(client: AsyncClient) -> None:
 async def test_event_boundary_corrections_get_and_delete(
     client: AsyncClient, app_settings
 ) -> None:
-    rd_id, _es_id = await _seed_complete_segmentation_job(app_settings)
+    rd_id, es_id = await _seed_complete_segmentation_job(app_settings)
     await client.post(
         f"{BASE}/event-boundary-corrections",
         json={
             "region_detection_job_id": rd_id,
+            "event_segmentation_job_id": es_id,
             "corrections": [
                 {
                     "region_id": "r1",
@@ -1773,14 +1850,14 @@ async def test_event_boundary_corrections_get_and_delete(
 
     get_resp = await client.get(
         f"{BASE}/event-boundary-corrections",
-        params={"region_detection_job_id": rd_id},
+        params={"event_segmentation_job_id": es_id},
     )
     assert get_resp.status_code == 200
     assert len(get_resp.json()) == 1
 
     del_resp = await client.delete(
         f"{BASE}/event-boundary-corrections",
-        params={"region_detection_job_id": rd_id},
+        params={"event_segmentation_job_id": es_id},
     )
     assert del_resp.status_code == 204
 
@@ -1789,6 +1866,39 @@ async def test_event_boundary_corrections_get_and_delete(
         params={"region_detection_job_id": rd_id},
     )
     assert get_resp2.json() == []
+
+
+@pytest.mark.asyncio
+async def test_event_boundary_corrections_post_overlap_conflict(
+    client: AsyncClient, app_settings
+) -> None:
+    rd_id, es_id = await _seed_complete_segmentation_job(app_settings)
+    resp = await client.post(
+        f"{BASE}/event-boundary-corrections",
+        json={
+            "region_detection_job_id": rd_id,
+            "event_segmentation_job_id": es_id,
+            "corrections": [
+                {
+                    "region_id": "r1",
+                    "correction_type": "add",
+                    "corrected_start_sec": 1.0,
+                    "corrected_end_sec": 2.0,
+                },
+                {
+                    "region_id": "r1",
+                    "correction_type": "add",
+                    "corrected_start_sec": 1.5,
+                    "corrected_end_sec": 2.5,
+                },
+            ],
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["message"] == (
+        "Event boundary correction creates overlapping events"
+    )
 
 
 # ---- Vocalization corrections (unified) ------------------------------------

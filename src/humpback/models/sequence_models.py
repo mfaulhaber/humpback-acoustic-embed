@@ -35,6 +35,7 @@ class ContinuousEmbeddingJob(UUIDMixin, TimestampMixin, Base):
 
     status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
     event_segmentation_job_id: Mapped[Optional[str]] = mapped_column(default=None)
+    event_source_mode: Mapped[str] = mapped_column(default="raw")
     model_version: Mapped[str]
     window_size_seconds: Mapped[Optional[float]] = mapped_column(Float, default=None)
     hop_seconds: Mapped[Optional[float]] = mapped_column(Float, default=None)
