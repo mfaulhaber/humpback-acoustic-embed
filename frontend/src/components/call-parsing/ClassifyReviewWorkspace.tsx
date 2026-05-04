@@ -14,7 +14,7 @@ import {
   useCreateClassificationJob,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
-import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
+import { regionTileUrl } from "@/api/client";
 import type {
   EventBoundaryCorrectionItem,
   EventBoundaryCorrectionResponse,
@@ -34,7 +34,6 @@ import {
   X,
   RotateCcw,
 } from "lucide-react";
-import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
@@ -42,11 +41,13 @@ import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { RegionBoundaryMarkers } from "@/components/timeline/overlays/RegionBoundaryMarkers";
 import { EventBarOverlay, type EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
+import { RegionAudioTimeline } from "./RegionAudioTimeline";
 import { TypePalette } from "./TypePalette";
 import {
   ClassifyDetailPanel,
   type AggregatedEvent,
 } from "./ClassifyDetailPanel";
+import { useRegionEpoch, type RegionEpoch } from "./useRegionEpoch";
 
 type SavedEventBounds = {
   eventId: string;
@@ -248,6 +249,7 @@ export function ClassifyReviewWorkspace({
     [selectedJob, segJobs],
   );
   const regionDetectionJobId = segJob?.region_detection_job_id ?? null;
+  const regionEpoch = useRegionEpoch(regionDetectionJobId);
 
   const { data: regions = [] } = useRegionJobRegions(regionDetectionJobId);
   const { data: typedEventRows = [] } = useTypedEvents(selectedJobId);
@@ -661,22 +663,23 @@ export function ClassifyReviewWorkspace({
   const navDirectionRef = useRef<"forward" | "backward">("forward");
 
   useEffect(() => {
-    if (!currentEvent || viewStart === undefined) return;
+    if (!currentEvent || viewStart === undefined || !regionEpoch) return;
     const viewEnd = viewStart + viewSpan;
     const pad = viewSpan * 0.15;
+    const eventStartEpoch = regionEpoch.toEpoch(currentEvent.startSec);
+    const eventEndEpoch = regionEpoch.toEpoch(currentEvent.endSec);
     const fullyVisible =
-      currentEvent.startSec >= viewStart + pad &&
-      currentEvent.endSec <= viewEnd - pad;
+      eventStartEpoch >= viewStart + pad && eventEndEpoch <= viewEnd - pad;
     if (!fullyVisible) {
       let target: number;
       if (navDirectionRef.current === "forward") {
-        target = currentEvent.endSec + pad - viewSpan / 2;
+        target = eventEndEpoch + pad - viewSpan / 2;
       } else {
-        target = currentEvent.startSec - pad + viewSpan / 2;
+        target = eventStartEpoch - pad + viewSpan / 2;
       }
       setScrollToCenter(target);
     }
-  }, [currentEvent, viewStart, viewSpan]);
+  }, [currentEvent, viewStart, viewSpan, regionEpoch]);
 
   // Navigation
   const goPrev = useCallback(() => {
@@ -740,8 +743,9 @@ export function ClassifyReviewWorkspace({
   } | null>(null);
 
   const handleAddEvent = useCallback(
-    (sec: number) => {
-      if (!currentRegion) return;
+    (epochSec: number) => {
+      if (!currentRegion || !regionEpoch) return;
+      const sec = epochSec - regionEpoch.regionStartTimestamp;
       const tempId = `add-${crypto.randomUUID()}`;
       const start = Math.round((sec - 0.5) * 10) / 10;
       const end = Math.round((sec + 0.5) * 10) / 10;
@@ -759,18 +763,21 @@ export function ClassifyReviewWorkspace({
       });
       setContextMenu(null);
     },
-    [currentRegion],
+    [currentRegion, regionEpoch],
   );
 
   // Playback via ref handle
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
       playbackRef.current?.pause();
-    } else if (displayEvent) {
+    } else if (displayEvent && regionEpoch) {
       const duration = displayEvent.endSec - displayEvent.startSec;
-      playbackRef.current?.play(displayEvent.startSec, duration);
+      playbackRef.current?.play(
+        regionEpoch.toEpoch(displayEvent.startSec),
+        duration,
+      );
     }
-  }, [isPlaying, displayEvent]);
+  }, [isPlaying, displayEvent, regionEpoch]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1184,38 +1191,41 @@ export function ClassifyReviewWorkspace({
               }}
               onClick={() => setContextMenu(null)}
             >
-              <TimelineProvider
-                ref={playbackRef}
-                key={`${selectedJobId}-${currentRegion.region_id}`}
-                jobStart={0}
-                jobEnd={currentRegion.padded_end_sec}
-                zoomLevels={REVIEW_ZOOM}
-                defaultZoom={userZoom}
-                playback="slice"
-                audioUrlBuilder={(startEpoch, durationSec) =>
-                  regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
-                }
-                disableKeyboardShortcuts
-                scrollOnPlayback={false}
-                onZoomChange={setUserZoom}
-                onPlayStateChange={setIsPlaying}
-              >
-                <ClassifyViewerBody
+              {regionEpoch ? (
+                <RegionAudioTimeline
+                  ref={playbackRef}
                   regionDetectionJobId={regionDetectionJobId}
-                  region={currentRegion}
-                  regionEffectiveEvents={regionEffectiveEvents}
-                  selectedEventId={currentEvent?.eventId ?? null}
-                  onSelectEvent={(eventId) => {
-                    if (!eventId) return;
-                    const idx = navigableEvents.findIndex((e) => e.eventId === eventId);
-                    if (idx >= 0) setCurrentEventIndex(idx);
-                  }}
-                  onAdjust={handleAdjust}
-                  scrollToCenter={scrollToCenter}
-                  onViewStartChange={setViewStart}
-                  onViewSpanChange={setViewSpan}
-                />
-              </TimelineProvider>
+                  regionEpoch={regionEpoch}
+                  resetKey={`${selectedJobId}-${currentRegion.region_id}`}
+                  zoomLevels={REVIEW_ZOOM}
+                  defaultZoom={userZoom}
+                  disableKeyboardShortcuts
+                  scrollOnPlayback={false}
+                  onZoomChange={setUserZoom}
+                  onPlayStateChange={setIsPlaying}
+                >
+                  <ClassifyViewerBody
+                    regionDetectionJobId={regionDetectionJobId}
+                    region={currentRegion}
+                    regionEffectiveEvents={regionEffectiveEvents}
+                    selectedEventId={currentEvent?.eventId ?? null}
+                    onSelectEvent={(eventId) => {
+                      if (!eventId) return;
+                      const idx = navigableEvents.findIndex((e) => e.eventId === eventId);
+                      if (idx >= 0) setCurrentEventIndex(idx);
+                    }}
+                    onAdjust={handleAdjust}
+                    scrollToCenter={scrollToCenter}
+                    onViewStartChange={setViewStart}
+                    onViewSpanChange={setViewSpan}
+                    regionEpoch={regionEpoch}
+                  />
+                </RegionAudioTimeline>
+              ) : (
+                <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
+                  Loading region…
+                </div>
+              )}
 
               {/* Context menu */}
               {contextMenu && (
@@ -1245,7 +1255,10 @@ export function ClassifyReviewWorkspace({
           <TypePalette activeType={currentEventType} onSelectType={handleSelectType} typeSource={currentTypeSource} />
 
           {/* Detail panel */}
-          <ClassifyDetailPanel event={displayEvent} jobStartEpoch={0} />
+          <ClassifyDetailPanel
+            event={displayEvent}
+            jobStartEpoch={regionEpoch?.regionStartTimestamp ?? 0}
+          />
         </div>
       ) : (
         <div className="py-8 text-center text-muted-foreground">
@@ -1267,6 +1280,7 @@ interface ClassifyViewerBodyProps {
   scrollToCenter: number | undefined;
   onViewStartChange: (v: number) => void;
   onViewSpanChange: (v: number) => void;
+  regionEpoch: RegionEpoch;
 }
 
 function ClassifyViewerBody({
@@ -1279,8 +1293,10 @@ function ClassifyViewerBody({
   scrollToCenter,
   onViewStartChange,
   onViewSpanChange,
+  regionEpoch,
 }: ClassifyViewerBodyProps) {
   const ctx = useTimelineContext();
+  const regionStart = regionEpoch.regionStartTimestamp;
 
   // Re-center when region changes
   const prevRegionRef = useRef<string>(region.region_id);
@@ -1289,9 +1305,17 @@ function ClassifyViewerBody({
       prevRegionRef.current = region.region_id;
       const dur = region.padded_end_sec - region.padded_start_sec;
       const span = ctx.activePreset.span;
-      ctx.seekTo(region.padded_start_sec + Math.min(dur, span) / 2);
+      ctx.seekTo(
+        regionStart + region.padded_start_sec + Math.min(dur, span) / 2,
+      );
     }
-  }, [region.region_id, region.padded_start_sec, region.padded_end_sec, ctx]);
+  }, [
+    region.region_id,
+    region.padded_start_sec,
+    region.padded_end_sec,
+    ctx,
+    regionStart,
+  ]);
 
   // External scroll-to-center
   const prevScrollRef = useRef<number | undefined>(undefined);
@@ -1347,6 +1371,27 @@ function ClassifyViewerBody({
     [regionDetectionJobId],
   );
 
+  // Translate event coordinates from job-relative to absolute epoch before
+  // handing them to the overlay (which operates in the timeline provider's
+  // epoch coordinate space). Convert back when storing corrections.
+  const regionEffectiveEventsEpoch = useMemo<EffectiveEvent[]>(
+    () =>
+      regionEffectiveEvents.map((e) => ({
+        ...e,
+        startSec: regionStart + e.startSec,
+        endSec: regionStart + e.endSec,
+        originalStartSec: regionStart + e.originalStartSec,
+        originalEndSec: regionStart + e.originalEndSec,
+      })),
+    [regionEffectiveEvents, regionStart],
+  );
+  const handleAdjustEpoch = useCallback(
+    (eventId: string, startEpoch: number, endEpoch: number) => {
+      onAdjust(eventId, startEpoch - regionStart, endEpoch - regionStart);
+    },
+    [onAdjust, regionStart],
+  );
+
   return (
     <div className="w-full select-none">
       <div className="flex flex-col" style={{ height: 200 }}>
@@ -1355,12 +1400,15 @@ function ClassifyViewerBody({
           tileUrlBuilder={tileUrlBuilder}
           freqRange={[0, 3000]}
         >
-          <RegionBoundaryMarkers startEpoch={region.start_sec} endEpoch={region.end_sec} />
+          <RegionBoundaryMarkers
+            startEpoch={regionStart + region.start_sec}
+            endEpoch={regionStart + region.end_sec}
+          />
           <EventBarOverlay
-            events={regionEffectiveEvents}
+            events={regionEffectiveEventsEpoch}
             selectedEventId={selectedEventId}
             onSelectEvent={onSelectEvent}
-            onAdjust={onAdjust}
+            onAdjust={handleAdjustEpoch}
             onAdd={() => {}}
             addMode={false}
             activeRegionId={region.region_id}

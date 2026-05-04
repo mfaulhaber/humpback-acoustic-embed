@@ -11,14 +11,14 @@ import {
   useQuickRetrain,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
-import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
+import { regionTileUrl } from "@/api/client";
 import type {
   EventSegmentationJob,
   EventBoundaryCorrectionItem,
   EventBoundaryCorrectionResponse,
+  Region,
 } from "@/api/types";
 import { toast } from "@/components/ui/use-toast";
-import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import type { TimelinePlaybackHandle } from "@/components/timeline/provider/types";
@@ -28,8 +28,10 @@ import { RegionBandOverlay } from "@/components/timeline/overlays/RegionBandOver
 import { EventBarOverlay, type EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 import { EventDetailPanel } from "./EventDetailPanel";
+import { RegionAudioTimeline } from "./RegionAudioTimeline";
 import { RegionTable } from "./RegionTable";
 import { ReviewToolbar, type RetrainStatus } from "./ReviewToolbar";
+import { useRegionEpoch, type RegionEpoch } from "./useRegionEpoch";
 
 export function SegmentReviewWorkspace({
   initialJobId,
@@ -60,6 +62,7 @@ export function SegmentReviewWorkspace({
 
   const selectedJob = completeJobs.find((j) => j.id === selectedJobId) ?? null;
   const regionDetectionJobId = selectedJob?.region_detection_job_id ?? null;
+  const regionEpoch = useRegionEpoch(regionDetectionJobId);
 
   const { data: regions = [] } = useRegionJobRegions(regionDetectionJobId);
   const { data: events = [] } = useSegmentationJobEvents(selectedJobId);
@@ -311,23 +314,24 @@ export function SegmentReviewWorkspace({
 
   // Auto-scroll spectrogram when current event is not fully visible
   useEffect(() => {
-    if (!currentNavEvent || viewStart === undefined) return;
+    if (!currentNavEvent || viewStart === undefined || !regionEpoch) return;
     const viewEnd = viewStart + viewSpan;
     const pad = viewSpan * 0.15;
+    const eventStartEpoch = regionEpoch.toEpoch(currentNavEvent.startSec);
+    const eventEndEpoch = regionEpoch.toEpoch(currentNavEvent.endSec);
     const fullyVisible =
-      currentNavEvent.startSec >= viewStart + pad &&
-      currentNavEvent.endSec <= viewEnd - pad;
+      eventStartEpoch >= viewStart + pad && eventEndEpoch <= viewEnd - pad;
     if (!fullyVisible) {
       let target: number;
       if (navDirectionRef.current === "forward") {
-        target = currentNavEvent.endSec + pad - viewSpan / 2;
+        target = eventEndEpoch + pad - viewSpan / 2;
       } else {
-        target = currentNavEvent.startSec - pad + viewSpan / 2;
+        target = eventStartEpoch - pad + viewSpan / 2;
       }
       scrollSeqRef.current += 1;
       setScrollToCenter({ target, seq: scrollSeqRef.current });
     }
-  }, [currentNavEvent, viewStart, viewSpan]);
+  }, [currentNavEvent, viewStart, viewSpan, regionEpoch]);
 
   // Callbacks for overlay
   const handleAdjust = useCallback(
@@ -492,15 +496,24 @@ export function SegmentReviewWorkspace({
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
       playbackRef.current?.pause();
-    } else if (selectedEvent) {
+    } else if (selectedEvent && regionEpoch) {
       const duration = selectedEvent.endSec - selectedEvent.startSec;
-      playbackRef.current?.play(selectedEvent.startSec, duration);
-    } else if (selectedRegion) {
-      const playStart = viewStart ?? selectedRegion.padded_start_sec;
-      const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
+      playbackRef.current?.play(
+        regionEpoch.toEpoch(selectedEvent.startSec),
+        duration,
+      );
+    } else if (selectedRegion && regionEpoch) {
+      // viewStart is already in epoch space when the timeline is mounted;
+      // padded_start_sec is region-relative and needs translation.
+      const playStart =
+        viewStart ?? regionEpoch.toEpoch(selectedRegion.padded_start_sec);
+      const regionEndEpoch = regionEpoch.toEpoch(
+        selectedRegion.padded_end_sec,
+      );
+      const duration = Math.min(regionEndEpoch - playStart, 30);
       playbackRef.current?.play(playStart, duration);
     }
-  }, [isPlaying, selectedEvent, selectedRegion, viewStart]);
+  }, [isPlaying, selectedEvent, selectedRegion, viewStart, regionEpoch]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -638,15 +651,6 @@ export function SegmentReviewWorkspace({
     );
   }, [retrainStatus, regionDetectionJobId, createSegJob]);
 
-  const jobStart = 0;
-  const jobEnd = timelineExtent?.end ?? 0;
-
-  const audioUrlBuilder = useCallback(
-    (startEpoch: number, durationSec: number) =>
-      regionAudioSliceUrl(regionDetectionJobId ?? "", startEpoch, durationSec),
-    [regionDetectionJobId],
-  );
-
   const tileUrlBuilder = useCallback(
     (_jobId: string, zoomLevel: string, tileIndex: number) =>
       regionTileUrl(regionDetectionJobId ?? "", zoomLevel, tileIndex),
@@ -688,7 +692,7 @@ export function SegmentReviewWorkspace({
       </div>
 
       {/* Workspace body */}
-      {selectedJob && selectedRegion && timelineExtent ? (
+      {selectedJob && selectedRegion && timelineExtent && regionEpoch ? (
         <div className="rounded-md border">
           <ReviewToolbar
             region={selectedRegion}
@@ -706,8 +710,12 @@ export function SegmentReviewWorkspace({
                 return;
               }
               if (!selectedRegion) return;
-              const playStart = viewStart ?? selectedRegion.padded_start_sec;
-              const duration = Math.min(selectedRegion.padded_end_sec - playStart, 30);
+              const playStart =
+                viewStart ?? regionEpoch.toEpoch(selectedRegion.padded_start_sec);
+              const regionEndEpoch = regionEpoch.toEpoch(
+                selectedRegion.padded_end_sec,
+              );
+              const duration = Math.min(regionEndEpoch - playStart, 30);
               playbackRef.current?.play(playStart, duration);
             }}
             hasCorrections={hasCorrections}
@@ -728,17 +736,15 @@ export function SegmentReviewWorkspace({
             onNextEvent={goNextEvent}
             currentEventIndex={currentEventIndex}
             totalEventCount={navigableEvents.length}
-            jobStartEpoch={jobStart}
+            jobStartEpoch={regionEpoch.regionStartTimestamp}
           />
-          <TimelineProvider
+          <RegionAudioTimeline
             ref={playbackRef}
-            key={`${selectedJobId}-${selectedRegionId}`}
-            jobStart={jobStart}
-            jobEnd={jobEnd}
+            regionDetectionJobId={regionDetectionJobId!}
+            regionEpoch={regionEpoch}
+            resetKey={`${selectedJobId}-${selectedRegionId}`}
             zoomLevels={REVIEW_ZOOM}
             defaultZoom={userZoom}
-            playback="slice"
-            audioUrlBuilder={audioUrlBuilder}
             disableKeyboardShortcuts
             scrollOnPlayback={false}
             onZoomChange={setUserZoom}
@@ -764,8 +770,9 @@ export function SegmentReviewWorkspace({
               onViewStartChange={setViewStart}
               onViewSpanChange={setViewSpan}
               tileUrlBuilder={tileUrlBuilder}
+              regionEpoch={regionEpoch}
             />
-          </TimelineProvider>
+          </RegionAudioTimeline>
           <EventDetailPanel
             event={selectedEvent}
             onDelete={handleDelete}
@@ -777,9 +784,12 @@ export function SegmentReviewWorkspace({
               }
               if (!selectedEvent) return;
               const duration = selectedEvent.endSec - selectedEvent.startSec;
-              playbackRef.current?.play(selectedEvent.startSec, duration);
+              playbackRef.current?.play(
+                regionEpoch.toEpoch(selectedEvent.startSec),
+                duration,
+              );
             }}
-            jobStartEpoch={jobStart}
+            jobStartEpoch={regionEpoch.regionStartTimestamp}
           />
           <RegionTable
             regions={regions}
@@ -787,13 +797,15 @@ export function SegmentReviewWorkspace({
             corrections={savedCorrections}
             selectedRegionId={selectedRegionId}
             onSelectRegion={handleSelectRegion}
-            jobStartEpoch={jobStart}
+            jobStartEpoch={regionEpoch.regionStartTimestamp}
           />
         </div>
       ) : selectedJob ? (
         <div className="rounded-md border">
           <div className="p-4 text-center text-sm text-muted-foreground">
-            Select a region to view its spectrogram
+            {regionEpoch
+              ? "Select a region to view its spectrogram"
+              : "Loading region…"}
           </div>
           <RegionTable
             regions={regions}
@@ -801,7 +813,7 @@ export function SegmentReviewWorkspace({
             corrections={savedCorrections}
             selectedRegionId={selectedRegionId}
             onSelectRegion={handleSelectRegion}
-            jobStartEpoch={jobStart}
+            jobStartEpoch={regionEpoch?.regionStartTimestamp ?? 0}
           />
         </div>
       ) : (
@@ -816,8 +828,8 @@ export function SegmentReviewWorkspace({
 
 interface SegmentViewerBodyProps {
   regionDetectionJobId: string;
-  region: import("@/api/types").Region;
-  regions: import("@/api/types").Region[];
+  region: Region;
+  regions: Region[];
   selectedRegionId: string;
   onSelectRegion: (regionId: string) => void;
   regionEvents: EffectiveEvent[];
@@ -830,6 +842,7 @@ interface SegmentViewerBodyProps {
   onViewStartChange: (viewStart: number) => void;
   onViewSpanChange: (viewSpan: number) => void;
   tileUrlBuilder: (jobId: string, zoomLevel: string, tileIndex: number, freqMin: number, freqMax: number) => string;
+  regionEpoch: RegionEpoch;
 }
 
 function SegmentViewerBody({
@@ -848,8 +861,10 @@ function SegmentViewerBody({
   onViewStartChange,
   onViewSpanChange,
   tileUrlBuilder,
+  regionEpoch,
 }: SegmentViewerBodyProps) {
   const ctx = useTimelineContext();
+  const regionStart = regionEpoch.regionStartTimestamp;
 
   // Re-center when region changes
   const prevRegionRef = useRef<string>(region.region_id);
@@ -858,9 +873,17 @@ function SegmentViewerBody({
       prevRegionRef.current = region.region_id;
       const dur = region.padded_end_sec - region.padded_start_sec;
       const span = ctx.activePreset.span;
-      ctx.seekTo(region.padded_start_sec + Math.min(dur, span) / 2);
+      ctx.seekTo(
+        regionStart + region.padded_start_sec + Math.min(dur, span) / 2,
+      );
     }
-  }, [region.region_id, region.padded_start_sec, region.padded_end_sec, ctx]);
+  }, [
+    region.region_id,
+    region.padded_start_sec,
+    region.padded_end_sec,
+    ctx,
+    regionStart,
+  ]);
 
   // External scroll-to-center (for event navigation)
   const scrollSeqRef = useRef<number | undefined>(undefined);
@@ -912,6 +935,44 @@ function SegmentViewerBody({
   // Show region bands at wide zoom (1m or 5m)
   const showBands = ctx.activePreset.key === "5m" || ctx.activePreset.key === "1m";
 
+  // Translate region/event coordinates from job-relative to absolute epoch
+  // before handing them to overlays, which operate in the timeline provider's
+  // (now epoch) coordinate space.
+  const regionsEpoch = useMemo<Region[]>(
+    () =>
+      regions.map((r) => ({
+        ...r,
+        start_sec: regionStart + r.start_sec,
+        end_sec: regionStart + r.end_sec,
+        padded_start_sec: regionStart + r.padded_start_sec,
+        padded_end_sec: regionStart + r.padded_end_sec,
+      })),
+    [regions, regionStart],
+  );
+  const regionEventsEpoch = useMemo<EffectiveEvent[]>(
+    () =>
+      regionEvents.map((e) => ({
+        ...e,
+        startSec: regionStart + e.startSec,
+        endSec: regionStart + e.endSec,
+        originalStartSec: regionStart + e.originalStartSec,
+        originalEndSec: regionStart + e.originalEndSec,
+      })),
+    [regionEvents, regionStart],
+  );
+  const handleAdjustEpoch = useCallback(
+    (eventId: string, startEpoch: number, endEpoch: number) => {
+      onAdjust(eventId, startEpoch - regionStart, endEpoch - regionStart);
+    },
+    [onAdjust, regionStart],
+  );
+  const handleAddEpoch = useCallback(
+    (regionId: string, startEpoch: number, endEpoch: number) => {
+      onAdd(regionId, startEpoch - regionStart, endEpoch - regionStart);
+    },
+    [onAdd, regionStart],
+  );
+
   return (
     <div className="w-full select-none">
       <div className="flex flex-col" style={{ height: 240 }}>
@@ -920,20 +981,23 @@ function SegmentViewerBody({
           tileUrlBuilder={tileUrlBuilder}
           freqRange={[0, 3000]}
         >
-          <RegionBoundaryMarkers startEpoch={region.start_sec} endEpoch={region.end_sec} />
+          <RegionBoundaryMarkers
+            startEpoch={regionStart + region.start_sec}
+            endEpoch={regionStart + region.end_sec}
+          />
           {showBands && (
             <RegionBandOverlay
-              regions={regions}
+              regions={regionsEpoch}
               activeRegionId={selectedRegionId}
               onSelectRegion={onSelectRegion}
             />
           )}
           <EventBarOverlay
-            events={regionEvents}
+            events={regionEventsEpoch}
             selectedEventId={selectedEventId}
             onSelectEvent={onSelectEvent}
-            onAdjust={onAdjust}
-            onAdd={onAdd}
+            onAdjust={handleAdjustEpoch}
+            onAdd={handleAddEpoch}
             addMode={addMode}
             activeRegionId={selectedRegionId}
           />
