@@ -18,16 +18,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.sequence_models.exemplars import WindowMeta
 from humpback.sequence_models.overlay import OverlayMetadata
+
+
+class LabelDistribution(TypedDict):
+    """Simplified per-state label-distribution shape (supersedes ADR-060).
+
+    Both SurfPerch and CRNN sources produce the same shape; CRNN's tier
+    metadata still appears on ``decoded.parquet`` and exemplars but no
+    longer stratifies the chart.
+    """
+
+    n_states: int
+    total_windows: int
+    states: dict[str, dict[str, int]]
 
 
 def read_decoded_parquet(decoded_artifact_path: str | Path) -> pa.Table:
@@ -67,26 +79,14 @@ class OverlayInputs:
     window_metas: list[WindowMeta]
 
 
-@dataclass
-class LabelDistributionInputs:
-    """Source-agnostic bundle consumed by label-distribution computation.
-
-    ``hydrophone_id`` resolves the DetectionJob/VocalizationLabel SQL fetch
-    that lives in the service. ``state_rows`` carries the same shape across
-    sources (``start_timestamp``, ``end_timestamp``, ``viterbi_state``);
-    the in-memory key is preserved as ``viterbi_state`` regardless of
-    on-disk column rename so downstream consumers stay unchanged.
-    ``tier_per_row`` is parallel to ``state_rows`` and ``None`` for sources
-    without a tier dimension (SurfPerch).
-    """
-
-    hydrophone_id: str | None
-    state_rows: list[dict[str, Any]]
-    tier_per_row: list[str] | None
-
-
 class SequenceArtifactLoader(Protocol):
-    """Loader Protocol — one impl per embedding source family."""
+    """Loader Protocol — one impl per embedding source family.
+
+    Label distribution is no longer routed through the loader: the service
+    layer reads it from the bound ``EventClassificationJob`` via
+    ``humpback.sequence_models.label_distribution.load_effective_event_labels``.
+    Loaders only contribute the source-specific decoded/embedding read.
+    """
 
     def load(
         self,
@@ -94,14 +94,6 @@ class SequenceArtifactLoader(Protocol):
         hmm_job: HMMSequenceJob,
         cej: ContinuousEmbeddingJob,
     ) -> OverlayInputs: ...
-
-    async def load_label_distribution_inputs(
-        self,
-        session: AsyncSession,
-        storage_root: Path,
-        hmm_job: HMMSequenceJob,
-        cej: ContinuousEmbeddingJob,
-    ) -> LabelDistributionInputs: ...
 
 
 from humpback.sequence_models.loaders.crnn_region import CrnnRegionLoader  # noqa: E402
@@ -136,7 +128,7 @@ def get_loader(
 
 __all__ = [
     "CrnnRegionLoader",
-    "LabelDistributionInputs",
+    "LabelDistribution",
     "OverlayInputs",
     "SequenceArtifactLoader",
     "SurfPerchLoader",

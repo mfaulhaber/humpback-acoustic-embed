@@ -230,6 +230,11 @@ class HMMSequenceJobCreate(BaseModel):
     """
 
     continuous_embedding_job_id: str
+    # Optional explicit Classify binding. When ``None`` the submit
+    # endpoint resolves the most recent completed
+    # ``EventClassificationJob`` for the upstream segmentation; when
+    # provided, the value must be completed and on the same segmentation.
+    event_classification_job_id: Optional[str] = None
     n_states: int = Field(ge=2)
     pca_dims: int = Field(default=50, ge=1)
     pca_whiten: bool = False
@@ -281,6 +286,7 @@ class HMMSequenceJobOut(BaseModel):
     id: str
     status: str
     continuous_embedding_job_id: str
+    event_classification_job_id: Optional[str] = None
     n_states: int
     pca_dims: int
     pca_whiten: bool
@@ -384,17 +390,19 @@ class OverlayResponse(BaseModel):
 
 
 class LabelDistributionResponse(BaseModel):
-    """Per-state label distribution from center-time join.
+    """Per-state label distribution sourced from Call Parsing Classify.
 
-    Unified nested shape (ADR-060): outer key is state, middle key is the
-    tier bucket, inner key is the label. SurfPerch jobs use the synthetic
-    ``"all"`` tier; CRNN jobs use real tier keys (``event_core`` /
-    ``near_event`` / ``background``).
+    Simplified shape (supersedes ADR-060): outer key is state, inner key
+    is the label. The ``(background)`` bucket holds windows whose center
+    falls outside any effective event (or inside an event whose
+    corrections wiped every type). CRNN tier metadata persists on
+    ``decoded.parquet`` and exemplars but no longer stratifies the
+    label-distribution chart.
     """
 
     n_states: int
     total_windows: int
-    states: dict[str, dict[str, dict[str, int]]]
+    states: dict[str, dict[str, int]]
 
 
 class ExemplarRecord(BaseModel):
@@ -407,7 +415,7 @@ class ExemplarRecord(BaseModel):
     end_timestamp: float
     max_state_probability: float
     exemplar_type: str
-    extras: dict[str, str | int | float | None] = Field(default_factory=dict)
+    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExemplarsResponse(BaseModel):
@@ -623,6 +631,9 @@ class MaskedTransformerJobCreate(BaseModel):
     """Request body for creating a ``MaskedTransformerJob``."""
 
     continuous_embedding_job_id: str
+    # Optional explicit Classify binding; same semantics as on
+    # :class:`HMMSequenceJobCreate`.
+    event_classification_job_id: Optional[str] = None
     preset: Literal["small", "default", "large"] = "default"
     k_values: list[int] = Field(default_factory=lambda: [100])
     mask_fraction: float = Field(default=0.20, ge=0.0, le=1.0)
@@ -660,6 +671,7 @@ class MaskedTransformerJobOut(BaseModel):
     status: str
     status_reason: Optional[str] = None
     continuous_embedding_job_id: str
+    event_classification_job_id: Optional[str] = None
     training_signature: str
     preset: str
     mask_fraction: float
@@ -736,6 +748,18 @@ class GenerateInterpretationsRequest(BaseModel):
     """Body for the generate-interpretations endpoint."""
 
     k_values: Optional[list[int]] = None
+
+
+class RegenerateLabelDistributionRequest(BaseModel):
+    """Body for the HMM/MT ``regenerate-label-distribution`` endpoints.
+
+    ``event_classification_job_id`` is optional: when omitted the
+    endpoint regenerates against the currently bound Classify job; when
+    provided (and validation passes) the FK is atomically re-bound after
+    the artifact write succeeds.
+    """
+
+    event_classification_job_id: Optional[str] = None
 
 
 class LossCurveResponse(BaseModel):

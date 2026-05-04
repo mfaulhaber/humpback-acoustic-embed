@@ -1,8 +1,9 @@
-"""Tests for the source-agnostic HMM interpretation loaders (ADR-059, ADR-060, ADR-061)."""
+"""Tests for the source-agnostic HMM interpretation loaders (ADR-059, ADR-061)."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_type_hints
 
 import joblib
 import numpy as np
@@ -11,12 +12,10 @@ import pyarrow.parquet as pq
 import pytest
 from sklearn.decomposition import PCA
 
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
-from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.sequence_models.loaders import (
     CrnnRegionLoader,
-    LabelDistributionInputs,
+    LabelDistribution,
     OverlayInputs,
     SurfPerchLoader,
     get_loader,
@@ -387,192 +386,65 @@ class TestCrnnRegionLoader:
         assert len(result.viterbi_states) > 0
 
 
-class TestSurfPerchLabelDistributionLoader:
-    async def test_returns_aligned_state_rows_and_hydrophone(self, session, tmp_path):
-        region_job = RegionDetectionJob(
-            status=JobStatus.complete.value,
-            hydrophone_id="rpi_orcasound_lab",
-            start_timestamp=1000.0,
-            end_timestamp=1300.0,
-        )
-        session.add(region_job)
-        await session.flush()
-        seg_job = EventSegmentationJob(
-            status=JobStatus.complete.value,
-            region_detection_job_id=region_job.id,
-        )
-        session.add(seg_job)
-        await session.commit()
-        await session.refresh(seg_job)
+class TestLabelDistributionShape:
+    """Lock the simplified per-state shape (ADR-060 superseded).
 
-        cej = ContinuousEmbeddingJob(
-            event_segmentation_job_id=seg_job.id,
-            model_version="surfperch-tensorflow2",
-            window_size_seconds=5.0,
-            hop_seconds=1.0,
-            pad_seconds=2.0,
-            target_sample_rate=32000,
-            encoding_signature=f"sig-{seg_job.id}",
-            status=JobStatus.complete.value,
-        )
-        session.add(cej)
-        await session.commit()
-        await session.refresh(cej)
+    Both source loaders feed ``compute_label_distribution`` which returns
+    this shape; the typed-dict here lives on the loader Protocol so a
+    reintroduction of a tier dimension would surface as a shape change.
+    """
 
-        hmm_job = _make_hmm_job("hmm-sp-ld")
-        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
-        decoded_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(
-            pa.table(
-                {
-                    "start_timestamp": pa.array([1010.0, 1100.0], type=pa.float64()),
-                    "end_timestamp": pa.array([1015.0, 1105.0], type=pa.float64()),
-                    "label": pa.array([0, 1], type=pa.int16()),
-                }
-            ),
-            decoded_path,
+    def test_label_distribution_typed_dict_has_no_tier_dimension(self):
+        hints = get_type_hints(LabelDistribution)
+        assert hints["n_states"] is int
+        assert hints["total_windows"] is int
+        states_hint = hints["states"]
+        # dict[str, dict[str, int]] — args resolve as (str, dict[str, int]).
+        outer_args = states_hint.__args__
+        assert outer_args[0] is str
+        inner = outer_args[1]
+        inner_args = inner.__args__
+        assert inner_args[0] is str
+        assert inner_args[1] is int
+
+    def test_label_distribution_typed_dict_inner_value_is_int_not_dict(self):
+        """Defensive: a tier-dimension regression would change the inner
+        value type from ``int`` to a nested mapping."""
+        hints = get_type_hints(LabelDistribution)
+        inner = hints["states"].__args__[1]
+        assert inner.__args__[1] is int
+
+    def test_compute_label_distribution_omits_synthetic_all_tier(self):
+        """SurfPerch source no longer emits a synthetic ``"all"`` tier; the
+        per-state buckets map labels directly to counts."""
+        from humpback.sequence_models.label_distribution import (
+            BACKGROUND_LABEL,
+            WindowAnnotation,
+            compute_label_distribution,
         )
 
-        result = await SurfPerchLoader(
-            decoded_artifact_path=str(decoded_path)
-        ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
+        rows = [
+            {
+                "start_timestamp": 0.0,
+                "end_timestamp": 1.0,
+                "viterbi_state": 0,
+            },
+            {
+                "start_timestamp": 1.0,
+                "end_timestamp": 2.0,
+                "viterbi_state": 1,
+            },
+        ]
+        annotations = [
+            WindowAnnotation(event_id="e0", event_types=("song",), event_confidence={}),
+            WindowAnnotation(event_id=None, event_types=(), event_confidence={}),
+        ]
 
-        assert isinstance(result, LabelDistributionInputs)
-        assert result.hydrophone_id == "rpi_orcasound_lab"
-        assert result.tier_per_row is None
-        assert len(result.state_rows) == 2
-        assert result.state_rows[0]["start_timestamp"] == 1010.0
-        assert result.state_rows[0]["viterbi_state"] == 0
-        assert result.state_rows[1]["viterbi_state"] == 1
+        dist = compute_label_distribution(rows, annotations, n_states=2)
 
-    async def test_missing_event_segmentation_raises(self, session, tmp_path):
-        cej = ContinuousEmbeddingJob(
-            event_segmentation_job_id="does-not-exist",
-            model_version="surfperch-tensorflow2",
-            window_size_seconds=5.0,
-            hop_seconds=1.0,
-            pad_seconds=2.0,
-            target_sample_rate=32000,
-            encoding_signature="sig-missing-esj",
-            status=JobStatus.complete.value,
-        )
-        session.add(cej)
-        await session.commit()
-        await session.refresh(cej)
-
-        hmm_job = _make_hmm_job("hmm-sp-missing")
-        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
-        with pytest.raises(ValueError, match="EventSegmentationJob not found"):
-            await SurfPerchLoader(
-                decoded_artifact_path=str(decoded_path)
-            ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
-
-
-class TestCrnnRegionLabelDistributionLoader:
-    async def test_returns_tier_per_row_aligned_with_state_rows(
-        self, session, tmp_path
-    ):
-        region_job = RegionDetectionJob(
-            status=JobStatus.complete.value,
-            hydrophone_id="rpi_orcasound_lab",
-            start_timestamp=1000.0,
-            end_timestamp=1300.0,
-        )
-        session.add(region_job)
-        await session.commit()
-        await session.refresh(region_job)
-
-        cej = ContinuousEmbeddingJob(
-            event_segmentation_job_id="seg-anything",
-            region_detection_job_id=region_job.id,
-            model_version="crnn-call-parsing-pytorch",
-            window_size_seconds=0.25,
-            hop_seconds=0.25,
-            pad_seconds=0.0,
-            target_sample_rate=16000,
-            encoding_signature=f"sig-crnn-{region_job.id}",
-            status=JobStatus.complete.value,
-        )
-        session.add(cej)
-        await session.commit()
-        await session.refresh(cej)
-
-        hmm_job = _make_hmm_job("hmm-crnn-ld")
-        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
-        decoded_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(
-            pa.table(
-                {
-                    "start_timestamp": pa.array(
-                        [1000.0, 1000.5, 1001.0], type=pa.float64()
-                    ),
-                    "end_timestamp": pa.array(
-                        [1000.5, 1001.0, 1001.5], type=pa.float64()
-                    ),
-                    "label": pa.array([0, 1, 0], type=pa.int16()),
-                    "tier": pa.array(
-                        ["event_core", "near_event", "background"], type=pa.string()
-                    ),
-                }
-            ),
-            decoded_path,
-        )
-
-        result = await CrnnRegionLoader(
-            decoded_artifact_path=str(decoded_path)
-        ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
-
-        assert isinstance(result, LabelDistributionInputs)
-        assert result.hydrophone_id == "rpi_orcasound_lab"
-        assert result.tier_per_row == ["event_core", "near_event", "background"]
-        assert result.tier_per_row is not None
-        assert len(result.state_rows) == 3
-        assert len(result.tier_per_row) == len(result.state_rows)
-        assert result.state_rows[0]["viterbi_state"] == 0
-        assert result.state_rows[1]["viterbi_state"] == 1
-
-    async def test_missing_region_detection_job_raises(self, session, tmp_path):
-        cej = ContinuousEmbeddingJob(
-            event_segmentation_job_id="seg-anything",
-            region_detection_job_id="does-not-exist",
-            model_version="crnn-call-parsing-pytorch",
-            window_size_seconds=0.25,
-            hop_seconds=0.25,
-            pad_seconds=0.0,
-            target_sample_rate=16000,
-            encoding_signature="sig-crnn-missing",
-            status=JobStatus.complete.value,
-        )
-        session.add(cej)
-        await session.commit()
-        await session.refresh(cej)
-
-        hmm_job = _make_hmm_job("hmm-crnn-missing")
-        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
-        with pytest.raises(ValueError, match="RegionDetectionJob not found"):
-            await CrnnRegionLoader(
-                decoded_artifact_path=str(decoded_path)
-            ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
-
-    async def test_null_region_detection_job_id_raises(self, session, tmp_path):
-        cej = ContinuousEmbeddingJob(
-            event_segmentation_job_id="seg-anything",
-            region_detection_job_id=None,
-            model_version="crnn-call-parsing-pytorch",
-            window_size_seconds=0.25,
-            hop_seconds=0.25,
-            pad_seconds=0.0,
-            target_sample_rate=16000,
-            encoding_signature="sig-crnn-null",
-            status=JobStatus.complete.value,
-        )
-        session.add(cej)
-        await session.commit()
-        await session.refresh(cej)
-
-        hmm_job = _make_hmm_job("hmm-crnn-null")
-        decoded_path = hmm_sequence_decoded_path(tmp_path, hmm_job.id)
-        with pytest.raises(ValueError, match="missing region_detection_job_id"):
-            await CrnnRegionLoader(
-                decoded_artifact_path=str(decoded_path)
-            ).load_label_distribution_inputs(session, tmp_path, hmm_job, cej)
+        # No "all" tier wrapper; outer state values are flat label maps.
+        assert dist["states"]["0"] == {"song": 1}
+        assert dist["states"]["1"] == {BACKGROUND_LABEL: 1}
+        for bucket in dist["states"].values():
+            for value in bucket.values():
+                assert isinstance(value, int)

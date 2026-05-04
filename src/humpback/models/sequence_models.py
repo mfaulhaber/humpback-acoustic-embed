@@ -74,6 +74,11 @@ class HMMSequenceJob(UUIDMixin, TimestampMixin, Base):
 
     status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
     continuous_embedding_job_id: Mapped[str]
+    # Pass 3 Classify job whose typed_events.parquet (with VocalizationCorrection
+    # overlay) feeds label_distribution.json and exemplar annotations. Nullable
+    # in storage for the in-transaction window only; the submit endpoint
+    # resolves a non-NULL value before the row commits.
+    event_classification_job_id: Mapped[Optional[str]] = mapped_column(default=None)
     n_states: Mapped[int] = mapped_column(Integer)
     pca_dims: Mapped[int] = mapped_column(Integer)
     pca_whiten: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -141,6 +146,9 @@ class MaskedTransformerJob(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
     status_reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
     continuous_embedding_job_id: Mapped[str]
+    # Pass 3 Classify job that feeds label_distribution.json + exemplar
+    # annotations; nullable in storage for the in-transaction window only.
+    event_classification_job_id: Mapped[Optional[str]] = mapped_column(default=None)
     training_signature: Mapped[str]
     # Training config
     preset: Mapped[str] = mapped_column(Text, default="default")

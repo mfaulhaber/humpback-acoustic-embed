@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Plot from "react-plotly.js";
 import { Link, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { regionAudioSliceUrl, regionTileUrl } from "@/api/client";
 import {
   type ExemplarRecord,
   type MotifSummary,
+  useContinuousEmbeddingJob,
+  useEventClassificationJobsForSegmentation,
   useMaskedTransformerExemplars,
   useMaskedTransformerJob,
   useMaskedTransformerLabelDistribution,
@@ -19,6 +22,7 @@ import {
   useMotifExtractionJobs,
   useMotifs,
   useMotifsByLength,
+  useRegenerateMTLabelDistribution,
 } from "@/api/sequenceModels";
 import { DiscreteSequenceBar, type DiscreteSequenceItem } from "./DiscreteSequenceBar";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
@@ -82,6 +86,12 @@ export function MaskedTransformerDetailPage() {
   const [byLengthLength, setByLengthLength] = useState<MotifTokenCount | null>(null);
   const [byLengthActiveIndex, setByLengthActiveIndex] = useState(0);
   const isByLengthMode = byLengthLength != null;
+
+  // Resolve the upstream CEJ so we have the segmentation id (used by the
+  // regenerate-label-distribution dialog to filter Classify candidates).
+  const cejId = data?.job.continuous_embedding_job_id ?? null;
+  const { data: cejDetail } = useContinuousEmbeddingJob(cejId);
+  const segmentationJobId = cejDetail?.job.event_segmentation_job_id ?? null;
 
   // Lift the motif-extraction queries to the page level so byLength mode
   // can compute its own occurrences without duplicating fetches. The
@@ -214,7 +224,7 @@ export function MaskedTransformerDetailPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <StatusBadge status={job.status} />
             {job.chosen_device && (
               <Badge
@@ -227,6 +237,20 @@ export function MaskedTransformerDetailPage() {
             )}
             <Badge variant="outline">preset: {job.preset}</Badge>
             <Badge variant="outline">source: {source_kind}</Badge>
+            {job.event_classification_job_id ? (
+              <Link
+                className="no-underline"
+                to={`/app/call-parsing/classify-review?job_id=${encodeURIComponent(
+                  job.event_classification_job_id,
+                )}`}
+                data-testid="mt-detail-classify-badge"
+              >
+                <Badge variant="outline">
+                  Labels: Classify #
+                  {job.event_classification_job_id.slice(0, 8)}
+                </Badge>
+              </Link>
+            ) : null}
             <span className="text-muted-foreground text-xs">
               {kValues.length > 0 ? `k = ${kValues.join(", ")}` : "no k configured"}
             </span>
@@ -331,6 +355,14 @@ export function MaskedTransformerDetailPage() {
           title={<LabelDistributionTitle kValues={kValues} />}
           storageKey="mt:label-distribution"
           testId="mt-label-distribution-panel"
+          headerExtra={
+            <RegenerateMTLabelDistributionTrigger
+              mtJobId={jobId}
+              kValues={kValues}
+              segmentationJobId={segmentationJobId}
+              boundClassifyId={job.event_classification_job_id}
+            />
+          }
         >
           <LabelDistributionSection jobId={jobId} kValues={kValues} />
         </CollapsiblePanelCard>
@@ -975,9 +1007,199 @@ function ExemplarList({ records }: { records: ExemplarRecord[] }) {
               {String(r.extras.tier)}
             </Badge>
           )}
+          <ExemplarEventTypeChips exemplar={r} />
         </li>
       ))}
     </ul>
+  );
+}
+
+function ExemplarEventTypeChips({ exemplar }: { exemplar: ExemplarRecord }) {
+  const rawTypes = exemplar.extras?.event_types;
+  const types: string[] = Array.isArray(rawTypes)
+    ? (rawTypes.filter((v) => typeof v === "string") as string[])
+    : [];
+  const eventId = exemplar.extras?.event_id;
+
+  if (types.length === 0) {
+    return (
+      <div
+        className="flex flex-wrap gap-1 mt-1"
+        data-testid="mt-exemplar-event-types"
+      >
+        <span
+          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 text-[10px] font-medium"
+          data-testid="mt-exemplar-background-chip"
+        >
+          (background)
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex flex-wrap gap-1 mt-1"
+      data-testid="mt-exemplar-event-types"
+    >
+      {types.map((t) => {
+        const chip = (
+          <span
+            key={t}
+            className="px-1.5 py-0.5 rounded bg-blue-500 text-white text-[10px] font-medium"
+            data-testid="mt-exemplar-type-chip"
+          >
+            {t}
+          </span>
+        );
+        if (typeof eventId === "string" && eventId.length > 0) {
+          return (
+            <Link
+              key={t}
+              to={`/app/call-parsing/classify-review?event_id=${encodeURIComponent(eventId)}`}
+              className="no-underline"
+            >
+              {chip}
+            </Link>
+          );
+        }
+        return chip;
+      })}
+    </div>
+  );
+}
+
+function RegenerateMTLabelDistributionTrigger({
+  mtJobId,
+  kValues,
+  segmentationJobId,
+  boundClassifyId,
+}: {
+  mtJobId: string;
+  kValues: number[];
+  segmentationJobId: string | null;
+  boundClassifyId: string | null;
+}) {
+  const k = useSelectedK(kValues);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [chosenClassify, setChosenClassify] = useState<string>(
+    boundClassifyId ?? "",
+  );
+  useEffect(() => {
+    setChosenClassify(boundClassifyId ?? "");
+  }, [boundClassifyId, open]);
+
+  const classifyJobsQuery = useEventClassificationJobsForSegmentation(
+    open ? segmentationJobId : null,
+  );
+  const classifyJobs = classifyJobsQuery.data ?? [];
+  const mutation = useRegenerateMTLabelDistribution();
+
+  const handleConfirm = () => {
+    if (k == null) return;
+    setError(null);
+    mutation.mutate(
+      {
+        jobId: mtJobId,
+        k,
+        body:
+          chosenClassify && chosenClassify !== boundClassifyId
+            ? { event_classification_job_id: chosenClassify }
+            : undefined,
+      },
+      {
+        onSuccess: () => setOpen(false),
+        onError: (err: unknown) => {
+          setError(err instanceof Error ? err.message : String(err));
+        },
+      },
+    );
+  };
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen(true)}
+        disabled={k == null}
+        data-testid="mt-regenerate-label-distribution"
+      >
+        Regenerate label distribution
+      </Button>
+      {open ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          data-testid="mt-regenerate-dialog"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="bg-white rounded-md shadow-lg p-4 w-[440px] max-w-[90vw] space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-medium">
+              Regenerate label distribution for all k values
+            </h3>
+            <div className="text-sm space-y-2">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">
+                  Event Classification Job
+                </span>
+                <select
+                  data-testid="mt-regenerate-classify-select"
+                  className="w-full border rounded-md px-2 py-1 text-sm mt-1"
+                  value={chosenClassify}
+                  disabled={classifyJobsQuery.isLoading}
+                  onChange={(e) => setChosenClassify(e.target.value)}
+                >
+                  {classifyJobs.length === 0 ? (
+                    <option value="">— none —</option>
+                  ) : null}
+                  {classifyJobs.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      #{c.id.slice(0, 8)}
+                      {c.model_name ? ` · ${c.model_name}` : ""}
+                      {c.n_events_classified != null
+                        ? ` · ${c.n_events_classified} events`
+                        : ""}
+                      {c.id === boundClassifyId ? " · (current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {error ? (
+                <div
+                  className="text-red-700 text-xs"
+                  data-testid="mt-regenerate-error"
+                >
+                  {error}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={mutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleConfirm}
+                disabled={
+                  mutation.isPending || chosenClassify === "" || k == null
+                }
+                data-testid="mt-regenerate-confirm"
+              >
+                {mutation.isPending ? "Regenerating…" : "Regenerate"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -990,23 +1212,6 @@ function LabelDistributionSection({
 }) {
   const k = useSelectedK(kValues);
   const { data } = useMaskedTransformerLabelDistribution(jobId, k);
-  // Collapse tier dimension to match the existing HMM chart visual.
-  // ``useMemo`` must run unconditionally to satisfy hooks rules; it
-  // returns an empty record when ``data`` is not yet available.
-  const collapsed = useMemo(() => {
-    const out: Record<string, Record<string, number>> = {};
-    if (!data) return out;
-    for (const [stateKey, tiers] of Object.entries(data.states)) {
-      const inner: Record<string, number> = {};
-      for (const counts of Object.values(tiers)) {
-        for (const [label, count] of Object.entries(counts)) {
-          inner[label] = (inner[label] ?? 0) + count;
-        }
-      }
-      out[stateKey] = inner;
-    }
-    return out;
-  }, [data]);
   if (!data) return null;
   return (
     <table className="text-xs" data-testid="mt-label-distribution">
@@ -1017,7 +1222,7 @@ function LabelDistributionSection({
         </tr>
       </thead>
       <tbody>
-        {Object.entries(collapsed).map(([stateKey, counts]) => {
+        {Object.entries(data.states).map(([stateKey, counts]) => {
           const sorted = Object.entries(counts)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 5);

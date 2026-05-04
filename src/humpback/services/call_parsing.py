@@ -484,6 +484,55 @@ async def list_event_classification_jobs(
     return list(result.scalars().all())
 
 
+async def list_classification_jobs_for_segmentation(
+    session: AsyncSession,
+    *,
+    event_segmentation_job_id: str,
+    status: Optional[str] = None,
+) -> list[dict]:
+    """Return Classify jobs bound to one segmentation, newest first.
+
+    Joins ``vocalization_models`` so callers (the Sequence Models submit
+    dropdown) can render the option label without a second round-trip.
+    Each row is a dict shaped to ``ClassificationJobForSegmentation``.
+    """
+    from humpback.models.vocalization import VocalizationClassifierModel
+
+    stmt = (
+        select(
+            EventClassificationJob,
+            VocalizationClassifierModel.name.label("model_name"),
+        )
+        .outerjoin(
+            VocalizationClassifierModel,
+            VocalizationClassifierModel.id
+            == EventClassificationJob.vocalization_model_id,
+        )
+        .where(
+            EventClassificationJob.event_segmentation_job_id
+            == event_segmentation_job_id
+        )
+        .order_by(EventClassificationJob.created_at.desc())
+    )
+    if status is not None:
+        stmt = stmt.where(EventClassificationJob.status == status)
+
+    result = await session.execute(stmt)
+    out: list[dict] = []
+    for row in result.all():
+        job = row[0]
+        out.append(
+            {
+                "id": job.id,
+                "created_at": job.created_at,
+                "model_name": row.model_name,
+                "n_events_classified": job.typed_event_count,
+                "status": job.status,
+            }
+        )
+    return out
+
+
 async def get_event_classification_job(
     session: AsyncSession, job_id: str
 ) -> Optional[EventClassificationJob]:

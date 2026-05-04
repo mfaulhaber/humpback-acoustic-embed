@@ -4,8 +4,12 @@ Validates that the source ``ContinuousEmbeddingJob`` is complete before
 creating an ``HMMSequenceJob``. No idempotency key — HMM training is
 stochastic and comparing configs requires multiple runs.
 
-PR 3 adds interpretation artifact generation (overlay, exemplars,
-label distribution) for completed jobs.
+Interpretation generation (overlay, exemplars, label distribution) is
+consolidated into a single async ``generate_interpretations()`` call;
+the bound ``EventClassificationJob`` (FK on the row) is the label
+source via the event-scoped helper in
+``humpback.sequence_models.label_distribution``. Vocalization Labeling
+is no longer consulted.
 """
 
 from __future__ import annotations
@@ -22,23 +26,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
-from humpback.models.classifier import DetectionJob
-from humpback.models.labeling import VocalizationLabel
+from humpback.models.call_parsing import EventClassificationJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.schemas.sequence_models import HMMSequenceJobCreate
 from humpback.sequence_models.exemplars import select_exemplars
 from humpback.sequence_models.label_distribution import (
-    DetectionWindow,
-    LabelRecord,
+    WindowAnnotation,
+    assign_labels_to_windows,
     compute_label_distribution,
+    load_effective_event_labels,
 )
 from humpback.sequence_models.loaders import get_loader
 from humpback.sequence_models.overlay import compute_overlay
 from humpback.services.continuous_embedding_service import source_kind_for
 from humpback.storage import (
     atomic_rename,
-    detection_row_store_path,
     ensure_dir,
     hmm_sequence_decoded_path,
     hmm_sequence_dir,
@@ -54,6 +57,57 @@ logger = logging.getLogger(__name__)
 
 class CancelTerminalJobError(Exception):
     """Raised when caller attempts to cancel a job in a terminal state."""
+
+
+async def resolve_event_classification_job_id(
+    session: AsyncSession,
+    *,
+    event_segmentation_job_id: str,
+    requested_id: Optional[str],
+) -> str:
+    """Resolve and validate the Classify FK for HMM/MT submit.
+
+    If ``requested_id`` is ``None``, returns the most recent completed
+    ``EventClassificationJob`` for the upstream segmentation. If
+    ``requested_id`` is provided, verifies it exists, is completed, and
+    has a matching segmentation. Raises ``ValueError`` (mapped to 422 by
+    the router) when no candidate exists or validation fails.
+    """
+    if requested_id is not None:
+        cls_job = await session.get(EventClassificationJob, requested_id)
+        if cls_job is None:
+            raise ValueError(f"event_classification_job not found: {requested_id}")
+        if cls_job.event_segmentation_job_id != event_segmentation_job_id:
+            raise ValueError(
+                f"event_classification_job {requested_id} segmentation "
+                f"{cls_job.event_segmentation_job_id!r} does not match "
+                f"upstream segmentation {event_segmentation_job_id!r}"
+            )
+        if cls_job.status != JobStatus.complete.value:
+            raise ValueError(
+                f"event_classification_job {requested_id} must be completed "
+                f"(current status: {cls_job.status!r})"
+            )
+        return cls_job.id
+
+    stmt = (
+        select(EventClassificationJob)
+        .where(
+            EventClassificationJob.event_segmentation_job_id
+            == event_segmentation_job_id,
+            EventClassificationJob.status == JobStatus.complete.value,
+        )
+        .order_by(EventClassificationJob.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    latest = result.scalars().first()
+    if latest is None:
+        raise ValueError(
+            "no completed event_classification_job exists for segmentation "
+            f"{event_segmentation_job_id!r}; run Pass 3 Classify first"
+        )
+    return latest.id
 
 
 async def create_hmm_sequence_job(
@@ -72,6 +126,17 @@ async def create_hmm_sequence_job(
             "HMM sequence job requires a completed continuous_embedding_job "
             f"(current status: {source.status!r})"
         )
+
+    if not source.event_segmentation_job_id:
+        raise ValueError(
+            "continuous_embedding_job has no event_segmentation_job_id; "
+            "cannot resolve Classify binding"
+        )
+    classify_id = await resolve_event_classification_job_id(
+        session,
+        event_segmentation_job_id=source.event_segmentation_job_id,
+        requested_id=payload.event_classification_job_id,
+    )
 
     from humpback.services.continuous_embedding_service import (
         SOURCE_KIND_REGION_CRNN,
@@ -109,6 +174,7 @@ async def create_hmm_sequence_job(
 
     job = HMMSequenceJob(
         continuous_embedding_job_id=payload.continuous_embedding_job_id,
+        event_classification_job_id=classify_id,
         n_states=payload.n_states,
         pca_dims=payload.pca_dims,
         pca_whiten=payload.pca_whiten,
@@ -211,18 +277,34 @@ def _hmm_decoded_path_for_read(storage_root: Path, job_id: str) -> Path:
     return decoded
 
 
-def generate_interpretations(
+async def generate_interpretations(
+    session: AsyncSession,
     storage_root: Path,
     job: HMMSequenceJob,
     cej: ContinuousEmbeddingJob,
-) -> None:
-    """Generate PCA/UMAP overlay and state exemplars for a completed HMM job.
+) -> dict[str, Any]:
+    """Generate overlay, exemplars, and label distribution for a completed HMM job.
 
     Source-agnostic: dispatches to the registered loader for the upstream
     embedding source family (SurfPerch event-padded vs. CRNN region-based;
-    see ADR-059). Does NOT generate label distribution (that requires DB
-    access to vocalization_labels, which changes over time).
+    see ADR-059).
+
+    Labels come from the bound ``event_classification_job_id`` via the
+    event-scoped helper (see
+    ``humpback.sequence_models.label_distribution``). The job row's FK is
+    required; the submit endpoint guarantees it is non-NULL after
+    successful job creation.
+
+    Returns the persisted ``label_distribution`` payload so callers can
+    refresh client state without a separate read.
     """
+    if not job.event_classification_job_id:
+        raise ValueError(
+            f"HMMSequenceJob {job.id} has no event_classification_job_id; "
+            "label distribution cannot be generated. Ensure the submit "
+            "endpoint resolves a Classify job before the worker runs."
+        )
+
     decoded_path = _hmm_decoded_path_for_read(storage_root, job.id)
     loader = get_loader(source_kind_for(cej.model_version), decoded_path)
     inputs = loader.load(storage_root, job, cej)
@@ -244,9 +326,41 @@ def generate_interpretations(
 
     all_states_flat = np.concatenate(inputs.viterbi_states)
 
+    # Build (start_timestamp, end_timestamp, viterbi_state) rows parallel
+    # to window_metas/all_states_flat for the event-scoped join.
+    window_rows: list[dict[str, Any]] = [
+        {
+            "start_timestamp": float(m.start_timestamp),
+            "end_timestamp": float(m.end_timestamp),
+            "viterbi_state": int(s),
+        }
+        for m, s in zip(inputs.window_metas, all_states_flat)
+    ]
+
+    events = await load_effective_event_labels(
+        session,
+        event_classification_job_id=job.event_classification_job_id,
+        storage_root=storage_root,
+    )
+    annotations = assign_labels_to_windows(window_rows, events)
+
+    # Annotate exemplars after selection so selection logic stays unchanged.
     exemplars_result = select_exemplars(
         pca_full, all_states_flat, inputs.window_metas, job.n_states
     )
+    annotation_by_key: dict[tuple[str, int], WindowAnnotation] = {
+        (m.sequence_id, m.position_in_sequence): a
+        for m, a in zip(inputs.window_metas, annotations)
+    }
+    for state_records in exemplars_result["states"].values():
+        for record in state_records:
+            key = (record["sequence_id"], int(record["position_in_sequence"]))
+            ann = annotation_by_key.get(key)
+            if ann is not None:
+                record["extras"]["event_id"] = ann.event_id
+                record["extras"]["event_types"] = list(ann.event_types)
+                record["extras"]["event_confidence"] = dict(ann.event_confidence)
+
     exemplars_dir = ensure_dir(hmm_sequence_exemplars_dir(storage_root, job.id))
     exemplars_dst = hmm_sequence_exemplars_path(storage_root, job.id)
     exemplars_tmp = exemplars_dir / "exemplars.json.tmp"
@@ -255,87 +369,80 @@ def generate_interpretations(
     )
     atomic_rename(exemplars_tmp, exemplars_dst)
 
-
-async def generate_label_distribution(
-    session: AsyncSession,
-    storage_root: Path,
-    job: HMMSequenceJob,
-) -> dict[str, Any]:
-    """Compute and persist state-to-label distribution for a completed HMM job.
-
-    Source-agnostic: dispatches to the registered loader for the upstream
-    embedding source (SurfPerch event-padded vs. CRNN region-based; see
-    ADR-060) for hydrophone resolution and per-row tier extraction. The
-    DetectionJob + VocalizationLabel SQL fetch is shared across sources.
-    Joins HMM window timestamps with detection-window extents and labels
-    via center-time-in-window semantics.
-    """
-    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
-    if cej is None:
-        raise ValueError(
-            f"ContinuousEmbeddingJob not found: {job.continuous_embedding_job_id}"
-        )
-
-    decoded_path = _hmm_decoded_path_for_read(storage_root, job.id)
-    loader = get_loader(source_kind_for(cej.model_version), decoded_path)
-    inputs = await loader.load_label_distribution_inputs(
-        session, storage_root, job, cej
-    )
-
-    detection_windows: list[DetectionWindow] = []
-    label_records: list[LabelRecord] = []
-
-    if inputs.hydrophone_id:
-        stmt = (
-            select(DetectionJob)
-            .where(DetectionJob.hydrophone_id == inputs.hydrophone_id)
-            .where(DetectionJob.status == "complete")
-        )
-        result = await session.execute(stmt)
-        det_jobs = list(result.scalars().all())
-
-        from humpback.classifier.detection_rows import read_detection_row_store
-
-        for dj in det_jobs:
-            rs_path = detection_row_store_path(storage_root, dj.id)
-            if not rs_path.exists():
-                continue
-
-            _, rows = read_detection_row_store(rs_path)
-            for r in rows:
-                rid = r.get("row_id", "")
-                s_utc = r.get("start_utc", "")
-                e_utc = r.get("end_utc", "")
-                if rid and s_utc and e_utc:
-                    detection_windows.append(
-                        DetectionWindow(
-                            row_id=rid,
-                            start_utc=float(s_utc),
-                            end_utc=float(e_utc),
-                        )
-                    )
-
-            lbl_stmt = (
-                select(VocalizationLabel)
-                .where(VocalizationLabel.detection_job_id == dj.id)
-                .where(VocalizationLabel.source == "manual")
-            )
-            lbl_result = await session.execute(lbl_stmt)
-            for lbl in lbl_result.scalars().all():
-                label_records.append(LabelRecord(row_id=lbl.row_id, label=lbl.label))
-
-    dist = compute_label_distribution(
-        inputs.state_rows,
-        detection_windows,
-        label_records,
-        job.n_states,
-        tier_per_row=inputs.tier_per_row,
-    )
-
+    dist = compute_label_distribution(window_rows, annotations, job.n_states)
     dist_dst = hmm_sequence_label_distribution_path(storage_root, job.id)
     dist_tmp = dist_dst.with_suffix(".json.tmp")
     dist_dst.parent.mkdir(parents=True, exist_ok=True)
     dist_tmp.write_text(json.dumps(dist, sort_keys=True, indent=2), encoding="utf-8")
     atomic_rename(dist_tmp, dist_dst)
+
+    return dist
+
+
+async def regenerate_label_distribution(
+    session: AsyncSession,
+    storage_root: Path,
+    job: HMMSequenceJob,
+    *,
+    requested_classify_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Regenerate label-distribution + exemplar artifacts; optionally re-bind.
+
+    Step ordering (spec §6.7) for the optional re-bind path:
+
+      1. **Validate** — confirm requested Classify is completed and on the
+         same upstream segmentation as the HMM job's continuous-embedding
+         source. Raises ``ValueError`` (mapped to 400 by the router) on
+         mismatch; FK and on-disk artifacts unchanged.
+      2. **Write artifacts** — temp-then-rename ``overlay.parquet``,
+         ``label_distribution.json``, ``exemplars.json`` keyed off the
+         (possibly different) Classify FK. The job row is mutated
+         in-memory only at this point so the loader uses the right FK.
+      3. **Commit FK** — single SQL transaction. A failure between
+         steps 2 and 3 (rare) leaves files paired with the old FK; calling
+         regenerate again with no body re-derives consistent artifacts.
+
+    When ``requested_classify_id`` is ``None`` the FK is left unchanged
+    and only artifacts are rebuilt.
+    """
+    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
+    if cej is None:
+        raise ValueError(
+            "source continuous_embedding_job not found: "
+            f"{job.continuous_embedding_job_id}"
+        )
+
+    previous_classify_id = job.event_classification_job_id
+
+    if requested_classify_id is not None:
+        if not cej.event_segmentation_job_id:
+            raise ValueError(
+                "continuous_embedding_job has no event_segmentation_job_id; "
+                "cannot validate Classify re-bind"
+            )
+        # Step 1 — validate before touching disk.
+        await resolve_event_classification_job_id(
+            session,
+            event_segmentation_job_id=cej.event_segmentation_job_id,
+            requested_id=requested_classify_id,
+        )
+        # In-memory swap so the artifact write keys off the new FK.
+        job.event_classification_job_id = requested_classify_id
+
+    try:
+        # Step 2 — write artifacts via per-file temp-then-rename.
+        dist = await generate_interpretations(session, storage_root, job, cej)
+    except Exception:
+        # Step 2 failed: revert in-memory swap so the FK and the on-disk
+        # artifacts remain consistent with the prior state.
+        job.event_classification_job_id = previous_classify_id
+        raise
+
+    if (
+        requested_classify_id is not None
+        and previous_classify_id != requested_classify_id
+    ):
+        # Step 3 — commit the FK update.
+        await session.commit()
 
     return dist

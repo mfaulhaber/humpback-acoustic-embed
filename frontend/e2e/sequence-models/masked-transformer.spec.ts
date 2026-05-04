@@ -222,8 +222,8 @@ const LABEL_DIST = {
   n_states: 100,
   total_windows: 4,
   states: {
-    "5": { event_core: { song: 2 }, background: {}, near_event: {} },
-    "7": { event_core: {}, background: { call: 1 }, near_event: {} },
+    "5": { song: 2 },
+    "7": { call: 1, "(background)": 1 },
   },
 };
 

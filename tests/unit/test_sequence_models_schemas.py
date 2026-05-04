@@ -99,6 +99,39 @@ def test_exemplar_record_carries_extras_for_crnn_tier():
     assert record.extras["tier"] == "event_core"
 
 
+def test_exemplar_record_accepts_classify_event_extras():
+    """Spec ADR-063: extras carries event_types (list) and event_confidence (dict)."""
+    record = ExemplarRecord(
+        sequence_id="0",
+        position_in_sequence=3,
+        audio_file_id=None,
+        start_timestamp=10.0,
+        end_timestamp=15.0,
+        max_state_probability=0.93,
+        exemplar_type="high_confidence",
+        extras={
+            "event_id": 7,
+            "event_types": ["moan", "song"],
+            "event_confidence": {"moan": 0.9, "song": 0.7},
+        },
+    )
+    assert record.extras["event_types"] == ["moan", "song"]
+    assert record.extras["event_confidence"] == {"moan": 0.9, "song": 0.7}
+
+    background = ExemplarRecord(
+        sequence_id="0",
+        position_in_sequence=4,
+        audio_file_id=None,
+        start_timestamp=15.0,
+        end_timestamp=20.0,
+        max_state_probability=0.5,
+        exemplar_type="boundary",
+        extras={"event_id": None, "event_types": [], "event_confidence": {}},
+    )
+    assert background.extras["event_types"] == []
+    assert background.extras["event_confidence"] == {}
+
+
 def test_overlay_point_validates_unified_shape_and_rejects_missing_sequence_id():
     OverlayPoint(
         sequence_id="0",

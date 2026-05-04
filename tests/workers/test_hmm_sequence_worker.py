@@ -17,7 +17,11 @@ import pyarrow.parquet as pq
 import pytest
 
 from humpback.config import Settings
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
+from humpback.models.call_parsing import (
+    EventClassificationJob,
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.schemas.sequence_models import HMMSequenceJobCreate
@@ -36,6 +40,9 @@ from humpback.storage import (
     hmm_sequence_transition_matrix_path,
 )
 from humpback.workers.hmm_sequence_worker import run_hmm_sequence_job, run_one_iteration
+from tests.fixtures.sequence_models.classify_binding import (
+    seed_classify_for_segmentation,
+)
 from tests.fixtures.sequence_models.synthetic_sequences import (
     generate_synthetic_sequences,
 )
@@ -121,6 +128,14 @@ async def _seed_complete_ce_job(session, settings) -> ContinuousEmbeddingJob:
     session.add(seg_job)
     await session.commit()
     await session.refresh(seg_job)
+
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
 
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,
@@ -393,6 +408,14 @@ async def _seed_complete_crnn_ce_job(session, settings) -> ContinuousEmbeddingJo
     await session.commit()
     await session.refresh(seg_job)
 
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
+
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,
         region_detection_job_id=region_job.id,
@@ -441,7 +464,15 @@ async def _create_crnn_hmm_job(
 
 async def test_crnn_happy_path_writes_overlay_and_exemplars(session, settings):
     ce_job = await _seed_complete_crnn_ce_job(session, settings)
+    cls_id = await seed_classify_for_segmentation(
+        session,
+        settings.storage_root,
+        event_segmentation_job_id=ce_job.event_segmentation_job_id or "",
+    )
     job = await _create_crnn_hmm_job(session, ce_job.id)
+    job.event_classification_job_id = cls_id
+    await session.commit()
+    await session.refresh(job)
 
     await run_hmm_sequence_job(session, job, settings)
     await session.refresh(job)

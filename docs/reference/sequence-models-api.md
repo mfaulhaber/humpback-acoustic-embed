@@ -135,6 +135,12 @@ statistics and visualizations for latent-state discovery.
 - `POST /sequence-models/hmm-sequences` — create an HMM sequence job.
   Requires a completed `ContinuousEmbeddingJob` as source. Accepts:
   - `continuous_embedding_job_id` (required)
+  - `event_classification_job_id` (optional; ADR-063) — when omitted the
+    server picks the most recent completed `EventClassificationJob`
+    whose `event_segmentation_job_id` matches the upstream segmentation;
+    rejected with `422` when no completed Classify exists. When provided,
+    the value must reference a completed Classify job whose segmentation
+    matches the upstream segmentation; otherwise `422`.
   - `n_states` (required, >= 2)
   - `pca_dims` (default `50`, >= 1)
   - `pca_whiten` (default `false`)
@@ -226,15 +232,15 @@ labels change over time).
   artifact not found.
 
 - `GET /sequence-models/hmm-sequences/{id}/label-distribution` —
-  per-state label distribution from center-time join with
-  `vocalization_labels`. Returns the unified nested shape
+  per-state label distribution sourced from the bound
+  `EventClassificationJob` (Pass 3 Classify) plus `VocalizationCorrection`
+  overlay (ADR-063, supersedes ADR-060). Returns the simplified shape
   `{ n_states, total_windows,
-  states: { "0": { "tier": { "label_a": count, ... } }, ... } }`
-  (ADR-060). SurfPerch jobs use the synthetic `"all"` tier key; CRNN
-  jobs use the per-chunk tier values (`event_core` / `near_event` /
-  `background`). Computed on-demand if no cached
-  `label_distribution.json` exists. `400` if job not complete. `404` if
-  job not found.
+  states: { "0": { "label_a": count, ... }, ... } }`. The
+  `(background)` bucket holds windows whose center falls outside any
+  effective event (or inside an event whose corrections wiped every
+  type). Computed on-demand if no cached `label_distribution.json`
+  exists. `400` if job not complete. `404` if job not found.
 
 - `GET /sequence-models/hmm-sequences/{id}/exemplars` — per-state
   exemplar windows (high-confidence, nearest-to-centroid,
@@ -244,11 +250,25 @@ labels change over time).
   `exemplar_type`. `404` if job or artifact not found.
 
 - `POST /sequence-models/hmm-sequences/{id}/generate-interpretations`
-  — regenerate all three interpretation artifacts (overlay, label
-  distribution, exemplars) for a completed job. Runs unconditionally
-  for both source kinds (ADR-060). Returns
+  — legacy regenerate; equivalent to
+  `regenerate-label-distribution` with no body. Returns
   `{ status: "ok", job_id, label_distribution_generated: true }`.
   `400` if job not complete. `404` if not found.
+
+- `POST /sequence-models/hmm-sequences/{id}/regenerate-label-distribution`
+  — rebuild label-distribution + exemplar artifacts (and the
+  overlay-parquet recomputation), with an optional Classify re-bind
+  (ADR-063). Body:
+  `{ "event_classification_job_id"?: string }`. When omitted, the
+  current FK is used. When provided, the new Classify job's
+  `event_segmentation_job_id` must match the HMM job's upstream
+  segmentation; otherwise `400` and nothing changes on disk or in the
+  DB. The endpoint validates → writes artifacts via per-file
+  temp-then-rename → commits the FK update in a single transaction.
+  A failure during the artifact-write step leaves the FK and existing
+  files untouched (in-memory FK swap is reverted). Returns
+  `{ status: "ok", job_id, event_classification_job_id, label_distribution }`.
+  `400` for validation/state errors. `404` if not found.
 
 ### Interpretation Schemas (ADR-059, source-agnostic)
 
@@ -259,21 +279,25 @@ index for SurfPerch, chunk index for CRNN), `start_timestamp`,
 `max_state_probability`.
 
 `LabelDistributionResponse`: `n_states`, `total_windows`, `states` (dict
-of state index → dict of tier key → dict of label → count). Unified
-across sources under ADR-060: SurfPerch jobs collapse the tier dimension
-to a single synthetic `"all"` key on disk; CRNN jobs persist real tier
-keys (`event_core` / `near_event` / `background`). The frontend chart
-collapses the tier dimension in `useMemo` so the visual is identical for
-both sources; the tier-stratified data is preserved on disk for a future
-tier-aware UI.
+of state index → dict of label → int count). Simplified shape
+(ADR-063, supersedes ADR-060) — no tier dimension. Both SurfPerch and
+CRNN sources produce the same shape. The reserved `(background)` bucket
+holds windows whose center falls outside any effective event or inside
+an event whose corrections wiped every type. CRNN's `extras.tier` on
+`decoded.parquet` and exemplars is unchanged and continues to drive the
+per-state tier-composition strip.
 
 `ExemplarRecord`: `sequence_id`, `position_in_sequence`,
 `audio_file_id` (nullable for hydrophone-only jobs), `start_timestamp`,
 `end_timestamp`, `max_state_probability`, `exemplar_type`, plus an
-`extras: dict[str, str | int | float | None]` channel for
-source-specific metadata. CRNN-source records populate `extras["tier"]`
-with one of `"event_core"` / `"near_event"` / `"background"`; SurfPerch
-records leave `extras` empty.
+`extras` channel for source-specific metadata. CRNN-source records
+populate `extras["tier"]` with one of `"event_core"` / `"near_event"` /
+`"background"`. ADR-063 also adds `extras["event_id"]` (nullable
+string), `extras["event_types"]` (list of strings; empty for
+background), and `extras["event_confidence"]` (`{type: float}`) so the
+detail-page chips can click through to Classify Review for the
+underlying event. SurfPerch records carry the same Classify-binding
+fields and only omit `tier`.
 
 **Legacy read-time adapter (transitional).** Pre-ADR-059 SurfPerch
 overlay parquets and exemplars JSON files remain on disk with the old
@@ -281,15 +305,15 @@ overlay parquets and exemplars JSON files remain on disk with the old
 overlay and exemplars GET endpoints translate those legacy column / key
 names in-memory to the unified shape before serializing the response;
 disk files are not rewritten by the adapter. The existing Refresh
-button (POST `/generate-interpretations/{id}`) rewrites them in unified
-form on demand. The adapter is a structural no-op when the on-disk
-artifact is already in unified shape.
+button (POST `/regenerate-label-distribution/{id}`) rewrites them in
+unified form on demand. The adapter is a structural no-op when the
+on-disk artifact is already in unified shape.
 
-The same transitional pattern covers pre-ADR-060 flat
-`label_distribution.json` files (`states[state] = {label: count}`): the
-GET `/label-distribution` endpoint projects them to
-`states[state] = {"all": {label: count}}` in-memory; the file on disk is
-unchanged until a Refresh rewrites it in unified form.
+ADR-063 supersedes ADR-060: the tier dimension is dropped from
+`label_distribution.json`, no read-time tier-shape adapter is shipped.
+Existing rows had been deleted via the UI before the cutover and the
+artifact directories were wiped, so no migration loader is required. A
+fresh regenerate produces the simplified shape directly.
 
 ## Motif Extraction Jobs
 
@@ -383,6 +407,10 @@ parameter.
     completed `continuous_embedding_jobs` row with
     `model_version="crnn-call-parsing-pytorch"` (CRNN region-based
     source); SurfPerch sources are rejected with `422` at v1.
+  - `event_classification_job_id` (optional; ADR-063) — same semantics
+    as on the HMM submit. Defaults to the most recent completed
+    Classify for the upstream segmentation; `422` when none exists or
+    when the explicit value mismatches.
   - `preset` (default `"default"`, one of `"small"` | `"default"` |
     `"large"`) — selects `(d_model, num_layers, num_heads, ff_dim)`.
   - `k_values` (default `[100]`) — non-empty list of ints ≥ 2;
@@ -434,6 +462,16 @@ parameter.
   every configured k; a list scopes regeneration to the listed k. Only
   valid for `status="completed"`.
 
+- `POST /sequence-models/masked-transformers/{id}/regenerate-label-distribution?k=N`
+  — rebuild **all** `k<N>/label_distribution.json` files in one shot
+  with optional Classify re-bind (ADR-063). Body:
+  `{ "event_classification_job_id"?: string }`. Effective events load
+  exactly once per call regardless of how many k values are configured.
+  The `?k=` query parameter selects which payload is returned in the
+  response; defaults to the first configured k. Same atomic write
+  ordering as the HMM regenerate (validate → temp-then-rename →
+  commit FK). Returns `{ status: "ok", job_id, k, event_classification_job_id, label_distribution }`.
+
 - `GET /sequence-models/masked-transformers/{id}/loss-curve` — returns
   `{ "epochs": list[int], "train_loss": list[float], "val_loss":
   list[float | null] }` from `loss_curve.json`.
@@ -456,8 +494,8 @@ entry of `k_values`); `404` on unknown k:
 - `GET /sequence-models/masked-transformers/{id}/exemplars?k=N` —
   per-token exemplar windows. Same `ExemplarRecord` shape as HMM.
 - `GET /sequence-models/masked-transformers/{id}/label-distribution?k=N`
-  — per-token vocabulary distribution. Same nested
-  `states[token][tier][label] = count` shape as HMM (ADR-060).
+  — per-token vocabulary distribution. Simplified `states[token][label] = count`
+  shape (ADR-063, supersedes ADR-060), same as HMM.
 - `GET /sequence-models/masked-transformers/{id}/run-lengths?k=N` —
   per-token run-length arrays from `run_lengths.json`. Same shape as
   HMM dwell histograms.

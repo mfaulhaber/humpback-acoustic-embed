@@ -1,15 +1,23 @@
-"""Tests for the HMM sequence service — create, list, get, cancel lifecycle."""
+"""Tests for the HMM sequence service — create, list, get, cancel lifecycle.
+
+Label-distribution generation is exercised via the event-scoped helper
+unit tests in ``tests/sequence_models/test_label_distribution.py`` plus
+the loader integration test
+``tests/sequence_models/test_load_effective_event_labels.py``. The full
+``generate_interpretations`` end-to-end (PCA + UMAP + overlay + label
+distribution) is covered by the API integration tests and the manual
+smoke pass (see spec §8.7).
+"""
 
 from typing import Any
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
-from humpback.classifier.detection_rows import write_detection_row_store
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
-from humpback.models.classifier import DetectionJob
-from humpback.models.labeling import VocalizationLabel
+from humpback.models.call_parsing import (
+    EventClassificationJob,
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.schemas.sequence_models import HMMSequenceJobCreate
@@ -18,15 +26,10 @@ from humpback.services.hmm_sequence_service import (
     cancel_hmm_sequence_job,
     create_hmm_sequence_job,
     delete_hmm_sequence_job,
-    generate_label_distribution,
     get_hmm_sequence_job,
     list_hmm_sequence_jobs,
 )
-from humpback.storage import (
-    detection_row_store_path,
-    hmm_sequence_dir,
-    hmm_sequence_states_path,
-)
+from humpback.storage import hmm_sequence_dir
 
 
 async def _seed_continuous_embedding_job(
@@ -50,6 +53,14 @@ async def _seed_continuous_embedding_job(
     session.add(seg_job)
     await session.commit()
     await session.refresh(seg_job)
+
+    # Bind a completed Classify job so HMM submit can resolve its FK.
+    classify_job = EventClassificationJob(
+        status=JobStatus.complete.value,
+        event_segmentation_job_id=seg_job.id,
+    )
+    session.add(classify_job)
+    await session.commit()
 
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,
@@ -188,204 +199,6 @@ async def test_cancel_complete_raises(session):
 async def test_cancel_missing_returns_none(session):
     result = await cancel_hmm_sequence_job(session, "nonexistent")
     assert result is None
-
-
-async def test_generate_label_distribution_uses_epoch_hmm_timestamps(session, tmp_path):
-    rd_start = 1_000.0
-    region_job = RegionDetectionJob(
-        status=JobStatus.complete.value,
-        hydrophone_id="rpi_orcasound_lab",
-        start_timestamp=rd_start,
-        end_timestamp=1_300.0,
-    )
-    session.add(region_job)
-    await session.flush()
-
-    seg_job = EventSegmentationJob(
-        status=JobStatus.complete.value,
-        region_detection_job_id=region_job.id,
-    )
-    session.add(seg_job)
-    await session.commit()
-    await session.refresh(seg_job)
-
-    ce_job = ContinuousEmbeddingJob(
-        event_segmentation_job_id=seg_job.id,
-        model_version="surfperch-tensorflow2",
-        window_size_seconds=5.0,
-        hop_seconds=1.0,
-        pad_seconds=2.0,
-        target_sample_rate=32000,
-        encoding_signature=f"test-sig-{seg_job.id}",
-        status=JobStatus.complete.value,
-    )
-    session.add(ce_job)
-    await session.commit()
-    await session.refresh(ce_job)
-
-    hmm_job = await create_hmm_sequence_job(session, _make_payload(ce_job.id))
-    hmm_job.status = JobStatus.complete.value
-    await session.commit()
-    await session.refresh(hmm_job)
-
-    states_path = hmm_sequence_states_path(tmp_path, hmm_job.id)
-    states_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(
-        pa.table(
-            {
-                "start_timestamp": pa.array([1010.0, 1100.0], type=pa.float64()),
-                "end_timestamp": pa.array([1015.0, 1105.0], type=pa.float64()),
-                "viterbi_state": pa.array([0, 1], type=pa.int16()),
-            }
-        ),
-        states_path,
-    )
-
-    detection_job = DetectionJob(
-        status=JobStatus.complete.value,
-        classifier_model_id="model-1",
-        hydrophone_id=region_job.hydrophone_id,
-        start_timestamp=rd_start,
-        end_timestamp=1_300.0,
-    )
-    session.add(detection_job)
-    await session.commit()
-    await session.refresh(detection_job)
-
-    row_store_path = detection_row_store_path(tmp_path, detection_job.id)
-    write_detection_row_store(
-        row_store_path,
-        [
-            {
-                "row_id": "row-1",
-                "start_utc": "1010.0",
-                "end_utc": "1015.0",
-            }
-        ],
-    )
-
-    session.add(
-        VocalizationLabel(
-            detection_job_id=detection_job.id,
-            row_id="row-1",
-            label="whup",
-            source="manual",
-        )
-    )
-    await session.commit()
-
-    result = await generate_label_distribution(session, tmp_path, hmm_job)
-
-    # Unified nested shape: SurfPerch jobs use the synthetic "all" tier.
-    assert result["states"]["0"]["all"]["whup"] == 1
-    assert result["states"]["1"]["all"]["unlabeled"] == 1
-
-
-async def test_generate_label_distribution_crnn_source_emits_tier_keys(
-    session, tmp_path
-):
-    """CRNN-source HMM jobs emit a tier-bucketed label distribution."""
-    rd_start = 1_000.0
-    region_job = RegionDetectionJob(
-        status=JobStatus.complete.value,
-        hydrophone_id="rpi_orcasound_lab",
-        start_timestamp=rd_start,
-        end_timestamp=1_300.0,
-    )
-    session.add(region_job)
-    await session.flush()
-
-    seg_job = EventSegmentationJob(
-        status=JobStatus.complete.value,
-        region_detection_job_id=region_job.id,
-    )
-    session.add(seg_job)
-    await session.commit()
-    await session.refresh(seg_job)
-
-    ce_job = ContinuousEmbeddingJob(
-        event_segmentation_job_id=seg_job.id,
-        region_detection_job_id=region_job.id,
-        model_version="crnn-call-parsing-pytorch",
-        window_size_seconds=0.25,
-        hop_seconds=0.25,
-        pad_seconds=0.0,
-        target_sample_rate=16000,
-        encoding_signature=f"test-sig-crnn-{seg_job.id}",
-        status=JobStatus.complete.value,
-    )
-    session.add(ce_job)
-    await session.commit()
-    await session.refresh(ce_job)
-
-    hmm_job = await create_hmm_sequence_job(session, _make_payload(ce_job.id))
-    hmm_job.status = JobStatus.complete.value
-    await session.commit()
-    await session.refresh(hmm_job)
-
-    states_path = hmm_sequence_states_path(tmp_path, hmm_job.id)
-    states_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(
-        pa.table(
-            {
-                "start_timestamp": pa.array(
-                    [1010.0, 1011.0, 1100.0], type=pa.float64()
-                ),
-                "end_timestamp": pa.array([1010.5, 1011.5, 1100.5], type=pa.float64()),
-                "viterbi_state": pa.array([0, 0, 1], type=pa.int16()),
-                "tier": pa.array(
-                    ["event_core", "background", "near_event"], type=pa.string()
-                ),
-            }
-        ),
-        states_path,
-    )
-
-    detection_job = DetectionJob(
-        status=JobStatus.complete.value,
-        classifier_model_id="model-1",
-        hydrophone_id=region_job.hydrophone_id,
-        start_timestamp=rd_start,
-        end_timestamp=1_300.0,
-    )
-    session.add(detection_job)
-    await session.commit()
-    await session.refresh(detection_job)
-
-    row_store_path = detection_row_store_path(tmp_path, detection_job.id)
-    write_detection_row_store(
-        row_store_path,
-        [
-            {
-                "row_id": "row-1",
-                "start_utc": "1010.0",
-                "end_utc": "1011.0",
-            }
-        ],
-    )
-
-    session.add(
-        VocalizationLabel(
-            detection_job_id=detection_job.id,
-            row_id="row-1",
-            label="whup",
-            source="manual",
-        )
-    )
-    await session.commit()
-
-    result = await generate_label_distribution(session, tmp_path, hmm_job)
-
-    # State 0 has rows in two tiers; only event_core overlaps the labeled
-    # detection window (center 1010.25 falls inside [1010.0, 1011.0)).
-    # The background row's center (1011.25) is outside the detection range.
-    assert result["states"]["0"]["event_core"]["whup"] == 1
-    assert result["states"]["0"]["background"]["unlabeled"] == 1
-    # State 1's row is tagged near_event and its center is outside the window.
-    assert result["states"]["1"]["near_event"]["unlabeled"] == 1
-    # No synthetic "all" key should appear on a CRNN-source job.
-    for state_payload in result["states"].values():
-        assert "all" not in state_payload
 
 
 async def test_delete_removes_db_row_and_disk_artifacts(session, settings):

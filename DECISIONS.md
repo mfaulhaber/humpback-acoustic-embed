@@ -732,3 +732,70 @@ encoding signature.
   resolved by overlap against the effective event set.
 - Future event-aware consumers must explicitly choose raw versus effective
   event semantics and include that choice in provenance or idempotency keys.
+
+## ADR-063: Sequence Models label source switched to Call Parsing Classify
+
+**Status**: accepted
+**Supersedes**: ADR-060 (tier-aware HMM label distribution storage)
+**Builds on**: ADR-054 (read-time correction overlay), ADR-056, ADR-057, ADR-059, ADR-061, ADR-062
+
+**Context**: HMM and Masked Transformer label-distribution charts and exemplar
+annotations previously consumed manual labels from `vocalization_labels` via the
+`hydrophone_id → DetectionJob[]` fan-out, then center-time-matched every
+sequence window against detection-window `[start_utc, end_utc)` ranges. That
+chain had three problems: it pulled from the older 5-second Vocalization
+Labeling workspace rather than the active Call Parsing Classify (Pass 3)
+pipeline, it walked an indirect join that mixed in unrelated detection-job
+labels on the same hydrophone, and detection windows are coarser than the
+variable-length Pass 2 events. ADR-060's tier-aware storage was a workaround
+that preserved the legacy detection-window structure under the loader Protocol.
+
+**Decision**: Replace the label source with `EventClassificationJob` (Pass 3)
+plus `VocalizationCorrection` and `EventBoundaryCorrection` overlays via
+`load_effective_events()`. HMM and MT job rows gain an explicit
+`event_classification_job_id` FK (migration `066_sequence_models_classify_binding`).
+The submit endpoints accept an optional `event_classification_job_id`; when
+omitted, the server picks the most recent completed `EventClassificationJob`
+for the upstream segmentation, and rejects with 422 when none exists. New
+`POST .../regenerate-label-distribution` endpoints rebuild artifacts and
+optionally re-bind to a different Classify job in a single atomic write
+(validate → temp-then-rename → commit FK). The MT regenerate rebuilds **all**
+`k<N>/label_distribution.json` files in one shot, loading effective events once.
+
+`label_distribution.json` shape simplifies to
+`{n_states, total_windows, states: {state: {label: count}}}`. The tier
+dimension is gone; CRNN's `extras.tier` on `decoded.parquet` and exemplars is
+**unchanged** (it still drives the per-state tier-composition strip, which is
+independent of label distribution). Each exemplar's `extras` gains
+`event_id`, `event_types`, and `event_confidence`; the frontend renders type
+chips that click through to Classify Review for the underlying event, and
+background exemplars get a single `(background)` chip.
+
+Effective type set per event = `(model types where above_threshold == True) ∪
+(VocalizationCorrection rows overlapping event with correction_type == "add") −
+(VocalizationCorrection rows overlapping event with correction_type == "remove")`.
+Events whose corrected type set is empty are still returned by the loader, but
+their windows fall into the `(background)` bucket so chart and exemplar
+invariants stay consistent (`event_id` is set iff at least one surviving label
+exists).
+
+**Consequences**:
+- ADR-060 is superseded. Pre-existing `label_distribution.json` files are not
+  migrated on the fly; the in-flight rows had been deleted via the UI before
+  the cutover and the artifact directories were wiped. The simplified shape
+  pass-through is enforced by `LabelDistributionResponse`.
+- `vocalization_labels`, `DetectionJob`, and the hydrophone fan-out are no
+  longer consulted by the loader Protocol. Vocalization Labeling workspace
+  retains its own table and workflow.
+- Regenerate is manual (Q7:A): no auto-recompute on `VocalizationCorrection`
+  writes. The detail page exposes a "Regenerate label distribution" button
+  with an optional re-bind dialog; the button invalidates
+  `["hmm-label-distribution", id]` / `["hmm-exemplars", id]` (and MT
+  equivalents) on success.
+- Failure during the artifact-write step leaves the FK and existing files
+  intact (in-memory FK swap is reverted on exception). Recovery from the
+  rare step-3 failure is to re-run regenerate.
+- Sequence Models submit now requires a completed Classify job for the
+  upstream segmentation; the create form's submit button stays disabled with
+  helper text *"Run Pass 3 Classify on this segmentation first"* when none
+  exist.

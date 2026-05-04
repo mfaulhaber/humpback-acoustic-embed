@@ -8,6 +8,7 @@ import {
   continuousEmbeddingSourceKind,
   useContinuousEmbeddingJobs,
   useCreateHMMSequenceJob,
+  useEventClassificationJobsForSegmentation,
 } from "@/api/sequenceModels";
 
 type TrainingMode = "full_region" | "event_balanced" | "event_only";
@@ -26,6 +27,7 @@ export function HMMSequenceCreateForm() {
   const completedCEJs = cejJobs.filter((j) => j.status === "complete");
 
   const [sourceId, setSourceId] = useState("");
+  const [classifyId, setClassifyId] = useState<string>("");
   const [nStates, setNStates] = useState(4);
   const [pcaDims, setPcaDims] = useState(50);
   const [covType, setCovType] = useState<"diag" | "full">("diag");
@@ -57,6 +59,24 @@ export function HMMSequenceCreateForm() {
     return continuousEmbeddingSourceKind(selectedJob) === "region_crnn";
   }, [selectedJob]);
 
+  const segmentationJobId = selectedJob?.event_segmentation_job_id ?? null;
+  const classifyJobsQuery = useEventClassificationJobsForSegmentation(
+    segmentationJobId,
+  );
+  const classifyJobs = classifyJobsQuery.data ?? [];
+
+  // Default the Classify selection to the most-recent option whenever the
+  // dropdown contents change (segmentation flip, refetch).
+  useEffect(() => {
+    if (classifyJobs.length === 0) {
+      setClassifyId("");
+      return;
+    }
+    if (!classifyJobs.some((c) => c.id === classifyId)) {
+      setClassifyId(classifyJobs[0].id);
+    }
+  }, [classifyJobs, classifyId]);
+
   // Reset advanced panel when source kind flips so SurfPerch never
   // sends CRNN-only fields and CRNN never sends stale config.
   useEffect(() => {
@@ -68,10 +88,15 @@ export function HMMSequenceCreateForm() {
   const proportionsSum = eventCoreProp + nearEventProp + backgroundProp;
   const proportionsValid = Math.abs(proportionsSum - 1.0) <= 1e-6;
 
+  const classifyDropdownReady =
+    sourceId === "" || (!classifyJobsQuery.isLoading && classifyJobs.length > 0);
+
   const canSubmit =
     sourceId !== "" &&
     nStates >= 2 &&
     !createMutation.isPending &&
+    classifyDropdownReady &&
+    classifyId !== "" &&
     (!isCrnnSource || proportionsValid);
 
   const handleSubmit = () => {
@@ -80,6 +105,7 @@ export function HMMSequenceCreateForm() {
 
     const body: CreateHMMSequenceJobRequest = {
       continuous_embedding_job_id: sourceId,
+      event_classification_job_id: classifyId || undefined,
       n_states: nStates,
       pca_dims: pcaDims,
       covariance_type: covType,
@@ -138,6 +164,45 @@ export function HMMSequenceCreateForm() {
                 </option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1">
+              Event Classification Job
+            </label>
+            <select
+              data-testid="hmm-classify-select"
+              className="w-full border rounded-md px-2 py-1 text-sm"
+              value={classifyId}
+              disabled={
+                sourceId === "" ||
+                classifyJobsQuery.isLoading ||
+                classifyJobs.length === 0
+              }
+              onChange={(e) => setClassifyId(e.target.value)}
+            >
+              {classifyJobs.length === 0 ? (
+                <option value="">— none —</option>
+              ) : null}
+              {classifyJobs.map((c) => (
+                <option key={c.id} value={c.id}>
+                  #{c.id.slice(0, 8)}
+                  {c.model_name ? ` · ${c.model_name}` : ""}
+                  {c.n_events_classified != null
+                    ? ` · ${c.n_events_classified} events`
+                    : ""}
+                </option>
+              ))}
+            </select>
+            {sourceId !== "" &&
+              !classifyJobsQuery.isLoading &&
+              classifyJobs.length === 0 ? (
+              <p
+                className="text-xs text-amber-700 mt-1"
+                data-testid="hmm-classify-empty-helper"
+              >
+                Run Pass 3 Classify on this segmentation first
+              </p>
+            ) : null}
           </div>
           <div>
             <label className="text-sm font-medium block mb-1">States</label>

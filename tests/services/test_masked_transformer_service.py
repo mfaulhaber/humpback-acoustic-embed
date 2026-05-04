@@ -6,7 +6,11 @@ import json
 
 import pytest
 
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
+from humpback.models.call_parsing import (
+    EventClassificationJob,
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.services.masked_transformer_service import (
@@ -43,6 +47,14 @@ async def _seed_crnn_cej(
     await session.commit()
     await session.refresh(seg_job)
 
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
+
     cej = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,
         region_detection_job_id=region_job.id,
@@ -73,6 +85,14 @@ async def _seed_surfperch_cej(session) -> ContinuousEmbeddingJob:
     session.add(seg_job)
     await session.commit()
     await session.refresh(seg_job)
+
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
 
     cej = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,

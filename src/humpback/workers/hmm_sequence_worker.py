@@ -427,7 +427,7 @@ async def run_hmm_sequence_job(
         try:
             from humpback.services.hmm_sequence_service import generate_interpretations
 
-            generate_interpretations(settings.storage_root, job, source)
+            await generate_interpretations(session, settings.storage_root, job, source)
         except Exception:
             logger.warning(
                 "hmm_sequence | job=%s | interpretation generation failed, continuing",
@@ -684,7 +684,7 @@ async def _run_region_crnn_hmm(
     try:
         from humpback.services.hmm_sequence_service import generate_interpretations
 
-        generate_interpretations(settings.storage_root, job, source)
+        await generate_interpretations(session, settings.storage_root, job, source)
     except Exception:
         logger.warning(
             "hmm_sequence | job=%s | interpretation generation failed, continuing",
