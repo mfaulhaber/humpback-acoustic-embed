@@ -73,7 +73,6 @@ from humpback.services.hmm_sequence_service import (
     create_hmm_sequence_job,
     delete_hmm_sequence_job,
     generate_interpretations,
-    generate_label_distribution,
     get_hmm_sequence_job,
     list_hmm_sequence_jobs,
 )
@@ -486,7 +485,14 @@ async def get_hmm_label_distribution(
         return LabelDistributionResponse.model_validate(
             _project_legacy_label_distribution(payload)
         )
-    dist = await generate_label_distribution(session, settings.storage_root, job)
+    from humpback.models.sequence_models import ContinuousEmbeddingJob
+
+    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
+    if cej is None:
+        raise HTTPException(
+            status_code=400, detail="source continuous embedding job not found"
+        )
+    dist = await generate_interpretations(session, settings.storage_root, job, cej)
     return LabelDistributionResponse.model_validate(dist)
 
 
@@ -560,8 +566,7 @@ async def regenerate_interpretations(
             status_code=400, detail="source continuous embedding job not found"
         )
 
-    generate_interpretations(settings.storage_root, job, cej)
-    await generate_label_distribution(session, settings.storage_root, job)
+    await generate_interpretations(session, settings.storage_root, job, cej)
 
     return {
         "status": "ok",

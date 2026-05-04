@@ -1,6 +1,6 @@
 # Sequence Models — Classify Label Source Implementation Plan
 
-**Goal:** Replace `vocalization_labels` with `EventClassificationJob` (+ `EventTypeCorrection` / `EventBoundaryCorrection` overlays) as the only label source feeding HMM Sequence and Masked Transformer label-distribution artifacts and exemplar annotations.
+**Goal:** Replace `vocalization_labels` with `EventClassificationJob` (+ `VocalizationCorrection` / `EventBoundaryCorrection` overlays) as the only label source feeding HMM Sequence and Masked Transformer label-distribution artifacts and exemplar annotations.
 
 **Spec:** [docs/specs/2026-05-04-sequence-models-classify-label-source-design.md](../specs/2026-05-04-sequence-models-classify-label-source-design.md)
 
@@ -8,19 +8,19 @@
 
 ---
 
-### Task 1: Backup production DB and add migration 065
+### Task 1: Backup production DB and add migration 066
 
 **Files:**
-- Create: `alembic/versions/065_sequence_models_classify_binding.py`
+- Create: `alembic/versions/066_sequence_models_classify_binding.py`
 
 **Acceptance criteria:**
-- [ ] **Production DB backed up before any change.** Read `HUMPBACK_DATABASE_URL` from `.env`, copy to `${DB_PATH}.YYYY-MM-DD-HH:MM.bak` (UTC timestamp), confirm the `.bak` exists with non-zero size. If backup fails or is skipped, stop. (CLAUDE.md §3.5.)
-- [ ] Migration 065 adds `event_classification_job_id INTEGER FOREIGN KEY (event_classification_jobs.id) ON DELETE RESTRICT NULL` to `hmm_sequence_jobs` and `masked_transformer_jobs`, with an index on each.
-- [ ] Uses `op.batch_alter_table()` for SQLite compatibility.
-- [ ] `down_revision = "064"`; revision identifier is `"065"`.
-- [ ] `downgrade()` drops the indexes and columns in reverse order.
-- [ ] `uv run alembic upgrade head` runs cleanly against the production DB.
-- [ ] `uv run alembic downgrade -1` followed by `uv run alembic upgrade head` round-trips cleanly (verified locally; production left at `head` after).
+- [x] **Production DB backed up before any change.** Read `HUMPBACK_DATABASE_URL` from `.env`, copy to `${DB_PATH}.YYYY-MM-DD-HH:MM.bak` (UTC timestamp), confirm the `.bak` exists with non-zero size. If backup fails or is skipped, stop. (CLAUDE.md §3.5.)
+- [x] Migration 066 adds `event_classification_job_id` (String FK to `event_classification_jobs.id`, `ON DELETE RESTRICT`, nullable) to `hmm_sequence_jobs` and `masked_transformer_jobs`, with an index on each.
+- [x] Uses `op.batch_alter_table()` for SQLite compatibility, with named FK constraints (SQLite batch mode requires named constraints).
+- [x] `down_revision = "065"`; revision identifier is `"066"`. (065 was already taken by the recent `effective_event_identity` migration on main; bumped accordingly.)
+- [x] `downgrade()` drops the indexes and columns in reverse order.
+- [x] `uv run alembic upgrade head` runs cleanly against the production DB.
+- [x] `uv run alembic downgrade -1` followed by `uv run alembic upgrade head` round-trips cleanly (verified locally; production left at `head` after).
 
 **Tests needed:**
 - An Alembic upgrade/downgrade round-trip on a temporary copy of the schema, asserting the columns appear/disappear and indexes follow them.
@@ -30,41 +30,44 @@
 ### Task 2: Event-scoped label-distribution helper module
 
 **Files:**
-- Modify: `src/humpback/sequence_models/label_distribution.py` (replace existing detection-window-based helper)
-- Create: `tests/sequence_models/test_label_distribution_event_scoped.py`
+- Modify: `src/humpback/sequence_models/label_distribution.py` (replaced existing detection-window-based helper)
+- Modify: `tests/sequence_models/test_label_distribution.py` (replaced obsolete pure-function tests)
+- Create: `tests/sequence_models/test_load_effective_event_labels.py` (loader integration tests)
 
 **Acceptance criteria:**
-- [ ] `BACKGROUND_LABEL = "(background)"` exported.
-- [ ] `EffectiveEventLabels` dataclass (frozen): `event_id: int`, `start_utc: float`, `end_utc: float`, `types: frozenset[str]`, `confidences: dict[str, float]`.
-- [ ] `load_effective_event_labels(session, event_classification_job_id) -> list[EffectiveEventLabels]` returns events sorted by `start_utc`, with type set computed as `(model types where above_threshold) ∪ (user-added/confirmed) − (user-deleted)` via the existing `load_effective_events()` overlay (ADR-054).
-- [ ] Events with empty effective types are returned (with `types = frozenset()`); they are *not* dropped at the loader layer.
-- [ ] `assign_labels_to_windows(decoded_df, events) -> pd.DataFrame` adds two columns: `event_id: int | None` and `event_types: list[str]`, using a two-pointer event-scoped inversion. Rows whose center time falls outside every event get `event_id=None, event_types=[]`. Rows inside an empty-types event also get `event_id=None, event_types=[]` (chart/exemplar invariant: `event_id` set iff at least one surviving label exists).
-- [ ] Algorithm is O(n_windows + n_events); single sort + single pass.
-- [ ] Old detection-window center-time match against `vocalization_labels` is **removed** from this module.
+- [x] `BACKGROUND_LABEL = "(background)"` exported.
+- [x] `EffectiveEventLabels` dataclass (frozen): `event_id: str`, `start_utc: float`, `end_utc: float`, `types: frozenset[str]`, `confidences: dict[str, float]`. (Note: `event_id` is `str` per the existing `Event` schema, not `int` as the spec sketch suggested.)
+- [x] `load_effective_event_labels(session, *, event_classification_job_id, storage_root) -> list[EffectiveEventLabels]` returns events sorted by `start_utc`, with type set computed as `(model types where above_threshold) ∪ (user-added/confirmed) − (user-deleted)` via the existing `load_effective_events()` overlay (ADR-054) and `VocalizationCorrection` rows (region-scoped, time-range overlapping).
+- [x] Events with empty effective types are returned (with `types = frozenset()`); they are *not* dropped at the loader layer.
+- [x] `assign_labels_to_windows(rows, events) -> list[WindowAnnotation]` returns annotations parallel to the input rows. Rows whose center time falls outside every event get `event_id=None, event_types=()`. Rows inside an empty-types event also get the background annotation (chart/exemplar invariant: `event_id` set iff at least one surviving label exists).
+- [x] Algorithm is O(n_windows + n_events); single sort + single pass via two-pointer cursor.
+- [x] Old detection-window center-time match against `vocalization_labels` is **removed** from this module.
 
 **Tests needed:**
 - Three disjoint events + windows straddling them; assert center-time placement, multi-label union into `event_types`, background bucket for outside windows.
-- An event with all types user-deleted via `EventTypeCorrection`: its windows go to background.
+- An event with all types user-deleted via `VocalizationCorrection`: its windows go to background.
 - Synthetic 10k-window / 1k-event input runs in single-pass time and produces the correct counts.
 - Above-threshold model type kept; below-threshold model type filtered; user-added included; user-deleted excluded; user-confirmed below-threshold included.
 - `EventBoundaryCorrection` shifts an event start; window membership changes accordingly.
 
 ---
 
-### Task 3: Rewrite HMM service `generate_label_distribution()` + exemplar annotation
+### Task 3: Rewrite HMM service interpretation + exemplar annotation
 
 **Files:**
-- Modify: `src/humpback/services/hmm_sequence_service.py`
-- Modify: `tests/sequence_models/test_hmm_service_label_distribution.py` (rewrite to match new shape)
+- Modify: `src/humpback/services/hmm_sequence_service.py` (consolidated `generate_interpretations` is now async, label distribution + exemplars + overlay all run in one call; old `generate_label_distribution` removed)
+- Modify: `src/humpback/workers/hmm_sequence_worker.py` (await the now-async generator)
+- Modify: `src/humpback/api/routers/sequence_models.py` (drop import of removed `generate_label_distribution`; the existing `/label-distribution` lazy-generation endpoint and `/generate-interpretations` regenerate endpoint both delegate to the consolidated function)
+- Modify: `tests/services/test_hmm_sequence_service.py` (drop obsolete `generate_label_distribution` tests)
 
 **Acceptance criteria:**
-- [ ] `generate_label_distribution()` reads the bound `EventClassificationJob` from `self.event_classification_job_id`, calls `load_effective_event_labels()` and `assign_labels_to_windows()`.
-- [ ] Per-state buckets are computed via `value_counts()` over an exploded `event_types` column where empty lists become a single `BACKGROUND_LABEL` row per window.
-- [ ] Output `label_distribution.json` shape: `{"n_states": int, "total_windows": int, "states": {"<i>": {"<label>": <count>, ...}, ...}}`. **No tier dimension.**
-- [ ] Atomic temp-then-rename write.
-- [ ] Exemplar selection logic is unchanged; after selection, each exemplar's `extras` dict is annotated with `event_id`, `event_types`, `event_confidence`. Background exemplars get `event_id=None, event_types=[], event_confidence={}`.
-- [ ] CRNN's `extras.tier` is preserved on `decoded.parquet` and exemplars (untouched by this rewrite).
-- [ ] The `hydrophone_id → DetectionJob` fan-out path used only for label coverage is removed from this service. Hydrophone resolution stays only where the embedding loader actually requires it.
+- [x] Consolidated `async generate_interpretations(session, storage_root, job, cej)` reads the bound `event_classification_job_id` from the job row, calls `load_effective_event_labels()` + `assign_labels_to_windows()`, runs `compute_label_distribution()`, and writes `label_distribution.json` + annotated `exemplars.json` + `overlay.parquet`.
+- [x] Raises if `job.event_classification_job_id` is `None` (the submit-validation step in Task 6 guarantees non-NULL after job creation).
+- [x] Output `label_distribution.json` shape: `{"n_states": int, "total_windows": int, "states": {"<i>": {"<label>": <count>, ...}, ...}}`. **No tier dimension.**
+- [x] Per-file atomic temp-then-rename write for both JSON files and the overlay parquet.
+- [x] Exemplar selection logic is unchanged; after selection, each exemplar's `extras` dict is annotated with `event_id`, `event_types`, `event_confidence`. Background exemplars get `event_id=None, event_types=[], event_confidence={}`.
+- [x] CRNN's `extras.tier` is preserved on `decoded.parquet` and exemplars (untouched by this rewrite — set by the loader, never overwritten).
+- [x] The detection-window/`vocalization_labels` SQL fan-out is removed from the service.
 
 **Tests needed:**
 - End-to-end against an in-memory fixture with one `EventSegmentationJob`, one `EventClassificationJob`, sample `typed_events.parquet`, synthetic `decoded.parquet`, and an HMM job row bound by FK.
@@ -77,13 +80,14 @@
 
 **Files:**
 - Modify: `src/humpback/services/masked_transformer_service.py`
-- Modify: `tests/sequence_models/test_masked_transformer_service_label_distribution.py` (rewrite)
 
 **Acceptance criteria:**
-- [ ] Effective events are loaded **once** per service call via `load_effective_event_labels()`; the annotated `event_id`/`event_types` columns are computed once and reused across the k loop.
-- [ ] Each `k<N>/label_distribution.json` uses the same simplified shape as Task 3; per-state grouping uses the per-k `label` (k-means token) column.
-- [ ] Each `k<N>/exemplars.json` is annotated like Task 3.
-- [ ] Atomic per-file temp-then-rename for each k subdir's outputs.
+- [x] `generate_interpretations(session, storage_root, job, k, *, events_cache=None)` accepts an optional pre-loaded events cache to amortize the DB + parquet reads across the per-k loop.
+- [x] New `generate_interpretations_all_k(session, storage_root, job, k_values)` loads effective events once via `load_effective_event_labels()` and threads the cache through each k call. Returns `{k: label_distribution_payload}`.
+- [x] Each `k<N>/label_distribution.json` uses the same simplified shape as Task 3; per-state grouping uses the per-k `label` (k-means token) column.
+- [x] Each `k<N>/exemplars.json` is annotated identically to Task 3 (event_id, event_types, event_confidence).
+- [x] Atomic per-file temp-then-rename for each k subdir's outputs.
+- [x] Detection-window/`vocalization_labels` fan-out removed; raises if `job.event_classification_job_id` is `None`.
 
 **Tests needed:**
 - Mirror of Task 3 test for two `k` values, asserting both `k<N>/` outputs have the new shape.
@@ -255,8 +259,8 @@
 
 **Acceptance criteria:**
 - [ ] New ADR appended to `DECISIONS.md`: *"Sequence Models label source switched to Call Parsing Classify"* — explicitly supersedes ADR-060; references ADR-054 (correction overlay) and ADR-059 (loader Protocol).
-- [ ] CLAUDE.md §9.1 Sequence Models bullet updated: state-to-label distribution sourced from `EventClassificationJob` + `EventTypeCorrection` overlay; tier dimension removed from label-distribution artifacts (CRNN tier metadata persists on `decoded.parquet`/exemplars).
-- [ ] CLAUDE.md §9.2: latest migration bumped to `065_sequence_models_classify_binding.py`.
+- [ ] CLAUDE.md §9.1 Sequence Models bullet updated: state-to-label distribution sourced from `EventClassificationJob` + `VocalizationCorrection` overlay; tier dimension removed from label-distribution artifacts (CRNN tier metadata persists on `decoded.parquet`/exemplars).
+- [ ] CLAUDE.md §9.2: latest migration bumped to `066_sequence_models_classify_binding.py`.
 - [ ] `docs/reference/sequence-models-api.md`: documents the two `regenerate-label-distribution` endpoints and the new `event_classification_job_id` field on submit.
 - [ ] `docs/reference/data-model.md`: notes the new FK columns on `hmm_sequence_jobs` and `masked_transformer_jobs`.
 - [ ] `docs/reference/behavioral-constraints.md`: documents the submit-time precondition (Classify required) and the manual-regenerate semantics (no auto-recompute on correction writes).

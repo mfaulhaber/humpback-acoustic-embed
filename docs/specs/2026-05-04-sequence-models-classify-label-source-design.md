@@ -5,11 +5,13 @@
 **Supersedes:** ADR-060 (tier-aware HMM label distribution storage)
 **Related:** ADR-054 (read-time correction overlay), ADR-056 (Sequence Models track), ADR-057 (CRNN region-based source), ADR-059 (source-agnostic loader Protocol), ADR-061 (masked-transformer), ADR-062 (segmentation-scoped event identity)
 
+> **Implementation note (2026-05-04):** The brainstorming exploration referenced a separate `EventTypeCorrection` table that does not actually exist; type corrections live in `VocalizationCorrection` — region-scoped, keyed by `(region_detection_job_id, start_sec, end_sec, type_name)`, with `correction_type ∈ {"add", "remove"}`. Functional semantics are identical to the spec's intent: event-overlapping `"add"` rows include the type, `"remove"` rows exclude it. All references below use the actual `VocalizationCorrection` name.
+
 ---
 
 ## 1. Goal
 
-Replace `vocalization_labels` with the Call Parsing Pass 3 output (`EventClassificationJob` plus `EventTypeCorrection` and `EventBoundaryCorrection` overlays via `load_effective_events()`) as the **only** label source feeding HMM Sequence and Masked Transformer label-distribution artifacts and exemplar annotations.
+Replace `vocalization_labels` with the Call Parsing Pass 3 output (`EventClassificationJob` plus `VocalizationCorrection` and `EventBoundaryCorrection` overlays via `load_effective_events()`) as the **only** label source feeding HMM Sequence and Masked Transformer label-distribution artifacts and exemplar annotations.
 
 Vocalization Labeling workspace and the `vocalization_labels` table are not touched; they continue to serve their own workflow.
 
@@ -96,11 +98,11 @@ The bound Classify job determines the label source for label-distribution and ex
 
 ## 5. Data model & migration
 
-### 5.1 Alembic migration `065_sequence_models_classify_binding.py`
+### 5.1 Alembic migration `066_sequence_models_classify_binding.py`
 
 ```python
-revision = "065"
-down_revision = "064"
+revision = "066"
+down_revision = "065"
 
 def upgrade() -> None:
     with op.batch_alter_table("hmm_sequence_jobs") as batch:
@@ -178,7 +180,7 @@ def load_effective_event_labels(
 ) -> list[EffectiveEventLabels]:
     """
     Reads typed_events.parquet for the given Classify job, applies
-    EventTypeCorrection and EventBoundaryCorrection overlays via
+    VocalizationCorrection and EventBoundaryCorrection overlays via
     load_effective_events() (ADR-054), and returns one record per
     effective event in start_utc order.
 
@@ -364,7 +366,7 @@ regenerateMTLabelDistribution(jobId: number, k: number, body?: {event_classifica
 `tests/sequence_models/test_label_distribution_event_scoped.py` (new):
 
 - `test_assign_labels_inverts_events_to_windows` — three disjoint events + decoded windows straddling them; assert center-time placement, multi-label union, background bucket for outside windows.
-- `test_assign_labels_handles_empty_event_types` — event with all types user-deleted via `EventTypeCorrection` → empty type set → its windows go to background.
+- `test_assign_labels_handles_empty_event_types` — event with all types user-deleted via `VocalizationCorrection` → empty type set → its windows go to background.
 - `test_assign_labels_two_pointer_o_n` — large synthetic input (10k windows, 1k events); single-pass execution.
 - `test_load_effective_event_labels_applies_corrections` — fixtures cover above-threshold model type kept, below-threshold model type filtered, user-added included, user-deleted excluded, user-confirmed below-threshold included.
 - `test_load_effective_event_labels_applies_boundary_corrections` — `EventBoundaryCorrection` shifts an event start; window membership changes accordingly.
@@ -428,7 +430,7 @@ regenerateMTLabelDistribution(jobId: number, k: number, body?: {event_classifica
 ### 8.7 Manual smoke before PR
 
 1. **Backup prod DB** per CLAUDE.md §3.5 (Acceptance Criterion #1 of the migration step).
-2. `uv run alembic upgrade head` to land migration 065.
+2. `uv run alembic upgrade head` to land migration 066.
 3. `rm -rf data/sequence_models/hmm_sequence_jobs/* data/sequence_models/masked_transformer_jobs/*` (SQL rows already deleted via UI).
 4. Submit one HMM job and one Masked Transformer job against an existing `EventSegmentationJob` with completed Classify; open both detail pages; confirm chart renders, exemplar chips render, regenerate works, re-binding to a different Classify job (if available) works.
 5. Open Vocalization Labeling workspace — confirm unchanged.
@@ -453,8 +455,8 @@ In order:
 Per CLAUDE.md §10.2 doc-update matrix:
 
 - **DECISIONS.md** — append new ADR: *"Sequence Models label source switched to Call Parsing Classify"* (supersedes ADR-060 explicitly; references ADR-054 for correction overlay, ADR-059 for loader Protocol).
-- **CLAUDE.md §9.1** — update Sequence Models bullet: state-to-label distribution now sourced from `EventClassificationJob` + `EventTypeCorrection` overlay; tier dimension removed from label-distribution artifacts (CRNN tier metadata persists on `decoded.parquet`/exemplars).
-- **CLAUDE.md §9.2** — bump latest migration to `065_sequence_models_classify_binding.py`.
+- **CLAUDE.md §9.1** — update Sequence Models bullet: state-to-label distribution now sourced from `EventClassificationJob` + `VocalizationCorrection` overlay; tier dimension removed from label-distribution artifacts (CRNN tier metadata persists on `decoded.parquet`/exemplars).
+- **CLAUDE.md §9.2** — bump latest migration to `066_sequence_models_classify_binding.py`.
 - **`docs/reference/sequence-models-api.md`** — add the two `regenerate-label-distribution` endpoints; document the `event_classification_job_id` field on submit.
 - **`docs/reference/data-model.md`** — note the new FK columns on `hmm_sequence_jobs` and `masked_transformer_jobs`.
 - **`docs/reference/behavioral-constraints.md`** — note the submit-time precondition (Classify required) and the manual-regenerate semantics.

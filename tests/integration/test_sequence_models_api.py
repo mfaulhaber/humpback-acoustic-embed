@@ -12,7 +12,6 @@ from humpback.storage import (
     hmm_sequence_exemplars_path,
     hmm_sequence_label_distribution_path,
     hmm_sequence_overlay_path,
-    hmm_sequence_states_path,
 )
 
 
@@ -681,111 +680,36 @@ async def test_label_distribution_endpoint_unified_shape_is_no_op(client, app_se
     assert body["states"]["0"]["background"]["unlabeled"] == 1
 
 
-async def test_regenerate_interpretations_runs_label_distribution_for_crnn(
-    client, app_settings
-):
-    """ADR-060: CRNN-source HMM jobs invoke generate_label_distribution and
-    write a unified-shape JSON artifact to disk."""
-    job_id = await _create_complete_crnn_hmm_job(client, app_settings)
+async def test_regenerate_interpretations_endpoint_smoke(client, app_settings):
+    """Endpoint plumbing smoke: POST /generate-interpretations returns 200.
 
-    # Stub the heavy overlay/exemplar generator; we only care about the
-    # label-distribution path here.
+    Replaces the pre-spec ADR-060 tests that asserted the legacy
+    tier-dimension JSON shape. The consolidated ``generate_interpretations``
+    is exercised end-to-end by the worker tests
+    (``test_crnn_happy_path_writes_overlay_and_exemplars``,
+    ``test_happy_path_persists_all_artifacts``) and the manual smoke pass
+    in spec §8.7. Here we just verify the API endpoint dispatches and
+    returns the documented body shape.
+    """
+    job_id = await _create_complete_hmm_job(client, app_settings)
+
+    # Stub the heavy generator so the test stays fast; we're only
+    # asserting the router plumbing, not the artifact contents.
     import humpback.api.routers.sequence_models as router_mod
 
-    def _fake_generate_interpretations(*_args, **_kwargs):
-        return None
+    async def _fake_generate_interpretations(*_args, **_kwargs):
+        return {"n_states": 1, "total_windows": 0, "states": {"0": {}}}
 
     router_mod_orig = router_mod.generate_interpretations
     router_mod.generate_interpretations = _fake_generate_interpretations  # type: ignore[assignment]
     try:
-        # Provide a real states.parquet with a tier column so the CRNN
-        # loader can read it.
-        states_path = hmm_sequence_states_path(app_settings.storage_root, job_id)
-        states_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(
-            pa.table(
-                {
-                    "start_timestamp": pa.array([1010.0, 1100.0], type=pa.float64()),
-                    "end_timestamp": pa.array([1010.5, 1100.5], type=pa.float64()),
-                    "viterbi_state": pa.array([0, 1], type=pa.int16()),
-                    "tier": pa.array(["event_core", "background"], type=pa.string()),
-                }
-            ),
-            states_path,
-        )
-
         resp = await client.post(
             f"/sequence-models/hmm-sequences/{job_id}/generate-interpretations"
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["status"] == "ok"
+        assert body["job_id"] == job_id
         assert body["label_distribution_generated"] is True
-
-        dist_path = hmm_sequence_label_distribution_path(
-            app_settings.storage_root, job_id
-        )
-        assert dist_path.exists()
-        on_disk = json.loads(dist_path.read_text(encoding="utf-8"))
-        assert on_disk["n_states"] == 3
-        # CRNN jobs use real tier keys, not the synthetic "all" key.
-        for state_payload in on_disk["states"].values():
-            assert "all" not in state_payload
-        assert on_disk["states"]["0"] == {"event_core": {"unlabeled": 1}}
-        assert on_disk["states"]["1"] == {"background": {"unlabeled": 1}}
-    finally:
-        router_mod.generate_interpretations = router_mod_orig  # type: ignore[assignment]
-
-
-async def test_regenerate_interpretations_runs_label_distribution_for_surfperch(
-    client, app_settings
-):
-    """ADR-060: SurfPerch-source HMM jobs continue to write unified shape."""
-    job_id = await _create_complete_hmm_job(client, app_settings)
-
-    import humpback.api.routers.sequence_models as router_mod
-
-    def _fake_generate_interpretations(*_args, **_kwargs):
-        return None
-
-    router_mod_orig = router_mod.generate_interpretations
-    router_mod.generate_interpretations = _fake_generate_interpretations  # type: ignore[assignment]
-    try:
-        states_path = hmm_sequence_states_path(app_settings.storage_root, job_id)
-        states_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(
-            pa.table(
-                {
-                    "start_timestamp": pa.array([1010.0, 1100.0], type=pa.float64()),
-                    "end_timestamp": pa.array([1015.0, 1105.0], type=pa.float64()),
-                    "viterbi_state": pa.array([0, 1], type=pa.int16()),
-                }
-            ),
-            states_path,
-        )
-
-        # Pre-seed a legacy flat-shape file to verify Refresh rewrites it.
-        dist_path = hmm_sequence_label_distribution_path(
-            app_settings.storage_root, job_id
-        )
-        dist_path.parent.mkdir(parents=True, exist_ok=True)
-        dist_path.write_text(
-            json.dumps(_legacy_label_distribution_payload()), encoding="utf-8"
-        )
-
-        resp = await client.post(
-            f"/sequence-models/hmm-sequences/{job_id}/generate-interpretations"
-        )
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["label_distribution_generated"] is True
-
-        on_disk = json.loads(dist_path.read_text(encoding="utf-8"))
-        # Rewritten in unified shape with the synthetic "all" tier key.
-        for state_payload in on_disk["states"].values():
-            for inner in state_payload.values():
-                # Every inner value is now a {label: count} dict, not int.
-                assert isinstance(inner, dict)
-        assert "all" in on_disk["states"]["0"]
     finally:
         router_mod.generate_interpretations = router_mod_orig  # type: ignore[assignment]

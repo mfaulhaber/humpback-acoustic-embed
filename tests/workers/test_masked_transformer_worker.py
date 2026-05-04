@@ -33,6 +33,9 @@ from humpback.storage import (
     masked_transformer_reconstruction_error_path,
 )
 from humpback.workers.masked_transformer_worker import run_masked_transformer_job
+from tests.fixtures.sequence_models.classify_binding import (
+    seed_classify_for_segmentation,
+)
 
 
 CRNN_VECTOR_DIM = 16
@@ -89,6 +92,23 @@ def _write_synthetic_crnn_embeddings_parquet(
     path = out_dir / "embeddings.parquet"
     pq.write_table(table, path)
     return path
+
+
+async def _bind_classify(session, settings, cej, job) -> None:
+    """Bind a fresh complete Classify job to ``job.event_classification_job_id``.
+
+    All MT worker happy-path tests need this so the consolidated
+    ``generate_interpretations`` (which raises if the FK is None per spec
+    §6.2) runs the label-distribution path.
+    """
+    cls_id = await seed_classify_for_segmentation(
+        session,
+        settings.storage_root,
+        event_segmentation_job_id=cej.event_segmentation_job_id or "",
+    )
+    job.event_classification_job_id = cls_id
+    await session.commit()
+    await session.refresh(job)
 
 
 async def _seed_crnn_ce_job(session, settings) -> ContinuousEmbeddingJob:
@@ -182,6 +202,7 @@ async def test_happy_path_persists_all_artifacts(session, settings, monkeypatch)
     job, _ = await create_masked_transformer_job(
         session, continuous_embedding_job_id=cej.id, **_tiny_config()
     )
+    await _bind_classify(session, settings, cej, job)
 
     await run_masked_transformer_job(session, job, settings)
     await session.refresh(job)
@@ -279,6 +300,7 @@ async def test_device_fallback_records_reason(session, settings, monkeypatch):
     job, _ = await create_masked_transformer_job(
         session, continuous_embedding_job_id=cej.id, **_tiny_config()
     )
+    await _bind_classify(session, settings, cej, job)
 
     await run_masked_transformer_job(
         session, job, settings, device_validation_force_fail=True
@@ -301,6 +323,7 @@ async def test_extend_k_sweep_skips_retraining(session, settings, monkeypatch):
     job, _ = await create_masked_transformer_job(
         session, continuous_embedding_job_id=cej.id, **config
     )
+    await _bind_classify(session, settings, cej, job)
 
     # First pass: trains transformer + writes k=10 bundle.
     await run_masked_transformer_job(session, job, settings)
@@ -345,6 +368,7 @@ async def test_requeued_partial_k_bundle_regenerates_missing_interpretations(
     job, _ = await create_masked_transformer_job(
         session, continuous_embedding_job_id=cej.id, **_tiny_config()
     )
+    await _bind_classify(session, settings, cej, job)
 
     await run_masked_transformer_job(session, job, settings)
     await session.refresh(job)
