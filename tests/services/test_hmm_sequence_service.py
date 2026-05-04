@@ -13,7 +13,11 @@ from typing import Any
 
 import pytest
 
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
+from humpback.models.call_parsing import (
+    EventClassificationJob,
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.schemas.sequence_models import HMMSequenceJobCreate
@@ -49,6 +53,14 @@ async def _seed_continuous_embedding_job(
     session.add(seg_job)
     await session.commit()
     await session.refresh(seg_job)
+
+    # Bind a completed Classify job so HMM submit can resolve its FK.
+    classify_job = EventClassificationJob(
+        status=JobStatus.complete.value,
+        event_segmentation_job_id=seg_job.id,
+    )
+    session.add(classify_job)
+    await session.commit()
 
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,

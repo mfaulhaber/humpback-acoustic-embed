@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import {
   continuousEmbeddingSourceKind,
   useContinuousEmbeddingJobs,
   useCreateMaskedTransformerJob,
+  useEventClassificationJobsForSegmentation,
 } from "@/api/sequenceModels";
 
 const PRESETS: MaskedTransformerPreset[] = ["small", "default", "large"];
@@ -44,6 +45,7 @@ export function MaskedTransformerCreateForm() {
   );
 
   const [sourceId, setSourceId] = useState("");
+  const [classifyId, setClassifyId] = useState<string>("");
   const [preset, setPreset] = useState<MaskedTransformerPreset>("default");
   const [kInput, setKInput] = useState("100");
   const [maxEpochs, setMaxEpochs] = useState(30);
@@ -62,20 +64,45 @@ export function MaskedTransformerCreateForm() {
 
   const [error, setError] = useState<string | null>(null);
 
+  const selectedJob = useMemo(
+    () => eligible.find((j) => j.id === sourceId) ?? null,
+    [eligible, sourceId],
+  );
+  const segmentationJobId = selectedJob?.event_segmentation_job_id ?? null;
+  const classifyJobsQuery = useEventClassificationJobsForSegmentation(
+    segmentationJobId,
+  );
+  const classifyJobs = classifyJobsQuery.data ?? [];
+
+  useEffect(() => {
+    if (classifyJobs.length === 0) {
+      setClassifyId("");
+      return;
+    }
+    if (!classifyJobs.some((c) => c.id === classifyId)) {
+      setClassifyId(classifyJobs[0].id);
+    }
+  }, [classifyJobs, classifyId]);
+
   const kValues = parseKValues(kInput);
   const kValid = kValues !== null;
+  const classifyDropdownReady =
+    sourceId === "" || (!classifyJobsQuery.isLoading && classifyJobs.length > 0);
   const canSubmit =
     sourceId !== "" &&
     kValid &&
     !createMutation.isPending &&
     spanMax >= spanMin &&
-    PRESETS.includes(preset);
+    PRESETS.includes(preset) &&
+    classifyDropdownReady &&
+    classifyId !== "";
 
   const handleSubmit = () => {
     setError(null);
     if (!canSubmit || !kValues) return;
     const body: MaskedTransformerJobCreate = {
       continuous_embedding_job_id: sourceId,
+      event_classification_job_id: classifyId || undefined,
       preset,
       k_values: kValues,
       max_epochs: maxEpochs,
@@ -130,6 +157,47 @@ export function MaskedTransformerCreateForm() {
               No completed CRNN region-based continuous-embedding jobs found.
             </div>
           )}
+        </div>
+
+        <div className="grid gap-2">
+          <label className="text-xs font-medium" htmlFor="mt-classify">
+            Event Classification Job
+          </label>
+          <select
+            id="mt-classify"
+            data-testid="mt-classify-select"
+            value={classifyId}
+            disabled={
+              sourceId === "" ||
+              classifyJobsQuery.isLoading ||
+              classifyJobs.length === 0
+            }
+            onChange={(e) => setClassifyId(e.target.value)}
+            className="rounded-md border px-2 py-1 text-sm"
+          >
+            {classifyJobs.length === 0 ? (
+              <option value="">— none —</option>
+            ) : null}
+            {classifyJobs.map((c) => (
+              <option key={c.id} value={c.id}>
+                #{c.id.slice(0, 8)}
+                {c.model_name ? ` · ${c.model_name}` : ""}
+                {c.n_events_classified != null
+                  ? ` · ${c.n_events_classified} events`
+                  : ""}
+              </option>
+            ))}
+          </select>
+          {sourceId !== "" &&
+            !classifyJobsQuery.isLoading &&
+            classifyJobs.length === 0 ? (
+            <p
+              className="text-xs text-amber-700"
+              data-testid="mt-classify-empty-helper"
+            >
+              Run Pass 3 Classify on this segmentation first
+            </p>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-3" role="radiogroup" aria-label="Preset">

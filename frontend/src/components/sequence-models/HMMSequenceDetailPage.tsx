@@ -12,6 +12,7 @@ import {
   isHMMSequenceJobActive,
   useCancelHMMSequenceJob,
   useContinuousEmbeddingJob,
+  useEventClassificationJobsForSegmentation,
   useGenerateInterpretations,
   useHMMDwell,
   useHMMExemplars,
@@ -20,6 +21,7 @@ import {
   useHMMSequenceJob,
   useHMMStates,
   useHMMTransitions,
+  useRegenerateHMMLabelDistribution,
 } from "@/api/sequenceModels";
 import { regionTileUrl, regionAudioSliceUrl } from "@/api/client";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
@@ -299,45 +301,170 @@ function PcaUmapScatter({
   );
 }
 
+const BACKGROUND_LABEL = "(background)";
+const BACKGROUND_COLOR = "#d1d5db";
+
+function RegenerateLabelDistributionTrigger({
+  hmmJobId,
+  segmentationJobId,
+  boundClassifyId,
+}: {
+  hmmJobId: string;
+  segmentationJobId: string | null;
+  boundClassifyId: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [chosenClassify, setChosenClassify] = useState<string>(
+    boundClassifyId ?? "",
+  );
+  useEffect(() => {
+    setChosenClassify(boundClassifyId ?? "");
+  }, [boundClassifyId, open]);
+
+  const classifyJobsQuery = useEventClassificationJobsForSegmentation(
+    open ? segmentationJobId : null,
+  );
+  const classifyJobs = classifyJobsQuery.data ?? [];
+  const mutation = useRegenerateHMMLabelDistribution();
+
+  const handleConfirm = () => {
+    setError(null);
+    mutation.mutate(
+      {
+        jobId: hmmJobId,
+        body:
+          chosenClassify && chosenClassify !== boundClassifyId
+            ? { event_classification_job_id: chosenClassify }
+            : undefined,
+      },
+      {
+        onSuccess: () => setOpen(false),
+        onError: (err: unknown) => {
+          setError(err instanceof Error ? err.message : String(err));
+        },
+      },
+    );
+  };
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen(true)}
+        data-testid="hmm-regenerate-label-distribution"
+      >
+        Regenerate label distribution
+      </Button>
+      {open ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          data-testid="hmm-regenerate-dialog"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="bg-white rounded-md shadow-lg p-4 w-[420px] max-w-[90vw] space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-medium">
+              Regenerate label distribution
+            </h3>
+            <div className="text-sm space-y-2">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">
+                  Event Classification Job
+                </span>
+                <select
+                  data-testid="hmm-regenerate-classify-select"
+                  className="w-full border rounded-md px-2 py-1 text-sm mt-1"
+                  value={chosenClassify}
+                  disabled={classifyJobsQuery.isLoading}
+                  onChange={(e) => setChosenClassify(e.target.value)}
+                >
+                  {classifyJobs.length === 0 ? (
+                    <option value="">— none —</option>
+                  ) : null}
+                  {classifyJobs.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      #{c.id.slice(0, 8)}
+                      {c.model_name ? ` · ${c.model_name}` : ""}
+                      {c.n_events_classified != null
+                        ? ` · ${c.n_events_classified} events`
+                        : ""}
+                      {c.id === boundClassifyId ? " · (current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {error ? (
+                <div
+                  className="text-red-700 text-xs"
+                  data-testid="hmm-regenerate-error"
+                >
+                  {error}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={mutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleConfirm}
+                disabled={mutation.isPending || chosenClassify === ""}
+                data-testid="hmm-regenerate-confirm"
+              >
+                {mutation.isPending ? "Regenerating…" : "Regenerate"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function LabelDistributionChart({
   data,
 }: {
   data: LabelDistribution;
 }) {
   const traces = useMemo(() => {
-    // Collapse the tier dimension: sum counts across all tier keys per
-    // label, per state. Preserves existing single-stack chart visual for
-    // both SurfPerch (single "all" tier) and CRNN (multiple tiers).
-    const collapsedByState: Record<string, Record<string, number>> = {};
-    for (const [stateKey, tierBuckets] of Object.entries(data.states)) {
-      const collapsed: Record<string, number> = {};
-      for (const labelCounts of Object.values(tierBuckets)) {
-        for (const [lbl, count] of Object.entries(labelCounts)) {
-          collapsed[lbl] = (collapsed[lbl] ?? 0) + count;
-        }
-      }
-      collapsedByState[stateKey] = collapsed;
-    }
-
+    // Simplified shape (supersedes ADR-060): states[i] is already
+    // Record<label, int>. The (background) bucket gets a reserved
+    // neutral-gray slot and is rendered last so it visually
+    // deprioritizes against real types.
     const allLabels = new Set<string>();
-    for (const counts of Object.values(collapsedByState)) {
+    for (const counts of Object.values(data.states)) {
       for (const lbl of Object.keys(counts)) {
         allLabels.add(lbl);
       }
     }
-    const sortedLabels = Array.from(allLabels).sort();
+    const realLabels = Array.from(allLabels)
+      .filter((l) => l !== BACKGROUND_LABEL)
+      .sort();
+    const sortedLabels = allLabels.has(BACKGROUND_LABEL)
+      ? [...realLabels, BACKGROUND_LABEL]
+      : realLabels;
     const stateKeys = Array.from({ length: data.n_states }, (_, i) => String(i));
     const xLabels = stateKeys.map((s) => `S${s}`);
 
     return sortedLabels.map((lbl, i) => ({
       x: xLabels,
-      y: stateKeys.map((s) => collapsedByState[s]?.[lbl] ?? 0),
+      y: stateKeys.map((s) => data.states[s]?.[lbl] ?? 0),
       name: lbl,
       type: "bar" as const,
       marker: {
         color:
-          lbl === "unlabeled"
-            ? "#d1d5db"
+          lbl === BACKGROUND_LABEL
+            ? BACKGROUND_COLOR
             : LABEL_COLORS[i % LABEL_COLORS.length],
       },
     }));
@@ -410,6 +537,87 @@ function TierCompositionStrip({
 }
 
 
+function buildLabelColorMap(
+  states: Record<string, ExemplarRecord[]>,
+): Record<string, string> {
+  const labels = new Set<string>();
+  for (const records of Object.values(states)) {
+    for (const ex of records) {
+      const types = ex.extras?.event_types;
+      if (Array.isArray(types)) {
+        for (const t of types) {
+          if (typeof t === "string") labels.add(t);
+        }
+      }
+    }
+  }
+  const sorted = Array.from(labels).sort();
+  const out: Record<string, string> = {};
+  sorted.forEach((label, i) => {
+    out[label] = LABEL_COLORS[i % LABEL_COLORS.length];
+  });
+  return out;
+}
+
+function ExemplarTypeChips({
+  exemplar,
+  colorByLabel,
+}: {
+  exemplar: ExemplarRecord;
+  colorByLabel: Record<string, string>;
+}) {
+  const rawTypes = exemplar.extras?.event_types;
+  const types: string[] = Array.isArray(rawTypes)
+    ? (rawTypes.filter((v) => typeof v === "string") as string[])
+    : [];
+  const eventId = exemplar.extras?.event_id;
+
+  if (types.length === 0) {
+    return (
+      <div className="flex flex-wrap gap-1 mt-1" data-testid="exemplar-event-types">
+        <span
+          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 text-[10px] font-medium"
+          data-testid="exemplar-background-chip"
+        >
+          {BACKGROUND_LABEL}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1" data-testid="exemplar-event-types">
+      {types.map((t) => {
+        const color = colorByLabel[t] ?? "#9ca3af";
+        const chip = (
+          <span
+            key={t}
+            className="px-1.5 py-0.5 rounded text-white text-[10px] font-medium"
+            style={{ backgroundColor: color }}
+            data-testid="exemplar-type-chip"
+          >
+            {t}
+          </span>
+        );
+        if (typeof eventId === "string" && eventId.length > 0) {
+          // Click-through to Classify Review filtered to this event.
+          return (
+            <Link
+              key={t}
+              to={`/app/call-parsing/classify-review?event_id=${encodeURIComponent(eventId)}`}
+              className="no-underline"
+              data-testid="exemplar-type-chip-link"
+            >
+              {chip}
+            </Link>
+          );
+        }
+        return chip;
+      })}
+    </div>
+  );
+}
+
 function ExemplarGallery({
   states,
   nStates,
@@ -427,6 +635,8 @@ function ExemplarGallery({
       return next;
     });
   };
+
+  const colorByLabel = useMemo(() => buildLabelColorMap(states), [states]);
 
   const typeLabel: Record<string, string> = {
     high_confidence: "High Confidence",
@@ -505,6 +715,10 @@ function ExemplarGallery({
                                     {tier}
                                   </div>
                                 )}
+                                <ExemplarTypeChips
+                                  exemplar={ex}
+                                  colorByLabel={colorByLabel}
+                                />
                               </div>
                             );
                           })}
@@ -1005,6 +1219,19 @@ export function HMMSequenceDetailPage() {
             <span className="font-medium">Source CEJ:</span>{" "}
             {job.continuous_embedding_job_id.slice(0, 8)}
           </div>
+          {job.event_classification_job_id ? (
+            <div data-testid="hmm-detail-classify-badge">
+              <span className="font-medium">Labels from Classify job:</span>{" "}
+              <Link
+                to={`/app/call-parsing/classify-review?job_id=${encodeURIComponent(
+                  job.event_classification_job_id,
+                )}`}
+                className="font-mono underline"
+              >
+                #{job.event_classification_job_id.slice(0, 8)}
+              </Link>
+            </div>
+          ) : null}
           <div>
             <span className="font-medium">Created (UTC):</span>{" "}
             {job.created_at}
@@ -1179,22 +1406,20 @@ export function HMMSequenceDetailPage() {
           storageKey="hmm:label-distribution"
           testId="hmm-label-distribution-panel"
           headerExtra={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={generateMutation.isPending}
-              onClick={() => generateMutation.mutate(job.id)}
-              data-testid="hmm-generate-interpretations"
-            >
-              {generateMutation.isPending ? "Generating…" : "Refresh"}
-            </Button>
+            <RegenerateLabelDistributionTrigger
+              hmmJobId={job.id}
+              segmentationJobId={
+                cejDetail?.job.event_segmentation_job_id ?? null
+              }
+              boundClassifyId={job.event_classification_job_id}
+            />
           }
         >
           {labelDistData ? (
             <LabelDistributionChart data={labelDistData} />
           ) : (
             <div className="text-sm text-slate-500">
-              No label distribution available. Click Refresh to generate.
+              No label distribution available. Click Regenerate to build.
             </div>
           )}
         </CollapsiblePanelCard>

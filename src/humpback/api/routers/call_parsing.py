@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -32,6 +33,7 @@ from humpback.schemas.call_parsing import (
     EventBoundaryCorrectionResponse,
     CallParsingRunCreate,
     CallParsingRunResponse,
+    ClassificationJobForSegmentation,
     ClassificationJobWithCorrectionCount,
     ClassifierModelResponse,
     ClassifierTrainingJobResponse,
@@ -831,6 +833,28 @@ async def list_classification_jobs(session: SessionDep):
 async def list_classification_jobs_with_correction_counts(session: SessionDep):
     rows = await service.list_classification_jobs_with_correction_counts(session)
     return [ClassificationJobWithCorrectionCount(**row) for row in rows]
+
+
+@router.get(
+    "/classification-jobs/by-segmentation",
+    response_model=list[ClassificationJobForSegmentation],
+)
+async def list_classification_jobs_by_segmentation(
+    session: SessionDep,
+    event_segmentation_job_id: str = Query(...),
+    status: Optional[str] = Query(default=None),
+):
+    """Return Classify jobs for a single segmentation, newest first.
+
+    Powers the Sequence Models submit dropdown. ``status=completed``
+    filters to jobs that can be bound by an HMM/MT submit.
+    """
+    rows = await service.list_classification_jobs_for_segmentation(
+        session,
+        event_segmentation_job_id=event_segmentation_job_id,
+        status=status,
+    )
+    return [ClassificationJobForSegmentation(**row) for row in rows]
 
 
 @router.get(

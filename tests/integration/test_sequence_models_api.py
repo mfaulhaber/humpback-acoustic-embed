@@ -175,6 +175,7 @@ async def test_create_rejects_non_complete_segmentation_job(client, app_settings
 
 
 async def _seed_complete_continuous_embedding_job(app_settings) -> str:
+    from humpback.models.call_parsing import EventClassificationJob
     from humpback.models.sequence_models import ContinuousEmbeddingJob
 
     engine = create_engine(app_settings.database_url)
@@ -194,6 +195,13 @@ async def _seed_complete_continuous_embedding_job(app_settings) -> str:
         )
         session.add(seg_job)
         await session.flush()
+        # Bind a completed Classify job so HMM/MT submit can resolve a
+        # default event_classification_job_id.
+        classify_job = EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+        session.add(classify_job)
         cej = ContinuousEmbeddingJob(
             status=JobStatus.complete.value,
             event_segmentation_job_id=seg_job.id,
@@ -274,6 +282,7 @@ async def test_hmm_get_detail_returns_job_without_summary(client, app_settings):
 
 
 async def test_hmm_detail_includes_region_detection_job_id(client, app_settings):
+    from humpback.models.call_parsing import EventClassificationJob
     from humpback.models.sequence_models import ContinuousEmbeddingJob
 
     engine = create_engine(app_settings.database_url)
@@ -293,6 +302,12 @@ async def test_hmm_detail_includes_region_detection_job_id(client, app_settings)
         )
         session.add(seg_job)
         await session.flush()
+        session.add(
+            EventClassificationJob(
+                status=JobStatus.complete.value,
+                event_segmentation_job_id=seg_job.id,
+            )
+        )
         cej = ContinuousEmbeddingJob(
             status=JobStatus.complete.value,
             event_segmentation_job_id=seg_job.id,
@@ -569,6 +584,7 @@ async def test_exemplars_endpoint_unified_format_is_no_op(client, app_settings):
 
 async def _create_complete_crnn_hmm_job(client, app_settings) -> str:
     """Create a CRNN-source HMM job in the ``complete`` state for endpoint tests."""
+    from humpback.models.call_parsing import EventClassificationJob
     from humpback.models.sequence_models import (
         ContinuousEmbeddingJob,
         HMMSequenceJob,
@@ -585,8 +601,21 @@ async def _create_complete_crnn_hmm_job(client, app_settings) -> str:
         )
         session.add(region_job)
         await session.flush()
+        seg_job = EventSegmentationJob(
+            status=JobStatus.complete.value,
+            region_detection_job_id=region_job.id,
+        )
+        session.add(seg_job)
+        await session.flush()
+        session.add(
+            EventClassificationJob(
+                status=JobStatus.complete.value,
+                event_segmentation_job_id=seg_job.id,
+            )
+        )
         cej = ContinuousEmbeddingJob(
             status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
             region_detection_job_id=region_job.id,
             model_version="crnn-call-parsing-pytorch",
             window_size_seconds=0.25,
@@ -615,27 +644,24 @@ async def _create_complete_crnn_hmm_job(client, app_settings) -> str:
     return job_id
 
 
-def _legacy_label_distribution_payload() -> dict:
-    """Pre-ADR-060 flat shape: ``states[state] = {label: count}``."""
-    return {
-        "n_states": 2,
-        "total_windows": 3,
-        "states": {
-            "0": {"song": 2, "unlabeled": 1},
-            "1": {"unlabeled": 5},
-        },
-    }
-
-
-async def test_label_distribution_endpoint_translates_legacy_flat_shape(
+async def test_label_distribution_endpoint_returns_simplified_shape(
     client, app_settings
 ):
-    """Pre-ADR-060 flat shape on disk projects to the unified nested shape on GET."""
+    """The endpoint passes through the simplified per-state shape unchanged
+    (supersedes ADR-060). Outer key is state, inner key is the label, value
+    is an int count. No tier dimension."""
     job_id = await _create_complete_hmm_job(client, app_settings)
     dist_path = hmm_sequence_label_distribution_path(app_settings.storage_root, job_id)
     dist_path.parent.mkdir(parents=True, exist_ok=True)
-    legacy = _legacy_label_distribution_payload()
-    dist_path.write_text(json.dumps(legacy), encoding="utf-8")
+    payload = {
+        "n_states": 2,
+        "total_windows": 3,
+        "states": {
+            "0": {"song": 2, "(background)": 1},
+            "1": {"(background)": 5},
+        },
+    }
+    dist_path.write_text(json.dumps(payload), encoding="utf-8")
     on_disk_bytes_before = dist_path.read_bytes()
 
     resp = await client.get(
@@ -645,63 +671,30 @@ async def test_label_distribution_endpoint_translates_legacy_flat_shape(
     body = resp.json()
     assert body["n_states"] == 2
     assert body["total_windows"] == 3
-    # Legacy flat dict is wrapped under the synthetic "all" key.
-    assert body["states"]["0"]["all"]["song"] == 2
-    assert body["states"]["0"]["all"]["unlabeled"] == 1
-    assert body["states"]["1"]["all"]["unlabeled"] == 5
+    assert body["states"]["0"]["song"] == 2
+    assert body["states"]["0"]["(background)"] == 1
+    assert body["states"]["1"]["(background)"] == 5
 
-    # On-disk file must NOT be rewritten by the GET adapter.
+    # GET must never rewrite on-disk artifacts.
     assert dist_path.read_bytes() == on_disk_bytes_before
-
-
-async def test_label_distribution_endpoint_unified_shape_is_no_op(client, app_settings):
-    """Unified shape on disk passes through unchanged."""
-    job_id = await _create_complete_hmm_job(client, app_settings)
-    dist_path = hmm_sequence_label_distribution_path(app_settings.storage_root, job_id)
-    dist_path.parent.mkdir(parents=True, exist_ok=True)
-    unified = {
-        "n_states": 1,
-        "total_windows": 2,
-        "states": {
-            "0": {
-                "event_core": {"song": 1},
-                "background": {"unlabeled": 1},
-            }
-        },
-    }
-    dist_path.write_text(json.dumps(unified), encoding="utf-8")
-
-    resp = await client.get(
-        f"/sequence-models/hmm-sequences/{job_id}/label-distribution"
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["states"]["0"]["event_core"]["song"] == 1
-    assert body["states"]["0"]["background"]["unlabeled"] == 1
 
 
 async def test_regenerate_interpretations_endpoint_smoke(client, app_settings):
     """Endpoint plumbing smoke: POST /generate-interpretations returns 200.
 
-    Replaces the pre-spec ADR-060 tests that asserted the legacy
-    tier-dimension JSON shape. The consolidated ``generate_interpretations``
-    is exercised end-to-end by the worker tests
-    (``test_crnn_happy_path_writes_overlay_and_exemplars``,
-    ``test_happy_path_persists_all_artifacts``) and the manual smoke pass
-    in spec §8.7. Here we just verify the API endpoint dispatches and
-    returns the documented body shape.
+    Stubs the heavy generator at the service layer so the test stays fast;
+    the consolidated ``generate_interpretations`` is exercised end-to-end
+    by the worker tests and the manual smoke pass in spec §8.7.
     """
     job_id = await _create_complete_hmm_job(client, app_settings)
 
-    # Stub the heavy generator so the test stays fast; we're only
-    # asserting the router plumbing, not the artifact contents.
-    import humpback.api.routers.sequence_models as router_mod
+    import humpback.services.hmm_sequence_service as hmm_service
 
     async def _fake_generate_interpretations(*_args, **_kwargs):
         return {"n_states": 1, "total_windows": 0, "states": {"0": {}}}
 
-    router_mod_orig = router_mod.generate_interpretations
-    router_mod.generate_interpretations = _fake_generate_interpretations  # type: ignore[assignment]
+    orig = hmm_service.generate_interpretations
+    hmm_service.generate_interpretations = _fake_generate_interpretations  # type: ignore[assignment]
     try:
         resp = await client.post(
             f"/sequence-models/hmm-sequences/{job_id}/generate-interpretations"
@@ -712,4 +705,4 @@ async def test_regenerate_interpretations_endpoint_smoke(client, app_settings):
         assert body["job_id"] == job_id
         assert body["label_distribution_generated"] is True
     finally:
-        router_mod.generate_interpretations = router_mod_orig  # type: ignore[assignment]
+        hmm_service.generate_interpretations = orig  # type: ignore[assignment]

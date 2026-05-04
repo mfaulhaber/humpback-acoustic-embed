@@ -27,12 +27,41 @@ from humpback.storage import (
 async def _seed_crnn_cej(
     app_settings, *, status: str = JobStatus.complete.value
 ) -> str:
+    from humpback.models.call_parsing import (
+        EventClassificationJob,
+        EventSegmentationJob,
+        RegionDetectionJob,
+    )
+
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
     async with sf() as session:
+        region_job = RegionDetectionJob(
+            status=JobStatus.complete.value,
+            hydrophone_id="rpi_orcasound_lab",
+            start_timestamp=1000.0,
+            end_timestamp=1600.0,
+        )
+        session.add(region_job)
+        await session.flush()
+        seg_job = EventSegmentationJob(
+            status=JobStatus.complete.value,
+            region_detection_job_id=region_job.id,
+        )
+        session.add(seg_job)
+        await session.flush()
+        # Bind a completed Classify job so MT submit can resolve a default
+        # event_classification_job_id.
+        session.add(
+            EventClassificationJob(
+                status=JobStatus.complete.value,
+                event_segmentation_job_id=seg_job.id,
+            )
+        )
         cej = ContinuousEmbeddingJob(
             status=status,
-            event_segmentation_job_id="seg-mt-api",
+            event_segmentation_job_id=seg_job.id,
+            region_detection_job_id=region_job.id,
             model_version="crnn-call-parsing-pytorch",
             target_sample_rate=32000,
             encoding_signature=f"enc-mt-{status}",
@@ -44,12 +73,38 @@ async def _seed_crnn_cej(
 
 
 async def _seed_surfperch_cej(app_settings) -> str:
+    from humpback.models.call_parsing import (
+        EventClassificationJob,
+        EventSegmentationJob,
+        RegionDetectionJob,
+    )
+
     engine = create_engine(app_settings.database_url)
     sf = create_session_factory(engine)
     async with sf() as session:
+        region_job = RegionDetectionJob(
+            status=JobStatus.complete.value,
+            hydrophone_id="rpi_orcasound_lab",
+            start_timestamp=1000.0,
+            end_timestamp=1600.0,
+        )
+        session.add(region_job)
+        await session.flush()
+        seg_job = EventSegmentationJob(
+            status=JobStatus.complete.value,
+            region_detection_job_id=region_job.id,
+        )
+        session.add(seg_job)
+        await session.flush()
+        session.add(
+            EventClassificationJob(
+                status=JobStatus.complete.value,
+                event_segmentation_job_id=seg_job.id,
+            )
+        )
         cej = ContinuousEmbeddingJob(
             status=JobStatus.complete.value,
-            event_segmentation_job_id="seg-mt-surf",
+            event_segmentation_job_id=seg_job.id,
             model_version="surfperch-tensorflow2",
             window_size_seconds=5.0,
             hop_seconds=1.0,

@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.config import Settings
+from humpback.models.call_parsing import EventClassificationJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.schemas.sequence_models import HMMSequenceJobCreate
@@ -58,6 +59,57 @@ class CancelTerminalJobError(Exception):
     """Raised when caller attempts to cancel a job in a terminal state."""
 
 
+async def resolve_event_classification_job_id(
+    session: AsyncSession,
+    *,
+    event_segmentation_job_id: str,
+    requested_id: Optional[str],
+) -> str:
+    """Resolve and validate the Classify FK for HMM/MT submit.
+
+    If ``requested_id`` is ``None``, returns the most recent completed
+    ``EventClassificationJob`` for the upstream segmentation. If
+    ``requested_id`` is provided, verifies it exists, is completed, and
+    has a matching segmentation. Raises ``ValueError`` (mapped to 422 by
+    the router) when no candidate exists or validation fails.
+    """
+    if requested_id is not None:
+        cls_job = await session.get(EventClassificationJob, requested_id)
+        if cls_job is None:
+            raise ValueError(f"event_classification_job not found: {requested_id}")
+        if cls_job.event_segmentation_job_id != event_segmentation_job_id:
+            raise ValueError(
+                f"event_classification_job {requested_id} segmentation "
+                f"{cls_job.event_segmentation_job_id!r} does not match "
+                f"upstream segmentation {event_segmentation_job_id!r}"
+            )
+        if cls_job.status != JobStatus.complete.value:
+            raise ValueError(
+                f"event_classification_job {requested_id} must be completed "
+                f"(current status: {cls_job.status!r})"
+            )
+        return cls_job.id
+
+    stmt = (
+        select(EventClassificationJob)
+        .where(
+            EventClassificationJob.event_segmentation_job_id
+            == event_segmentation_job_id,
+            EventClassificationJob.status == JobStatus.complete.value,
+        )
+        .order_by(EventClassificationJob.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    latest = result.scalars().first()
+    if latest is None:
+        raise ValueError(
+            "no completed event_classification_job exists for segmentation "
+            f"{event_segmentation_job_id!r}; run Pass 3 Classify first"
+        )
+    return latest.id
+
+
 async def create_hmm_sequence_job(
     session: AsyncSession,
     payload: HMMSequenceJobCreate,
@@ -74,6 +126,17 @@ async def create_hmm_sequence_job(
             "HMM sequence job requires a completed continuous_embedding_job "
             f"(current status: {source.status!r})"
         )
+
+    if not source.event_segmentation_job_id:
+        raise ValueError(
+            "continuous_embedding_job has no event_segmentation_job_id; "
+            "cannot resolve Classify binding"
+        )
+    classify_id = await resolve_event_classification_job_id(
+        session,
+        event_segmentation_job_id=source.event_segmentation_job_id,
+        requested_id=payload.event_classification_job_id,
+    )
 
     from humpback.services.continuous_embedding_service import (
         SOURCE_KIND_REGION_CRNN,
@@ -111,6 +174,7 @@ async def create_hmm_sequence_job(
 
     job = HMMSequenceJob(
         continuous_embedding_job_id=payload.continuous_embedding_job_id,
+        event_classification_job_id=classify_id,
         n_states=payload.n_states,
         pca_dims=payload.pca_dims,
         pca_whiten=payload.pca_whiten,
@@ -311,5 +375,74 @@ async def generate_interpretations(
     dist_dst.parent.mkdir(parents=True, exist_ok=True)
     dist_tmp.write_text(json.dumps(dist, sort_keys=True, indent=2), encoding="utf-8")
     atomic_rename(dist_tmp, dist_dst)
+
+    return dist
+
+
+async def regenerate_label_distribution(
+    session: AsyncSession,
+    storage_root: Path,
+    job: HMMSequenceJob,
+    *,
+    requested_classify_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Regenerate label-distribution + exemplar artifacts; optionally re-bind.
+
+    Step ordering (spec §6.7) for the optional re-bind path:
+
+      1. **Validate** — confirm requested Classify is completed and on the
+         same upstream segmentation as the HMM job's continuous-embedding
+         source. Raises ``ValueError`` (mapped to 400 by the router) on
+         mismatch; FK and on-disk artifacts unchanged.
+      2. **Write artifacts** — temp-then-rename ``overlay.parquet``,
+         ``label_distribution.json``, ``exemplars.json`` keyed off the
+         (possibly different) Classify FK. The job row is mutated
+         in-memory only at this point so the loader uses the right FK.
+      3. **Commit FK** — single SQL transaction. A failure between
+         steps 2 and 3 (rare) leaves files paired with the old FK; calling
+         regenerate again with no body re-derives consistent artifacts.
+
+    When ``requested_classify_id`` is ``None`` the FK is left unchanged
+    and only artifacts are rebuilt.
+    """
+    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
+    if cej is None:
+        raise ValueError(
+            "source continuous_embedding_job not found: "
+            f"{job.continuous_embedding_job_id}"
+        )
+
+    previous_classify_id = job.event_classification_job_id
+
+    if requested_classify_id is not None:
+        if not cej.event_segmentation_job_id:
+            raise ValueError(
+                "continuous_embedding_job has no event_segmentation_job_id; "
+                "cannot validate Classify re-bind"
+            )
+        # Step 1 — validate before touching disk.
+        await resolve_event_classification_job_id(
+            session,
+            event_segmentation_job_id=cej.event_segmentation_job_id,
+            requested_id=requested_classify_id,
+        )
+        # In-memory swap so the artifact write keys off the new FK.
+        job.event_classification_job_id = requested_classify_id
+
+    try:
+        # Step 2 — write artifacts via per-file temp-then-rename.
+        dist = await generate_interpretations(session, storage_root, job, cej)
+    except Exception:
+        # Step 2 failed: revert in-memory swap so the FK and the on-disk
+        # artifacts remain consistent with the prior state.
+        job.event_classification_job_id = previous_classify_id
+        raise
+
+    if (
+        requested_classify_id is not None
+        and previous_classify_id != requested_classify_id
+    ):
+        # Step 3 — commit the FK update.
+        await session.commit()
 
     return dist

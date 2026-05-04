@@ -11,7 +11,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
+from humpback.models.call_parsing import (
+    EventClassificationJob,
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.services.masked_transformer_service import (
@@ -128,6 +132,14 @@ async def _seed_crnn_ce_job(session, settings) -> ContinuousEmbeddingJob:
     await session.commit()
     await session.refresh(seg_job)
 
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
+
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,
         region_detection_job_id=region_job.id,
@@ -166,6 +178,13 @@ async def _seed_surfperch_ce_job(session) -> ContinuousEmbeddingJob:
     session.add(seg_job)
     await session.commit()
     await session.refresh(seg_job)
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,
         model_version="surfperch-tensorflow2",

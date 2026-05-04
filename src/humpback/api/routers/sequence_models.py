@@ -49,6 +49,7 @@ from humpback.schemas.sequence_models import (
     OverlayResponse,
     ReconstructionErrorResponse,
     ReconstructionErrorRow,
+    RegenerateLabelDistributionRequest,
     RunLengthsResponse,
     StateTierComposition,
     TokenRow,
@@ -75,6 +76,7 @@ from humpback.services.hmm_sequence_service import (
     generate_interpretations,
     get_hmm_sequence_job,
     list_hmm_sequence_jobs,
+    regenerate_label_distribution as hmm_regenerate_label_distribution,
 )
 from humpback.services.masked_transformer_service import (
     CancelTerminalJobError as MTCancelTerminalJobError,
@@ -87,6 +89,7 @@ from humpback.services.masked_transformer_service import (
     get_masked_transformer_job,
     list_masked_transformer_jobs,
     parse_k_values,
+    regenerate_label_distribution as mt_regenerate_label_distribution,
 )
 from humpback.services.motif_extraction_service import (
     CancelTerminalJobError as MotifCancelTerminalJobError,
@@ -440,34 +443,6 @@ async def get_hmm_overlay(
     return OverlayResponse(total=total, items=items)
 
 
-def _project_legacy_label_distribution(payload: dict) -> dict:
-    """Read-time adapter for pre-ADR-060 flat label-distribution JSON (transitional).
-
-    Pre-PR SurfPerch label-distribution files have the shape
-    ``states[state] = {label: count}``; the unified shape (ADR-060) is
-    ``states[state] = {tier: {label: count}}``. New artifacts already match
-    the unified shape so this adapter is a no-op for them. Disk files are
-    never rewritten by this code path; the Refresh button rewrites them in
-    unified format on demand.
-    """
-    states = payload.get("states")
-    if not isinstance(states, dict):
-        return payload
-    projected_states: dict[str, dict[str, dict[str, int]]] = {}
-    for state_key, inner in states.items():
-        if not isinstance(inner, dict) or not inner:
-            projected_states[state_key] = inner if isinstance(inner, dict) else {}
-            continue
-        # Detection rule: legacy flat shape's first inner value is int;
-        # unified nested shape's first inner value is dict.
-        first_value = next(iter(inner.values()))
-        if isinstance(first_value, dict):
-            projected_states[state_key] = inner
-        else:
-            projected_states[state_key] = {"all": inner}
-    return {**payload, "states": projected_states}
-
-
 @router.get("/hmm-sequences/{job_id}/label-distribution")
 async def get_hmm_label_distribution(
     job_id: str,
@@ -482,9 +457,7 @@ async def get_hmm_label_distribution(
     dist_path = hmm_sequence_label_distribution_path(settings.storage_root, job_id)
     if dist_path.exists():
         payload = json.loads(dist_path.read_text(encoding="utf-8"))
-        return LabelDistributionResponse.model_validate(
-            _project_legacy_label_distribution(payload)
-        )
+        return LabelDistributionResponse.model_validate(payload)
     from humpback.models.sequence_models import ContinuousEmbeddingJob
 
     cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
@@ -552,26 +525,66 @@ async def regenerate_interpretations(
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict:
+    """Legacy endpoint: regenerate against the currently bound Classify FK.
+
+    Equivalent to ``regenerate-label-distribution`` with no body.
+    Kept for compatibility with worker-triggered runs.
+    """
     job = await get_hmm_sequence_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="hmm sequence job not found")
     if job.status != "complete":
         raise HTTPException(status_code=400, detail="job not complete")
 
-    from humpback.models.sequence_models import ContinuousEmbeddingJob
-
-    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
-    if cej is None:
-        raise HTTPException(
-            status_code=400, detail="source continuous embedding job not found"
+    try:
+        await hmm_regenerate_label_distribution(
+            session, settings.storage_root, job, requested_classify_id=None
         )
-
-    await generate_interpretations(session, settings.storage_root, job, cej)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     return {
         "status": "ok",
         "job_id": job_id,
         "label_distribution_generated": True,
+    }
+
+
+@router.post("/hmm-sequences/{job_id}/regenerate-label-distribution")
+async def regenerate_hmm_label_distribution(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    body: RegenerateLabelDistributionRequest = RegenerateLabelDistributionRequest(),
+) -> dict:
+    """Rebuild the label-distribution and exemplar artifacts (optional re-bind).
+
+    Body is optional; when absent the current FK is used. When
+    ``event_classification_job_id`` is provided, validation runs first,
+    artifacts are written via temp-then-rename, and the FK update commits
+    only after the artifact write succeeds (spec §6.7).
+    """
+    job = await get_hmm_sequence_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="hmm sequence job not found")
+    if job.status != "complete":
+        raise HTTPException(status_code=400, detail="job not complete")
+
+    try:
+        dist = await hmm_regenerate_label_distribution(
+            session,
+            settings.storage_root,
+            job,
+            requested_classify_id=body.event_classification_job_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "event_classification_job_id": job.event_classification_job_id,
+        "label_distribution": dist,
     }
 
 
@@ -782,6 +795,7 @@ async def create_masked_transformer(
         job, created = await create_masked_transformer_job(
             session,
             continuous_embedding_job_id=body.continuous_embedding_job_id,
+            event_classification_job_id=body.event_classification_job_id,
             preset=body.preset,
             mask_fraction=body.mask_fraction,
             span_length_min=body.span_length_min,
@@ -914,6 +928,48 @@ async def generate_masked_transformer_interpretations(
         await mt_generate_interpretations(session, settings.storage_root, job, int(k))
 
     return {"status": "ok", "job_id": job_id, "k_values": requested}
+
+
+@router.post("/masked-transformers/{job_id}/regenerate-label-distribution")
+async def regenerate_mt_label_distribution(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    k: Optional[int] = Query(default=None, ge=2),
+    body: RegenerateLabelDistributionRequest = RegenerateLabelDistributionRequest(),
+) -> dict:
+    """Rebuild every per-k label-distribution artifact (optional re-bind).
+
+    The MT regenerate always rebuilds **all** ``k<N>/label_distribution.json``
+    files in one shot so the per-k caches stay coherent. The ``k`` query
+    parameter selects which payload is returned in the response; when
+    omitted, the first configured k is used.
+    """
+    job = await get_masked_transformer_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="masked transformer job not found")
+    if job.status != JobStatus.complete.value:
+        raise HTTPException(status_code=400, detail="job not complete")
+
+    resolved_k = _resolve_k(job, k)
+
+    try:
+        per_k = await mt_regenerate_label_distribution(
+            session,
+            settings.storage_root,
+            job,
+            requested_classify_id=body.event_classification_job_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "k": resolved_k,
+        "event_classification_job_id": job.event_classification_job_id,
+        "label_distribution": per_k.get(resolved_k),
+    }
 
 
 @router.get("/masked-transformers/{job_id}/loss-curve")
@@ -1062,9 +1118,7 @@ async def get_mt_label_distribution(
     if not path.exists():
         raise HTTPException(status_code=404, detail="label_distribution.json not found")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return LabelDistributionResponse.model_validate(
-        _project_legacy_label_distribution(payload)
-    )
+    return LabelDistributionResponse.model_validate(payload)
 
 
 @router.get("/masked-transformers/{job_id}/run-lengths")

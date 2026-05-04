@@ -109,10 +109,10 @@ const LABEL_DISTRIBUTION = {
   n_states: 4,
   total_windows: 4,
   states: {
-    "0": { all: { song: 1 } },
-    "1": { all: { call: 1 } },
-    "2": { all: { unlabeled: 1 } },
-    "3": { all: { song: 1 } },
+    "0": { song: 1 },
+    "1": { call: 1 },
+    "2": { "(background)": 1 },
+    "3": { song: 1 },
   },
 };
 

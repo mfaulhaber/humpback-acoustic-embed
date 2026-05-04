@@ -136,6 +136,7 @@ async def create_masked_transformer_job(
     session: AsyncSession,
     *,
     continuous_embedding_job_id: str,
+    event_classification_job_id: Optional[str] = None,
     preset: str = "default",
     mask_fraction: float = 0.20,
     span_length_min: int = 2,
@@ -153,6 +154,13 @@ async def create_masked_transformer_job(
 
     Returns ``(job, created)`` where ``created`` is ``False`` when an
     existing job with the same ``training_signature`` is returned.
+
+    The Classify FK is resolved at submit time: when omitted, the most
+    recent completed ``EventClassificationJob`` for the upstream
+    segmentation is bound; when provided, it must be completed and on
+    the same segmentation. An idempotent re-submit returns the existing
+    job unchanged regardless of any ``event_classification_job_id``
+    value passed (re-binding is done via the regenerate endpoint).
     """
     if preset not in {"small", "default", "large"}:
         raise ValueError(f"preset must be one of small/default/large, got {preset!r}")
@@ -199,8 +207,24 @@ async def create_masked_transformer_job(
     if found is not None:
         return found, False
 
+    if not cej.event_segmentation_job_id:
+        raise ValueError(
+            "continuous_embedding_job has no event_segmentation_job_id; "
+            "cannot resolve Classify binding"
+        )
+    from humpback.services.hmm_sequence_service import (
+        resolve_event_classification_job_id,
+    )
+
+    classify_id = await resolve_event_classification_job_id(
+        session,
+        event_segmentation_job_id=cej.event_segmentation_job_id,
+        requested_id=event_classification_job_id,
+    )
+
     job = MaskedTransformerJob(
         continuous_embedding_job_id=continuous_embedding_job_id,
+        event_classification_job_id=classify_id,
         training_signature=signature,
         preset=preset,
         mask_fraction=float(mask_fraction),
@@ -606,6 +630,64 @@ async def generate_interpretations_all_k(
     return out
 
 
+async def regenerate_label_distribution(
+    session: AsyncSession,
+    storage_root: Path,
+    job: MaskedTransformerJob,
+    *,
+    requested_classify_id: Optional[str] = None,
+) -> dict[int, dict[str, Any]]:
+    """Regenerate every per-k label-distribution artifact; optionally re-bind.
+
+    Mirrors :func:`humpback.services.hmm_sequence_service.regenerate_label_distribution`:
+    validate → write artifacts → commit FK update. The MT regenerate
+    rebuilds **all** ``k<N>/label_distribution.json`` files in one call
+    so the per-k caches stay coherent. Effective events are loaded once
+    by ``generate_interpretations_all_k``.
+    """
+    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
+    if cej is None:
+        raise ValueError(
+            "source continuous_embedding_job not found: "
+            f"{job.continuous_embedding_job_id}"
+        )
+
+    previous_classify_id = job.event_classification_job_id
+
+    if requested_classify_id is not None:
+        if not cej.event_segmentation_job_id:
+            raise ValueError(
+                "continuous_embedding_job has no event_segmentation_job_id; "
+                "cannot validate Classify re-bind"
+            )
+        from humpback.services.hmm_sequence_service import (
+            resolve_event_classification_job_id,
+        )
+
+        await resolve_event_classification_job_id(
+            session,
+            event_segmentation_job_id=cej.event_segmentation_job_id,
+            requested_id=requested_classify_id,
+        )
+        job.event_classification_job_id = requested_classify_id
+
+    try:
+        out = await generate_interpretations_all_k(
+            session, storage_root, job, parse_k_values(job.k_values)
+        )
+    except Exception:
+        job.event_classification_job_id = previous_classify_id
+        raise
+
+    if (
+        requested_classify_id is not None
+        and previous_classify_id != requested_classify_id
+    ):
+        await session.commit()
+
+    return out
+
+
 __all__ = [
     "CancelTerminalJobError",
     "ExtendKSweepError",
@@ -619,5 +701,6 @@ __all__ = [
     "get_masked_transformer_job",
     "list_masked_transformer_jobs",
     "parse_k_values",
+    "regenerate_label_distribution",
     "serialize_k_values",
 ]

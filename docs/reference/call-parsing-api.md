@@ -52,6 +52,7 @@ Four-pass pipeline under `/call-parsing/*`. Passes 1–3 are fully functional; P
 
 - `POST /call-parsing/classification-jobs` — create a queued Pass 3 job; validates `vocalization_model_id` exists (404) and has `model_family='pytorch_event_cnn'` + `input_mode='segmented_event'` (422); validates `event_segmentation_job_id` exists (404) and is `complete` (409)
 - `GET /call-parsing/classification-jobs`, `GET /call-parsing/classification-jobs/{id}`, `DELETE /call-parsing/classification-jobs/{id}` — list / detail / delete
+- `GET /call-parsing/classification-jobs/by-segmentation?event_segmentation_job_id={id}&status=complete` — slim listing for the Sequence Models submit dropdown (ADR-063). Returns `[{id, created_at, model_name, n_events_classified, status}, ...]` newest first, joined with `vocalization_models.name`. `status` is optional (commonly `complete`).
 - `GET /call-parsing/classification-jobs/{id}/typed-events` — return persisted `typed_events.parquet` rows as JSON sorted by `start_sec`; `region_id` is resolved from raw segmentation events first and effective events second so older typed rows remain renderable after later boundary edits. 409 while job is not `complete`, 404 if parquet file is missing.
 - Job response payloads include `compute_device` and `gpu_fallback_reason` with the same conventions as Pass 2 segmentation jobs.
 

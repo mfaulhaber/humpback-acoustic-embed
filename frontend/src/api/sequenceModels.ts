@@ -235,6 +235,7 @@ export interface HMMSequenceJob {
   id: string;
   status: string;
   continuous_embedding_job_id: string;
+  event_classification_job_id: string | null;
   n_states: number;
   pca_dims: number;
   pca_whiten: boolean;
@@ -290,6 +291,9 @@ export interface HMMSequenceJobDetail {
 
 export interface CreateHMMSequenceJobRequest {
   continuous_embedding_job_id: string;
+  // Optional explicit Classify binding; the backend defaults to the most
+  // recent completed EventClassificationJob for the upstream segmentation.
+  event_classification_job_id?: string;
   n_states: number;
   pca_dims?: number;
   pca_whiten?: boolean;
@@ -884,10 +888,12 @@ export interface OverlayResponse {
 export interface LabelDistribution {
   n_states: number;
   total_windows: number;
-  // Unified nested shape (ADR-060): outer = state, middle = tier bucket,
-  // inner = label. SurfPerch jobs use the synthetic "all" tier; CRNN jobs
-  // use real tier keys ("event_core" / "near_event" / "background").
-  states: Record<string, Record<string, Record<string, number>>>;
+  // Simplified shape (supersedes ADR-060): outer = state, inner = label,
+  // value = int count. ``(background)`` is the bucket for windows whose
+  // center falls outside any effective event. CRNN tier metadata
+  // persists on ``decoded.parquet`` and exemplars but no longer
+  // stratifies the chart.
+  states: Record<string, Record<string, number>>;
 }
 
 export interface ExemplarRecord {
@@ -898,7 +904,13 @@ export interface ExemplarRecord {
   end_timestamp: number;
   max_state_probability: number;
   exemplar_type: string;
-  extras: Record<string, string | number | null>;
+  // Source-specific metadata. CRNN exemplars carry ``tier`` (string).
+  // Sequence Models classify-binding adds ``event_id`` (string | null),
+  // ``event_types`` (string[]) and ``event_confidence`` (Record<string, number>).
+  extras: Record<
+    string,
+    string | number | null | string[] | Record<string, number>
+  >;
 }
 
 export interface ExemplarsResponse {
@@ -988,6 +1000,7 @@ export interface MaskedTransformerJob {
   status: string;
   status_reason: string | null;
   continuous_embedding_job_id: string;
+  event_classification_job_id: string | null;
   training_signature: string;
   preset: MaskedTransformerPreset;
   mask_fraction: number;
@@ -1025,6 +1038,8 @@ export interface MaskedTransformerJobDetail {
 
 export interface MaskedTransformerJobCreate {
   continuous_embedding_job_id: string;
+  // Optional explicit Classify binding; defaults to most recent completed.
+  event_classification_job_id?: string;
   preset?: MaskedTransformerPreset;
   k_values?: number[];
   mask_fraction?: number;
@@ -1414,5 +1429,121 @@ export function useMaskedTransformerRunLengths(
     queryKey: ["masked-transformer-run-lengths", jobId, k],
     queryFn: () => fetchMaskedTransformerRunLengths(jobId as string, k),
     enabled: enabled && jobId != null,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Classify-binding listing + Sequence Models regenerate-label-distribution
+// ---------------------------------------------------------------------------
+
+export interface ClassificationJobForSegmentation {
+  id: string;
+  created_at: string;
+  model_name: string | null;
+  n_events_classified: number | null;
+  status: string;
+}
+
+export function listEventClassificationJobsForSegmentation(
+  segmentationJobId: string,
+  status: string = "complete",
+): Promise<ClassificationJobForSegmentation[]> {
+  const params = new URLSearchParams({
+    event_segmentation_job_id: segmentationJobId,
+    status,
+  });
+  return request<ClassificationJobForSegmentation[]>(
+    `/call-parsing/classification-jobs/by-segmentation?${params.toString()}`,
+  );
+}
+
+export function useEventClassificationJobsForSegmentation(
+  segmentationJobId: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["event-classification-jobs", segmentationJobId],
+    queryFn: () =>
+      listEventClassificationJobsForSegmentation(segmentationJobId as string),
+    enabled: enabled && segmentationJobId != null,
+  });
+}
+
+export interface RegenerateLabelDistributionResponse {
+  status: string;
+  job_id: string;
+  event_classification_job_id: string | null;
+  label_distribution: LabelDistribution;
+  k?: number;
+}
+
+export function regenerateHMMLabelDistribution(
+  jobId: string,
+  body: { event_classification_job_id?: string } = {},
+): Promise<RegenerateLabelDistributionResponse> {
+  return request(`${HMM_ROOT}/${jobId}/regenerate-label-distribution`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function regenerateMTLabelDistribution(
+  jobId: string,
+  k: number,
+  body: { event_classification_job_id?: string } = {},
+): Promise<RegenerateLabelDistributionResponse> {
+  const params = new URLSearchParams({ k: String(k) });
+  return request(
+    `${MT_ROOT}/${jobId}/regenerate-label-distribution?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function useRegenerateHMMLabelDistribution() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      body,
+    }: {
+      jobId: string;
+      body?: { event_classification_job_id?: string };
+    }) => regenerateHMMLabelDistribution(jobId, body ?? {}),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["hmm-job", vars.jobId] });
+      qc.invalidateQueries({ queryKey: ["hmm-label-distribution", vars.jobId] });
+      qc.invalidateQueries({ queryKey: ["hmm-exemplars", vars.jobId] });
+    },
+  });
+}
+
+export function useRegenerateMTLabelDistribution() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      k,
+      body,
+    }: {
+      jobId: string;
+      k: number;
+      body?: { event_classification_job_id?: string };
+    }) => regenerateMTLabelDistribution(jobId, k, body ?? {}),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-job", vars.jobId],
+      });
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-label-distribution", vars.jobId],
+      });
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-exemplars", vars.jobId],
+      });
+    },
   });
 }

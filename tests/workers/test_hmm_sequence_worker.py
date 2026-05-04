@@ -17,7 +17,11 @@ import pyarrow.parquet as pq
 import pytest
 
 from humpback.config import Settings
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
+from humpback.models.call_parsing import (
+    EventClassificationJob,
+    EventSegmentationJob,
+    RegionDetectionJob,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
 from humpback.schemas.sequence_models import HMMSequenceJobCreate
@@ -124,6 +128,14 @@ async def _seed_complete_ce_job(session, settings) -> ContinuousEmbeddingJob:
     session.add(seg_job)
     await session.commit()
     await session.refresh(seg_job)
+
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
 
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,
@@ -395,6 +407,14 @@ async def _seed_complete_crnn_ce_job(session, settings) -> ContinuousEmbeddingJo
     session.add(seg_job)
     await session.commit()
     await session.refresh(seg_job)
+
+    session.add(
+        EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+    )
+    await session.commit()
 
     ce_job = ContinuousEmbeddingJob(
         event_segmentation_job_id=seg_job.id,

@@ -172,6 +172,22 @@ class ClassificationJobWithCorrectionCount(EventClassificationJobSummary):
     end_timestamp: Optional[float] = None
 
 
+class ClassificationJobForSegmentation(BaseModel):
+    """Slim listing entry for a Classify job belonging to one segmentation.
+
+    Powers the Sequence Models submit dropdown (HMM and masked-transformer
+    create pages). Joined model name lets the option label be self-contained.
+    """
+
+    id: str
+    created_at: datetime
+    model_name: Optional[str] = None
+    n_events_classified: Optional[int] = None
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
 class CallParsingRunResponse(BaseModel):
     id: str
     audio_file_id: Optional[str] = None
