@@ -592,6 +592,16 @@ test.describe("Sequence Models — HMM Sequence", () => {
     // HMMStateBar canvas present
     await expect(viewerPanel.getByTestId("hmm-state-bar")).toBeVisible();
 
+    // Two-layer overlay container is in place: clipped band layer keeps
+    // overlays from bleeding past the canvas edge; sibling tooltip layer
+    // is unclipped so DetectionOverlay/VocalizationOverlay tooltips
+    // remain readable past the boundary.
+    const band = viewerPanel.getByTestId("overlay-band-layer");
+    await expect(band).toBeAttached();
+    const bandOverflow = await band.evaluate((el) => getComputedStyle(el).overflow);
+    expect(bandOverflow).toBe("hidden");
+    await expect(viewerPanel.getByTestId("overlay-tooltip-layer")).toBeAttached();
+
     // Span nav is visible with correct label
     await expect(page.getByTestId("hmm-span-nav")).toBeVisible();
     await expect(page.getByTestId("hmm-span-label")).toContainText("Event 1/2");

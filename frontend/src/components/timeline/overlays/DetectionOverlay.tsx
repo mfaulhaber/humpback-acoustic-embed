@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import type { DetectionRow } from "@/api/types";
 import { useOverlayContext } from "./OverlayContext";
 import { LABEL_COLORS, type LabelType } from "../constants";
@@ -53,7 +54,7 @@ export function DetectionOverlay({
   visible,
   onDetectionClick,
 }: DetectionOverlayProps) {
-  const { epochToX, canvasWidth, canvasHeight } = useOverlayContext();
+  const { epochToX, canvasWidth, canvasHeight, tooltipPortalTarget } = useOverlayContext();
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
@@ -183,37 +184,48 @@ export function DetectionOverlay({
         />
       ))}
 
-      {tooltip && (
-        <div
-          ref={tooltipRef}
-          style={{
-            position: "absolute",
-            left: tooltipPos.left,
-            top: tooltipPos.top,
-            background: "rgba(6, 13, 20, 0.95)",
-            border: "1px solid rgba(64, 224, 192, 0.3)",
-            borderRadius: 6,
-            padding: "6px 10px",
-            fontSize: 11,
-            lineHeight: "1.5",
-            color: "#a0c8c0",
-            whiteSpace: "nowrap",
-            pointerEvents: "none",
-            zIndex: 20,
-          }}
-        >
-          <div style={{ fontWeight: 600, textTransform: "capitalize", marginBottom: 2 }}>
-            {tooltip.label}
-          </div>
-          <div>
-            {tooltip.startTime} &ndash; {tooltip.endTime}
-          </div>
-          <div>
-            Confidence: avg {(tooltip.avgConfidence * 100).toFixed(1)}% / peak{" "}
-            {(tooltip.peakConfidence * 100).toFixed(1)}%
-          </div>
-        </div>
-      )}
+      {tooltip && !tooltipPortalTarget && renderTooltipNode(tooltipRef, tooltipPos, tooltip)}
+      {tooltip && tooltipPortalTarget &&
+        createPortal(renderTooltipNode(tooltipRef, tooltipPos, tooltip), tooltipPortalTarget)}
+    </div>
+  );
+}
+
+function renderTooltipNode(
+  tooltipRef: React.Ref<HTMLDivElement>,
+  tooltipPos: { left: number; top: number },
+  tooltip: TooltipState,
+) {
+  return (
+    <div
+      ref={tooltipRef}
+      data-testid="detection-overlay-tooltip"
+      style={{
+        position: "absolute",
+        left: tooltipPos.left,
+        top: tooltipPos.top,
+        background: "rgba(6, 13, 20, 0.95)",
+        border: "1px solid rgba(64, 224, 192, 0.3)",
+        borderRadius: 6,
+        padding: "6px 10px",
+        fontSize: 11,
+        lineHeight: "1.5",
+        color: "#a0c8c0",
+        whiteSpace: "nowrap",
+        pointerEvents: "none",
+        zIndex: 20,
+      }}
+    >
+      <div style={{ fontWeight: 600, textTransform: "capitalize", marginBottom: 2 }}>
+        {tooltip.label}
+      </div>
+      <div>
+        {tooltip.startTime} &ndash; {tooltip.endTime}
+      </div>
+      <div>
+        Confidence: avg {(tooltip.avgConfidence * 100).toFixed(1)}% / peak{" "}
+        {(tooltip.peakConfidence * 100).toFixed(1)}%
+      </div>
     </div>
   );
 }

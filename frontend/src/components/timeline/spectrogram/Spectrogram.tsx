@@ -39,6 +39,7 @@ export function Spectrogram({
 }: SpectrogramProps) {
   const ctx = useTimelineContext();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltipLayer, setTooltipLayer] = useState<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
 
@@ -97,8 +98,9 @@ export function Spectrogram({
       canvasHeight,
       epochToX: (epoch: number) => (epoch - ctx.centerTimestamp) * ctx.pxPerSec + canvasWidth / 2,
       xToEpoch: (x: number) => ctx.centerTimestamp + (x - canvasWidth / 2) / ctx.pxPerSec,
+      tooltipPortalTarget: tooltipLayer,
     }),
-    [ctx.viewStart, ctx.viewEnd, ctx.pxPerSec, ctx.centerTimestamp, canvasWidth, canvasHeight],
+    [ctx.viewStart, ctx.viewEnd, ctx.pxPerSec, ctx.centerTimestamp, canvasWidth, canvasHeight, tooltipLayer],
   );
 
   const cursor = ctx.isPlaying ? "default" : ctx.isDraggingTimeline ? "grabbing" : "grab";
@@ -131,12 +133,39 @@ export function Spectrogram({
             />
           )}
 
-          {/* Overlay container */}
-          <div className="absolute inset-0" style={{ width: canvasWidth, height: canvasHeight }}>
+          {/*
+            Overlay container — split into two siblings:
+              1. Clipped band layer: clamps every overlay child to the
+                 canvas rectangle so highlights/regions cannot bleed
+                 into the FrequencyAxis or right gutter.
+              2. Unclipped tooltip layer: portal target for overlays
+                 (DetectionOverlay, VocalizationOverlay) whose tooltips
+                 must remain readable past the canvas edge.
+          */}
+          <div
+            data-testid="overlay-band-layer"
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: canvasWidth,
+              height: canvasHeight,
+              overflow: "hidden",
+            }}
+          >
             <OverlayContext.Provider value={overlayValue}>
               {children}
             </OverlayContext.Provider>
           </div>
+          <div
+            ref={setTooltipLayer}
+            data-testid="overlay-tooltip-layer"
+            style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
+              zIndex: 5,
+            }}
+          />
 
           <Playhead canvasWidth={canvasWidth} canvasHeight={canvasHeight + (scores ? effectiveStripHeight : 0)} />
 

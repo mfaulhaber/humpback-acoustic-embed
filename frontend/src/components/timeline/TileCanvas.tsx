@@ -36,9 +36,25 @@ function putCachedTile(url: string, img: HTMLImageElement) {
 }
 
 // ---------------------------------------------------------------------------
-// Tile loading tracker (prevents duplicate loads)
+// Tile loading tracker (prevents duplicate loads) + load notifications
 // ---------------------------------------------------------------------------
 const loadingTiles = new Set<string>();
+const tileLoadedSubscribers = new Set<() => void>();
+
+export function subscribeTileLoaded(cb: () => void): () => void {
+  tileLoadedSubscribers.add(cb);
+  return () => {
+    tileLoadedSubscribers.delete(cb);
+  };
+}
+
+function notifyTileLoaded(): void {
+  for (const cb of tileLoadedSubscribers) cb();
+}
+
+// Test-only: drive subscribers without constructing an Image. Production code
+// should never call this — use the loader's onload path.
+export const __notifyTileLoadedForTest = notifyTileLoaded;
 
 function loadTile(url: string): Promise<HTMLImageElement> {
   const cached = getCachedTile(url);
@@ -69,6 +85,7 @@ function loadTile(url: string): Promise<HTMLImageElement> {
     img.onload = () => {
       loadingTiles.delete(url);
       putCachedTile(url, img);
+      notifyTileLoaded();
       resolve(img);
     };
     img.onerror = () => {
@@ -319,23 +336,20 @@ export function TileCanvas({
     return () => cancelAnimationFrame(drawRef.current);
   }, [draw]);
 
-  // Also re-draw periodically while tiles are loading
+  // Re-draw the moment a tile finishes loading (deduped per frame)
   useEffect(() => {
-    let running = true;
-    let handle = 0;
-
-    const poll = () => {
-      if (!running) return;
-      if (loadingTiles.size > 0) {
+    let pending = 0;
+    const schedule = () => {
+      if (pending !== 0) return;
+      pending = requestAnimationFrame(() => {
+        pending = 0;
         draw();
-      }
-      handle = requestAnimationFrame(poll);
+      });
     };
-    handle = requestAnimationFrame(poll);
-
+    const unsubscribe = subscribeTileLoaded(schedule);
     return () => {
-      running = false;
-      cancelAnimationFrame(handle);
+      unsubscribe();
+      if (pending !== 0) cancelAnimationFrame(pending);
     };
   }, [draw]);
 

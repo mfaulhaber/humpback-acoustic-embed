@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useLayoutEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import type { TimelineVocalizationLabel } from "@/api/types";
 import { useOverlayContext } from "./OverlayContext";
 import { VOCALIZATION_BAR, VOCALIZATION_BADGE_PALETTE } from "../constants";
@@ -57,7 +58,7 @@ interface TooltipState {
 }
 
 export function VocalizationOverlay({ labels, visible }: VocalizationOverlayProps) {
-  const { epochToX, canvasWidth, canvasHeight } = useOverlayContext();
+  const { epochToX, canvasWidth, canvasHeight, tooltipPortalTarget } = useOverlayContext();
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
@@ -182,53 +183,69 @@ export function VocalizationOverlay({ labels, visible }: VocalizationOverlayProp
         );
       })}
 
-      {tooltip && (
-        <div
-          ref={tooltipRef}
-          style={{
-            position: "absolute",
-            left: tooltipPos.left,
-            top: tooltipPos.top,
-            background: "rgba(6, 13, 20, 0.95)",
-            border: "1px solid rgba(168, 130, 220, 0.4)",
-            borderRadius: 6,
-            padding: "6px 10px",
-            fontSize: 11,
-            lineHeight: "1.5",
-            color: "#c4b5d0",
-            whiteSpace: "nowrap",
-            pointerEvents: "none",
-            zIndex: 20,
-          }}
-        >
-          <div style={{ marginBottom: 2 }}>
-            {formatTime(tooltip.group.start_utc)} &ndash; {formatTime(tooltip.group.end_utc)}
+      {tooltip && !tooltipPortalTarget &&
+        renderTooltipNode(tooltipRef, tooltipPos, tooltip, badgeColorMap)}
+      {tooltip && tooltipPortalTarget &&
+        createPortal(
+          renderTooltipNode(tooltipRef, tooltipPos, tooltip, badgeColorMap),
+          tooltipPortalTarget,
+        )}
+    </div>
+  );
+}
+
+function renderTooltipNode(
+  tooltipRef: React.Ref<HTMLDivElement>,
+  tooltipPos: { left: number; top: number },
+  tooltip: TooltipState,
+  badgeColorMap: Map<string, string>,
+) {
+  return (
+    <div
+      ref={tooltipRef}
+      data-testid="vocalization-overlay-tooltip"
+      style={{
+        position: "absolute",
+        left: tooltipPos.left,
+        top: tooltipPos.top,
+        background: "rgba(6, 13, 20, 0.95)",
+        border: "1px solid rgba(168, 130, 220, 0.4)",
+        borderRadius: 6,
+        padding: "6px 10px",
+        fontSize: 11,
+        lineHeight: "1.5",
+        color: "#c4b5d0",
+        whiteSpace: "nowrap",
+        pointerEvents: "none",
+        zIndex: 20,
+      }}
+    >
+      <div style={{ marginBottom: 2 }}>
+        {formatTime(tooltip.group.start_utc)} &ndash; {formatTime(tooltip.group.end_utc)}
+      </div>
+      {tooltip.group.labels.map((lbl) => {
+        const color = badgeColorMap.get(lbl.label) ?? "#ccc";
+        return (
+          <div key={`${lbl.label}:${lbl.source}`} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              style={{
+                display: "inline-block",
+                width: 8,
+                height: 8,
+                borderRadius: 2,
+                background: lbl.source === "manual" ? color : "transparent",
+                border: `1.5px solid ${color}`,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontWeight: 600, color: "#e0d4f0" }}>{lbl.label}</span>
+            <span style={{ color: "#8a7a9a" }}>
+              {lbl.source}
+              {lbl.confidence != null && ` ${(lbl.confidence * 100).toFixed(0)}%`}
+            </span>
           </div>
-          {tooltip.group.labels.map((lbl) => {
-            const color = badgeColorMap.get(lbl.label) ?? "#ccc";
-            return (
-              <div key={`${lbl.label}:${lbl.source}`} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 8,
-                    height: 8,
-                    borderRadius: 2,
-                    background: lbl.source === "manual" ? color : "transparent",
-                    border: `1.5px solid ${color}`,
-                    flexShrink: 0,
-                  }}
-                />
-                <span style={{ fontWeight: 600, color: "#e0d4f0" }}>{lbl.label}</span>
-                <span style={{ color: "#8a7a9a" }}>
-                  {lbl.source}
-                  {lbl.confidence != null && ` ${(lbl.confidence * 100).toFixed(0)}%`}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }
