@@ -8,6 +8,13 @@ export interface OverlayContextValue {
   canvasHeight: number;
   epochToX: (epoch: number) => number;
   xToEpoch: (x: number) => number;
+  /**
+   * Mount target for overlay elements that must remain visible past the
+   * canvas edge (e.g. tooltips). Sibling of the clipped band layer with
+   * no overflow clipping. Null until the layer's ref attaches, and null
+   * when the overlay renders outside a Spectrogram (back-compat).
+   */
+  tooltipPortalTarget: HTMLElement | null;
 }
 
 export const OverlayContext = createContext<OverlayContextValue | null>(null);

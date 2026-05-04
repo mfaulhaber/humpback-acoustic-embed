@@ -418,4 +418,15 @@ test.describe("Classify Review — event badges", () => {
     await expect(badge).toHaveAttribute("data-source", "negative");
     await expect(badge).toHaveText("—");
   });
+
+  test("overlay band layer is clipped; tooltip layer is unclipped", async ({
+    page,
+  }) => {
+    await openReview(page);
+    const band = page.getByTestId("overlay-band-layer").first();
+    await expect(band).toBeAttached();
+    const overflow = await band.evaluate((el) => getComputedStyle(el).overflow);
+    expect(overflow).toBe("hidden");
+    await expect(page.getByTestId("overlay-tooltip-layer").first()).toBeAttached();
+  });
 });

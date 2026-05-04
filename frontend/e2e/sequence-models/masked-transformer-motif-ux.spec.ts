@@ -561,4 +561,24 @@ test.describe("Masked Transformer Motif UX", () => {
     );
     expect(overflowY).toBe("auto");
   });
+
+  test("overlay band layer clips children; tooltip layer is unclipped", async ({ page }) => {
+    const state: MockState = { audioSliceUrls: [] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("masked-transformer-detail-page")).toBeVisible();
+    await expect(page.getByTestId("mt-motif-highlight-layer")).toBeVisible();
+
+    const band = page.getByTestId("overlay-band-layer");
+    const tooltip = page.getByTestId("overlay-tooltip-layer");
+    await expect(band).toBeAttached();
+    await expect(tooltip).toBeAttached();
+
+    const bandOverflow = await band.evaluate((el) => getComputedStyle(el).overflow);
+    expect(bandOverflow).toBe("hidden");
+
+    const tooltipOverflow = await tooltip.evaluate((el) => getComputedStyle(el).overflow);
+    expect(tooltipOverflow).not.toBe("hidden");
+  });
 });

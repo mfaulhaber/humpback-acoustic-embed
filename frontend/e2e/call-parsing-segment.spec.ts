@@ -395,6 +395,13 @@ test.describe("Segment Review workspace", () => {
     await page.goto("/app/call-parsing/segment?tab=review");
     await page.locator("#review-job-select").selectOption(COMPLETE_SEG_JOB.id);
     await expect(page.getByTestId("spectrogram-viewport")).toBeVisible();
+
+    // Two-layer overlay container is in place on Segment Review.
+    const band = page.getByTestId("overlay-band-layer").first();
+    await expect(band).toBeAttached();
+    const overflow = await band.evaluate((el) => getComputedStyle(el).overflow);
+    expect(overflow).toBe("hidden");
+    await expect(page.getByTestId("overlay-tooltip-layer").first()).toBeAttached();
   });
 
   test("event bars render on spectrogram for selected region", async ({

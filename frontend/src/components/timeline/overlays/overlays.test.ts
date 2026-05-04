@@ -80,6 +80,7 @@ describe("RegionBoundaryMarkers", () => {
     canvasHeight: 120,
     epochToX: (epoch: number) => (epoch - 100) * 10,
     xToEpoch: (x: number) => 100 + x / 10,
+    tooltipPortalTarget: null,
   };
 
   it("can render boundary lines without dimming outside the active region", () => {
@@ -111,6 +112,7 @@ describe("MotifHighlightOverlay", () => {
     canvasHeight: 120,
     epochToX: (epoch: number) => (epoch - 100) * 10,
     xToEpoch: (x: number) => 100 + x / 10,
+    tooltipPortalTarget: null,
   };
 
   function makeOcc(motifKey: string, start: number, end: number, idx: number): MotifOccurrence {
