@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import torch
 
+from humpback.sequence_models.contrastive_loss import ContrastiveEventMetadata
 from humpback.sequence_models.masked_transformer import (
     MaskedTransformer,
     MaskedTransformerConfig,
@@ -232,6 +233,76 @@ class TestTrainConvergence:
         ]
         assert grad_norms
         assert any(norm > 0.0 for norm in grad_norms)
+
+    def test_contrastive_training_records_separated_loss_curves(self):
+        sequences = _make_synthetic_sequences(n_seq=4, T=10, D=8, seed=23)
+        events = [
+            ContrastiveEventMetadata("a", "r1", ("Moan",), 2, 6),
+            ContrastiveEventMetadata("b", "r2", ("Moan",), 2, 6),
+            ContrastiveEventMetadata("c", "r1", ("Whup",), 2, 6),
+            ContrastiveEventMetadata("d", "r2", ("Whup",), 2, 6),
+        ]
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_fraction=0.25,
+            span_length_min=2,
+            span_length_max=4,
+            dropout=0.0,
+            mask_weight_bias=False,
+            max_epochs=2,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=23,
+            batch_size=4,
+            retrieval_head_enabled=True,
+            retrieval_dim=8,
+            retrieval_hidden_dim=16,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            contrastive_min_events_per_label=2,
+            contrastive_min_regions_per_label=2,
+        )
+
+        result = train_masked_transformer(
+            sequences, config, device="cpu", contrastive_events=events
+        )
+
+        assert len(result.loss_curve["train"]) == 2
+        assert len(result.loss_curve["train_masked"]) == 2
+        assert len(result.loss_curve["train_contrastive"]) == 2
+        assert len(result.loss_curve["train_total"]) == 2
+        assert result.loss_curve["train_contrastive"][-1] >= 0.0
+        assert "final_train_contrastive_loss" in result.val_metrics
+
+    def test_contrastive_training_skips_no_positive_batches(self):
+        sequences = _make_synthetic_sequences(n_seq=2, T=8, D=6, seed=24)
+        events = [
+            ContrastiveEventMetadata("a", "r1", ("Moan",), 0, 4),
+            ContrastiveEventMetadata("b", "r2", ("Whup",), 0, 4),
+        ]
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=24,
+            batch_size=2,
+            retrieval_head_enabled=True,
+            retrieval_dim=6,
+            retrieval_hidden_dim=12,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            contrastive_min_events_per_label=1,
+            contrastive_min_regions_per_label=1,
+        )
+
+        result = train_masked_transformer(
+            sequences, config, device="cpu", contrastive_events=events
+        )
+
+        assert result.loss_curve["train_contrastive"] == [0.0]
+        assert result.loss_curve["train_contrastive_skipped_batches"] == [1.0]
 
 
 class TestEarlyStopping:
@@ -477,3 +548,23 @@ def test_config_carries_sequence_construction_fields():
     assert config.event_centered_fraction == 0.5
     assert config.pre_event_context_sec == 1.0
     assert config.post_event_context_sec == 3.0
+
+
+def test_config_carries_contrastive_fields():
+    config = MaskedTransformerConfig(
+        contrastive_loss_weight=0.1,
+        contrastive_temperature=0.05,
+        contrastive_label_source="human_corrections",
+        contrastive_min_events_per_label=2,
+        contrastive_min_regions_per_label=1,
+        require_cross_region_positive=False,
+        related_label_policy_json='{"exclude_pairs":[]}',
+    )
+
+    assert config.contrastive_loss_weight == 0.1
+    assert config.contrastive_temperature == 0.05
+    assert config.contrastive_label_source == "human_corrections"
+    assert config.contrastive_min_events_per_label == 2
+    assert config.contrastive_min_regions_per_label == 1
+    assert config.require_cross_region_positive is False
+    assert config.related_label_policy_json == '{"exclude_pairs":[]}'

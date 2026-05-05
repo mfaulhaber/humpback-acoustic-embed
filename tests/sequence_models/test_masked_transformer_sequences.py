@@ -38,6 +38,8 @@ def test_region_mode_returns_original_full_region_sequences_and_tiers() -> None:
     assert result.sequences[0] is sequences[0]
     assert result.tier_lists == tiers
     assert result.source_kinds == ["region", "region"]
+    assert all(candidate.event_id is None for candidate in result.candidates)
+    assert all(candidate.human_types == () for candidate in result.candidates)
 
 
 def test_event_centered_windows_include_context_and_clamp_edges() -> None:
@@ -62,9 +64,9 @@ def test_event_centered_windows_include_context_and_clamp_edges() -> None:
         starts=starts,
         ends=ends,
         effective_events=[
-            EffectiveEventInterval("r1", 2.2, 2.8),
-            EffectiveEventInterval("r1", 0.1, 0.4),
-            EffectiveEventInterval("r1", 5.6, 5.9),
+            EffectiveEventInterval("r1", 2.2, 2.8, "event-mid", ("Moan",)),
+            EffectiveEventInterval("r1", 0.1, 0.4, "event-start", ()),
+            EffectiveEventInterval("r1", 5.6, 5.9, "event-end", ("Whup",)),
         ],
         mode="event_centered",
         pre_event_context_sec=1.0,
@@ -78,6 +80,12 @@ def test_event_centered_windows_include_context_and_clamp_edges() -> None:
     ]
     np.testing.assert_array_equal(result.sequences[1], sequences[0][1:4])
     assert result.tier_lists[1] == tiers[0][1:4]
+    assert result.candidates[1].event_id == "event-mid"
+    assert result.candidates[1].event_start_timestamp == 2.2
+    assert result.candidates[1].event_end_timestamp == 2.8
+    assert result.candidates[1].event_start_index == 1
+    assert result.candidates[1].event_end_index == 2
+    assert result.candidates[1].human_types == ("Moan",)
     assert all(kind == "event_centered" for kind in result.source_kinds)
 
 

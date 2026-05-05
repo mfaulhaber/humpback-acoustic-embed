@@ -50,6 +50,14 @@ from humpback.storage import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_RELATED_LABEL_EXCLUSIONS: tuple[tuple[str, str], ...] = (
+    ("Creak", "Vibrate"),
+    ("Moan", "Ascending Moan"),
+    ("Moan", "Descending Moan"),
+    ("Growl", "Buzz"),
+    ("Whup", "Grunt"),
+)
+
 
 class CancelTerminalJobError(Exception):
     """Raised when caller attempts to cancel a job in a terminal state."""
@@ -86,6 +94,14 @@ def compute_training_signature(
     event_centered_fraction: float = 0.0,
     pre_event_context_sec: Optional[float] = None,
     post_event_context_sec: Optional[float] = None,
+    contrastive_loss_weight: float = 0.0,
+    contrastive_temperature: float = 0.07,
+    contrastive_label_source: str = "none",
+    contrastive_min_events_per_label: int = 4,
+    contrastive_min_regions_per_label: int = 2,
+    require_cross_region_positive: bool = True,
+    related_label_policy_json: Optional[str] = None,
+    event_classification_job_id: Optional[str] = None,
 ) -> str:
     """Stable signature over training-only config (excludes ``k_values``).
 
@@ -132,6 +148,23 @@ def compute_training_signature(
                 else None,
             }
         )
+    if float(contrastive_loss_weight) > 0.0:
+        payload.update(
+            {
+                "contrastive_loss_weight": float(contrastive_loss_weight),
+                "contrastive_temperature": float(contrastive_temperature),
+                "contrastive_label_source": contrastive_label_source,
+                "contrastive_min_events_per_label": int(
+                    contrastive_min_events_per_label
+                ),
+                "contrastive_min_regions_per_label": int(
+                    contrastive_min_regions_per_label
+                ),
+                "require_cross_region_positive": bool(require_cross_region_positive),
+                "related_label_policy_json": related_label_policy_json,
+                "event_classification_job_id": event_classification_job_id,
+            }
+        )
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -159,6 +192,15 @@ def parse_k_values(payload: str | list[int]) -> list[int]:
 
 def serialize_k_values(values: list[int]) -> str:
     return json.dumps([int(v) for v in values], separators=(",", ":"))
+
+
+def default_related_label_policy_json() -> str:
+    """Canonical JSON for Phase 3 related-label negative exclusions."""
+    return json.dumps(
+        {"exclude_pairs": [list(pair) for pair in DEFAULT_RELATED_LABEL_EXCLUSIONS]},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def normalize_retrieval_head_config(
@@ -230,6 +272,72 @@ def normalize_sequence_construction_config(
     return "mixed", fraction, pre_context, post_context
 
 
+def normalize_contrastive_config(
+    *,
+    contrastive_loss_weight: float = 0.0,
+    contrastive_temperature: float = 0.07,
+    contrastive_label_source: str = "none",
+    contrastive_min_events_per_label: int = 4,
+    contrastive_min_regions_per_label: int = 2,
+    require_cross_region_positive: bool = True,
+    related_label_policy_json: Optional[str] = None,
+    retrieval_head_enabled: bool = False,
+) -> tuple[float, float, str, int, int, bool, Optional[str]]:
+    weight = float(contrastive_loss_weight)
+    if weight < 0.0:
+        raise ValueError("contrastive_loss_weight must be non-negative")
+    temperature = float(contrastive_temperature)
+    if temperature <= 0.0:
+        raise ValueError("contrastive_temperature must be positive")
+    min_events = int(contrastive_min_events_per_label)
+    min_regions = int(contrastive_min_regions_per_label)
+    if min_events <= 0:
+        raise ValueError("contrastive_min_events_per_label must be positive")
+    if min_regions <= 0:
+        raise ValueError("contrastive_min_regions_per_label must be positive")
+    if contrastive_label_source not in {"none", "human_corrections"}:
+        raise ValueError(
+            "contrastive_label_source must be one of none/human_corrections"
+        )
+
+    if weight == 0.0:
+        return (
+            0.0,
+            temperature,
+            "none",
+            min_events,
+            min_regions,
+            bool(require_cross_region_positive),
+            related_label_policy_json,
+        )
+
+    if not retrieval_head_enabled:
+        raise ValueError("contrastive training requires retrieval_head_enabled=true")
+    if contrastive_label_source != "human_corrections":
+        raise ValueError(
+            "positive contrastive_loss_weight requires "
+            'contrastive_label_source="human_corrections"'
+        )
+
+    policy_json = related_label_policy_json or default_related_label_policy_json()
+    try:
+        parsed = json.loads(policy_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("related_label_policy_json must be valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("related_label_policy_json must be a JSON object")
+    canonical_policy = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+    return (
+        weight,
+        temperature,
+        "human_corrections",
+        min_events,
+        min_regions,
+        bool(require_cross_region_positive),
+        canonical_policy,
+    )
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -255,6 +363,13 @@ async def create_masked_transformer_job(
     event_centered_fraction: Optional[float] = 0.0,
     pre_event_context_sec: Optional[float] = None,
     post_event_context_sec: Optional[float] = None,
+    contrastive_loss_weight: float = 0.0,
+    contrastive_temperature: float = 0.07,
+    contrastive_label_source: str = "none",
+    contrastive_min_events_per_label: int = 4,
+    contrastive_min_regions_per_label: int = 2,
+    require_cross_region_positive: bool = True,
+    related_label_policy_json: Optional[str] = None,
     max_epochs: int = 30,
     early_stop_patience: int = 3,
     val_split: float = 0.1,
@@ -298,6 +413,24 @@ async def create_masked_transformer_job(
         pre_event_context_sec=pre_event_context_sec,
         post_event_context_sec=post_event_context_sec,
     )
+    (
+        normalized_contrastive_loss_weight,
+        normalized_contrastive_temperature,
+        normalized_contrastive_label_source,
+        normalized_contrastive_min_events_per_label,
+        normalized_contrastive_min_regions_per_label,
+        normalized_require_cross_region_positive,
+        normalized_related_label_policy_json,
+    ) = normalize_contrastive_config(
+        contrastive_loss_weight=contrastive_loss_weight,
+        contrastive_temperature=contrastive_temperature,
+        contrastive_label_source=contrastive_label_source,
+        contrastive_min_events_per_label=contrastive_min_events_per_label,
+        contrastive_min_regions_per_label=contrastive_min_regions_per_label,
+        require_cross_region_positive=require_cross_region_positive,
+        related_label_policy_json=related_label_policy_json,
+        retrieval_head_enabled=normalized_retrieval_head_enabled,
+    )
 
     cej = await session.get(ContinuousEmbeddingJob, continuous_embedding_job_id)
     if cej is None:
@@ -316,6 +449,22 @@ async def create_masked_transformer_job(
         )
 
     k_list = parse_k_values(k_values if k_values is not None else [100])
+    classify_id_for_signature: Optional[str] = None
+    if normalized_contrastive_loss_weight > 0.0:
+        if not cej.event_segmentation_job_id:
+            raise ValueError(
+                "continuous_embedding_job has no event_segmentation_job_id; "
+                "cannot resolve Classify binding"
+            )
+        from humpback.services.hmm_sequence_service import (
+            resolve_event_classification_job_id,
+        )
+
+        classify_id_for_signature = await resolve_event_classification_job_id(
+            session,
+            event_segmentation_job_id=cej.event_segmentation_job_id,
+            requested_id=event_classification_job_id,
+        )
 
     signature = compute_training_signature(
         continuous_embedding_job_id=continuous_embedding_job_id,
@@ -334,6 +483,14 @@ async def create_masked_transformer_job(
         event_centered_fraction=normalized_event_centered_fraction,
         pre_event_context_sec=normalized_pre_event_context_sec,
         post_event_context_sec=normalized_post_event_context_sec,
+        contrastive_loss_weight=normalized_contrastive_loss_weight,
+        contrastive_temperature=normalized_contrastive_temperature,
+        contrastive_label_source=normalized_contrastive_label_source,
+        contrastive_min_events_per_label=normalized_contrastive_min_events_per_label,
+        contrastive_min_regions_per_label=normalized_contrastive_min_regions_per_label,
+        require_cross_region_positive=normalized_require_cross_region_positive,
+        related_label_policy_json=normalized_related_label_policy_json,
+        event_classification_job_id=classify_id_for_signature,
         max_epochs=max_epochs,
         early_stop_patience=early_stop_patience,
         val_split=val_split,
@@ -354,15 +511,18 @@ async def create_masked_transformer_job(
             "continuous_embedding_job has no event_segmentation_job_id; "
             "cannot resolve Classify binding"
         )
-    from humpback.services.hmm_sequence_service import (
-        resolve_event_classification_job_id,
-    )
+    if classify_id_for_signature is None:
+        from humpback.services.hmm_sequence_service import (
+            resolve_event_classification_job_id,
+        )
 
-    classify_id = await resolve_event_classification_job_id(
-        session,
-        event_segmentation_job_id=cej.event_segmentation_job_id,
-        requested_id=event_classification_job_id,
-    )
+        classify_id = await resolve_event_classification_job_id(
+            session,
+            event_segmentation_job_id=cej.event_segmentation_job_id,
+            requested_id=event_classification_job_id,
+        )
+    else:
+        classify_id = classify_id_for_signature
 
     job = MaskedTransformerJob(
         continuous_embedding_job_id=continuous_embedding_job_id,
@@ -383,6 +543,13 @@ async def create_masked_transformer_job(
         event_centered_fraction=normalized_event_centered_fraction,
         pre_event_context_sec=normalized_pre_event_context_sec,
         post_event_context_sec=normalized_post_event_context_sec,
+        contrastive_loss_weight=normalized_contrastive_loss_weight,
+        contrastive_temperature=normalized_contrastive_temperature,
+        contrastive_label_source=normalized_contrastive_label_source,
+        contrastive_min_events_per_label=normalized_contrastive_min_events_per_label,
+        contrastive_min_regions_per_label=normalized_contrastive_min_regions_per_label,
+        require_cross_region_positive=normalized_require_cross_region_positive,
+        related_label_policy_json=normalized_related_label_policy_json,
         max_epochs=int(max_epochs),
         early_stop_patience=int(early_stop_patience),
         val_split=float(val_split),
@@ -850,6 +1017,7 @@ __all__ = [
     "generate_interpretations_all_k",
     "get_masked_transformer_job",
     "list_masked_transformer_jobs",
+    "normalize_contrastive_config",
     "normalize_sequence_construction_config",
     "parse_k_values",
     "regenerate_label_distribution",

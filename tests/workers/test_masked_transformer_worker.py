@@ -18,6 +18,7 @@ from humpback.models.call_parsing import (
     EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
+    VocalizationCorrection,
 )
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
@@ -120,6 +121,27 @@ async def _bind_classify(
     job.event_classification_job_id = cls_id
     await session.commit()
     await session.refresh(job)
+
+
+async def _add_vocalization_correction(
+    session,
+    cej: ContinuousEmbeddingJob,
+    *,
+    start_sec: float,
+    end_sec: float,
+    type_name: str,
+    correction_type: str = "add",
+) -> None:
+    session.add(
+        VocalizationCorrection(
+            region_detection_job_id=cej.region_detection_job_id or "",
+            start_sec=start_sec,
+            end_sec=end_sec,
+            type_name=type_name,
+            correction_type=correction_type,
+        )
+    )
+    await session.commit()
 
 
 async def _seed_crnn_ce_job(session, settings) -> ContinuousEmbeddingJob:
@@ -534,6 +556,174 @@ async def test_event_centered_mode_fails_when_no_events_overlap(
 
     assert job.status == JobStatus.failed.value
     assert "no trainable" in (job.error_message or "")
+
+
+async def test_contrastive_event_centered_passes_human_labels_to_training(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+            "sequence_construction_mode": "event_centered",
+            "contrastive_loss_weight": 0.1,
+            "contrastive_label_source": "human_corrections",
+            "contrastive_min_events_per_label": 2,
+            "contrastive_min_regions_per_label": 2,
+        },
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[
+            Event("e1", "region-00", 1.0, 2.0, 1.5, 0.9),
+            Event("e2", "region-01", 11.0, 12.0, 11.5, 0.8),
+        ],
+    )
+    await _add_vocalization_correction(
+        session, cej, start_sec=1.0, end_sec=2.0, type_name="Moan"
+    )
+    await _add_vocalization_correction(
+        session, cej, start_sec=11.0, end_sec=12.0, type_name="Moan"
+    )
+
+    import humpback.workers.masked_transformer_worker as worker_mod
+
+    real_train = worker_mod.train_masked_transformer
+    observed_labels: list[tuple[str, ...]] = []
+
+    def _spy_train(sequences, *args, **kwargs):  # type: ignore[no-untyped-def]
+        observed_labels[:] = [
+            event.human_types
+            for event in kwargs.get("contrastive_events") or []
+            if event is not None
+        ]
+        return real_train(sequences, *args, **kwargs)
+
+    monkeypatch.setattr(worker_mod, "train_masked_transformer", _spy_train)
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert observed_labels.count(("Moan",)) == 2
+    retrieval = pq.read_table(
+        masked_transformer_retrieval_embeddings_path(settings.storage_root, job.id)
+    )
+    assert retrieval.num_rows == 72
+    loss_payload = json.loads(
+        masked_transformer_loss_curve_path(settings.storage_root, job.id).read_text()
+    )
+    assert "train_loss" in loss_payload
+    assert "train_masked_loss" in loss_payload
+    assert "train_contrastive_loss" in loss_payload
+    assert "train_total_loss" in loss_payload
+    assert len(loss_payload["train_loss"]) == len(loss_payload["train_total_loss"])
+
+
+async def test_contrastive_ignores_model_only_labels(session, settings, monkeypatch):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+            "sequence_construction_mode": "event_centered",
+            "contrastive_loss_weight": 0.1,
+            "contrastive_label_source": "human_corrections",
+            "contrastive_min_events_per_label": 2,
+            "contrastive_min_regions_per_label": 2,
+        },
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[
+            Event("e1", "region-00", 1.0, 2.0, 1.5, 0.9),
+            Event("e2", "region-01", 11.0, 12.0, 11.5, 0.8),
+        ],
+    )
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.failed.value
+    assert "no eligible human-correction positive pairs" in (job.error_message or "")
+
+
+async def test_contrastive_keeps_unlabeled_events_for_masked_modeling(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+            "sequence_construction_mode": "event_centered",
+            "contrastive_loss_weight": 0.1,
+            "contrastive_label_source": "human_corrections",
+            "contrastive_min_events_per_label": 2,
+            "contrastive_min_regions_per_label": 2,
+        },
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[
+            Event("e1", "region-00", 1.0, 2.0, 1.5, 0.9),
+            Event("e2", "region-01", 11.0, 12.0, 11.5, 0.8),
+            Event("e3", "region-02", 21.0, 22.0, 21.5, 0.7),
+        ],
+    )
+    await _add_vocalization_correction(
+        session, cej, start_sec=1.0, end_sec=2.0, type_name="Moan"
+    )
+    await _add_vocalization_correction(
+        session, cej, start_sec=11.0, end_sec=12.0, type_name="Moan"
+    )
+
+    import humpback.workers.masked_transformer_worker as worker_mod
+
+    real_train = worker_mod.train_masked_transformer
+    observed_labels: list[tuple[str, ...]] = []
+
+    def _spy_train(sequences, *args, **kwargs):  # type: ignore[no-untyped-def]
+        observed_labels[:] = [
+            event.human_types
+            for event in kwargs.get("contrastive_events") or []
+            if event is not None
+        ]
+        return real_train(sequences, *args, **kwargs)
+
+    monkeypatch.setattr(worker_mod, "train_masked_transformer", _spy_train)
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert ("Moan",) in observed_labels
+    assert () in observed_labels
 
 
 async def test_atomic_per_k_writes_clean_up_on_failure(session, settings, monkeypatch):

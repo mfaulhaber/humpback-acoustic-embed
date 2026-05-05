@@ -19,16 +19,16 @@
 - Modify: `tests/integration/test_masked_transformer_api.py`
 
 **Acceptance criteria:**
-- [ ] **Production DB backup taken FIRST per CLAUDE.md §3.5:** read `HUMPBACK_DATABASE_URL` from `.env` with `DB_URL=$(grep '^HUMPBACK_DATABASE_URL=' .env | cut -d= -f2-)`, derive the SQLite path with `DB_PATH=${DB_URL#sqlite+aiosqlite:///}`, create a UTC backup name with `BACKUP="$DB_PATH.$(date -u +%Y-%m-%d-%H:%M).bak"`, copy with `cp "$DB_PATH" "$BACKUP"`, and verify non-zero size with `test -s "$BACKUP"` before running any migration command. If any backup command fails or is skipped, stop and do not apply the migration.
-- [ ] Migration `069_masked_transformer_contrastive_training.py` adds `contrastive_loss_weight`, `contrastive_temperature`, `contrastive_label_source`, `contrastive_min_events_per_label`, `contrastive_min_regions_per_label`, `require_cross_region_positive`, and `related_label_policy_json` to `masked_transformer_jobs` using `op.batch_alter_table()` for SQLite compatibility.
-- [ ] Existing rows backfill to contrastive-disabled behavior: `contrastive_loss_weight=0.0`, `contrastive_temperature=0.07`, `contrastive_label_source="none"`, `contrastive_min_events_per_label=4`, `contrastive_min_regions_per_label=2`, `require_cross_region_positive=true`, and `related_label_policy_json=NULL`.
-- [ ] `MaskedTransformerJob`, `MaskedTransformerJobCreate`, and `MaskedTransformerJobOut` expose the new fields with defaults that preserve existing job creation behavior.
-- [ ] Accepted `contrastive_label_source` values are `none` and `human_corrections`.
-- [ ] Any positive `contrastive_loss_weight` requires `retrieval_head_enabled=true`, `contrastive_label_source="human_corrections"`, and an `event_classification_job_id` bound to the selected upstream workflow.
-- [ ] `contrastive_temperature`, `contrastive_min_events_per_label`, and `contrastive_min_regions_per_label` reject non-positive values.
-- [ ] Omitted related-label policy resolves to the Phase 3 default exclusions from the design spec and is stored or serialized consistently for signature computation.
-- [ ] `compute_training_signature()` includes normalized contrastive fields, continues to exclude `k_values`, and includes `event_classification_job_id` when human-correction contrastive training is enabled.
-- [ ] Re-submitting a contrastive-disabled config remains idempotent with equivalent pre-069 jobs, while changing any enabled contrastive field changes the signature.
+- [x] **Production DB backup taken FIRST per CLAUDE.md §3.5:** read `HUMPBACK_DATABASE_URL` from `.env` with `DB_URL=$(grep '^HUMPBACK_DATABASE_URL=' .env | cut -d= -f2-)`, derive the SQLite path with `DB_PATH=${DB_URL#sqlite+aiosqlite:///}`, create a UTC backup name with `BACKUP="$DB_PATH.$(date -u +%Y-%m-%d-%H:%M).bak"`, copy with `cp "$DB_PATH" "$BACKUP"`, and verify non-zero size with `test -s "$BACKUP"` before running any migration command. If any backup command fails or is skipped, stop and do not apply the migration.
+- [x] Migration `069_masked_transformer_contrastive_training.py` adds `contrastive_loss_weight`, `contrastive_temperature`, `contrastive_label_source`, `contrastive_min_events_per_label`, `contrastive_min_regions_per_label`, `require_cross_region_positive`, and `related_label_policy_json` to `masked_transformer_jobs` using `op.batch_alter_table()` for SQLite compatibility.
+- [x] Existing rows backfill to contrastive-disabled behavior: `contrastive_loss_weight=0.0`, `contrastive_temperature=0.07`, `contrastive_label_source="none"`, `contrastive_min_events_per_label=4`, `contrastive_min_regions_per_label=2`, `require_cross_region_positive=true`, and `related_label_policy_json=NULL`.
+- [x] `MaskedTransformerJob`, `MaskedTransformerJobCreate`, and `MaskedTransformerJobOut` expose the new fields with defaults that preserve existing job creation behavior.
+- [x] Accepted `contrastive_label_source` values are `none` and `human_corrections`.
+- [x] Any positive `contrastive_loss_weight` requires `retrieval_head_enabled=true`, `contrastive_label_source="human_corrections"`, and an `event_classification_job_id` bound to the selected upstream workflow.
+- [x] `contrastive_temperature`, `contrastive_min_events_per_label`, and `contrastive_min_regions_per_label` reject non-positive values.
+- [x] Omitted related-label policy resolves to the Phase 3 default exclusions from the design spec and is stored or serialized consistently for signature computation.
+- [x] `compute_training_signature()` includes normalized contrastive fields, continues to exclude `k_values`, and includes `event_classification_job_id` when human-correction contrastive training is enabled.
+- [x] Re-submitting a contrastive-disabled config remains idempotent with equivalent pre-069 jobs, while changing any enabled contrastive field changes the signature.
 
 **Tests needed:**
 - Migration upgrade/downgrade test against SQLite showing defaults on pre-existing `masked_transformer_jobs` rows.
@@ -47,14 +47,14 @@
 - Modify: `tests/sequence_models/test_masked_transformer_sequences.py`
 
 **Acceptance criteria:**
-- [ ] A reusable loader returns effective events annotated only with human correction label sets, reusing the Phase 0 human-correction semantics and never using Classify model labels as positives.
-- [ ] Effective event boundaries are loaded through `load_effective_events()` so boundary corrections are respected.
-- [ ] Event-relative seconds are bridged to absolute UTC with the upstream `RegionDetectionJob.start_timestamp`, matching ADR-062 and ADR-063 timestamp semantics.
-- [ ] Events with no surviving human correction labels are represented as unlabeled and remain eligible for masked-modeling sequence construction.
-- [ ] Add/remove correction overlays support multi-label events, add-then-remove behavior, and remove-only behavior.
-- [ ] Event-centered training candidates carry stable event metadata, absolute event interval, region id, candidate chunk start/end indexes, and human label sets when available.
-- [ ] Region-context candidates remain valid masked-modeling examples and carry no contrastive event label unless explicitly event-aligned later.
-- [ ] The structures are pure data contracts with no tensor, model, or optimizer dependency.
+- [x] A reusable loader returns effective events annotated only with human correction label sets, reusing the Phase 0 human-correction semantics and never using Classify model labels as positives.
+- [x] Effective event boundaries are loaded through `load_effective_events()` so boundary corrections are respected.
+- [x] Event-relative seconds are bridged to absolute UTC with the upstream `RegionDetectionJob.start_timestamp`, matching ADR-062 and ADR-063 timestamp semantics.
+- [x] Events with no surviving human correction labels are represented as unlabeled and remain eligible for masked-modeling sequence construction.
+- [x] Add/remove correction overlays support multi-label events, add-then-remove behavior, and remove-only behavior.
+- [x] Event-centered training candidates carry stable event metadata, absolute event interval, region id, candidate chunk start/end indexes, and human label sets when available.
+- [x] Region-context candidates remain valid masked-modeling examples and carry no contrastive event label unless explicitly event-aligned later.
+- [x] The structures are pure data contracts with no tensor, model, or optimizer dependency.
 
 **Tests needed:**
 - Unit tests with one event and two overlapping add corrections showing a multi-label set.
@@ -73,15 +73,15 @@
 - Modify: `tests/sequence_models/test_masked_transformer.py`
 
 **Acceptance criteria:**
-- [ ] Event embeddings are mean-pooled from transformer hidden states over each event's unpadded chunk span and then passed through the existing retrieval projection head.
-- [ ] Positive masks use human label-set intersection and include only events whose labels satisfy the configured minimum event and region support thresholds.
-- [ ] Negative masks require both events to have eligible human labels, disjoint label sets, and no pair blocked by the related-label exclusion policy.
-- [ ] When `require_cross_region_positive=true`, same-label different-region positives are preferred and same-region-only positives are excluded when a cross-region positive exists for the anchor.
-- [ ] Batches with no valid positives return a zero contrastive loss that preserves autograd compatibility and lets masked loss train normally.
-- [ ] Supervised-contrastive loss is finite for multi-label events, singleton labels, empty labels, rare labels, and all-related-label batches.
-- [ ] `MaskedTransformerConfig` carries contrastive loss weight, temperature, label source, support thresholds, cross-region-positive behavior, and related-label policy.
-- [ ] `train_masked_transformer()` combines losses as masked loss plus `contrastive_loss_weight * contrastive_loss` only when enabled.
-- [ ] Retrieval-head consistency loss from Phase 1 continues to operate when contrastive loss is disabled and does not double-count as the supervised contrastive term.
+- [x] Event embeddings are mean-pooled from transformer hidden states over each event's unpadded chunk span and then passed through the existing retrieval projection head.
+- [x] Positive masks use human label-set intersection and include only events whose labels satisfy the configured minimum event and region support thresholds.
+- [x] Negative masks require both events to have eligible human labels, disjoint label sets, and no pair blocked by the related-label exclusion policy.
+- [x] When `require_cross_region_positive=true`, same-label different-region positives are preferred and same-region-only positives are excluded when a cross-region positive exists for the anchor.
+- [x] Batches with no valid positives return a zero contrastive loss that preserves autograd compatibility and lets masked loss train normally.
+- [x] Supervised-contrastive loss is finite for multi-label events, singleton labels, empty labels, rare labels, and all-related-label batches.
+- [x] `MaskedTransformerConfig` carries contrastive loss weight, temperature, label source, support thresholds, cross-region-positive behavior, and related-label policy.
+- [x] `train_masked_transformer()` combines losses as masked loss plus `contrastive_loss_weight * contrastive_loss` only when enabled.
+- [x] Retrieval-head consistency loss from Phase 1 continues to operate when contrastive loss is disabled and does not double-count as the supervised contrastive term.
 
 **Tests needed:**
 - Unit tests for positive masks with overlapping multi-label sets and disjoint sets.
@@ -102,13 +102,13 @@
 - Modify: `tests/sequence_models/test_contrastive_loss.py`
 
 **Acceptance criteria:**
-- [ ] Training batches receive optional per-sequence contrastive event metadata aligned 1:1 with the constructed training sequence list.
-- [ ] Contrastive-enabled training prefers batches with multiple eligible labels, multiple regions, and same-label different-region examples when available.
-- [ ] Labels without the configured minimum support remain in masked modeling batches but are excluded from contrastive masks.
-- [ ] Batch construction remains deterministic under `seed`.
-- [ ] If the available training set cannot form a contrastive batch, training logs or records that contrastive was skipped for that batch and continues with masked loss only.
-- [ ] Validation computes masked, contrastive, and total losses using the same mask rules without mutating training sampler state.
-- [ ] Existing callers that omit contrastive metadata continue to train exactly as contrastive-disabled masked-transformer jobs.
+- [x] Training batches receive optional per-sequence contrastive event metadata aligned 1:1 with the constructed training sequence list.
+- [x] Contrastive-enabled training prefers batches with multiple eligible labels, multiple regions, and same-label different-region examples when available.
+- [x] Labels without the configured minimum support remain in masked modeling batches but are excluded from contrastive masks.
+- [x] Batch construction remains deterministic under `seed`.
+- [x] If the available training set cannot form a contrastive batch, training logs or records that contrastive was skipped for that batch and continues with masked loss only.
+- [x] Validation computes masked, contrastive, and total losses using the same mask rules without mutating training sampler state.
+- [x] Existing callers that omit contrastive metadata continue to train exactly as contrastive-disabled masked-transformer jobs.
 
 **Tests needed:**
 - Unit test showing a deterministic batch order and same-label cross-region co-occurrence under a fixed seed.
@@ -126,15 +126,15 @@
 - Modify: `tests/fixtures/sequence_models/classify_binding.py`
 
 **Acceptance criteria:**
-- [ ] First-pass contrastive-enabled workers load human-correction event labels through the shared contrastive label loader and the bound Classify workflow context.
-- [ ] Contrastive label loading uses only human `VocalizationCorrection` rows; model Classify labels never create positives or negatives.
-- [ ] Event-centered and mixed training candidates receive aligned human label metadata before calling `train_masked_transformer()`.
-- [ ] Events without human labels remain in the constructed training sequences for masked modeling and are excluded only from contrastive masks.
-- [ ] If `contrastive_loss_weight>0` and no eligible human-labeled positives exist, the worker fails clearly before spending epochs on a run that cannot exercise contrastive loss.
-- [ ] Full-region extraction still writes one contextual row and, for retrieval-head jobs, one retrieval row per upstream CRNN chunk.
-- [ ] Per-k tokenization still uses retrieval embeddings for retrieval-head jobs and contextual embeddings for non-retrieval jobs.
-- [ ] Extend-k-sweep follow-up passes do not reload human labels, rebuild contrastive batches, retrain the transformer, or rewrite transformer/contextual/retrieval artifacts.
-- [ ] Saved `transformer.pt` metadata records contrastive loss config and related-label policy.
+- [x] First-pass contrastive-enabled workers load human-correction event labels through the shared contrastive label loader and the bound Classify workflow context.
+- [x] Contrastive label loading uses only human `VocalizationCorrection` rows; model Classify labels never create positives or negatives.
+- [x] Event-centered and mixed training candidates receive aligned human label metadata before calling `train_masked_transformer()`.
+- [x] Events without human labels remain in the constructed training sequences for masked modeling and are excluded only from contrastive masks.
+- [x] If `contrastive_loss_weight>0` and no eligible human-labeled positives exist, the worker fails clearly before spending epochs on a run that cannot exercise contrastive loss.
+- [x] Full-region extraction still writes one contextual row and, for retrieval-head jobs, one retrieval row per upstream CRNN chunk.
+- [x] Per-k tokenization still uses retrieval embeddings for retrieval-head jobs and contextual embeddings for non-retrieval jobs.
+- [x] Extend-k-sweep follow-up passes do not reload human labels, rebuild contrastive batches, retrain the transformer, or rewrite transformer/contextual/retrieval artifacts.
+- [x] Saved `transformer.pt` metadata records contrastive loss config and related-label policy.
 
 **Tests needed:**
 - Worker test for contrastive-enabled event-centered mode with human-labeled events asserting training receives labels and artifact row counts remain full-region aligned.
@@ -155,12 +155,12 @@
 - Modify: `docs/reference/storage-layout.md`
 
 **Acceptance criteria:**
-- [ ] `TrainResult.loss_curve` records train and validation series for masked loss, contrastive loss, total loss, and contrastive-skipped batch counts.
-- [ ] Existing `train_loss` and `val_loss` in `loss_curve.json` continue to mean total loss for backward-compatible consumers.
-- [ ] `loss_curve.json` adds explicit `train_masked_loss`, `train_contrastive_loss`, `train_total_loss`, `val_masked_loss`, `val_contrastive_loss`, and `val_total_loss` arrays.
-- [ ] `val_metrics` includes final masked, contrastive, total, and skipped-batch values using JSON-friendly primitives.
-- [ ] Non-contrastive jobs write contrastive series as zeros or omit only fields documented as optional; frontend and existing tests must not break.
-- [ ] Storage-layout reference documents the expanded loss-curve artifact.
+- [x] `TrainResult.loss_curve` records train and validation series for masked loss, contrastive loss, total loss, and contrastive-skipped batch counts.
+- [x] Existing `train_loss` and `val_loss` in `loss_curve.json` continue to mean total loss for backward-compatible consumers.
+- [x] `loss_curve.json` adds explicit `train_masked_loss`, `train_contrastive_loss`, `train_total_loss`, `val_masked_loss`, `val_contrastive_loss`, and `val_total_loss` arrays.
+- [x] `val_metrics` includes final masked, contrastive, total, and skipped-batch values using JSON-friendly primitives.
+- [x] Non-contrastive jobs write contrastive series as zeros or omit only fields documented as optional; frontend and existing tests must not break.
+- [x] Storage-layout reference documents the expanded loss-curve artifact.
 
 **Tests needed:**
 - Unit test showing contrastive-enabled training returns all loss series with aligned epoch counts.
@@ -179,12 +179,12 @@
 - Modify: `frontend/src/components/sequence-models/__tests__/MaskedTransformerCreateForm.test.tsx`
 
 **Acceptance criteria:**
-- [ ] Frontend API types include contrastive training fields on create and job response types.
-- [ ] The create form keeps contrastive training disabled by default and submits backward-compatible defaults.
-- [ ] Contrastive controls are enabled only when retrieval head is enabled.
-- [ ] Enabling contrastive training sets `contrastive_label_source="human_corrections"` and exposes loss weight, temperature, support thresholds, and cross-region-positive controls.
-- [ ] Frontend validation prevents positive contrastive weight without retrieval head and prevents non-positive temperature/support thresholds.
-- [ ] Existing retrieval-head and sequence-construction controls continue to work independently when contrastive training remains disabled.
+- [x] Frontend API types include contrastive training fields on create and job response types.
+- [x] The create form keeps contrastive training disabled by default and submits backward-compatible defaults.
+- [x] Contrastive controls are enabled only when retrieval head is enabled.
+- [x] Enabling contrastive training sets `contrastive_label_source="human_corrections"` and exposes loss weight, temperature, support thresholds, and cross-region-positive controls.
+- [x] Frontend validation prevents positive contrastive weight without retrieval head and prevents non-positive temperature/support thresholds.
+- [x] Existing retrieval-head and sequence-construction controls continue to work independently when contrastive training remains disabled.
 
 **Tests needed:**
 - E2E update showing the default create request remains contrastive-disabled.
@@ -204,13 +204,13 @@
 - Modify: `docs/reference/frontend.md`
 
 **Acceptance criteria:**
-- [ ] Data-model reference documents the new `MaskedTransformerJob` contrastive fields and their default/backward-compatibility behavior.
-- [ ] API reference documents create/job response contrastive fields, accepted label sources, normalization rules, and validation constraints.
-- [ ] Storage-layout reference documents separated loss-curve fields and confirms contextual/retrieval embedding artifact schemas remain unchanged.
-- [ ] Behavioral constraints make the invariant explicit: human corrections are the only contrastive supervision source; model Classify labels cannot create contrastive positives.
-- [ ] Behavioral constraints record that unlabeled events remain valid masked-modeling examples but do not contribute to contrastive loss.
-- [ ] Behavioral constraints keep the `training_signature` rule explicit: contrastive config is included, contrastive-enabled human correction training includes the bound Classify workflow id, and `k_values` is excluded.
-- [ ] Frontend reference records the contrastive create-form controls and defaults.
+- [x] Data-model reference documents the new `MaskedTransformerJob` contrastive fields and their default/backward-compatibility behavior.
+- [x] API reference documents create/job response contrastive fields, accepted label sources, normalization rules, and validation constraints.
+- [x] Storage-layout reference documents separated loss-curve fields and confirms contextual/retrieval embedding artifact schemas remain unchanged.
+- [x] Behavioral constraints make the invariant explicit: human corrections are the only contrastive supervision source; model Classify labels cannot create contrastive positives.
+- [x] Behavioral constraints record that unlabeled events remain valid masked-modeling examples but do not contribute to contrastive loss.
+- [x] Behavioral constraints keep the `training_signature` rule explicit: contrastive config is included, contrastive-enabled human correction training includes the bound Classify workflow id, and `k_values` is excluded.
+- [x] Frontend reference records the contrastive create-form controls and defaults.
 
 **Tests needed:**
 - Documentation-only task; covered by review plus the verification commands below.

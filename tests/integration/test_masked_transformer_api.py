@@ -152,6 +152,36 @@ async def test_create_happy_path(client, app_settings):
     assert body["event_centered_fraction"] == 0.4
     assert body["pre_event_context_sec"] == 1.5
     assert body["post_event_context_sec"] == 2.5
+    assert body["contrastive_loss_weight"] == 0.0
+    assert body["contrastive_label_source"] == "none"
+
+
+async def test_create_contrastive_round_trips(client, app_settings):
+    cej_id = await _seed_crnn_cej(app_settings)
+    response = await client.post(
+        "/sequence-models/masked-transformers",
+        json={
+            "continuous_embedding_job_id": cej_id,
+            "preset": "small",
+            "retrieval_head_enabled": True,
+            "contrastive_loss_weight": 0.1,
+            "contrastive_temperature": 0.07,
+            "contrastive_label_source": "human_corrections",
+            "contrastive_min_events_per_label": 2,
+            "contrastive_min_regions_per_label": 1,
+            "require_cross_region_positive": False,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["retrieval_head_enabled"] is True
+    assert body["contrastive_loss_weight"] == 0.1
+    assert body["contrastive_temperature"] == 0.07
+    assert body["contrastive_label_source"] == "human_corrections"
+    assert body["contrastive_min_events_per_label"] == 2
+    assert body["contrastive_min_regions_per_label"] == 1
+    assert body["require_cross_region_positive"] is False
+    assert body["related_label_policy_json"] is not None
 
 
 async def test_create_idempotent_on_signature(client, app_settings):
@@ -201,6 +231,19 @@ async def test_create_rejects_invalid_sequence_construction(client, app_settings
             "continuous_embedding_job_id": cej_id,
             "sequence_construction_mode": "mixed",
             "event_centered_fraction": 1.0,
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_create_rejects_contrastive_without_retrieval_head(client, app_settings):
+    cej_id = await _seed_crnn_cej(app_settings)
+    response = await client.post(
+        "/sequence-models/masked-transformers",
+        json={
+            "continuous_embedding_job_id": cej_id,
+            "contrastive_loss_weight": 0.1,
+            "contrastive_label_source": "human_corrections",
         },
     )
     assert response.status_code == 422

@@ -199,6 +199,13 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert contextual.event_centered_fraction == 0.0
     assert contextual.pre_event_context_sec is None
     assert contextual.post_event_context_sec is None
+    assert contextual.contrastive_loss_weight == 0.0
+    assert contextual.contrastive_temperature == 0.07
+    assert contextual.contrastive_label_source == "none"
+    assert contextual.contrastive_min_events_per_label == 4
+    assert contextual.contrastive_min_regions_per_label == 2
+    assert contextual.require_cross_region_positive is True
+    assert contextual.related_label_policy_json is None
 
     retrieval = MaskedTransformerJobCreate(
         continuous_embedding_job_id="cej-1",
@@ -291,6 +298,44 @@ def test_masked_transformer_create_retrieval_head_validation():
     assert disabled.retrieval_hidden_dim is None
 
 
+def test_masked_transformer_create_contrastive_validation():
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="none",
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            contrastive_temperature=0.0,
+        )
+
+    payload = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        retrieval_head_enabled=True,
+        contrastive_loss_weight=0.1,
+        contrastive_label_source="human_corrections",
+        contrastive_min_events_per_label=2,
+        contrastive_min_regions_per_label=1,
+        require_cross_region_positive=False,
+    )
+    assert payload.contrastive_label_source == "human_corrections"
+    assert payload.contrastive_min_events_per_label == 2
+    assert payload.contrastive_min_regions_per_label == 1
+    assert payload.require_cross_region_positive is False
+
+
 def test_masked_transformer_job_out_serializes_retrieval_fields():
     payload = {
         "id": "mt-1",
@@ -314,6 +359,13 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "event_centered_fraction": 0.5,
         "pre_event_context_sec": 1.0,
         "post_event_context_sec": 3.0,
+        "contrastive_loss_weight": 0.1,
+        "contrastive_temperature": 0.07,
+        "contrastive_label_source": "human_corrections",
+        "contrastive_min_events_per_label": 4,
+        "contrastive_min_regions_per_label": 2,
+        "require_cross_region_positive": True,
+        "related_label_policy_json": '{"exclude_pairs":[]}',
         "max_epochs": 30,
         "early_stop_patience": 3,
         "val_split": 0.1,
@@ -341,6 +393,9 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
     assert job.event_centered_fraction == 0.5
     assert job.pre_event_context_sec == 1.0
     assert job.post_event_context_sec == 3.0
+    assert job.contrastive_loss_weight == 0.1
+    assert job.contrastive_label_source == "human_corrections"
+    assert job.related_label_policy_json == '{"exclude_pairs":[]}'
     assert job.k_values == [100]
 
 

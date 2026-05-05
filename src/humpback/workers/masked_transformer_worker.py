@@ -52,6 +52,12 @@ from humpback.sequence_models.masked_transformer import (
     extract_transformer_embeddings,
     train_masked_transformer,
 )
+from humpback.sequence_models.contrastive_labels import load_contrastive_event_labels
+from humpback.sequence_models.contrastive_loss import (
+    ContrastiveEventMetadata,
+    build_contrastive_masks,
+    parse_related_label_policy,
+)
 from humpback.sequence_models.masked_transformer_sequences import (
     EffectiveEventInterval,
     build_masked_transformer_training_sequences,
@@ -429,10 +435,24 @@ def _write_reconstruction_error(
 def _write_loss_curve(
     *, storage_root: Path, job_id: str, loss_curve: dict, val_metrics: dict
 ) -> None:
+    train_total = list(loss_curve.get("train_total", loss_curve.get("train", [])))
+    val_total = list(loss_curve.get("val_total", loss_curve.get("val", [])))
     payload = {
-        "epochs": list(range(1, len(loss_curve.get("train", [])) + 1)),
-        "train_loss": list(loss_curve.get("train", [])),
-        "val_loss": list(loss_curve.get("val", [])),
+        "epochs": list(range(1, len(train_total) + 1)),
+        "train_loss": train_total,
+        "val_loss": val_total,
+        "train_masked_loss": list(loss_curve.get("train_masked", train_total)),
+        "train_contrastive_loss": list(loss_curve.get("train_contrastive", [])),
+        "train_total_loss": train_total,
+        "val_masked_loss": list(loss_curve.get("val_masked", val_total)),
+        "val_contrastive_loss": list(loss_curve.get("val_contrastive", [])),
+        "val_total_loss": val_total,
+        "train_contrastive_skipped_batches": list(
+            loss_curve.get("train_contrastive_skipped_batches", [])
+        ),
+        "val_contrastive_skipped_batches": list(
+            loss_curve.get("val_contrastive_skipped_batches", [])
+        ),
         "val_metrics": val_metrics,
     }
     dst = masked_transformer_loss_curve_path(storage_root, job_id)
@@ -466,6 +486,13 @@ def _save_model_state(
             "event_centered_fraction": config.event_centered_fraction,
             "pre_event_context_sec": config.pre_event_context_sec,
             "post_event_context_sec": config.post_event_context_sec,
+            "contrastive_loss_weight": config.contrastive_loss_weight,
+            "contrastive_temperature": config.contrastive_temperature,
+            "contrastive_label_source": config.contrastive_label_source,
+            "contrastive_min_events_per_label": config.contrastive_min_events_per_label,
+            "contrastive_min_regions_per_label": config.contrastive_min_regions_per_label,
+            "require_cross_region_positive": config.require_cross_region_positive,
+            "related_label_policy_json": config.related_label_policy_json,
         },
     }
     torch.save(payload, tmp)
@@ -563,6 +590,13 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
         event_centered_fraction=float(job.event_centered_fraction),
         pre_event_context_sec=job.pre_event_context_sec,
         post_event_context_sec=job.post_event_context_sec,
+        contrastive_loss_weight=float(job.contrastive_loss_weight),
+        contrastive_temperature=float(job.contrastive_temperature),
+        contrastive_label_source=job.contrastive_label_source,  # type: ignore[arg-type]
+        contrastive_min_events_per_label=int(job.contrastive_min_events_per_label),
+        contrastive_min_regions_per_label=int(job.contrastive_min_regions_per_label),
+        require_cross_region_positive=bool(job.require_cross_region_positive),
+        related_label_policy_json=job.related_label_policy_json,
         max_epochs=int(job.max_epochs),
         early_stop_patience=int(job.early_stop_patience),
         val_split=float(job.val_split),
@@ -603,6 +637,68 @@ async def _load_effective_event_intervals(
         )
         for event in events
     ]
+
+
+async def _load_contrastive_event_intervals(
+    session: AsyncSession,
+    *,
+    storage_root: Path,
+    cej: ContinuousEmbeddingJob,
+) -> list[EffectiveEventInterval]:
+    if not cej.event_segmentation_job_id:
+        raise ValueError(
+            "contrastive masked-transformer training requires "
+            "event_segmentation_job_id on the upstream continuous embedding job"
+        )
+    if not cej.region_detection_job_id:
+        raise ValueError(
+            "contrastive masked-transformer training requires "
+            "region_detection_job_id on the upstream continuous embedding job"
+        )
+    region_job = await session.get(RegionDetectionJob, cej.region_detection_job_id)
+    if region_job is None:
+        raise ValueError(f"RegionDetectionJob {cej.region_detection_job_id} not found")
+    labels, _ = await load_contrastive_event_labels(
+        session,
+        storage_root=storage_root,
+        event_segmentation_job_id=cej.event_segmentation_job_id,
+        region_detection_job_id=cej.region_detection_job_id,
+        region_start_timestamp=region_job.start_timestamp,
+    )
+    return [
+        EffectiveEventInterval(
+            region_id=event.region_id,
+            start_timestamp=event.start_timestamp,
+            end_timestamp=event.end_timestamp,
+            event_id=event.event_id,
+            human_types=event.human_types,
+        )
+        for event in labels
+    ]
+
+
+def _contrastive_metadata_from_candidates(
+    candidates: list,
+) -> list[Optional[ContrastiveEventMetadata]]:
+    out: list[Optional[ContrastiveEventMetadata]] = []
+    for candidate in candidates:
+        if (
+            candidate.event_id is None
+            or candidate.event_start_index is None
+            or candidate.event_end_index is None
+        ):
+            out.append(None)
+            continue
+        out.append(
+            ContrastiveEventMetadata(
+                event_id=candidate.event_id,
+                region_id=candidate.region_id,
+                human_types=candidate.human_types,
+                start_index=int(candidate.event_start_index),
+                end_index=int(candidate.event_end_index),
+            )
+        )
+    return out
 
 
 def _previously_done_k(storage_root: Path, job_id: str, k_list: list[int]) -> set[int]:
@@ -699,7 +795,17 @@ async def run_masked_transformer_job(
             await session.refresh(job)
 
             event_intervals: list[EffectiveEventInterval] = []
-            if config.sequence_construction_mode != "region":
+            contrastive_enabled = (
+                config.contrastive_loss_weight > 0.0
+                and config.contrastive_label_source == "human_corrections"
+            )
+            if contrastive_enabled:
+                event_intervals = await _load_contrastive_event_intervals(
+                    session,
+                    storage_root=settings.storage_root,
+                    cej=cej,
+                )
+            elif config.sequence_construction_mode != "region":
                 event_intervals = await _load_effective_event_intervals(
                     session,
                     storage_root=settings.storage_root,
@@ -727,11 +833,36 @@ async def run_masked_transformer_job(
             tier_payload: list[Optional[list[str]]] = [
                 t for t in constructed.tier_lists
             ]
+            contrastive_events: list[Optional[ContrastiveEventMetadata]] | None = None
+            if contrastive_enabled:
+                contrastive_events = _contrastive_metadata_from_candidates(
+                    constructed.candidates
+                )
+                labeled_events = [
+                    event
+                    for event in contrastive_events
+                    if event is not None and event.human_types
+                ]
+                masks = build_contrastive_masks(
+                    labeled_events,
+                    min_events_per_label=config.contrastive_min_events_per_label,
+                    min_regions_per_label=config.contrastive_min_regions_per_label,
+                    require_cross_region_positive=config.require_cross_region_positive,
+                    related_label_pairs=parse_related_label_policy(
+                        config.related_label_policy_json
+                    ),
+                )
+                if masks.valid_anchor_count == 0:
+                    raise ValueError(
+                        "contrastive masked-transformer training found no eligible "
+                        "human-correction positive pairs"
+                    )
             train_result = train_masked_transformer(
                 constructed.sequences,
                 config,
                 device=chosen_device,
                 tier_lists=tier_payload,
+                contrastive_events=contrastive_events,
             )
             full_region_tier_payload: list[Optional[list[str]]] = [
                 t for t in tier_lists

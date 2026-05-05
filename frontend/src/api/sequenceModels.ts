@@ -998,6 +998,9 @@ export type MaskedTransformerSequenceConstructionMode =
   | "region"
   | "event_centered"
   | "mixed";
+export type MaskedTransformerContrastiveLabelSource =
+  | "none"
+  | "human_corrections";
 
 export interface MaskedTransformerJob {
   id: string;
@@ -1021,6 +1024,13 @@ export interface MaskedTransformerJob {
   event_centered_fraction: number;
   pre_event_context_sec: number | null;
   post_event_context_sec: number | null;
+  contrastive_loss_weight: number;
+  contrastive_temperature: number;
+  contrastive_label_source: MaskedTransformerContrastiveLabelSource;
+  contrastive_min_events_per_label: number;
+  contrastive_min_regions_per_label: number;
+  require_cross_region_positive: boolean;
+  related_label_policy_json: string | null;
   max_epochs: number;
   early_stop_patience: number;
   val_split: number;
@@ -1068,6 +1078,13 @@ export interface MaskedTransformerJobCreate {
   event_centered_fraction?: number | null;
   pre_event_context_sec?: number | null;
   post_event_context_sec?: number | null;
+  contrastive_loss_weight?: number;
+  contrastive_temperature?: number;
+  contrastive_label_source?: MaskedTransformerContrastiveLabelSource;
+  contrastive_min_events_per_label?: number;
+  contrastive_min_regions_per_label?: number;
+  require_cross_region_positive?: boolean;
+  related_label_policy_json?: string | null;
   max_epochs?: number;
   early_stop_patience?: number;
   val_split?: number;
@@ -1082,6 +1099,14 @@ export interface LossCurveResponse {
   epochs: number[];
   train_loss: number[];
   val_loss: (number | null)[];
+  train_masked_loss?: number[];
+  train_contrastive_loss?: number[];
+  train_total_loss?: number[];
+  val_masked_loss?: (number | null)[];
+  val_contrastive_loss?: number[];
+  val_total_loss?: (number | null)[];
+  train_contrastive_skipped_batches?: number[];
+  val_contrastive_skipped_batches?: number[];
   val_metrics: Record<string, unknown>;
 }
 
