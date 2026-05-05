@@ -47,10 +47,12 @@ def test_apply_human_correction_labels_supports_multilabel_events() -> None:
     assert events[0].end_timestamp == 1012.0
     assert events[0].human_types == ("Moan", "Whup")
     assert meta["events_with_human_labels"] == 1
+    assert meta["single_label_effective_events"] == 0
+    assert meta["multi_label_effective_events"] == 1
 
 
 def test_apply_human_correction_labels_applies_add_remove_overlay() -> None:
-    events, _ = apply_human_correction_labels(
+    events, meta = apply_human_correction_labels(
         effective_events=[
             _Event("event-1", "region-a", 10.0, 12.0),
             _Event("event-2", "region-a", 20.0, 22.0),
@@ -75,6 +77,8 @@ def test_apply_human_correction_labels_applies_add_remove_overlay() -> None:
 
     assert events[0].human_types == ()
     assert events[1].human_types == ()
+    assert meta["unlabeled_effective_events"] == 2
+    assert meta["single_label_effective_events"] == 0
 
 
 def test_apply_human_correction_labels_ignores_non_overlapping_rows() -> None:
@@ -87,3 +91,4 @@ def test_apply_human_correction_labels_ignores_non_overlapping_rows() -> None:
     assert events[0].human_types == ()
     assert meta["total_correction_rows"] == 1
     assert meta["events_with_human_labels"] == 0
+    assert meta["unlabeled_effective_events"] == 1

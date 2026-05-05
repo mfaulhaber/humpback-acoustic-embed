@@ -255,10 +255,16 @@ async def load_human_correction_events(
     for event in events:
         for label in event.human_types:
             label_counter[label] += 1
+    unlabeled_events = sum(1 for event in events if not event.human_types)
+    single_label_events = sum(1 for event in events if len(event.human_types) == 1)
+    multi_label_events = sum(1 for event in events if len(event.human_types) > 1)
 
     return events, {
         "total_correction_rows": len(corrections),
         "events_with_human_labels": sum(1 for e in events if e.human_types),
+        "unlabeled_effective_events": unlabeled_events,
+        "single_label_effective_events": single_label_events,
+        "multi_label_effective_events": multi_label_events,
         "corrections_by_type": dict(corrections_by_type.most_common()),
         "event_label_counts": dict(label_counter.most_common()),
     }
@@ -967,6 +973,15 @@ async def build_nearest_neighbor_report(
             "human_labeled_query_pool_rows": human_candidate_count,
             "human_labeled_effective_events": context.correction_meta[
                 "events_with_human_labels"
+            ],
+            "unlabeled_effective_events": context.correction_meta[
+                "unlabeled_effective_events"
+            ],
+            "single_label_effective_events": context.correction_meta[
+                "single_label_effective_events"
+            ],
+            "multi_label_effective_events": context.correction_meta[
+                "multi_label_effective_events"
             ],
             "vocalization_correction_rows": context.correction_meta[
                 "total_correction_rows"

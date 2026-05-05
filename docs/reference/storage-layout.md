@@ -89,6 +89,11 @@
   {job_id}/.prepare.lock                   (advisory flock for exclusive classifier prepare ownership)
 /cleanup-manifests/
   {timestamp}-legacy-workflow-removal.json (manifest written by scripts/cleanup_legacy_workflows.py)
+/retrieval_sweeps/
+  submit-manifest.json        (default output from scripts/masked_transformer_retrieval_sweep.py submit; planned rows, submitted/reused job ids, blocked stop-rule rows, label semantics)
+  comparison.csv              (default deterministic ranked comparison table)
+  comparison.md               (compact research summary with metric definitions, label coverage, and stop-rule checks)
+  comparison.json             (normalized comparison payload for notebooks or follow-up scripts)
 ```
 
 Timeline tile image writes now use the shared `spans/{span_key}/...`
