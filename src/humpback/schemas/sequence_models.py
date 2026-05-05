@@ -646,6 +646,10 @@ class MaskedTransformerJobCreate(BaseModel):
     retrieval_dim: Optional[int] = Field(default=None, gt=0)
     retrieval_hidden_dim: Optional[int] = Field(default=None, gt=0)
     retrieval_l2_normalize: bool = True
+    sequence_construction_mode: Literal["region", "event_centered", "mixed"] = "region"
+    event_centered_fraction: Optional[float] = Field(default=0.0, ge=0.0, le=1.0)
+    pre_event_context_sec: Optional[float] = Field(default=None, ge=0.0)
+    post_event_context_sec: Optional[float] = Field(default=None, ge=0.0)
     max_epochs: int = Field(default=30, ge=1)
     early_stop_patience: int = Field(default=3, ge=1)
     val_split: float = Field(default=0.1, ge=0.0, lt=1.0)
@@ -673,6 +677,27 @@ class MaskedTransformerJobCreate(BaseModel):
         else:
             self.retrieval_dim = None
             self.retrieval_hidden_dim = None
+        if self.sequence_construction_mode == "region":
+            self.event_centered_fraction = 0.0
+            self.pre_event_context_sec = None
+            self.post_event_context_sec = None
+        elif self.sequence_construction_mode == "event_centered":
+            self.event_centered_fraction = 1.0
+            if self.pre_event_context_sec is None:
+                self.pre_event_context_sec = 2.0
+            if self.post_event_context_sec is None:
+                self.post_event_context_sec = 2.0
+        else:
+            if self.event_centered_fraction is None:
+                raise ValueError("mixed mode requires event_centered_fraction")
+            if not 0.0 < self.event_centered_fraction < 1.0:
+                raise ValueError(
+                    "mixed mode requires 0.0 < event_centered_fraction < 1.0"
+                )
+            if self.pre_event_context_sec is None:
+                self.pre_event_context_sec = 2.0
+            if self.post_event_context_sec is None:
+                self.post_event_context_sec = 2.0
         return self
 
 
@@ -696,6 +721,10 @@ class MaskedTransformerJobOut(BaseModel):
     retrieval_dim: Optional[int] = None
     retrieval_hidden_dim: Optional[int] = None
     retrieval_l2_normalize: bool = True
+    sequence_construction_mode: str = "region"
+    event_centered_fraction: float = 0.0
+    pre_event_context_sec: Optional[float] = None
+    post_event_context_sec: Optional[float] = None
     max_epochs: int
     early_stop_patience: int
     val_split: float

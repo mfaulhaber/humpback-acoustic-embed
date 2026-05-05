@@ -19,17 +19,17 @@
 - Modify: `tests/integration/test_masked_transformer_api.py`
 
 **Acceptance criteria:**
-- [ ] **Production DB backup taken FIRST per CLAUDE.md §3.5:** read `HUMPBACK_DATABASE_URL` from `.env` with `DB_URL=$(grep '^HUMPBACK_DATABASE_URL=' .env | cut -d= -f2-)`, derive the SQLite path with `DB_PATH=${DB_URL#sqlite+aiosqlite:///}`, create a UTC backup name with `BACKUP="$DB_PATH.$(date -u +%Y-%m-%d-%H:%M).bak"`, copy with `cp "$DB_PATH" "$BACKUP"`, and verify non-zero size with `test -s "$BACKUP"` before running any migration command. If any backup command fails or is skipped, stop and do not apply the migration.
-- [ ] Migration `068_masked_transformer_event_centered_sequences.py` adds `sequence_construction_mode`, `event_centered_fraction`, `pre_event_context_sec`, and `post_event_context_sec` to `masked_transformer_jobs` using `op.batch_alter_table()` for SQLite compatibility.
-- [ ] Existing rows backfill to region-only behavior: `sequence_construction_mode="region"`, `event_centered_fraction=0.0`, and null pre/post context fields.
-- [ ] `MaskedTransformerJob`, `MaskedTransformerJobCreate`, and `MaskedTransformerJobOut` expose the new fields with defaults that preserve existing job creation behavior.
-- [ ] Accepted modes are `region`, `event_centered`, and `mixed`.
-- [ ] Event-centered and mixed modes normalize omitted pre/post context to the Phase 2 defaults `2.0` seconds each.
-- [ ] Region mode normalizes `event_centered_fraction` to `0.0` and clears pre/post context fields.
-- [ ] Event-centered mode normalizes `event_centered_fraction` to `1.0`.
-- [ ] Mixed mode requires `0.0 < event_centered_fraction < 1.0`.
-- [ ] `compute_training_signature()` includes the normalized sequence-construction fields and continues to exclude `k_values`.
-- [ ] Re-submitting an existing region-only config returns the same pre-068 job as before, while changing any sequence-construction field changes the signature.
+- [x] **Production DB backup taken FIRST per CLAUDE.md §3.5:** read `HUMPBACK_DATABASE_URL` from `.env` with `DB_URL=$(grep '^HUMPBACK_DATABASE_URL=' .env | cut -d= -f2-)`, derive the SQLite path with `DB_PATH=${DB_URL#sqlite+aiosqlite:///}`, create a UTC backup name with `BACKUP="$DB_PATH.$(date -u +%Y-%m-%d-%H:%M).bak"`, copy with `cp "$DB_PATH" "$BACKUP"`, and verify non-zero size with `test -s "$BACKUP"` before running any migration command. If any backup command fails or is skipped, stop and do not apply the migration.
+- [x] Migration `068_masked_transformer_event_centered_sequences.py` adds `sequence_construction_mode`, `event_centered_fraction`, `pre_event_context_sec`, and `post_event_context_sec` to `masked_transformer_jobs` using `op.batch_alter_table()` for SQLite compatibility.
+- [x] Existing rows backfill to region-only behavior: `sequence_construction_mode="region"`, `event_centered_fraction=0.0`, and null pre/post context fields.
+- [x] `MaskedTransformerJob`, `MaskedTransformerJobCreate`, and `MaskedTransformerJobOut` expose the new fields with defaults that preserve existing job creation behavior.
+- [x] Accepted modes are `region`, `event_centered`, and `mixed`.
+- [x] Event-centered and mixed modes normalize omitted pre/post context to the Phase 2 defaults `2.0` seconds each.
+- [x] Region mode normalizes `event_centered_fraction` to `0.0` and clears pre/post context fields.
+- [x] Event-centered mode normalizes `event_centered_fraction` to `1.0`.
+- [x] Mixed mode requires `0.0 < event_centered_fraction < 1.0`.
+- [x] `compute_training_signature()` includes the normalized sequence-construction fields and continues to exclude `k_values`.
+- [x] Re-submitting an existing region-only config returns the same pre-068 job as before, while changing any sequence-construction field changes the signature.
 
 **Tests needed:**
 - Migration upgrade/downgrade test against SQLite showing defaults on pre-existing `masked_transformer_jobs` rows.
@@ -48,17 +48,17 @@
 - Modify: `tests/sequence_models/test_masked_transformer.py`
 
 **Acceptance criteria:**
-- [ ] A pure builder accepts full-region CRNN embedding sequences plus aligned tier/start/end metadata and effective event intervals, and returns training sequences with aligned tier lists.
-- [ ] Region mode returns the original full-region training sequences unchanged.
-- [ ] Event-centered mode returns one training sequence per effective event that overlaps available CRNN chunks.
-- [ ] Each event-centered training window includes configured pre-event and post-event context, clamped to the available region chunk range.
-- [ ] Short events, long events, and events near the beginning or end of a region produce non-empty, correctly bounded windows.
-- [ ] Events with no overlapping upstream CRNN chunks are skipped without affecting extraction-time full-region metadata.
-- [ ] Mixed mode combines region and event-centered candidates according to `event_centered_fraction`.
-- [ ] Mixed mode selection is deterministic under `seed`.
-- [ ] Mixed mode always returns at least one trainable sequence when either source has candidates.
-- [ ] The builder does not read files, query the database, mutate input arrays, or apply contrastive labels.
-- [ ] `MaskedTransformerConfig` carries the sequence-construction fields so trainer-facing configuration has one source of truth.
+- [x] A pure builder accepts full-region CRNN embedding sequences plus aligned tier/start/end metadata and effective event intervals, and returns training sequences with aligned tier lists.
+- [x] Region mode returns the original full-region training sequences unchanged.
+- [x] Event-centered mode returns one training sequence per effective event that overlaps available CRNN chunks.
+- [x] Each event-centered training window includes configured pre-event and post-event context, clamped to the available region chunk range.
+- [x] Short events, long events, and events near the beginning or end of a region produce non-empty, correctly bounded windows.
+- [x] Events with no overlapping upstream CRNN chunks are skipped without affecting extraction-time full-region metadata.
+- [x] Mixed mode combines region and event-centered candidates according to `event_centered_fraction`.
+- [x] Mixed mode selection is deterministic under `seed`.
+- [x] Mixed mode always returns at least one trainable sequence when either source has candidates.
+- [x] The builder does not read files, query the database, mutate input arrays, or apply contrastive labels.
+- [x] `MaskedTransformerConfig` carries the sequence-construction fields so trainer-facing configuration has one source of truth.
 
 **Tests needed:**
 - Unit tests for short, long, and edge-near events with explicit expected chunk index ranges.
@@ -77,16 +77,16 @@
 - Modify: `tests/fixtures/sequence_models/classify_binding.py`
 
 **Acceptance criteria:**
-- [ ] First-pass workers load effective events through the existing segmentation-correction path for event-centered and mixed modes.
-- [ ] Event seconds are bridged to the same timestamp domain as CRNN chunk `start_timestamp` and `end_timestamp` using the upstream `RegionDetectionJob.start_timestamp`, consistent with ADR-062 and ADR-063 semantics.
-- [ ] Training uses event-centered or mixed training sequences only when configured.
-- [ ] Extraction still runs over the original full-region sequences for contextual embeddings, retrieval embeddings, reconstruction error, and per-k tokenization.
-- [ ] Retrieval-head jobs still write one retrieval embedding row per upstream CRNN chunk, not per event-centered training window.
-- [ ] Non-retrieval jobs still write one contextual embedding row per upstream CRNN chunk.
-- [ ] `job.total_sequences` and `job.total_chunks` continue to report full-region extraction counts so existing UI and storage contracts do not change.
-- [ ] Saved `transformer.pt` metadata records sequence-construction mode, event-centered fraction, and pre/post context values.
-- [ ] If an event-centered or mixed job has no usable event-centered windows, the worker fails clearly rather than silently training as region-only.
-- [ ] Extend-k-sweep follow-up passes do not rebuild event-centered windows or retrain the transformer.
+- [x] First-pass workers load effective events through the existing segmentation-correction path for event-centered and mixed modes.
+- [x] Event seconds are bridged to the same timestamp domain as CRNN chunk `start_timestamp` and `end_timestamp` using the upstream `RegionDetectionJob.start_timestamp`, consistent with ADR-062 and ADR-063 semantics.
+- [x] Training uses event-centered or mixed training sequences only when configured.
+- [x] Extraction still runs over the original full-region sequences for contextual embeddings, retrieval embeddings, reconstruction error, and per-k tokenization.
+- [x] Retrieval-head jobs still write one retrieval embedding row per upstream CRNN chunk, not per event-centered training window.
+- [x] Non-retrieval jobs still write one contextual embedding row per upstream CRNN chunk.
+- [x] `job.total_sequences` and `job.total_chunks` continue to report full-region extraction counts so existing UI and storage contracts do not change.
+- [x] Saved `transformer.pt` metadata records sequence-construction mode, event-centered fraction, and pre/post context values.
+- [x] If an event-centered or mixed job has no usable event-centered windows, the worker fails clearly rather than silently training as region-only.
+- [x] Extend-k-sweep follow-up passes do not rebuild event-centered windows or retrain the transformer.
 
 **Tests needed:**
 - Worker test for event-centered mode with effective events asserting full-region artifact row counts still match the upstream CRNN parquet.
@@ -105,13 +105,13 @@
 - Modify: `frontend/e2e/sequence-models/masked-transformer.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Frontend API types include `sequence_construction_mode`, `event_centered_fraction`, `pre_event_context_sec`, and `post_event_context_sec` on create and job response types.
-- [ ] The create form exposes a compact mode control for region, event-centered, and mixed training construction.
-- [ ] Region mode remains the default and submits the same effective payload shape as existing contextual jobs plus explicit Phase 2 defaults.
-- [ ] Event-centered and mixed modes enable numeric pre/post context controls.
-- [ ] Mixed mode enables an `event_centered_fraction` numeric control and prevents values outside `0.0 < fraction < 1.0`.
-- [ ] Event-centered mode submits `event_centered_fraction=1.0`; region mode submits `event_centered_fraction=0.0`.
-- [ ] Existing retrieval-head controls continue to work independently of sequence-construction mode.
+- [x] Frontend API types include `sequence_construction_mode`, `event_centered_fraction`, `pre_event_context_sec`, and `post_event_context_sec` on create and job response types.
+- [x] The create form exposes a compact mode control for region, event-centered, and mixed training construction.
+- [x] Region mode remains the default and submits the same effective payload shape as existing contextual jobs plus explicit Phase 2 defaults.
+- [x] Event-centered and mixed modes enable numeric pre/post context controls.
+- [x] Mixed mode enables an `event_centered_fraction` numeric control and prevents values outside `0.0 < fraction < 1.0`.
+- [x] Event-centered mode submits `event_centered_fraction=1.0`; region mode submits `event_centered_fraction=0.0`.
+- [x] Existing retrieval-head controls continue to work independently of sequence-construction mode.
 
 **Tests needed:**
 - E2E update showing the default create request remains region mode.
@@ -130,11 +130,11 @@
 - Modify: `docs/reference/frontend.md`
 
 **Acceptance criteria:**
-- [ ] Data-model reference documents the new `MaskedTransformerJob` sequence-construction fields and their default/backward-compatibility behavior.
-- [ ] API reference documents create/job response sequence-construction fields, accepted modes, and normalization rules.
-- [ ] Behavioral constraints make the invariant explicit: event-centered windows affect training only; extraction artifacts stay full-region aligned.
-- [ ] Behavioral constraints keep the `training_signature` rule explicit: sequence-construction config is included and `k_values` is excluded.
-- [ ] Frontend reference records the create-form sequence-construction controls.
+- [x] Data-model reference documents the new `MaskedTransformerJob` sequence-construction fields and their default/backward-compatibility behavior.
+- [x] API reference documents create/job response sequence-construction fields, accepted modes, and normalization rules.
+- [x] Behavioral constraints make the invariant explicit: event-centered windows affect training only; extraction artifacts stay full-region aligned.
+- [x] Behavioral constraints keep the `training_signature` rule explicit: sequence-construction config is included and `k_values` is excluded.
+- [x] Frontend reference records the create-form sequence-construction controls.
 
 **Tests needed:**
 - Documentation-only task; covered by review plus the verification commands below.

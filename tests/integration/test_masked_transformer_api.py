@@ -137,6 +137,10 @@ async def test_create_happy_path(client, app_settings):
             "continuous_embedding_job_id": cej_id,
             "preset": "small",
             "k_values": [50, 100],
+            "sequence_construction_mode": "mixed",
+            "event_centered_fraction": 0.4,
+            "pre_event_context_sec": 1.5,
+            "post_event_context_sec": 2.5,
         },
     )
     assert response.status_code == 201, response.text
@@ -144,6 +148,10 @@ async def test_create_happy_path(client, app_settings):
     assert body["preset"] == "small"
     assert body["k_values"] == [50, 100]
     assert body["status"] == "queued"
+    assert body["sequence_construction_mode"] == "mixed"
+    assert body["event_centered_fraction"] == 0.4
+    assert body["pre_event_context_sec"] == 1.5
+    assert body["post_event_context_sec"] == 2.5
 
 
 async def test_create_idempotent_on_signature(client, app_settings):
@@ -185,6 +193,19 @@ async def test_create_rejects_invalid_preset(client, app_settings):
     assert response.status_code == 422
 
 
+async def test_create_rejects_invalid_sequence_construction(client, app_settings):
+    cej_id = await _seed_crnn_cej(app_settings)
+    response = await client.post(
+        "/sequence-models/masked-transformers",
+        json={
+            "continuous_embedding_job_id": cej_id,
+            "sequence_construction_mode": "mixed",
+            "event_centered_fraction": 1.0,
+        },
+    )
+    assert response.status_code == 422
+
+
 async def test_create_rejects_k_below_2(client, app_settings):
     cej_id = await _seed_crnn_cej(app_settings)
     response = await client.post(
@@ -209,6 +230,10 @@ async def test_list_and_detail(client, app_settings):
     detail = await client.get(f"/sequence-models/masked-transformers/{job_id}")
     assert detail.status_code == 200
     assert detail.json()["job"]["id"] == job_id
+    assert detail.json()["job"]["sequence_construction_mode"] == "region"
+    assert detail.json()["job"]["event_centered_fraction"] == 0.0
+    assert detail.json()["job"]["pre_event_context_sec"] is None
+    assert detail.json()["job"]["post_event_context_sec"] is None
     assert detail.json()["source_kind"] == "region_crnn"
 
 

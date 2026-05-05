@@ -994,6 +994,10 @@ export function useGenerateInterpretations() {
 const MT_ROOT = "/sequence-models/masked-transformers";
 
 export type MaskedTransformerPreset = "small" | "default" | "large";
+export type MaskedTransformerSequenceConstructionMode =
+  | "region"
+  | "event_centered"
+  | "mixed";
 
 export interface MaskedTransformerJob {
   id: string;
@@ -1013,6 +1017,10 @@ export interface MaskedTransformerJob {
   retrieval_dim: number | null;
   retrieval_hidden_dim: number | null;
   retrieval_l2_normalize: boolean;
+  sequence_construction_mode: MaskedTransformerSequenceConstructionMode;
+  event_centered_fraction: number;
+  pre_event_context_sec: number | null;
+  post_event_context_sec: number | null;
   max_epochs: number;
   early_stop_patience: number;
   val_split: number;
@@ -1056,6 +1064,10 @@ export interface MaskedTransformerJobCreate {
   retrieval_dim?: number | null;
   retrieval_hidden_dim?: number | null;
   retrieval_l2_normalize?: boolean;
+  sequence_construction_mode?: MaskedTransformerSequenceConstructionMode;
+  event_centered_fraction?: number | null;
+  pre_event_context_sec?: number | null;
+  post_event_context_sec?: number | null;
   max_epochs?: number;
   early_stop_patience?: number;
   val_split?: number;

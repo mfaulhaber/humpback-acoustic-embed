@@ -431,6 +431,18 @@ parameter.
     disabled) — positive integers controlling the projection head.
   - `retrieval_l2_normalize` (default `true`) — L2-normalizes retrieval
     vectors before persistence and downstream tokenization.
+  - `sequence_construction_mode` (default `"region"`, one of
+    `"region"` | `"event_centered"` | `"mixed"`) — controls which
+    windows feed training. Region mode trains on full CRNN region
+    sequences. Event-centered mode trains on one effective-event-centered
+    window per boundary-corrected event. Mixed mode combines full-region
+    and event-centered candidates deterministically under `seed`.
+  - `event_centered_fraction` — normalized to `0.0` in region mode and
+    `1.0` in event-centered mode. Mixed mode requires
+    `0.0 < event_centered_fraction < 1.0`.
+  - `pre_event_context_sec`, `post_event_context_sec` — event-centered
+    and mixed modes default omitted values to `2.0`; region mode clears
+    both to null. Values must be non-negative.
   - `max_epochs`, `early_stop_patience` (default `3`), `val_split`
     (default `0.1`), `seed` (default `42`).
 
@@ -447,7 +459,9 @@ parameter.
   region/embedding metadata. Response shape mirrors the HMM detail
   shape with masked-transformer-specific fields (`k_values`,
   `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`,
-  `retrieval_l2_normalize`, `chosen_device`, `fallback_reason`,
+  `retrieval_l2_normalize`, `sequence_construction_mode`,
+  `event_centered_fraction`, `pre_event_context_sec`,
+  `post_event_context_sec`, `chosen_device`, `fallback_reason`,
   `final_train_loss`, `final_val_loss`, `total_epochs`,
   `total_sequences`, `total_chunks`).
 
@@ -552,7 +566,9 @@ entry of `k_values`); `404` on unknown k:
 hyperparameters (`preset`, `mask_fraction`, `span_length_min`,
 `span_length_max`, `dropout`, `mask_weight_bias`, `cosine_loss_weight`,
 `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`,
-`retrieval_l2_normalize`, `max_epochs`, `early_stop_patience`,
+`retrieval_l2_normalize`, `sequence_construction_mode`,
+`event_centered_fraction`, `pre_event_context_sec`,
+`post_event_context_sec`, `max_epochs`, `early_stop_patience`,
 `val_split`, `seed`), tokenization config (`k_values`), device +
 outcomes (`chosen_device`, `fallback_reason`, `final_train_loss`,
 `final_val_loss`, `total_epochs`), storage (`job_dir`,
@@ -591,10 +607,17 @@ Reused across HMM and masked-transformer detail pages: `OverlayResponse`,
 - `training_signature` is computed from
   `(continuous_embedding_job_id, preset, mask_fraction,
   span_length_min, span_length_max, dropout, mask_weight_bias,
-  cosine_loss_weight, retrieval-head config when enabled, max_epochs,
+  cosine_loss_weight, retrieval-head config when enabled,
+  non-region sequence-construction config, max_epochs,
   early_stop_patience, val_split, seed)` — `k_values` is intentionally
   excluded so a completed job can extend its k-sweep. Disabled
-  retrieval-head jobs preserve the pre-067 signature shape.
+  retrieval-head jobs preserve the pre-067 signature shape; default
+  region-mode jobs preserve the pre-068 signature shape.
+- Event-centered and mixed sequence construction affect training only.
+  The worker still extracts contextual embeddings, retrieval embeddings,
+  reconstruction error, and per-k decoded tokens over the original
+  full-region CRNN sequences, so artifact row counts and downstream
+  token consumers remain unchanged.
 - Retrieval-head jobs continue writing `contextual_embeddings.parquet`
   for compatibility and diagnostics, and additionally write
   `retrieval_embeddings.parquet`; their per-k `decoded.parquet` bundles

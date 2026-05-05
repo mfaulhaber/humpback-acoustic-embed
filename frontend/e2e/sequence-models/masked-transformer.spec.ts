@@ -76,6 +76,10 @@ const QUEUED_JOB = {
   retrieval_dim: null,
   retrieval_hidden_dim: null,
   retrieval_l2_normalize: true,
+  sequence_construction_mode: "region",
+  event_centered_fraction: 0.0,
+  pre_event_context_sec: null,
+  post_event_context_sec: null,
   max_epochs: 30,
   early_stop_patience: 3,
   val_split: 0.1,
@@ -334,6 +338,11 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
           retrieval_dim: body.retrieval_dim ?? null,
           retrieval_hidden_dim: body.retrieval_hidden_dim ?? null,
           retrieval_l2_normalize: body.retrieval_l2_normalize ?? true,
+          sequence_construction_mode:
+            body.sequence_construction_mode ?? "region",
+          event_centered_fraction: body.event_centered_fraction ?? 0.0,
+          pre_event_context_sec: body.pre_event_context_sec ?? null,
+          post_event_context_sec: body.post_event_context_sec ?? null,
         };
         state.jobs = [created, ...state.jobs];
         return route.fulfill({
@@ -520,6 +529,10 @@ test.describe("Sequence Models — Masked Transformer", () => {
       retrieval_dim: null,
       retrieval_hidden_dim: null,
       retrieval_l2_normalize: true,
+      sequence_construction_mode: "region",
+      event_centered_fraction: 0.0,
+      pre_event_context_sec: null,
+      post_event_context_sec: null,
     });
   });
 
@@ -542,6 +555,52 @@ test.describe("Sequence Models — Masked Transformer", () => {
       retrieval_dim: 64,
       retrieval_hidden_dim: 256,
       retrieval_l2_normalize: true,
+    });
+  });
+
+  test("create form submits event-centered sequence mode", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await page
+      .getByTestId("mt-sequence-mode-event_centered")
+      .locator("input")
+      .check();
+    await page.getByTestId("mt-adv-pre_event_context_sec").fill("1.5");
+    await page.getByTestId("mt-adv-post_event_context_sec").fill("2.5");
+    await page.getByTestId("mt-create-submit").click();
+    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    expect(state.capturedCreates?.[0]).toMatchObject({
+      sequence_construction_mode: "event_centered",
+      event_centered_fraction: 1.0,
+      pre_event_context_sec: 1.5,
+      post_event_context_sec: 2.5,
+    });
+  });
+
+  test("create form submits mixed sequence fraction", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await page.getByTestId("mt-sequence-mode-mixed").locator("input").check();
+    await page.getByTestId("mt-adv-event_centered_fraction").fill("0.35");
+    await page.getByTestId("mt-create-submit").click();
+    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    expect(state.capturedCreates?.[0]).toMatchObject({
+      sequence_construction_mode: "mixed",
+      event_centered_fraction: 0.35,
+      pre_event_context_sec: 2.0,
+      post_event_context_sec: 2.0,
     });
   });
 

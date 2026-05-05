@@ -82,6 +82,10 @@ def compute_training_signature(
     retrieval_dim: Optional[int] = None,
     retrieval_hidden_dim: Optional[int] = None,
     retrieval_l2_normalize: bool = True,
+    sequence_construction_mode: str = "region",
+    event_centered_fraction: float = 0.0,
+    pre_event_context_sec: Optional[float] = None,
+    post_event_context_sec: Optional[float] = None,
 ) -> str:
     """Stable signature over training-only config (excludes ``k_values``).
 
@@ -113,6 +117,19 @@ def compute_training_signature(
                 if retrieval_hidden_dim is not None
                 else None,
                 "retrieval_l2_normalize": bool(retrieval_l2_normalize),
+            }
+        )
+    if sequence_construction_mode != "region":
+        payload.update(
+            {
+                "sequence_construction_mode": sequence_construction_mode,
+                "event_centered_fraction": float(event_centered_fraction),
+                "pre_event_context_sec": float(pre_event_context_sec)
+                if pre_event_context_sec is not None
+                else None,
+                "post_event_context_sec": float(post_event_context_sec)
+                if post_event_context_sec is not None
+                else None,
             }
         )
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -175,6 +192,44 @@ def normalize_retrieval_head_config(
     return True, resolved_dim, resolved_hidden_dim, l2_normalize
 
 
+def normalize_sequence_construction_config(
+    *,
+    sequence_construction_mode: str = "region",
+    event_centered_fraction: Optional[float] = 0.0,
+    pre_event_context_sec: Optional[float] = None,
+    post_event_context_sec: Optional[float] = None,
+) -> tuple[str, float, Optional[float], Optional[float]]:
+    mode = sequence_construction_mode
+    if mode not in {"region", "event_centered", "mixed"}:
+        raise ValueError(
+            "sequence_construction_mode must be one of region/event_centered/mixed"
+        )
+
+    if pre_event_context_sec is not None and float(pre_event_context_sec) < 0.0:
+        raise ValueError("pre_event_context_sec must be non-negative when provided")
+    if post_event_context_sec is not None and float(post_event_context_sec) < 0.0:
+        raise ValueError("post_event_context_sec must be non-negative when provided")
+
+    if mode == "region":
+        return "region", 0.0, None, None
+
+    pre_context = 2.0 if pre_event_context_sec is None else float(pre_event_context_sec)
+    post_context = (
+        2.0 if post_event_context_sec is None else float(post_event_context_sec)
+    )
+    if mode == "event_centered":
+        return "event_centered", 1.0, pre_context, post_context
+
+    if event_centered_fraction is None:
+        raise ValueError("mixed sequence construction requires event_centered_fraction")
+    fraction = float(event_centered_fraction)
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(
+            "mixed sequence construction requires 0.0 < event_centered_fraction < 1.0"
+        )
+    return "mixed", fraction, pre_context, post_context
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -196,6 +251,10 @@ async def create_masked_transformer_job(
     retrieval_dim: Optional[int] = None,
     retrieval_hidden_dim: Optional[int] = None,
     retrieval_l2_normalize: bool = True,
+    sequence_construction_mode: str = "region",
+    event_centered_fraction: Optional[float] = 0.0,
+    pre_event_context_sec: Optional[float] = None,
+    post_event_context_sec: Optional[float] = None,
     max_epochs: int = 30,
     early_stop_patience: int = 3,
     val_split: float = 0.1,
@@ -227,6 +286,17 @@ async def create_masked_transformer_job(
         retrieval_dim=retrieval_dim,
         retrieval_hidden_dim=retrieval_hidden_dim,
         retrieval_l2_normalize=retrieval_l2_normalize,
+    )
+    (
+        normalized_sequence_construction_mode,
+        normalized_event_centered_fraction,
+        normalized_pre_event_context_sec,
+        normalized_post_event_context_sec,
+    ) = normalize_sequence_construction_config(
+        sequence_construction_mode=sequence_construction_mode,
+        event_centered_fraction=event_centered_fraction,
+        pre_event_context_sec=pre_event_context_sec,
+        post_event_context_sec=post_event_context_sec,
     )
 
     cej = await session.get(ContinuousEmbeddingJob, continuous_embedding_job_id)
@@ -260,6 +330,10 @@ async def create_masked_transformer_job(
         retrieval_dim=normalized_retrieval_dim,
         retrieval_hidden_dim=normalized_retrieval_hidden_dim,
         retrieval_l2_normalize=normalized_retrieval_l2_normalize,
+        sequence_construction_mode=normalized_sequence_construction_mode,
+        event_centered_fraction=normalized_event_centered_fraction,
+        pre_event_context_sec=normalized_pre_event_context_sec,
+        post_event_context_sec=normalized_post_event_context_sec,
         max_epochs=max_epochs,
         early_stop_patience=early_stop_patience,
         val_split=val_split,
@@ -305,6 +379,10 @@ async def create_masked_transformer_job(
         retrieval_dim=normalized_retrieval_dim,
         retrieval_hidden_dim=normalized_retrieval_hidden_dim,
         retrieval_l2_normalize=normalized_retrieval_l2_normalize,
+        sequence_construction_mode=normalized_sequence_construction_mode,
+        event_centered_fraction=normalized_event_centered_fraction,
+        pre_event_context_sec=normalized_pre_event_context_sec,
+        post_event_context_sec=normalized_post_event_context_sec,
         max_epochs=int(max_epochs),
         early_stop_patience=int(early_stop_patience),
         val_split=float(val_split),
@@ -772,6 +850,7 @@ __all__ = [
     "generate_interpretations_all_k",
     "get_masked_transformer_job",
     "list_masked_transformer_jobs",
+    "normalize_sequence_construction_config",
     "parse_k_values",
     "regenerate_label_distribution",
     "serialize_k_values",

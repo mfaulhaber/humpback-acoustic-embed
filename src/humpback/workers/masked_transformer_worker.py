@@ -36,8 +36,10 @@ import pyarrow.parquet as pq
 import torch
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from humpback.call_parsing.segmentation.extraction import load_effective_events
 from humpback.config import Settings
 from humpback.ml.device import select_device
+from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
@@ -46,8 +48,13 @@ from humpback.models.sequence_models import (
 from humpback.sequence_models.masked_transformer import (
     MaskedTransformer,
     MaskedTransformerConfig,
+    compute_reconstruction_error,
     extract_transformer_embeddings,
     train_masked_transformer,
+)
+from humpback.sequence_models.masked_transformer_sequences import (
+    EffectiveEventInterval,
+    build_masked_transformer_training_sequences,
 )
 from humpback.sequence_models.tokenization import (
     compute_run_lengths,
@@ -436,7 +443,12 @@ def _write_loss_curve(
 
 
 def _save_model_state(
-    *, storage_root: Path, job_id: str, model: MaskedTransformer, feature_dim: int
+    *,
+    storage_root: Path,
+    job_id: str,
+    model: MaskedTransformer,
+    feature_dim: int,
+    config: MaskedTransformerConfig,
 ) -> None:
     dst = masked_transformer_model_path(storage_root, job_id)
     tmp = dst.with_suffix(dst.suffix + ".tmp")
@@ -450,6 +462,10 @@ def _save_model_state(
             "retrieval_dim": model.retrieval_dim,
             "retrieval_hidden_dim": model.retrieval_hidden_dim,
             "retrieval_l2_normalize": model.retrieval_l2_normalize,
+            "sequence_construction_mode": config.sequence_construction_mode,
+            "event_centered_fraction": config.event_centered_fraction,
+            "pre_event_context_sec": config.pre_event_context_sec,
+            "post_event_context_sec": config.post_event_context_sec,
         },
     }
     torch.save(payload, tmp)
@@ -543,11 +559,50 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
         retrieval_dim=job.retrieval_dim,
         retrieval_hidden_dim=job.retrieval_hidden_dim,
         retrieval_l2_normalize=bool(job.retrieval_l2_normalize),
+        sequence_construction_mode=job.sequence_construction_mode,  # type: ignore[arg-type]
+        event_centered_fraction=float(job.event_centered_fraction),
+        pre_event_context_sec=job.pre_event_context_sec,
+        post_event_context_sec=job.post_event_context_sec,
         max_epochs=int(job.max_epochs),
         early_stop_patience=int(job.early_stop_patience),
         val_split=float(job.val_split),
         seed=int(job.seed),
     )
+
+
+async def _load_effective_event_intervals(
+    session: AsyncSession,
+    *,
+    storage_root: Path,
+    cej: ContinuousEmbeddingJob,
+) -> list[EffectiveEventInterval]:
+    if not cej.event_segmentation_job_id:
+        raise ValueError(
+            "event-centered masked-transformer training requires "
+            "event_segmentation_job_id on the upstream continuous embedding job"
+        )
+    if not cej.region_detection_job_id:
+        raise ValueError(
+            "event-centered masked-transformer training requires "
+            "region_detection_job_id on the upstream continuous embedding job"
+        )
+    region_job = await session.get(RegionDetectionJob, cej.region_detection_job_id)
+    if region_job is None:
+        raise ValueError(f"RegionDetectionJob {cej.region_detection_job_id} not found")
+    offset = float(region_job.start_timestamp or 0.0)
+    events = await load_effective_events(
+        session,
+        event_segmentation_job_id=cej.event_segmentation_job_id,
+        storage_root=storage_root,
+    )
+    return [
+        EffectiveEventInterval(
+            region_id=event.region_id,
+            start_timestamp=float(event.start_sec) + offset,
+            end_timestamp=float(event.end_sec) + offset,
+        )
+        for event in events
+    ]
 
 
 def _previously_done_k(storage_root: Path, job_id: str, k_list: list[int]) -> set[int]:
@@ -643,12 +698,50 @@ async def run_masked_transformer_job(
             await session.commit()
             await session.refresh(job)
 
-            tier_payload: list[Optional[list[str]]] = [t for t in tier_lists]
+            event_intervals: list[EffectiveEventInterval] = []
+            if config.sequence_construction_mode != "region":
+                event_intervals = await _load_effective_event_intervals(
+                    session,
+                    storage_root=settings.storage_root,
+                    cej=cej,
+                )
+            constructed = build_masked_transformer_training_sequences(
+                region_ids=region_ids,
+                sequences=sequences,
+                tier_lists=tier_lists,
+                starts=starts,
+                ends=ends,
+                effective_events=event_intervals,
+                mode=config.sequence_construction_mode,
+                event_centered_fraction=config.event_centered_fraction,
+                pre_event_context_sec=config.pre_event_context_sec,
+                post_event_context_sec=config.post_event_context_sec,
+                seed=int(job.seed),
+            )
+            if not constructed.sequences:
+                raise ValueError(
+                    "sequence construction produced no trainable masked-transformer "
+                    f"windows for mode {config.sequence_construction_mode!r}"
+                )
+
+            tier_payload: list[Optional[list[str]]] = [
+                t for t in constructed.tier_lists
+            ]
             train_result = train_masked_transformer(
-                sequences,
+                constructed.sequences,
                 config,
                 device=chosen_device,
                 tier_lists=tier_payload,
+            )
+            full_region_tier_payload: list[Optional[list[str]]] = [
+                t for t in tier_lists
+            ]
+            full_region_reconstruction_error = compute_reconstruction_error(
+                train_result.model,
+                sequences,
+                config,
+                device=chosen_device,
+                tier_lists=full_region_tier_payload,
             )
 
             _save_model_state(
@@ -656,6 +749,7 @@ async def run_masked_transformer_job(
                 job_id=job_id,
                 model=train_result.model,
                 feature_dim=feature_dim,
+                config=config,
             )
             _write_loss_curve(
                 storage_root=settings.storage_root,
@@ -667,7 +761,7 @@ async def run_masked_transformer_job(
                 storage_root=settings.storage_root,
                 job_id=job_id,
                 region_ids=region_ids,
-                rec_per_chunk=train_result.reconstruction_error_per_chunk,
+                rec_per_chunk=full_region_reconstruction_error,
                 starts=starts,
                 ends=ends,
             )

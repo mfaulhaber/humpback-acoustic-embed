@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   type MaskedTransformerJobCreate,
   type MaskedTransformerPreset,
+  type MaskedTransformerSequenceConstructionMode,
   continuousEmbeddingSourceKind,
   useContinuousEmbeddingJobs,
   useCreateMaskedTransformerJob,
@@ -62,6 +63,11 @@ export function MaskedTransformerCreateForm() {
   const [retrievalDim, setRetrievalDim] = useState(128);
   const [retrievalHiddenDim, setRetrievalHiddenDim] = useState(512);
   const [retrievalL2Normalize, setRetrievalL2Normalize] = useState(true);
+  const [sequenceMode, setSequenceMode] =
+    useState<MaskedTransformerSequenceConstructionMode>("region");
+  const [eventCenteredFraction, setEventCenteredFraction] = useState(0.5);
+  const [preEventContextSec, setPreEventContextSec] = useState(2.0);
+  const [postEventContextSec, setPostEventContextSec] = useState(2.0);
   const [earlyStop, setEarlyStop] = useState(3);
   const [valSplit, setValSplit] = useState(0.1);
   const [seed, setSeed] = useState(42);
@@ -92,6 +98,12 @@ export function MaskedTransformerCreateForm() {
   const kValid = kValues !== null;
   const classifyDropdownReady =
     sourceId === "" || (!classifyJobsQuery.isLoading && classifyJobs.length > 0);
+  const sequenceModeValid =
+    sequenceMode !== "mixed" ||
+    (eventCenteredFraction > 0.0 && eventCenteredFraction < 1.0);
+  const contextValid =
+    sequenceMode === "region" ||
+    (preEventContextSec >= 0.0 && postEventContextSec >= 0.0);
   const canSubmit =
     sourceId !== "" &&
     kValid &&
@@ -100,6 +112,8 @@ export function MaskedTransformerCreateForm() {
     PRESETS.includes(preset) &&
     classifyDropdownReady &&
     classifyId !== "" &&
+    sequenceModeValid &&
+    contextValid &&
     (!retrievalHeadEnabled || (retrievalDim > 0 && retrievalHiddenDim > 0));
 
   const handleSubmit = () => {
@@ -121,6 +135,17 @@ export function MaskedTransformerCreateForm() {
       retrieval_dim: retrievalHeadEnabled ? retrievalDim : null,
       retrieval_hidden_dim: retrievalHeadEnabled ? retrievalHiddenDim : null,
       retrieval_l2_normalize: retrievalL2Normalize,
+      sequence_construction_mode: sequenceMode,
+      event_centered_fraction:
+        sequenceMode === "event_centered"
+          ? 1.0
+          : sequenceMode === "mixed"
+            ? eventCenteredFraction
+            : 0.0,
+      pre_event_context_sec:
+        sequenceMode === "region" ? null : preEventContextSec,
+      post_event_context_sec:
+        sequenceMode === "region" ? null : postEventContextSec,
       early_stop_patience: earlyStop,
       val_split: valSplit,
       seed,
@@ -302,6 +327,58 @@ export function MaskedTransformerCreateForm() {
               />
               retrieval projection head
             </label>
+            <div
+              className="col-span-2 grid gap-2"
+              role="radiogroup"
+              aria-label="Sequence construction"
+            >
+              <span className="text-xs font-medium">sequence construction</span>
+              <div className="flex flex-wrap gap-3">
+                {(["region", "event_centered", "mixed"] as const).map((mode) => (
+                  <label
+                    key={mode}
+                    className="flex items-center gap-1 text-sm"
+                    data-testid={`mt-sequence-mode-${mode}`}
+                  >
+                    <input
+                      type="radio"
+                      name="mt-sequence-mode"
+                      value={mode}
+                      checked={sequenceMode === mode}
+                      onChange={() => setSequenceMode(mode)}
+                    />
+                    {mode}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <Field
+              label="pre_event_context_sec"
+              value={preEventContextSec}
+              step={0.25}
+              disabled={sequenceMode === "region"}
+              invalid={sequenceMode !== "region" && preEventContextSec < 0}
+              onChange={setPreEventContextSec}
+            />
+            <Field
+              label="post_event_context_sec"
+              value={postEventContextSec}
+              step={0.25}
+              disabled={sequenceMode === "region"}
+              invalid={sequenceMode !== "region" && postEventContextSec < 0}
+              onChange={setPostEventContextSec}
+            />
+            <Field
+              label="event_centered_fraction"
+              value={eventCenteredFraction}
+              step={0.05}
+              disabled={sequenceMode !== "mixed"}
+              invalid={
+                sequenceMode === "mixed" &&
+                !(eventCenteredFraction > 0.0 && eventCenteredFraction < 1.0)
+              }
+              onChange={setEventCenteredFraction}
+            />
             <Field
               label="retrieval_dim"
               value={retrievalDim}

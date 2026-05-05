@@ -463,3 +463,17 @@ class TestReconstructionErrorPerChunk:
 def test_unknown_preset_raises():
     with pytest.raises(ValueError):
         MaskedTransformerConfig(preset="huge").preset_dims()  # type: ignore[arg-type]
+
+
+def test_config_carries_sequence_construction_fields():
+    config = MaskedTransformerConfig(
+        sequence_construction_mode="mixed",
+        event_centered_fraction=0.5,
+        pre_event_context_sec=1.0,
+        post_event_context_sec=3.0,
+    )
+
+    assert config.sequence_construction_mode == "mixed"
+    assert config.event_centered_fraction == 0.5
+    assert config.pre_event_context_sec == 1.0
+    assert config.post_event_context_sec == 3.0
