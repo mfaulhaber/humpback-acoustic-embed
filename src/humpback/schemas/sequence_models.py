@@ -762,6 +762,229 @@ class RegenerateLabelDistributionRequest(BaseModel):
     event_classification_job_id: Optional[str] = None
 
 
+RetrievalEmbeddingSpace = Literal["contextual", "retrieval"]
+RetrievalMode = Literal[
+    "unrestricted", "exclude_same_event", "exclude_same_event_and_region"
+]
+RetrievalEmbeddingVariant = Literal[
+    "raw_l2",
+    "centered_l2",
+    "remove_pc1",
+    "remove_pc3",
+    "remove_pc5",
+    "remove_pc10",
+    "whiten_pca",
+]
+
+
+class MaskedTransformerNearestNeighborReportRequest(BaseModel):
+    """Body for the masked-transformer nearest-neighbor report endpoint."""
+
+    k: Optional[int] = Field(default=None, ge=2)
+    embedding_space: RetrievalEmbeddingSpace = "contextual"
+    samples: int = Field(default=50, ge=1)
+    topn: int = Field(default=10, ge=1)
+    seed: int = 20260504
+    retrieval_modes: list[RetrievalMode] = Field(
+        default_factory=lambda: [
+            "unrestricted",
+            "exclude_same_event",
+            "exclude_same_event_and_region",
+        ]
+    )
+    embedding_variants: list[RetrievalEmbeddingVariant] = Field(
+        default_factory=lambda: [
+            "raw_l2",
+            "centered_l2",
+            "remove_pc1",
+            "remove_pc3",
+            "remove_pc5",
+            "remove_pc10",
+            "whiten_pca",
+        ]
+    )
+    include_query_rows: bool = False
+    include_neighbor_rows: bool = False
+    include_event_level: bool = False
+
+    @field_validator("retrieval_modes")
+    @classmethod
+    def _validate_retrieval_modes(cls, v: list[RetrievalMode]) -> list[RetrievalMode]:
+        if not v:
+            raise ValueError("retrieval_modes must be non-empty")
+        return v
+
+    @field_validator("embedding_variants")
+    @classmethod
+    def _validate_embedding_variants(
+        cls, v: list[RetrievalEmbeddingVariant]
+    ) -> list[RetrievalEmbeddingVariant]:
+        if not v:
+            raise ValueError("embedding_variants must be non-empty")
+        return v
+
+
+class RetrievalDiagnosticsJobMetadata(BaseModel):
+    """Job metadata included in a nearest-neighbor report."""
+
+    job_id: str
+    status: str
+    continuous_embedding_job_id: str
+    event_classification_job_id: Optional[str] = None
+    region_detection_job_id: Optional[str] = None
+    k_values: list[int]
+    k: int
+    total_sequences: Optional[int] = None
+    total_chunks: Optional[int] = None
+    final_train_loss: Optional[float] = None
+    final_val_loss: Optional[float] = None
+    total_epochs: Optional[int] = None
+
+
+class RetrievalDiagnosticsOptionsOut(BaseModel):
+    """Resolved options echoed by the diagnostics endpoint."""
+
+    embedding_space: RetrievalEmbeddingSpace
+    samples: int
+    topn: int
+    seed: int
+    retrieval_modes: list[RetrievalMode]
+    embedding_variants: list[RetrievalEmbeddingVariant]
+    include_query_rows: bool
+    include_neighbor_rows: bool
+    include_event_level: bool = False
+
+
+class RetrievalDiagnosticsLabelMetric(BaseModel):
+    """Per-label retrieval metric."""
+
+    query_count: int
+    neighbor_count: int
+    same_human_label: float
+
+
+class RetrievalDiagnosticsMetrics(BaseModel):
+    """Aggregate nearest-neighbor metrics for one mode/variant."""
+
+    same_human_label: float
+    exact_human_label_set: float
+    same_event: float
+    same_region: float
+    adjacent_1s: float
+    nearby_5s: float
+    same_token: float
+    similar_duration: float
+    without_human_label: float
+    low_event_overlap: float
+    avg_cosine: float
+    median_cosine: float
+    random_pair_percentiles: dict[str, float] = Field(default_factory=dict)
+    verdicts: dict[str, int] = Field(default_factory=dict)
+    label_specific_same_human_label: dict[str, RetrievalDiagnosticsLabelMetric] = Field(
+        default_factory=dict
+    )
+
+
+class RetrievalDiagnosticsQuerySummary(BaseModel):
+    """Query-level summary row from retrieval diagnostics."""
+
+    query_order: int
+    query_idx: int
+    query_region: str
+    query_chunk: int
+    query_start_timestamp: float
+    query_human_types: str
+    query_event_id: str
+    query_duration: Optional[float] = None
+    query_token: int
+    neighbor_count: int
+    same_human_label_rate: float
+    exact_human_label_set_rate: float
+    same_event_rate: float
+    same_region_rate: float
+    adjacent_1s_rate: float
+    nearby_5s_rate: float
+    same_token_rate: float
+    similar_duration_rate: float
+    neighbor_without_human_label_rate: float
+    neighbor_low_event_overlap_rate: float
+    avg_cosine: float
+    verdict: str
+
+
+class RetrievalDiagnosticsNeighborRow(BaseModel):
+    """One nearest-neighbor row for an optional detailed response."""
+
+    query_order: int
+    query_idx: int
+    rank: int
+    neighbor_idx: int
+    cosine: float
+    query_region: str
+    neighbor_region: str
+    query_chunk: int
+    neighbor_chunk: int
+    center_delta_sec: float
+    same_region: bool
+    adjacent_1s: bool
+    nearby_5s: bool
+    query_human_types: str
+    neighbor_human_types: str
+    same_human_label: bool
+    exact_human_label_set: bool
+    query_event_id: str
+    neighbor_event_id: str
+    same_event: bool
+    query_duration: Optional[float] = None
+    neighbor_duration: Optional[float] = None
+    similar_duration: bool
+    query_token: int
+    neighbor_token: int
+    same_token: bool
+    query_tier: str
+    neighbor_tier: str
+    query_overlap: float
+    neighbor_overlap: float
+    query_call_probability: float
+    neighbor_call_probability: float
+    query_start_timestamp: float
+    neighbor_start_timestamp: float
+
+
+class RetrievalDiagnosticsLabelCoverage(BaseModel):
+    """Label and artifact coverage for a diagnostics response."""
+
+    embedding_rows: int
+    sampled_queries: int
+    human_labeled_query_pool_rows: int
+    human_labeled_effective_events: int
+    vocalization_correction_rows: int
+    human_label_chunk_counts: dict[str, int] = Field(default_factory=dict)
+    human_label_event_counts: dict[str, int] = Field(default_factory=dict)
+    corrections_by_type: dict[str, int] = Field(default_factory=dict)
+
+
+class MaskedTransformerNearestNeighborReportResponse(BaseModel):
+    """Structured nearest-neighbor diagnostics for one MT job."""
+
+    job: RetrievalDiagnosticsJobMetadata
+    options: RetrievalDiagnosticsOptionsOut
+    artifacts: dict[str, str] = Field(default_factory=dict)
+    label_coverage: RetrievalDiagnosticsLabelCoverage
+    results: dict[str, dict[str, RetrievalDiagnosticsMetrics]]
+    event_level_results: Optional[dict[str, dict[str, RetrievalDiagnosticsMetrics]]] = (
+        None
+    )
+    representative_good_queries: list[RetrievalDiagnosticsQuerySummary] = Field(
+        default_factory=list
+    )
+    representative_risky_queries: list[RetrievalDiagnosticsQuerySummary] = Field(
+        default_factory=list
+    )
+    query_rows: list[RetrievalDiagnosticsQuerySummary] = Field(default_factory=list)
+    neighbor_rows: list[RetrievalDiagnosticsNeighborRow] = Field(default_factory=list)
+
+
 class LossCurveResponse(BaseModel):
     """Loss-curve payload from ``loss_curve.json``."""
 

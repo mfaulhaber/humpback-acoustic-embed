@@ -34,6 +34,8 @@ from humpback.schemas.sequence_models import (
     HMMStateSummary,
     LabelDistributionResponse,
     LossCurveResponse,
+    MaskedTransformerNearestNeighborReportRequest,
+    MaskedTransformerNearestNeighborReportResponse,
     MaskedTransformerJobCreate,
     MaskedTransformerJobDetail,
     MaskedTransformerJobOut,
@@ -56,6 +58,7 @@ from humpback.schemas.sequence_models import (
     TokensResponse,
     TransitionMatrixResponse,
 )
+from humpback.sequence_models import retrieval_diagnostics
 from humpback.services.continuous_embedding_service import (
     SOURCE_KIND_REGION_CRNN,
     source_kind_for,
@@ -970,6 +973,41 @@ async def regenerate_mt_label_distribution(
         "event_classification_job_id": job.event_classification_job_id,
         "label_distribution": per_k.get(resolved_k),
     }
+
+
+@router.post("/masked-transformers/{job_id}/nearest-neighbor-report")
+async def get_mt_nearest_neighbor_report(
+    job_id: str,
+    body: MaskedTransformerNearestNeighborReportRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> MaskedTransformerNearestNeighborReportResponse:
+    options = retrieval_diagnostics.RetrievalReportOptions(
+        k=body.k,
+        embedding_space=body.embedding_space,
+        samples=body.samples,
+        topn=body.topn,
+        seed=body.seed,
+        retrieval_modes=tuple(body.retrieval_modes),
+        embedding_variants=tuple(body.embedding_variants),
+        include_query_rows=body.include_query_rows,
+        include_neighbor_rows=body.include_neighbor_rows,
+        include_event_level=body.include_event_level,
+    )
+    try:
+        payload = await retrieval_diagnostics.build_nearest_neighbor_report(
+            session,
+            storage_root=settings.storage_root,
+            job_id=job_id,
+            options=options,
+        )
+    except retrieval_diagnostics.RetrievalDiagnosticsNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except retrieval_diagnostics.RetrievalDiagnosticsConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except retrieval_diagnostics.RetrievalDiagnosticsInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return MaskedTransformerNearestNeighborReportResponse.model_validate(payload)
 
 
 @router.get("/masked-transformers/{job_id}/loss-curve")
