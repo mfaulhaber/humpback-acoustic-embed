@@ -658,6 +658,11 @@ class MaskedTransformerJobCreate(BaseModel):
     contrastive_min_regions_per_label: int = Field(default=2, ge=1)
     require_cross_region_positive: bool = True
     related_label_policy_json: Optional[str] = None
+    contrastive_sampler_enabled: bool = True
+    contrastive_labels_per_batch: int = Field(default=4, ge=1)
+    contrastive_events_per_label: int = Field(default=4, ge=1)
+    contrastive_max_unlabeled_fraction: float = Field(default=0.25, ge=0.0, lt=1.0)
+    contrastive_region_balance: bool = True
     max_epochs: int = Field(default=30, ge=1)
     early_stop_patience: int = Field(default=3, ge=1)
     val_split: float = Field(default=0.1, ge=0.0, lt=1.0)
@@ -756,6 +761,11 @@ class MaskedTransformerJobOut(BaseModel):
     contrastive_min_regions_per_label: int = 2
     require_cross_region_positive: bool = True
     related_label_policy_json: Optional[str] = None
+    contrastive_sampler_enabled: bool = True
+    contrastive_labels_per_batch: int = 4
+    contrastive_events_per_label: int = 4
+    contrastive_max_unlabeled_fraction: float = 0.25
+    contrastive_region_balance: bool = True
     max_epochs: int
     early_stop_patience: int
     val_split: float

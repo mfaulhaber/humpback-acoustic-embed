@@ -140,3 +140,41 @@ def test_supervised_contrastive_loss_zero_when_no_valid_positive() -> None:
     assert masks.valid_anchor_count == 0
     loss.backward()
     assert embeddings.grad is not None
+
+
+def test_global_eligible_labels_allow_smaller_local_batch_support() -> None:
+    metadata = [
+        _meta("a", "r1", ("Moan",)),
+        _meta("b", "r2", ("Moan",)),
+    ]
+
+    masks = build_contrastive_masks(
+        metadata,
+        min_events_per_label=4,
+        min_regions_per_label=2,
+        eligible_labels={"Moan"},
+    )
+
+    assert masks.valid_anchor_count == 2
+    assert masks.positive_mask[0, 1]
+    assert masks.positive_mask[1, 0]
+
+
+def test_explicit_eligible_labels_exclude_otherwise_supported_label() -> None:
+    metadata = [
+        _meta("a", "r1", ("Moan",)),
+        _meta("b", "r2", ("Moan",)),
+        _meta("c", "r1", ("Whup",)),
+        _meta("d", "r2", ("Whup",)),
+    ]
+
+    masks = build_contrastive_masks(
+        metadata,
+        min_events_per_label=1,
+        min_regions_per_label=1,
+        eligible_labels={"Moan"},
+    )
+
+    assert masks.eligible_mask.tolist() == [True, True, False, False]
+    assert masks.positive_mask[0, 1]
+    assert not masks.positive_mask[2, 3]

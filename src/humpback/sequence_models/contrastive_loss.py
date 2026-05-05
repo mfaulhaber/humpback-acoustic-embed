@@ -55,12 +55,13 @@ def parse_related_label_policy(
     return frozenset(frozenset(pair) for pair in pairs if len(pair) == 2)
 
 
-def _eligible_labels(
+def compute_eligible_contrastive_labels(
     metadata: list[ContrastiveEventMetadata],
     *,
     min_events_per_label: int,
     min_regions_per_label: int,
 ) -> set[str]:
+    """Compute label support against the full split, not a local batch."""
     counts: Counter[str] = Counter()
     regions: dict[str, set[str]] = defaultdict(set)
     for item in metadata:
@@ -82,6 +83,7 @@ def build_contrastive_masks(
     min_regions_per_label: int = 2,
     require_cross_region_positive: bool = True,
     related_label_pairs: Iterable[frozenset[str]] | None = None,
+    eligible_labels: set[str] | frozenset[str] | None = None,
     device: torch.device | str = "cpu",
 ) -> ContrastiveMaskResult:
     """Build positive and negative masks from human label-set semantics."""
@@ -99,12 +101,18 @@ def build_contrastive_masks(
         if related_label_pairs is None
         else frozenset(related_label_pairs)
     )
-    eligible_labels = _eligible_labels(
-        metadata,
-        min_events_per_label=min_events_per_label,
-        min_regions_per_label=min_regions_per_label,
+    resolved_eligible_labels = (
+        compute_eligible_contrastive_labels(
+            metadata,
+            min_events_per_label=min_events_per_label,
+            min_regions_per_label=min_regions_per_label,
+        )
+        if eligible_labels is None
+        else set(eligible_labels)
     )
-    label_sets = [frozenset(item.human_types) & eligible_labels for item in metadata]
+    label_sets = [
+        frozenset(item.human_types) & resolved_eligible_labels for item in metadata
+    ]
     for i, labels in enumerate(label_sets):
         eligible[i] = bool(labels)
 
@@ -150,6 +158,7 @@ def supervised_contrastive_loss(
     min_regions_per_label: int = 2,
     require_cross_region_positive: bool = True,
     related_label_policy_json: Optional[str] = None,
+    eligible_labels: set[str] | frozenset[str] | None = None,
 ) -> tuple[torch.Tensor, ContrastiveMaskResult]:
     """Compute a finite supervised contrastive loss for event embeddings."""
     if embeddings.shape[0] != len(metadata):
@@ -161,6 +170,7 @@ def supervised_contrastive_loss(
         min_regions_per_label=min_regions_per_label,
         require_cross_region_positive=require_cross_region_positive,
         related_label_pairs=related_pairs,
+        eligible_labels=eligible_labels,
         device=embeddings.device,
     )
     if embeddings.numel() == 0 or masks.valid_anchor_count == 0:
@@ -185,6 +195,7 @@ __all__ = [
     "ContrastiveEventMetadata",
     "ContrastiveMaskResult",
     "build_contrastive_masks",
+    "compute_eligible_contrastive_labels",
     "parse_related_label_policy",
     "supervised_contrastive_loss",
 ]

@@ -155,6 +155,11 @@ class TestCreateMaskedTransformerJob:
         assert job.contrastive_min_regions_per_label == 2
         assert job.require_cross_region_positive is True
         assert job.related_label_policy_json is None
+        assert job.contrastive_sampler_enabled is True
+        assert job.contrastive_labels_per_batch == 4
+        assert job.contrastive_events_per_label == 4
+        assert job.contrastive_max_unlabeled_fraction == pytest.approx(0.25)
+        assert job.contrastive_region_balance is True
 
     async def test_idempotent_returns_existing(self, session):
         cej = await _seed_crnn_cej(session)
@@ -400,6 +405,59 @@ class TestCreateMaskedTransformerJob:
         assert contrastive.contrastive_label_source == "human_corrections"
         assert contrastive.related_label_policy_json is not None
         assert contrastive.event_classification_job_id is not None
+
+    async def test_contrastive_sampler_config_changes_signature_only_when_enabled(
+        self, session
+    ):
+        cej = await _seed_crnn_cej(session)
+        disabled, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            contrastive_labels_per_batch=2,
+            contrastive_events_per_label=2,
+            contrastive_max_unlabeled_fraction=0.1,
+            contrastive_region_balance=False,
+        )
+        disabled_again, disabled_created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            contrastive_labels_per_batch=3,
+            contrastive_events_per_label=3,
+            contrastive_max_unlabeled_fraction=0.2,
+            contrastive_region_balance=True,
+        )
+
+        assert disabled_created is False
+        assert disabled.id == disabled_again.id
+
+        first, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            contrastive_labels_per_batch=2,
+        )
+        second, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            contrastive_labels_per_batch=3,
+        )
+
+        assert created is True
+        assert first.id != second.id
+        assert first.training_signature != second.training_signature
 
     async def test_contrastive_signature_includes_classify_binding(self, session):
         cej = await _seed_crnn_cej(session)

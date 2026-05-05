@@ -1032,6 +1032,11 @@ export interface MaskedTransformerJob {
   contrastive_min_regions_per_label: number;
   require_cross_region_positive: boolean;
   related_label_policy_json: string | null;
+  contrastive_sampler_enabled: boolean;
+  contrastive_labels_per_batch: number;
+  contrastive_events_per_label: number;
+  contrastive_max_unlabeled_fraction: number;
+  contrastive_region_balance: boolean;
   max_epochs: number;
   early_stop_patience: number;
   val_split: number;
@@ -1087,6 +1092,11 @@ export interface MaskedTransformerJobCreate {
   contrastive_min_regions_per_label?: number;
   require_cross_region_positive?: boolean;
   related_label_policy_json?: string | null;
+  contrastive_sampler_enabled?: boolean;
+  contrastive_labels_per_batch?: number;
+  contrastive_events_per_label?: number;
+  contrastive_max_unlabeled_fraction?: number;
+  contrastive_region_balance?: boolean;
   max_epochs?: number;
   early_stop_patience?: number;
   val_split?: number;
@@ -1109,6 +1119,12 @@ export interface LossCurveResponse {
   val_total_loss?: (number | null)[];
   train_contrastive_skipped_batches?: number[];
   val_contrastive_skipped_batches?: number[];
+  train_contrastive_valid_batches?: number[];
+  train_contrastive_valid_anchor_count?: number[];
+  train_contrastive_positive_pair_count?: number[];
+  train_contrastive_eligible_label_count?: number[];
+  train_contrastive_labeled_event_count?: number[];
+  train_contrastive_unlabeled_fill_count?: number[];
   val_metrics: Record<string, unknown>;
 }
 

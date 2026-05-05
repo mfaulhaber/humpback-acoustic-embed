@@ -458,11 +458,25 @@ parameter.
   - `contrastive_min_events_per_label` (default `4`) and
     `contrastive_min_regions_per_label` (default `2`) — positive support
     thresholds before a human label participates in contrastive masks.
+    These are global train-split eligibility gates, not per-batch gates.
   - `require_cross_region_positive` (default `true`) — when same-label
     different-region positives exist for an anchor, same-region positives
     are excluded for that anchor.
   - `related_label_policy_json` (optional) — JSON policy for related-label
     negative exclusions. Omitted enabled jobs use the Phase 3 defaults.
+  - `contrastive_sampler_enabled` (default `true`) — when contrastive
+    loss is positive, plans label-balanced batches before masked-only
+    remainder batches.
+  - `contrastive_labels_per_batch` (default `4`) and
+    `contrastive_events_per_label` (default `4`) — positive sampler
+    counts controlling how many globally eligible labels and events per
+    label are packed into each planned contrastive batch.
+  - `contrastive_max_unlabeled_fraction` (default `0.25`) — maximum
+    fraction of rare-label or unlabeled examples used as fill inside a
+    planned contrastive batch; remaining examples still train masked
+    modeling in later batches.
+  - `contrastive_region_balance` (default `true`) — prefers distinct
+    regions when choosing same-label examples for a batch.
   - `batch_size` (default `8`) — training mini-batch size. Non-default
     values participate in `training_signature`.
   - `max_epochs`, `early_stop_patience` (default `3`), `val_split`
@@ -487,9 +501,14 @@ parameter.
   (`contrastive_loss_weight`, `contrastive_temperature`,
   `contrastive_label_source`, `contrastive_min_events_per_label`,
   `contrastive_min_regions_per_label`, `require_cross_region_positive`,
-  `related_label_policy_json`), `chosen_device`, `fallback_reason`,
+  `related_label_policy_json`, `contrastive_sampler_enabled`,
+  `contrastive_labels_per_batch`, `contrastive_events_per_label`,
+  `contrastive_max_unlabeled_fraction`,
+  `contrastive_region_balance`), `chosen_device`, `fallback_reason`,
   `final_train_loss`, `final_val_loss`, `total_epochs`,
-  `total_sequences`, `total_chunks`).
+  `total_sequences`, `total_chunks`). Full-region extraction artifacts
+  remain unchanged regardless of event-centered or contrastive training
+  windows.
 
 - `POST /sequence-models/masked-transformers/{id}/extend-k-sweep` —
   body `{ "additional_k": list[int] }`. Only valid for
@@ -563,7 +582,10 @@ parameter.
   `val_loss` are total-loss compatibility aliases; Phase 3 artifacts
   also include explicit `train_masked_loss`, `train_contrastive_loss`,
   `train_total_loss`, `val_masked_loss`, `val_contrastive_loss`,
-  `val_total_loss`, and contrastive skipped-batch series when present.
+  `val_total_loss`, contrastive skipped-batch series, and contrastive
+  batch diagnostics when present: valid-batch count, valid-anchor count,
+  positive-pair count, eligible-label count, labeled-event count, and
+  unlabeled-fill count.
 
 - `GET /sequence-models/masked-transformers/{id}/reconstruction-error`
   — paginated `(sequence_id, position, score)` rows from
