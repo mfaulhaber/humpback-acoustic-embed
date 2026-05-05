@@ -330,9 +330,20 @@ def test_masked_transformer_create_contrastive_validation():
             contrastive_temperature=0.0,
         )
 
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="region",
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+        )
+
     payload = MaskedTransformerJobCreate(
         continuous_embedding_job_id="cej-1",
         retrieval_head_enabled=True,
+        sequence_construction_mode="mixed",
+        event_centered_fraction=0.7,
         contrastive_loss_weight=0.1,
         contrastive_label_source="human_corrections",
         contrastive_min_events_per_label=2,
@@ -340,6 +351,8 @@ def test_masked_transformer_create_contrastive_validation():
         require_cross_region_positive=False,
     )
     assert payload.contrastive_label_source == "human_corrections"
+    assert payload.sequence_construction_mode == "mixed"
+    assert payload.event_centered_fraction == 0.7
     assert payload.contrastive_min_events_per_label == 2
     assert payload.contrastive_min_regions_per_label == 1
     assert payload.require_cross_region_positive is False

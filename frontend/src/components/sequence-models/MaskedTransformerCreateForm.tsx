@@ -446,7 +446,13 @@ export function MaskedTransformerCreateForm() {
                 data-testid="mt-contrastive-enabled"
                 checked={contrastiveEnabled}
                 disabled={!retrievalHeadEnabled}
-                onChange={(e) => setContrastiveEnabled(e.target.checked)}
+                onChange={(e) => {
+                  setContrastiveEnabled(e.target.checked);
+                  if (e.target.checked && sequenceMode === "region") {
+                    setSequenceMode("mixed");
+                    setEventCenteredFraction(0.7);
+                  }
+                }}
               />
               human-correction contrastive loss
             </label>

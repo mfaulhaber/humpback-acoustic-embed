@@ -618,6 +618,10 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
     expect(state.capturedCreates?.[0]).toMatchObject({
       retrieval_head_enabled: true,
+      sequence_construction_mode: "mixed",
+      event_centered_fraction: 0.7,
+      pre_event_context_sec: 2.0,
+      post_event_context_sec: 2.0,
       contrastive_loss_weight: 0.25,
       contrastive_temperature: 0.05,
       contrastive_label_source: "human_corrections",

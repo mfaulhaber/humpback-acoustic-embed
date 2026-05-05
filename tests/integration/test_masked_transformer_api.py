@@ -166,6 +166,8 @@ async def test_create_contrastive_round_trips(client, app_settings):
             "continuous_embedding_job_id": cej_id,
             "preset": "small",
             "retrieval_head_enabled": True,
+            "sequence_construction_mode": "mixed",
+            "event_centered_fraction": 0.7,
             "contrastive_loss_weight": 0.1,
             "contrastive_temperature": 0.07,
             "contrastive_label_source": "human_corrections",
@@ -177,6 +179,8 @@ async def test_create_contrastive_round_trips(client, app_settings):
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["retrieval_head_enabled"] is True
+    assert body["sequence_construction_mode"] == "mixed"
+    assert body["event_centered_fraction"] == 0.7
     assert body["contrastive_loss_weight"] == 0.1
     assert body["contrastive_temperature"] == 0.07
     assert body["contrastive_label_source"] == "human_corrections"
@@ -258,6 +262,22 @@ async def test_create_rejects_contrastive_without_retrieval_head(client, app_set
         },
     )
     assert response.status_code == 422
+
+
+async def test_create_rejects_contrastive_region_sequence_mode(client, app_settings):
+    cej_id = await _seed_crnn_cej(app_settings)
+    response = await client.post(
+        "/sequence-models/masked-transformers",
+        json={
+            "continuous_embedding_job_id": cej_id,
+            "retrieval_head_enabled": True,
+            "sequence_construction_mode": "region",
+            "contrastive_loss_weight": 0.1,
+            "contrastive_label_source": "human_corrections",
+        },
+    )
+    assert response.status_code == 422
+    assert "event-centered or mixed" in response.text
 
 
 async def test_create_rejects_k_below_2(client, app_settings):

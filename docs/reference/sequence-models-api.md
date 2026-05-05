@@ -446,7 +446,10 @@ parameter.
   - `contrastive_loss_weight` (default `0.0`) — when positive, adds
     human-correction supervised contrastive loss to masked loss. Positive
     values require `retrieval_head_enabled=true` and
-    `contrastive_label_source="human_corrections"`.
+    `contrastive_label_source="human_corrections"`. Positive contrastive
+    loss also requires `sequence_construction_mode` to be
+    `"event_centered"` or `"mixed"` so event-level human labels can align
+    to training windows.
   - `contrastive_temperature` (default `0.07`) — positive supervised
     contrastive temperature.
   - `contrastive_label_source` (default `"none"`, one of `"none"` |

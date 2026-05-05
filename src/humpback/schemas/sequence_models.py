@@ -711,6 +711,11 @@ class MaskedTransformerJobCreate(BaseModel):
         else:
             if not self.retrieval_head_enabled:
                 raise ValueError("contrastive training requires retrieval_head_enabled")
+            if self.sequence_construction_mode == "region":
+                raise ValueError(
+                    "contrastive training requires event-centered or mixed "
+                    "sequence construction"
+                )
             if self.contrastive_label_source != "human_corrections":
                 raise ValueError(
                     "positive contrastive_loss_weight requires "

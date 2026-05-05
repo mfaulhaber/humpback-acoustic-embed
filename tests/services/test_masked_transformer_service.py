@@ -387,6 +387,8 @@ class TestCreateMaskedTransformerJob:
             continuous_embedding_job_id=cej.id,
             preset="small",
             retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
             contrastive_loss_weight=0.1,
             contrastive_label_source="human_corrections",
         )
@@ -406,6 +408,8 @@ class TestCreateMaskedTransformerJob:
             continuous_embedding_job_id=cej.id,
             preset="small",
             retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
             contrastive_loss_weight=0.1,
             contrastive_label_source="human_corrections",
         )
@@ -422,6 +426,8 @@ class TestCreateMaskedTransformerJob:
             continuous_embedding_job_id=cej.id,
             preset="small",
             retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
             contrastive_loss_weight=0.1,
             contrastive_label_source="human_corrections",
             event_classification_job_id=second_classify.id,
@@ -438,6 +444,8 @@ class TestCreateMaskedTransformerJob:
             continuous_embedding_job_id=cej.id,
             preset="small",
             retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
             contrastive_loss_weight=0.1,
             contrastive_label_source="human_corrections",
             k_values=[100],
@@ -447,6 +455,8 @@ class TestCreateMaskedTransformerJob:
             continuous_embedding_job_id=cej.id,
             preset="small",
             retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
             contrastive_loss_weight=0.1,
             contrastive_label_source="human_corrections",
             k_values=[200],
@@ -473,8 +483,22 @@ class TestCreateMaskedTransformerJob:
                 session,
                 continuous_embedding_job_id=cej.id,
                 retrieval_head_enabled=True,
+                sequence_construction_mode="mixed",
+                event_centered_fraction=0.7,
                 contrastive_loss_weight=0.1,
                 contrastive_label_source="none",
+            )
+
+    async def test_contrastive_validates_non_region_sequence_mode(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="event-centered or mixed"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                sequence_construction_mode="region",
+                contrastive_loss_weight=0.1,
+                contrastive_label_source="human_corrections",
             )
 
     async def test_rejects_nonexistent_upstream(self, session):

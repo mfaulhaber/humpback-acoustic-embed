@@ -97,3 +97,7 @@ Deployment/runtime configuration should come from a repo-root `.env` plus
 repo-root `.env`; direct `Settings()` construction should stay hermetic.
 Production host allowlisting belongs in FastAPI via `HUMPBACK_ALLOWED_HOSTS`;
 do not use Vite `allowedHosts` for deployed host validation.
+
+## Sequence Models UI Notes
+
+- `MaskedTransformerCreateForm` keeps human-correction contrastive loss disabled by default. Enabling it requires the retrieval projection head and automatically switches region-only training to mixed mode with `event_centered_fraction=0.7`, because contrastive labels attach to event-centered windows rather than full-region sequences.

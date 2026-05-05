@@ -438,6 +438,13 @@ async def create_masked_transformer_job(
         related_label_policy_json=related_label_policy_json,
         retrieval_head_enabled=normalized_retrieval_head_enabled,
     )
+    if (
+        normalized_contrastive_loss_weight > 0.0
+        and normalized_sequence_construction_mode == "region"
+    ):
+        raise ValueError(
+            "contrastive training requires event-centered or mixed sequence construction"
+        )
 
     cej = await session.get(ContinuousEmbeddingJob, continuous_embedding_job_id)
     if cej is None:
