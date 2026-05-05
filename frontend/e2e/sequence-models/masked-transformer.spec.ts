@@ -227,14 +227,19 @@ const EXEMPLARS = {
   states: {
     "5": [
       {
-        sequence_id: "r1",
+        sequence_id: "r2",
         position_in_sequence: 0,
-        audio_file_id: 1,
-        start_timestamp: 100.0,
-        end_timestamp: 100.25,
-        max_state_probability: 0.7,
+        audio_file_id: 2,
+        start_timestamp: 200.0,
+        end_timestamp: 200.25,
+        max_state_probability: 0.6,
         exemplar_type: "high_confidence",
-        extras: { tier: "event_core" },
+        extras: {
+          tier: "event_core",
+          event_id: "event-song-1",
+          event_types: ["song"],
+          event_confidence: { song: 0.92 },
+        },
       },
     ],
     "7": [
@@ -775,6 +780,37 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await expect(page.getByTestId("mt-exemplar-gallery")).toBeVisible();
     await expect(page.getByTestId("mt-label-distribution")).toBeVisible();
     await expect(page.getByTestId("motif-extraction-panel")).toBeVisible();
+  });
+
+  test("exemplar vocal label badge centers the token timeline", async ({ page }) => {
+    const state: MockState = { jobs: [COMPLETE_JOB] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+
+    const timelineCenter = page.getByTestId("mt-timeline-center");
+    const readCenter = async () =>
+      Number(await timelineCenter.getAttribute("data-center-timestamp"));
+
+    await expect
+      .poll(readCenter, { message: "initial timeline center" })
+      .toBeCloseTo(100.0, 2);
+
+    await page.getByTestId("mt-exemplar-gallery").scrollIntoViewIfNeeded();
+    await page.getByTestId("mt-exemplar-type-chip").first().click();
+
+    await expect(page).toHaveURL(
+      new RegExp(`/masked-transformer/${COMPLETE_JOB.id}`),
+    );
+    await expect(page.getByTestId("mt-timeline-viewer")).toBeInViewport();
+    await expect
+      .poll(readCenter, { message: "center after label-chip click" })
+      .toBeCloseTo(200.125, 2);
+
+    await page.getByTestId("mt-exemplar-gallery").scrollIntoViewIfNeeded();
+    await page.getByTestId("mt-exemplar-background-chip").click();
+    await expect
+      .poll(readCenter, { message: "background chip leaves center unchanged" })
+      .toBeCloseTo(200.125, 2);
   });
 
   test("k-picker switches the URL search-param without remount", async ({ page }) => {
