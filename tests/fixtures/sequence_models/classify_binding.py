@@ -21,6 +21,7 @@ from humpback.call_parsing.storage import (
     write_events,
     write_typed_events,
 )
+from humpback.call_parsing.types import Event
 from humpback.models.call_parsing import EventClassificationJob
 
 
@@ -29,6 +30,7 @@ async def seed_classify_for_segmentation(
     storage_root: Path,
     *,
     event_segmentation_job_id: str,
+    events: list[Event] | None = None,
 ) -> str:
     """Create a completed EventClassificationJob with empty parquet artifacts.
 
@@ -40,8 +42,8 @@ async def seed_classify_for_segmentation(
     seg_dir = segmentation_job_dir(storage_root, event_segmentation_job_id)
     seg_dir.mkdir(parents=True, exist_ok=True)
     events_path = seg_dir / "events.parquet"
-    if not events_path.exists():
-        write_events(events_path, [])
+    if events is not None or not events_path.exists():
+        write_events(events_path, events or [])
 
     cls_job = EventClassificationJob(
         status="complete",

@@ -11,7 +11,9 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+import torch
 
+from humpback.call_parsing.types import Event
 from humpback.models.call_parsing import (
     EventClassificationJob,
     EventSegmentationJob,
@@ -100,7 +102,9 @@ def _write_synthetic_crnn_embeddings_parquet(
     return path
 
 
-async def _bind_classify(session, settings, cej, job) -> None:
+async def _bind_classify(
+    session, settings, cej, job, *, events: list[Event] | None = None
+) -> None:
     """Bind a fresh complete Classify job to ``job.event_classification_job_id``.
 
     All MT worker happy-path tests need this so the consolidated
@@ -111,6 +115,7 @@ async def _bind_classify(session, settings, cej, job) -> None:
         session,
         settings.storage_root,
         event_segmentation_job_id=cej.event_segmentation_job_id or "",
+        events=events,
     )
     job.event_classification_job_id = cls_id
     await session.commit()
@@ -368,6 +373,167 @@ async def test_retrieval_head_extend_k_sweep_reuses_retrieval_artifact(
     assert retrieval_path.stat().st_mtime_ns == mtimes["retrieval"]
     kmeans_payload = joblib.load(masked_transformer_k_kmeans_path(sr, job.id, 12))
     assert kmeans_payload["kmeans"].cluster_centers_.shape[1] == 6
+
+
+async def test_event_centered_mode_preserves_full_region_artifact_rows(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "sequence_construction_mode": "event_centered",
+            "pre_event_context_sec": 1.0,
+            "post_event_context_sec": 1.0,
+        },
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[
+            Event("e1", "region-00", 1.0, 2.0, 1.5, 0.9),
+            Event("e2", "region-01", 11.0, 12.0, 11.5, 0.8),
+        ],
+    )
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert job.total_sequences == 3
+    assert job.total_chunks == 72
+    sr = settings.storage_root
+    contextual = pq.read_table(
+        masked_transformer_contextual_embeddings_path(sr, job.id)
+    )
+    reconstruction = pq.read_table(
+        masked_transformer_reconstruction_error_path(sr, job.id)
+    )
+    decoded = pq.read_table(masked_transformer_k_decoded_path(sr, job.id, 10))
+    assert contextual.num_rows == 72
+    assert reconstruction.num_rows == 72
+    assert decoded.num_rows == 72
+
+    state = torch.load(
+        masked_transformer_model_path(sr, job.id),
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert state["config"]["sequence_construction_mode"] == "event_centered"
+    assert state["config"]["event_centered_fraction"] == 1.0
+    assert state["config"]["pre_event_context_sec"] == 1.0
+    assert state["config"]["post_event_context_sec"] == 1.0
+
+
+async def test_retrieval_head_event_centered_keeps_retrieval_rows_full_region(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+            "sequence_construction_mode": "event_centered",
+        },
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[Event("e1", "region-00", 1.0, 2.0, 1.5, 0.9)],
+    )
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    retrieval = pq.read_table(
+        masked_transformer_retrieval_embeddings_path(settings.storage_root, job.id)
+    )
+    assert retrieval.num_rows == 72
+
+
+async def test_mixed_mode_trains_on_region_and_event_windows(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "sequence_construction_mode": "mixed",
+            "event_centered_fraction": 0.5,
+            "pre_event_context_sec": 0.5,
+            "post_event_context_sec": 0.5,
+        },
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[
+            Event("e1", "region-00", 1.0, 2.0, 1.5, 0.9),
+            Event("e2", "region-01", 11.0, 12.0, 11.5, 0.8),
+            Event("e3", "region-02", 21.0, 22.0, 21.5, 0.7),
+        ],
+    )
+
+    import humpback.workers.masked_transformer_worker as worker_mod
+
+    real_train = worker_mod.train_masked_transformer
+    observed_lengths: list[int] = []
+
+    def _spy_train(sequences, *args, **kwargs):  # type: ignore[no-untyped-def]
+        observed_lengths[:] = [int(seq.shape[0]) for seq in sequences]
+        return real_train(sequences, *args, **kwargs)
+
+    monkeypatch.setattr(worker_mod, "train_masked_transformer", _spy_train)
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert any(length == 24 for length in observed_lengths)
+    assert any(length < 24 for length in observed_lengths)
+
+
+async def test_event_centered_mode_fails_when_no_events_overlap(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{**_tiny_config(), "sequence_construction_mode": "event_centered"},
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[Event("e1", "region-00", 500.0, 501.0, 500.5, 0.9)],
+    )
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.failed.value
+    assert "no trainable" in (job.error_message or "")
 
 
 async def test_atomic_per_k_writes_clean_up_on_failure(session, settings, monkeypatch):

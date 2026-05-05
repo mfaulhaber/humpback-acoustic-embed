@@ -143,6 +143,10 @@ class TestCreateMaskedTransformerJob:
         assert job.retrieval_dim is None
         assert job.retrieval_hidden_dim is None
         assert job.retrieval_l2_normalize is True
+        assert job.sequence_construction_mode == "region"
+        assert job.event_centered_fraction == pytest.approx(0.0)
+        assert job.pre_event_context_sec is None
+        assert job.post_event_context_sec is None
 
     async def test_idempotent_returns_existing(self, session):
         cej = await _seed_crnn_cej(session)
@@ -242,6 +246,80 @@ class TestCreateMaskedTransformerJob:
         assert created is False
         assert first.id == second.id
         assert json.loads(second.k_values) == [100]
+
+    async def test_region_sequence_mode_preserves_existing_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        first, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+        )
+        second, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            sequence_construction_mode="region",
+            event_centered_fraction=0.9,
+            pre_event_context_sec=5.0,
+            post_event_context_sec=6.0,
+        )
+
+        assert created is False
+        assert first.id == second.id
+        assert second.sequence_construction_mode == "region"
+
+    async def test_event_centered_sequence_config_changes_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        region, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+        )
+        event_centered, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            sequence_construction_mode="event_centered",
+        )
+
+        assert created is True
+        assert event_centered.id != region.id
+        assert event_centered.training_signature != region.training_signature
+        assert event_centered.sequence_construction_mode == "event_centered"
+        assert event_centered.event_centered_fraction == pytest.approx(1.0)
+        assert event_centered.pre_event_context_sec == pytest.approx(2.0)
+        assert event_centered.post_event_context_sec == pytest.approx(2.0)
+
+    async def test_mixed_sequence_fraction_participates_in_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        first, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.25,
+        )
+        second, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.75,
+        )
+
+        assert created is True
+        assert first.id != second.id
+        assert first.training_signature != second.training_signature
+
+    async def test_mixed_sequence_mode_validates_fraction(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="0.0 < event_centered_fraction < 1.0"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                sequence_construction_mode="mixed",
+                event_centered_fraction=1.0,
+            )
 
     async def test_rejects_nonexistent_upstream(self, session):
         with pytest.raises(ValueError, match="continuous_embedding_job not found"):

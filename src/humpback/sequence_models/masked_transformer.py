@@ -68,6 +68,10 @@ class MaskedTransformerConfig:
     retrieval_dim: int | None = None
     retrieval_hidden_dim: int | None = None
     retrieval_l2_normalize: bool = True
+    sequence_construction_mode: Literal["region", "event_centered", "mixed"] = "region"
+    event_centered_fraction: float = 0.0
+    pre_event_context_sec: float | None = None
+    post_event_context_sec: float | None = None
     max_epochs: int = 30
     early_stop_patience: int = 3
     val_split: float = 0.1
@@ -592,37 +596,13 @@ def train_masked_transformer(
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    # ---- Per-chunk reconstruction error on validation pass over all sequences ----
-    model.eval()
-    reconstruction_error_per_chunk: list[np.ndarray] = []
-    val_batch_seqs: list[np.ndarray] = list(sequences)
-    val_batch_tiers = list(tier_lists) if tier_lists is not None else None
-    # Use a deterministic mask (same seed) so reconstruction error is
-    # reproducible across runs of an extend-k-sweep.
-    error_rng = np.random.default_rng(config.seed + 1)
-    with torch.no_grad():
-        bs = max(1, config.batch_size)
-        for start in range(0, len(val_batch_seqs), bs):
-            batch_seqs = val_batch_seqs[start : start + bs]
-            batch_tiers = (
-                val_batch_tiers[start : start + bs]
-                if val_batch_tiers is not None
-                else None
-            )
-            batch = _build_batch(batch_seqs, batch_tiers, config, error_rng, device_obj)
-            output = model(batch.inputs, src_key_padding_mask=batch.pad_mask)
-            _, per_chunk = _compute_loss(
-                output.reconstructed,
-                batch.targets,
-                batch.mask_positions,
-                batch.weights,
-                config.cosine_loss_weight,
-            )
-            per_chunk_np = per_chunk.cpu().numpy()
-            for i, length in enumerate(batch.lengths):
-                reconstruction_error_per_chunk.append(
-                    per_chunk_np[i, :length].astype(np.float32, copy=True)
-                )
+    reconstruction_error_per_chunk = compute_reconstruction_error(
+        model,
+        sequences,
+        config,
+        device=device_obj,
+        tier_lists=tier_lists,
+    )
 
     val_metrics: dict[str, float] = {
         "best_val_loss": float(best_val_loss)
@@ -648,6 +628,48 @@ def train_masked_transformer(
         n_train_sequences=len(train_idx),
         n_val_sequences=len(val_idx),
     )
+
+
+def compute_reconstruction_error(
+    model: MaskedTransformer,
+    sequences: list[np.ndarray],
+    config: MaskedTransformerConfig,
+    device: str | torch.device = "cpu",
+    *,
+    tier_lists: Optional[list[Optional[list[str]]]] = None,
+) -> list[np.ndarray]:
+    """Compute deterministic per-chunk reconstruction error for sequences."""
+    device_obj = _device_obj(device)
+    model = model.to(device_obj)
+    model.eval()
+    reconstruction_error_per_chunk: list[np.ndarray] = []
+    val_batch_seqs: list[np.ndarray] = list(sequences)
+    val_batch_tiers = list(tier_lists) if tier_lists is not None else None
+    error_rng = np.random.default_rng(config.seed + 1)
+    with torch.no_grad():
+        bs = max(1, config.batch_size)
+        for start in range(0, len(val_batch_seqs), bs):
+            batch_seqs = val_batch_seqs[start : start + bs]
+            batch_tiers = (
+                val_batch_tiers[start : start + bs]
+                if val_batch_tiers is not None
+                else None
+            )
+            batch = _build_batch(batch_seqs, batch_tiers, config, error_rng, device_obj)
+            output = model(batch.inputs, src_key_padding_mask=batch.pad_mask)
+            _, per_chunk = _compute_loss(
+                output.reconstructed,
+                batch.targets,
+                batch.mask_positions,
+                batch.weights,
+                config.cosine_loss_weight,
+            )
+            per_chunk_np = per_chunk.cpu().numpy()
+            for i, length in enumerate(batch.lengths):
+                reconstruction_error_per_chunk.append(
+                    per_chunk_np[i, :length].astype(np.float32, copy=True)
+                )
+    return reconstruction_error_per_chunk
 
 
 def extract_contextual_embeddings(
@@ -714,6 +736,7 @@ __all__ = [
     "TIER_LOSS_WEIGHTS",
     "TrainResult",
     "apply_span_mask",
+    "compute_reconstruction_error",
     "extract_contextual_embeddings",
     "extract_transformer_embeddings",
     "train_masked_transformer",

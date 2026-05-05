@@ -195,6 +195,10 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert contextual.retrieval_dim is None
     assert contextual.retrieval_hidden_dim is None
     assert contextual.retrieval_l2_normalize is True
+    assert contextual.sequence_construction_mode == "region"
+    assert contextual.event_centered_fraction == 0.0
+    assert contextual.pre_event_context_sec is None
+    assert contextual.post_event_context_sec is None
 
     retrieval = MaskedTransformerJobCreate(
         continuous_embedding_job_id="cej-1",
@@ -204,6 +208,62 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert retrieval.retrieval_dim == 128
     assert retrieval.retrieval_hidden_dim == 512
     assert retrieval.retrieval_l2_normalize is True
+
+
+def test_masked_transformer_create_sequence_construction_normalization():
+    region = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        sequence_construction_mode="region",
+        event_centered_fraction=0.5,
+        pre_event_context_sec=4.0,
+        post_event_context_sec=5.0,
+    )
+    assert region.event_centered_fraction == 0.0
+    assert region.pre_event_context_sec is None
+    assert region.post_event_context_sec is None
+
+    event_centered = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        sequence_construction_mode="event_centered",
+    )
+    assert event_centered.event_centered_fraction == 1.0
+    assert event_centered.pre_event_context_sec == 2.0
+    assert event_centered.post_event_context_sec == 2.0
+
+    mixed = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        sequence_construction_mode="mixed",
+        event_centered_fraction=0.4,
+        pre_event_context_sec=1.5,
+        post_event_context_sec=2.5,
+    )
+    assert mixed.event_centered_fraction == 0.4
+    assert mixed.pre_event_context_sec == 1.5
+    assert mixed.post_event_context_sec == 2.5
+
+
+def test_masked_transformer_create_sequence_construction_validation():
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate.model_validate(
+            {
+                "continuous_embedding_job_id": "cej-1",
+                "sequence_construction_mode": "bad",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.0,
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            sequence_construction_mode="event_centered",
+            pre_event_context_sec=-1.0,
+        )
 
 
 def test_masked_transformer_create_retrieval_head_validation():
@@ -250,6 +310,10 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "retrieval_dim": 128,
         "retrieval_hidden_dim": 512,
         "retrieval_l2_normalize": True,
+        "sequence_construction_mode": "mixed",
+        "event_centered_fraction": 0.5,
+        "pre_event_context_sec": 1.0,
+        "post_event_context_sec": 3.0,
         "max_epochs": 30,
         "early_stop_patience": 3,
         "val_split": 0.1,
@@ -273,6 +337,10 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
     assert job.retrieval_head_enabled is True
     assert job.retrieval_dim == 128
     assert job.retrieval_hidden_dim == 512
+    assert job.sequence_construction_mode == "mixed"
+    assert job.event_centered_fraction == 0.5
+    assert job.pre_event_context_sec == 1.0
+    assert job.post_event_context_sec == 3.0
     assert job.k_values == [100]
 
 
