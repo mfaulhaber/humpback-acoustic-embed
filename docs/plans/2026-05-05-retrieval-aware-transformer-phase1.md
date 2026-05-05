@@ -19,15 +19,15 @@
 - Modify: `tests/unit/test_sequence_models_schemas.py`
 
 **Acceptance criteria:**
-- [ ] **Production DB backup taken FIRST per CLAUDE.md §3.5:** read `HUMPBACK_DATABASE_URL` from `.env` with `DB_URL=$(grep '^HUMPBACK_DATABASE_URL=' .env | cut -d= -f2-)`, derive the SQLite path with `DB_PATH=${DB_URL#sqlite+aiosqlite:///}`, create a UTC backup name with `BACKUP="$DB_PATH.$(date -u +%Y-%m-%d-%H:%M).bak"`, copy with `cp "$DB_PATH" "$BACKUP"`, and verify non-zero size with `test -s "$BACKUP"` before running any migration command. If any backup command fails or is skipped, stop and do not apply the migration.
-- [ ] Migration `067_masked_transformer_retrieval_head.py` adds `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`, and `retrieval_l2_normalize` to `masked_transformer_jobs` using `op.batch_alter_table()` for SQLite compatibility.
-- [ ] Existing rows backfill to `retrieval_head_enabled=false`, `retrieval_dim=NULL`, `retrieval_hidden_dim=NULL`, and `retrieval_l2_normalize=true`.
-- [ ] `MaskedTransformerJob` exposes the new fields with defaults matching the migration and preserves existing rows without manual data repair.
-- [ ] `MaskedTransformerJobCreate` accepts the retrieval-head fields with defaults that keep current behavior unchanged.
-- [ ] `MaskedTransformerJobOut` returns the retrieval-head fields so jobs and detail pages can show which embedding space owns tokenization.
-- [ ] `create_masked_transformer_job()` validates retrieval dimensions only when the retrieval head is enabled; omitted enabled-job dimensions resolve to the Phase 1 defaults `retrieval_dim=128` and `retrieval_hidden_dim=512`.
-- [ ] `compute_training_signature()` includes the normalized retrieval-head config fields and continues to exclude `k_values`.
-- [ ] Re-submitting an existing non-retrieval config returns the same job as before, while changing any retrieval-head config field changes the signature.
+- [x] **Production DB backup taken FIRST per CLAUDE.md §3.5:** read `HUMPBACK_DATABASE_URL` from `.env` with `DB_URL=$(grep '^HUMPBACK_DATABASE_URL=' .env | cut -d= -f2-)`, derive the SQLite path with `DB_PATH=${DB_URL#sqlite+aiosqlite:///}`, create a UTC backup name with `BACKUP="$DB_PATH.$(date -u +%Y-%m-%d-%H:%M).bak"`, copy with `cp "$DB_PATH" "$BACKUP"`, and verify non-zero size with `test -s "$BACKUP"` before running any migration command. If any backup command fails or is skipped, stop and do not apply the migration.
+- [x] Migration `067_masked_transformer_retrieval_head.py` adds `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`, and `retrieval_l2_normalize` to `masked_transformer_jobs` using `op.batch_alter_table()` for SQLite compatibility.
+- [x] Existing rows backfill to `retrieval_head_enabled=false`, `retrieval_dim=NULL`, `retrieval_hidden_dim=NULL`, and `retrieval_l2_normalize=true`.
+- [x] `MaskedTransformerJob` exposes the new fields with defaults matching the migration and preserves existing rows without manual data repair.
+- [x] `MaskedTransformerJobCreate` accepts the retrieval-head fields with defaults that keep current behavior unchanged.
+- [x] `MaskedTransformerJobOut` returns the retrieval-head fields so jobs and detail pages can show which embedding space owns tokenization.
+- [x] `create_masked_transformer_job()` validates retrieval dimensions only when the retrieval head is enabled; omitted enabled-job dimensions resolve to the Phase 1 defaults `retrieval_dim=128` and `retrieval_hidden_dim=512`.
+- [x] `compute_training_signature()` includes the normalized retrieval-head config fields and continues to exclude `k_values`.
+- [x] Re-submitting an existing non-retrieval config returns the same job as before, while changing any retrieval-head config field changes the signature.
 
 **Tests needed:**
 - Migration upgrade/downgrade test against SQLite showing defaults on pre-existing `masked_transformer_jobs` rows.
@@ -43,14 +43,14 @@
 - Modify: `tests/sequence_models/test_masked_transformer.py`
 
 **Acceptance criteria:**
-- [ ] `MaskedTransformerConfig` carries `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`, and `retrieval_l2_normalize`.
-- [ ] `MaskedTransformer` can be constructed with the retrieval head disabled and remains backward-compatible for existing non-retrieval training and extraction behavior.
-- [ ] When enabled, the model adds `LayerNorm -> Linear -> GELU -> Linear` after the transformer hidden state and returns retrieval embeddings alongside reconstructed outputs and hidden states.
-- [ ] Retrieval outputs have shape `(batch, T, retrieval_dim)` and are L2-normalized when `retrieval_l2_normalize=true`.
-- [ ] The forward result has an explicit named contract, such as a dataclass, so callers do not rely on ambiguous tuple positions once a third output exists.
-- [ ] Masked reconstruction remains based on transformer hidden states, preserving the current reconstruction objective.
-- [ ] Phase 1 resolves the spec tension that `total_loss=masked_loss` does not naturally train an otherwise-unused projection head: implementation either documents and tests the chosen gradient path or updates the design before code lands.
-- [ ] Tests assert that retrieval-head parameters receive gradients during Phase 1 training when `retrieval_head_enabled=true`.
+- [x] `MaskedTransformerConfig` carries `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`, and `retrieval_l2_normalize`.
+- [x] `MaskedTransformer` can be constructed with the retrieval head disabled and remains backward-compatible for existing non-retrieval training and extraction behavior.
+- [x] When enabled, the model adds `LayerNorm -> Linear -> GELU -> Linear` after the transformer hidden state and returns retrieval embeddings alongside reconstructed outputs and hidden states.
+- [x] Retrieval outputs have shape `(batch, T, retrieval_dim)` and are L2-normalized when `retrieval_l2_normalize=true`.
+- [x] The forward result has an explicit named contract, such as a dataclass, so callers do not rely on ambiguous tuple positions once a third output exists.
+- [x] Masked reconstruction remains based on transformer hidden states, preserving the current reconstruction objective.
+- [x] Phase 1 resolves the spec tension that `total_loss=masked_loss` does not naturally train an otherwise-unused projection head: implementation either documents and tests the chosen gradient path or updates the design before code lands.
+- [x] Tests assert that retrieval-head parameters receive gradients during Phase 1 training when `retrieval_head_enabled=true`.
 
 **Tests needed:**
 - Forward-shape test for disabled and enabled retrieval-head modes.
@@ -68,13 +68,13 @@
 - Modify: `tests/workers/test_masked_transformer_worker.py`
 
 **Acceptance criteria:**
-- [ ] First-pass retrieval-head jobs write both `contextual_embeddings.parquet` and `retrieval_embeddings.parquet`.
-- [ ] `retrieval_embeddings.parquet` mirrors the contextual embedding schema: `region_id`, `chunk_index_in_region`, `audio_file_id`, `start_timestamp`, `end_timestamp`, `tier`, and `embedding`.
-- [ ] Retrieval embeddings are written atomically through a temporary file and `atomic_rename()`.
-- [ ] Existing non-retrieval jobs continue to write only `contextual_embeddings.parquet`.
-- [ ] Saved `transformer.pt` metadata includes enough retrieval-head config to reload or inspect the trained model contract later.
-- [ ] Extend-k-sweep follow-up passes can read retrieval embeddings for retrieval-head jobs without retraining or re-extracting the transformer.
-- [ ] Missing retrieval artifacts on a retrieval-head follow-up fail clearly instead of silently falling back to contextual tokenization.
+- [x] First-pass retrieval-head jobs write both `contextual_embeddings.parquet` and `retrieval_embeddings.parquet`.
+- [x] `retrieval_embeddings.parquet` mirrors the contextual embedding schema: `region_id`, `chunk_index_in_region`, `audio_file_id`, `start_timestamp`, `end_timestamp`, `tier`, and `embedding`.
+- [x] Retrieval embeddings are written atomically through a temporary file and `atomic_rename()`.
+- [x] Existing non-retrieval jobs continue to write only `contextual_embeddings.parquet`.
+- [x] Saved `transformer.pt` metadata includes enough retrieval-head config to reload or inspect the trained model contract later.
+- [x] Extend-k-sweep follow-up passes can read retrieval embeddings for retrieval-head jobs without retraining or re-extracting the transformer.
+- [x] Missing retrieval artifacts on a retrieval-head follow-up fail clearly instead of silently falling back to contextual tokenization.
 
 **Tests needed:**
 - Worker test for a retrieval-head job asserting both parquet artifacts exist and have matching row alignment.
@@ -94,13 +94,13 @@
 - Modify: `tests/sequence_models/test_retrieval_diagnostics.py`
 
 **Acceptance criteria:**
-- [ ] `_write_per_k_bundle()` receives the embedding space selected by the job rather than assuming contextual embeddings.
-- [ ] New retrieval-head jobs fit k-means and write `k<N>/decoded.parquet` from `retrieval_embeddings.parquet`.
-- [ ] Existing jobs and retrieval-head-disabled jobs continue to fit k-means from `contextual_embeddings.parquet`.
-- [ ] Per-k bundle shape remains unchanged, including `decoded.parquet`, `kmeans.joblib`, `run_lengths.json`, `overlay.parquet`, `exemplars.json`, and `label_distribution.json`.
-- [ ] Overlay, exemplar, run-length, label-distribution, and motif-extraction consumers continue to read the per-k bundle without requiring a schema change.
-- [ ] The nearest-neighbor report can compare `embedding_space="contextual"` and `embedding_space="retrieval"` for the same completed retrieval-head job.
-- [ ] Requesting retrieval-space diagnostics for an old job without `retrieval_embeddings.parquet` still returns the Phase 0 409 behavior.
+- [x] `_write_per_k_bundle()` receives the embedding space selected by the job rather than assuming contextual embeddings.
+- [x] New retrieval-head jobs fit k-means and write `k<N>/decoded.parquet` from `retrieval_embeddings.parquet`.
+- [x] Existing jobs and retrieval-head-disabled jobs continue to fit k-means from `contextual_embeddings.parquet`.
+- [x] Per-k bundle shape remains unchanged, including `decoded.parquet`, `kmeans.joblib`, `run_lengths.json`, `overlay.parquet`, `exemplars.json`, and `label_distribution.json`.
+- [x] Overlay, exemplar, run-length, label-distribution, and motif-extraction consumers continue to read the per-k bundle without requiring a schema change.
+- [x] The nearest-neighbor report can compare `embedding_space="contextual"` and `embedding_space="retrieval"` for the same completed retrieval-head job.
+- [x] Requesting retrieval-space diagnostics for an old job without `retrieval_embeddings.parquet` still returns the Phase 0 409 behavior.
 
 **Tests needed:**
 - Worker regression test using distinguishable contextual and retrieval fixture embeddings to prove k-means labels are fit from retrieval embeddings when the head is enabled.
@@ -118,12 +118,12 @@
 - Modify: `frontend/e2e/sequence-models/masked-transformer.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Frontend API types include the retrieval-head config fields on create and job responses.
-- [ ] The create form can submit `retrieval_head_enabled=true` with optional retrieval dimensions and L2 normalization.
-- [ ] The create form defaults preserve current non-retrieval job creation.
-- [ ] Retrieval dimension controls are disabled or omitted unless the retrieval head is enabled.
-- [ ] Frontend validation prevents non-positive retrieval dimensions before submit.
-- [ ] Existing masked-transformer create E2E coverage is updated so the submitted payload includes the new fields when the user enables retrieval mode.
+- [x] Frontend API types include the retrieval-head config fields on create and job responses.
+- [x] The create form can submit `retrieval_head_enabled=true` with optional retrieval dimensions and L2 normalization.
+- [x] The create form defaults preserve current non-retrieval job creation.
+- [x] Retrieval dimension controls are disabled or omitted unless the retrieval head is enabled.
+- [x] Frontend validation prevents non-positive retrieval dimensions before submit.
+- [x] Existing masked-transformer create E2E coverage is updated so the submitted payload includes the new fields when the user enables retrieval mode.
 
 **Tests needed:**
 - E2E test or update showing the retrieval-head toggle changes the create request payload.
@@ -141,11 +141,11 @@
 - Modify: `docs/reference/frontend.md`
 
 **Acceptance criteria:**
-- [ ] Data-model reference documents the new `MaskedTransformerJob` retrieval-head fields and their default/backward-compatibility behavior.
-- [ ] Storage-layout reference documents `retrieval_embeddings.parquet` and states that retrieval-head per-k bundles are tokenized from retrieval embeddings.
-- [ ] API reference documents create/job response retrieval-head fields and the unchanged nearest-neighbor embedding-space behavior from Phase 0.
-- [ ] Behavioral constraints keep the `training_signature` rule explicit: retrieval-head training config is included and `k_values` is excluded.
-- [ ] Frontend reference records the create-form retrieval-head controls.
+- [x] Data-model reference documents the new `MaskedTransformerJob` retrieval-head fields and their default/backward-compatibility behavior.
+- [x] Storage-layout reference documents `retrieval_embeddings.parquet` and states that retrieval-head per-k bundles are tokenized from retrieval embeddings.
+- [x] API reference documents create/job response retrieval-head fields and the unchanged nearest-neighbor embedding-space behavior from Phase 0.
+- [x] Behavioral constraints keep the `training_signature` rule explicit: retrieval-head training config is included and `k_values` is excluded.
+- [x] Frontend reference records the create-form retrieval-head controls.
 
 **Tests needed:**
 - Documentation-only task; covered by review plus the verification commands below.

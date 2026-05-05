@@ -642,6 +642,10 @@ class MaskedTransformerJobCreate(BaseModel):
     dropout: float = Field(default=0.1, ge=0.0, le=1.0)
     mask_weight_bias: bool = True
     cosine_loss_weight: float = Field(default=0.0, ge=0.0)
+    retrieval_head_enabled: bool = False
+    retrieval_dim: Optional[int] = Field(default=None, gt=0)
+    retrieval_hidden_dim: Optional[int] = Field(default=None, gt=0)
+    retrieval_l2_normalize: bool = True
     max_epochs: int = Field(default=30, ge=1)
     early_stop_patience: int = Field(default=3, ge=1)
     val_split: float = Field(default=0.1, ge=0.0, lt=1.0)
@@ -661,6 +665,14 @@ class MaskedTransformerJobCreate(BaseModel):
     def _validate_span(self) -> "MaskedTransformerJobCreate":
         if self.span_length_max < self.span_length_min:
             raise ValueError("span_length_max must be >= span_length_min")
+        if self.retrieval_head_enabled:
+            if self.retrieval_dim is None:
+                self.retrieval_dim = 128
+            if self.retrieval_hidden_dim is None:
+                self.retrieval_hidden_dim = 512
+        else:
+            self.retrieval_dim = None
+            self.retrieval_hidden_dim = None
         return self
 
 
@@ -680,6 +692,10 @@ class MaskedTransformerJobOut(BaseModel):
     dropout: float
     mask_weight_bias: bool
     cosine_loss_weight: float
+    retrieval_head_enabled: bool = False
+    retrieval_dim: Optional[int] = None
+    retrieval_hidden_dim: Optional[int] = None
+    retrieval_l2_normalize: bool = True
     max_epochs: int
     early_stop_patience: int
     val_split: float

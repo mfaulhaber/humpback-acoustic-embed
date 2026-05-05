@@ -8,6 +8,8 @@ from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobManifest,
     ContinuousEmbeddingSpanSummary,
     ExemplarRecord,
+    MaskedTransformerJobCreate,
+    MaskedTransformerJobOut,
     MaskedTransformerNearestNeighborReportRequest,
     MaskedTransformerNearestNeighborReportResponse,
     OverlayPoint,
@@ -185,6 +187,93 @@ def test_nearest_neighbor_report_request_defaults():
     ]
     assert payload.include_query_rows is False
     assert payload.include_neighbor_rows is False
+
+
+def test_masked_transformer_create_retrieval_head_defaults():
+    contextual = MaskedTransformerJobCreate(continuous_embedding_job_id="cej-1")
+    assert contextual.retrieval_head_enabled is False
+    assert contextual.retrieval_dim is None
+    assert contextual.retrieval_hidden_dim is None
+    assert contextual.retrieval_l2_normalize is True
+
+    retrieval = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        retrieval_head_enabled=True,
+    )
+    assert retrieval.retrieval_head_enabled is True
+    assert retrieval.retrieval_dim == 128
+    assert retrieval.retrieval_hidden_dim == 512
+    assert retrieval.retrieval_l2_normalize is True
+
+
+def test_masked_transformer_create_retrieval_head_validation():
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            retrieval_dim=0,
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            retrieval_hidden_dim=-1,
+        )
+
+    disabled = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        retrieval_head_enabled=False,
+        retrieval_dim=64,
+        retrieval_hidden_dim=256,
+    )
+    assert disabled.retrieval_dim is None
+    assert disabled.retrieval_hidden_dim is None
+
+
+def test_masked_transformer_job_out_serializes_retrieval_fields():
+    payload = {
+        "id": "mt-1",
+        "status": "queued",
+        "status_reason": None,
+        "continuous_embedding_job_id": "cej-1",
+        "event_classification_job_id": "cls-1",
+        "training_signature": "sig",
+        "preset": "default",
+        "mask_fraction": 0.2,
+        "span_length_min": 2,
+        "span_length_max": 6,
+        "dropout": 0.1,
+        "mask_weight_bias": True,
+        "cosine_loss_weight": 0.0,
+        "retrieval_head_enabled": True,
+        "retrieval_dim": 128,
+        "retrieval_hidden_dim": 512,
+        "retrieval_l2_normalize": True,
+        "max_epochs": 30,
+        "early_stop_patience": 3,
+        "val_split": 0.1,
+        "seed": 42,
+        "k_values": "[100]",
+        "chosen_device": None,
+        "fallback_reason": None,
+        "final_train_loss": None,
+        "final_val_loss": None,
+        "total_epochs": None,
+        "job_dir": None,
+        "total_sequences": None,
+        "total_chunks": None,
+        "error_message": None,
+        "created_at": "2026-05-05T00:00:00",
+        "updated_at": "2026-05-05T00:00:00",
+    }
+
+    job = MaskedTransformerJobOut.model_validate(payload)
+
+    assert job.retrieval_head_enabled is True
+    assert job.retrieval_dim == 128
+    assert job.retrieval_hidden_dim == 512
+    assert job.k_values == [100]
 
 
 def test_nearest_neighbor_report_request_rejects_invalid_options():

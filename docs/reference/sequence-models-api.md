@@ -422,6 +422,15 @@ parameter.
     carries tier metadata, scales the per-position loss by tier weight
     (event_core 1.5, near_event 1.2, background 0.5).
   - `cosine_loss_weight` (default `0.0`) — MSE-only when zero.
+  - `retrieval_head_enabled` (default `false`) — when true, trains a
+    small projection head, writes `retrieval_embeddings.parquet`, and
+    fits per-k k-means tokenizers from the retrieval vectors instead of
+    contextual hidden states.
+  - `retrieval_dim` (default `128` when enabled; null when disabled)
+    and `retrieval_hidden_dim` (default `512` when enabled; null when
+    disabled) — positive integers controlling the projection head.
+  - `retrieval_l2_normalize` (default `true`) — L2-normalizes retrieval
+    vectors before persistence and downstream tokenization.
   - `max_epochs`, `early_stop_patience` (default `3`), `val_split`
     (default `0.1`), `seed` (default `42`).
 
@@ -437,8 +446,10 @@ parameter.
   plus tier-composition strip (CRNN sources only) and resolved upstream
   region/embedding metadata. Response shape mirrors the HMM detail
   shape with masked-transformer-specific fields (`k_values`,
-  `chosen_device`, `fallback_reason`, `final_train_loss`,
-  `final_val_loss`, `total_epochs`, `total_sequences`, `total_chunks`).
+  `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`,
+  `retrieval_l2_normalize`, `chosen_device`, `fallback_reason`,
+  `final_train_loss`, `final_val_loss`, `total_epochs`,
+  `total_sequences`, `total_chunks`).
 
 - `POST /sequence-models/masked-transformers/{id}/extend-k-sweep` —
   body `{ "additional_k": list[int] }`. Only valid for
@@ -540,11 +551,12 @@ entry of `k_values`); `404` on unknown k:
 `continuous_embedding_job_id` FK, `training_signature`, all training
 hyperparameters (`preset`, `mask_fraction`, `span_length_min`,
 `span_length_max`, `dropout`, `mask_weight_bias`, `cosine_loss_weight`,
-`max_epochs`, `early_stop_patience`, `val_split`, `seed`), tokenization
-config (`k_values`), device + outcomes (`chosen_device`,
-`fallback_reason`, `final_train_loss`, `final_val_loss`,
-`total_epochs`), storage (`job_dir`, `total_sequences`, `total_chunks`),
-and UTC timestamps.
+`retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`,
+`retrieval_l2_normalize`, `max_epochs`, `early_stop_patience`,
+`val_split`, `seed`), tokenization config (`k_values`), device +
+outcomes (`chosen_device`, `fallback_reason`, `final_train_loss`,
+`final_val_loss`, `total_epochs`), storage (`job_dir`,
+`total_sequences`, `total_chunks`), and UTC timestamps.
 
 `MaskedTransformerJobDetail` adds the tier-composition strip (CRNN
 only) and resolved upstream region metadata, mirroring
@@ -579,9 +591,14 @@ Reused across HMM and masked-transformer detail pages: `OverlayResponse`,
 - `training_signature` is computed from
   `(continuous_embedding_job_id, preset, mask_fraction,
   span_length_min, span_length_max, dropout, mask_weight_bias,
-  cosine_loss_weight, max_epochs, early_stop_patience, val_split,
-  seed)` — `k_values` is intentionally excluded so a completed job can
-  extend its k-sweep.
+  cosine_loss_weight, retrieval-head config when enabled, max_epochs,
+  early_stop_patience, val_split, seed)` — `k_values` is intentionally
+  excluded so a completed job can extend its k-sweep. Disabled
+  retrieval-head jobs preserve the pre-067 signature shape.
+- Retrieval-head jobs continue writing `contextual_embeddings.parquet`
+  for compatibility and diagnostics, and additionally write
+  `retrieval_embeddings.parquet`; their per-k `decoded.parquet` bundles
+  are tokenized from retrieval embeddings.
 - Device validation runs forward+backward on a fixed synthetic batch on
   both CPU and the chosen accelerator before training. On tolerance
   failure the worker records `fallback_reason` and proceeds on CPU.

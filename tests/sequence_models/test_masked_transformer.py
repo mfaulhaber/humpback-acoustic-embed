@@ -131,6 +131,31 @@ class TestForwardShape:
         assert reconstructed.shape == (2, 8, D_input)
         assert hidden.shape == (2, 8, d_model)
 
+    def test_forward_returns_retrieval_when_enabled(self):
+        torch.manual_seed(0)
+        D_input, d_model, retrieval_dim = 16, 32, 7
+        model = MaskedTransformer(
+            input_dim=D_input,
+            d_model=d_model,
+            num_layers=1,
+            num_heads=4,
+            ff_dim=64,
+            dropout=0.0,
+            retrieval_head_enabled=True,
+            retrieval_dim=retrieval_dim,
+            retrieval_hidden_dim=24,
+        )
+        x = torch.randn(2, 8, D_input)
+
+        output = model(x)
+
+        assert output.reconstructed.shape == (2, 8, D_input)
+        assert output.hidden.shape == (2, 8, d_model)
+        assert output.retrieval is not None
+        assert output.retrieval.shape == (2, 8, retrieval_dim)
+        norms = torch.linalg.vector_norm(output.retrieval, ord=2, dim=-1)
+        torch.testing.assert_close(norms, torch.ones_like(norms), atol=1e-5, rtol=1e-5)
+
 
 class TestTrainConvergence:
     def test_loss_decreases_on_synthetic_sinusoids(self):
@@ -177,6 +202,36 @@ class TestTrainConvergence:
         assert len(result.training_mask) == 6
         assert sum(result.training_mask) == result.n_train_sequences
         assert 6 - sum(result.training_mask) == result.n_val_sequences
+
+    def test_retrieval_head_parameters_update_during_training(self):
+        sequences = _make_synthetic_sequences(n_seq=4, T=16, D=8, seed=17)
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_fraction=0.25,
+            span_length_min=2,
+            span_length_max=4,
+            dropout=0.0,
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=17,
+            batch_size=2,
+            retrieval_head_enabled=True,
+            retrieval_dim=8,
+            retrieval_hidden_dim=16,
+        )
+
+        result = train_masked_transformer(sequences, config, device="cpu")
+
+        assert result.model.retrieval_head is not None
+        grad_norms = [
+            float(p.grad.detach().abs().sum())
+            for p in result.model.retrieval_head.parameters()
+            if p.grad is not None
+        ]
+        assert grad_norms
+        assert any(norm > 0.0 for norm in grad_norms)
 
 
 class TestEarlyStopping:
@@ -315,6 +370,44 @@ class TestExtractContextualEmbeddings:
         assert Z[0].shape == (5, result.model.d_model)
         assert Z[1].shape == (12, result.model.d_model)
         assert Z[2].shape == (7, result.model.d_model)
+
+    def test_retrieval_extraction_shape(self):
+        from humpback.sequence_models.masked_transformer import (
+            extract_transformer_embeddings,
+        )
+
+        sequences = [
+            np.random.RandomState(i).randn(T, 8).astype(np.float32)
+            for i, T in enumerate([5, 12])
+        ]
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_fraction=0.20,
+            span_length_min=2,
+            span_length_max=4,
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=2,
+            batch_size=2,
+            retrieval_head_enabled=True,
+            retrieval_dim=6,
+            retrieval_hidden_dim=12,
+        )
+        result = train_masked_transformer(sequences, config, device="cpu")
+
+        Z, R, lengths = extract_transformer_embeddings(
+            result.model, sequences, device="cpu", batch_size=2
+        )
+
+        assert lengths == [5, 12]
+        assert len(Z) == 2
+        assert R is not None
+        assert len(R) == 2
+        assert R[0].shape == (5, 6)
+        assert R[1].shape == (12, 6)
+        np.testing.assert_allclose(np.linalg.norm(R[0], axis=1), np.ones(5), atol=1e-5)
 
     def test_ordering_is_preserved_against_single_pass(self):
         sequences = [

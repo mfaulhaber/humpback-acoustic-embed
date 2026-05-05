@@ -28,6 +28,8 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 
 **Masked Transformer detail page panel order** (top → bottom, after the metadata Card and KPicker): Token Timeline (plain Card with the legend inside), Motifs, Loss Curve, Run-Length Histograms, Overlay, Exemplars, Label Distribution. Motifs sits directly under the timeline so the legend, prev/next, and the alignment-strip are all visible without scrolling.
 
+**Masked Transformer create form**: Advanced options include a retrieval projection-head checkbox. When enabled, `retrieval_dim` and `retrieval_hidden_dim` numeric controls are active and default to 128 / 512, with an L2-normalize checkbox defaulting on. The unchecked default submits `retrieval_head_enabled=false` and null dimensions so existing contextual masked-transformer jobs keep their prior behavior.
+
 **Timeline tiles**: Frontend consumers keep the existing URL contracts:
 classifier timelines request `timelineTileUrl`, and region-backed timelines
 request `regionTileUrl`. The backend stores and reuses PNG tiles through a

@@ -64,6 +64,10 @@ class MaskedTransformerConfig:
     dropout: float = 0.1
     mask_weight_bias: bool = True
     cosine_loss_weight: float = 0.0
+    retrieval_head_enabled: bool = False
+    retrieval_dim: int | None = None
+    retrieval_hidden_dim: int | None = None
+    retrieval_l2_normalize: bool = True
     max_epochs: int = 30
     early_stop_patience: int = 3
     val_split: float = 0.1
@@ -91,6 +95,19 @@ class TrainResult:
     n_val_sequences: int
 
 
+@dataclass
+class MaskedTransformerForward:
+    """Named forward contract with tuple-unpack compatibility."""
+
+    reconstructed: torch.Tensor
+    hidden: torch.Tensor
+    retrieval: Optional[torch.Tensor] = None
+
+    def __iter__(self):
+        yield self.reconstructed
+        yield self.hidden
+
+
 class MaskedTransformer(nn.Module):
     """``Linear -> TransformerEncoder(norm_first, GELU) -> Linear``.
 
@@ -107,10 +124,20 @@ class MaskedTransformer(nn.Module):
         num_heads: int,
         ff_dim: int,
         dropout: float = 0.1,
+        retrieval_head_enabled: bool = False,
+        retrieval_dim: Optional[int] = None,
+        retrieval_hidden_dim: Optional[int] = None,
+        retrieval_l2_normalize: bool = True,
     ) -> None:
         super().__init__()
         self.input_dim = input_dim
         self.d_model = d_model
+        self.retrieval_head_enabled = bool(retrieval_head_enabled)
+        self.retrieval_dim = int(retrieval_dim) if retrieval_dim is not None else None
+        self.retrieval_hidden_dim = (
+            int(retrieval_hidden_dim) if retrieval_hidden_dim is not None else None
+        )
+        self.retrieval_l2_normalize = bool(retrieval_l2_normalize)
         self.input_proj = nn.Linear(input_dim, d_model)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -123,17 +150,41 @@ class MaskedTransformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.output_proj = nn.Linear(d_model, input_dim)
+        if self.retrieval_head_enabled:
+            resolved_dim = self.retrieval_dim or 128
+            resolved_hidden = self.retrieval_hidden_dim or 512
+            self.retrieval_dim = resolved_dim
+            self.retrieval_hidden_dim = resolved_hidden
+            self.retrieval_head = nn.Sequential(
+                nn.LayerNorm(d_model),
+                nn.Linear(d_model, resolved_hidden),
+                nn.GELU(),
+                nn.Linear(resolved_hidden, resolved_dim),
+            )
+        else:
+            self.retrieval_head = None
 
     def forward(
         self,
         x: torch.Tensor,
         src_key_padding_mask: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> MaskedTransformerForward:
         hidden = self.encoder(
             self.input_proj(x), src_key_padding_mask=src_key_padding_mask
         )
         reconstructed = self.output_proj(hidden)
-        return reconstructed, hidden
+        retrieval: Optional[torch.Tensor] = None
+        head = self.retrieval_head
+        if head is not None:
+            retrieval = head(hidden)
+            if self.retrieval_l2_normalize:
+                assert retrieval is not None
+                retrieval = F.normalize(retrieval, p=2, dim=-1, eps=1e-12)
+        return MaskedTransformerForward(
+            reconstructed=reconstructed,
+            hidden=hidden,
+            retrieval=retrieval,
+        )
 
 
 def apply_span_mask(
@@ -336,6 +387,22 @@ def _compute_loss(
     return loss, sq_err_per_chunk.detach()
 
 
+def _compute_retrieval_consistency_loss(
+    predicted: Optional[torch.Tensor],
+    target: Optional[torch.Tensor],
+    mask_positions: torch.Tensor,
+) -> torch.Tensor:
+    """Unsupervised masked-context loss that gives Phase 1 retrieval head gradients."""
+    if predicted is None or target is None or not bool(mask_positions.any()):
+        reference = predicted if predicted is not None else target
+        if reference is None:
+            return torch.tensor(0.0, device=mask_positions.device)
+        return reference.sum() * 0.0
+    diff = (predicted - target.detach()).pow(2).mean(dim=-1)
+    mask = mask_positions.to(diff.dtype)
+    return (diff * mask).sum() / mask.sum().clamp_min(1.0)
+
+
 def _train_val_split(
     n_sequences: int, val_split: float, rng: np.random.Generator
 ) -> tuple[list[bool], list[int], list[int]]:
@@ -399,6 +466,10 @@ def train_masked_transformer(
         num_heads=dims["num_heads"],
         ff_dim=dims["ff_dim"],
         dropout=config.dropout,
+        retrieval_head_enabled=config.retrieval_head_enabled,
+        retrieval_dim=config.retrieval_dim,
+        retrieval_hidden_dim=config.retrieval_hidden_dim,
+        retrieval_l2_normalize=config.retrieval_l2_normalize,
     ).to(device_obj)
 
     optim = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -443,14 +514,25 @@ def train_masked_transformer(
             batch = _build_batch(batch_seqs, batch_tiers, config, rng, device_obj)
 
             optim.zero_grad(set_to_none=True)
-            reconstructed, _ = model(batch.inputs, src_key_padding_mask=batch.pad_mask)
+            output = model(batch.inputs, src_key_padding_mask=batch.pad_mask)
             loss, _ = _compute_loss(
-                reconstructed,
+                output.reconstructed,
                 batch.targets,
                 batch.mask_positions,
                 batch.weights,
                 config.cosine_loss_weight,
             )
+            if config.retrieval_head_enabled:
+                with torch.no_grad():
+                    target_output = model(
+                        batch.targets, src_key_padding_mask=batch.pad_mask
+                    )
+                retrieval_loss = _compute_retrieval_consistency_loss(
+                    output.retrieval,
+                    target_output.retrieval,
+                    batch.mask_positions,
+                )
+                loss = loss + 0.01 * retrieval_loss
             loss.backward()
             optim.step()
             epoch_train_loss += float(loss.detach().item())
@@ -464,16 +546,26 @@ def train_masked_transformer(
             model.eval()
             with torch.no_grad():
                 val_batch = _build_batch(val_seqs, val_tiers, config, rng, device_obj)
-                reconstructed, _ = model(
+                output = model(
                     val_batch.inputs, src_key_padding_mask=val_batch.pad_mask
                 )
                 val_loss, _ = _compute_loss(
-                    reconstructed,
+                    output.reconstructed,
                     val_batch.targets,
                     val_batch.mask_positions,
                     val_batch.weights,
                     config.cosine_loss_weight,
                 )
+                if config.retrieval_head_enabled:
+                    target_output = model(
+                        val_batch.targets, src_key_padding_mask=val_batch.pad_mask
+                    )
+                    retrieval_loss = _compute_retrieval_consistency_loss(
+                        output.retrieval,
+                        target_output.retrieval,
+                        val_batch.mask_positions,
+                    )
+                    val_loss = val_loss + 0.01 * retrieval_loss
             val_loss_value = float(val_loss.item())
         else:
             val_loss_value = float("nan")
@@ -518,9 +610,9 @@ def train_masked_transformer(
                 else None
             )
             batch = _build_batch(batch_seqs, batch_tiers, config, error_rng, device_obj)
-            reconstructed, _ = model(batch.inputs, src_key_padding_mask=batch.pad_mask)
+            output = model(batch.inputs, src_key_padding_mask=batch.pad_mask)
             _, per_chunk = _compute_loss(
-                reconstructed,
+                output.reconstructed,
                 batch.targets,
                 batch.mask_positions,
                 batch.weights,
@@ -570,14 +662,32 @@ def extract_contextual_embeddings(
     Returns ``(Z, lengths)`` where ``Z`` is a list aligned 1:1 with
     ``sequences`` and each entry is shape ``(T_i, d_model)``.
     """
+    Z, _, lengths = extract_transformer_embeddings(
+        model,
+        sequences,
+        device=device,
+        batch_size=batch_size,
+    )
+    return Z, lengths
+
+
+def extract_transformer_embeddings(
+    model: MaskedTransformer,
+    sequences: list[np.ndarray],
+    device: str | torch.device = "cpu",
+    *,
+    batch_size: int = 8,
+) -> tuple[list[np.ndarray], list[np.ndarray] | None, list[int]]:
+    """Run encoder forward and return contextual plus optional retrieval embeddings."""
     if not sequences:
-        return [], []
+        return [], [] if model.retrieval_head_enabled else None, []
 
     device_obj = _device_obj(device)
     model = model.to(device_obj)
     model.eval()
 
     Z: list[np.ndarray] = []
+    R: list[np.ndarray] | None = [] if model.retrieval_head_enabled else None
     lengths: list[int] = [int(seq.shape[0]) for seq in sequences]
     with torch.no_grad():
         for start in range(0, len(sequences), max(1, batch_size)):
@@ -585,19 +695,26 @@ def extract_contextual_embeddings(
             inputs_tensor, pad_mask, batch_lengths = _pad_batch(batch_seqs)
             inputs_tensor = inputs_tensor.to(device_obj)
             pad_mask = pad_mask.to(device_obj)
-            _, hidden = model(inputs_tensor, src_key_padding_mask=pad_mask)
-            hidden_np = hidden.cpu().numpy()
+            output = model(inputs_tensor, src_key_padding_mask=pad_mask)
+            hidden_np = output.hidden.cpu().numpy()
+            retrieval_np = (
+                output.retrieval.cpu().numpy() if output.retrieval is not None else None
+            )
             for i, L in enumerate(batch_lengths):
                 Z.append(hidden_np[i, :L].astype(np.float32, copy=True))
-    return Z, lengths
+                if R is not None and retrieval_np is not None:
+                    R.append(retrieval_np[i, :L].astype(np.float32, copy=True))
+    return Z, R, lengths
 
 
 __all__ = [
     "MaskedTransformer",
     "MaskedTransformerConfig",
+    "MaskedTransformerForward",
     "TIER_LOSS_WEIGHTS",
     "TrainResult",
     "apply_span_mask",
     "extract_contextual_embeddings",
+    "extract_transformer_embeddings",
     "train_masked_transformer",
 ]

@@ -46,7 +46,7 @@ from humpback.models.sequence_models import (
 from humpback.sequence_models.masked_transformer import (
     MaskedTransformer,
     MaskedTransformerConfig,
-    extract_contextual_embeddings,
+    extract_transformer_embeddings,
     train_masked_transformer,
 )
 from humpback.sequence_models.tokenization import (
@@ -79,6 +79,7 @@ from humpback.storage import (
     masked_transformer_loss_curve_path,
     masked_transformer_model_path,
     masked_transformer_reconstruction_error_path,
+    masked_transformer_retrieval_embeddings_path,
 )
 from humpback.workers.queue import claim_masked_transformer_job
 
@@ -317,9 +318,52 @@ def _write_contextual_embeddings(
     audio_ids: list[list[Optional[int]]],
     tier_lists: list[list[str]],
 ) -> None:
+    _write_embedding_artifact(
+        dst=masked_transformer_contextual_embeddings_path(storage_root, job_id),
+        region_ids=region_ids,
+        embeddings_by_seq=Z_by_seq,
+        starts=starts,
+        ends=ends,
+        audio_ids=audio_ids,
+        tier_lists=tier_lists,
+    )
+
+
+def _write_retrieval_embeddings(
+    *,
+    storage_root: Path,
+    job_id: str,
+    region_ids: list[str],
+    R_by_seq: list[np.ndarray],
+    starts: list[list[float]],
+    ends: list[list[float]],
+    audio_ids: list[list[Optional[int]]],
+    tier_lists: list[list[str]],
+) -> None:
+    _write_embedding_artifact(
+        dst=masked_transformer_retrieval_embeddings_path(storage_root, job_id),
+        region_ids=region_ids,
+        embeddings_by_seq=R_by_seq,
+        starts=starts,
+        ends=ends,
+        audio_ids=audio_ids,
+        tier_lists=tier_lists,
+    )
+
+
+def _write_embedding_artifact(
+    *,
+    dst: Path,
+    region_ids: list[str],
+    embeddings_by_seq: list[np.ndarray],
+    starts: list[list[float]],
+    ends: list[list[float]],
+    audio_ids: list[list[Optional[int]]],
+    tier_lists: list[list[str]],
+) -> None:
     rows: list[dict] = []
     for region_id, Z_seq, start_seq, end_seq, audio_seq, tier_seq in zip(
-        region_ids, Z_by_seq, starts, ends, audio_ids, tier_lists
+        region_ids, embeddings_by_seq, starts, ends, audio_ids, tier_lists
     ):
         for pos in range(Z_seq.shape[0]):
             rows.append(
@@ -336,7 +380,6 @@ def _write_contextual_embeddings(
                 }
             )
     table = pa.Table.from_pylist(rows)
-    dst = masked_transformer_contextual_embeddings_path(storage_root, job_id)
     tmp = dst.with_suffix(dst.suffix + ".tmp")
     dst.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, tmp)
@@ -403,6 +446,10 @@ def _save_model_state(
         "config": {
             "input_dim": feature_dim,
             "d_model": model.d_model,
+            "retrieval_head_enabled": model.retrieval_head_enabled,
+            "retrieval_dim": model.retrieval_dim,
+            "retrieval_hidden_dim": model.retrieval_hidden_dim,
+            "retrieval_l2_normalize": model.retrieval_l2_normalize,
         },
     }
     torch.save(payload, tmp)
@@ -424,7 +471,39 @@ def _read_contextual_embeddings(
     list[list[Optional[int]]],
     list[list[str]],
 ]:
-    path = masked_transformer_contextual_embeddings_path(storage_root, job_id)
+    return _read_embedding_artifact(
+        masked_transformer_contextual_embeddings_path(storage_root, job_id)
+    )
+
+
+def _read_retrieval_embeddings(
+    storage_root: Path, job_id: str
+) -> tuple[
+    list[str],
+    list[np.ndarray],
+    list[list[float]],
+    list[list[float]],
+    list[list[Optional[int]]],
+    list[list[str]],
+]:
+    path = masked_transformer_retrieval_embeddings_path(storage_root, job_id)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"retrieval_embeddings.parquet not found for retrieval-head job {job_id}"
+        )
+    return _read_embedding_artifact(path)
+
+
+def _read_embedding_artifact(
+    path: Path,
+) -> tuple[
+    list[str],
+    list[np.ndarray],
+    list[list[float]],
+    list[list[float]],
+    list[list[Optional[int]]],
+    list[list[str]],
+]:
     table = pq.read_table(path)
     region_col = table.column("region_id").to_pylist()
     unique_regions = sorted(set(region_col))
@@ -460,6 +539,10 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
         dropout=float(job.dropout),
         mask_weight_bias=bool(job.mask_weight_bias),
         cosine_loss_weight=float(job.cosine_loss_weight),
+        retrieval_head_enabled=bool(job.retrieval_head_enabled),
+        retrieval_dim=job.retrieval_dim,
+        retrieval_hidden_dim=job.retrieval_hidden_dim,
+        retrieval_l2_normalize=bool(job.retrieval_l2_normalize),
         max_epochs=int(job.max_epochs),
         early_stop_patience=int(job.early_stop_patience),
         val_split=float(job.val_split),
@@ -589,7 +672,7 @@ async def run_masked_transformer_job(
                 ends=ends,
             )
 
-            Z, _ = extract_contextual_embeddings(
+            Z, R, _ = extract_transformer_embeddings(
                 train_result.model, sequences, device=chosen_device
             )
             _write_contextual_embeddings(
@@ -602,6 +685,22 @@ async def run_masked_transformer_job(
                 audio_ids=audio_ids,
                 tier_lists=tier_lists,
             )
+            if config.retrieval_head_enabled:
+                if R is None:
+                    raise RuntimeError("retrieval head enabled but no retrieval output")
+                _write_retrieval_embeddings(
+                    storage_root=settings.storage_root,
+                    job_id=job_id,
+                    region_ids=region_ids,
+                    R_by_seq=R,
+                    starts=starts,
+                    ends=ends,
+                    audio_ids=audio_ids,
+                    tier_lists=tier_lists,
+                )
+                token_embeddings = R
+            else:
+                token_embeddings = Z
 
             job.final_train_loss = train_result.val_metrics.get("final_train_loss")
             final_val = train_result.val_metrics.get("final_val_loss")
@@ -617,12 +716,16 @@ async def run_masked_transformer_job(
             # state is left untouched.
             (
                 region_ids,
-                Z,
+                token_embeddings,
                 starts,
                 ends,
                 audio_ids,
                 tier_lists,
-            ) = _read_contextual_embeddings(settings.storage_root, job_id)
+            ) = (
+                _read_retrieval_embeddings(settings.storage_root, job_id)
+                if config.retrieval_head_enabled
+                else _read_contextual_embeddings(settings.storage_root, job_id)
+            )
 
         previously_done = _previously_done_k(settings.storage_root, job_id, k_list)
 
@@ -636,7 +739,7 @@ async def run_masked_transformer_job(
                 storage_root=settings.storage_root,
                 job_id=job_id,
                 k=k,
-                Z_by_seq=Z,
+                Z_by_seq=token_embeddings,
                 region_ids=region_ids,
                 tier_lists=tier_lists,
                 starts=starts,

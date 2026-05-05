@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -35,6 +36,7 @@ from humpback.storage import (
     masked_transformer_loss_curve_path,
     masked_transformer_model_path,
     masked_transformer_reconstruction_error_path,
+    masked_transformer_retrieval_embeddings_path,
 )
 from humpback.workers.masked_transformer_worker import run_masked_transformer_job
 from tests.fixtures.sequence_models.classify_binding import (
@@ -233,6 +235,7 @@ async def test_happy_path_persists_all_artifacts(session, settings, monkeypatch)
     assert masked_transformer_loss_curve_path(sr, job.id).exists()
     assert masked_transformer_reconstruction_error_path(sr, job.id).exists()
     assert masked_transformer_contextual_embeddings_path(sr, job.id).exists()
+    assert not masked_transformer_retrieval_embeddings_path(sr, job.id).exists()
     # Per-k bundle.
     k = 10
     k_dir = masked_transformer_k_dir(sr, job.id, k)
@@ -278,6 +281,93 @@ async def test_happy_path_persists_all_artifacts(session, settings, monkeypatch)
     assert job.total_chunks == 72
     assert job.total_epochs is not None
     assert job.chosen_device == "cpu"
+
+
+async def test_retrieval_head_job_persists_and_tokenizes_retrieval_embeddings(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+        },
+    )
+    await _bind_classify(session, settings, cej, job)
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    sr = settings.storage_root
+    contextual_path = masked_transformer_contextual_embeddings_path(sr, job.id)
+    retrieval_path = masked_transformer_retrieval_embeddings_path(sr, job.id)
+    assert contextual_path.exists()
+    assert retrieval_path.exists()
+
+    contextual = pq.read_table(contextual_path)
+    retrieval = pq.read_table(retrieval_path)
+    assert contextual.num_rows == retrieval.num_rows
+    assert retrieval.column_names == contextual.column_names
+    retrieval_vectors = retrieval.column("embedding").to_pylist()
+    assert len(retrieval_vectors[0]) == 6
+    norms = np.linalg.norm(np.asarray(retrieval_vectors, dtype=np.float32), axis=1)
+    np.testing.assert_allclose(norms, np.ones_like(norms), atol=1e-5)
+
+    kmeans_payload = joblib.load(masked_transformer_k_kmeans_path(sr, job.id, 10))
+    assert kmeans_payload["kmeans"].cluster_centers_.shape[1] == 6
+
+
+async def test_retrieval_head_extend_k_sweep_reuses_retrieval_artifact(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "k_values": [10],
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+        },
+    )
+    await _bind_classify(session, settings, cej, job)
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+    assert job.status == JobStatus.complete.value, job.error_message
+
+    sr = settings.storage_root
+    transformer_path = masked_transformer_model_path(sr, job.id)
+    contextual_path = masked_transformer_contextual_embeddings_path(sr, job.id)
+    retrieval_path = masked_transformer_retrieval_embeddings_path(sr, job.id)
+    mtimes = {
+        "transformer": transformer_path.stat().st_mtime_ns,
+        "contextual": contextual_path.stat().st_mtime_ns,
+        "retrieval": retrieval_path.stat().st_mtime_ns,
+    }
+
+    job.k_values = json.dumps([10, 12])
+    job.status = JobStatus.queued.value
+    await session.commit()
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert transformer_path.stat().st_mtime_ns == mtimes["transformer"]
+    assert contextual_path.stat().st_mtime_ns == mtimes["contextual"]
+    assert retrieval_path.stat().st_mtime_ns == mtimes["retrieval"]
+    kmeans_payload = joblib.load(masked_transformer_k_kmeans_path(sr, job.id, 12))
+    assert kmeans_payload["kmeans"].cluster_centers_.shape[1] == 6
 
 
 async def test_atomic_per_k_writes_clean_up_on_failure(session, settings, monkeypatch):
