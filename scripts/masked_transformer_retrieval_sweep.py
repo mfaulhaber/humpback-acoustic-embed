@@ -218,7 +218,7 @@ def _explicit_targets(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "run_name": run_name,
                 "job_id": job_id,
                 "embedding_spaces": spaces,
-                "k_values": [args.k],
+                "k_values": [args.k if args.k is not None else DEFAULT_K_VALUES[0]],
                 "metadata": {"label_semantics": LABEL_SEMANTICS},
             }
         )
@@ -258,7 +258,7 @@ async def compare_runs(args: argparse.Namespace) -> int:
                 if not job_id:
                     continue
                 k_values = target.get("k_values") or [args.k]
-                k = int(args.k or k_values[0])
+                k = int(args.k if args.k is not None else k_values[0])
                 for space in target.get("embedding_spaces") or [args.embedding_space]:
                     options = RetrievalReportOptions(
                         k=k,
@@ -359,7 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="JOB_ID, RUN_NAME=JOB_ID, or RUN_NAME=JOB_ID:retrieval",
     )
     compare.add_argument("--embedding-space", default="retrieval")
-    compare.add_argument("--k", type=int, default=DEFAULT_K_VALUES[0])
+    compare.add_argument("--k", type=int)
     compare.add_argument("--samples", type=int, default=50)
     compare.add_argument("--topn", type=int, default=10)
     compare.add_argument("--seed", type=int, default=20260504)

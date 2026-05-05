@@ -172,6 +172,55 @@ def test_compare_keeps_failed_jobs_in_outputs(tmp_path, monkeypatch) -> None:
     assert comparison["rows"][0]["error"] == "artifact missing"
 
 
+def test_compare_manifest_uses_row_k_when_no_override(tmp_path, monkeypatch) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "run_name": "trial",
+                        "job_id": "job-1",
+                        "embedding_spaces": ["retrieval"],
+                        "k_values": [100],
+                    }
+                ]
+            }
+        )
+    )
+    seen: list[int | None] = []
+
+    async def fake_report(_session, *, storage_root, job_id, options):
+        seen.append(options.k)
+        return {
+            "job": {"job_id": job_id, "k": options.k},
+            "options": {"embedding_space": options.embedding_space},
+            "label_coverage": {},
+            "results": {
+                cli.REQUIRED_RETRIEVAL_MODE: {
+                    cli.PRIMARY_VARIANT: {"same_human_label": 0.5}
+                }
+            },
+        }
+
+    monkeypatch.setattr(cli, "create_engine", lambda _url: _FakeEngine())
+    monkeypatch.setattr(cli, "create_session_factory", lambda _engine: _FakeFactory())
+    monkeypatch.setattr(cli, "build_nearest_neighbor_report", fake_report)
+
+    exit_code = cli.main(
+        [
+            "compare",
+            "--manifest",
+            str(manifest_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen == [100]
+
+
 def test_submit_async_function_can_be_called_directly(tmp_path) -> None:
     args = cli.build_parser().parse_args(
         ["submit", "--dry-run", "--output-dir", str(tmp_path)]
