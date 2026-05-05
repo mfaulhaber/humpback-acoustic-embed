@@ -88,6 +88,11 @@ const QUEUED_JOB = {
   contrastive_min_regions_per_label: 2,
   require_cross_region_positive: true,
   related_label_policy_json: null,
+  contrastive_sampler_enabled: true,
+  contrastive_labels_per_batch: 4,
+  contrastive_events_per_label: 4,
+  contrastive_max_unlabeled_fraction: 0.25,
+  contrastive_region_balance: true,
   max_epochs: 30,
   early_stop_patience: 3,
   val_split: 0.1,
@@ -362,6 +367,12 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
           require_cross_region_positive:
             body.require_cross_region_positive ?? true,
           related_label_policy_json: body.related_label_policy_json ?? null,
+          contrastive_sampler_enabled: body.contrastive_sampler_enabled ?? true,
+          contrastive_labels_per_batch: body.contrastive_labels_per_batch ?? 4,
+          contrastive_events_per_label: body.contrastive_events_per_label ?? 4,
+          contrastive_max_unlabeled_fraction:
+            body.contrastive_max_unlabeled_fraction ?? 0.25,
+          contrastive_region_balance: body.contrastive_region_balance ?? true,
         };
         state.jobs = [created, ...state.jobs];
         return route.fulfill({
@@ -613,6 +624,12 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-adv-contrastive_temperature").fill("0.05");
     await page.getByTestId("mt-adv-contrastive_min_events_per_label").fill("2");
     await page.getByTestId("mt-adv-contrastive_min_regions_per_label").fill("1");
+    await page.getByTestId("mt-adv-contrastive_labels_per_batch").fill("3");
+    await page.getByTestId("mt-adv-contrastive_events_per_label").fill("2");
+    await page
+      .getByTestId("mt-adv-contrastive_max_unlabeled_fraction")
+      .fill("0.1");
+    await page.getByTestId("mt-contrastive-region-balance").uncheck();
     await page.getByTestId("mt-require-cross-region-positive").uncheck();
     await page.getByTestId("mt-create-submit").click();
     await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
@@ -628,7 +645,49 @@ test.describe("Sequence Models — Masked Transformer", () => {
       contrastive_min_events_per_label: 2,
       contrastive_min_regions_per_label: 1,
       require_cross_region_positive: false,
+      contrastive_sampler_enabled: true,
+      contrastive_labels_per_batch: 3,
+      contrastive_events_per_label: 2,
+      contrastive_max_unlabeled_fraction: 0.1,
+      contrastive_region_balance: false,
     });
+  });
+
+  test("create form hides sampler controls until contrastive is active", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await expect(
+      page.getByTestId("mt-adv-contrastive_labels_per_batch"),
+    ).toHaveCount(0);
+    await page.getByTestId("mt-retrieval-head-enabled").check();
+    await page.getByTestId("mt-contrastive-enabled").check();
+    await expect(
+      page.getByTestId("mt-adv-contrastive_labels_per_batch"),
+    ).toBeVisible();
+  });
+
+  test("create form blocks invalid sampler values", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await page.getByTestId("mt-retrieval-head-enabled").check();
+    await page.getByTestId("mt-contrastive-enabled").check();
+    await page
+      .getByTestId("mt-adv-contrastive_max_unlabeled_fraction")
+      .fill("1");
+
+    await expect(page.getByTestId("mt-create-submit")).toBeDisabled();
   });
 
   test("create form submits event-centered sequence mode", async ({ page }) => {

@@ -12,6 +12,7 @@ from humpback.sequence_models.masked_transformer import (
     MaskedTransformerConfig,
     TIER_LOSS_WEIGHTS,
     apply_span_mask,
+    build_contrastive_epoch_batches,
     extract_contextual_embeddings,
     train_masked_transformer,
 )
@@ -233,6 +234,9 @@ class TestTrainConvergence:
         ]
         assert grad_norms
         assert any(norm > 0.0 for norm in grad_norms)
+        assert result.loss_curve["train_contrastive_valid_batches"] == [0.0]
+        assert result.loss_curve["train_contrastive_valid_anchor_count"] == [0.0]
+        assert result.loss_curve["train_contrastive_positive_pair_count"] == [0.0]
 
     def test_contrastive_training_records_separated_loss_curves(self):
         sequences = _make_synthetic_sequences(n_seq=4, T=10, D=8, seed=23)
@@ -271,10 +275,17 @@ class TestTrainConvergence:
         assert len(result.loss_curve["train_masked"]) == 2
         assert len(result.loss_curve["train_contrastive"]) == 2
         assert len(result.loss_curve["train_total"]) == 2
+        assert len(result.loss_curve["train_contrastive_valid_batches"]) == 2
+        assert len(result.loss_curve["train_contrastive_valid_anchor_count"]) == 2
+        assert len(result.loss_curve["train_contrastive_positive_pair_count"]) == 2
+        assert len(result.loss_curve["train_contrastive_eligible_label_count"]) == 2
+        assert len(result.loss_curve["train_contrastive_labeled_event_count"]) == 2
+        assert len(result.loss_curve["train_contrastive_unlabeled_fill_count"]) == 2
         assert result.loss_curve["train_contrastive"][-1] >= 0.0
+        assert result.loss_curve["train_contrastive_valid_batches"][-1] > 0.0
         assert "final_train_contrastive_loss" in result.val_metrics
 
-    def test_contrastive_training_skips_no_positive_batches(self):
+    def test_contrastive_training_skips_no_positive_batches_when_no_pairs(self):
         sequences = _make_synthetic_sequences(n_seq=2, T=8, D=6, seed=24)
         events = [
             ContrastiveEventMetadata("a", "r1", ("Moan",), 0, 4),
@@ -303,6 +314,126 @@ class TestTrainConvergence:
 
         assert result.loss_curve["train_contrastive"] == [0.0]
         assert result.loss_curve["train_contrastive_skipped_batches"] == [1.0]
+
+    def test_contrastive_sampler_builds_batches_with_valid_anchor(self):
+        events = [
+            ContrastiveEventMetadata("a", "r1", ("Moan",), 0, 1),
+            ContrastiveEventMetadata("b", "r2", ("Moan",), 0, 1),
+            ContrastiveEventMetadata("c", "r1", ("Whup",), 0, 1),
+            ContrastiveEventMetadata("d", "r2", ("Whup",), 0, 1),
+            None,
+        ]
+
+        batches = build_contrastive_epoch_batches(
+            len(events),
+            events,
+            np.random.default_rng(3),
+            batch_size=4,
+            min_events_per_label=2,
+            min_regions_per_label=2,
+            labels_per_batch=2,
+            events_per_label=2,
+            max_unlabeled_fraction=0.25,
+            region_balance=True,
+        )
+
+        contrastive_batches = [batch for batch in batches if len(batch) > 1]
+        assert contrastive_batches
+        for batch in contrastive_batches[:1]:
+            batch_events = [events[i] for i in batch if events[i] is not None]
+            label_counts: dict[str, int] = {}
+            for event in batch_events:
+                assert event is not None
+                for label in event.human_types:
+                    label_counts[label] = label_counts.get(label, 0) + 1
+            assert any(count >= 2 for count in label_counts.values())
+
+    def test_contrastive_sampler_region_balance_prefers_cross_region(self):
+        events = [
+            ContrastiveEventMetadata("a", "r1", ("Moan",), 0, 1),
+            ContrastiveEventMetadata("b", "r1", ("Moan",), 0, 1),
+            ContrastiveEventMetadata("c", "r2", ("Moan",), 0, 1),
+            ContrastiveEventMetadata("d", "r3", ("Moan",), 0, 1),
+        ]
+
+        batches = build_contrastive_epoch_batches(
+            len(events),
+            events,
+            np.random.default_rng(7),
+            batch_size=4,
+            min_events_per_label=4,
+            min_regions_per_label=2,
+            labels_per_batch=1,
+            events_per_label=4,
+            region_balance=True,
+        )
+
+        regions = {events[i].region_id for i in batches[0] if events[i] is not None}
+        assert len(regions) >= 2
+
+    def test_contrastive_sampler_unlabeled_fill_respects_fraction(self):
+        events = [
+            ContrastiveEventMetadata("a", "r1", ("Moan",), 0, 1),
+            ContrastiveEventMetadata("b", "r2", ("Moan",), 0, 1),
+            ContrastiveEventMetadata("c", "r1", ("Whup",), 0, 1),
+            ContrastiveEventMetadata("d", "r2", ("Whup",), 0, 1),
+            None,
+            None,
+        ]
+
+        batches = build_contrastive_epoch_batches(
+            len(events),
+            events,
+            np.random.default_rng(11),
+            batch_size=4,
+            min_events_per_label=2,
+            min_regions_per_label=2,
+            labels_per_batch=1,
+            events_per_label=2,
+            max_unlabeled_fraction=0.25,
+        )
+
+        first_batch = batches[0]
+        assert sum(1 for idx in first_batch if events[idx] is None) <= 1
+
+    def test_contrastive_sampler_reduces_skipped_batches_on_supported_dataset(self):
+        sequences = _make_synthetic_sequences(n_seq=8, T=8, D=6, seed=25)
+        events = [
+            ContrastiveEventMetadata(f"m{i}", f"r{i % 2}", ("Moan",), 0, 4)
+            for i in range(4)
+        ] + [
+            ContrastiveEventMetadata(f"w{i}", f"r{i % 2}", ("Whup",), 0, 4)
+            for i in range(4)
+        ]
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=25,
+            batch_size=4,
+            retrieval_head_enabled=True,
+            retrieval_dim=6,
+            retrieval_hidden_dim=12,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            contrastive_min_events_per_label=4,
+            contrastive_min_regions_per_label=2,
+            contrastive_labels_per_batch=1,
+            contrastive_events_per_label=4,
+        )
+
+        result = train_masked_transformer(
+            sequences, config, device="cpu", contrastive_events=events
+        )
+
+        assert result.loss_curve["train_contrastive_skipped_batches"] == [0.0]
+        assert (
+            result.loss_curve["train_contrastive_valid_batches"][0]
+            + result.loss_curve["train_contrastive_skipped_batches"][0]
+            == 2.0
+        )
 
 
 class TestEarlyStopping:

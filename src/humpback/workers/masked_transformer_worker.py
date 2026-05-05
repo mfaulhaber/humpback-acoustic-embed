@@ -453,6 +453,24 @@ def _write_loss_curve(
         "val_contrastive_skipped_batches": list(
             loss_curve.get("val_contrastive_skipped_batches", [])
         ),
+        "train_contrastive_valid_batches": list(
+            loss_curve.get("train_contrastive_valid_batches", [])
+        ),
+        "train_contrastive_valid_anchor_count": list(
+            loss_curve.get("train_contrastive_valid_anchor_count", [])
+        ),
+        "train_contrastive_positive_pair_count": list(
+            loss_curve.get("train_contrastive_positive_pair_count", [])
+        ),
+        "train_contrastive_eligible_label_count": list(
+            loss_curve.get("train_contrastive_eligible_label_count", [])
+        ),
+        "train_contrastive_labeled_event_count": list(
+            loss_curve.get("train_contrastive_labeled_event_count", [])
+        ),
+        "train_contrastive_unlabeled_fill_count": list(
+            loss_curve.get("train_contrastive_unlabeled_fill_count", [])
+        ),
         "val_metrics": val_metrics,
     }
     dst = masked_transformer_loss_curve_path(storage_root, job_id)
@@ -494,6 +512,11 @@ def _save_model_state(
             "contrastive_min_regions_per_label": config.contrastive_min_regions_per_label,
             "require_cross_region_positive": config.require_cross_region_positive,
             "related_label_policy_json": config.related_label_policy_json,
+            "contrastive_sampler_enabled": config.contrastive_sampler_enabled,
+            "contrastive_labels_per_batch": config.contrastive_labels_per_batch,
+            "contrastive_events_per_label": config.contrastive_events_per_label,
+            "contrastive_max_unlabeled_fraction": config.contrastive_max_unlabeled_fraction,
+            "contrastive_region_balance": config.contrastive_region_balance,
         },
     }
     torch.save(payload, tmp)
@@ -599,6 +622,13 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
         contrastive_min_regions_per_label=int(job.contrastive_min_regions_per_label),
         require_cross_region_positive=bool(job.require_cross_region_positive),
         related_label_policy_json=job.related_label_policy_json,
+        contrastive_sampler_enabled=bool(job.contrastive_sampler_enabled),
+        contrastive_labels_per_batch=int(job.contrastive_labels_per_batch),
+        contrastive_events_per_label=int(job.contrastive_events_per_label),
+        contrastive_max_unlabeled_fraction=float(
+            job.contrastive_max_unlabeled_fraction
+        ),
+        contrastive_region_balance=bool(job.contrastive_region_balance),
         max_epochs=int(job.max_epochs),
         early_stop_patience=int(job.early_stop_patience),
         val_split=float(job.val_split),

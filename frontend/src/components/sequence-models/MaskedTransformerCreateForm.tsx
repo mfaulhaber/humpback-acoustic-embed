@@ -75,6 +75,12 @@ export function MaskedTransformerCreateForm() {
   const [contrastiveMinEvents, setContrastiveMinEvents] = useState(4);
   const [contrastiveMinRegions, setContrastiveMinRegions] = useState(2);
   const [requireCrossRegionPositive, setRequireCrossRegionPositive] = useState(true);
+  const [contrastiveSamplerEnabled, setContrastiveSamplerEnabled] = useState(true);
+  const [contrastiveLabelsPerBatch, setContrastiveLabelsPerBatch] = useState(4);
+  const [contrastiveEventsPerLabel, setContrastiveEventsPerLabel] = useState(4);
+  const [contrastiveMaxUnlabeledFraction, setContrastiveMaxUnlabeledFraction] =
+    useState(0.25);
+  const [contrastiveRegionBalance, setContrastiveRegionBalance] = useState(true);
   const [earlyStop, setEarlyStop] = useState(3);
   const [valSplit, setValSplit] = useState(0.1);
   const [seed, setSeed] = useState(42);
@@ -118,7 +124,11 @@ export function MaskedTransformerCreateForm() {
       contrastiveWeight > 0.0 &&
       contrastiveTemperature > 0.0 &&
       contrastiveMinEvents > 0 &&
-      contrastiveMinRegions > 0);
+      contrastiveMinRegions > 0 &&
+      contrastiveLabelsPerBatch > 0 &&
+      contrastiveEventsPerLabel > 0 &&
+      contrastiveMaxUnlabeledFraction >= 0.0 &&
+      contrastiveMaxUnlabeledFraction < 1.0);
   const canSubmit =
     sourceId !== "" &&
     kValid &&
@@ -175,6 +185,14 @@ export function MaskedTransformerCreateForm() {
       val_split: valSplit,
       seed,
     };
+    if (contrastiveActive) {
+      body.contrastive_sampler_enabled = contrastiveSamplerEnabled;
+      body.contrastive_labels_per_batch = contrastiveLabelsPerBatch;
+      body.contrastive_events_per_label = contrastiveEventsPerLabel;
+      body.contrastive_max_unlabeled_fraction =
+        contrastiveMaxUnlabeledFraction;
+      body.contrastive_region_balance = contrastiveRegionBalance;
+    }
     createMutation.mutate(body, {
       onSuccess: (job) => {
         navigate(`/app/sequence-models/masked-transformer/${job.id}`);
@@ -338,18 +356,13 @@ export function MaskedTransformerCreateForm() {
             className="grid grid-cols-2 gap-3 border rounded-md p-3"
             data-testid="mt-advanced-panel"
           >
+            <SectionHeader title="Model" />
             <Field label="mask_fraction" value={maskFraction} step={0.05} onChange={setMaskFraction} />
             <Field label="span_length_min" value={spanMin} step={1} onChange={(v) => setSpanMin(Math.max(1, Math.round(v)))} />
             <Field label="span_length_max" value={spanMax} step={1} onChange={(v) => setSpanMax(Math.max(1, Math.round(v)))} />
             <Field label="dropout" value={dropout} step={0.05} onChange={setDropout} />
             <Field label="cosine_loss_weight" value={cosineWeight} step={0.05} onChange={setCosineWeight} />
-            <Field
-              label="batch_size"
-              value={batchSize}
-              step={1}
-              invalid={batchSize <= 0}
-              onChange={(v) => setBatchSize(Math.max(1, Math.round(v)))}
-            />
+            <SectionHeader title="Retrieval Head" />
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -362,6 +375,33 @@ export function MaskedTransformerCreateForm() {
               />
               retrieval projection head
             </label>
+            <Field
+              label="retrieval_dim"
+              value={retrievalDim}
+              step={1}
+              disabled={!retrievalHeadEnabled}
+              invalid={retrievalHeadEnabled && retrievalDim <= 0}
+              onChange={(v) => setRetrievalDim(Math.round(v))}
+            />
+            <Field
+              label="retrieval_hidden_dim"
+              value={retrievalHiddenDim}
+              step={1}
+              disabled={!retrievalHeadEnabled}
+              invalid={retrievalHeadEnabled && retrievalHiddenDim <= 0}
+              onChange={(v) => setRetrievalHiddenDim(Math.round(v))}
+            />
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="mt-retrieval-l2-normalize"
+                checked={retrievalL2Normalize}
+                disabled={!retrievalHeadEnabled}
+                onChange={(e) => setRetrievalL2Normalize(e.target.checked)}
+              />
+              L2 normalize retrieval embeddings
+            </label>
+            <SectionHeader title="Training Windows" />
             <div
               className="col-span-2 grid gap-2"
               role="radiogroup"
@@ -414,32 +454,7 @@ export function MaskedTransformerCreateForm() {
               }
               onChange={setEventCenteredFraction}
             />
-            <Field
-              label="retrieval_dim"
-              value={retrievalDim}
-              step={1}
-              disabled={!retrievalHeadEnabled}
-              invalid={retrievalHeadEnabled && retrievalDim <= 0}
-              onChange={(v) => setRetrievalDim(Math.round(v))}
-            />
-            <Field
-              label="retrieval_hidden_dim"
-              value={retrievalHiddenDim}
-              step={1}
-              disabled={!retrievalHeadEnabled}
-              invalid={retrievalHeadEnabled && retrievalHiddenDim <= 0}
-              onChange={(v) => setRetrievalHiddenDim(Math.round(v))}
-            />
-            <label className="col-span-2 flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                data-testid="mt-retrieval-l2-normalize"
-                checked={retrievalL2Normalize}
-                disabled={!retrievalHeadEnabled}
-                onChange={(e) => setRetrievalL2Normalize(e.target.checked)}
-              />
-              L2 normalize retrieval embeddings
-            </label>
+            <SectionHeader title="Contrastive Learning" />
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -498,6 +513,64 @@ export function MaskedTransformerCreateForm() {
               />
               prefer cross-region positives
             </label>
+            {contrastiveActive && (
+              <>
+                <label className="col-span-2 flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    data-testid="mt-contrastive-sampler-enabled"
+                    checked={contrastiveSamplerEnabled}
+                    onChange={(e) => setContrastiveSamplerEnabled(e.target.checked)}
+                  />
+                  contrastive batch sampler
+                </label>
+                <Field
+                  label="contrastive_labels_per_batch"
+                  value={contrastiveLabelsPerBatch}
+                  step={1}
+                  invalid={contrastiveLabelsPerBatch <= 0}
+                  onChange={(v) =>
+                    setContrastiveLabelsPerBatch(Math.max(1, Math.round(v)))
+                  }
+                />
+                <Field
+                  label="contrastive_events_per_label"
+                  value={contrastiveEventsPerLabel}
+                  step={1}
+                  invalid={contrastiveEventsPerLabel <= 0}
+                  onChange={(v) =>
+                    setContrastiveEventsPerLabel(Math.max(1, Math.round(v)))
+                  }
+                />
+                <Field
+                  label="contrastive_max_unlabeled_fraction"
+                  value={contrastiveMaxUnlabeledFraction}
+                  step={0.05}
+                  invalid={
+                    contrastiveMaxUnlabeledFraction < 0.0 ||
+                    contrastiveMaxUnlabeledFraction >= 1.0
+                  }
+                  onChange={setContrastiveMaxUnlabeledFraction}
+                />
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    data-testid="mt-contrastive-region-balance"
+                    checked={contrastiveRegionBalance}
+                    onChange={(e) => setContrastiveRegionBalance(e.target.checked)}
+                  />
+                  region-balanced positives
+                </label>
+              </>
+            )}
+            <SectionHeader title="Run Controls" />
+            <Field
+              label="batch_size"
+              value={batchSize}
+              step={1}
+              invalid={batchSize <= 0}
+              onChange={(v) => setBatchSize(Math.max(1, Math.round(v)))}
+            />
             <Field label="early_stop_patience" value={earlyStop} step={1} onChange={(v) => setEarlyStop(Math.max(1, Math.round(v)))} />
             <Field label="val_split" value={valSplit} step={0.05} onChange={setValSplit} />
             <Field label="seed" value={seed} step={1} onChange={(v) => setSeed(Math.round(v))} />
@@ -521,6 +594,14 @@ export function MaskedTransformerCreateForm() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <div className="col-span-2 border-t pt-3 text-xs font-semibold first:border-t-0 first:pt-0">
+      {title}
+    </div>
   );
 }
 

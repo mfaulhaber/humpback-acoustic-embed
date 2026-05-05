@@ -1,7 +1,7 @@
 # Retrieval-Aware Transformer Contrastive Batching Improvements
 
 **Date:** 2026-05-05
-**Branch:** `feature/retrieval-aware-transformer-phase3`
+**Branch:** `feature/retrieval-aware-transformer-contrastive-batching`
 **Motivation:** Phase 0 diagnostics on the `batch_size=16` event-centered contrastive run proved that contrastive loss is now active, but training still skipped 14 contrastive batches per epoch and raw retrieval embeddings underperformed contextual embeddings. The current sampler sorts labeled examples before unlabeled examples, but it does not actively build batches with same-label cross-region positives.
 
 ## Goal
@@ -38,17 +38,17 @@ New persisted fields:
 - `contrastive_region_balance: bool = true`
 
 Acceptance criteria:
-- Migration uses `op.batch_alter_table()` and backfills existing rows to sampler-enabled defaults.
-- `MaskedTransformerJobCreate` validates positive integer sampler counts and `0.0 <= contrastive_max_unlabeled_fraction < 1.0`.
-- Sampler fields only affect `training_signature` when contrastive loss is enabled.
-- Contrastive-disabled job creation remains idempotent with existing disabled jobs.
-- Worker `_config_from_job()` passes sampler settings into `MaskedTransformerConfig`.
+- [x] Migration uses `op.batch_alter_table()` and backfills existing rows to sampler-enabled defaults.
+- [x] `MaskedTransformerJobCreate` validates positive integer sampler counts and `0.0 <= contrastive_max_unlabeled_fraction < 1.0`.
+- [x] Sampler fields only affect `training_signature` when contrastive loss is enabled.
+- [x] Contrastive-disabled job creation remains idempotent with existing disabled jobs.
+- [x] Worker `_config_from_job()` passes sampler settings into `MaskedTransformerConfig`.
 
 Tests:
-- Migration upgrade/downgrade test for defaults.
-- Schema validation tests for invalid sampler values.
-- Service signature tests proving sampler fields participate only when `contrastive_loss_weight > 0`.
-- API create/list/detail round-trip test for sampler fields.
+- [x] Migration upgrade/downgrade test for defaults.
+- [x] Schema validation tests for invalid sampler values.
+- [x] Service signature tests proving sampler fields participate only when `contrastive_loss_weight > 0`.
+- [x] API create/list/detail round-trip test for sampler fields.
 
 ## Task 2: Implement Global Label Eligibility and Batch Planning
 
@@ -68,18 +68,18 @@ Implementation notes:
 - Keep deterministic behavior under `seed`.
 
 Acceptance criteria:
-- Eligible labels are computed globally, not re-derived solely from local batch support.
-- A label with enough global support can form positives even if some individual batches contain fewer than the old threshold count.
-- Batches with eligible labels include same-label positives by construction whenever the train split contains them.
-- Rare-label and unlabeled examples remain in training for masked modeling.
-- Existing non-contrastive training still uses ordinary random permutation batching.
+- [x] Eligible labels are computed globally, not re-derived solely from local batch support.
+- [x] A label with enough global support can form positives even if some individual batches contain fewer than the old threshold count.
+- [x] Batches with eligible labels include same-label positives by construction whenever the train split contains them.
+- [x] Rare-label and unlabeled examples remain in training for masked modeling.
+- [x] Existing non-contrastive training still uses ordinary random permutation batching.
 
 Tests:
-- Pure sampler test: given multi-region labels, every contrastive batch contains at least one valid anchor.
-- Pure sampler test: region balancing prefers cross-region same-label examples.
-- Pure sampler test: unlabeled fill never exceeds `contrastive_max_unlabeled_fraction`.
-- Training regression: skipped contrastive batches drop to zero for a synthetic dataset with enough eligible labels.
-- Backward compatibility: contrastive-disabled callers preserve current loss behavior.
+- [x] Pure sampler test: given multi-region labels, every contrastive batch contains at least one valid anchor.
+- [x] Pure sampler test: region balancing prefers cross-region same-label examples.
+- [x] Pure sampler test: unlabeled fill never exceeds `contrastive_max_unlabeled_fraction`.
+- [x] Training regression: skipped contrastive batches drop to zero for a synthetic dataset with enough eligible labels.
+- [x] Backward compatibility: contrastive-disabled callers preserve current loss behavior.
 
 ## Task 3: Make Contrastive Mask Thresholds Compatible With Planned Batches
 
@@ -95,14 +95,14 @@ Implementation notes:
 - Keep the old behavior when `eligible_labels` is omitted so direct unit callers remain compatible.
 
 Acceptance criteria:
-- Batch-level masks can produce positives for globally eligible labels even when the batch itself has fewer than `contrastive_min_events_per_label` total events for that label.
-- Same-label intersection, related-label negative exclusions, and cross-region-positive preference remain unchanged.
-- Zero-positive batches still return zero contrastive loss safely.
+- [x] Batch-level masks can produce positives for globally eligible labels even when the batch itself has fewer than `contrastive_min_events_per_label` total events for that label.
+- [x] Same-label intersection, related-label negative exclusions, and cross-region-positive preference remain unchanged.
+- [x] Zero-positive batches still return zero contrastive loss safely.
 
 Tests:
-- Unit test showing a globally eligible label with two in-batch examples yields positives even when `min_events_per_label=4`.
-- Unit test showing labels not in `eligible_labels` are excluded even if they appear in the batch.
-- Existing contrastive-loss tests continue to pass unchanged.
+- [x] Unit test showing a globally eligible label with two in-batch examples yields positives even when `min_events_per_label=4`.
+- [x] Unit test showing labels not in `eligible_labels` are excluded even if they appear in the batch.
+- [x] Existing contrastive-loss tests continue to pass unchanged.
 
 ## Task 4: Expand Loss-Curve Diagnostics
 
@@ -121,15 +121,15 @@ New loss-curve fields:
 - `train_contrastive_unlabeled_fill_count`
 
 Acceptance criteria:
-- Existing `train`, `val`, `train_masked`, `train_contrastive`, and skipped-batch fields remain.
-- Diagnostics are JSON-friendly numeric arrays aligned with `epochs`.
-- For contrastive-disabled jobs, new contrastive diagnostics are zero arrays.
-- Worker artifact tests assert the new fields are present for contrastive-enabled runs.
+- [x] Existing `train`, `val`, `train_masked`, `train_contrastive`, and skipped-batch fields remain.
+- [x] Diagnostics are JSON-friendly numeric arrays aligned with `epochs`.
+- [x] For contrastive-disabled jobs, new contrastive diagnostics are zero arrays.
+- [x] Worker artifact tests assert the new fields are present for contrastive-enabled runs.
 
 Tests:
-- Unit test checking all arrays align to epoch count.
-- Training regression test showing valid batch count plus skipped batch count equals train batch count.
-- Worker artifact test for the new JSON keys.
+- [x] Unit test checking all arrays align to epoch count.
+- [x] Training regression test showing valid batch count plus skipped batch count equals train batch count.
+- [x] Worker artifact test for the new JSON keys.
 
 ## Task 5: Consolidate Create UI Into Meaningful Sections
 
@@ -154,16 +154,16 @@ UI behavior:
 - Keep all numeric fields as inputs with validation states.
 
 Acceptance criteria:
-- Submit payload includes sampler settings when contrastive is active.
-- Default create payload remains backward-compatible and contrastive-disabled.
-- The form no longer presents one undifferentiated advanced grid.
-- Controls remain compact and scan-friendly; no explanatory marketing text inside the app.
+- [x] Submit payload includes sampler settings when contrastive is active.
+- [x] Default create payload remains backward-compatible and contrastive-disabled.
+- [x] The form no longer presents one undifferentiated advanced grid.
+- [x] Controls remain compact and scan-friendly; no explanatory marketing text inside the app.
 
 Tests:
-- Playwright test for default submission.
-- Playwright test for contrastive submission with sampler overrides.
-- Playwright test that contrastive enablement switches region mode to mixed `0.7`.
-- Playwright test for disabled/invalid sampler values blocking submit.
+- [x] Playwright test for default submission.
+- [x] Playwright test for contrastive submission with sampler overrides.
+- [x] Playwright test that contrastive enablement switches region mode to mixed `0.7`.
+- [x] Playwright test for disabled/invalid sampler values blocking submit.
 
 ## Task 6: Add Docs and Behavioral Notes
 
@@ -173,10 +173,10 @@ Files:
 - `docs/reference/frontend.md`
 
 Acceptance criteria:
-- Data model documents new sampler fields and defaults.
-- API reference explains that support thresholds are global eligibility gates and sampler fields control per-batch composition.
-- Frontend reference documents the sectioned create form and contrastive defaults.
-- Notes explicitly say full-region extraction artifacts remain unchanged.
+- [x] Data model documents new sampler fields and defaults.
+- [x] API reference explains that support thresholds are global eligibility gates and sampler fields control per-batch composition.
+- [x] Frontend reference documents the sectioned create form and contrastive defaults.
+- [x] Notes explicitly say full-region extraction artifacts remain unchanged.
 
 ## Task 7: Verification
 

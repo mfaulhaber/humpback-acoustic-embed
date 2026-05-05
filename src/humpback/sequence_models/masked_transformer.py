@@ -23,6 +23,7 @@ chunks that lie outside any masked span are ignored as before.
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 
@@ -33,6 +34,7 @@ import torch.nn.functional as F
 
 from humpback.sequence_models.contrastive_loss import (
     ContrastiveEventMetadata,
+    compute_eligible_contrastive_labels,
     supervised_contrastive_loss,
 )
 
@@ -84,6 +86,11 @@ class MaskedTransformerConfig:
     contrastive_min_regions_per_label: int = 2
     require_cross_region_positive: bool = True
     related_label_policy_json: str | None = None
+    contrastive_sampler_enabled: bool = True
+    contrastive_labels_per_batch: int = 4
+    contrastive_events_per_label: int = 4
+    contrastive_max_unlabeled_fraction: float = 0.25
+    contrastive_region_balance: bool = True
     max_epochs: int = 30
     early_stop_patience: int = 3
     val_split: float = 0.1
@@ -493,6 +500,163 @@ def _contrastive_epoch_order(
     return np.asarray([*labeled, *unlabeled], dtype=int)
 
 
+def _choose_label_examples(
+    candidates: list[int],
+    events: Sequence[Optional[ContrastiveEventMetadata]],
+    *,
+    count: int,
+    region_balance: bool,
+) -> list[int]:
+    if not region_balance:
+        return candidates[:count]
+    by_region: dict[str, list[int]] = defaultdict(list)
+    for idx in candidates:
+        event = events[idx]
+        if event is not None:
+            by_region[event.region_id].append(idx)
+    chosen: list[int] = []
+    while len(chosen) < count and by_region:
+        for region in sorted(list(by_region)):
+            region_items = by_region[region]
+            if not region_items:
+                del by_region[region]
+                continue
+            chosen.append(region_items.pop(0))
+            if len(chosen) >= count:
+                break
+    return chosen
+
+
+def build_contrastive_epoch_batches(
+    n_train: int,
+    events: Sequence[Optional[ContrastiveEventMetadata]] | None,
+    rng: np.random.Generator,
+    *,
+    batch_size: int,
+    min_events_per_label: int = 4,
+    min_regions_per_label: int = 2,
+    labels_per_batch: int = 4,
+    events_per_label: int = 4,
+    max_unlabeled_fraction: float = 0.25,
+    region_balance: bool = True,
+) -> list[list[int]]:
+    """Plan deterministic contrastive-friendly batches for one train epoch."""
+    if n_train <= 0:
+        return []
+    resolved_batch_size = max(1, int(batch_size))
+    if not events:
+        order = [int(i) for i in rng.permutation(n_train)]
+        return [
+            order[start : start + resolved_batch_size]
+            for start in range(0, len(order), resolved_batch_size)
+        ]
+    metadata = [event for event in events if event is not None and event.human_types]
+    eligible_labels = compute_eligible_contrastive_labels(
+        metadata,
+        min_events_per_label=min_events_per_label,
+        min_regions_per_label=min_regions_per_label,
+    )
+    if not eligible_labels:
+        order = [int(i) for i in rng.permutation(n_train)]
+        return [
+            order[start : start + resolved_batch_size]
+            for start in range(0, len(order), resolved_batch_size)
+        ]
+
+    label_to_indices: dict[str, list[int]] = {label: [] for label in eligible_labels}
+    eligible_labeled_indices: set[int] = set()
+    rare_or_unlabeled: list[int] = []
+    for idx, event in enumerate(events):
+        if event is None or not event.human_types:
+            rare_or_unlabeled.append(idx)
+            continue
+        event_labels = set(event.human_types) & eligible_labels
+        if not event_labels:
+            rare_or_unlabeled.append(idx)
+            continue
+        eligible_labeled_indices.add(idx)
+        for label in event_labels:
+            label_to_indices[label].append(idx)
+
+    for label, indices in label_to_indices.items():
+        shuffled = [int(i) for i in rng.permutation(indices)]
+        label_to_indices[label] = shuffled
+    rare_or_unlabeled = [int(i) for i in rng.permutation(rare_or_unlabeled)]
+
+    unused_eligible = set(eligible_labeled_indices)
+    rare_cursor = 0
+    label_order = [str(label) for label in rng.permutation(sorted(eligible_labels))]
+    label_cursor = 0
+    batches: list[list[int]] = []
+    per_label_count = max(2, int(events_per_label))
+    max_fill = int(math.floor(resolved_batch_size * float(max_unlabeled_fraction)))
+
+    while True:
+        available_labels = [
+            label
+            for label in label_order
+            if len([idx for idx in label_to_indices[label] if idx in unused_eligible])
+            >= 2
+        ]
+        if not available_labels:
+            break
+        selected_labels: list[str] = []
+        attempts = 0
+        while (
+            len(selected_labels) < max(1, int(labels_per_batch))
+            and attempts < len(label_order) * 2
+        ):
+            label = label_order[label_cursor % len(label_order)]
+            label_cursor += 1
+            attempts += 1
+            if label not in available_labels or label in selected_labels:
+                continue
+            selected_labels.append(label)
+        if not selected_labels:
+            break
+
+        batch: list[int] = []
+        for label in selected_labels:
+            remaining = [
+                idx for idx in label_to_indices[label] if idx in unused_eligible
+            ]
+            capacity = resolved_batch_size - len(batch)
+            if capacity < 2:
+                break
+            chosen = _choose_label_examples(
+                remaining,
+                events,
+                count=min(per_label_count, capacity, len(remaining)),
+                region_balance=region_balance,
+            )
+            for idx in chosen:
+                if idx not in batch:
+                    batch.append(idx)
+                    unused_eligible.discard(idx)
+        if len(batch) < 2:
+            for idx in batch:
+                unused_eligible.add(idx)
+            break
+
+        fill_limit = min(max_fill, resolved_batch_size - len(batch))
+        while fill_limit > 0 and rare_cursor < len(rare_or_unlabeled):
+            batch.append(rare_or_unlabeled[rare_cursor])
+            rare_cursor += 1
+            fill_limit -= 1
+        batches.append(batch)
+
+    remainder = [*sorted(unused_eligible), *rare_or_unlabeled[rare_cursor:]]
+    if remainder:
+        remainder = [int(i) for i in rng.permutation(remainder)]
+        batches.extend(
+            [
+                remainder[start : start + resolved_batch_size]
+                for start in range(0, len(remainder), resolved_batch_size)
+            ]
+        )
+    return batches
+
+
 def train_masked_transformer(
     sequences: list[np.ndarray],
     config: MaskedTransformerConfig,
@@ -596,6 +760,23 @@ def train_masked_transformer(
     loss_curve_val_contrastive: list[float] = []
     loss_curve_train_skipped: list[float] = []
     loss_curve_val_skipped: list[float] = []
+    loss_curve_train_valid_batches: list[float] = []
+    loss_curve_train_valid_anchor_count: list[float] = []
+    loss_curve_train_positive_pair_count: list[float] = []
+    loss_curve_train_eligible_label_count: list[float] = []
+    loss_curve_train_labeled_event_count: list[float] = []
+    loss_curve_train_unlabeled_fill_count: list[float] = []
+    train_eligible_labels: set[str] = set()
+    if contrastive_enabled and train_events is not None:
+        train_eligible_labels = compute_eligible_contrastive_labels(
+            [
+                event
+                for event in train_events
+                if event is not None and event.human_types
+            ],
+            min_events_per_label=config.contrastive_min_events_per_label,
+            min_regions_per_label=config.contrastive_min_regions_per_label,
+        )
     best_val_loss = math.inf
     best_state: Optional[dict[str, torch.Tensor]] = None
     epochs_no_improve = 0
@@ -603,19 +784,41 @@ def train_masked_transformer(
 
     for epoch in range(1, config.max_epochs + 1):
         model.train()
-        perm = (
-            _contrastive_epoch_order(n_train, train_events, rng)
-            if contrastive_enabled
-            else rng.permutation(n_train)
-        )
+        if contrastive_enabled and config.contrastive_sampler_enabled:
+            epoch_batches = build_contrastive_epoch_batches(
+                n_train,
+                train_events,
+                rng,
+                batch_size=config.batch_size,
+                min_events_per_label=config.contrastive_min_events_per_label,
+                min_regions_per_label=config.contrastive_min_regions_per_label,
+                labels_per_batch=config.contrastive_labels_per_batch,
+                events_per_label=config.contrastive_events_per_label,
+                max_unlabeled_fraction=config.contrastive_max_unlabeled_fraction,
+                region_balance=config.contrastive_region_balance,
+            )
+        else:
+            perm = (
+                _contrastive_epoch_order(n_train, train_events, rng)
+                if contrastive_enabled
+                else rng.permutation(n_train)
+            )
+            epoch_batches = [
+                [int(i) for i in perm[start : start + config.batch_size]]
+                for start in range(0, n_train, max(1, config.batch_size))
+            ]
         epoch_train_loss = 0.0
         epoch_train_masked_loss = 0.0
         epoch_train_contrastive_loss = 0.0
         epoch_train_skipped = 0
+        epoch_train_valid_batches = 0
+        epoch_train_valid_anchor_count = 0
+        epoch_train_positive_pair_count = 0
+        epoch_train_labeled_event_count = 0
+        epoch_train_unlabeled_fill_count = 0
         n_train_batches = 0
 
-        for start in range(0, n_train, max(1, config.batch_size)):
-            batch_idx = perm[start : start + config.batch_size]
+        for batch_idx in epoch_batches:
             batch_seqs = [train_seqs[i] for i in batch_idx]
             batch_tiers = (
                 [train_tiers[i] for i in batch_idx] if train_tiers is not None else None
@@ -650,9 +853,16 @@ def train_masked_transformer(
                     min_regions_per_label=config.contrastive_min_regions_per_label,
                     require_cross_region_positive=config.require_cross_region_positive,
                     related_label_policy_json=config.related_label_policy_json,
+                    eligible_labels=train_eligible_labels,
                 )
                 if masks.valid_anchor_count == 0:
                     epoch_train_skipped += 1
+                else:
+                    epoch_train_valid_batches += 1
+                epoch_train_valid_anchor_count += masks.valid_anchor_count
+                epoch_train_positive_pair_count += int(masks.positive_mask.sum().item())
+                epoch_train_labeled_event_count += len(event_metadata)
+                epoch_train_unlabeled_fill_count += len(batch_idx) - len(event_metadata)
                 loss = loss + config.contrastive_loss_weight * contrastive_loss
             if config.retrieval_head_enabled:
                 with torch.no_grad():
@@ -682,6 +892,20 @@ def train_masked_transformer(
             epoch_train_contrastive_loss / max(1, n_train_batches)
         )
         loss_curve_train_skipped.append(float(epoch_train_skipped))
+        loss_curve_train_valid_batches.append(float(epoch_train_valid_batches))
+        loss_curve_train_valid_anchor_count.append(
+            float(epoch_train_valid_anchor_count)
+        )
+        loss_curve_train_positive_pair_count.append(
+            float(epoch_train_positive_pair_count)
+        )
+        loss_curve_train_eligible_label_count.append(float(len(train_eligible_labels)))
+        loss_curve_train_labeled_event_count.append(
+            float(epoch_train_labeled_event_count)
+        )
+        loss_curve_train_unlabeled_fill_count.append(
+            float(epoch_train_unlabeled_fill_count)
+        )
 
         # ---- Validation ----
         if val_seqs:
@@ -802,6 +1026,21 @@ def train_masked_transformer(
         "final_train_contrastive_skipped_batches": float(loss_curve_train_skipped[-1])
         if loss_curve_train_skipped
         else 0.0,
+        "final_train_contrastive_valid_batches": float(
+            loss_curve_train_valid_batches[-1]
+        )
+        if loss_curve_train_valid_batches
+        else 0.0,
+        "final_train_contrastive_valid_anchor_count": float(
+            loss_curve_train_valid_anchor_count[-1]
+        )
+        if loss_curve_train_valid_anchor_count
+        else 0.0,
+        "final_train_contrastive_positive_pair_count": float(
+            loss_curve_train_positive_pair_count[-1]
+        )
+        if loss_curve_train_positive_pair_count
+        else 0.0,
         "final_val_contrastive_skipped_batches": float(loss_curve_val_skipped[-1])
         if loss_curve_val_skipped
         else 0.0,
@@ -820,6 +1059,12 @@ def train_masked_transformer(
             "val_total": loss_curve_val,
             "train_contrastive_skipped_batches": loss_curve_train_skipped,
             "val_contrastive_skipped_batches": loss_curve_val_skipped,
+            "train_contrastive_valid_batches": loss_curve_train_valid_batches,
+            "train_contrastive_valid_anchor_count": loss_curve_train_valid_anchor_count,
+            "train_contrastive_positive_pair_count": loss_curve_train_positive_pair_count,
+            "train_contrastive_eligible_label_count": loss_curve_train_eligible_label_count,
+            "train_contrastive_labeled_event_count": loss_curve_train_labeled_event_count,
+            "train_contrastive_unlabeled_fill_count": loss_curve_train_unlabeled_fill_count,
         },
         val_metrics=val_metrics,
         training_mask=training_mask,

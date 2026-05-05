@@ -102,6 +102,11 @@ def compute_training_signature(
     contrastive_min_regions_per_label: int = 2,
     require_cross_region_positive: bool = True,
     related_label_policy_json: Optional[str] = None,
+    contrastive_sampler_enabled: bool = True,
+    contrastive_labels_per_batch: int = 4,
+    contrastive_events_per_label: int = 4,
+    contrastive_max_unlabeled_fraction: float = 0.25,
+    contrastive_region_balance: bool = True,
     event_classification_job_id: Optional[str] = None,
 ) -> str:
     """Stable signature over training-only config (excludes ``k_values``).
@@ -165,6 +170,13 @@ def compute_training_signature(
                 ),
                 "require_cross_region_positive": bool(require_cross_region_positive),
                 "related_label_policy_json": related_label_policy_json,
+                "contrastive_sampler_enabled": bool(contrastive_sampler_enabled),
+                "contrastive_labels_per_batch": int(contrastive_labels_per_batch),
+                "contrastive_events_per_label": int(contrastive_events_per_label),
+                "contrastive_max_unlabeled_fraction": float(
+                    contrastive_max_unlabeled_fraction
+                ),
+                "contrastive_region_balance": bool(contrastive_region_balance),
                 "event_classification_job_id": event_classification_job_id,
             }
         )
@@ -284,8 +296,15 @@ def normalize_contrastive_config(
     contrastive_min_regions_per_label: int = 2,
     require_cross_region_positive: bool = True,
     related_label_policy_json: Optional[str] = None,
+    contrastive_sampler_enabled: bool = True,
+    contrastive_labels_per_batch: int = 4,
+    contrastive_events_per_label: int = 4,
+    contrastive_max_unlabeled_fraction: float = 0.25,
+    contrastive_region_balance: bool = True,
     retrieval_head_enabled: bool = False,
-) -> tuple[float, float, str, int, int, bool, Optional[str]]:
+) -> tuple[
+    float, float, str, int, int, bool, Optional[str], bool, int, int, float, bool
+]:
     weight = float(contrastive_loss_weight)
     if weight < 0.0:
         raise ValueError("contrastive_loss_weight must be non-negative")
@@ -302,6 +321,15 @@ def normalize_contrastive_config(
         raise ValueError(
             "contrastive_label_source must be one of none/human_corrections"
         )
+    labels_per_batch = int(contrastive_labels_per_batch)
+    events_per_label = int(contrastive_events_per_label)
+    unlabeled_fraction = float(contrastive_max_unlabeled_fraction)
+    if labels_per_batch <= 0:
+        raise ValueError("contrastive_labels_per_batch must be positive")
+    if events_per_label <= 0:
+        raise ValueError("contrastive_events_per_label must be positive")
+    if not 0.0 <= unlabeled_fraction < 1.0:
+        raise ValueError("contrastive_max_unlabeled_fraction must be in [0.0, 1.0)")
 
     if weight == 0.0:
         return (
@@ -312,6 +340,11 @@ def normalize_contrastive_config(
             min_regions,
             bool(require_cross_region_positive),
             related_label_policy_json,
+            bool(contrastive_sampler_enabled),
+            labels_per_batch,
+            events_per_label,
+            unlabeled_fraction,
+            bool(contrastive_region_balance),
         )
 
     if not retrieval_head_enabled:
@@ -338,6 +371,11 @@ def normalize_contrastive_config(
         min_regions,
         bool(require_cross_region_positive),
         canonical_policy,
+        bool(contrastive_sampler_enabled),
+        labels_per_batch,
+        events_per_label,
+        unlabeled_fraction,
+        bool(contrastive_region_balance),
     )
 
 
@@ -374,6 +412,11 @@ async def create_masked_transformer_job(
     contrastive_min_regions_per_label: int = 2,
     require_cross_region_positive: bool = True,
     related_label_policy_json: Optional[str] = None,
+    contrastive_sampler_enabled: bool = True,
+    contrastive_labels_per_batch: int = 4,
+    contrastive_events_per_label: int = 4,
+    contrastive_max_unlabeled_fraction: float = 0.25,
+    contrastive_region_balance: bool = True,
     max_epochs: int = 30,
     early_stop_patience: int = 3,
     val_split: float = 0.1,
@@ -428,6 +471,11 @@ async def create_masked_transformer_job(
         normalized_contrastive_min_regions_per_label,
         normalized_require_cross_region_positive,
         normalized_related_label_policy_json,
+        normalized_contrastive_sampler_enabled,
+        normalized_contrastive_labels_per_batch,
+        normalized_contrastive_events_per_label,
+        normalized_contrastive_max_unlabeled_fraction,
+        normalized_contrastive_region_balance,
     ) = normalize_contrastive_config(
         contrastive_loss_weight=contrastive_loss_weight,
         contrastive_temperature=contrastive_temperature,
@@ -436,6 +484,11 @@ async def create_masked_transformer_job(
         contrastive_min_regions_per_label=contrastive_min_regions_per_label,
         require_cross_region_positive=require_cross_region_positive,
         related_label_policy_json=related_label_policy_json,
+        contrastive_sampler_enabled=contrastive_sampler_enabled,
+        contrastive_labels_per_batch=contrastive_labels_per_batch,
+        contrastive_events_per_label=contrastive_events_per_label,
+        contrastive_max_unlabeled_fraction=contrastive_max_unlabeled_fraction,
+        contrastive_region_balance=contrastive_region_balance,
         retrieval_head_enabled=normalized_retrieval_head_enabled,
     )
     if (
@@ -505,6 +558,11 @@ async def create_masked_transformer_job(
         contrastive_min_regions_per_label=normalized_contrastive_min_regions_per_label,
         require_cross_region_positive=normalized_require_cross_region_positive,
         related_label_policy_json=normalized_related_label_policy_json,
+        contrastive_sampler_enabled=normalized_contrastive_sampler_enabled,
+        contrastive_labels_per_batch=normalized_contrastive_labels_per_batch,
+        contrastive_events_per_label=normalized_contrastive_events_per_label,
+        contrastive_max_unlabeled_fraction=normalized_contrastive_max_unlabeled_fraction,
+        contrastive_region_balance=normalized_contrastive_region_balance,
         event_classification_job_id=classify_id_for_signature,
         max_epochs=max_epochs,
         early_stop_patience=early_stop_patience,
@@ -566,6 +624,11 @@ async def create_masked_transformer_job(
         contrastive_min_regions_per_label=normalized_contrastive_min_regions_per_label,
         require_cross_region_positive=normalized_require_cross_region_positive,
         related_label_policy_json=normalized_related_label_policy_json,
+        contrastive_sampler_enabled=normalized_contrastive_sampler_enabled,
+        contrastive_labels_per_batch=normalized_contrastive_labels_per_batch,
+        contrastive_events_per_label=normalized_contrastive_events_per_label,
+        contrastive_max_unlabeled_fraction=normalized_contrastive_max_unlabeled_fraction,
+        contrastive_region_balance=normalized_contrastive_region_balance,
         max_epochs=int(max_epochs),
         early_stop_patience=int(early_stop_patience),
         val_split=float(val_split),

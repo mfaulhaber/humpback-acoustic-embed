@@ -628,7 +628,16 @@ async def test_contrastive_event_centered_passes_human_labels_to_training(
     assert "train_masked_loss" in loss_payload
     assert "train_contrastive_loss" in loss_payload
     assert "train_total_loss" in loss_payload
+    assert "train_contrastive_valid_batches" in loss_payload
+    assert "train_contrastive_valid_anchor_count" in loss_payload
+    assert "train_contrastive_positive_pair_count" in loss_payload
+    assert "train_contrastive_eligible_label_count" in loss_payload
+    assert "train_contrastive_labeled_event_count" in loss_payload
+    assert "train_contrastive_unlabeled_fill_count" in loss_payload
     assert len(loss_payload["train_loss"]) == len(loss_payload["train_total_loss"])
+    assert len(loss_payload["train_loss"]) == len(
+        loss_payload["train_contrastive_valid_batches"]
+    )
 
 
 async def test_contrastive_ignores_model_only_labels(session, settings, monkeypatch):

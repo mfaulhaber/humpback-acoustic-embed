@@ -174,6 +174,13 @@ class MaskedTransformerJob(UUIDMixin, TimestampMixin, Base):
     contrastive_min_regions_per_label: Mapped[int] = mapped_column(Integer, default=2)
     require_cross_region_positive: Mapped[bool] = mapped_column(Boolean, default=True)
     related_label_policy_json: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    contrastive_sampler_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    contrastive_labels_per_batch: Mapped[int] = mapped_column(Integer, default=4)
+    contrastive_events_per_label: Mapped[int] = mapped_column(Integer, default=4)
+    contrastive_max_unlabeled_fraction: Mapped[float] = mapped_column(
+        Float, default=0.25
+    )
+    contrastive_region_balance: Mapped[bool] = mapped_column(Boolean, default=True)
     max_epochs: Mapped[int] = mapped_column(Integer, default=30)
     early_stop_patience: Mapped[int] = mapped_column(Integer, default=3)
     val_split: Mapped[float] = mapped_column(Float, default=0.1)

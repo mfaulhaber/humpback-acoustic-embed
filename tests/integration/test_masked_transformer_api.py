@@ -174,6 +174,10 @@ async def test_create_contrastive_round_trips(client, app_settings):
             "contrastive_min_events_per_label": 2,
             "contrastive_min_regions_per_label": 1,
             "require_cross_region_positive": False,
+            "contrastive_labels_per_batch": 3,
+            "contrastive_events_per_label": 2,
+            "contrastive_max_unlabeled_fraction": 0.1,
+            "contrastive_region_balance": False,
         },
     )
     assert response.status_code == 201, response.text
@@ -188,6 +192,19 @@ async def test_create_contrastive_round_trips(client, app_settings):
     assert body["contrastive_min_regions_per_label"] == 1
     assert body["require_cross_region_positive"] is False
     assert body["related_label_policy_json"] is not None
+    assert body["contrastive_sampler_enabled"] is True
+    assert body["contrastive_labels_per_batch"] == 3
+    assert body["contrastive_events_per_label"] == 2
+    assert body["contrastive_max_unlabeled_fraction"] == 0.1
+    assert body["contrastive_region_balance"] is False
+
+    detail = await client.get(f"/sequence-models/masked-transformers/{body['id']}")
+    assert detail.status_code == 200
+    detail_job = detail.json()["job"]
+    assert detail_job["contrastive_labels_per_batch"] == 3
+    assert detail_job["contrastive_events_per_label"] == 2
+    assert detail_job["contrastive_max_unlabeled_fraction"] == 0.1
+    assert detail_job["contrastive_region_balance"] is False
 
 
 async def test_create_idempotent_on_signature(client, app_settings):

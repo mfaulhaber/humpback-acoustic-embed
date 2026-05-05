@@ -206,6 +206,11 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert contextual.contrastive_min_regions_per_label == 2
     assert contextual.require_cross_region_positive is True
     assert contextual.related_label_policy_json is None
+    assert contextual.contrastive_sampler_enabled is True
+    assert contextual.contrastive_labels_per_batch == 4
+    assert contextual.contrastive_events_per_label == 4
+    assert contextual.contrastive_max_unlabeled_fraction == 0.25
+    assert contextual.contrastive_region_balance is True
     assert contextual.batch_size == 8
 
     retrieval = MaskedTransformerJobCreate(
@@ -333,6 +338,24 @@ def test_masked_transformer_create_contrastive_validation():
     with pytest.raises(ValidationError):
         MaskedTransformerJobCreate(
             continuous_embedding_job_id="cej-1",
+            contrastive_labels_per_batch=0,
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            contrastive_events_per_label=0,
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            contrastive_max_unlabeled_fraction=1.0,
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
             retrieval_head_enabled=True,
             sequence_construction_mode="region",
             contrastive_loss_weight=0.1,
@@ -349,6 +372,10 @@ def test_masked_transformer_create_contrastive_validation():
         contrastive_min_events_per_label=2,
         contrastive_min_regions_per_label=1,
         require_cross_region_positive=False,
+        contrastive_labels_per_batch=3,
+        contrastive_events_per_label=2,
+        contrastive_max_unlabeled_fraction=0.1,
+        contrastive_region_balance=False,
     )
     assert payload.contrastive_label_source == "human_corrections"
     assert payload.sequence_construction_mode == "mixed"
@@ -356,6 +383,10 @@ def test_masked_transformer_create_contrastive_validation():
     assert payload.contrastive_min_events_per_label == 2
     assert payload.contrastive_min_regions_per_label == 1
     assert payload.require_cross_region_positive is False
+    assert payload.contrastive_labels_per_batch == 3
+    assert payload.contrastive_events_per_label == 2
+    assert payload.contrastive_max_unlabeled_fraction == 0.1
+    assert payload.contrastive_region_balance is False
 
 
 def test_masked_transformer_job_out_serializes_retrieval_fields():
@@ -389,6 +420,11 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "contrastive_min_regions_per_label": 2,
         "require_cross_region_positive": True,
         "related_label_policy_json": '{"exclude_pairs":[]}',
+        "contrastive_sampler_enabled": True,
+        "contrastive_labels_per_batch": 4,
+        "contrastive_events_per_label": 4,
+        "contrastive_max_unlabeled_fraction": 0.25,
+        "contrastive_region_balance": True,
         "max_epochs": 30,
         "early_stop_patience": 3,
         "val_split": 0.1,
