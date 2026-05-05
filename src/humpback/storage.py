@@ -204,6 +204,12 @@ def masked_transformer_contextual_embeddings_path(
     )
 
 
+def masked_transformer_retrieval_embeddings_path(
+    storage_root: Path, job_id: str
+) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / "retrieval_embeddings.parquet"
+
+
 def masked_transformer_k_dir(storage_root: Path, job_id: str, k: int) -> Path:
     return masked_transformer_dir(storage_root, job_id) / f"k{int(k)}"
 

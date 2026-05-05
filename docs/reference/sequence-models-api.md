@@ -472,6 +472,40 @@ parameter.
   ordering as the HMM regenerate (validate → temp-then-rename →
   commit FK). Returns `{ status: "ok", job_id, k, event_classification_job_id, label_distribution }`.
 
+- `POST /sequence-models/masked-transformers/{id}/nearest-neighbor-report`
+  — run retrieval diagnostics for a completed masked-transformer job.
+  The endpoint uses backend source logic in
+  `humpback.sequence_models.retrieval_diagnostics`; it does not shell
+  out to a standalone script. Body fields:
+
+  - `k` (optional, default first configured k; unknown configured k
+    returns `404`)
+  - `embedding_space` (default `"contextual"`, one of `"contextual"` |
+    `"retrieval"`). Phase 0 supports contextual artifacts for existing
+    jobs; requesting `"retrieval"` before Phase 1 writes
+    `retrieval_embeddings.parquet` returns `409`.
+  - `samples` (default `50`, >= 1), `topn` (default `10`, >= 1),
+    `seed` (default `20260504`)
+  - `retrieval_modes` (default all): `"unrestricted"`,
+    `"exclude_same_event"`, `"exclude_same_event_and_region"`
+  - `embedding_variants` (default all): `"raw_l2"`, `"centered_l2"`,
+    `"remove_pc1"`, `"remove_pc3"`, `"remove_pc5"`, `"remove_pc10"`,
+    `"whiten_pca"`
+  - `include_query_rows`, `include_neighbor_rows`, and
+    `include_event_level` booleans (all default `false`)
+
+  Response is structured JSON with job metadata, resolved options,
+  artifact paths, label coverage, aggregate metrics by retrieval mode
+  and embedding variant, representative good/risky query summaries, and
+  optional detail rows. Human-label metrics are derived only from
+  `VocalizationCorrection` add/remove rows overlapped with
+  boundary-corrected effective events; Classify model `TypedEvent`
+  labels are not used for retrieval positives or negatives.
+
+  Status codes: `404` when the job or requested k is missing, `409`
+  when the job is incomplete or required artifacts are missing, and
+  `422` for invalid report options.
+
 - `GET /sequence-models/masked-transformers/{id}/loss-curve` — returns
   `{ "epochs": list[int], "train_loss": list[float], "val_loss":
   list[float | null] }` from `loss_curve.json`.
@@ -525,6 +559,17 @@ ReconstructionErrorPoint[] }` where `ReconstructionErrorPoint` is
 `ConfidenceStrip`.
 
 `ExtendKSweepRequest`: `{ additional_k: list[int] }`.
+
+`MaskedTransformerNearestNeighborReportRequest`: `{ k?: int,
+embedding_space?: "contextual" | "retrieval", samples?: int, topn?: int,
+seed?: int, retrieval_modes?: list[str], embedding_variants?: list[str],
+include_query_rows?: bool, include_neighbor_rows?: bool,
+include_event_level?: bool }`.
+
+`MaskedTransformerNearestNeighborReportResponse`: structured retrieval
+diagnostics with job metadata, label coverage, aggregate metrics by
+retrieval mode and embedding variant, representative queries, optional
+query rows, and optional neighbor rows.
 
 Reused across HMM and masked-transformer detail pages: `OverlayResponse`,
 `ExemplarsResponse`, `LabelDistribution`, `StateTierComposition`.

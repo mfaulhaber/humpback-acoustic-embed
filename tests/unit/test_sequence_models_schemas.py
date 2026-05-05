@@ -8,6 +8,8 @@ from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobManifest,
     ContinuousEmbeddingSpanSummary,
     ExemplarRecord,
+    MaskedTransformerNearestNeighborReportRequest,
+    MaskedTransformerNearestNeighborReportResponse,
     OverlayPoint,
 )
 
@@ -159,3 +161,184 @@ def test_overlay_point_validates_unified_shape_and_rejects_missing_sequence_id()
                 "max_state_probability": 0.5,
             }
         )
+
+
+def test_nearest_neighbor_report_request_defaults():
+    payload = MaskedTransformerNearestNeighborReportRequest()
+
+    assert payload.embedding_space == "contextual"
+    assert payload.samples == 50
+    assert payload.topn == 10
+    assert payload.retrieval_modes == [
+        "unrestricted",
+        "exclude_same_event",
+        "exclude_same_event_and_region",
+    ]
+    assert payload.embedding_variants == [
+        "raw_l2",
+        "centered_l2",
+        "remove_pc1",
+        "remove_pc3",
+        "remove_pc5",
+        "remove_pc10",
+        "whiten_pca",
+    ]
+    assert payload.include_query_rows is False
+    assert payload.include_neighbor_rows is False
+
+
+def test_nearest_neighbor_report_request_rejects_invalid_options():
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest.model_validate(
+            {"embedding_space": "bad"}
+        )
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest(samples=0)
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest(topn=0)
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest(retrieval_modes=[])
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest(embedding_variants=[])
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest.model_validate(
+            {"retrieval_modes": ["exclude_same_region"]}
+        )
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest.model_validate(
+            {"embedding_variants": ["raw"]}
+        )
+
+
+def test_nearest_neighbor_report_response_serializes_detail_rows():
+    response = MaskedTransformerNearestNeighborReportResponse.model_validate(
+        {
+            "job": {
+                "job_id": "mt-1",
+                "status": "complete",
+                "continuous_embedding_job_id": "cej-1",
+                "event_classification_job_id": None,
+                "region_detection_job_id": "rdj-1",
+                "k_values": [100],
+                "k": 100,
+            },
+            "options": {
+                "embedding_space": "contextual",
+                "samples": 1,
+                "topn": 1,
+                "seed": 1,
+                "retrieval_modes": ["unrestricted"],
+                "embedding_variants": ["raw_l2"],
+                "include_query_rows": True,
+                "include_neighbor_rows": True,
+            },
+            "artifacts": {"embedding_path": "/tmp/contextual_embeddings.parquet"},
+            "label_coverage": {
+                "embedding_rows": 2,
+                "sampled_queries": 1,
+                "human_labeled_query_pool_rows": 1,
+                "human_labeled_effective_events": 1,
+                "vocalization_correction_rows": 1,
+                "human_label_chunk_counts": {"moan": 1},
+                "human_label_event_counts": {"moan": 1},
+                "corrections_by_type": {"add:moan": 1},
+            },
+            "results": {
+                "unrestricted": {
+                    "raw_l2": {
+                        "same_human_label": 1.0,
+                        "exact_human_label_set": 1.0,
+                        "same_event": 0.0,
+                        "same_region": 0.0,
+                        "adjacent_1s": 0.0,
+                        "nearby_5s": 0.0,
+                        "same_token": 0.0,
+                        "similar_duration": 1.0,
+                        "without_human_label": 0.0,
+                        "low_event_overlap": 0.0,
+                        "avg_cosine": 0.9,
+                        "median_cosine": 0.9,
+                        "random_pair_percentiles": {"50": 0.1},
+                        "verdicts": {"good": 1},
+                        "label_specific_same_human_label": {
+                            "moan": {
+                                "query_count": 1,
+                                "neighbor_count": 1,
+                                "same_human_label": 1.0,
+                            }
+                        },
+                    }
+                }
+            },
+            "representative_good_queries": [
+                {
+                    "query_order": 1,
+                    "query_idx": 0,
+                    "query_region": "r1",
+                    "query_chunk": 0,
+                    "query_start_timestamp": 10.0,
+                    "query_human_types": "moan",
+                    "query_event_id": "E1",
+                    "query_duration": 0.5,
+                    "query_token": 3,
+                    "neighbor_count": 1,
+                    "same_human_label_rate": 1.0,
+                    "exact_human_label_set_rate": 1.0,
+                    "same_event_rate": 0.0,
+                    "same_region_rate": 0.0,
+                    "adjacent_1s_rate": 0.0,
+                    "nearby_5s_rate": 0.0,
+                    "same_token_rate": 0.0,
+                    "similar_duration_rate": 1.0,
+                    "neighbor_without_human_label_rate": 0.0,
+                    "neighbor_low_event_overlap_rate": 0.0,
+                    "avg_cosine": 0.9,
+                    "verdict": "good",
+                }
+            ],
+            "representative_risky_queries": [],
+            "query_rows": [],
+            "neighbor_rows": [
+                {
+                    "query_order": 1,
+                    "query_idx": 0,
+                    "rank": 1,
+                    "neighbor_idx": 1,
+                    "cosine": 0.9,
+                    "query_region": "r1",
+                    "neighbor_region": "r2",
+                    "query_chunk": 0,
+                    "neighbor_chunk": 0,
+                    "center_delta_sec": 2.0,
+                    "same_region": False,
+                    "adjacent_1s": False,
+                    "nearby_5s": False,
+                    "query_human_types": "moan",
+                    "neighbor_human_types": "moan",
+                    "same_human_label": True,
+                    "exact_human_label_set": True,
+                    "query_event_id": "E1",
+                    "neighbor_event_id": "E2",
+                    "same_event": False,
+                    "query_duration": 0.5,
+                    "neighbor_duration": 0.5,
+                    "similar_duration": True,
+                    "query_token": 3,
+                    "neighbor_token": 4,
+                    "same_token": False,
+                    "query_tier": "event_core",
+                    "neighbor_tier": "event_core",
+                    "query_overlap": 1.0,
+                    "neighbor_overlap": 1.0,
+                    "query_call_probability": 0.9,
+                    "neighbor_call_probability": 0.8,
+                    "query_start_timestamp": 10.0,
+                    "neighbor_start_timestamp": 12.0,
+                }
+            ],
+        }
+    )
+
+    dumped = response.model_dump()
+    assert dumped["job"]["job_id"] == "mt-1"
+    assert dumped["neighbor_rows"][0]["neighbor_region"] == "r2"
