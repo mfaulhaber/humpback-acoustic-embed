@@ -270,6 +270,8 @@ async def test_human_corrections_support_multiple_labels(session, tmp_storage):
 
     assert events[0].human_types == ("moan", "song")
     assert meta["event_label_counts"] == {"moan": 1, "song": 1}
+    assert meta["single_label_effective_events"] == 0
+    assert meta["multi_label_effective_events"] == 1
 
 
 async def test_remove_correction_subtracts_added_type(session, tmp_storage):
@@ -298,7 +300,7 @@ async def test_remove_correction_subtracts_added_type(session, tmp_storage):
     )
     await session.commit()
 
-    events, _meta = await diag.load_human_correction_events(
+    events, meta = await diag.load_human_correction_events(
         session,
         storage_root=tmp_storage,
         event_segmentation_job_id=seg_id,
@@ -307,6 +309,9 @@ async def test_remove_correction_subtracts_added_type(session, tmp_storage):
     )
 
     assert events[0].human_types == ()
+    assert meta["unlabeled_effective_events"] == 1
+    assert meta["single_label_effective_events"] == 0
+    assert meta["multi_label_effective_events"] == 0
 
 
 async def test_model_classify_labels_are_ignored(session, tmp_storage):
@@ -330,6 +335,9 @@ async def test_model_classify_labels_are_ignored(session, tmp_storage):
 
     assert events[0].human_types == ()
     assert meta["events_with_human_labels"] == 0
+    assert meta["unlabeled_effective_events"] == 1
+    assert meta["single_label_effective_events"] == 0
+    assert meta["multi_label_effective_events"] == 0
 
 
 async def test_boundary_adjusted_event_controls_row_membership(session, tmp_storage):

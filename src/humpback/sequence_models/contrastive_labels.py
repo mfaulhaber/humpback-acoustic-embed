@@ -77,9 +77,15 @@ def apply_human_correction_labels(
     for event in out:
         for label in event.human_types:
             label_counter[label] += 1
+    unlabeled_events = sum(1 for event in out if not event.human_types)
+    single_label_events = sum(1 for event in out if len(event.human_types) == 1)
+    multi_label_events = sum(1 for event in out if len(event.human_types) > 1)
     return out, {
         "total_correction_rows": len(corrections),
         "events_with_human_labels": sum(1 for event in out if event.human_types),
+        "unlabeled_effective_events": unlabeled_events,
+        "single_label_effective_events": single_label_events,
+        "multi_label_effective_events": multi_label_events,
         "corrections_by_type": dict(corrections_by_type.most_common()),
         "event_label_counts": dict(label_counter.most_common()),
     }

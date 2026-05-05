@@ -570,7 +570,20 @@ parameter.
   optional detail rows. Human-label metrics are derived only from
   `VocalizationCorrection` add/remove rows overlapped with
   boundary-corrected effective events; Classify model `TypedEvent`
-  labels are not used for retrieval positives or negatives.
+  labels are not used for retrieval positives or negatives. Label
+  coverage includes human-labeled, unlabeled, single-label, and
+  multi-label effective-event counts so sweep reports can verify the
+  intended authoritative single-label research assumption.
+
+  Repeatable research sweeps are driven by
+  `scripts/masked_transformer_retrieval_sweep.py`. Use `submit --dry-run`
+  to write a deterministic planning manifest, non-dry `submit` to call
+  `create_masked_transformer_job()` for runnable rows, and `compare` to
+  call this nearest-neighbor endpoint logic through
+  `build_nearest_neighbor_report()` and write `comparison.csv`,
+  `comparison.md`, and `comparison.json`. The comparison helper does not
+  duplicate nearest-neighbor math; the backend diagnostics remain the
+  source of metric truth.
 
   Status codes: `404` when the job or requested k is missing, `409`
   when the job is incomplete or required artifacts are missing, and

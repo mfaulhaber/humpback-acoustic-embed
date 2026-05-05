@@ -42,14 +42,14 @@ First-sweep ranking should use `exclude_same_event_and_region` and prefer raw re
 - Create: `tests/sequence_models/test_retrieval_sweeps.py`
 
 **Acceptance criteria:**
-- [ ] The module defines typed sweep configuration objects for baseline job settings, contrastive loss weight values, supported negative or related-label policy variants, k values, diagnostic options, and output paths.
-- [ ] Sweep expansion is deterministic and produces stable run names from normalized config values.
-- [ ] Lambda sweep values default to the spec values `0.05`, `0.10`, `0.25`, and `0.50`, while allowing caller-provided values.
-- [ ] Policy sweep support is limited to currently accepted masked-transformer create fields, such as related-label policy, require-cross-region-positive behavior, and sampler settings; true hard-negative policies that do not yet exist in the job schema are rejected with a clear message.
-- [ ] Expanded create payloads preserve existing service invariants: retrieval head enabled for contrastive runs, human-correction label source for positive contrastive weight, event-centered or mixed sequence construction, and `k_values` excluded from job identity.
-- [ ] The module records the corrected label assumption in run metadata as `label_semantics="authoritative_single_human_label"` unless diagnostics later observe otherwise.
-- [ ] The module can emit the initial sweep matrix above as a named preset without requiring the caller to hand-enter every run.
-- [ ] The preset records source job references, baseline metrics, and the stop rules used to decide whether later 100 ms or high-lambda runs should proceed.
+- [x] The module defines typed sweep configuration objects for baseline job settings, contrastive loss weight values, supported negative or related-label policy variants, k values, diagnostic options, and output paths.
+- [x] Sweep expansion is deterministic and produces stable run names from normalized config values.
+- [x] Lambda sweep values default to the spec values `0.05`, `0.10`, `0.25`, and `0.50`, while allowing caller-provided values.
+- [x] Policy sweep support is limited to currently accepted masked-transformer create fields, such as related-label policy, require-cross-region-positive behavior, and sampler settings; true hard-negative policies that do not yet exist in the job schema are rejected with a clear message.
+- [x] Expanded create payloads preserve existing service invariants: retrieval head enabled for contrastive runs, human-correction label source for positive contrastive weight, event-centered or mixed sequence construction, and `k_values` excluded from job identity.
+- [x] The module records the corrected label assumption in run metadata as `label_semantics="authoritative_single_human_label"` unless diagnostics later observe otherwise.
+- [x] The module can emit the initial sweep matrix above as a named preset without requiring the caller to hand-enter every run.
+- [x] The preset records source job references, baseline metrics, and the stop rules used to decide whether later 100 ms or high-lambda runs should proceed.
 
 **Tests needed:**
 - Unit tests for deterministic sweep expansion and run naming.
@@ -68,13 +68,13 @@ First-sweep ranking should use `exclude_same_event_and_region` and prefer raw re
 - Create or modify: `tests/scripts/test_masked_transformer_retrieval_sweep.py`
 
 **Acceptance criteria:**
-- [ ] The script supports a submit mode that loads settings, opens an async session, and calls `create_masked_transformer_job()` rather than inserting rows directly.
-- [ ] Submit mode accepts upstream continuous embedding job id, optional Classify binding, k values, preset/training defaults, lambda values, related-label policy variants, sampler overrides, seed values, and dry-run mode.
-- [ ] Dry-run mode prints deterministic planned run rows without creating jobs.
-- [ ] Non-dry-run mode creates or reuses jobs idempotently and writes a JSON manifest containing run name, requested config, resolved job id, created or reused status, and label semantics.
-- [ ] The script can optionally extend k sweeps on completed reused jobs through the existing `extend_k_sweep_job()` service path.
-- [ ] The CLI never starts worker loops itself; it reports queued or existing job ids for the existing worker system to process.
-- [ ] The script supports `--preset initial-retrieval-aware-sweep` for dry-run and submit modes, and marks runs that are blocked by unmet stop rules as planned-but-not-submitted.
+- [x] The script supports a submit mode that loads settings, opens an async session, and calls `create_masked_transformer_job()` rather than inserting rows directly.
+- [x] Submit mode accepts upstream continuous embedding job id, optional Classify binding, k values, preset/training defaults, lambda values, related-label policy variants, sampler overrides, seed values, and dry-run mode.
+- [x] Dry-run mode prints deterministic planned run rows without creating jobs.
+- [x] Non-dry-run mode creates or reuses jobs idempotently and writes a JSON manifest containing run name, requested config, resolved job id, created or reused status, and label semantics.
+- [x] The script can optionally extend k sweeps on completed reused jobs through the existing `extend_k_sweep_job()` service path.
+- [x] The CLI never starts worker loops itself; it reports queued or existing job ids for the existing worker system to process.
+- [x] The script supports `--preset initial-retrieval-aware-sweep` for dry-run and submit modes, and marks runs that are blocked by unmet stop rules as planned-but-not-submitted.
 
 **Tests needed:**
 - CLI parser tests for submit arguments and defaults.
@@ -94,16 +94,16 @@ First-sweep ranking should use `exclude_same_event_and_region` and prefer raw re
 - Modify: `tests/scripts/test_masked_transformer_retrieval_sweep.py`
 
 **Acceptance criteria:**
-- [ ] The module provides a compare workflow that accepts explicit masked-transformer job ids or a submit manifest.
-- [ ] Compare mode calls `build_nearest_neighbor_report()` for completed jobs and does not duplicate nearest-neighbor math.
-- [ ] Default diagnostic options use retrieval embedding space, the required retrieval modes, the required embedding variants, a fixed seed, and a configured k.
-- [ ] Baseline contextual jobs can be included by explicitly setting their embedding space to contextual in the comparison manifest.
-- [ ] Ranking primary key is cross-region same authoritative human label overlap from `exclude_same_event_and_region` and `raw_l2`.
-- [ ] Secondary columns include retrieval `remove_pc1`, `remove_pc3`, `remove_pc5`, `remove_pc10`, `whiten_pca`, same event rate, same region rate, similar duration rate, random-pair cosine percentiles, and good/mixed/bad verdict counts.
-- [ ] Jobs with zero human-labeled query coverage, missing retrieval artifacts, incomplete status, or unavailable k values are kept in the output with a failure status instead of aborting the whole comparison.
-- [ ] The comparison manifest records label coverage counts, including single-label event count, unlabeled event count, and multi-label event count.
-- [ ] Compare mode can ingest known baseline metric rows for historical jobs when the operator wants the first report to include already-observed session metrics before rerunning diagnostics.
-- [ ] Compare mode highlights the first-sweep go/no-go checks: skipped contrastive batches, raw retrieval versus contextual raw, raw retrieval versus contextual whitened, and event-level mean-pooled retrieval.
+- [x] The module provides a compare workflow that accepts explicit masked-transformer job ids or a submit manifest.
+- [x] Compare mode calls `build_nearest_neighbor_report()` for completed jobs and does not duplicate nearest-neighbor math.
+- [x] Default diagnostic options use retrieval embedding space, the required retrieval modes, the required embedding variants, a fixed seed, and a configured k.
+- [x] Baseline contextual jobs can be included by explicitly setting their embedding space to contextual in the comparison manifest.
+- [x] Ranking primary key is cross-region same authoritative human label overlap from `exclude_same_event_and_region` and `raw_l2`.
+- [x] Secondary columns include retrieval `remove_pc1`, `remove_pc3`, `remove_pc5`, `remove_pc10`, `whiten_pca`, same event rate, same region rate, similar duration rate, random-pair cosine percentiles, and good/mixed/bad verdict counts.
+- [x] Jobs with zero human-labeled query coverage, missing retrieval artifacts, incomplete status, or unavailable k values are kept in the output with a failure status instead of aborting the whole comparison.
+- [x] The comparison manifest records label coverage counts, including single-label event count, unlabeled event count, and multi-label event count.
+- [x] Compare mode can ingest known baseline metric rows for historical jobs when the operator wants the first report to include already-observed session metrics before rerunning diagnostics.
+- [x] Compare mode highlights the first-sweep go/no-go checks: skipped contrastive batches, raw retrieval versus contextual raw, raw retrieval versus contextual whitened, and event-level mean-pooled retrieval.
 
 **Tests needed:**
 - Unit tests for ranking order with synthetic diagnostic responses.
@@ -122,12 +122,12 @@ First-sweep ranking should use `exclude_same_event_and_region` and prefer raw re
 - Create: `tests/sequence_models/test_retrieval_sweep_outputs.py`
 
 **Acceptance criteria:**
-- [ ] Compare mode writes `comparison.csv`, `comparison.md`, and `comparison.json` to a caller-specified output directory.
-- [ ] CSV output is stable under seed and uses one row per job/config/k/embedding-space comparison.
-- [ ] Markdown output includes a compact ranked table, label coverage summary, metric definitions, diagnostic options, and any failure rows.
-- [ ] JSON output preserves the full normalized comparison payload for later notebook or script use.
-- [ ] Output filenames are deterministic unless the caller requests timestamped output.
-- [ ] Output rendering does not include large neighbor detail rows unless explicitly requested.
+- [x] Compare mode writes `comparison.csv`, `comparison.md`, and `comparison.json` to a caller-specified output directory.
+- [x] CSV output is stable under seed and uses one row per job/config/k/embedding-space comparison.
+- [x] Markdown output includes a compact ranked table, label coverage summary, metric definitions, diagnostic options, and any failure rows.
+- [x] JSON output preserves the full normalized comparison payload for later notebook or script use.
+- [x] Output filenames are deterministic unless the caller requests timestamped output.
+- [x] Output rendering does not include large neighbor detail rows unless explicitly requested.
 
 **Tests needed:**
 - Snapshot-style tests for CSV and Markdown from small synthetic comparison rows.
@@ -145,12 +145,12 @@ First-sweep ranking should use `exclude_same_event_and_region` and prefer raw re
 - Modify: `tests/sequence_models/test_contrastive_loss.py`
 
 **Acceptance criteria:**
-- [ ] Diagnostic metadata clearly distinguishes authoritative human labels from model Classify labels in field names or documentation comments.
-- [ ] Label coverage includes counts for unlabeled, single-label, and multi-label human-corrected effective events.
-- [ ] Current single-label human-corrected events produce the same same-label metric as set intersection, but the report explicitly marks the observed label cardinality.
-- [ ] Model-only Classify labels remain excluded from retrieval sweep positives and contrastive positives.
-- [ ] Existing multi-label compatibility tests remain valid, but are framed as defensive compatibility rather than the expected Phase 5 research case.
-- [ ] The comparison layer uses the new label-cardinality fields to warn when a run is not evaluating the intended single-label corrected dataset.
+- [x] Diagnostic metadata clearly distinguishes authoritative human labels from model Classify labels in field names or documentation comments.
+- [x] Label coverage includes counts for unlabeled, single-label, and multi-label human-corrected effective events.
+- [x] Current single-label human-corrected events produce the same same-label metric as set intersection, but the report explicitly marks the observed label cardinality.
+- [x] Model-only Classify labels remain excluded from retrieval sweep positives and contrastive positives.
+- [x] Existing multi-label compatibility tests remain valid, but are framed as defensive compatibility rather than the expected Phase 5 research case.
+- [x] The comparison layer uses the new label-cardinality fields to warn when a run is not evaluating the intended single-label corrected dataset.
 
 **Tests needed:**
 - Unit test for all single-label corrected events reporting zero multi-label events.
@@ -170,11 +170,11 @@ First-sweep ranking should use `exclude_same_event_and_region` and prefer raw re
 - Modify: `scripts/README.md`
 
 **Acceptance criteria:**
-- [ ] Sequence Models API docs describe the sweep helper workflow and clarify that nearest-neighbor diagnostics remain the source of comparison metrics.
-- [ ] Behavioral constraints state that Phase 5 sweep ranking uses authoritative human-corrected labels and rejects model-only Classify positives.
-- [ ] Storage or script docs identify where sweep manifests and comparison outputs are written.
-- [ ] The retrieval-aware transformer design keeps the corrected single-label research assumption visible near Phase 5.
-- [ ] Documentation says true hard-negative training policies are not added by Phase 5 unless Phase 4 schema support lands first.
+- [x] Sequence Models API docs describe the sweep helper workflow and clarify that nearest-neighbor diagnostics remain the source of comparison metrics.
+- [x] Behavioral constraints state that Phase 5 sweep ranking uses authoritative human-corrected labels and rejects model-only Classify positives.
+- [x] Storage or script docs identify where sweep manifests and comparison outputs are written.
+- [x] The retrieval-aware transformer design keeps the corrected single-label research assumption visible near Phase 5.
+- [x] Documentation says true hard-negative training policies are not added by Phase 5 unless Phase 4 schema support lands first.
 
 **Tests needed:**
 - Documentation-only review for consistency with implemented CLI flags, output filenames, and label semantics.

@@ -380,6 +380,8 @@ async def test_nearest_neighbor_report_returns_aggregate_metrics(client, app_set
     metrics = body["results"]["exclude_same_event_and_region"]["raw_l2"]
     assert math.isfinite(metrics["same_human_label"])
     assert body["label_coverage"]["human_labeled_effective_events"] == 3
+    assert body["label_coverage"]["single_label_effective_events"] == 3
+    assert body["label_coverage"]["multi_label_effective_events"] == 0
     assert body["query_rows"]
     assert body["neighbor_rows"]
     assert body["event_level_results"] is not None

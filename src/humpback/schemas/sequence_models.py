@@ -1044,6 +1044,9 @@ class RetrievalDiagnosticsLabelCoverage(BaseModel):
     sampled_queries: int
     human_labeled_query_pool_rows: int
     human_labeled_effective_events: int
+    unlabeled_effective_events: int = 0
+    single_label_effective_events: int = 0
+    multi_label_effective_events: int = 0
     vocalization_correction_rows: int
     human_label_chunk_counts: dict[str, int] = Field(default_factory=dict)
     human_label_event_counts: dict[str, int] = Field(default_factory=dict)

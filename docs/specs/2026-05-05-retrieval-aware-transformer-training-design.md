@@ -637,7 +637,9 @@ Current label assumption:
 Scope:
 
 - Add script helpers for lambda sweeps.
-- Add script helpers for hard-negative policy sweeps.
+- Add script helpers for currently persisted sampler and related-label policy
+  sweeps. True hard-negative training policies remain out of scope until the
+  Phase 4 schema fields exist.
 - Produce a compact comparison markdown/CSV across jobs.
 - Use Stage 0/1 metrics as the primary model-selection criteria.
 
@@ -646,6 +648,9 @@ Acceptance criteria:
 - Sweep output ranks by cross-region same-human-label overlap.
 - Sweep output includes raw retrieval, remove-PC, and whitened variants.
 - Sweep output includes good/mixed/bad query counts.
+- Sweep output includes unlabeled, single-label, and multi-label
+  human-corrected effective-event counts and warns when the observed dataset is
+  not the expected single-label research shape.
 
 Testing:
 
