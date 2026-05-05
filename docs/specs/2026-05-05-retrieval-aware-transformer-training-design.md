@@ -69,8 +69,17 @@ improve post-hoc whitening.
 
 ## 3. Verified Label Semantics
 
-The previous assumption that Call Parsing Classify labels are single-value is
-not correct in the current code.
+2026-05-05 correction: the Classify job used for the current retrieval-aware
+research track has human-corrected authoritative labels, with one surviving
+human label per corrected effective event. The earlier concern below remains
+useful historical context for why raw model Classify outputs must not define
+contrastive positives, but Phase 5 sweep comparison should treat the current
+research labels as authoritative single-label event annotations. Multi-label
+set handling remains a defensive compatibility path, not the expected metric
+shape for this sweep.
+
+The previous assumption that raw Call Parsing Classify model outputs are
+single-value is not correct in the current code.
 
 Verification:
 
@@ -81,16 +90,17 @@ Verification:
   `TypedEvent` per `(event, type)` whose score crosses its per-type threshold.
   If no type crosses threshold, it emits one fallback row for the best-scoring
   type with `above_threshold=False`.
-- `src/humpback/sequence_models/label_distribution.py` unions all
-  above-threshold model types, applies `VocalizationCorrection` add/remove
-  overlays, and assigns a type set to each effective event.
+- `src/humpback/sequence_models/label_distribution.py` now treats overlapping
+  human `VocalizationCorrection(add)` rows as authoritative replacement labels
+  for corrected events, falling back to model above-threshold types only when an
+  event has no human add correction.
 
 Design decision for retrieval-aware training:
 
 - Do not use model Classify labels for contrastive positives.
 - Use human correction labels only.
-- Treat human labels as a set per event, because corrections can add or remove
-  multiple type names over the same event interval.
+- Keep human labels set-capable for compatibility, but expect the current
+  research sweep to evaluate one authoritative human label per corrected event.
 
 ## 4. Goals
 
@@ -202,9 +212,12 @@ Notes:
 - `remove` rows without a corresponding surviving human add simply leave the
   event unlabeled for contrastive training.
 
-### 6.4 Multi-label human events
+### 6.4 Human event label cardinality
 
-Human correction labels are represented as a set.
+Human correction labels are represented as a set for compatibility with older
+or future data. The current Phase 5 research dataset is expected to have one
+authoritative human label per corrected event, so sweep reporting should surface
+unlabeled, single-label, and multi-label event counts explicitly.
 
 Contrastive positive rule:
 
@@ -224,7 +237,9 @@ negative(anchor, candidate)
 
 Do not duplicate one event into separate physical training examples per label in
 the first implementation. Instead, build the supervised-contrastive positive
-mask from set intersection.
+mask from set intersection, and let Phase 5 comparison flag any multi-label
+events as a label-cardinality warning rather than silently treating them as the
+expected case.
 
 ### 6.5 Region-aware sampling
 
@@ -608,6 +623,16 @@ Testing:
 
 Purpose: support repeatable research comparisons without building a large UI
 surface too early.
+
+Current label assumption:
+
+- The associated Classify job for this research sweep has authoritative
+  human-corrected single labels per effective event.
+- Sweep ranking should therefore report same authoritative human label overlap
+  as the primary metric, while still preserving existing set-capable diagnostic
+  plumbing for older or future multi-label data.
+- Model-only Classify labels and collapsed multi-label model outputs must not
+  create positives for the sweep objective.
 
 Scope:
 
