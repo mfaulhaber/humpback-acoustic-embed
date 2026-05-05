@@ -139,6 +139,10 @@ class TestCreateMaskedTransformerJob:
         assert job.training_signature
         assert json.loads(job.k_values) == [100]
         assert job.mask_fraction == pytest.approx(0.20)
+        assert job.retrieval_head_enabled is False
+        assert job.retrieval_dim is None
+        assert job.retrieval_hidden_dim is None
+        assert job.retrieval_l2_normalize is True
 
     async def test_idempotent_returns_existing(self, session):
         cej = await _seed_crnn_cej(session)
@@ -173,6 +177,72 @@ class TestCreateMaskedTransformerJob:
         assert first.id == second.id
         assert json.loads(first.k_values) == [100]
 
+    async def test_retrieval_head_config_changes_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        contextual, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+        )
+        retrieval, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+        )
+
+        assert created is True
+        assert retrieval.id != contextual.id
+        assert retrieval.training_signature != contextual.training_signature
+        assert retrieval.retrieval_head_enabled is True
+        assert retrieval.retrieval_dim == 128
+        assert retrieval.retrieval_hidden_dim == 512
+        assert retrieval.retrieval_l2_normalize is True
+
+    async def test_retrieval_head_dimensions_participate_in_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        first, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            retrieval_dim=64,
+            retrieval_hidden_dim=256,
+        )
+        second, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            retrieval_dim=128,
+            retrieval_hidden_dim=256,
+        )
+
+        assert created is True
+        assert first.id != second.id
+        assert first.training_signature != second.training_signature
+
+    async def test_retrieval_head_idempotency_still_excludes_k_values(self, session):
+        cej = await _seed_crnn_cej(session)
+        first, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            k_values=[100],
+        )
+        second, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            k_values=[200],
+        )
+
+        assert created is False
+        assert first.id == second.id
+        assert json.loads(second.k_values) == [100]
+
     async def test_rejects_nonexistent_upstream(self, session):
         with pytest.raises(ValueError, match="continuous_embedding_job not found"):
             await create_masked_transformer_job(
@@ -205,6 +275,23 @@ class TestCreateMaskedTransformerJob:
         with pytest.raises(ValueError, match="k must be >= 2"):
             await create_masked_transformer_job(
                 session, continuous_embedding_job_id=cej.id, k_values=[1]
+            )
+
+    async def test_retrieval_head_rejects_invalid_dimensions(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="retrieval_dim must be positive"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                retrieval_dim=0,
+            )
+        with pytest.raises(ValueError, match="retrieval_hidden_dim must be positive"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                retrieval_hidden_dim=0,
             )
 
 

@@ -78,6 +78,10 @@ def compute_training_signature(
     early_stop_patience: int,
     val_split: float,
     seed: int,
+    retrieval_head_enabled: bool = False,
+    retrieval_dim: Optional[int] = None,
+    retrieval_hidden_dim: Optional[int] = None,
+    retrieval_l2_normalize: bool = True,
 ) -> str:
     """Stable signature over training-only config (excludes ``k_values``).
 
@@ -98,6 +102,19 @@ def compute_training_signature(
         "val_split": float(val_split),
         "seed": int(seed),
     }
+    if retrieval_head_enabled:
+        payload.update(
+            {
+                "retrieval_head_enabled": True,
+                "retrieval_dim": int(retrieval_dim)
+                if retrieval_dim is not None
+                else None,
+                "retrieval_hidden_dim": int(retrieval_hidden_dim)
+                if retrieval_hidden_dim is not None
+                else None,
+                "retrieval_l2_normalize": bool(retrieval_l2_normalize),
+            }
+        )
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -127,6 +144,37 @@ def serialize_k_values(values: list[int]) -> str:
     return json.dumps([int(v) for v in values], separators=(",", ":"))
 
 
+def normalize_retrieval_head_config(
+    *,
+    retrieval_head_enabled: bool = False,
+    retrieval_dim: Optional[int] = None,
+    retrieval_hidden_dim: Optional[int] = None,
+    retrieval_l2_normalize: bool = True,
+) -> tuple[bool, Optional[int], Optional[int], bool]:
+    enabled = bool(retrieval_head_enabled)
+    l2_normalize = bool(retrieval_l2_normalize)
+    if not enabled:
+        if retrieval_dim is not None and int(retrieval_dim) <= 0:
+            raise ValueError("retrieval_dim must be positive when provided")
+        if retrieval_hidden_dim is not None and int(retrieval_hidden_dim) <= 0:
+            raise ValueError("retrieval_hidden_dim must be positive when provided")
+        return False, None, None, l2_normalize
+
+    resolved_dim = 128 if retrieval_dim is None else int(retrieval_dim)
+    resolved_hidden_dim = (
+        512 if retrieval_hidden_dim is None else int(retrieval_hidden_dim)
+    )
+    if resolved_dim <= 0:
+        raise ValueError(
+            "retrieval_dim must be positive when retrieval head is enabled"
+        )
+    if resolved_hidden_dim <= 0:
+        raise ValueError(
+            "retrieval_hidden_dim must be positive when retrieval head is enabled"
+        )
+    return True, resolved_dim, resolved_hidden_dim, l2_normalize
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -144,6 +192,10 @@ async def create_masked_transformer_job(
     dropout: float = 0.1,
     mask_weight_bias: bool = True,
     cosine_loss_weight: float = 0.0,
+    retrieval_head_enabled: bool = False,
+    retrieval_dim: Optional[int] = None,
+    retrieval_hidden_dim: Optional[int] = None,
+    retrieval_l2_normalize: bool = True,
     max_epochs: int = 30,
     early_stop_patience: int = 3,
     val_split: float = 0.1,
@@ -164,6 +216,18 @@ async def create_masked_transformer_job(
     """
     if preset not in {"small", "default", "large"}:
         raise ValueError(f"preset must be one of small/default/large, got {preset!r}")
+
+    (
+        normalized_retrieval_head_enabled,
+        normalized_retrieval_dim,
+        normalized_retrieval_hidden_dim,
+        normalized_retrieval_l2_normalize,
+    ) = normalize_retrieval_head_config(
+        retrieval_head_enabled=retrieval_head_enabled,
+        retrieval_dim=retrieval_dim,
+        retrieval_hidden_dim=retrieval_hidden_dim,
+        retrieval_l2_normalize=retrieval_l2_normalize,
+    )
 
     cej = await session.get(ContinuousEmbeddingJob, continuous_embedding_job_id)
     if cej is None:
@@ -192,6 +256,10 @@ async def create_masked_transformer_job(
         dropout=dropout,
         mask_weight_bias=mask_weight_bias,
         cosine_loss_weight=cosine_loss_weight,
+        retrieval_head_enabled=normalized_retrieval_head_enabled,
+        retrieval_dim=normalized_retrieval_dim,
+        retrieval_hidden_dim=normalized_retrieval_hidden_dim,
+        retrieval_l2_normalize=normalized_retrieval_l2_normalize,
         max_epochs=max_epochs,
         early_stop_patience=early_stop_patience,
         val_split=val_split,
@@ -233,6 +301,10 @@ async def create_masked_transformer_job(
         dropout=float(dropout),
         mask_weight_bias=bool(mask_weight_bias),
         cosine_loss_weight=float(cosine_loss_weight),
+        retrieval_head_enabled=normalized_retrieval_head_enabled,
+        retrieval_dim=normalized_retrieval_dim,
+        retrieval_hidden_dim=normalized_retrieval_hidden_dim,
+        retrieval_l2_normalize=normalized_retrieval_l2_normalize,
         max_epochs=int(max_epochs),
         early_stop_patience=int(early_stop_patience),
         val_split=float(val_split),

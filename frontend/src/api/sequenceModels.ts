@@ -1009,6 +1009,10 @@ export interface MaskedTransformerJob {
   dropout: number;
   mask_weight_bias: boolean;
   cosine_loss_weight: number;
+  retrieval_head_enabled: boolean;
+  retrieval_dim: number | null;
+  retrieval_hidden_dim: number | null;
+  retrieval_l2_normalize: boolean;
   max_epochs: number;
   early_stop_patience: number;
   val_split: number;
@@ -1048,6 +1052,10 @@ export interface MaskedTransformerJobCreate {
   dropout?: number;
   mask_weight_bias?: boolean;
   cosine_loss_weight?: number;
+  retrieval_head_enabled?: boolean;
+  retrieval_dim?: number | null;
+  retrieval_hidden_dim?: number | null;
+  retrieval_l2_normalize?: boolean;
   max_epochs?: number;
   early_stop_patience?: number;
   val_split?: number;

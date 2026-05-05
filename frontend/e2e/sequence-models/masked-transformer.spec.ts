@@ -46,11 +46,24 @@ const CEJ_SURFPERCH_COMPLETE = {
   total_chunks: null,
 };
 
+const CLASSIFY_JOB = {
+  id: "cls-1",
+  status: "complete",
+  event_segmentation_job_id: "seg-1",
+  model_name: "fixture-classifier",
+  n_events_classified: 12,
+  artifact_dir: "/tmp/data/call_parsing/classification/cls-1",
+  error_message: null,
+  created_at: "2026-04-29T00:20:00Z",
+  updated_at: "2026-04-29T00:25:00Z",
+};
+
 const QUEUED_JOB = {
   id: "mt-queued",
   status: "queued",
   status_reason: null,
   continuous_embedding_job_id: CEJ_CRNN_COMPLETE.id,
+  event_classification_job_id: "cls-1",
   training_signature: "sig-q",
   preset: "default",
   mask_fraction: 0.2,
@@ -59,6 +72,10 @@ const QUEUED_JOB = {
   dropout: 0.1,
   mask_weight_bias: true,
   cosine_loss_weight: 0.0,
+  retrieval_head_enabled: false,
+  retrieval_dim: null,
+  retrieval_hidden_dim: null,
+  retrieval_l2_normalize: true,
   max_epochs: 30,
   early_stop_patience: 3,
   val_split: 0.1,
@@ -260,11 +277,20 @@ interface MockState {
   motifJobs?: typeof MOTIF_JOB_HMM[];
   capturedMotifListUrls?: string[];
   capturedMotifCreates?: Array<Record<string, unknown>>;
+  capturedCreates?: Array<Record<string, unknown>>;
 }
 
 async function setupMocks(page: Page, state: MockState): Promise<void> {
   await page.route("**/sequence-models/continuous-embeddings**", (route: Route) => {
     if (route.request().method() === "GET") {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith(`/sequence-models/continuous-embeddings/${CEJ_CRNN_COMPLETE.id}`)) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ job: CEJ_CRNN_COMPLETE, manifest: null }),
+        });
+      }
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -273,6 +299,16 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
     }
     return route.fulfill({ status: 405 });
   });
+
+  await page.route(
+    "**/call-parsing/classification-jobs/by-segmentation**",
+    (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([CLASSIFY_JOB]),
+      }),
+  );
 
   await page.route(
     "**/sequence-models/masked-transformers",
@@ -287,12 +323,17 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
       }
       if (method === "POST") {
         const body = route.request().postDataJSON();
+        state.capturedCreates?.push(body);
         const created = {
           ...QUEUED_JOB,
           id: "mt-created",
           continuous_embedding_job_id: body.continuous_embedding_job_id,
           preset: body.preset ?? "default",
           k_values: body.k_values ?? [100],
+          retrieval_head_enabled: body.retrieval_head_enabled ?? false,
+          retrieval_dim: body.retrieval_dim ?? null,
+          retrieval_hidden_dim: body.retrieval_hidden_dim ?? null,
+          retrieval_l2_normalize: body.retrieval_l2_normalize ?? true,
         };
         state.jobs = [created, ...state.jobs];
         return route.fulfill({
@@ -460,7 +501,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   });
 
   test("create form parses k_values CSV and submits", async ({ page }) => {
-    const state: MockState = { jobs: [] };
+    const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
     await page.goto("/app/sequence-models/masked-transformer");
 
@@ -471,6 +512,37 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-preset-small").locator("input").check();
     await page.getByTestId("mt-create-submit").click();
     await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    expect(state.capturedCreates?.[0]).toMatchObject({
+      continuous_embedding_job_id: CEJ_CRNN_COMPLETE.id,
+      preset: "small",
+      k_values: [50, 100],
+      retrieval_head_enabled: false,
+      retrieval_dim: null,
+      retrieval_hidden_dim: null,
+      retrieval_l2_normalize: true,
+    });
+  });
+
+  test("create form submits retrieval-head config", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await page.getByTestId("mt-retrieval-head-enabled").check();
+    await page.getByTestId("mt-adv-retrieval_dim").fill("64");
+    await page.getByTestId("mt-adv-retrieval_hidden_dim").fill("256");
+    await page.getByTestId("mt-create-submit").click();
+    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    expect(state.capturedCreates?.[0]).toMatchObject({
+      retrieval_head_enabled: true,
+      retrieval_dim: 64,
+      retrieval_hidden_dim: 256,
+      retrieval_l2_normalize: true,
+    });
   });
 
   test("create form validation rejects k below 2", async ({ page }) => {

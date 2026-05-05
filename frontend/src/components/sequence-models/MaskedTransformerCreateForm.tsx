@@ -58,6 +58,10 @@ export function MaskedTransformerCreateForm() {
   const [spanMax, setSpanMax] = useState(6);
   const [dropout, setDropout] = useState(0.1);
   const [cosineWeight, setCosineWeight] = useState(0.0);
+  const [retrievalHeadEnabled, setRetrievalHeadEnabled] = useState(false);
+  const [retrievalDim, setRetrievalDim] = useState(128);
+  const [retrievalHiddenDim, setRetrievalHiddenDim] = useState(512);
+  const [retrievalL2Normalize, setRetrievalL2Normalize] = useState(true);
   const [earlyStop, setEarlyStop] = useState(3);
   const [valSplit, setValSplit] = useState(0.1);
   const [seed, setSeed] = useState(42);
@@ -95,7 +99,8 @@ export function MaskedTransformerCreateForm() {
     spanMax >= spanMin &&
     PRESETS.includes(preset) &&
     classifyDropdownReady &&
-    classifyId !== "";
+    classifyId !== "" &&
+    (!retrievalHeadEnabled || (retrievalDim > 0 && retrievalHiddenDim > 0));
 
   const handleSubmit = () => {
     setError(null);
@@ -112,6 +117,10 @@ export function MaskedTransformerCreateForm() {
       span_length_max: spanMax,
       dropout,
       cosine_loss_weight: cosineWeight,
+      retrieval_head_enabled: retrievalHeadEnabled,
+      retrieval_dim: retrievalHeadEnabled ? retrievalDim : null,
+      retrieval_hidden_dim: retrievalHeadEnabled ? retrievalHiddenDim : null,
+      retrieval_l2_normalize: retrievalL2Normalize,
       early_stop_patience: earlyStop,
       val_split: valSplit,
       seed,
@@ -284,6 +293,41 @@ export function MaskedTransformerCreateForm() {
             <Field label="span_length_max" value={spanMax} step={1} onChange={(v) => setSpanMax(Math.max(1, Math.round(v)))} />
             <Field label="dropout" value={dropout} step={0.05} onChange={setDropout} />
             <Field label="cosine_loss_weight" value={cosineWeight} step={0.05} onChange={setCosineWeight} />
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="mt-retrieval-head-enabled"
+                checked={retrievalHeadEnabled}
+                onChange={(e) => setRetrievalHeadEnabled(e.target.checked)}
+              />
+              retrieval projection head
+            </label>
+            <Field
+              label="retrieval_dim"
+              value={retrievalDim}
+              step={1}
+              disabled={!retrievalHeadEnabled}
+              invalid={retrievalHeadEnabled && retrievalDim <= 0}
+              onChange={(v) => setRetrievalDim(Math.round(v))}
+            />
+            <Field
+              label="retrieval_hidden_dim"
+              value={retrievalHiddenDim}
+              step={1}
+              disabled={!retrievalHeadEnabled}
+              invalid={retrievalHeadEnabled && retrievalHiddenDim <= 0}
+              onChange={(v) => setRetrievalHiddenDim(Math.round(v))}
+            />
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="mt-retrieval-l2-normalize"
+                checked={retrievalL2Normalize}
+                disabled={!retrievalHeadEnabled}
+                onChange={(e) => setRetrievalL2Normalize(e.target.checked)}
+              />
+              L2 normalize retrieval embeddings
+            </label>
             <Field label="early_stop_patience" value={earlyStop} step={1} onChange={(v) => setEarlyStop(Math.max(1, Math.round(v)))} />
             <Field label="val_split" value={valSplit} step={0.05} onChange={setValSplit} />
             <Field label="seed" value={seed} step={1} onChange={(v) => setSeed(Math.round(v))} />
@@ -315,11 +359,15 @@ function Field({
   value,
   step,
   onChange,
+  disabled = false,
+  invalid = false,
 }: {
   label: string;
   value: number;
   step: number;
   onChange: (v: number) => void;
+  disabled?: boolean;
+  invalid?: boolean;
 }) {
   return (
     <div>
@@ -330,6 +378,9 @@ function Field({
         id={`mt-adv-${label}`}
         type="number"
         step={step}
+        disabled={disabled}
+        data-testid={`mt-adv-${label}`}
+        className={invalid ? "border-red-500" : ""}
         value={value}
         onChange={(e) => {
           const next = Number.parseFloat(e.target.value);
