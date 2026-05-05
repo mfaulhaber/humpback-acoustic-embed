@@ -153,6 +153,94 @@ async def test_user_added_type_overrides_threshold(session, tmp_storage):
     )
 
     assert result[0].types == frozenset({"moan"})
+    assert result[0].confidences == {}
+
+
+async def test_user_added_type_replaces_model_labels(session, tmp_storage):
+    """Human add corrections are authoritative over model type sets."""
+    rdj_id, seg_id, cls_id = await _seed_classify_chain(session, tmp_storage)
+    write_events(
+        segmentation_job_dir(tmp_storage, seg_id) / "events.parquet",
+        [_event("E1", "R1", 10.0, 12.0)],
+    )
+    cls_dir = classification_job_dir(tmp_storage, cls_id)
+    cls_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        cls_dir / "typed_events.parquet",
+        [
+            _typed("E1", "moan", 0.95, above=True),
+            _typed("E1", "song", 0.85, above=True),
+            _typed("E1", "whup", 0.75, above=True),
+        ],
+    )
+    session.add(
+        VocalizationCorrection(
+            region_detection_job_id=rdj_id,
+            start_sec=10.0,
+            end_sec=12.0,
+            type_name="song",
+            correction_type="add",
+        )
+    )
+    await session.commit()
+
+    result = await load_effective_event_labels(
+        session,
+        event_classification_job_id=cls_id,
+        storage_root=tmp_storage,
+    )
+
+    assert result[0].types == frozenset({"song"})
+    assert result[0].confidences == {"song": 0.85}
+
+
+async def test_multiple_user_added_types_are_multilabel_replacement(
+    session, tmp_storage
+):
+    """Multiple human adds intentionally create a multi-label event."""
+    rdj_id, seg_id, cls_id = await _seed_classify_chain(session, tmp_storage)
+    write_events(
+        segmentation_job_dir(tmp_storage, seg_id) / "events.parquet",
+        [_event("E1", "R1", 10.0, 12.0)],
+    )
+    cls_dir = classification_job_dir(tmp_storage, cls_id)
+    cls_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        cls_dir / "typed_events.parquet",
+        [
+            _typed("E1", "moan", 0.95, above=True),
+            _typed("E1", "song", 0.85, above=True),
+            _typed("E1", "whup", 0.75, above=True),
+        ],
+    )
+    session.add_all(
+        [
+            VocalizationCorrection(
+                region_detection_job_id=rdj_id,
+                start_sec=10.0,
+                end_sec=12.0,
+                type_name="song",
+                correction_type="add",
+            ),
+            VocalizationCorrection(
+                region_detection_job_id=rdj_id,
+                start_sec=10.0,
+                end_sec=12.0,
+                type_name="whup",
+                correction_type="add",
+            ),
+        ]
+    )
+    await session.commit()
+
+    result = await load_effective_event_labels(
+        session,
+        event_classification_job_id=cls_id,
+        storage_root=tmp_storage,
+    )
+
+    assert result[0].types == frozenset({"song", "whup"})
+    assert result[0].confidences == {"song": 0.85, "whup": 0.75}
 
 
 async def test_user_remove_drops_above_threshold(session, tmp_storage):
@@ -191,6 +279,105 @@ async def test_user_remove_drops_above_threshold(session, tmp_storage):
     assert result[0].types == frozenset({"song"})
     assert "moan" not in result[0].confidences
     assert result[0].confidences == {"song": 0.85}
+
+
+async def test_user_remove_subtracts_from_human_replacement(session, tmp_storage):
+    """Remove corrections subtract from the human-added replacement set."""
+    rdj_id, seg_id, cls_id = await _seed_classify_chain(session, tmp_storage)
+    write_events(
+        segmentation_job_dir(tmp_storage, seg_id) / "events.parquet",
+        [_event("E1", "R1", 10.0, 12.0)],
+    )
+    cls_dir = classification_job_dir(tmp_storage, cls_id)
+    cls_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        cls_dir / "typed_events.parquet",
+        [
+            _typed("E1", "moan", 0.95, above=True),
+            _typed("E1", "song", 0.85, above=True),
+        ],
+    )
+    session.add_all(
+        [
+            VocalizationCorrection(
+                region_detection_job_id=rdj_id,
+                start_sec=10.0,
+                end_sec=12.0,
+                type_name="moan",
+                correction_type="add",
+            ),
+            VocalizationCorrection(
+                region_detection_job_id=rdj_id,
+                start_sec=10.0,
+                end_sec=12.0,
+                type_name="song",
+                correction_type="add",
+            ),
+            VocalizationCorrection(
+                region_detection_job_id=rdj_id,
+                start_sec=10.25,
+                end_sec=11.75,
+                type_name="song",
+                correction_type="remove",
+            ),
+        ]
+    )
+    await session.commit()
+
+    result = await load_effective_event_labels(
+        session,
+        event_classification_job_id=cls_id,
+        storage_root=tmp_storage,
+    )
+
+    assert result[0].types == frozenset({"moan"})
+    assert result[0].confidences == {"moan": 0.95}
+
+
+async def test_all_user_added_types_removed_returns_empty_set(session, tmp_storage):
+    """Human replacement labels can be removed back to background."""
+    rdj_id, seg_id, cls_id = await _seed_classify_chain(session, tmp_storage)
+    write_events(
+        segmentation_job_dir(tmp_storage, seg_id) / "events.parquet",
+        [_event("E1", "R1", 10.0, 12.0)],
+    )
+    cls_dir = classification_job_dir(tmp_storage, cls_id)
+    cls_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        cls_dir / "typed_events.parquet",
+        [
+            _typed("E1", "moan", 0.95, above=True),
+            _typed("E1", "song", 0.85, above=True),
+        ],
+    )
+    session.add_all(
+        [
+            VocalizationCorrection(
+                region_detection_job_id=rdj_id,
+                start_sec=10.0,
+                end_sec=12.0,
+                type_name="whup",
+                correction_type="add",
+            ),
+            VocalizationCorrection(
+                region_detection_job_id=rdj_id,
+                start_sec=10.25,
+                end_sec=11.75,
+                type_name="whup",
+                correction_type="remove",
+            ),
+        ]
+    )
+    await session.commit()
+
+    result = await load_effective_event_labels(
+        session,
+        event_classification_job_id=cls_id,
+        storage_root=tmp_storage,
+    )
+
+    assert result[0].types == frozenset()
+    assert result[0].confidences == {}
 
 
 async def test_empty_types_after_corrections(session, tmp_storage):

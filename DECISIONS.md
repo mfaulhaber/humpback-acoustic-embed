@@ -771,9 +771,11 @@ independent of label distribution). Each exemplar's `extras` gains
 chips that click through to Classify Review for the underlying event, and
 background exemplars get a single `(background)` chip.
 
-Effective type set per event = `(model types where above_threshold == True) ∪
-(VocalizationCorrection rows overlapping event with correction_type == "add") −
-(VocalizationCorrection rows overlapping event with correction_type == "remove")`.
+Effective type set per event = `human-added types - human-removed types` when
+any overlapping `VocalizationCorrection(add)` rows exist; otherwise
+`model types where above_threshold == True - human-removed types`. This
+authoritative human-correction rule supersedes the original union formula for
+Sequence Models interpretation artifacts.
 Events whose corrected type set is empty are still returned by the loader, but
 their windows fall into the `(background)` bucket so chart and exemplar
 invariants stay consistent (`event_id` is set iff at least one surviving label
