@@ -199,6 +199,14 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert contextual.event_centered_fraction == 0.0
     assert contextual.pre_event_context_sec is None
     assert contextual.post_event_context_sec is None
+    assert contextual.contrastive_loss_weight == 0.0
+    assert contextual.contrastive_temperature == 0.07
+    assert contextual.contrastive_label_source == "none"
+    assert contextual.contrastive_min_events_per_label == 4
+    assert contextual.contrastive_min_regions_per_label == 2
+    assert contextual.require_cross_region_positive is True
+    assert contextual.related_label_policy_json is None
+    assert contextual.batch_size == 8
 
     retrieval = MaskedTransformerJobCreate(
         continuous_embedding_job_id="cej-1",
@@ -291,6 +299,65 @@ def test_masked_transformer_create_retrieval_head_validation():
     assert disabled.retrieval_hidden_dim is None
 
 
+def test_masked_transformer_create_batch_size_validation():
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            batch_size=0,
+        )
+
+
+def test_masked_transformer_create_contrastive_validation():
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="none",
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            contrastive_temperature=0.0,
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="region",
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+        )
+
+    payload = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        retrieval_head_enabled=True,
+        sequence_construction_mode="mixed",
+        event_centered_fraction=0.7,
+        contrastive_loss_weight=0.1,
+        contrastive_label_source="human_corrections",
+        contrastive_min_events_per_label=2,
+        contrastive_min_regions_per_label=1,
+        require_cross_region_positive=False,
+    )
+    assert payload.contrastive_label_source == "human_corrections"
+    assert payload.sequence_construction_mode == "mixed"
+    assert payload.event_centered_fraction == 0.7
+    assert payload.contrastive_min_events_per_label == 2
+    assert payload.contrastive_min_regions_per_label == 1
+    assert payload.require_cross_region_positive is False
+
+
 def test_masked_transformer_job_out_serializes_retrieval_fields():
     payload = {
         "id": "mt-1",
@@ -306,6 +373,7 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "dropout": 0.1,
         "mask_weight_bias": True,
         "cosine_loss_weight": 0.0,
+        "batch_size": 16,
         "retrieval_head_enabled": True,
         "retrieval_dim": 128,
         "retrieval_hidden_dim": 512,
@@ -314,6 +382,13 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "event_centered_fraction": 0.5,
         "pre_event_context_sec": 1.0,
         "post_event_context_sec": 3.0,
+        "contrastive_loss_weight": 0.1,
+        "contrastive_temperature": 0.07,
+        "contrastive_label_source": "human_corrections",
+        "contrastive_min_events_per_label": 4,
+        "contrastive_min_regions_per_label": 2,
+        "require_cross_region_positive": True,
+        "related_label_policy_json": '{"exclude_pairs":[]}',
         "max_epochs": 30,
         "early_stop_patience": 3,
         "val_split": 0.1,
@@ -335,12 +410,16 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
     job = MaskedTransformerJobOut.model_validate(payload)
 
     assert job.retrieval_head_enabled is True
+    assert job.batch_size == 16
     assert job.retrieval_dim == 128
     assert job.retrieval_hidden_dim == 512
     assert job.sequence_construction_mode == "mixed"
     assert job.event_centered_fraction == 0.5
     assert job.pre_event_context_sec == 1.0
     assert job.post_event_context_sec == 3.0
+    assert job.contrastive_loss_weight == 0.1
+    assert job.contrastive_label_source == "human_corrections"
+    assert job.related_label_policy_json == '{"exclude_pairs":[]}'
     assert job.k_values == [100]
 
 

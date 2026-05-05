@@ -59,6 +59,7 @@ export function MaskedTransformerCreateForm() {
   const [spanMax, setSpanMax] = useState(6);
   const [dropout, setDropout] = useState(0.1);
   const [cosineWeight, setCosineWeight] = useState(0.0);
+  const [batchSize, setBatchSize] = useState(8);
   const [retrievalHeadEnabled, setRetrievalHeadEnabled] = useState(false);
   const [retrievalDim, setRetrievalDim] = useState(128);
   const [retrievalHiddenDim, setRetrievalHiddenDim] = useState(512);
@@ -68,6 +69,12 @@ export function MaskedTransformerCreateForm() {
   const [eventCenteredFraction, setEventCenteredFraction] = useState(0.5);
   const [preEventContextSec, setPreEventContextSec] = useState(2.0);
   const [postEventContextSec, setPostEventContextSec] = useState(2.0);
+  const [contrastiveEnabled, setContrastiveEnabled] = useState(false);
+  const [contrastiveWeight, setContrastiveWeight] = useState(0.1);
+  const [contrastiveTemperature, setContrastiveTemperature] = useState(0.07);
+  const [contrastiveMinEvents, setContrastiveMinEvents] = useState(4);
+  const [contrastiveMinRegions, setContrastiveMinRegions] = useState(2);
+  const [requireCrossRegionPositive, setRequireCrossRegionPositive] = useState(true);
   const [earlyStop, setEarlyStop] = useState(3);
   const [valSplit, setValSplit] = useState(0.1);
   const [seed, setSeed] = useState(42);
@@ -104,6 +111,14 @@ export function MaskedTransformerCreateForm() {
   const contextValid =
     sequenceMode === "region" ||
     (preEventContextSec >= 0.0 && postEventContextSec >= 0.0);
+  const contrastiveActive = retrievalHeadEnabled && contrastiveEnabled;
+  const contrastiveValid =
+    !contrastiveEnabled ||
+    (retrievalHeadEnabled &&
+      contrastiveWeight > 0.0 &&
+      contrastiveTemperature > 0.0 &&
+      contrastiveMinEvents > 0 &&
+      contrastiveMinRegions > 0);
   const canSubmit =
     sourceId !== "" &&
     kValid &&
@@ -114,6 +129,8 @@ export function MaskedTransformerCreateForm() {
     classifyId !== "" &&
     sequenceModeValid &&
     contextValid &&
+    contrastiveValid &&
+    batchSize > 0 &&
     (!retrievalHeadEnabled || (retrievalDim > 0 && retrievalHiddenDim > 0));
 
   const handleSubmit = () => {
@@ -131,6 +148,7 @@ export function MaskedTransformerCreateForm() {
       span_length_max: spanMax,
       dropout,
       cosine_loss_weight: cosineWeight,
+      batch_size: batchSize,
       retrieval_head_enabled: retrievalHeadEnabled,
       retrieval_dim: retrievalHeadEnabled ? retrievalDim : null,
       retrieval_hidden_dim: retrievalHeadEnabled ? retrievalHiddenDim : null,
@@ -146,6 +164,13 @@ export function MaskedTransformerCreateForm() {
         sequenceMode === "region" ? null : preEventContextSec,
       post_event_context_sec:
         sequenceMode === "region" ? null : postEventContextSec,
+      contrastive_loss_weight: contrastiveActive ? contrastiveWeight : 0.0,
+      contrastive_temperature: contrastiveTemperature,
+      contrastive_label_source: contrastiveActive ? "human_corrections" : "none",
+      contrastive_min_events_per_label: contrastiveMinEvents,
+      contrastive_min_regions_per_label: contrastiveMinRegions,
+      require_cross_region_positive: requireCrossRegionPositive,
+      related_label_policy_json: null,
       early_stop_patience: earlyStop,
       val_split: valSplit,
       seed,
@@ -318,12 +343,22 @@ export function MaskedTransformerCreateForm() {
             <Field label="span_length_max" value={spanMax} step={1} onChange={(v) => setSpanMax(Math.max(1, Math.round(v)))} />
             <Field label="dropout" value={dropout} step={0.05} onChange={setDropout} />
             <Field label="cosine_loss_weight" value={cosineWeight} step={0.05} onChange={setCosineWeight} />
+            <Field
+              label="batch_size"
+              value={batchSize}
+              step={1}
+              invalid={batchSize <= 0}
+              onChange={(v) => setBatchSize(Math.max(1, Math.round(v)))}
+            />
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 data-testid="mt-retrieval-head-enabled"
                 checked={retrievalHeadEnabled}
-                onChange={(e) => setRetrievalHeadEnabled(e.target.checked)}
+                onChange={(e) => {
+                  setRetrievalHeadEnabled(e.target.checked);
+                  if (!e.target.checked) setContrastiveEnabled(false);
+                }}
               />
               retrieval projection head
             </label>
@@ -404,6 +439,64 @@ export function MaskedTransformerCreateForm() {
                 onChange={(e) => setRetrievalL2Normalize(e.target.checked)}
               />
               L2 normalize retrieval embeddings
+            </label>
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="mt-contrastive-enabled"
+                checked={contrastiveEnabled}
+                disabled={!retrievalHeadEnabled}
+                onChange={(e) => {
+                  setContrastiveEnabled(e.target.checked);
+                  if (e.target.checked && sequenceMode === "region") {
+                    setSequenceMode("mixed");
+                    setEventCenteredFraction(0.7);
+                  }
+                }}
+              />
+              human-correction contrastive loss
+            </label>
+            <Field
+              label="contrastive_loss_weight"
+              value={contrastiveWeight}
+              step={0.05}
+              disabled={!contrastiveActive}
+              invalid={contrastiveActive && contrastiveWeight <= 0}
+              onChange={setContrastiveWeight}
+            />
+            <Field
+              label="contrastive_temperature"
+              value={contrastiveTemperature}
+              step={0.01}
+              disabled={!contrastiveActive}
+              invalid={contrastiveActive && contrastiveTemperature <= 0}
+              onChange={setContrastiveTemperature}
+            />
+            <Field
+              label="contrastive_min_events_per_label"
+              value={contrastiveMinEvents}
+              step={1}
+              disabled={!contrastiveActive}
+              invalid={contrastiveActive && contrastiveMinEvents <= 0}
+              onChange={(v) => setContrastiveMinEvents(Math.max(1, Math.round(v)))}
+            />
+            <Field
+              label="contrastive_min_regions_per_label"
+              value={contrastiveMinRegions}
+              step={1}
+              disabled={!contrastiveActive}
+              invalid={contrastiveActive && contrastiveMinRegions <= 0}
+              onChange={(v) => setContrastiveMinRegions(Math.max(1, Math.round(v)))}
+            />
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="mt-require-cross-region-positive"
+                checked={requireCrossRegionPositive}
+                disabled={!contrastiveActive}
+                onChange={(e) => setRequireCrossRegionPositive(e.target.checked)}
+              />
+              prefer cross-region positives
             </label>
             <Field label="early_stop_patience" value={earlyStop} step={1} onChange={(v) => setEarlyStop(Math.max(1, Math.round(v)))} />
             <Field label="val_split" value={valSplit} step={0.05} onChange={setValSplit} />

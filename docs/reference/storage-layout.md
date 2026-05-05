@@ -65,7 +65,7 @@
   {job_id}/transformer.pt              (PyTorch state_dict for the trained MaskedTransformer module)
   {job_id}/contextual_embeddings.parquet (Z extracted from the trained encoder; per-chunk contextual embedding vectors)
   {job_id}/retrieval_embeddings.parquet  (optional; retrieval-head jobs only; per-chunk L2-normalized projection-head vectors used for tokenization and retrieval diagnostics)
-  {job_id}/loss_curve.json             (per-epoch train + val loss history)
+  {job_id}/loss_curve.json             (per-epoch train + val total loss history; Phase 3 also stores masked/contrastive/total series and contrastive skipped-batch counts)
   {job_id}/reconstruction_error.parquet (per-chunk reconstruction MSE; consumed by the timeline ConfidenceStrip)
   {job_id}/k<N>/decoded.parquet        (per-chunk k-means tokens: sequence_id, position, label, confidence; confidence is softmax-temperature, drops into the same `max_state_probability` UI slot as HMM; retrieval-head jobs fit k-means from retrieval_embeddings.parquet, older jobs from contextual_embeddings.parquet)
   {job_id}/k<N>/kmeans.joblib          (fitted KMeans + τ for that k)

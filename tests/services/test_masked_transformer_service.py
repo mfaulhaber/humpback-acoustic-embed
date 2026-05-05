@@ -139,6 +139,7 @@ class TestCreateMaskedTransformerJob:
         assert job.training_signature
         assert json.loads(job.k_values) == [100]
         assert job.mask_fraction == pytest.approx(0.20)
+        assert job.batch_size == 8
         assert job.retrieval_head_enabled is False
         assert job.retrieval_dim is None
         assert job.retrieval_hidden_dim is None
@@ -147,6 +148,13 @@ class TestCreateMaskedTransformerJob:
         assert job.event_centered_fraction == pytest.approx(0.0)
         assert job.pre_event_context_sec is None
         assert job.post_event_context_sec is None
+        assert job.contrastive_loss_weight == pytest.approx(0.0)
+        assert job.contrastive_temperature == pytest.approx(0.07)
+        assert job.contrastive_label_source == "none"
+        assert job.contrastive_min_events_per_label == 4
+        assert job.contrastive_min_regions_per_label == 2
+        assert job.require_cross_region_positive is True
+        assert job.related_label_policy_json is None
 
     async def test_idempotent_returns_existing(self, session):
         cej = await _seed_crnn_cej(session)
@@ -180,6 +188,51 @@ class TestCreateMaskedTransformerJob:
         assert created2 is False
         assert first.id == second.id
         assert json.loads(first.k_values) == [100]
+
+    async def test_batch_size_participates_in_signature_when_non_default(self, session):
+        cej = await _seed_crnn_cej(session)
+        default, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+        )
+        larger_batch, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            batch_size=16,
+        )
+
+        assert created is True
+        assert default.id != larger_batch.id
+        assert default.training_signature != larger_batch.training_signature
+        assert larger_batch.batch_size == 16
+
+    async def test_default_batch_size_preserves_existing_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        implicit, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+        )
+        explicit, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            batch_size=8,
+        )
+
+        assert created is False
+        assert implicit.id == explicit.id
+
+    async def test_batch_size_validates_positive(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="batch_size must be positive"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                batch_size=0,
+            )
 
     async def test_retrieval_head_config_changes_signature(self, session):
         cej = await _seed_crnn_cej(session)
@@ -319,6 +372,133 @@ class TestCreateMaskedTransformerJob:
                 continuous_embedding_job_id=cej.id,
                 sequence_construction_mode="mixed",
                 event_centered_fraction=1.0,
+            )
+
+    async def test_contrastive_config_changes_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        retrieval, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+        )
+        contrastive, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+        )
+
+        assert created is True
+        assert contrastive.id != retrieval.id
+        assert contrastive.training_signature != retrieval.training_signature
+        assert contrastive.contrastive_loss_weight == pytest.approx(0.1)
+        assert contrastive.contrastive_label_source == "human_corrections"
+        assert contrastive.related_label_policy_json is not None
+        assert contrastive.event_classification_job_id is not None
+
+    async def test_contrastive_signature_includes_classify_binding(self, session):
+        cej = await _seed_crnn_cej(session)
+        first, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+        )
+        second_classify = EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=cej.event_segmentation_job_id,
+        )
+        session.add(second_classify)
+        await session.commit()
+        await session.refresh(second_classify)
+
+        second, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            event_classification_job_id=second_classify.id,
+        )
+
+        assert created is True
+        assert first.id != second.id
+        assert first.training_signature != second.training_signature
+
+    async def test_contrastive_idempotency_still_excludes_k_values(self, session):
+        cej = await _seed_crnn_cej(session)
+        first, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            k_values=[100],
+        )
+        second, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.7,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
+            k_values=[200],
+        )
+
+        assert created is False
+        assert first.id == second.id
+        assert json.loads(second.k_values) == [100]
+
+    async def test_contrastive_validates_required_retrieval_head(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="retrieval_head_enabled"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                contrastive_loss_weight=0.1,
+                contrastive_label_source="human_corrections",
+            )
+
+    async def test_contrastive_validates_label_source(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="contrastive_label_source"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                sequence_construction_mode="mixed",
+                event_centered_fraction=0.7,
+                contrastive_loss_weight=0.1,
+                contrastive_label_source="none",
+            )
+
+    async def test_contrastive_validates_non_region_sequence_mode(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="event-centered or mixed"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                sequence_construction_mode="region",
+                contrastive_loss_weight=0.1,
+                contrastive_label_source="human_corrections",
             )
 
     async def test_rejects_nonexistent_upstream(self, session):

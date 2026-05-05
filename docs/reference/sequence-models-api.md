@@ -443,6 +443,28 @@ parameter.
   - `pre_event_context_sec`, `post_event_context_sec` — event-centered
     and mixed modes default omitted values to `2.0`; region mode clears
     both to null. Values must be non-negative.
+  - `contrastive_loss_weight` (default `0.0`) — when positive, adds
+    human-correction supervised contrastive loss to masked loss. Positive
+    values require `retrieval_head_enabled=true` and
+    `contrastive_label_source="human_corrections"`. Positive contrastive
+    loss also requires `sequence_construction_mode` to be
+    `"event_centered"` or `"mixed"` so event-level human labels can align
+    to training windows.
+  - `contrastive_temperature` (default `0.07`) — positive supervised
+    contrastive temperature.
+  - `contrastive_label_source` (default `"none"`, one of `"none"` |
+    `"human_corrections"`). Model Classify labels are not valid
+    contrastive positives.
+  - `contrastive_min_events_per_label` (default `4`) and
+    `contrastive_min_regions_per_label` (default `2`) — positive support
+    thresholds before a human label participates in contrastive masks.
+  - `require_cross_region_positive` (default `true`) — when same-label
+    different-region positives exist for an anchor, same-region positives
+    are excluded for that anchor.
+  - `related_label_policy_json` (optional) — JSON policy for related-label
+    negative exclusions. Omitted enabled jobs use the Phase 3 defaults.
+  - `batch_size` (default `8`) — training mini-batch size. Non-default
+    values participate in `training_signature`.
   - `max_epochs`, `early_stop_patience` (default `3`), `val_split`
     (default `0.1`), `seed` (default `42`).
 
@@ -461,7 +483,11 @@ parameter.
   `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`,
   `retrieval_l2_normalize`, `sequence_construction_mode`,
   `event_centered_fraction`, `pre_event_context_sec`,
-  `post_event_context_sec`, `chosen_device`, `fallback_reason`,
+  `post_event_context_sec`, `batch_size`, contrastive fields
+  (`contrastive_loss_weight`, `contrastive_temperature`,
+  `contrastive_label_source`, `contrastive_min_events_per_label`,
+  `contrastive_min_regions_per_label`, `require_cross_region_positive`,
+  `related_label_policy_json`), `chosen_device`, `fallback_reason`,
   `final_train_loss`, `final_val_loss`, `total_epochs`,
   `total_sequences`, `total_chunks`).
 
@@ -533,7 +559,11 @@ parameter.
 
 - `GET /sequence-models/masked-transformers/{id}/loss-curve` — returns
   `{ "epochs": list[int], "train_loss": list[float], "val_loss":
-  list[float | null] }` from `loss_curve.json`.
+  list[float | null] }` from `loss_curve.json`. `train_loss` and
+  `val_loss` are total-loss compatibility aliases; Phase 3 artifacts
+  also include explicit `train_masked_loss`, `train_contrastive_loss`,
+  `train_total_loss`, `val_masked_loss`, `val_contrastive_loss`,
+  `val_total_loss`, and contrastive skipped-batch series when present.
 
 - `GET /sequence-models/masked-transformers/{id}/reconstruction-error`
   — paginated `(sequence_id, position, score)` rows from
@@ -565,7 +595,7 @@ entry of `k_values`); `404` on unknown k:
 `continuous_embedding_job_id` FK, `training_signature`, all training
 hyperparameters (`preset`, `mask_fraction`, `span_length_min`,
 `span_length_max`, `dropout`, `mask_weight_bias`, `cosine_loss_weight`,
-`retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`,
+`batch_size`, `retrieval_head_enabled`, `retrieval_dim`, `retrieval_hidden_dim`,
 `retrieval_l2_normalize`, `sequence_construction_mode`,
 `event_centered_fraction`, `pre_event_context_sec`,
 `post_event_context_sec`, `max_epochs`, `early_stop_patience`,

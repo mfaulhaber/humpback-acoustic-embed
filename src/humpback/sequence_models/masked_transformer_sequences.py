@@ -17,6 +17,8 @@ class EffectiveEventInterval:
     region_id: str
     start_timestamp: float
     end_timestamp: float
+    event_id: str | None = None
+    human_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,12 @@ class TrainingSequenceCandidate:
     tiers: list[str]
     start_index: int
     end_index: int
+    event_id: str | None = None
+    event_start_timestamp: float | None = None
+    event_end_timestamp: float | None = None
+    event_start_index: int | None = None
+    event_end_index: int | None = None
+    human_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -149,6 +157,12 @@ def _region_candidates(
                 tiers=tiers,
                 start_index=0,
                 end_index=int(sequence.shape[0]),
+                event_id=None,
+                event_start_timestamp=None,
+                event_end_timestamp=None,
+                event_start_index=None,
+                event_end_index=None,
+                human_types=(),
             )
         )
     return out
@@ -194,6 +208,8 @@ def _event_centered_candidates(
             continue
         start_idx = min(window_overlap)
         end_idx = max(window_overlap) + 1
+        event_start_idx = min(event_overlap) - start_idx
+        event_end_idx = max(event_overlap) + 1 - start_idx
         tiers = (
             list(tier_lists[idx][start_idx:end_idx])
             if tier_lists is not None
@@ -207,6 +223,12 @@ def _event_centered_candidates(
                 tiers=tiers,
                 start_index=start_idx,
                 end_index=end_idx,
+                event_id=event.event_id,
+                event_start_timestamp=event.start_timestamp,
+                event_end_timestamp=event.end_timestamp,
+                event_start_index=event_start_idx,
+                event_end_index=event_end_idx,
+                human_types=event.human_types,
             )
         )
     return out

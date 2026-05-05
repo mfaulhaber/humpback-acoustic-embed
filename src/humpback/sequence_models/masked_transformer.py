@@ -24,12 +24,17 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from humpback.sequence_models.contrastive_loss import (
+    ContrastiveEventMetadata,
+    supervised_contrastive_loss,
+)
 
 
 PresetName = Literal["small", "default", "large"]
@@ -72,6 +77,13 @@ class MaskedTransformerConfig:
     event_centered_fraction: float = 0.0
     pre_event_context_sec: float | None = None
     post_event_context_sec: float | None = None
+    contrastive_loss_weight: float = 0.0
+    contrastive_temperature: float = 0.07
+    contrastive_label_source: Literal["none", "human_corrections"] = "none"
+    contrastive_min_events_per_label: int = 4
+    contrastive_min_regions_per_label: int = 2
+    require_cross_region_positive: bool = True
+    related_label_policy_json: str | None = None
     max_epochs: int = 30
     early_stop_patience: int = 3
     val_split: float = 0.1
@@ -407,6 +419,33 @@ def _compute_retrieval_consistency_loss(
     return (diff * mask).sum() / mask.sum().clamp_min(1.0)
 
 
+def _pool_event_retrieval_embeddings(
+    model: MaskedTransformer,
+    hidden: torch.Tensor,
+    metadata: list[Optional[ContrastiveEventMetadata]] | None,
+    lengths: list[int],
+) -> tuple[torch.Tensor, list[ContrastiveEventMetadata]]:
+    if not metadata or model.retrieval_head is None:
+        return hidden.new_zeros((0, model.retrieval_dim or model.d_model)), []
+    pooled: list[torch.Tensor] = []
+    used: list[ContrastiveEventMetadata] = []
+    for i, item in enumerate(metadata):
+        if item is None or not item.human_types:
+            continue
+        length = lengths[i]
+        start = max(0, min(int(item.start_index), length))
+        end = max(start + 1, min(int(item.end_index), length))
+        pooled.append(hidden[i, start:end].mean(dim=0))
+        used.append(item)
+    if not pooled:
+        return hidden.new_zeros((0, model.retrieval_dim or model.d_model)), []
+    pooled_hidden = torch.stack(pooled, dim=0)
+    retrieval = model.retrieval_head(pooled_hidden)
+    if model.retrieval_l2_normalize:
+        retrieval = F.normalize(retrieval, p=2, dim=-1, eps=1e-12)
+    return retrieval, used
+
+
 def _train_val_split(
     n_sequences: int, val_split: float, rng: np.random.Generator
 ) -> tuple[list[bool], list[int], list[int]]:
@@ -424,12 +463,43 @@ def _train_val_split(
     return training_mask, train_idx, val_idx
 
 
+def _contrastive_epoch_order(
+    n_train: int,
+    events: list[Optional[ContrastiveEventMetadata]] | None,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Prefer labeled, cross-region-friendly examples early in an epoch."""
+    if events is None:
+        return rng.permutation(n_train)
+    labeled = [
+        i
+        for i, event in enumerate(events)
+        if event is not None and bool(event.human_types)
+    ]
+    labeled_set = set(labeled)
+    unlabeled = [i for i in range(n_train) if i not in labeled_set]
+    if not labeled:
+        return rng.permutation(n_train)
+
+    def _sort_key(i: int) -> tuple[str, str, str]:
+        event = events[i]
+        if event is None:
+            return "", "", ""
+        return event.human_types[0], event.region_id, event.event_id
+
+    labeled.sort(key=_sort_key)
+    if unlabeled:
+        unlabeled = [int(i) for i in rng.permutation(unlabeled)]
+    return np.asarray([*labeled, *unlabeled], dtype=int)
+
+
 def train_masked_transformer(
     sequences: list[np.ndarray],
     config: MaskedTransformerConfig,
     device: str | torch.device = "cpu",
     *,
     tier_lists: Optional[list[Optional[list[str]]]] = None,
+    contrastive_events: Optional[Sequence[Optional[ContrastiveEventMetadata]]] = None,
 ) -> TrainResult:
     """Train a masked-span transformer on per-region CRNN embeddings.
 
@@ -449,6 +519,10 @@ def train_masked_transformer(
         mask-weight bias. Must align in shape with each sequence's chunk
         axis when provided. Pass ``None`` to disable bias regardless of
         ``config.mask_weight_bias``.
+    contrastive_events
+        Optional per-sequence event metadata. When contrastive loss is
+        enabled, entries with human labels contribute event-level retrieval
+        embeddings; missing or unlabeled entries remain masked-modeling-only.
     """
     if not sequences:
         raise ValueError("masked-transformer training requires at least one sequence")
@@ -457,6 +531,14 @@ def train_masked_transformer(
     for seq in sequences:
         if seq.shape[1] != feature_dim:
             raise ValueError("all sequences must share the same feature dimension")
+    if contrastive_events is not None and len(contrastive_events) != len(sequences):
+        raise ValueError("contrastive_events must align with sequences")
+    contrastive_enabled = (
+        config.contrastive_loss_weight > 0.0
+        and config.contrastive_label_source == "human_corrections"
+    )
+    if contrastive_enabled and not config.retrieval_head_enabled:
+        raise ValueError("contrastive training requires retrieval_head_enabled=true")
 
     dims = config.preset_dims()
     torch.manual_seed(config.seed)
@@ -483,8 +565,18 @@ def train_masked_transformer(
     )
     train_seqs = [sequences[i] for i in train_idx]
     train_tiers = [tier_lists[i] for i in train_idx] if tier_lists is not None else None
+    train_events = (
+        [contrastive_events[i] for i in train_idx]
+        if contrastive_events is not None
+        else None
+    )
     val_seqs = [sequences[i] for i in val_idx]
     val_tiers = [tier_lists[i] for i in val_idx] if tier_lists is not None else None
+    val_events = (
+        [contrastive_events[i] for i in val_idx]
+        if contrastive_events is not None
+        else None
+    )
 
     if config.mask_weight_bias and tier_lists is None:
         # No tier metadata supplied — fall back to uniform weighting on
@@ -498,6 +590,12 @@ def train_masked_transformer(
 
     loss_curve_train: list[float] = []
     loss_curve_val: list[float] = []
+    loss_curve_train_masked: list[float] = []
+    loss_curve_val_masked: list[float] = []
+    loss_curve_train_contrastive: list[float] = []
+    loss_curve_val_contrastive: list[float] = []
+    loss_curve_train_skipped: list[float] = []
+    loss_curve_val_skipped: list[float] = []
     best_val_loss = math.inf
     best_state: Optional[dict[str, torch.Tensor]] = None
     epochs_no_improve = 0
@@ -505,8 +603,15 @@ def train_masked_transformer(
 
     for epoch in range(1, config.max_epochs + 1):
         model.train()
-        perm = rng.permutation(n_train)
+        perm = (
+            _contrastive_epoch_order(n_train, train_events, rng)
+            if contrastive_enabled
+            else rng.permutation(n_train)
+        )
         epoch_train_loss = 0.0
+        epoch_train_masked_loss = 0.0
+        epoch_train_contrastive_loss = 0.0
+        epoch_train_skipped = 0
         n_train_batches = 0
 
         for start in range(0, n_train, max(1, config.batch_size)):
@@ -515,17 +620,40 @@ def train_masked_transformer(
             batch_tiers = (
                 [train_tiers[i] for i in batch_idx] if train_tiers is not None else None
             )
+            batch_events = (
+                [train_events[i] for i in batch_idx]
+                if train_events is not None
+                else None
+            )
             batch = _build_batch(batch_seqs, batch_tiers, config, rng, device_obj)
 
             optim.zero_grad(set_to_none=True)
             output = model(batch.inputs, src_key_padding_mask=batch.pad_mask)
-            loss, _ = _compute_loss(
+            masked_loss, _ = _compute_loss(
                 output.reconstructed,
                 batch.targets,
                 batch.mask_positions,
                 batch.weights,
                 config.cosine_loss_weight,
             )
+            loss = masked_loss
+            contrastive_loss = output.hidden.sum() * 0.0
+            if contrastive_enabled:
+                event_embeddings, event_metadata = _pool_event_retrieval_embeddings(
+                    model, output.hidden, batch_events, batch.lengths
+                )
+                contrastive_loss, masks = supervised_contrastive_loss(
+                    event_embeddings,
+                    event_metadata,
+                    temperature=config.contrastive_temperature,
+                    min_events_per_label=config.contrastive_min_events_per_label,
+                    min_regions_per_label=config.contrastive_min_regions_per_label,
+                    require_cross_region_positive=config.require_cross_region_positive,
+                    related_label_policy_json=config.related_label_policy_json,
+                )
+                if masks.valid_anchor_count == 0:
+                    epoch_train_skipped += 1
+                loss = loss + config.contrastive_loss_weight * contrastive_loss
             if config.retrieval_head_enabled:
                 with torch.no_grad():
                     target_output = model(
@@ -536,14 +664,24 @@ def train_masked_transformer(
                     target_output.retrieval,
                     batch.mask_positions,
                 )
-                loss = loss + 0.01 * retrieval_loss
+                if not contrastive_enabled:
+                    loss = loss + 0.01 * retrieval_loss
             loss.backward()
             optim.step()
             epoch_train_loss += float(loss.detach().item())
+            epoch_train_masked_loss += float(masked_loss.detach().item())
+            epoch_train_contrastive_loss += float(contrastive_loss.detach().item())
             n_train_batches += 1
 
         train_loss = epoch_train_loss / max(1, n_train_batches)
         loss_curve_train.append(train_loss)
+        loss_curve_train_masked.append(
+            epoch_train_masked_loss / max(1, n_train_batches)
+        )
+        loss_curve_train_contrastive.append(
+            epoch_train_contrastive_loss / max(1, n_train_batches)
+        )
+        loss_curve_train_skipped.append(float(epoch_train_skipped))
 
         # ---- Validation ----
         if val_seqs:
@@ -553,13 +691,33 @@ def train_masked_transformer(
                 output = model(
                     val_batch.inputs, src_key_padding_mask=val_batch.pad_mask
                 )
-                val_loss, _ = _compute_loss(
+                val_masked_loss, _ = _compute_loss(
                     output.reconstructed,
                     val_batch.targets,
                     val_batch.mask_positions,
                     val_batch.weights,
                     config.cosine_loss_weight,
                 )
+                val_loss = val_masked_loss
+                val_contrastive_loss = output.hidden.sum() * 0.0
+                val_skipped = 0.0
+                if contrastive_enabled:
+                    event_embeddings, event_metadata = _pool_event_retrieval_embeddings(
+                        model, output.hidden, val_events, val_batch.lengths
+                    )
+                    val_contrastive_loss, masks = supervised_contrastive_loss(
+                        event_embeddings,
+                        event_metadata,
+                        temperature=config.contrastive_temperature,
+                        min_events_per_label=config.contrastive_min_events_per_label,
+                        min_regions_per_label=config.contrastive_min_regions_per_label,
+                        require_cross_region_positive=config.require_cross_region_positive,
+                        related_label_policy_json=config.related_label_policy_json,
+                    )
+                    val_skipped = 1.0 if masks.valid_anchor_count == 0 else 0.0
+                    val_loss = (
+                        val_loss + config.contrastive_loss_weight * val_contrastive_loss
+                    )
                 if config.retrieval_head_enabled:
                     target_output = model(
                         val_batch.targets, src_key_padding_mask=val_batch.pad_mask
@@ -569,11 +727,21 @@ def train_masked_transformer(
                         target_output.retrieval,
                         val_batch.mask_positions,
                     )
-                    val_loss = val_loss + 0.01 * retrieval_loss
+                    if not contrastive_enabled:
+                        val_loss = val_loss + 0.01 * retrieval_loss
             val_loss_value = float(val_loss.item())
+            val_masked_loss_value = float(val_masked_loss.item())
+            val_contrastive_loss_value = float(val_contrastive_loss.item())
+            val_skipped_value = float(val_skipped)
         else:
             val_loss_value = float("nan")
+            val_masked_loss_value = float("nan")
+            val_contrastive_loss_value = 0.0
+            val_skipped_value = 0.0
         loss_curve_val.append(val_loss_value)
+        loss_curve_val_masked.append(val_masked_loss_value)
+        loss_curve_val_contrastive.append(val_contrastive_loss_value)
+        loss_curve_val_skipped.append(val_skipped_value)
 
         # Early stopping on val plateau (NaN treated as no-improve).
         improved = (
@@ -613,6 +781,30 @@ def train_masked_transformer(
         else float("nan"),
         "final_val_loss": float(loss_curve_val[-1]) if loss_curve_val else float("nan"),
         "stopped_epoch": float(stopped_epoch),
+        "final_train_masked_loss": float(loss_curve_train_masked[-1])
+        if loss_curve_train_masked
+        else float("nan"),
+        "final_train_contrastive_loss": float(loss_curve_train_contrastive[-1])
+        if loss_curve_train_contrastive
+        else 0.0,
+        "final_train_total_loss": float(loss_curve_train[-1])
+        if loss_curve_train
+        else float("nan"),
+        "final_val_masked_loss": float(loss_curve_val_masked[-1])
+        if loss_curve_val_masked
+        else float("nan"),
+        "final_val_contrastive_loss": float(loss_curve_val_contrastive[-1])
+        if loss_curve_val_contrastive
+        else 0.0,
+        "final_val_total_loss": float(loss_curve_val[-1])
+        if loss_curve_val
+        else float("nan"),
+        "final_train_contrastive_skipped_batches": float(loss_curve_train_skipped[-1])
+        if loss_curve_train_skipped
+        else 0.0,
+        "final_val_contrastive_skipped_batches": float(loss_curve_val_skipped[-1])
+        if loss_curve_val_skipped
+        else 0.0,
     }
 
     return TrainResult(
@@ -620,6 +812,14 @@ def train_masked_transformer(
         loss_curve={
             "train": loss_curve_train,
             "val": loss_curve_val,
+            "train_masked": loss_curve_train_masked,
+            "val_masked": loss_curve_val_masked,
+            "train_contrastive": loss_curve_train_contrastive,
+            "val_contrastive": loss_curve_val_contrastive,
+            "train_total": loss_curve_train,
+            "val_total": loss_curve_val,
+            "train_contrastive_skipped_batches": loss_curve_train_skipped,
+            "val_contrastive_skipped_batches": loss_curve_val_skipped,
         },
         val_metrics=val_metrics,
         training_mask=training_mask,

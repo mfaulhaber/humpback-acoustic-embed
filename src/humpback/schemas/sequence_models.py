@@ -642,6 +642,7 @@ class MaskedTransformerJobCreate(BaseModel):
     dropout: float = Field(default=0.1, ge=0.0, le=1.0)
     mask_weight_bias: bool = True
     cosine_loss_weight: float = Field(default=0.0, ge=0.0)
+    batch_size: int = Field(default=8, ge=1)
     retrieval_head_enabled: bool = False
     retrieval_dim: Optional[int] = Field(default=None, gt=0)
     retrieval_hidden_dim: Optional[int] = Field(default=None, gt=0)
@@ -650,6 +651,13 @@ class MaskedTransformerJobCreate(BaseModel):
     event_centered_fraction: Optional[float] = Field(default=0.0, ge=0.0, le=1.0)
     pre_event_context_sec: Optional[float] = Field(default=None, ge=0.0)
     post_event_context_sec: Optional[float] = Field(default=None, ge=0.0)
+    contrastive_loss_weight: float = Field(default=0.0, ge=0.0)
+    contrastive_temperature: float = Field(default=0.07, gt=0.0)
+    contrastive_label_source: Literal["none", "human_corrections"] = "none"
+    contrastive_min_events_per_label: int = Field(default=4, ge=1)
+    contrastive_min_regions_per_label: int = Field(default=2, ge=1)
+    require_cross_region_positive: bool = True
+    related_label_policy_json: Optional[str] = None
     max_epochs: int = Field(default=30, ge=1)
     early_stop_patience: int = Field(default=3, ge=1)
     val_split: float = Field(default=0.1, ge=0.0, lt=1.0)
@@ -698,6 +706,21 @@ class MaskedTransformerJobCreate(BaseModel):
                 self.pre_event_context_sec = 2.0
             if self.post_event_context_sec is None:
                 self.post_event_context_sec = 2.0
+        if self.contrastive_loss_weight == 0.0:
+            self.contrastive_label_source = "none"
+        else:
+            if not self.retrieval_head_enabled:
+                raise ValueError("contrastive training requires retrieval_head_enabled")
+            if self.sequence_construction_mode == "region":
+                raise ValueError(
+                    "contrastive training requires event-centered or mixed "
+                    "sequence construction"
+                )
+            if self.contrastive_label_source != "human_corrections":
+                raise ValueError(
+                    "positive contrastive_loss_weight requires "
+                    "contrastive_label_source='human_corrections'"
+                )
         return self
 
 
@@ -717,6 +740,7 @@ class MaskedTransformerJobOut(BaseModel):
     dropout: float
     mask_weight_bias: bool
     cosine_loss_weight: float
+    batch_size: int = 8
     retrieval_head_enabled: bool = False
     retrieval_dim: Optional[int] = None
     retrieval_hidden_dim: Optional[int] = None
@@ -725,6 +749,13 @@ class MaskedTransformerJobOut(BaseModel):
     event_centered_fraction: float = 0.0
     pre_event_context_sec: Optional[float] = None
     post_event_context_sec: Optional[float] = None
+    contrastive_loss_weight: float = 0.0
+    contrastive_temperature: float = 0.07
+    contrastive_label_source: str = "none"
+    contrastive_min_events_per_label: int = 4
+    contrastive_min_regions_per_label: int = 2
+    require_cross_region_positive: bool = True
+    related_label_policy_json: Optional[str] = None
     max_epochs: int
     early_stop_patience: int
     val_split: float

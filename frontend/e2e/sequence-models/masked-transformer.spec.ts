@@ -72,6 +72,7 @@ const QUEUED_JOB = {
   dropout: 0.1,
   mask_weight_bias: true,
   cosine_loss_weight: 0.0,
+  batch_size: 8,
   retrieval_head_enabled: false,
   retrieval_dim: null,
   retrieval_hidden_dim: null,
@@ -80,6 +81,13 @@ const QUEUED_JOB = {
   event_centered_fraction: 0.0,
   pre_event_context_sec: null,
   post_event_context_sec: null,
+  contrastive_loss_weight: 0.0,
+  contrastive_temperature: 0.07,
+  contrastive_label_source: "none",
+  contrastive_min_events_per_label: 4,
+  contrastive_min_regions_per_label: 2,
+  require_cross_region_positive: true,
+  related_label_policy_json: null,
   max_epochs: 30,
   early_stop_patience: 3,
   val_split: 0.1,
@@ -334,6 +342,7 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
           continuous_embedding_job_id: body.continuous_embedding_job_id,
           preset: body.preset ?? "default",
           k_values: body.k_values ?? [100],
+          batch_size: body.batch_size ?? 8,
           retrieval_head_enabled: body.retrieval_head_enabled ?? false,
           retrieval_dim: body.retrieval_dim ?? null,
           retrieval_hidden_dim: body.retrieval_hidden_dim ?? null,
@@ -343,6 +352,16 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
           event_centered_fraction: body.event_centered_fraction ?? 0.0,
           pre_event_context_sec: body.pre_event_context_sec ?? null,
           post_event_context_sec: body.post_event_context_sec ?? null,
+          contrastive_loss_weight: body.contrastive_loss_weight ?? 0.0,
+          contrastive_temperature: body.contrastive_temperature ?? 0.07,
+          contrastive_label_source: body.contrastive_label_source ?? "none",
+          contrastive_min_events_per_label:
+            body.contrastive_min_events_per_label ?? 4,
+          contrastive_min_regions_per_label:
+            body.contrastive_min_regions_per_label ?? 2,
+          require_cross_region_positive:
+            body.require_cross_region_positive ?? true,
+          related_label_policy_json: body.related_label_policy_json ?? null,
         };
         state.jobs = [created, ...state.jobs];
         return route.fulfill({
@@ -529,10 +548,13 @@ test.describe("Sequence Models — Masked Transformer", () => {
       retrieval_dim: null,
       retrieval_hidden_dim: null,
       retrieval_l2_normalize: true,
+      batch_size: 8,
       sequence_construction_mode: "region",
       event_centered_fraction: 0.0,
       pre_event_context_sec: null,
       post_event_context_sec: null,
+      contrastive_loss_weight: 0.0,
+      contrastive_label_source: "none",
     });
   });
 
@@ -555,6 +577,57 @@ test.describe("Sequence Models — Masked Transformer", () => {
       retrieval_dim: 64,
       retrieval_hidden_dim: 256,
       retrieval_l2_normalize: true,
+    });
+  });
+
+  test("create form submits custom batch size", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await page.getByTestId("mt-adv-batch_size").fill("16");
+    await page.getByTestId("mt-create-submit").click();
+    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    expect(state.capturedCreates?.[0]).toMatchObject({
+      batch_size: 16,
+    });
+  });
+
+  test("create form submits contrastive config when retrieval is enabled", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await expect(page.getByTestId("mt-contrastive-enabled")).toBeDisabled();
+    await page.getByTestId("mt-retrieval-head-enabled").check();
+    await page.getByTestId("mt-contrastive-enabled").check();
+    await page.getByTestId("mt-adv-contrastive_loss_weight").fill("0.25");
+    await page.getByTestId("mt-adv-contrastive_temperature").fill("0.05");
+    await page.getByTestId("mt-adv-contrastive_min_events_per_label").fill("2");
+    await page.getByTestId("mt-adv-contrastive_min_regions_per_label").fill("1");
+    await page.getByTestId("mt-require-cross-region-positive").uncheck();
+    await page.getByTestId("mt-create-submit").click();
+    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    expect(state.capturedCreates?.[0]).toMatchObject({
+      retrieval_head_enabled: true,
+      sequence_construction_mode: "mixed",
+      event_centered_fraction: 0.7,
+      pre_event_context_sec: 2.0,
+      post_event_context_sec: 2.0,
+      contrastive_loss_weight: 0.25,
+      contrastive_temperature: 0.05,
+      contrastive_label_source: "human_corrections",
+      contrastive_min_events_per_label: 2,
+      contrastive_min_regions_per_label: 1,
+      require_cross_region_positive: false,
     });
   });
 
