@@ -75,6 +75,7 @@ export function MaskedTransformerDetailPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const { data, isLoading } = useMaskedTransformerJob(jobId);
   const timelineHandleRef = useRef<TimelinePlaybackHandle>(null!);
+  const timelineContainerRef = useRef<HTMLDivElement>(null);
   const [motifSelection, setMotifSelection] = useState<MotifPanelSelection>(
     EMPTY_MOTIF_SELECTION,
   );
@@ -192,6 +193,14 @@ export function MaskedTransformerDetailPage() {
     setByLengthLength(null);
     setByLengthActiveIndex(0);
   }, []);
+  const handleCenterExemplar = useCallback((exemplar: ExemplarRecord) => {
+    const center = (exemplar.start_timestamp + exemplar.end_timestamp) / 2;
+    timelineHandleRef.current?.seekTo(center);
+    timelineContainerRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, []);
 
   if (isLoading || !data) {
     return (
@@ -275,6 +284,7 @@ export function MaskedTransformerDetailPage() {
           regionStartTimestamp={region_start_timestamp}
           regionEndTimestamp={region_end_timestamp}
           timelineHandleRef={timelineHandleRef}
+          timelineContainerRef={timelineContainerRef}
           motifSelection={motifSelection}
           onMotifPrev={handleMotifPrev}
           onMotifNext={handleMotifNext}
@@ -346,7 +356,11 @@ export function MaskedTransformerDetailPage() {
           storageKey="mt:exemplars"
           testId="mt-exemplars-panel"
         >
-          <ExemplarsSection jobId={jobId} kValues={kValues} />
+          <ExemplarsSection
+            jobId={jobId}
+            kValues={kValues}
+            onCenterExemplar={handleCenterExemplar}
+          />
         </CollapsiblePanelCard>
       )}
 
@@ -697,6 +711,11 @@ function TimelineBody({
 
   return (
     <>
+      <div
+        className="sr-only"
+        data-testid="mt-timeline-center"
+        data-center-timestamp={ctx.centerTimestamp.toFixed(3)}
+      />
       <MotifTimelineLegend
         selectedMotifKey={legendSelectedMotifKey}
         selectedStates={legendSelectedStates}
@@ -775,6 +794,7 @@ function TimelineSection({
   regionStartTimestamp,
   regionEndTimestamp,
   timelineHandleRef,
+  timelineContainerRef,
   motifSelection,
   onMotifPrev,
   onMotifNext,
@@ -793,6 +813,7 @@ function TimelineSection({
   regionStartTimestamp: number | null;
   regionEndTimestamp: number | null;
   timelineHandleRef: React.RefObject<TimelinePlaybackHandle>;
+  timelineContainerRef: React.RefObject<HTMLDivElement>;
   motifSelection: MotifPanelSelection;
   onMotifPrev: () => void;
   onMotifNext: () => void;
@@ -852,54 +873,56 @@ function TimelineSection({
   }, [reconstructionScores]);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Token Timeline (k={k ?? "?"})</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {regionDetectionJobId && regionStartTimestamp != null && regionEndTimestamp != null ? (
-          <div data-testid="mt-timeline-viewer">
-            <TimelineProvider
-              key={`mt-timeline-${jobId}-${k}`}
-              ref={timelineHandleRef}
-              jobStart={regionStartTimestamp}
-              jobEnd={regionEndTimestamp}
-              zoomLevels={REVIEW_ZOOM}
-              defaultZoom={REVIEW_ZOOM[0].key}
-              playback="slice"
-              audioUrlBuilder={(startEpoch, durationSec) =>
-                regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
-              }
-            >
-              <TimelineBody
-                regionDetectionJobId={regionDetectionJobId}
-                tokenItems={tokenItems}
-                tokenScores={tokenScores}
-                reconstructionScores={reconstructionScores}
-                reconstructionMax={reconstructionMax}
-                k={k}
-                motifSelection={motifSelection}
-                byLengthLength={byLengthLength}
-                byLengthOccurrences={byLengthOccurrences}
-                byLengthActiveIndex={byLengthActiveIndex}
-                onByLengthActiveIndexChange={onByLengthActiveIndexChange}
-                onSelectByLength={onSelectByLength}
-                availableLengths={availableLengths}
-                motifsLoading={motifsLoading}
-                onMotifPrev={onMotifPrev}
-                onMotifNext={onMotifNext}
-                onPlayMotif={onPlayMotif}
-                timelineHandleRef={timelineHandleRef}
-              />
-            </TimelineProvider>
-          </div>
-        ) : (
-          <div className="text-xs text-muted-foreground">
-            Token strip preview ({tokenItems.length} chunks). Region context unavailable.
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <div ref={timelineContainerRef}>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Token Timeline (k={k ?? "?"})</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {regionDetectionJobId && regionStartTimestamp != null && regionEndTimestamp != null ? (
+            <div data-testid="mt-timeline-viewer">
+              <TimelineProvider
+                key={`mt-timeline-${jobId}-${k}`}
+                ref={timelineHandleRef}
+                jobStart={regionStartTimestamp}
+                jobEnd={regionEndTimestamp}
+                zoomLevels={REVIEW_ZOOM}
+                defaultZoom={REVIEW_ZOOM[0].key}
+                playback="slice"
+                audioUrlBuilder={(startEpoch, durationSec) =>
+                  regionAudioSliceUrl(regionDetectionJobId, startEpoch, durationSec)
+                }
+              >
+                <TimelineBody
+                  regionDetectionJobId={regionDetectionJobId}
+                  tokenItems={tokenItems}
+                  tokenScores={tokenScores}
+                  reconstructionScores={reconstructionScores}
+                  reconstructionMax={reconstructionMax}
+                  k={k}
+                  motifSelection={motifSelection}
+                  byLengthLength={byLengthLength}
+                  byLengthOccurrences={byLengthOccurrences}
+                  byLengthActiveIndex={byLengthActiveIndex}
+                  onByLengthActiveIndexChange={onByLengthActiveIndexChange}
+                  onSelectByLength={onSelectByLength}
+                  availableLengths={availableLengths}
+                  motifsLoading={motifsLoading}
+                  onMotifPrev={onMotifPrev}
+                  onMotifNext={onMotifNext}
+                  onPlayMotif={onPlayMotif}
+                  timelineHandleRef={timelineHandleRef}
+                />
+              </TimelineProvider>
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground">
+              Token strip preview ({tokenItems.length} chunks). Region context unavailable.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -967,9 +990,11 @@ function OverlaySection({
 function ExemplarsSection({
   jobId,
   kValues,
+  onCenterExemplar,
 }: {
   jobId: string;
   kValues: number[];
+  onCenterExemplar?: (exemplar: ExemplarRecord) => void;
 }) {
   const k = useSelectedK(kValues);
   const { data } = useMaskedTransformerExemplars(jobId, k);
@@ -983,14 +1008,23 @@ function ExemplarsSection({
       {Object.entries(data.states).map(([labelKey, records]) => (
         <div key={labelKey} className="border rounded-md p-2 text-xs">
           <div className="font-semibold mb-1">Token {labelKey}</div>
-          <ExemplarList records={records} />
+          <ExemplarList
+            records={records}
+            onCenterExemplar={onCenterExemplar}
+          />
         </div>
       ))}
     </div>
   );
 }
 
-function ExemplarList({ records }: { records: ExemplarRecord[] }) {
+function ExemplarList({
+  records,
+  onCenterExemplar,
+}: {
+  records: ExemplarRecord[];
+  onCenterExemplar?: (exemplar: ExemplarRecord) => void;
+}) {
   if (records.length === 0) {
     return <div className="text-muted-foreground">no exemplars</div>;
   }
@@ -1007,19 +1041,27 @@ function ExemplarList({ records }: { records: ExemplarRecord[] }) {
               {String(r.extras.tier)}
             </Badge>
           )}
-          <ExemplarEventTypeChips exemplar={r} />
+          <ExemplarEventTypeChips
+            exemplar={r}
+            onCenterExemplar={onCenterExemplar}
+          />
         </li>
       ))}
     </ul>
   );
 }
 
-function ExemplarEventTypeChips({ exemplar }: { exemplar: ExemplarRecord }) {
+function ExemplarEventTypeChips({
+  exemplar,
+  onCenterExemplar,
+}: {
+  exemplar: ExemplarRecord;
+  onCenterExemplar?: (exemplar: ExemplarRecord) => void;
+}) {
   const rawTypes = exemplar.extras?.event_types;
   const types: string[] = Array.isArray(rawTypes)
     ? (rawTypes.filter((v) => typeof v === "string") as string[])
     : [];
-  const eventId = exemplar.extras?.event_id;
 
   if (types.length === 0) {
     return (
@@ -1042,7 +1084,27 @@ function ExemplarEventTypeChips({ exemplar }: { exemplar: ExemplarRecord }) {
       data-testid="mt-exemplar-event-types"
     >
       {types.map((t) => {
-        const chip = (
+        if (onCenterExemplar) {
+          const center = (exemplar.start_timestamp + exemplar.end_timestamp) / 2;
+          return (
+            <button
+              key={t}
+              type="button"
+              className="px-1.5 py-0.5 rounded bg-blue-500 text-white text-[10px] font-medium cursor-pointer hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300"
+              data-testid="mt-exemplar-type-chip"
+              data-exemplar-center={center.toFixed(3)}
+              title="Center in timeline"
+              aria-label={`Center timeline on ${t} exemplar at ${center.toFixed(2)} seconds`}
+              onClick={(event) => {
+                event.preventDefault();
+                onCenterExemplar(exemplar);
+              }}
+            >
+              {t}
+            </button>
+          );
+        }
+        return (
           <span
             key={t}
             className="px-1.5 py-0.5 rounded bg-blue-500 text-white text-[10px] font-medium"
@@ -1051,18 +1113,6 @@ function ExemplarEventTypeChips({ exemplar }: { exemplar: ExemplarRecord }) {
             {t}
           </span>
         );
-        if (typeof eventId === "string" && eventId.length > 0) {
-          return (
-            <Link
-              key={t}
-              to={`/app/call-parsing/classify-review?event_id=${encodeURIComponent(eventId)}`}
-              className="no-underline"
-            >
-              {chip}
-            </Link>
-          );
-        }
-        return chip;
       })}
     </div>
   );
