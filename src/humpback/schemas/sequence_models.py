@@ -642,6 +642,7 @@ class MaskedTransformerJobCreate(BaseModel):
     dropout: float = Field(default=0.1, ge=0.0, le=1.0)
     mask_weight_bias: bool = True
     cosine_loss_weight: float = Field(default=0.0, ge=0.0)
+    batch_size: int = Field(default=8, ge=1)
     retrieval_head_enabled: bool = False
     retrieval_dim: Optional[int] = Field(default=None, gt=0)
     retrieval_hidden_dim: Optional[int] = Field(default=None, gt=0)
@@ -734,6 +735,7 @@ class MaskedTransformerJobOut(BaseModel):
     dropout: float
     mask_weight_bias: bool
     cosine_loss_weight: float
+    batch_size: int = 8
     retrieval_head_enabled: bool = False
     retrieval_dim: Optional[int] = None
     retrieval_hidden_dim: Optional[int] = None

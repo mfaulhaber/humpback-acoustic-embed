@@ -139,6 +139,7 @@ class TestCreateMaskedTransformerJob:
         assert job.training_signature
         assert json.loads(job.k_values) == [100]
         assert job.mask_fraction == pytest.approx(0.20)
+        assert job.batch_size == 8
         assert job.retrieval_head_enabled is False
         assert job.retrieval_dim is None
         assert job.retrieval_hidden_dim is None
@@ -187,6 +188,51 @@ class TestCreateMaskedTransformerJob:
         assert created2 is False
         assert first.id == second.id
         assert json.loads(first.k_values) == [100]
+
+    async def test_batch_size_participates_in_signature_when_non_default(self, session):
+        cej = await _seed_crnn_cej(session)
+        default, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+        )
+        larger_batch, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            batch_size=16,
+        )
+
+        assert created is True
+        assert default.id != larger_batch.id
+        assert default.training_signature != larger_batch.training_signature
+        assert larger_batch.batch_size == 16
+
+    async def test_default_batch_size_preserves_existing_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        implicit, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+        )
+        explicit, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            batch_size=8,
+        )
+
+        assert created is False
+        assert implicit.id == explicit.id
+
+    async def test_batch_size_validates_positive(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="batch_size must be positive"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                batch_size=0,
+            )
 
     async def test_retrieval_head_config_changes_signature(self, session):
         cej = await _seed_crnn_cej(session)

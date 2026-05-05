@@ -86,6 +86,7 @@ def compute_training_signature(
     early_stop_patience: int,
     val_split: float,
     seed: int,
+    batch_size: int = 8,
     retrieval_head_enabled: bool = False,
     retrieval_dim: Optional[int] = None,
     retrieval_hidden_dim: Optional[int] = None,
@@ -122,6 +123,8 @@ def compute_training_signature(
         "val_split": float(val_split),
         "seed": int(seed),
     }
+    if int(batch_size) != 8:
+        payload["batch_size"] = int(batch_size)
     if retrieval_head_enabled:
         payload.update(
             {
@@ -355,6 +358,7 @@ async def create_masked_transformer_job(
     dropout: float = 0.1,
     mask_weight_bias: bool = True,
     cosine_loss_weight: float = 0.0,
+    batch_size: int = 8,
     retrieval_head_enabled: bool = False,
     retrieval_dim: Optional[int] = None,
     retrieval_hidden_dim: Optional[int] = None,
@@ -390,6 +394,9 @@ async def create_masked_transformer_job(
     """
     if preset not in {"small", "default", "large"}:
         raise ValueError(f"preset must be one of small/default/large, got {preset!r}")
+    normalized_batch_size = int(batch_size)
+    if normalized_batch_size <= 0:
+        raise ValueError("batch_size must be positive")
 
     (
         normalized_retrieval_head_enabled,
@@ -475,6 +482,7 @@ async def create_masked_transformer_job(
         dropout=dropout,
         mask_weight_bias=mask_weight_bias,
         cosine_loss_weight=cosine_loss_weight,
+        batch_size=normalized_batch_size,
         retrieval_head_enabled=normalized_retrieval_head_enabled,
         retrieval_dim=normalized_retrieval_dim,
         retrieval_hidden_dim=normalized_retrieval_hidden_dim,
@@ -535,6 +543,7 @@ async def create_masked_transformer_job(
         dropout=float(dropout),
         mask_weight_bias=bool(mask_weight_bias),
         cosine_loss_weight=float(cosine_loss_weight),
+        batch_size=normalized_batch_size,
         retrieval_head_enabled=normalized_retrieval_head_enabled,
         retrieval_dim=normalized_retrieval_dim,
         retrieval_hidden_dim=normalized_retrieval_hidden_dim,

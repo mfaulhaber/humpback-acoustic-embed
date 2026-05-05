@@ -137,6 +137,7 @@ async def test_create_happy_path(client, app_settings):
             "continuous_embedding_job_id": cej_id,
             "preset": "small",
             "k_values": [50, 100],
+            "batch_size": 16,
             "sequence_construction_mode": "mixed",
             "event_centered_fraction": 0.4,
             "pre_event_context_sec": 1.5,
@@ -147,6 +148,7 @@ async def test_create_happy_path(client, app_settings):
     body = response.json()
     assert body["preset"] == "small"
     assert body["k_values"] == [50, 100]
+    assert body["batch_size"] == 16
     assert body["status"] == "queued"
     assert body["sequence_construction_mode"] == "mixed"
     assert body["event_centered_fraction"] == 0.4
@@ -236,6 +238,15 @@ async def test_create_rejects_invalid_sequence_construction(client, app_settings
     assert response.status_code == 422
 
 
+async def test_create_rejects_invalid_batch_size(client, app_settings):
+    cej_id = await _seed_crnn_cej(app_settings)
+    response = await client.post(
+        "/sequence-models/masked-transformers",
+        json={"continuous_embedding_job_id": cej_id, "batch_size": 0},
+    )
+    assert response.status_code == 422
+
+
 async def test_create_rejects_contrastive_without_retrieval_head(client, app_settings):
     cej_id = await _seed_crnn_cej(app_settings)
     response = await client.post(
@@ -273,6 +284,7 @@ async def test_list_and_detail(client, app_settings):
     detail = await client.get(f"/sequence-models/masked-transformers/{job_id}")
     assert detail.status_code == 200
     assert detail.json()["job"]["id"] == job_id
+    assert detail.json()["job"]["batch_size"] == 8
     assert detail.json()["job"]["sequence_construction_mode"] == "region"
     assert detail.json()["job"]["event_centered_fraction"] == 0.0
     assert detail.json()["job"]["pre_event_context_sec"] is None

@@ -806,6 +806,7 @@ async def create_masked_transformer(
             dropout=body.dropout,
             mask_weight_bias=body.mask_weight_bias,
             cosine_loss_weight=body.cosine_loss_weight,
+            batch_size=body.batch_size,
             retrieval_head_enabled=body.retrieval_head_enabled,
             retrieval_dim=body.retrieval_dim,
             retrieval_hidden_dim=body.retrieval_hidden_dim,

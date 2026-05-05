@@ -59,6 +59,7 @@ export function MaskedTransformerCreateForm() {
   const [spanMax, setSpanMax] = useState(6);
   const [dropout, setDropout] = useState(0.1);
   const [cosineWeight, setCosineWeight] = useState(0.0);
+  const [batchSize, setBatchSize] = useState(8);
   const [retrievalHeadEnabled, setRetrievalHeadEnabled] = useState(false);
   const [retrievalDim, setRetrievalDim] = useState(128);
   const [retrievalHiddenDim, setRetrievalHiddenDim] = useState(512);
@@ -129,6 +130,7 @@ export function MaskedTransformerCreateForm() {
     sequenceModeValid &&
     contextValid &&
     contrastiveValid &&
+    batchSize > 0 &&
     (!retrievalHeadEnabled || (retrievalDim > 0 && retrievalHiddenDim > 0));
 
   const handleSubmit = () => {
@@ -146,6 +148,7 @@ export function MaskedTransformerCreateForm() {
       span_length_max: spanMax,
       dropout,
       cosine_loss_weight: cosineWeight,
+      batch_size: batchSize,
       retrieval_head_enabled: retrievalHeadEnabled,
       retrieval_dim: retrievalHeadEnabled ? retrievalDim : null,
       retrieval_hidden_dim: retrievalHeadEnabled ? retrievalHiddenDim : null,
@@ -340,6 +343,13 @@ export function MaskedTransformerCreateForm() {
             <Field label="span_length_max" value={spanMax} step={1} onChange={(v) => setSpanMax(Math.max(1, Math.round(v)))} />
             <Field label="dropout" value={dropout} step={0.05} onChange={setDropout} />
             <Field label="cosine_loss_weight" value={cosineWeight} step={0.05} onChange={setCosineWeight} />
+            <Field
+              label="batch_size"
+              value={batchSize}
+              step={1}
+              invalid={batchSize <= 0}
+              onChange={(v) => setBatchSize(Math.max(1, Math.round(v)))}
+            />
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input
                 type="checkbox"

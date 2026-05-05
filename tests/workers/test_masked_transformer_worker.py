@@ -236,6 +236,7 @@ def _tiny_config() -> dict[str, Any]:
         dropout=0.0,
         mask_weight_bias=False,
         cosine_loss_weight=0.0,
+        batch_size=2,
         max_epochs=2,
         early_stop_patience=10,
         val_split=0.34,
@@ -446,6 +447,7 @@ async def test_event_centered_mode_preserves_full_region_artifact_rows(
         map_location="cpu",
         weights_only=False,
     )
+    assert state["config"]["batch_size"] == 2
     assert state["config"]["sequence_construction_mode"] == "event_centered"
     assert state["config"]["event_centered_fraction"] == 1.0
     assert state["config"]["pre_event_context_sec"] == 1.0

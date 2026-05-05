@@ -158,6 +158,7 @@ class MaskedTransformerJob(UUIDMixin, TimestampMixin, Base):
     dropout: Mapped[float] = mapped_column(Float, default=0.1)
     mask_weight_bias: Mapped[bool] = mapped_column(Boolean, default=True)
     cosine_loss_weight: Mapped[float] = mapped_column(Float, default=0.0)
+    batch_size: Mapped[int] = mapped_column(Integer, default=8)
     retrieval_head_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     retrieval_dim: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     retrieval_hidden_dim: Mapped[Optional[int]] = mapped_column(Integer, default=None)

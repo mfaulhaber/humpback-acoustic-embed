@@ -206,6 +206,7 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert contextual.contrastive_min_regions_per_label == 2
     assert contextual.require_cross_region_positive is True
     assert contextual.related_label_policy_json is None
+    assert contextual.batch_size == 8
 
     retrieval = MaskedTransformerJobCreate(
         continuous_embedding_job_id="cej-1",
@@ -298,6 +299,14 @@ def test_masked_transformer_create_retrieval_head_validation():
     assert disabled.retrieval_hidden_dim is None
 
 
+def test_masked_transformer_create_batch_size_validation():
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            batch_size=0,
+        )
+
+
 def test_masked_transformer_create_contrastive_validation():
     with pytest.raises(ValidationError):
         MaskedTransformerJobCreate(
@@ -351,6 +360,7 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "dropout": 0.1,
         "mask_weight_bias": True,
         "cosine_loss_weight": 0.0,
+        "batch_size": 16,
         "retrieval_head_enabled": True,
         "retrieval_dim": 128,
         "retrieval_hidden_dim": 512,
@@ -387,6 +397,7 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
     job = MaskedTransformerJobOut.model_validate(payload)
 
     assert job.retrieval_head_enabled is True
+    assert job.batch_size == 16
     assert job.retrieval_dim == 128
     assert job.retrieval_hidden_dim == 512
     assert job.sequence_construction_mode == "mixed"

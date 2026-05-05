@@ -72,6 +72,7 @@ const QUEUED_JOB = {
   dropout: 0.1,
   mask_weight_bias: true,
   cosine_loss_weight: 0.0,
+  batch_size: 8,
   retrieval_head_enabled: false,
   retrieval_dim: null,
   retrieval_hidden_dim: null,
@@ -341,6 +342,7 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
           continuous_embedding_job_id: body.continuous_embedding_job_id,
           preset: body.preset ?? "default",
           k_values: body.k_values ?? [100],
+          batch_size: body.batch_size ?? 8,
           retrieval_head_enabled: body.retrieval_head_enabled ?? false,
           retrieval_dim: body.retrieval_dim ?? null,
           retrieval_hidden_dim: body.retrieval_hidden_dim ?? null,
@@ -546,6 +548,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
       retrieval_dim: null,
       retrieval_hidden_dim: null,
       retrieval_l2_normalize: true,
+      batch_size: 8,
       sequence_construction_mode: "region",
       event_centered_fraction: 0.0,
       pre_event_context_sec: null,
@@ -574,6 +577,23 @@ test.describe("Sequence Models — Masked Transformer", () => {
       retrieval_dim: 64,
       retrieval_hidden_dim: 256,
       retrieval_l2_normalize: true,
+    });
+  });
+
+  test("create form submits custom batch size", async ({ page }) => {
+    const state: MockState = { jobs: [], capturedCreates: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/masked-transformer");
+
+    await page
+      .getByTestId("mt-source-select")
+      .selectOption(CEJ_CRNN_COMPLETE.id);
+    await page.getByTestId("mt-show-advanced").click();
+    await page.getByTestId("mt-adv-batch_size").fill("16");
+    await page.getByTestId("mt-create-submit").click();
+    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    expect(state.capturedCreates?.[0]).toMatchObject({
+      batch_size: 16,
     });
   });
 
