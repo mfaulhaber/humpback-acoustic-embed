@@ -16,11 +16,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from humpback.call_parsing.storage import classification_job_dir, write_typed_events
+from humpback.call_parsing.types import Event, TypedEvent
 from humpback.config import Settings
 from humpback.models.call_parsing import (
     EventClassificationJob,
     EventSegmentationJob,
     RegionDetectionJob,
+    VocalizationCorrection,
 )
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, HMMSequenceJob
@@ -31,6 +34,7 @@ from humpback.storage import (
     hmm_sequence_dir,
     hmm_sequence_exemplars_path,
     hmm_sequence_hmm_model_path,
+    hmm_sequence_label_distribution_path,
     hmm_sequence_overlay_path,
     hmm_sequence_pca_model_path,
     hmm_sequence_decoded_path,
@@ -442,6 +446,59 @@ async def _seed_complete_crnn_ce_job(session, settings) -> ContinuousEmbeddingJo
     return ce_job
 
 
+def _write_collapsed_typed_events(settings, cls_id: str, event_ids: list[str]) -> None:
+    cls_dir = classification_job_dir(settings.storage_root, cls_id)
+    cls_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        cls_dir / "typed_events.parquet",
+        [
+            TypedEvent(
+                event_id=event_id,
+                start_sec=0.0,
+                end_sec=0.0,
+                type_name=type_name,
+                score=score,
+                above_threshold=True,
+            )
+            for event_id in event_ids
+            for type_name, score in [
+                ("Moan", 0.95),
+                ("Whup", 0.90),
+                ("Song", 0.85),
+                ("Noise", 0.80),
+            ]
+        ],
+    )
+
+
+async def _add_vocalization_correction(
+    session,
+    cej: ContinuousEmbeddingJob,
+    *,
+    start_sec: float,
+    end_sec: float,
+    type_name: str,
+) -> None:
+    session.add(
+        VocalizationCorrection(
+            region_detection_job_id=cej.region_detection_job_id or "",
+            start_sec=start_sec,
+            end_sec=end_sec,
+            type_name=type_name,
+            correction_type="add",
+        )
+    )
+    await session.commit()
+
+
+def _aggregate_distribution_labels(payload: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for state_counts in payload["states"].values():
+        for label, count in state_counts.items():
+            counts[label] = counts.get(label, 0) + int(count)
+    return counts
+
+
 async def _create_crnn_hmm_job(
     session, ce_job_id: str, **overrides: Any
 ) -> HMMSequenceJob:
@@ -518,6 +575,61 @@ async def test_crnn_happy_path_writes_overlay_and_exemplars(session, settings):
             "near_event",
             "background",
         }
+
+
+async def test_crnn_interpretations_use_human_adds_as_replacement_labels(
+    session, settings
+):
+    ce_job = await _seed_complete_crnn_ce_job(session, settings)
+    cls_id = await seed_classify_for_segmentation(
+        session,
+        settings.storage_root,
+        event_segmentation_job_id=ce_job.event_segmentation_job_id or "",
+        events=[
+            Event("e1", "region-00", 0.0, 12.5, 6.25, 0.9),
+            Event("e2", "region-01", 100.0, 112.5, 106.25, 0.8),
+            Event("e3", "region-02", 200.0, 212.5, 206.25, 0.7),
+        ],
+    )
+    _write_collapsed_typed_events(settings, cls_id, ["e1", "e2", "e3"])
+    await _add_vocalization_correction(
+        session, ce_job, start_sec=0.0, end_sec=12.5, type_name="Moan"
+    )
+    await _add_vocalization_correction(
+        session, ce_job, start_sec=100.0, end_sec=112.5, type_name="Whup"
+    )
+    await _add_vocalization_correction(
+        session, ce_job, start_sec=200.0, end_sec=212.5, type_name="Song"
+    )
+    job = await _create_crnn_hmm_job(session, ce_job.id)
+    job.event_classification_job_id = cls_id
+    await session.commit()
+    await session.refresh(job)
+
+    await run_hmm_sequence_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    sr = settings.storage_root
+    exemplars = json.loads(hmm_sequence_exemplars_path(sr, job.id).read_text())
+    flat_exemplars = [
+        record
+        for state_records in exemplars["states"].values()
+        for record in state_records
+    ]
+    assert flat_exemplars
+    for record in flat_exemplars:
+        extras = record["extras"]
+        assert {"event_id", "event_types", "event_confidence"} <= set(extras)
+        assert set(extras["event_types"]) <= {"Moan", "Whup", "Song"}
+        assert "Noise" not in extras["event_types"]
+
+    distribution = json.loads(
+        hmm_sequence_label_distribution_path(sr, job.id).read_text()
+    )
+    label_counts = _aggregate_distribution_labels(distribution)
+    assert set(label_counts) == {"Moan", "Whup", "Song"}
+    assert all(label_counts[label] > 0 for label in ["Moan", "Whup", "Song"])
 
 
 async def test_crnn_interpretation_failure_keeps_job_complete(

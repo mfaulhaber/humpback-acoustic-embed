@@ -50,9 +50,11 @@ class EffectiveEventLabels:
     bridged from the source-audio-relative ``Event.start_sec`` /
     ``end_sec`` via the upstream ``RegionDetectionJob.start_timestamp``.
 
-    ``types`` is the union of (model types where ``above_threshold``) and
-    user-added ``VocalizationCorrection`` rows, minus user-removed rows.
-    May be empty when corrections wipe every surviving type.
+    ``types`` uses human-added ``VocalizationCorrection`` rows as an
+    authoritative replacement set when present; otherwise it uses model
+    types where ``above_threshold``. User-removed rows are subtracted
+    from either source. May be empty when corrections wipe every
+    surviving type.
     """
 
     event_id: str
@@ -78,11 +80,10 @@ async def load_effective_event_labels(
 
     Effective type set per event ::
 
-        (model types where above_threshold == True)
-        ∪ (VocalizationCorrection rows overlapping event with
-           correction_type == "add")
-        − (VocalizationCorrection rows overlapping event with
-           correction_type == "remove")
+        if any overlapping VocalizationCorrection(add) rows exist:
+            added types - removed types
+        else:
+            model above-threshold types - removed types
 
     Events whose corrected type set is empty are still returned (the
     interval is real); ``assign_labels_to_windows`` treats them the same
@@ -141,19 +142,23 @@ async def load_effective_event_labels(
 
     out: list[EffectiveEventLabels] = []
     for event in effective_events:
-        types = set(types_by_event.get(event.event_id, {}).keys())
-        confidences = dict(types_by_event.get(event.event_id, {}))
+        model_confidences = dict(types_by_event.get(event.event_id, {}))
+        model_types = set(model_confidences.keys())
+        added_types: set[str] = set()
+        removed_types: set[str] = set()
 
         for vc in corrections:
             if vc.start_sec < event.end_sec and vc.end_sec > event.start_sec:
                 if vc.correction_type == "add":
-                    types.add(vc.type_name)
+                    added_types.add(vc.type_name)
                 elif vc.correction_type == "remove":
-                    types.discard(vc.type_name)
-                    confidences.pop(vc.type_name, None)
+                    removed_types.add(vc.type_name)
+
+        types = set(added_types) if added_types else set(model_types)
+        types.difference_update(removed_types)
 
         # Drop confidences for any type no longer in the surviving set.
-        confidences = {t: c for t, c in confidences.items() if t in types}
+        confidences = {t: c for t, c in model_confidences.items() if t in types}
 
         out.append(
             EffectiveEventLabels(
@@ -273,10 +278,9 @@ def compute_label_distribution(
 
     No tier dimension. Each state is ``{label: int}``. ``BACKGROUND_LABEL``
     appears for windows with empty ``event_types``. Multi-label events
-    contribute ``+1`` to each label's bucket per overlapping window
-    (matching the union semantics of the previous loader). The per-state
-    total may exceed ``total_windows`` because of multi-label events; the
-    chart reads each label bar independently.
+    contribute ``+1`` to each label's bucket per overlapping window. The
+    per-state total may exceed ``total_windows`` because of multi-label
+    events; the chart reads each label bar independently.
     """
     if len(rows) != len(annotations):
         raise ValueError(

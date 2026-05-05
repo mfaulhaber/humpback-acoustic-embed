@@ -7,6 +7,8 @@
 
 > **Implementation note (2026-05-04):** The brainstorming exploration referenced a separate `EventTypeCorrection` table that does not actually exist; type corrections live in `VocalizationCorrection` — region-scoped, keyed by `(region_detection_job_id, start_sec, end_sec, type_name)`, with `correction_type ∈ {"add", "remove"}`. Functional semantics are identical to the spec's intent: event-overlapping `"add"` rows include the type, `"remove"` rows exclude it. All references below use the actual `VocalizationCorrection` name.
 
+> **Amendment (2026-05-05):** `docs/specs/2026-05-05-authoritative-human-corrections-label-source-design.md` supersedes this spec's original union formula for Sequence Models interpretation artifacts. When an effective event has any overlapping `VocalizationCorrection(add)` rows, those human-added labels replace the model above-threshold set; overlapping removes are then subtracted. Existing HMM/MT artifacts require manual regeneration to reflect the amended semantics.
+
 ---
 
 ## 1. Goal
@@ -44,7 +46,7 @@ By switching to the Classify pipeline's events, the label source becomes (a) up 
 | Q1 | **Pure replacement.** `vocalization_labels` no longer feeds HMM/MT label distribution. | Vocalization Labeling workspace untouched. |
 | Q2 | **Event-scoped inversion** for window→label join. Each effective event distributes its corrected, above-threshold types to every sequence window whose center falls inside its `[start, end)`. Windows outside every event map to a reserved `(background)` bucket. | Two-pointer O(n_windows + n_events). Events are non-overlapping by construction (Pass 2 segmentation, ADR-062). |
 | Q3 | **Chart + exemplars** are the scope. `overlay.parquet` (PCA/UMAP scatter) is unchanged. | Exemplar cards gain type chips and link back to Classify Review for the underlying event. |
-| Q4 | **Strict above-threshold + corrections.** Effective types per event = (model types where `above_threshold == True`) ∪ (user-added/confirmed) − (user-deleted). No configurable threshold knob. | Matches what users see in Classify Review as "real" labels. |
+| Q4 | **Strict above-threshold + authoritative corrections.** Effective types per event = human-added labels when any overlapping `VocalizationCorrection(add)` exists, otherwise model types where `above_threshold == True`; user-deleted labels are subtracted from either base. No configurable threshold knob. | Matches what users see in Classify Review as "real" labels and prevents collapsed model outputs from leaking into corrected Sequence Models artifacts. |
 | Q5 | **Explicit `event_classification_job_id` selection at submit time.** New nullable FK on `hmm_sequence_jobs` and `masked_transformer_jobs`. Default to most recent completed Classify job for the upstream segmentation; submit rejected if none exist. | Reproducibility: the bound Classify job determines labels deterministically; later Classify runs do not silently change a finished HMM/MT job's labels. |
 | Q6 | **Drop tier dimension** from `label_distribution.json`. SurfPerch and CRNN sources both produce `{n_states, total_windows, states: {state: {label: count}}}`. CRNN's `extras.tier` on `decoded.parquet` and exemplars is unchanged (it powers the per-state tier-composition strip, which is independent of label distribution). | All Sequence Models jobs already deleted via UI; no on-disk migration, no dual-format loader, no version field. ADR-060 superseded. |
 | Q7 | **Manual "Regenerate label distribution" button** on HMM and MT detail pages. Re-runs the label-distribution + exemplars pass against the bound Classify job (with current corrections); optionally re-binds to a different Classify job in the same atomic write. | No auto-recompute on correction writes; no live-query rendering; artifacts remain the source of truth. |
@@ -184,9 +186,11 @@ def load_effective_event_labels(
     load_effective_events() (ADR-054), and returns one record per
     effective event in start_utc order.
 
-    Type set per event = (model types where above_threshold == True)
-                       ∪ (user-added/confirmed types)
-                       − (user-deleted types)
+    Type set per event:
+      if any overlapping VocalizationCorrection(add) rows exist:
+          user-added types - user-deleted types
+      else:
+          model types where above_threshold == True - user-deleted types
 
     An event with empty `types` after correction is returned with
     `types = frozenset()`. Such events still represent a real interval
@@ -233,9 +237,9 @@ def assign_labels_to_windows(
       "states": {"0": {...}, "1": {...}, ...}}
 ```
 
-`explode_or_background` is the small bit of pandas glue that turns each row's `event_types` list into one row per type (counted in each label's bucket — multi-label union semantics) and replaces empty lists with a single `BACKGROUND_LABEL` entry so background windows show up exactly once per state.
+`explode_or_background` is the small bit of pandas glue that turns each row's `event_types` list into one row per type (counted in each label's bucket) and replaces empty lists with a single `BACKGROUND_LABEL` entry so background windows show up exactly once per state.
 
-The per-state total may exceed `total_windows` because of multi-label events — same union semantics today's loader already uses; the chart treats each label's bar independently.
+The per-state total may exceed `total_windows` because of multi-label events; the chart treats each label's bar independently.
 
 ### 6.3 `masked_transformer_service.generate_interpretations()` (rewrite)
 
@@ -365,10 +369,10 @@ regenerateMTLabelDistribution(jobId: number, k: number, body?: {event_classifica
 
 `tests/sequence_models/test_label_distribution_event_scoped.py` (new):
 
-- `test_assign_labels_inverts_events_to_windows` — three disjoint events + decoded windows straddling them; assert center-time placement, multi-label union, background bucket for outside windows.
+- `test_assign_labels_inverts_events_to_windows` — three disjoint events + decoded windows straddling them; assert center-time placement, multi-label counting, background bucket for outside windows.
 - `test_assign_labels_handles_empty_event_types` — event with all types user-deleted via `VocalizationCorrection` → empty type set → its windows go to background.
 - `test_assign_labels_two_pointer_o_n` — large synthetic input (10k windows, 1k events); single-pass execution.
-- `test_load_effective_event_labels_applies_corrections` — fixtures cover above-threshold model type kept, below-threshold model type filtered, user-added included, user-deleted excluded, user-confirmed below-threshold included.
+- `test_load_effective_event_labels_applies_corrections` — fixtures cover above-threshold model type kept when no human add exists, below-threshold model type filtered, user-added replacement labels, user-deleted labels excluded, and user-confirmed below-threshold labels included.
 - `test_load_effective_event_labels_applies_boundary_corrections` — `EventBoundaryCorrection` shifts an event start; window membership changes accordingly.
 
 `tests/sequence_models/test_hmm_service_label_distribution.py` (rewrite/replace):
@@ -377,7 +381,7 @@ regenerateMTLabelDistribution(jobId: number, k: number, body?: {event_classifica
 - Assert produced `label_distribution.json` shape (`{n_states, total_windows, states: {state: {label: count}}}`); no tier dimension; same shape for SurfPerch and CRNN sources.
 - Assert `(background)` bucket appears with expected count.
 - Assert exemplar JSON has `event_id`, `event_types`, `event_confidence` populated.
-- Multi-label union: an event with two types contributes `+1` to each label's bucket per overlapping window.
+- Multi-label counting: an event with two surviving types contributes `+1` to each label's bucket per overlapping window.
 
 `tests/sequence_models/test_masked_transformer_service_label_distribution.py` (rewrite/replace):
 

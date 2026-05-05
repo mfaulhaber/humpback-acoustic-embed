@@ -45,7 +45,7 @@ def _event(
 
 class TestAssignLabelsToWindows:
     def test_inverts_events_to_windows(self):
-        """Three disjoint events, windows in/out, multi-label union."""
+        """Three disjoint events, windows in/out, multi-label event."""
         rows = [
             _row(100.0, 101.0, 0),  # center 100.5 → in event A
             _row(101.0, 102.0, 1),  # center 101.5 → in event A

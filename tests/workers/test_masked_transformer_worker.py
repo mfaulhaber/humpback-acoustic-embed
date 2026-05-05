@@ -13,7 +13,8 @@ import pyarrow.parquet as pq
 import pytest
 import torch
 
-from humpback.call_parsing.types import Event
+from humpback.call_parsing.storage import classification_job_dir, write_typed_events
+from humpback.call_parsing.types import Event, TypedEvent
 from humpback.models.call_parsing import (
     EventClassificationJob,
     EventSegmentationJob,
@@ -105,7 +106,7 @@ def _write_synthetic_crnn_embeddings_parquet(
 
 async def _bind_classify(
     session, settings, cej, job, *, events: list[Event] | None = None
-) -> None:
+) -> str:
     """Bind a fresh complete Classify job to ``job.event_classification_job_id``.
 
     All MT worker happy-path tests need this so the consolidated
@@ -121,6 +122,40 @@ async def _bind_classify(
     job.event_classification_job_id = cls_id
     await session.commit()
     await session.refresh(job)
+    return cls_id
+
+
+def _write_collapsed_typed_events(settings, cls_id: str, event_ids: list[str]) -> None:
+    cls_dir = classification_job_dir(settings.storage_root, cls_id)
+    cls_dir.mkdir(parents=True, exist_ok=True)
+    write_typed_events(
+        cls_dir / "typed_events.parquet",
+        [
+            TypedEvent(
+                event_id=event_id,
+                start_sec=0.0,
+                end_sec=0.0,
+                type_name=type_name,
+                score=score,
+                above_threshold=True,
+            )
+            for event_id in event_ids
+            for type_name, score in [
+                ("Moan", 0.95),
+                ("Whup", 0.90),
+                ("Song", 0.85),
+                ("Noise", 0.80),
+            ]
+        ],
+    )
+
+
+def _aggregate_distribution_labels(payload: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for state_counts in payload["states"].values():
+        for label, count in state_counts.items():
+            counts[label] = counts.get(label, 0) + int(count)
+    return counts
 
 
 async def _add_vocalization_correction(
@@ -309,6 +344,65 @@ async def test_happy_path_persists_all_artifacts(session, settings, monkeypatch)
     assert job.total_chunks == 72
     assert job.total_epochs is not None
     assert job.chosen_device == "cpu"
+
+
+async def test_interpretations_use_human_adds_as_replacement_labels(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session, continuous_embedding_job_id=cej.id, **_tiny_config()
+    )
+    cls_id = await _bind_classify(
+        session,
+        settings,
+        cej,
+        job,
+        events=[
+            Event("e1", "region-00", 0.0, 6.0, 3.0, 0.9),
+            Event("e2", "region-01", 10.0, 16.0, 13.0, 0.8),
+            Event("e3", "region-02", 20.0, 26.0, 23.0, 0.7),
+        ],
+    )
+    _write_collapsed_typed_events(settings, cls_id, ["e1", "e2", "e3"])
+    await _add_vocalization_correction(
+        session, cej, start_sec=0.0, end_sec=6.0, type_name="Moan"
+    )
+    await _add_vocalization_correction(
+        session, cej, start_sec=10.0, end_sec=16.0, type_name="Whup"
+    )
+    await _add_vocalization_correction(
+        session, cej, start_sec=20.0, end_sec=26.0, type_name="Song"
+    )
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    sr = settings.storage_root
+    k = 10
+    exemplars = json.loads(
+        masked_transformer_k_exemplars_path(sr, job.id, k).read_text()
+    )
+    flat_exemplars = [
+        record
+        for state_records in exemplars["states"].values()
+        for record in state_records
+    ]
+    assert flat_exemplars
+    for record in flat_exemplars:
+        extras = record["extras"]
+        assert {"event_id", "event_types", "event_confidence"} <= set(extras)
+        assert set(extras["event_types"]) <= {"Moan", "Whup", "Song"}
+        assert "Noise" not in extras["event_types"]
+
+    distribution = json.loads(
+        masked_transformer_k_label_distribution_path(sr, job.id, k).read_text()
+    )
+    label_counts = _aggregate_distribution_labels(distribution)
+    assert set(label_counts) == {"Moan", "Whup", "Song"}
+    assert all(label_counts[label] > 0 for label in ["Moan", "Whup", "Song"])
 
 
 async def test_retrieval_head_job_persists_and_tokenizes_retrieval_embeddings(
