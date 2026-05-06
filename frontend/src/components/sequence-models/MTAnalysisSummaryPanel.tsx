@@ -7,21 +7,34 @@ interface SummaryLine {
   text: string;
 }
 
+interface SpaceDiagnostic {
+  tone: SummaryTone;
+  title: string;
+  lines: string[];
+}
+
 export interface MTAnalysisSummary {
   run: SummaryLine[];
   geometry: SummaryLine[];
-  recommendedSpaces: SummaryLine[];
-  cautionSpaces: SummaryLine[];
+  spaceDiagnostics: SpaceDiagnostic[];
   neighborhood: SummaryLine[];
 }
 
-const RECOMMENDED_SPACE_ORDER = [
-  "contextual.whiten_pca",
-  "contextual.remove_pc10",
-  "retrieval.whiten_pca",
-  "retrieval.remove_pc10",
+const SPACE_DIAGNOSTIC_ORDER = [
+  "contextual.raw_l2",
+  "retrieval.raw_l2",
+  "contextual.centered_l2",
+  "retrieval.centered_l2",
+  "contextual.remove_pc1",
+  "retrieval.remove_pc1",
+  "contextual.remove_pc3",
+  "retrieval.remove_pc3",
   "contextual.remove_pc5",
   "retrieval.remove_pc5",
+  "contextual.whiten_pca",
+  "retrieval.whiten_pca",
+  "contextual.remove_pc10",
+  "retrieval.remove_pc10",
 ];
 
 function toneClass(tone: SummaryTone): string {
@@ -37,6 +50,24 @@ function formatMetric(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   if (Math.abs(value) >= 100) return value.toLocaleString();
   return value.toFixed(3);
+}
+
+function formatRank(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  });
+}
+
+function formatPercent(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatCount(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return Math.round(value).toLocaleString();
 }
 
 function formatRange(values: number[]): string {
@@ -72,16 +103,150 @@ function isPoorRankBand(value: unknown): boolean {
   return value === "weak" || value === "severe_collapse";
 }
 
-function spaceSummary(space: string, row: Record<string, unknown>): string {
-  const warningCount = warningsFor(row).length;
-  const rank = asNumber(row.effective_rank);
-  const parts = [
-    String(row.mean_vector_band ?? "unknown mean"),
-    String(row.effective_rank_band ?? "unknown rank"),
+function isOkayRankBand(value: unknown): boolean {
+  return value === "weak";
+}
+
+function titleizeToken(value: string): string {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function variantLabel(variant: string): string {
+  if (variant === "raw_l2") return "Raw";
+  if (variant === "centered_l2") return "Centered";
+  if (variant === "whiten_pca") return "Whitened";
+  const match = /^remove_pc(\d+)$/.exec(variant);
+  if (match) return `PC${match[1]}-Removed`;
+  return titleizeToken(variant);
+}
+
+function spaceTitle(space: string): string {
+  const [sourceSpace, variant = ""] = space.split(".");
+  return `${variantLabel(variant)} ${titleizeToken(sourceSpace)} Space`;
+}
+
+function nestedRecord(
+  row: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const value = row[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function saturationLine(row: Record<string, unknown>): string {
+  const percentiles = nestedRecord(row, "random_pair_percentiles");
+  const p75 = asNumber(percentiles.p75);
+  const p95 = asNumber(percentiles.p95);
+  if (p75 == null && p95 == null) {
+    return "Random-pair cosine percentiles were not reported.";
+  }
+  const label =
+    (p75 != null && p75 > 0.7) || (p95 != null && p95 > 0.95)
+      ? "Very saturated"
+      : (p75 != null && p75 > 0.3) || (p95 != null && p95 > 0.7)
+        ? "Some saturation"
+        : "Low saturation";
+  return `${label}: random-pair cosine p75 ${formatMetric(
+    p75,
+  )}, p95 ${formatMetric(p95)}.`;
+}
+
+function assessmentLine(row: Record<string, unknown>): string {
+  if (row.available === false) {
+    const reason = row.reason ? String(row.reason) : "not available";
+    return `This space is unavailable: ${reason}.`;
+  }
+  if (
+    warningsFor(row).length > 0 ||
+    isPoorMeanBand(row.mean_vector_band) ||
+    row.effective_rank_band === "severe_collapse"
+  ) {
+    return "Not a good space to trust directly.";
+  }
+  if (
+    isGoodMeanBand(row.mean_vector_band) &&
+    isGoodRankBand(row.effective_rank_band)
+  ) {
+    return "Good candidate for inference and motif search.";
+  }
+  if (isOkayRankBand(row.effective_rank_band)) {
+    return "Usable with caution; prefer a broader space when available.";
+  }
+  return "Interpret with caution until this measurement has a clearer threshold.";
+}
+
+function diagnosticTone(row: Record<string, unknown>): SummaryTone {
+  if (row.available === false) return "warn";
+  if (
+    warningsFor(row).length > 0 ||
+    isPoorMeanBand(row.mean_vector_band) ||
+    row.effective_rank_band === "severe_collapse"
+  ) {
+    return "bad";
+  }
+  if (isPoorRankBand(row.effective_rank_band)) return "warn";
+  if (
+    isGoodMeanBand(row.mean_vector_band) &&
+    isGoodRankBand(row.effective_rank_band)
+  ) {
+    return "good";
+  }
+  return "neutral";
+}
+
+function buildSpaceDiagnostic(
+  space: string,
+  row: Record<string, unknown>,
+): SpaceDiagnostic {
+  if (row.available === false) {
+    return {
+      tone: "warn",
+      title: spaceTitle(space),
+      lines: [assessmentLine(row)],
+    };
+  }
+
+  const pca = nestedRecord(row, "pca_explained_variance");
+  const rankBand = row.effective_rank_band
+    ? String(row.effective_rank_band)
+    : "unknown";
+  const vectorDim = row.vector_dim;
+  const lines = [
+    saturationLine(row),
+    `Mean vector band: ${String(row.mean_vector_band ?? "unknown")}.`,
+    `Effective rank: ${formatRank(
+      row.effective_rank,
+    )}, ${rankBand} for ${formatCount(vectorDim)} dims.`,
+    `PC1 alone explains ${formatPercent(pca.pc1)} of variance.`,
+    assessmentLine(row),
   ];
-  if (rank != null) parts.push(`rank ${formatMetric(rank)}`);
-  parts.push(warningCount === 0 ? "no warnings" : `${warningCount} warnings`);
-  return `${space}: ${parts.join(", ")}`;
+
+  return {
+    tone: diagnosticTone(row),
+    title: spaceTitle(space),
+    lines,
+  };
+}
+
+function orderedSpaceEntries(
+  spaces: Record<string, Record<string, unknown>>,
+): [string, Record<string, unknown>][] {
+  const ordered: [string, Record<string, unknown>][] =
+    SPACE_DIAGNOSTIC_ORDER.flatMap((space) => {
+      const row = spaces[space];
+      return row ? [[space, row]] : [];
+    });
+  const seen = new Set(ordered.map(([space]) => space));
+  const remaining = Object.entries(spaces)
+    .filter(([space]) => !seen.has(space))
+    .sort(([a], [b]) => a.localeCompare(b));
+  return [...ordered, ...remaining];
 }
 
 function metricValues(
@@ -116,7 +281,6 @@ export function buildMTAnalysisSummary(
 
   const geometrySummary = report.geometry_report?.summary ?? {};
   const spaces = report.geometry_report?.spaces ?? {};
-  const spaceEntries = Object.entries(spaces);
   const saturated = geometrySummary.retrieval_raw_saturated === true;
   const lambdaBlocked = geometrySummary.lambda_sweeps_blocked === true;
   const warningCount = Array.isArray(geometrySummary.warnings)
@@ -145,50 +309,11 @@ export function buildMTAnalysisSummary(
     });
   }
 
-  const recommendedSpaces: SummaryLine[] = RECOMMENDED_SPACE_ORDER.flatMap(
-    (space) => {
-      const row = spaces[space];
-      if (!row) return [];
-      if (
-        row.available === true &&
-        warningsFor(row).length === 0 &&
-        isGoodMeanBand(row.mean_vector_band) &&
-        isGoodRankBand(row.effective_rank_band)
-      ) {
-        return [{ tone: "good" as const, text: spaceSummary(space, row) }];
-      }
-      return [];
-    },
-  );
-  if (recommendedSpaces.length === 0) {
-    recommendedSpaces.push({
-      tone: "warn",
-      text: "No requested embedding space is clean enough to recommend automatically.",
-    });
-  }
-
-  const cautionSpaces: SummaryLine[] = spaceEntries.flatMap(([space, row]) => {
-    if (
-      row.available === false ||
-      warningsFor(row).length > 0 ||
-      isPoorMeanBand(row.mean_vector_band) ||
-      isPoorRankBand(row.effective_rank_band)
-    ) {
-      return [
-        {
-          tone: row.available === false ? ("warn" as const) : ("bad" as const),
-          text: spaceSummary(space, row),
-        },
-      ];
-    }
-    return [];
-  });
-  if (cautionSpaces.length === 0) {
-    cautionSpaces.push({
-      tone: "good",
-      text: "No requested embedding spaces were flagged for caution.",
-    });
-  }
+  const spaceDiagnostics = report.geometry_report
+    ? orderedSpaceEntries(spaces).map(([space, row]) =>
+        buildSpaceDiagnostic(space, row),
+      )
+    : [];
 
   const sameToken = metricValues(report, "same_token");
   const similarDuration = metricValues(report, "similar_duration");
@@ -215,8 +340,7 @@ export function buildMTAnalysisSummary(
   return {
     run,
     geometry,
-    recommendedSpaces: recommendedSpaces.slice(0, 4),
-    cautionSpaces: cautionSpaces.slice(0, 4),
+    spaceDiagnostics,
     neighborhood,
   };
 }
@@ -247,6 +371,38 @@ function SummarySection({
   );
 }
 
+function SpaceDiagnosticsSection({
+  spaces,
+}: {
+  spaces: SpaceDiagnostic[];
+}) {
+  if (spaces.length === 0) return null;
+  return (
+    <section className="space-y-2 lg:col-span-2">
+      <h3 className="text-xs font-semibold uppercase text-muted-foreground">
+        Embedding Spaces
+      </h3>
+      <div className="grid gap-2 lg:grid-cols-2">
+        {spaces.map((space) => (
+          <article
+            key={space.title}
+            className={`rounded-md border px-3 py-2 text-xs ${toneClass(
+              space.tone,
+            )}`}
+          >
+            <h4 className="mb-2 text-sm font-semibold">{space.title}</h4>
+            <div className="space-y-1">
+              {space.lines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function MTAnalysisSummaryPanel({
   report,
 }: {
@@ -262,11 +418,7 @@ export function MTAnalysisSummaryPanel({
       <div className="grid gap-4 lg:grid-cols-2">
         <SummarySection title="Run" lines={summary.run} />
         <SummarySection title="Geometry" lines={summary.geometry} />
-        <SummarySection
-          title="Recommended Spaces"
-          lines={summary.recommendedSpaces}
-        />
-        <SummarySection title="Caution Spaces" lines={summary.cautionSpaces} />
+        <SpaceDiagnosticsSection spaces={summary.spaceDiagnostics} />
         <div className="lg:col-span-2">
           <SummarySection
             title="Neighborhood Behavior"

@@ -232,8 +232,32 @@ const ANALYSIS_REPORT = {
     spaces: {
       "contextual.raw_l2": {
         available: true,
-        mean_vector_band: "healthy",
+        vector_dim: 256,
+        random_pair_percentiles: { p75: 0.967, p95: 0.998 },
+        mean_vector_band: "collapse_risk",
+        effective_rank: 24.3,
+        effective_rank_band: "weak",
+        pca_explained_variance: { pc1: 0.89 },
+        warnings: ["pc1_dominant", "mean_norm_collapse_risk"],
+      },
+      "contextual.whiten_pca": {
+        available: true,
+        vector_dim: 256,
+        random_pair_percentiles: { p75: 0.102, p95: 0.209 },
+        mean_vector_band: "good",
+        effective_rank: 121.8,
+        effective_rank_band: "broad",
+        pca_explained_variance: { pc1: 0.05 },
+        warnings: [],
+      },
+      "retrieval.remove_pc10": {
+        available: true,
+        vector_dim: 256,
+        random_pair_percentiles: { p75: 0.205, p95: 0.377 },
+        mean_vector_band: "okay",
+        effective_rank: 60.4,
         effective_rank_band: "plausible",
+        pca_explained_variance: { pc1: 0.11 },
         warnings: [],
       },
       "retrieval.raw_l2": {
@@ -513,7 +537,8 @@ test.describe("Sequence Models - MT Training", () => {
       ],
     });
     await expect(page.getByTestId("mt-analysis-summary-panel")).toBeVisible();
-    await expect(page.getByText("Recommended Spaces")).toBeVisible();
+    await expect(page.getByText("Embedding Spaces")).toBeVisible();
+    await expect(page.getByText("Raw Contextual Space")).toBeVisible();
     await expect(page.getByText("Label Coverage")).toBeVisible();
     await expect(page.getByText("Aggregate Retrieval Metrics")).toBeVisible();
     await expect(page.getByText("Geometry Diagnostics")).toBeVisible();
