@@ -10,20 +10,23 @@ import hashlib
 import json
 import logging
 import shutil
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 import pyarrow.parquet as pq
 from sklearn.decomposition import PCA
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from humpback.config import Settings
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
     MaskedTransformerJob,
+    MaskedTransformerJobSource,
 )
 from humpback.sequence_models.contrastive_loss import (
     parse_negative_label_family_policy,
@@ -84,6 +87,7 @@ class ExtendKSweepError(Exception):
 def compute_training_signature(
     *,
     continuous_embedding_job_id: str,
+    sources: Optional[list[dict[str, str | int]]] = None,
     preset: str,
     mask_fraction: float,
     span_length_min: int,
@@ -141,6 +145,15 @@ def compute_training_signature(
         "val_split": float(val_split),
         "seed": int(seed),
     }
+    if sources is not None:
+        payload["sources"] = [
+            {
+                "source_order": int(source["source_order"]),
+                "continuous_embedding_job_id": source["continuous_embedding_job_id"],
+                "event_classification_job_id": source["event_classification_job_id"],
+            }
+            for source in sources
+        ]
     if int(batch_size) != 8:
         payload["batch_size"] = int(batch_size)
     if retrieval_head_enabled:
@@ -486,6 +499,141 @@ def normalize_contrastive_config(
     )
 
 
+def _normalize_source_inputs(
+    *,
+    continuous_embedding_job_id: Optional[str],
+    event_classification_job_id: Optional[str],
+    sources: Optional[Sequence[Mapping[str, Any]]],
+) -> tuple[list[dict[str, Optional[str]]], bool]:
+    """Return source-pair inputs and whether caller used the multi-source shape."""
+    if sources is None:
+        if continuous_embedding_job_id is None:
+            raise ValueError("continuous_embedding_job_id is required")
+        return (
+            [
+                {
+                    "continuous_embedding_job_id": continuous_embedding_job_id,
+                    "event_classification_job_id": event_classification_job_id,
+                    "source_alias": None,
+                }
+            ],
+            False,
+        )
+    if not sources:
+        raise ValueError("sources must be non-empty")
+    normalized: list[dict[str, Optional[str]]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw_source in sources:
+        cej_id = raw_source.get("continuous_embedding_job_id")
+        classify_id = raw_source.get("event_classification_job_id")
+        if not cej_id:
+            raise ValueError("source continuous_embedding_job_id is required")
+        if not classify_id:
+            raise ValueError("source event_classification_job_id is required")
+        pair = (str(cej_id), str(classify_id))
+        if pair in seen:
+            raise ValueError("duplicate masked-transformer source pair")
+        seen.add(pair)
+        alias = raw_source.get("source_alias")
+        normalized.append(
+            {
+                "continuous_embedding_job_id": pair[0],
+                "event_classification_job_id": pair[1],
+                "source_alias": str(alias) if alias is not None else None,
+            }
+        )
+    return normalized, True
+
+
+def _compatible_value(value: Any) -> Any:
+    if isinstance(value, float):
+        return round(value, 9)
+    return value
+
+
+def _validate_source_compatibility(sources: list[ContinuousEmbeddingJob]) -> None:
+    if not sources:
+        raise ValueError("at least one source is required")
+    fields = (
+        "vector_dim",
+        "model_version",
+        "chunk_size_seconds",
+        "chunk_hop_seconds",
+        "projection_kind",
+        "projection_dim",
+    )
+    baseline = sources[0]
+    for field in fields:
+        expected = _compatible_value(getattr(baseline, field))
+        for source in sources[1:]:
+            actual = _compatible_value(getattr(source, field))
+            if actual != expected:
+                raise ValueError(
+                    "masked-transformer sources must share compatible "
+                    f"{field}: {expected!r} != {actual!r}"
+                )
+
+    checkpoints = [source.crnn_checkpoint_sha256 for source in sources]
+    if all(value is not None for value in checkpoints):
+        expected_checkpoint = checkpoints[0]
+        if any(value != expected_checkpoint for value in checkpoints[1:]):
+            raise ValueError(
+                "masked-transformer sources must share compatible "
+                "crnn_checkpoint_sha256"
+            )
+
+
+async def _resolve_source_pairs(
+    session: AsyncSession,
+    source_inputs: list[dict[str, Optional[str]]],
+) -> tuple[list[dict[str, str | int | None]], list[ContinuousEmbeddingJob]]:
+    from humpback.services.hmm_sequence_service import (
+        resolve_event_classification_job_id,
+    )
+
+    resolved: list[dict[str, str | int | None]] = []
+    cej_jobs: list[ContinuousEmbeddingJob] = []
+    for idx, source in enumerate(source_inputs):
+        cej_id = source["continuous_embedding_job_id"]
+        if cej_id is None:
+            raise ValueError("source continuous_embedding_job_id is required")
+        cej = await session.get(ContinuousEmbeddingJob, cej_id)
+        if cej is None:
+            raise ValueError(f"continuous_embedding_job not found: {cej_id}")
+        if cej.status != JobStatus.complete.value:
+            raise ValueError(
+                "masked-transformer job requires a completed continuous_embedding_job "
+                f"(current status: {cej.status!r})"
+            )
+        if source_kind_for(cej.model_version) != SOURCE_KIND_REGION_CRNN:
+            raise ValueError(
+                "masked-transformer job requires a CRNN region-based upstream "
+                "continuous_embedding_job "
+                f"(got source_kind={source_kind_for(cej.model_version)!r})"
+            )
+        if not cej.event_segmentation_job_id:
+            raise ValueError(
+                "continuous_embedding_job has no event_segmentation_job_id; "
+                "cannot resolve Classify binding"
+            )
+        classify_id = await resolve_event_classification_job_id(
+            session,
+            event_segmentation_job_id=cej.event_segmentation_job_id,
+            requested_id=source["event_classification_job_id"],
+        )
+        cej_jobs.append(cej)
+        resolved.append(
+            {
+                "source_order": idx,
+                "continuous_embedding_job_id": cej.id,
+                "event_classification_job_id": classify_id,
+                "source_alias": source.get("source_alias"),
+            }
+        )
+    _validate_source_compatibility(cej_jobs)
+    return resolved, cej_jobs
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -494,8 +642,9 @@ def normalize_contrastive_config(
 async def create_masked_transformer_job(
     session: AsyncSession,
     *,
-    continuous_embedding_job_id: str,
+    continuous_embedding_job_id: Optional[str] = None,
     event_classification_job_id: Optional[str] = None,
+    sources: Optional[Sequence[Mapping[str, Any]]] = None,
     preset: str = "default",
     mask_fraction: float = 0.20,
     span_length_min: int = 2,
@@ -546,6 +695,34 @@ async def create_masked_transformer_job(
     job unchanged regardless of any ``event_classification_job_id``
     value passed (re-binding is done via the regenerate endpoint).
     """
+    source_inputs, multi_source_shape = _normalize_source_inputs(
+        continuous_embedding_job_id=continuous_embedding_job_id,
+        event_classification_job_id=event_classification_job_id,
+        sources=sources,
+    )
+    if multi_source_shape:
+        if float(contrastive_loss_weight) != 0.0:
+            raise ValueError("multi-source MT Training does not support contrastive")
+        if contrastive_label_source != "none":
+            raise ValueError(
+                'multi-source MT Training requires contrastive_label_source="none"'
+            )
+        if training_freeze_mode != "none":
+            raise ValueError(
+                "multi-source MT Training does not support projection-head-only "
+                "ablation"
+            )
+        if source_masked_transformer_job_id is not None:
+            raise ValueError(
+                "multi-source MT Training does not support "
+                "source_masked_transformer_job_id"
+            )
+        if negative_label_family_policy_json is not None:
+            raise ValueError(
+                "multi-source MT Training does not support "
+                "negative_label_family_policy_json"
+            )
+
     if preset not in {"small", "default", "large"}:
         raise ValueError(f"preset must be one of small/default/large, got {preset!r}")
     normalized_batch_size = int(batch_size)
@@ -625,21 +802,11 @@ async def create_masked_transformer_job(
             "contrastive training requires event-centered or mixed sequence construction"
         )
 
-    cej = await session.get(ContinuousEmbeddingJob, continuous_embedding_job_id)
-    if cej is None:
-        raise ValueError(
-            f"continuous_embedding_job not found: {continuous_embedding_job_id}"
-        )
-    if cej.status != JobStatus.complete.value:
-        raise ValueError(
-            "masked-transformer job requires a completed continuous_embedding_job "
-            f"(current status: {cej.status!r})"
-        )
-    if source_kind_for(cej.model_version) != SOURCE_KIND_REGION_CRNN:
-        raise ValueError(
-            "masked-transformer job requires a CRNN region-based upstream "
-            f"continuous_embedding_job (got source_kind={source_kind_for(cej.model_version)!r})"
-        )
+    resolved_sources, cej_jobs = await _resolve_source_pairs(session, source_inputs)
+    primary_source = resolved_sources[0]
+    primary_cej_id = str(primary_source["continuous_embedding_job_id"])
+    primary_classify_id = str(primary_source["event_classification_job_id"])
+
     if normalized_training_freeze_mode == "transformer_frozen_projection_head_only":
         source_job = await session.get(
             MaskedTransformerJob, normalized_source_masked_transformer_job_id
@@ -654,7 +821,7 @@ async def create_masked_transformer_job(
                 "source_masked_transformer_job must be completed for "
                 "transformer_frozen_projection_head_only"
             )
-        if source_job.continuous_embedding_job_id != continuous_embedding_job_id:
+        if source_job.continuous_embedding_job_id != primary_cej_id:
             raise ValueError(
                 "source_masked_transformer_job must use the same "
                 "continuous_embedding_job_id"
@@ -684,23 +851,26 @@ async def create_masked_transformer_job(
     k_list = parse_k_values(k_values if k_values is not None else [100])
     classify_id_for_signature: Optional[str] = None
     if normalized_contrastive_loss_weight > 0.0:
-        if not cej.event_segmentation_job_id:
-            raise ValueError(
-                "continuous_embedding_job has no event_segmentation_job_id; "
-                "cannot resolve Classify binding"
-            )
-        from humpback.services.hmm_sequence_service import (
-            resolve_event_classification_job_id,
-        )
-
-        classify_id_for_signature = await resolve_event_classification_job_id(
-            session,
-            event_segmentation_job_id=cej.event_segmentation_job_id,
-            requested_id=event_classification_job_id,
-        )
+        classify_id_for_signature = primary_classify_id
 
     signature = compute_training_signature(
-        continuous_embedding_job_id=continuous_embedding_job_id,
+        continuous_embedding_job_id=primary_cej_id,
+        sources=(
+            [
+                {
+                    "source_order": int(cast(int, source["source_order"])),
+                    "continuous_embedding_job_id": str(
+                        source["continuous_embedding_job_id"]
+                    ),
+                    "event_classification_job_id": str(
+                        source["event_classification_job_id"]
+                    ),
+                }
+                for source in resolved_sources
+            ]
+            if multi_source_shape
+            else None
+        ),
         preset=preset,
         mask_fraction=mask_fraction,
         span_length_min=span_length_min,
@@ -741,34 +911,18 @@ async def create_masked_transformer_job(
     )
 
     existing = await session.execute(
-        select(MaskedTransformerJob).where(
-            MaskedTransformerJob.training_signature == signature
-        )
+        select(MaskedTransformerJob)
+        .options(selectinload(MaskedTransformerJob.sources))
+        .where(MaskedTransformerJob.training_signature == signature)
     )
     found = existing.scalar_one_or_none()
     if found is not None:
         return found, False
 
-    if not cej.event_segmentation_job_id:
-        raise ValueError(
-            "continuous_embedding_job has no event_segmentation_job_id; "
-            "cannot resolve Classify binding"
-        )
-    if classify_id_for_signature is None:
-        from humpback.services.hmm_sequence_service import (
-            resolve_event_classification_job_id,
-        )
-
-        classify_id = await resolve_event_classification_job_id(
-            session,
-            event_segmentation_job_id=cej.event_segmentation_job_id,
-            requested_id=event_classification_job_id,
-        )
-    else:
-        classify_id = classify_id_for_signature
+    classify_id = classify_id_for_signature or primary_classify_id
 
     job = MaskedTransformerJob(
-        continuous_embedding_job_id=continuous_embedding_job_id,
+        continuous_embedding_job_id=primary_cej_id,
         event_classification_job_id=classify_id,
         training_signature=signature,
         preset=preset,
@@ -810,9 +964,25 @@ async def create_masked_transformer_job(
         k_values=serialize_k_values(k_list),
         status=JobStatus.queued.value,
     )
+    job.sources = [
+        MaskedTransformerJobSource(
+            source_order=int(cast(int, source["source_order"])),
+            continuous_embedding_job_id=str(source["continuous_embedding_job_id"]),
+            event_classification_job_id=str(source["event_classification_job_id"]),
+            source_alias=(
+                str(source["source_alias"])
+                if source.get("source_alias") is not None
+                else None
+            ),
+        )
+        for source in resolved_sources
+    ]
     session.add(job)
     await session.commit()
     await session.refresh(job)
+    refreshed = await get_masked_transformer_job(session, job.id)
+    if refreshed is not None:
+        return refreshed, True
     return job, True
 
 
@@ -822,7 +992,11 @@ async def list_masked_transformer_jobs(
     status: Optional[str] = None,
     continuous_embedding_job_id: Optional[str] = None,
 ) -> list[MaskedTransformerJob]:
-    stmt = select(MaskedTransformerJob).order_by(MaskedTransformerJob.created_at.desc())
+    stmt = (
+        select(MaskedTransformerJob)
+        .options(selectinload(MaskedTransformerJob.sources))
+        .order_by(MaskedTransformerJob.created_at.desc())
+    )
     if status is not None:
         stmt = stmt.where(MaskedTransformerJob.status == status)
     if continuous_embedding_job_id is not None:
@@ -837,7 +1011,12 @@ async def list_masked_transformer_jobs(
 async def get_masked_transformer_job(
     session: AsyncSession, job_id: str
 ) -> Optional[MaskedTransformerJob]:
-    return await session.get(MaskedTransformerJob, job_id)
+    result = await session.execute(
+        select(MaskedTransformerJob)
+        .options(selectinload(MaskedTransformerJob.sources))
+        .where(MaskedTransformerJob.id == job_id)
+    )
+    return result.scalars().one_or_none()
 
 
 async def cancel_masked_transformer_job(

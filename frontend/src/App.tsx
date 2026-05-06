@@ -26,6 +26,9 @@ import { HMMSequenceJobsPage } from "@/components/sequence-models/HMMSequenceJob
 import { HMMSequenceDetailPage } from "@/components/sequence-models/HMMSequenceDetailPage";
 import { MaskedTransformerJobsPage } from "@/components/sequence-models/MaskedTransformerJobsPage";
 import { MaskedTransformerDetailPage } from "@/components/sequence-models/MaskedTransformerDetailPage";
+import { MTTrainingJobsPage } from "@/components/sequence-models/MTTrainingJobsPage";
+import { MTTrainingDetailPage } from "@/components/sequence-models/MTTrainingDetailPage";
+import { MTTrainingAnalysisPage } from "@/components/sequence-models/MTTrainingAnalysisPage";
 
 export default function App() {
   return (
@@ -58,8 +61,13 @@ export default function App() {
         <Route path="/app/sequence-models/continuous-embedding" element={<ContinuousEmbeddingJobsPage />} />
         <Route path="/app/sequence-models/hmm-sequence/:jobId" element={<HMMSequenceDetailPage />} />
         <Route path="/app/sequence-models/hmm-sequence" element={<HMMSequenceJobsPage />} />
+        <Route path="/app/sequence-models/mt-training/:jobId/analysis" element={<MTTrainingAnalysisPage />} />
+        <Route path="/app/sequence-models/mt-training/:jobId" element={<MTTrainingDetailPage />} />
+        <Route path="/app/sequence-models/mt-training" element={<MTTrainingJobsPage />} />
+        <Route path="/app/sequence-models/mt-motif/:jobId" element={<MaskedTransformerDetailPage />} />
+        <Route path="/app/sequence-models/mt-motif" element={<MaskedTransformerJobsPage />} />
         <Route path="/app/sequence-models/masked-transformer/:jobId" element={<MaskedTransformerDetailPage />} />
-        <Route path="/app/sequence-models/masked-transformer" element={<MaskedTransformerJobsPage />} />
+        <Route path="/app/sequence-models/masked-transformer" element={<Navigate to="/app/sequence-models/mt-motif" replace />} />
         <Route path="/app/admin" element={<AdminTab />} />
         <Route path="*" element={<Navigate to="/app/call-parsing/detection" replace />} />
       </Routes>

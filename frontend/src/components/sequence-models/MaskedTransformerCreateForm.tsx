@@ -210,7 +210,7 @@ export function MaskedTransformerCreateForm() {
     }
     createMutation.mutate(body, {
       onSuccess: (job) => {
-        navigate(`/app/sequence-models/masked-transformer/${job.id}`);
+        navigate(`/app/sequence-models/mt-motif/${job.id}`);
       },
       onError: (err: unknown) => {
         const message =
@@ -223,7 +223,7 @@ export function MaskedTransformerCreateForm() {
   return (
     <Card data-testid="masked-transformer-create-form">
       <CardHeader>
-        <CardTitle className="text-base">New Masked Transformer Job</CardTitle>
+        <CardTitle className="text-base">New MT Motif Job</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-2">

@@ -521,11 +521,11 @@ async function setupMocks(page: Page, state: MockState): Promise<void> {
   );
 }
 
-test.describe("Sequence Models — Masked Transformer", () => {
-  test("nav reaches the Masked Transformer jobs page", async ({ page }) => {
+test.describe("Sequence Models - MT Motif", () => {
+  test("nav reaches the MT Motif jobs page", async ({ page }) => {
     const state: MockState = { jobs: [QUEUED_JOB, COMPLETE_JOB] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
     await expect(page.getByTestId("masked-transformer-jobs-page")).toBeVisible();
     await expect(page.getByText("Active Jobs")).toBeVisible();
     await expect(page.getByText("Previous Jobs")).toBeVisible();
@@ -534,7 +534,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form filters to CRNN-source completed CE jobs", async ({ page }) => {
     const state: MockState = { jobs: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     const select = page.getByTestId("mt-source-select");
     await expect(select).toBeVisible();
@@ -547,7 +547,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form parses k_values CSV and submits", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -555,7 +555,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-k-values").fill("50, 100");
     await page.getByTestId("mt-preset-small").locator("input").check();
     await page.getByTestId("mt-create-submit").click();
-    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    await expect(page).toHaveURL(/\/mt-motif\/mt-created/);
     expect(state.capturedCreates?.[0]).toMatchObject({
       continuous_embedding_job_id: CEJ_CRNN_COMPLETE.id,
       preset: "small",
@@ -577,7 +577,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form submits retrieval-head config", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -587,7 +587,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-adv-retrieval_dim").fill("64");
     await page.getByTestId("mt-adv-retrieval_hidden_dim").fill("256");
     await page.getByTestId("mt-create-submit").click();
-    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    await expect(page).toHaveURL(/\/mt-motif\/mt-created/);
     expect(state.capturedCreates?.[0]).toMatchObject({
       retrieval_head_enabled: true,
       retrieval_dim: 64,
@@ -599,7 +599,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form submits custom batch size", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -607,7 +607,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-show-advanced").click();
     await page.getByTestId("mt-adv-batch_size").fill("16");
     await page.getByTestId("mt-create-submit").click();
-    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    await expect(page).toHaveURL(/\/mt-motif\/mt-created/);
     expect(state.capturedCreates?.[0]).toMatchObject({
       batch_size: 16,
     });
@@ -616,7 +616,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form submits contrastive config when retrieval is enabled", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -637,7 +637,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-contrastive-region-balance").uncheck();
     await page.getByTestId("mt-require-cross-region-positive").uncheck();
     await page.getByTestId("mt-create-submit").click();
-    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    await expect(page).toHaveURL(/\/mt-motif\/mt-created/);
     expect(state.capturedCreates?.[0]).toMatchObject({
       retrieval_head_enabled: true,
       sequence_construction_mode: "mixed",
@@ -661,7 +661,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form hides sampler controls until contrastive is active", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -680,7 +680,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form blocks invalid sampler values", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -698,7 +698,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form submits event-centered sequence mode", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -711,7 +711,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-adv-pre_event_context_sec").fill("1.5");
     await page.getByTestId("mt-adv-post_event_context_sec").fill("2.5");
     await page.getByTestId("mt-create-submit").click();
-    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    await expect(page).toHaveURL(/\/mt-motif\/mt-created/);
     expect(state.capturedCreates?.[0]).toMatchObject({
       sequence_construction_mode: "event_centered",
       event_centered_fraction: 1.0,
@@ -723,7 +723,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form submits mixed sequence fraction", async ({ page }) => {
     const state: MockState = { jobs: [], capturedCreates: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await page
       .getByTestId("mt-source-select")
@@ -732,7 +732,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-sequence-mode-mixed").locator("input").check();
     await page.getByTestId("mt-adv-event_centered_fraction").fill("0.35");
     await page.getByTestId("mt-create-submit").click();
-    await expect(page).toHaveURL(/\/masked-transformer\/mt-created/);
+    await expect(page).toHaveURL(/\/mt-motif\/mt-created/);
     expect(state.capturedCreates?.[0]).toMatchObject({
       sequence_construction_mode: "mixed",
       event_centered_fraction: 0.35,
@@ -744,7 +744,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("create form validation rejects k below 2", async ({ page }) => {
     const state: MockState = { jobs: [] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
     await page
       .getByTestId("mt-source-select")
       .selectOption(CEJ_CRNN_COMPLETE.id);
@@ -756,7 +756,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("jobs table displays k_values + device badge + actions", async ({ page }) => {
     const state: MockState = { jobs: [COMPLETE_JOB] };
     await setupMocks(page, state);
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
 
     await expect(
       page.getByTestId(`mt-job-k-values-${COMPLETE_JOB.id}`),
@@ -770,7 +770,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("detail page renders header, loss curve, timeline, exemplars, label distribution", async ({ page }) => {
     const state: MockState = { jobs: [COMPLETE_JOB] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("masked-transformer-detail-page")).toBeVisible();
     await expect(page.getByTestId("mt-detail-device-badge")).toContainText("mps");
@@ -785,7 +785,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("exemplar vocal label badge centers the token timeline", async ({ page }) => {
     const state: MockState = { jobs: [COMPLETE_JOB] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     const timelineCenter = page.getByTestId("mt-timeline-center");
     const readCenter = async () =>
@@ -799,7 +799,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
     await page.getByTestId("mt-exemplar-type-chip").first().click();
 
     await expect(page).toHaveURL(
-      new RegExp(`/masked-transformer/${COMPLETE_JOB.id}`),
+      new RegExp(`/mt-motif/${COMPLETE_JOB.id}`),
     );
     await expect(page.getByTestId("mt-timeline-viewer")).toBeInViewport();
     await expect
@@ -816,7 +816,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
   test("k-picker switches the URL search-param without remount", async ({ page }) => {
     const state: MockState = { jobs: [COMPLETE_JOB] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     // Default = first k.
     await expect(
@@ -838,7 +838,7 @@ test.describe("Sequence Models — Masked Transformer", () => {
       capturedMotifCreates: [],
     };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await page.getByTestId("k-picker-tab-100").click();
     await page.getByTestId("motif-create-submit").click();

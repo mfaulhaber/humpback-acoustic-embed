@@ -265,7 +265,7 @@ test.describe("Sequence Models — Classify binding (MT submit)", () => {
       return route.fulfill({ status: 405 });
     });
 
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
     await page.getByTestId("mt-source-select").selectOption(CEJ_CRNN.id);
 
     const classifySelect = page.getByTestId("mt-classify-select");
@@ -294,7 +294,7 @@ test.describe("Sequence Models — Classify binding (MT submit)", () => {
       return route.fulfill({ status: 405 });
     });
 
-    await page.goto("/app/sequence-models/masked-transformer");
+    await page.goto("/app/sequence-models/mt-motif");
     await page.getByTestId("mt-source-select").selectOption(CEJ_CRNN.id);
 
     await expect(page.getByTestId("mt-classify-select")).toBeDisabled();

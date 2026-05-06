@@ -627,13 +627,37 @@ class MotifOccurrencesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class MaskedTransformerJobSourceCreate(BaseModel):
+    """One source pair for multi-source masked-transformer training."""
+
+    continuous_embedding_job_id: str
+    event_classification_job_id: str
+    source_alias: Optional[str] = None
+
+
+class MaskedTransformerJobSourceOut(BaseModel):
+    """Persisted source pair for a masked-transformer job."""
+
+    id: str
+    masked_transformer_job_id: str
+    source_order: int
+    continuous_embedding_job_id: str
+    event_classification_job_id: str
+    source_alias: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class MaskedTransformerJobCreate(BaseModel):
     """Request body for creating a ``MaskedTransformerJob``."""
 
-    continuous_embedding_job_id: str
+    continuous_embedding_job_id: Optional[str] = None
     # Optional explicit Classify binding; same semantics as on
     # :class:`HMMSequenceJobCreate`.
     event_classification_job_id: Optional[str] = None
+    sources: Optional[list[MaskedTransformerJobSourceCreate]] = None
     preset: Literal["small", "default", "large"] = "default"
     k_values: list[int] = Field(default_factory=lambda: [100])
     mask_fraction: float = Field(default=0.20, ge=0.0, le=1.0)
@@ -686,6 +710,50 @@ class MaskedTransformerJobCreate(BaseModel):
 
     @model_validator(mode="after")
     def _validate_span(self) -> "MaskedTransformerJobCreate":
+        if self.sources is not None:
+            if not self.sources:
+                raise ValueError("sources must be non-empty when provided")
+            seen: set[tuple[str, str]] = set()
+            for source in self.sources:
+                pair = (
+                    source.continuous_embedding_job_id,
+                    source.event_classification_job_id,
+                )
+                if pair in seen:
+                    raise ValueError("duplicate masked-transformer source pair")
+                seen.add(pair)
+            first = self.sources[0]
+            if self.continuous_embedding_job_id is None:
+                self.continuous_embedding_job_id = first.continuous_embedding_job_id
+            if self.event_classification_job_id is None:
+                self.event_classification_job_id = first.event_classification_job_id
+            if self.contrastive_loss_weight != 0.0:
+                raise ValueError(
+                    "multi-source MT Training does not support contrastive training"
+                )
+            if self.contrastive_label_source != "none":
+                raise ValueError(
+                    "multi-source MT Training requires contrastive_label_source='none'"
+                )
+            if self.training_freeze_mode != "none":
+                raise ValueError(
+                    "multi-source MT Training does not support projection-head-only "
+                    "ablation"
+                )
+            if self.source_masked_transformer_job_id is not None:
+                raise ValueError(
+                    "multi-source MT Training does not support "
+                    "source_masked_transformer_job_id"
+                )
+            if self.negative_label_family_policy_json is not None:
+                raise ValueError(
+                    "multi-source MT Training does not support "
+                    "negative_label_family_policy_json"
+                )
+        elif self.continuous_embedding_job_id is None:
+            raise ValueError(
+                "continuous_embedding_job_id is required when sources is omitted"
+            )
         if self.span_length_max < self.span_length_min:
             raise ValueError("span_length_max must be >= span_length_min")
         if self.retrieval_head_enabled:
@@ -773,6 +841,7 @@ class MaskedTransformerJobOut(BaseModel):
     status_reason: Optional[str] = None
     continuous_embedding_job_id: str
     event_classification_job_id: Optional[str] = None
+    source_count: int = 1
     training_signature: str
     preset: str
     mask_fraction: float
@@ -847,6 +916,7 @@ class MaskedTransformerJobDetail(BaseModel):
     """Detail response for a masked-transformer job."""
 
     job: MaskedTransformerJobOut
+    sources: list[MaskedTransformerJobSourceOut] = Field(default_factory=list)
     region_detection_job_id: Optional[str] = None
     region_start_timestamp: Optional[float] = None
     region_end_timestamp: Optional[float] = None

@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import shutil
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -34,7 +35,9 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from humpback.call_parsing.segmentation.extraction import load_effective_events
 from humpback.config import Settings
@@ -81,6 +84,7 @@ from humpback.storage import (
     ensure_dir,
     masked_transformer_contextual_embeddings_path,
     masked_transformer_dir,
+    masked_transformer_inference_manifest_path,
     masked_transformer_k_decoded_path,
     masked_transformer_k_dir,
     masked_transformer_k_exemplars_path,
@@ -98,6 +102,14 @@ from humpback.storage import (
 from humpback.workers.queue import claim_masked_transformer_job
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _MTSourceContext:
+    source_index: int
+    continuous_embedding_job_id: str
+    event_classification_job_id: Optional[str]
+    source_alias: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +254,10 @@ _DECODED_SCHEMA = pa.schema(
         pa.field("tier", pa.string()),
         pa.field("chunk_index_in_region", pa.int32()),
         pa.field("region_id", pa.string()),
+        pa.field("source_index", pa.int32()),
+        pa.field("continuous_embedding_job_id", pa.string()),
+        pa.field("event_classification_job_id", pa.string(), nullable=True),
+        pa.field("original_region_id", pa.string()),
     ]
 )
 
@@ -257,6 +273,10 @@ def _write_per_k_bundle(
     starts: list[list[float]],
     ends: list[list[float]],
     audio_ids: list[list[Optional[int]]],
+    source_indexes: list[int],
+    source_continuous_embedding_job_ids: list[str],
+    source_event_classification_job_ids: list[Optional[str]],
+    original_region_ids: list[str],
     seed: int,
 ) -> None:
     """Fit k-means on stacked Z, decode tokens, and persist k<N>/ atomically."""
@@ -274,8 +294,28 @@ def _write_per_k_bundle(
     # Token decoding per sequence keeps ordering aligned with parquet rows.
     token_sequences: list[np.ndarray] = []
     rows: list[dict] = []
-    for region_id, Z_seq, tier_seq, start_seq, end_seq, audio_seq in zip(
-        region_ids, Z_by_seq, tier_lists, starts, ends, audio_ids
+    for (
+        region_id,
+        Z_seq,
+        tier_seq,
+        start_seq,
+        end_seq,
+        audio_seq,
+        source_index,
+        cej_id,
+        classify_id,
+        original_region_id,
+    ) in zip(
+        region_ids,
+        Z_by_seq,
+        tier_lists,
+        starts,
+        ends,
+        audio_ids,
+        source_indexes,
+        source_continuous_embedding_job_ids,
+        source_event_classification_job_ids,
+        original_region_ids,
     ):
         labels, confidences = decode_tokens(Z_seq, kmeans, tau)
         token_sequences.append(labels)
@@ -294,6 +334,10 @@ def _write_per_k_bundle(
                     "tier": tier_seq[pos] if pos < len(tier_seq) else "",
                     "chunk_index_in_region": int(pos),
                     "region_id": region_id,
+                    "source_index": int(source_index),
+                    "continuous_embedding_job_id": cej_id,
+                    "event_classification_job_id": classify_id,
+                    "original_region_id": original_region_id,
                 }
             )
 
@@ -331,6 +375,10 @@ def _write_contextual_embeddings(
     ends: list[list[float]],
     audio_ids: list[list[Optional[int]]],
     tier_lists: list[list[str]],
+    source_indexes: list[int],
+    source_continuous_embedding_job_ids: list[str],
+    source_event_classification_job_ids: list[Optional[str]],
+    original_region_ids: list[str],
 ) -> None:
     _write_embedding_artifact(
         dst=masked_transformer_contextual_embeddings_path(storage_root, job_id),
@@ -340,6 +388,10 @@ def _write_contextual_embeddings(
         ends=ends,
         audio_ids=audio_ids,
         tier_lists=tier_lists,
+        source_indexes=source_indexes,
+        source_continuous_embedding_job_ids=source_continuous_embedding_job_ids,
+        source_event_classification_job_ids=source_event_classification_job_ids,
+        original_region_ids=original_region_ids,
     )
 
 
@@ -353,6 +405,10 @@ def _write_retrieval_embeddings(
     ends: list[list[float]],
     audio_ids: list[list[Optional[int]]],
     tier_lists: list[list[str]],
+    source_indexes: list[int],
+    source_continuous_embedding_job_ids: list[str],
+    source_event_classification_job_ids: list[Optional[str]],
+    original_region_ids: list[str],
 ) -> None:
     _write_embedding_artifact(
         dst=masked_transformer_retrieval_embeddings_path(storage_root, job_id),
@@ -362,6 +418,10 @@ def _write_retrieval_embeddings(
         ends=ends,
         audio_ids=audio_ids,
         tier_lists=tier_lists,
+        source_indexes=source_indexes,
+        source_continuous_embedding_job_ids=source_continuous_embedding_job_ids,
+        source_event_classification_job_ids=source_event_classification_job_ids,
+        original_region_ids=original_region_ids,
     )
 
 
@@ -375,6 +435,10 @@ def _write_retrieval_head_outputs(
     ends: list[list[float]],
     audio_ids: list[list[Optional[int]]],
     tier_lists: list[list[str]],
+    source_indexes: list[int],
+    source_continuous_embedding_job_ids: list[str],
+    source_event_classification_job_ids: list[Optional[str]],
+    original_region_ids: list[str],
 ) -> None:
     _write_embedding_artifact(
         dst=masked_transformer_retrieval_head_outputs_path(storage_root, job_id),
@@ -384,6 +448,10 @@ def _write_retrieval_head_outputs(
         ends=ends,
         audio_ids=audio_ids,
         tier_lists=tier_lists,
+        source_indexes=source_indexes,
+        source_continuous_embedding_job_ids=source_continuous_embedding_job_ids,
+        source_event_classification_job_ids=source_event_classification_job_ids,
+        original_region_ids=original_region_ids,
     )
 
 
@@ -396,10 +464,34 @@ def _write_embedding_artifact(
     ends: list[list[float]],
     audio_ids: list[list[Optional[int]]],
     tier_lists: list[list[str]],
+    source_indexes: list[int],
+    source_continuous_embedding_job_ids: list[str],
+    source_event_classification_job_ids: list[Optional[str]],
+    original_region_ids: list[str],
 ) -> None:
     rows: list[dict] = []
-    for region_id, Z_seq, start_seq, end_seq, audio_seq, tier_seq in zip(
-        region_ids, embeddings_by_seq, starts, ends, audio_ids, tier_lists
+    for (
+        region_id,
+        Z_seq,
+        start_seq,
+        end_seq,
+        audio_seq,
+        tier_seq,
+        source_index,
+        cej_id,
+        classify_id,
+        original_region_id,
+    ) in zip(
+        region_ids,
+        embeddings_by_seq,
+        starts,
+        ends,
+        audio_ids,
+        tier_lists,
+        source_indexes,
+        source_continuous_embedding_job_ids,
+        source_event_classification_job_ids,
+        original_region_ids,
     ):
         for pos in range(Z_seq.shape[0]):
             rows.append(
@@ -413,6 +505,10 @@ def _write_embedding_artifact(
                     "end_timestamp": float(end_seq[pos]) if pos < len(end_seq) else 0.0,
                     "tier": tier_seq[pos] if pos < len(tier_seq) else "",
                     "embedding": Z_seq[pos].astype(np.float32).tolist(),
+                    "source_index": int(source_index),
+                    "continuous_embedding_job_id": cej_id,
+                    "event_classification_job_id": classify_id,
+                    "original_region_id": original_region_id,
                 }
             )
     table = pa.Table.from_pylist(rows)
@@ -430,10 +526,30 @@ def _write_reconstruction_error(
     rec_per_chunk: list[np.ndarray],
     starts: list[list[float]],
     ends: list[list[float]],
+    source_indexes: list[int],
+    source_continuous_embedding_job_ids: list[str],
+    source_event_classification_job_ids: list[Optional[str]],
+    original_region_ids: list[str],
 ) -> None:
     rows: list[dict] = []
-    for region_id, scores, start_seq, end_seq in zip(
-        region_ids, rec_per_chunk, starts, ends
+    for (
+        region_id,
+        scores,
+        start_seq,
+        end_seq,
+        source_index,
+        cej_id,
+        classify_id,
+        original_region_id,
+    ) in zip(
+        region_ids,
+        rec_per_chunk,
+        starts,
+        ends,
+        source_indexes,
+        source_continuous_embedding_job_ids,
+        source_event_classification_job_ids,
+        original_region_ids,
     ):
         for pos in range(len(scores)):
             rows.append(
@@ -445,6 +561,10 @@ def _write_reconstruction_error(
                     if pos < len(start_seq)
                     else 0.0,
                     "end_timestamp": float(end_seq[pos]) if pos < len(end_seq) else 0.0,
+                    "source_index": int(source_index),
+                    "continuous_embedding_job_id": cej_id,
+                    "event_classification_job_id": classify_id,
+                    "original_region_id": original_region_id,
                 }
             )
     table = pa.Table.from_pylist(rows)
@@ -594,6 +714,10 @@ def _read_contextual_embeddings(
     list[list[float]],
     list[list[Optional[int]]],
     list[list[str]],
+    list[int],
+    list[str],
+    list[Optional[str]],
+    list[str],
 ]:
     return _read_embedding_artifact(
         masked_transformer_contextual_embeddings_path(storage_root, job_id)
@@ -609,6 +733,10 @@ def _read_retrieval_embeddings(
     list[list[float]],
     list[list[Optional[int]]],
     list[list[str]],
+    list[int],
+    list[str],
+    list[Optional[str]],
+    list[str],
 ]:
     path = masked_transformer_retrieval_embeddings_path(storage_root, job_id)
     if not path.exists():
@@ -627,6 +755,10 @@ def _read_embedding_artifact(
     list[list[float]],
     list[list[Optional[int]]],
     list[list[str]],
+    list[int],
+    list[str],
+    list[Optional[str]],
+    list[str],
 ]:
     table = pq.read_table(path)
     region_col = table.column("region_id").to_pylist()
@@ -636,6 +768,10 @@ def _read_embedding_artifact(
     ends: list[list[float]] = []
     audio_ids: list[list[Optional[int]]] = []
     tiers: list[list[str]] = []
+    source_indexes: list[int] = []
+    source_cej_ids: list[str] = []
+    source_classify_ids: list[Optional[str]] = []
+    original_region_ids: list[str] = []
     for rid in unique_regions:
         indices = [i for i, v in enumerate(region_col) if v == rid]
         sub = table.take(indices).sort_by("chunk_index_in_region")
@@ -646,7 +782,39 @@ def _read_embedding_artifact(
         audio_ids.append(list(sub.column("audio_file_id").to_pylist()))
         tier_col = sub.column("tier").to_pylist() if "tier" in sub.column_names else []
         tiers.append([str(t) if t is not None else "" for t in tier_col])
-    return unique_regions, seqs, starts, ends, audio_ids, tiers
+        source_indexes.append(
+            int(sub.column("source_index")[0].as_py())
+            if "source_index" in sub.column_names
+            else 0
+        )
+        source_cej_ids.append(
+            str(sub.column("continuous_embedding_job_id")[0].as_py())
+            if "continuous_embedding_job_id" in sub.column_names
+            else ""
+        )
+        source_classify_ids.append(
+            str(sub.column("event_classification_job_id")[0].as_py())
+            if "event_classification_job_id" in sub.column_names
+            and sub.column("event_classification_job_id")[0].as_py() is not None
+            else None
+        )
+        original_region_ids.append(
+            str(sub.column("original_region_id")[0].as_py())
+            if "original_region_id" in sub.column_names
+            else str(rid)
+        )
+    return (
+        unique_regions,
+        seqs,
+        starts,
+        ends,
+        audio_ids,
+        tiers,
+        source_indexes,
+        source_cej_ids,
+        source_classify_ids,
+        original_region_ids,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -696,11 +864,60 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
     )
 
 
+async def _load_job_with_sources(
+    session: AsyncSession, job_id: str
+) -> MaskedTransformerJob:
+    result = await session.execute(
+        select(MaskedTransformerJob)
+        .options(selectinload(MaskedTransformerJob.sources))
+        .where(MaskedTransformerJob.id == job_id)
+    )
+    job = result.scalars().one_or_none()
+    if job is None:
+        raise ValueError(f"masked_transformer_job not found: {job_id}")
+    return job
+
+
+def _source_contexts_from_job(job: MaskedTransformerJob) -> list[_MTSourceContext]:
+    rows = sorted(job.sources, key=lambda source: source.source_order)
+    if rows:
+        return [
+            _MTSourceContext(
+                source_index=int(source.source_order),
+                continuous_embedding_job_id=source.continuous_embedding_job_id,
+                event_classification_job_id=(
+                    job.event_classification_job_id
+                    if len(rows) == 1 and job.event_classification_job_id
+                    else source.event_classification_job_id
+                ),
+                source_alias=source.source_alias,
+            )
+            for source in rows
+        ]
+    return [
+        _MTSourceContext(
+            source_index=0,
+            continuous_embedding_job_id=job.continuous_embedding_job_id,
+            event_classification_job_id=job.event_classification_job_id,
+        )
+    ]
+
+
+def _namespace_region_id(
+    source: _MTSourceContext, region_id: str, *, namespace: bool
+) -> str:
+    if not namespace:
+        return region_id
+    return f"{source.source_index}:{region_id}"
+
+
 async def _load_effective_event_intervals(
     session: AsyncSession,
     *,
     storage_root: Path,
     cej: ContinuousEmbeddingJob,
+    source: _MTSourceContext,
+    namespace_regions: bool = False,
 ) -> list[EffectiveEventInterval]:
     if not cej.event_segmentation_job_id:
         raise ValueError(
@@ -723,7 +940,9 @@ async def _load_effective_event_intervals(
     )
     return [
         EffectiveEventInterval(
-            region_id=event.region_id,
+            region_id=_namespace_region_id(
+                source, event.region_id, namespace=namespace_regions
+            ),
             start_timestamp=float(event.start_sec) + offset,
             end_timestamp=float(event.end_sec) + offset,
         )
@@ -736,6 +955,8 @@ async def _load_contrastive_event_intervals(
     *,
     storage_root: Path,
     cej: ContinuousEmbeddingJob,
+    source: _MTSourceContext,
+    namespace_regions: bool = False,
 ) -> list[EffectiveEventInterval]:
     if not cej.event_segmentation_job_id:
         raise ValueError(
@@ -759,7 +980,9 @@ async def _load_contrastive_event_intervals(
     )
     return [
         EffectiveEventInterval(
-            region_id=event.region_id,
+            region_id=_namespace_region_id(
+                source, event.region_id, namespace=namespace_regions
+            ),
             start_timestamp=event.start_timestamp,
             end_timestamp=event.end_timestamp,
             event_id=event.event_id,
@@ -809,6 +1032,108 @@ def _previously_done_k(storage_root: Path, job_id: str, k_list: list[int]) -> se
     return done
 
 
+def _write_inference_manifest(
+    *,
+    storage_root: Path,
+    job: MaskedTransformerJob,
+    config: MaskedTransformerConfig,
+    source_contexts: list[_MTSourceContext],
+    source_jobs: list[ContinuousEmbeddingJob],
+    namespace_regions: bool,
+    k_values: list[int],
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "masked_transformer_job_id": job.id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "model_path": str(masked_transformer_model_path(storage_root, job.id)),
+        "contextual_embeddings_path": str(
+            masked_transformer_contextual_embeddings_path(storage_root, job.id)
+        ),
+        "retrieval_embeddings_path": (
+            str(masked_transformer_retrieval_embeddings_path(storage_root, job.id))
+            if config.retrieval_head_enabled
+            else None
+        ),
+        "retrieval_head_outputs_path": (
+            str(masked_transformer_retrieval_head_outputs_path(storage_root, job.id))
+            if config.retrieval_head_enabled
+            else None
+        ),
+        "k_values": [int(k) for k in k_values],
+        "tokenizers": {
+            str(int(k)): {
+                "kmeans_path": str(
+                    masked_transformer_k_kmeans_path(storage_root, job.id, int(k))
+                ),
+                "decoded_path": str(
+                    masked_transformer_k_decoded_path(storage_root, job.id, int(k))
+                ),
+            }
+            for k in k_values
+        },
+        "sequence_id_strategy": (
+            "source_index_prefix" if namespace_regions else "region_id"
+        ),
+        "sequence_construction": {
+            "mode": config.sequence_construction_mode,
+            "event_centered_fraction": config.event_centered_fraction,
+            "pre_event_context_sec": config.pre_event_context_sec,
+            "post_event_context_sec": config.post_event_context_sec,
+        },
+        "model_config": {
+            "preset": config.preset,
+            "retrieval_head_enabled": config.retrieval_head_enabled,
+            "retrieval_dim": config.retrieval_dim,
+            "retrieval_hidden_dim": config.retrieval_hidden_dim,
+            "retrieval_l2_normalize": config.retrieval_l2_normalize,
+            "retrieval_head_arch": config.retrieval_head_arch,
+            "seed": config.seed,
+        },
+        "source_compatibility": {
+            "vector_dim": source_jobs[0].vector_dim if source_jobs else None,
+            "model_version": source_jobs[0].model_version if source_jobs else None,
+            "chunk_size_seconds": source_jobs[0].chunk_size_seconds
+            if source_jobs
+            else None,
+            "chunk_hop_seconds": source_jobs[0].chunk_hop_seconds
+            if source_jobs
+            else None,
+            "projection_kind": source_jobs[0].projection_kind if source_jobs else None,
+            "projection_dim": source_jobs[0].projection_dim if source_jobs else None,
+            "crnn_checkpoint_sha256": source_jobs[0].crnn_checkpoint_sha256
+            if source_jobs
+            else None,
+        },
+        "sources": [
+            {
+                "source_index": int(source.source_index),
+                "continuous_embedding_job_id": source.continuous_embedding_job_id,
+                "event_classification_job_id": source.event_classification_job_id,
+                "source_alias": source.source_alias,
+                "model_version": cej.model_version,
+                "vector_dim": cej.vector_dim,
+                "chunk_size_seconds": cej.chunk_size_seconds,
+                "chunk_hop_seconds": cej.chunk_hop_seconds,
+                "projection_kind": cej.projection_kind,
+                "projection_dim": cej.projection_dim,
+                "crnn_checkpoint_sha256": cej.crnn_checkpoint_sha256,
+                "parquet_path": str(
+                    continuous_embedding_parquet_path(
+                        storage_root, source.continuous_embedding_job_id
+                    )
+                ),
+            }
+            for source, cej in zip(source_contexts, source_jobs)
+        ],
+    }
+    dst = masked_transformer_inference_manifest_path(storage_root, job.id)
+    tmp = dst.with_suffix(dst.suffix + ".tmp")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+    atomic_rename(tmp, dst)
+
+
 async def run_masked_transformer_job(
     session: AsyncSession,
     job: MaskedTransformerJob,
@@ -826,26 +1151,37 @@ async def run_masked_transformer_job(
     job_id = job.id
     job_dir = ensure_dir(masked_transformer_dir(settings.storage_root, job_id))
     try:
-        job = await session.merge(job)
+        job = await _load_job_with_sources(session, job_id)
+        source_contexts = _source_contexts_from_job(job)
+        namespace_regions = len(source_contexts) > 1
 
-        # Validate upstream.
-        cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
-        if cej is None or cej.status != JobStatus.complete.value:
-            raise ValueError(
-                f"upstream continuous_embedding_job {job.continuous_embedding_job_id}"
-                " is not complete"
+        # Validate upstream source rows and collect parquet paths.
+        source_jobs: list[ContinuousEmbeddingJob] = []
+        source_embedding_paths: list[Path] = []
+        for source in source_contexts:
+            cej = await session.get(
+                ContinuousEmbeddingJob, source.continuous_embedding_job_id
             )
-        if source_kind_for(cej.model_version) != SOURCE_KIND_REGION_CRNN:
-            raise ValueError(
-                "masked-transformer requires a CRNN region-based upstream "
-                f"(got {cej.model_version!r})"
-            )
+            if cej is None or cej.status != JobStatus.complete.value:
+                raise ValueError(
+                    "upstream continuous_embedding_job "
+                    f"{source.continuous_embedding_job_id} is not complete"
+                )
+            if source_kind_for(cej.model_version) != SOURCE_KIND_REGION_CRNN:
+                raise ValueError(
+                    "masked-transformer requires a CRNN region-based upstream "
+                    f"(got {cej.model_version!r})"
+                )
 
-        embeddings_path = continuous_embedding_parquet_path(
-            settings.storage_root, cej.id
-        )
-        if not embeddings_path.exists():
-            raise FileNotFoundError(f"embeddings.parquet not found for cej {cej.id}")
+            embeddings_path = continuous_embedding_parquet_path(
+                settings.storage_root, cej.id
+            )
+            if not embeddings_path.exists():
+                raise FileNotFoundError(
+                    f"embeddings.parquet not found for cej {cej.id}"
+                )
+            source_jobs.append(cej)
+            source_embedding_paths.append(embeddings_path)
 
         # Mark running.
         job.status = JobStatus.running.value
@@ -857,6 +1193,10 @@ async def run_masked_transformer_job(
 
         k_list = parse_k_values(job.k_values)
         config = _config_from_job(job)
+        if len(source_contexts) > 1 and config.contrastive_loss_weight > 0.0:
+            raise ValueError(
+                "multi-source masked-transformer jobs cannot be contrastive"
+            )
 
         transformer_path = masked_transformer_model_path(settings.storage_root, job_id)
         z_path = masked_transformer_contextual_embeddings_path(
@@ -865,19 +1205,51 @@ async def run_masked_transformer_job(
         first_pass = not (transformer_path.exists() and z_path.exists())
 
         if first_pass:
-            embeddings_table = pq.read_table(embeddings_path)
-            (
-                region_ids,
-                sequences,
-                tier_lists,
-                starts,
-                ends,
-                audio_ids,
-            ) = _group_region_sequences(embeddings_table)
+            region_ids: list[str] = []
+            sequences: list[np.ndarray] = []
+            tier_lists: list[list[str]] = []
+            starts: list[list[float]] = []
+            ends: list[list[float]] = []
+            audio_ids: list[list[Optional[int]]] = []
+            source_indexes: list[int] = []
+            source_cej_ids: list[str] = []
+            source_classify_ids: list[Optional[str]] = []
+            original_region_ids: list[str] = []
+
+            for source, embeddings_path in zip(source_contexts, source_embedding_paths):
+                embeddings_table = pq.read_table(embeddings_path)
+                (
+                    local_region_ids,
+                    local_sequences,
+                    local_tier_lists,
+                    local_starts,
+                    local_ends,
+                    local_audio_ids,
+                ) = _group_region_sequences(embeddings_table)
+                for idx, original_region_id in enumerate(local_region_ids):
+                    region_ids.append(
+                        _namespace_region_id(
+                            source, original_region_id, namespace=namespace_regions
+                        )
+                    )
+                    sequences.append(local_sequences[idx])
+                    tier_lists.append(local_tier_lists[idx])
+                    starts.append(local_starts[idx])
+                    ends.append(local_ends[idx])
+                    audio_ids.append(local_audio_ids[idx])
+                    source_indexes.append(int(source.source_index))
+                    source_cej_ids.append(source.continuous_embedding_job_id)
+                    source_classify_ids.append(source.event_classification_job_id)
+                    original_region_ids.append(original_region_id)
             if not sequences:
                 raise ValueError("no embedding sequences found in upstream parquet")
 
             feature_dim = int(sequences[0].shape[1])
+            for sequence in sequences[1:]:
+                if int(sequence.shape[1]) != feature_dim:
+                    raise ValueError(
+                        "masked-transformer source embeddings must share feature_dim"
+                    )
             chosen_device, fallback_reason = validate_training_device(
                 feature_dim, force_fail=device_validation_force_fail
             )
@@ -895,17 +1267,27 @@ async def run_masked_transformer_job(
                 config.training_freeze_mode == "transformer_frozen_projection_head_only"
             )
             if contrastive_enabled:
-                event_intervals = await _load_contrastive_event_intervals(
-                    session,
-                    storage_root=settings.storage_root,
-                    cej=cej,
-                )
+                for source, cej in zip(source_contexts, source_jobs):
+                    event_intervals.extend(
+                        await _load_contrastive_event_intervals(
+                            session,
+                            storage_root=settings.storage_root,
+                            cej=cej,
+                            source=source,
+                            namespace_regions=namespace_regions,
+                        )
+                    )
             elif config.sequence_construction_mode != "region":
-                event_intervals = await _load_effective_event_intervals(
-                    session,
-                    storage_root=settings.storage_root,
-                    cej=cej,
-                )
+                for source, cej in zip(source_contexts, source_jobs):
+                    event_intervals.extend(
+                        await _load_effective_event_intervals(
+                            session,
+                            storage_root=settings.storage_root,
+                            cej=cej,
+                            source=source,
+                            namespace_regions=namespace_regions,
+                        )
+                    )
             construction_mode = (
                 "event_centered"
                 if projection_head_only
@@ -1017,6 +1399,10 @@ async def run_masked_transformer_job(
                 rec_per_chunk=full_region_reconstruction_error,
                 starts=starts,
                 ends=ends,
+                source_indexes=source_indexes,
+                source_continuous_embedding_job_ids=source_cej_ids,
+                source_event_classification_job_ids=source_classify_ids,
+                original_region_ids=original_region_ids,
             )
 
             Z, R, R_pre_l2, _ = extract_transformer_embeddings_with_pre_l2(
@@ -1031,6 +1417,10 @@ async def run_masked_transformer_job(
                 ends=ends,
                 audio_ids=audio_ids,
                 tier_lists=tier_lists,
+                source_indexes=source_indexes,
+                source_continuous_embedding_job_ids=source_cej_ids,
+                source_event_classification_job_ids=source_classify_ids,
+                original_region_ids=original_region_ids,
             )
             if config.retrieval_head_enabled:
                 if R is None or R_pre_l2 is None:
@@ -1044,6 +1434,10 @@ async def run_masked_transformer_job(
                     ends=ends,
                     audio_ids=audio_ids,
                     tier_lists=tier_lists,
+                    source_indexes=source_indexes,
+                    source_continuous_embedding_job_ids=source_cej_ids,
+                    source_event_classification_job_ids=source_classify_ids,
+                    original_region_ids=original_region_ids,
                 )
                 _write_retrieval_embeddings(
                     storage_root=settings.storage_root,
@@ -1054,6 +1448,10 @@ async def run_masked_transformer_job(
                     ends=ends,
                     audio_ids=audio_ids,
                     tier_lists=tier_lists,
+                    source_indexes=source_indexes,
+                    source_continuous_embedding_job_ids=source_cej_ids,
+                    source_event_classification_job_ids=source_classify_ids,
+                    original_region_ids=original_region_ids,
                 )
                 token_embeddings = R
             else:
@@ -1078,6 +1476,10 @@ async def run_masked_transformer_job(
                 ends,
                 audio_ids,
                 tier_lists,
+                source_indexes,
+                source_cej_ids,
+                source_classify_ids,
+                original_region_ids,
             ) = (
                 _read_retrieval_embeddings(settings.storage_root, job_id)
                 if config.retrieval_head_enabled
@@ -1102,6 +1504,10 @@ async def run_masked_transformer_job(
                 starts=starts,
                 ends=ends,
                 audio_ids=audio_ids,
+                source_indexes=source_indexes,
+                source_continuous_embedding_job_ids=source_cej_ids,
+                source_event_classification_job_ids=source_classify_ids,
+                original_region_ids=original_region_ids,
                 seed=int(job.seed),
             )
             # Spec §4.2: produce overlay/exemplars/label-distribution per k so
@@ -1109,6 +1515,16 @@ async def run_masked_transformer_job(
             # `complete`. Without this, frontend reads 404 until the user hits
             # POST /generate-interpretations manually.
             await generate_interpretations(session, settings.storage_root, job, int(k))
+
+        _write_inference_manifest(
+            storage_root=settings.storage_root,
+            job=job,
+            config=config,
+            source_contexts=source_contexts,
+            source_jobs=source_jobs,
+            namespace_regions=namespace_regions,
+            k_values=k_list,
+        )
 
         # Mark completed.
         now = datetime.now(timezone.utc)

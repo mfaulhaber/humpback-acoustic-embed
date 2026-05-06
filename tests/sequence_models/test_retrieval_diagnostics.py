@@ -333,6 +333,50 @@ def test_geometry_retrieval_pre_l2_norm_distribution_when_available():
     assert report["dimension_std"]["max"] > 1.0
 
 
+def test_source_aware_event_assignment_disambiguates_overlapping_sources():
+    rows = [
+        {
+            "region_id": "0:R1",
+            "original_region_id": "R1",
+            "source_index": 0,
+            "start_timestamp": 1000.0,
+            "end_timestamp": 1000.25,
+        },
+        {
+            "region_id": "1:R1",
+            "original_region_id": "R1",
+            "source_index": 1,
+            "start_timestamp": 1000.0,
+            "end_timestamp": 1000.25,
+        },
+    ]
+    events = [
+        diag.HumanLabeledEvent(
+            event_id="0:E1",
+            region_id="0:R1",
+            start_utc=1000.0,
+            end_utc=1000.5,
+            human_types=("Moan",),
+            source_index=0,
+        ),
+        diag.HumanLabeledEvent(
+            event_id="1:E1",
+            region_id="1:R1",
+            start_utc=1000.0,
+            end_utc=1000.5,
+            human_types=("Growl",),
+            source_index=1,
+        ),
+    ]
+
+    assigned = diag._assign_events_to_rows(rows, events)
+
+    assert assigned[0] is not None
+    assert assigned[1] is not None
+    assert assigned[0].human_types == ("Moan",)
+    assert assigned[1].human_types == ("Growl",)
+
+
 async def test_human_corrections_support_multiple_labels(session, tmp_storage):
     rdj_id, seg_id, _cls_id = await _seed_chain(session, tmp_storage)
     write_events(

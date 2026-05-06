@@ -22,6 +22,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import normalize
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from humpback.call_parsing.segmentation.extraction import load_effective_events
 from humpback.models.call_parsing import (
@@ -132,6 +133,11 @@ class HumanLabeledEvent:
     start_utc: float
     end_utc: float
     human_types: tuple[str, ...]
+    source_index: int | None = None
+    continuous_embedding_job_id: str | None = None
+    event_classification_job_id: str | None = None
+    original_event_id: str | None = None
+    original_region_id: str | None = None
 
     @property
     def duration(self) -> float:
@@ -139,10 +145,20 @@ class HumanLabeledEvent:
 
 
 @dataclass(frozen=True)
+class _DiagnosticSource:
+    source_index: int
+    continuous_embedding_job_id: str
+    event_classification_job_id: str | None
+    continuous_embedding_job: ContinuousEmbeddingJob
+    region_detection_job: RegionDetectionJob
+
+
+@dataclass(frozen=True)
 class _JobContext:
     job: MaskedTransformerJob
     continuous_embedding_job: ContinuousEmbeddingJob
     region_detection_job: RegionDetectionJob
+    sources: list[_DiagnosticSource]
     k: int
     k_values: list[int]
     events: list[HumanLabeledEvent]
@@ -199,26 +215,23 @@ def _assign_events_to_rows(
     rows: list[dict[str, Any]], events: list[HumanLabeledEvent]
 ) -> list[HumanLabeledEvent | None]:
     annotations: list[HumanLabeledEvent | None] = [None] * len(rows)
-    order = sorted(
-        range(len(rows)),
-        key=lambda i: (
-            (float(rows[i]["start_timestamp"]) + float(rows[i]["end_timestamp"])) / 2.0,
-            i,
-        ),
-    )
-    centers = [
-        (float(rows[i]["start_timestamp"]) + float(rows[i]["end_timestamp"])) / 2.0
-        for i in order
-    ]
-    cursor = 0
-    for event in sorted(events, key=lambda e: (e.start_utc, e.end_utc, e.event_id)):
-        while cursor < len(order) and centers[cursor] < event.start_utc:
-            cursor += 1
-        i = cursor
-        while i < len(order) and centers[i] < event.end_utc:
-            annotations[order[i]] = event
-            i += 1
-        cursor = i
+    sorted_events = sorted(events, key=lambda e: (e.start_utc, e.end_utc, e.event_id))
+    for row_idx, row in enumerate(rows):
+        center = (float(row["start_timestamp"]) + float(row["end_timestamp"])) / 2.0
+        for event in sorted_events:
+            if center < event.start_utc:
+                break
+            if center >= event.end_utc:
+                continue
+            if event.source_index is None or int(row.get("source_index", 0)) == int(
+                event.source_index
+            ):
+                event_region = event.region_id
+                row_region = str(row.get("region_id") or "")
+                row_original_region = str(row.get("original_region_id") or row_region)
+                if not row_region or event_region in {row_region, row_original_region}:
+                    annotations[row_idx] = event
+                    break
     return annotations
 
 
@@ -292,6 +305,117 @@ async def load_human_correction_events(
     }
 
 
+def _namespace_event(
+    event: HumanLabeledEvent,
+    *,
+    source_index: int,
+    continuous_embedding_job_id: str,
+    event_classification_job_id: str | None,
+    namespace_regions: bool,
+) -> HumanLabeledEvent:
+    event_id = (
+        f"{source_index}:{event.event_id}" if namespace_regions else event.event_id
+    )
+    region_id = (
+        f"{source_index}:{event.region_id}" if namespace_regions else event.region_id
+    )
+    return HumanLabeledEvent(
+        event_id=event_id,
+        region_id=region_id,
+        start_utc=event.start_utc,
+        end_utc=event.end_utc,
+        human_types=event.human_types,
+        source_index=source_index,
+        continuous_embedding_job_id=continuous_embedding_job_id,
+        event_classification_job_id=event_classification_job_id,
+        original_event_id=event.event_id,
+        original_region_id=event.region_id,
+    )
+
+
+def _merge_correction_meta(metas: list[dict[str, Any]]) -> dict[str, Any]:
+    merged = {
+        "total_correction_rows": 0,
+        "events_with_human_labels": 0,
+        "unlabeled_effective_events": 0,
+        "single_label_effective_events": 0,
+        "multi_label_effective_events": 0,
+        "corrections_by_type": {},
+        "event_label_counts": {},
+    }
+    correction_counter: Counter[str] = Counter()
+    label_counter: Counter[str] = Counter()
+    for meta in metas:
+        for key in (
+            "total_correction_rows",
+            "events_with_human_labels",
+            "unlabeled_effective_events",
+            "single_label_effective_events",
+            "multi_label_effective_events",
+        ):
+            merged[key] += int(meta.get(key, 0))
+        correction_counter.update(meta.get("corrections_by_type", {}) or {})
+        label_counter.update(meta.get("event_label_counts", {}) or {})
+    merged["corrections_by_type"] = dict(correction_counter.most_common())
+    merged["event_label_counts"] = dict(label_counter.most_common())
+    return merged
+
+
+async def _diagnostic_sources_for_job(
+    session: AsyncSession, job: MaskedTransformerJob
+) -> list[_DiagnosticSource]:
+    source_rows = sorted(job.sources, key=lambda source: source.source_order)
+    if not source_rows:
+        source_rows = []
+
+    raw_sources: list[tuple[int, str, str | None]] = (
+        [
+            (
+                int(source.source_order),
+                source.continuous_embedding_job_id,
+                source.event_classification_job_id,
+            )
+            for source in source_rows
+        ]
+        if source_rows
+        else [(0, job.continuous_embedding_job_id, job.event_classification_job_id)]
+    )
+    if len(raw_sources) == 1 and job.event_classification_job_id:
+        idx, cej_id, _classify_id = raw_sources[0]
+        raw_sources[0] = (idx, cej_id, job.event_classification_job_id)
+
+    out: list[_DiagnosticSource] = []
+    for source_index, cej_id, classify_id in raw_sources:
+        cej = await session.get(ContinuousEmbeddingJob, cej_id)
+        if cej is None:
+            raise RetrievalDiagnosticsConflict(
+                f"continuous embedding job not found: {cej_id}"
+            )
+        if not cej.region_detection_job_id:
+            raise RetrievalDiagnosticsConflict(
+                "masked-transformer diagnostics require a region-scoped upstream"
+            )
+        if not cej.event_segmentation_job_id:
+            raise RetrievalDiagnosticsConflict(
+                "continuous embedding job has no event_segmentation_job_id"
+            )
+        rdj = await session.get(RegionDetectionJob, cej.region_detection_job_id)
+        if rdj is None:
+            raise RetrievalDiagnosticsConflict(
+                f"region detection job not found: {cej.region_detection_job_id}"
+            )
+        out.append(
+            _DiagnosticSource(
+                source_index=source_index,
+                continuous_embedding_job_id=cej.id,
+                event_classification_job_id=classify_id,
+                continuous_embedding_job=cej,
+                region_detection_job=rdj,
+            )
+        )
+    return out
+
+
 async def _load_job_context(
     session: AsyncSession,
     *,
@@ -299,31 +423,21 @@ async def _load_job_context(
     job_id: str,
     requested_k: int | None,
 ) -> _JobContext:
-    job = await session.get(MaskedTransformerJob, job_id)
+    result = await session.execute(
+        select(MaskedTransformerJob)
+        .options(selectinload(MaskedTransformerJob.sources))
+        .where(MaskedTransformerJob.id == job_id)
+    )
+    job = result.scalars().one_or_none()
     if job is None:
         raise RetrievalDiagnosticsNotFound("masked transformer job not found")
     if job.status != JobStatus.complete.value:
         raise RetrievalDiagnosticsConflict("masked transformer job is not complete")
 
-    cej = await session.get(ContinuousEmbeddingJob, job.continuous_embedding_job_id)
-    if cej is None:
-        raise RetrievalDiagnosticsConflict(
-            f"continuous embedding job not found: {job.continuous_embedding_job_id}"
-        )
-    if not cej.region_detection_job_id:
-        raise RetrievalDiagnosticsConflict(
-            "masked-transformer diagnostics require a region-scoped upstream"
-        )
-    if not cej.event_segmentation_job_id:
-        raise RetrievalDiagnosticsConflict(
-            "continuous embedding job has no event_segmentation_job_id"
-        )
-
-    rdj = await session.get(RegionDetectionJob, cej.region_detection_job_id)
-    if rdj is None:
-        raise RetrievalDiagnosticsConflict(
-            f"region detection job not found: {cej.region_detection_job_id}"
-        )
+    sources = await _diagnostic_sources_for_job(session, job)
+    primary = sources[0]
+    cej = primary.continuous_embedding_job
+    rdj = primary.region_detection_job
 
     try:
         k_values = parse_k_values(job.k_values)
@@ -336,22 +450,40 @@ async def _load_job_context(
     if k not in k_values:
         raise RetrievalDiagnosticsNotFound(f"k={k} is not in this job's k_values")
 
-    events, correction_meta = await load_human_correction_events(
-        session,
-        storage_root=storage_root,
-        event_segmentation_job_id=cej.event_segmentation_job_id,
-        region_detection_job_id=cej.region_detection_job_id,
-        region_start_timestamp=rdj.start_timestamp,
-    )
+    namespace_regions = len(sources) > 1
+    all_events: list[HumanLabeledEvent] = []
+    all_meta: list[dict[str, Any]] = []
+    for source in sources:
+        source_events, source_meta = await load_human_correction_events(
+            session,
+            storage_root=storage_root,
+            event_segmentation_job_id=source.continuous_embedding_job.event_segmentation_job_id
+            or "",
+            region_detection_job_id=source.continuous_embedding_job.region_detection_job_id
+            or "",
+            region_start_timestamp=source.region_detection_job.start_timestamp,
+        )
+        all_events.extend(
+            _namespace_event(
+                event,
+                source_index=source.source_index,
+                continuous_embedding_job_id=source.continuous_embedding_job_id,
+                event_classification_job_id=source.event_classification_job_id,
+                namespace_regions=namespace_regions,
+            )
+            for event in source_events
+        )
+        all_meta.append(source_meta)
 
     return _JobContext(
         job=job,
         continuous_embedding_job=cej,
         region_detection_job=rdj,
+        sources=sources,
         k=k,
         k_values=k_values,
-        events=events,
-        correction_meta=correction_meta,
+        events=all_events,
+        correction_meta=_merge_correction_meta(all_meta),
     )
 
 
@@ -370,10 +502,8 @@ def _build_rows(
     embedding_space: EmbeddingSpace,
 ) -> tuple[list[dict[str, Any]], FloatArray, dict[str, str]]:
     job_id = context.job.id
-    cej_id = context.continuous_embedding_job.id
     embedding_path = _embedding_path(storage_root, job_id, embedding_space)
     decoded_path = masked_transformer_k_decoded_path(storage_root, job_id, context.k)
-    ce_path = continuous_embedding_parquet_path(storage_root, cej_id)
 
     if not embedding_path.exists():
         raise RetrievalDiagnosticsConflict(
@@ -383,14 +513,9 @@ def _build_rows(
         raise RetrievalDiagnosticsConflict(
             f"decoded.parquet not found for k={context.k}"
         )
-    if not ce_path.exists():
-        raise RetrievalDiagnosticsConflict(
-            f"continuous embedding parquet not found for job {cej_id}"
-        )
 
     embedding_rows = _read_table_rows(embedding_path)
     decoded_rows = _read_table_rows(decoded_path)
-    ce_rows = _read_table_rows(ce_path)
 
     decoded_by_key: dict[tuple[str, int], dict[str, Any]] = {}
     for row in decoded_rows:
@@ -398,11 +523,22 @@ def _build_rows(
         position = int(row.get("chunk_index_in_region", row.get("position", 0)))
         decoded_by_key[(region_id, position)] = row
 
-    ce_by_key: dict[tuple[str, int], dict[str, Any]] = {}
-    for row in ce_rows:
-        region_id = str(row.get("region_id") or "")
-        position = int(row.get("chunk_index_in_region", 0))
-        ce_by_key[(region_id, position)] = row
+    ce_paths: dict[int, Path] = {}
+    ce_by_key: dict[tuple[int, str, int], dict[str, Any]] = {}
+    for source in context.sources:
+        ce_path = continuous_embedding_parquet_path(
+            storage_root, source.continuous_embedding_job_id
+        )
+        if not ce_path.exists():
+            raise RetrievalDiagnosticsConflict(
+                "continuous embedding parquet not found for job "
+                f"{source.continuous_embedding_job_id}"
+            )
+        ce_paths[int(source.source_index)] = ce_path
+        for row in _read_table_rows(ce_path):
+            region_id = str(row.get("region_id") or "")
+            position = int(row.get("chunk_index_in_region", 0))
+            ce_by_key[(int(source.source_index), region_id, position)] = row
 
     event_for_row = _assign_events_to_rows(embedding_rows, context.events)
     raw_vectors = np.asarray(
@@ -412,10 +548,12 @@ def _build_rows(
     rows: list[dict[str, Any]] = []
     for idx, (emb_row, event) in enumerate(zip(embedding_rows, event_for_row)):
         region_id = str(emb_row["region_id"])
+        source_index = int(emb_row.get("source_index", 0))
+        original_region_id = str(emb_row.get("original_region_id") or region_id)
         chunk_index = int(emb_row["chunk_index_in_region"])
         key = (region_id, chunk_index)
         decoded = decoded_by_key.get(key, {})
-        ce = ce_by_key.get(key, {})
+        ce = ce_by_key.get((source_index, original_region_id, chunk_index), {})
         start = float(emb_row["start_timestamp"])
         end = float(emb_row["end_timestamp"])
         human_types = event.human_types if event else tuple()
@@ -423,6 +561,16 @@ def _build_rows(
             {
                 "idx": idx,
                 "region_id": region_id,
+                "original_region_id": original_region_id,
+                "source_index": source_index,
+                "continuous_embedding_job_id": str(
+                    emb_row.get("continuous_embedding_job_id")
+                    or context.continuous_embedding_job.id
+                ),
+                "event_classification_job_id": emb_row.get(
+                    "event_classification_job_id"
+                )
+                or context.job.event_classification_job_id,
                 "chunk_index": chunk_index,
                 "start_timestamp": start,
                 "end_timestamp": end,
@@ -447,7 +595,12 @@ def _build_rows(
     artifacts = {
         "embedding_path": str(embedding_path),
         "decoded_path": str(decoded_path),
-        "continuous_embedding_path": str(ce_path),
+        "continuous_embedding_path": str(
+            ce_paths.get(0)
+            or continuous_embedding_parquet_path(
+                storage_root, context.continuous_embedding_job.id
+            )
+        ),
     }
     return rows, raw_vectors, artifacts
 

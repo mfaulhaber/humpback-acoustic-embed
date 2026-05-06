@@ -222,11 +222,11 @@ export function MaskedTransformerDetailPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">
-              Masked Transformer · {job.id.slice(0, 8)}
+              MT Motif · {job.id.slice(0, 8)}
             </CardTitle>
             <Link
               className="text-xs underline text-muted-foreground"
-              to="/app/sequence-models/masked-transformer"
+              to="/app/sequence-models/mt-motif"
             >
               ← back
             </Link>

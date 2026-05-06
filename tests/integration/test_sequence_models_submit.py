@@ -107,6 +107,12 @@ async def _seed_crnn_cej(app_settings, seg_job_id: str) -> str:
             hop_seconds=0.25,
             pad_seconds=0.0,
             target_sample_rate=16000,
+            vector_dim=8,
+            chunk_size_seconds=0.25,
+            chunk_hop_seconds=0.25,
+            crnn_checkpoint_sha256="test-crnn-checkpoint",
+            projection_kind="identity",
+            projection_dim=8,
             encoding_signature=f"submit-test-crnn-{seg_job_id}",
         )
         session.add(cej)
@@ -255,6 +261,50 @@ async def test_mt_submit_defaults_to_latest_classification(client, app_settings)
     body = resp.json()
     assert body["event_classification_job_id"] == newer_id
     assert body["event_classification_job_id"] != older_id
+
+
+async def test_mt_submit_accepts_multiple_source_pairs(client, app_settings):
+    seg_a_id, classify_a, _ = await _seed_segmentation_with_optional_classify(
+        app_settings
+    )
+    seg_b_id, classify_b, _ = await _seed_segmentation_with_optional_classify(
+        app_settings
+    )
+    cej_a = await _seed_crnn_cej(app_settings, seg_a_id)
+    cej_b = await _seed_crnn_cej(app_settings, seg_b_id)
+
+    resp = await client.post(
+        "/sequence-models/masked-transformers",
+        json={
+            "sources": [
+                {
+                    "continuous_embedding_job_id": cej_a,
+                    "event_classification_job_id": classify_a,
+                },
+                {
+                    "continuous_embedding_job_id": cej_b,
+                    "event_classification_job_id": classify_b,
+                },
+            ],
+            "preset": "small",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["continuous_embedding_job_id"] == cej_a
+    assert body["event_classification_job_id"] == classify_a
+
+    detail = await client.get(f"/sequence-models/masked-transformers/{body['id']}")
+    assert detail.status_code == 200, detail.text
+    sources = detail.json()["sources"]
+    assert [source["continuous_embedding_job_id"] for source in sources] == [
+        cej_a,
+        cej_b,
+    ]
+    assert [source["event_classification_job_id"] for source in sources] == [
+        classify_a,
+        classify_b,
+    ]
 
 
 async def test_mt_submit_rejects_mismatched_classification(client, app_settings):
