@@ -605,8 +605,9 @@ parameter.
   percentiles (`p0`, `p1`, `p5`, `p25`, `p50`, `p75`, `p95`, `p99`,
   `p100`), normalized mean-vector norm and band, effective rank and band,
   PCA explained variance (`pc1`, `pc1_5`, `pc1_10`), per-dimension
-  standard-deviation summary, pre-L2 norm distribution where available,
-  and warnings. Missing retrieval artifacts are returned as unavailable
+  standard-deviation summary with a `dimension_std_source`, pre-L2 norm
+  distribution where available, and warnings. Missing retrieval artifacts
+  are returned as unavailable
   retrieval spaces instead of failing the whole contextual report. The
   summary flags `retrieval_raw_saturated` and
   `lambda_sweeps_blocked`; further lambda sweeps should remain paused

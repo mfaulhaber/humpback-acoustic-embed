@@ -890,6 +890,22 @@ def _norm_distribution(
     return {"available": True, "source": source, **_percentile_summary(norms)}
 
 
+def _dimension_std_vectors(
+    *,
+    source_space: EmbeddingSpace,
+    variant_pre_l2_matrix: FloatArray,
+    retrieval_pre_l2_vectors: FloatArray | None,
+    retrieval_pre_l2_source: str | None,
+) -> tuple[FloatArray, str]:
+    if source_space == "retrieval":
+        if retrieval_pre_l2_vectors is not None:
+            return retrieval_pre_l2_vectors, (
+                retrieval_pre_l2_source or "retrieval_head_outputs"
+            )
+        return variant_pre_l2_matrix, "retrieval_post_l2_artifact"
+    return variant_pre_l2_matrix, "contextual_artifact"
+
+
 def _geometry_warnings(
     *,
     cosine: dict[str, float],
@@ -970,6 +986,12 @@ def build_geometry_space_report(
         else None
     )
     norm_available = bool(source_space == "contextual" or pre_l2_vectors is not None)
+    dimension_vectors, dimension_source = _dimension_std_vectors(
+        source_space=source_space,
+        variant_pre_l2_matrix=pre_l2_matrix,
+        retrieval_pre_l2_vectors=pre_l2_vectors,
+        retrieval_pre_l2_source=pre_l2_source,
+    )
     return {
         "available": True,
         "reason": None,
@@ -985,7 +1007,8 @@ def build_geometry_space_report(
         "effective_rank_fraction": rank / max(vector_dim, 1),
         "effective_rank_band": _effective_rank_band(rank),
         "pca_explained_variance": pca_variance,
-        "dimension_std": _dimension_std_summary(pre_l2_matrix),
+        "dimension_std": _dimension_std_summary(dimension_vectors),
+        "dimension_std_source": dimension_source,
         "pre_l2_norm_distribution": _norm_distribution(
             norm_vectors, available=norm_available, source=norm_source
         ),
@@ -1021,6 +1044,7 @@ def _unavailable_geometry_space_report(
         "effective_rank_band": None,
         "pca_explained_variance": {},
         "dimension_std": {},
+        "dimension_std_source": "unavailable",
         "pre_l2_norm_distribution": {"available": False, "source": "unavailable"},
         "warnings": [reason],
     }

@@ -266,6 +266,7 @@ def test_geometry_report_detects_single_cone_saturation():
     assert "p75_gt_0p7" in report["warnings"]
     assert "mean_norm_collapse_risk" in report["warnings"]
     assert report["pre_l2_norm_distribution"]["available"] is False
+    assert report["dimension_std_source"] == "retrieval_post_l2_artifact"
 
 
 def test_geometry_report_classifies_low_rank_effective_rank():
@@ -288,6 +289,7 @@ def test_geometry_report_classifies_low_rank_effective_rank():
     assert "effective_rank_severe_collapse" in report["warnings"]
     assert report["pre_l2_norm_distribution"]["available"] is True
     assert report["pre_l2_norm_distribution"]["source"] == "contextual_artifact"
+    assert report["dimension_std_source"] == "contextual_artifact"
 
 
 def test_geometry_pca_handles_fewer_than_ten_components():
@@ -327,6 +329,8 @@ def test_geometry_retrieval_pre_l2_norm_distribution_when_available():
     assert norms["source"] == "retrieval_head_outputs"
     assert norms["min"] == 2.0
     assert norms["max"] == 4.0
+    assert report["dimension_std_source"] == "retrieval_head_outputs"
+    assert report["dimension_std"]["max"] > 1.0
 
 
 async def test_human_corrections_support_multiple_labels(session, tmp_storage):

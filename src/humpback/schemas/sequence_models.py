@@ -1133,6 +1133,7 @@ class GeometrySpaceReport(BaseModel):
     effective_rank_band: Optional[str] = None
     pca_explained_variance: dict[str, float | int] = Field(default_factory=dict)
     dimension_std: dict[str, float] = Field(default_factory=dict)
+    dimension_std_source: str = "unavailable"
     pre_l2_norm_distribution: dict[str, float | bool | str] = Field(
         default_factory=dict
     )
