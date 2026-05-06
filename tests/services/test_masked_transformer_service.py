@@ -559,6 +559,93 @@ class TestCreateMaskedTransformerJob:
                 contrastive_label_source="human_corrections",
             )
 
+    async def test_projection_head_ablation_accepts_region_sequence_mode(self, session):
+        cej = await _seed_crnn_cej(session)
+        source, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+        )
+        source.status = JobStatus.complete.value
+        await session.commit()
+
+        ablation, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="region",
+            contrastive_loss_weight=1.0,
+            contrastive_label_source="human_corrections",
+            training_freeze_mode="transformer_frozen_projection_head_only",
+            source_masked_transformer_job_id=source.id,
+            negative_label_family_policy_json='{"families":{}}',
+        )
+
+        assert created is True
+        assert (
+            ablation.training_freeze_mode == "transformer_frozen_projection_head_only"
+        )
+        assert ablation.source_masked_transformer_job_id == source.id
+        assert ablation.negative_label_family_policy_json == '{"families":{}}'
+        assert ablation.training_signature != source.training_signature
+
+    async def test_projection_head_ablation_validates_source_job(self, session):
+        cej = await _seed_crnn_cej(session)
+        with pytest.raises(ValueError, match="source_masked_transformer_job_id"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+            )
+        with pytest.raises(ValueError, match="source_masked_transformer_job not found"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id="missing",
+            )
+
+    async def test_projection_head_ablation_requires_completed_matching_source(
+        self, session
+    ):
+        cej = await _seed_crnn_cej(session)
+        other_cej = await _seed_crnn_cej(session)
+        source, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            retrieval_head_enabled=True,
+        )
+        with pytest.raises(ValueError, match="must be completed"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+            )
+        source.status = JobStatus.complete.value
+        await session.commit()
+        with pytest.raises(ValueError, match="same continuous_embedding_job_id"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=other_cej.id,
+                retrieval_head_enabled=True,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+            )
+
     async def test_rejects_nonexistent_upstream(self, session):
         with pytest.raises(ValueError, match="continuous_embedding_job not found"):
             await create_masked_transformer_job(

@@ -827,6 +827,9 @@ async def create_masked_transformer(
             contrastive_events_per_label=body.contrastive_events_per_label,
             contrastive_max_unlabeled_fraction=body.contrastive_max_unlabeled_fraction,
             contrastive_region_balance=body.contrastive_region_balance,
+            training_freeze_mode=body.training_freeze_mode,
+            source_masked_transformer_job_id=body.source_masked_transformer_job_id,
+            negative_label_family_policy_json=body.negative_label_family_policy_json,
             max_epochs=body.max_epochs,
             early_stop_patience=body.early_stop_patience,
             val_split=body.val_split,
@@ -1014,6 +1017,14 @@ async def get_mt_nearest_neighbor_report(
         include_query_rows=body.include_query_rows,
         include_neighbor_rows=body.include_neighbor_rows,
         include_event_level=body.include_event_level,
+        include_geometry_report=body.include_geometry_report,
+        geometry_embedding_spaces=(
+            tuple(body.geometry_embedding_spaces)
+            if body.geometry_embedding_spaces is not None
+            else None
+        ),
+        geometry_random_pairs=body.geometry_random_pairs,
+        geometry_pca_components=body.geometry_pca_components,
     )
     try:
         payload = await retrieval_diagnostics.build_nearest_neighbor_report(

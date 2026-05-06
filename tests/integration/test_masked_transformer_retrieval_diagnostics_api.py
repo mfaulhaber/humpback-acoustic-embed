@@ -385,6 +385,79 @@ async def test_nearest_neighbor_report_returns_aggregate_metrics(client, app_set
     assert body["query_rows"]
     assert body["neighbor_rows"]
     assert body["event_level_results"] is not None
+    assert body["geometry_report"] is None
+
+
+async def test_nearest_neighbor_report_returns_geometry_when_requested(
+    client, app_settings
+):
+    job_id = await _seed_diagnostics_job(app_settings)
+
+    response = await client.post(
+        f"/sequence-models/masked-transformers/{job_id}/nearest-neighbor-report",
+        json={
+            "k": 100,
+            "samples": 1,
+            "topn": 1,
+            "retrieval_modes": ["exclude_same_event_and_region"],
+            "embedding_variants": ["raw_l2"],
+            "include_geometry_report": True,
+            "geometry_random_pairs": 500,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    geometry = response.json()["geometry_report"]
+    assert geometry["spaces"]["contextual.raw_l2"]["available"] is True
+    assert (
+        geometry["spaces"]["contextual.raw_l2"]["random_pair_percentiles"]["p50"] >= 0.0
+    )
+    assert geometry["spaces"]["retrieval.raw_l2"]["available"] is False
+    assert (
+        geometry["spaces"]["retrieval.raw_l2"]["reason"]
+        == "retrieval_artifact_unavailable"
+    )
+    assert geometry["summary"]["lambda_sweeps_blocked"] is False
+
+
+async def test_nearest_neighbor_report_flags_saturated_retrieval_geometry(
+    client, app_settings
+):
+    job_id = await _seed_diagnostics_job(app_settings)
+    retrieval_rows = []
+    for idx in range(6):
+        retrieval_rows.append(
+            {
+                "region_id": f"R{idx // 2 + 1}",
+                "chunk_index_in_region": idx % 2,
+                "audio_file_id": idx + 1,
+                "start_timestamp": 1_000.0 + idx,
+                "end_timestamp": 1_000.25 + idx,
+                "tier": "event_core",
+                "embedding": [1.0, 0.01 * idx, 0.0],
+            }
+        )
+    pq.write_table(
+        pa.Table.from_pylist(retrieval_rows),
+        masked_transformer_retrieval_embeddings_path(app_settings.storage_root, job_id),
+    )
+
+    response = await client.post(
+        f"/sequence-models/masked-transformers/{job_id}/nearest-neighbor-report",
+        json={
+            "k": 100,
+            "samples": 1,
+            "topn": 1,
+            "include_geometry_report": True,
+            "geometry_embedding_spaces": ["retrieval.raw_l2"],
+            "geometry_random_pairs": 500,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    summary = response.json()["geometry_report"]["summary"]
+    assert summary["retrieval_raw_saturated"] is True
+    assert summary["lambda_sweeps_blocked"] is True
 
 
 async def test_nearest_neighbor_report_unknown_k_returns_404(client, app_settings):

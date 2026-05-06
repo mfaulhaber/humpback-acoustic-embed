@@ -79,7 +79,7 @@ def test_initial_sweep_preset_order_and_metadata() -> None:
         "baseline-250ms-stage0-contextual",
         "baseline-250ms-pre-sampler-contrastive",
         "baseline-100ms-completed-contrastive",
-        "250ms-sampler-confirm-lambda-0p10",
+        "250ms-projection-head-only-ablation",
     ]
     assert runs[0].job_id == sweeps.BASELINE_STAGE0_JOB_ID
     assert runs[1].job_id == sweeps.PRE_SAMPLER_CONTRASTIVE_JOB_ID
@@ -88,7 +88,10 @@ def test_initial_sweep_preset_order_and_metadata() -> None:
         run.metadata["label_semantics"] == sweeps.LABEL_SEMANTICS for run in runs
     )
     assert runs[3].runnable is True
-    assert "awaits sampler-confirmation" in str(runs[4].blocked_reason)
+    assert runs[3].create_payload["training_freeze_mode"] == (
+        "transformer_frozen_projection_head_only"
+    )
+    assert "projection-head geometry" in str(runs[4].blocked_reason)
 
 
 def test_rank_uses_cross_region_raw_same_human_label() -> None:
@@ -173,6 +176,47 @@ def test_label_cardinality_flattens_from_report() -> None:
     assert row.multi_label_effective_events == 1
 
 
+def test_geometry_metrics_flatten_from_report() -> None:
+    row = sweeps.comparison_row_from_report(
+        "geometry",
+        {
+            "job": {"job_id": "job-1", "k": 150},
+            "options": {"embedding_space": "retrieval"},
+            "label_coverage": {},
+            "results": {
+                sweeps.REQUIRED_RETRIEVAL_MODE: {
+                    sweeps.PRIMARY_VARIANT: {"same_human_label": 0.5}
+                }
+            },
+            "geometry_report": {
+                "spaces": {
+                    "retrieval.raw_l2": {
+                        "random_pair_percentiles": {
+                            "p50": 0.2,
+                            "p75": 0.8,
+                            "p95": 0.97,
+                        },
+                        "mean_vector_norm": 0.4,
+                        "effective_rank": 6.0,
+                        "pca_explained_variance": {
+                            "pc1": 0.4,
+                            "pc1_5": 0.75,
+                            "pc1_10": 0.9,
+                        },
+                    }
+                },
+                "summary": {"lambda_sweeps_blocked": True},
+            },
+        },
+    )
+
+    assert row.retrieval_raw_geometry_p75 == 0.8
+    assert row.retrieval_raw_mean_vector_norm == 0.4
+    assert row.retrieval_raw_effective_rank == 6.0
+    assert row.retrieval_raw_pc1_5 == 0.75
+    assert row.lambda_sweeps_blocked is True
+
+
 def test_first_sweep_stop_rules() -> None:
     rows = [
         sweeps.ComparisonRow(
@@ -195,6 +239,7 @@ def test_first_sweep_stop_rules() -> None:
 
     checks = sweeps.evaluate_first_sweep_stop_rules(rows)
 
+    assert checks["retrieval_raw_geometry_unsaturated"] is None
     assert checks["skipped_batches_below_baseline"] is True
     assert checks["raw_retrieval_beats_contextual_raw"] is True
     assert checks["raw_retrieval_within_margin_of_contextual_whitened"] is True

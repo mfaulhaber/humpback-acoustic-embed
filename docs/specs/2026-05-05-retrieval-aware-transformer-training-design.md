@@ -486,6 +486,16 @@ POST /sequence-models/masked-transformers/{job_id}/nearest-neighbor-report
 - Add human-correction-only label extraction helper.
 - Report raw, centered, remove-PC, and whitened variants.
 - Report label-specific same-label overlap.
+- Add a projection-head geometry diagnostic section before further lambda
+  sweeps. The default geometry spaces are contextual raw, contextual
+  remove_pc10, contextual whiten_pca, retrieval raw, retrieval remove_pc10,
+  and retrieval whiten_pca. Each space reports random-pair cosine
+  percentiles, normalized mean-vector norm, effective rank, PCA explained
+  variance, per-dimension standard-deviation summary, and pre-L2 norm
+  distribution where available.
+- Flag `retrieval.raw_l2` cone collapse or anisotropy and expose a
+  `lambda_sweeps_blocked` summary verdict while raw retrieval geometry is
+  saturated.
 
 Acceptance criteria:
 
@@ -498,6 +508,8 @@ Acceptance criteria:
   same sampled query set across embedding variants.
 - The endpoint returns 404 for missing jobs or unavailable k values, 409 for
   incomplete jobs or missing artifacts, and 422 for invalid report options.
+- Missing retrieval artifacts mark retrieval geometry spaces unavailable while
+  preserving contextual geometry for older jobs.
 
 Testing:
 
@@ -517,6 +529,9 @@ Scope:
 - Add projection head to `MaskedTransformer`.
 - Add config and signature fields for the retrieval head.
 - Persist `retrieval_embeddings.parquet`.
+- Persist `retrieval_head_outputs.parquet` with projection-head outputs before
+  L2 normalization so diagnostics can detect unstable norms that post-L2
+  embeddings hide.
 - Switch per-k k-means tokenization to retrieval embeddings for new
   retrieval-head jobs.
 - Keep masked loss only: `contrastive_loss_weight=0.0`.
@@ -651,6 +666,14 @@ Acceptance criteria:
 - Sweep output includes unlabeled, single-label, and multi-label
   human-corrected effective-event counts and warns when the observed dataset is
   not the expected single-label research shape.
+- Sweep comparison requests the geometry report and flattens raw retrieval
+  geometry into the CSV/Markdown/JSON outputs.
+- The initial sweep preset must run a frozen-transformer,
+  projection-head-only ablation before any new 250 ms lambda run. That ablation
+  uses conservative same-label/different-region positives and safe
+  different-label-family negatives.
+- Do not continue lambda sweeps until `retrieval.raw_l2` geometry is no longer
+  saturated.
 
 Testing:
 
@@ -676,6 +699,11 @@ similar duration rate
 good / mixed / bad query counts
 label-specific same-label overlap
 random-pair cosine percentiles
+normalized mean-vector norm
+effective rank
+PCA explained variance
+per-dimension std summary
+pre-L2 norm distribution
 ```
 
 Required retrieval modes:

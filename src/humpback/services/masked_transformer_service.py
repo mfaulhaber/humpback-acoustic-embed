@@ -57,6 +57,12 @@ DEFAULT_RELATED_LABEL_EXCLUSIONS: tuple[tuple[str, str], ...] = (
     ("Growl", "Buzz"),
     ("Whup", "Grunt"),
 )
+DEFAULT_NEGATIVE_LABEL_FAMILIES: dict[str, tuple[str, ...]] = {
+    "moan_family": ("Moan", "Ascending Moan", "Descending Moan"),
+    "creak_vibrate_family": ("Creak", "Vibrate"),
+    "growl_buzz_family": ("Growl", "Buzz"),
+    "whup_grunt_family": ("Whup", "Grunt"),
+}
 
 
 class CancelTerminalJobError(Exception):
@@ -107,6 +113,9 @@ def compute_training_signature(
     contrastive_events_per_label: int = 4,
     contrastive_max_unlabeled_fraction: float = 0.25,
     contrastive_region_balance: bool = True,
+    training_freeze_mode: str = "none",
+    source_masked_transformer_job_id: Optional[str] = None,
+    negative_label_family_policy_json: Optional[str] = None,
     event_classification_job_id: Optional[str] = None,
 ) -> str:
     """Stable signature over training-only config (excludes ``k_values``).
@@ -180,6 +189,14 @@ def compute_training_signature(
                 "event_classification_job_id": event_classification_job_id,
             }
         )
+    if training_freeze_mode != "none":
+        payload.update(
+            {
+                "training_freeze_mode": training_freeze_mode,
+                "source_masked_transformer_job_id": source_masked_transformer_job_id,
+                "negative_label_family_policy_json": negative_label_family_policy_json,
+            }
+        )
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -215,6 +232,77 @@ def default_related_label_policy_json() -> str:
         {"exclude_pairs": [list(pair) for pair in DEFAULT_RELATED_LABEL_EXCLUSIONS]},
         sort_keys=True,
         separators=(",", ":"),
+    )
+
+
+def default_negative_label_family_policy_json() -> str:
+    """Canonical JSON for safe projection-head-only negative families."""
+    return json.dumps(
+        {
+            "families": {
+                family: list(labels)
+                for family, labels in DEFAULT_NEGATIVE_LABEL_FAMILIES.items()
+            }
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def normalize_ablation_config(
+    *,
+    training_freeze_mode: str = "none",
+    source_masked_transformer_job_id: Optional[str] = None,
+    negative_label_family_policy_json: Optional[str] = None,
+    retrieval_head_enabled: bool = False,
+    contrastive_label_source: str = "none",
+    contrastive_loss_weight: float = 0.0,
+) -> tuple[str, Optional[str], Optional[str]]:
+    """Validate projection-head-only ablation config independent of DB state."""
+    if training_freeze_mode not in {
+        "none",
+        "transformer_frozen_projection_head_only",
+    }:
+        raise ValueError(
+            "training_freeze_mode must be one of none/"
+            "transformer_frozen_projection_head_only"
+        )
+    if training_freeze_mode == "none":
+        return "none", None, None
+    if not source_masked_transformer_job_id:
+        raise ValueError(
+            "source_masked_transformer_job_id is required for "
+            "transformer_frozen_projection_head_only"
+        )
+    if not retrieval_head_enabled:
+        raise ValueError(
+            "transformer_frozen_projection_head_only requires retrieval_head_enabled=true"
+        )
+    if contrastive_label_source != "human_corrections":
+        raise ValueError(
+            "transformer_frozen_projection_head_only requires "
+            'contrastive_label_source="human_corrections"'
+        )
+    if float(contrastive_loss_weight) <= 0.0:
+        raise ValueError(
+            "transformer_frozen_projection_head_only requires positive "
+            "contrastive_loss_weight"
+        )
+    policy_json = (
+        negative_label_family_policy_json or default_negative_label_family_policy_json()
+    )
+    try:
+        parsed = json.loads(policy_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "negative_label_family_policy_json must be valid JSON"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("negative_label_family_policy_json must be a JSON object")
+    return (
+        training_freeze_mode,
+        source_masked_transformer_job_id,
+        json.dumps(parsed, sort_keys=True, separators=(",", ":")),
     )
 
 
@@ -417,6 +505,9 @@ async def create_masked_transformer_job(
     contrastive_events_per_label: int = 4,
     contrastive_max_unlabeled_fraction: float = 0.25,
     contrastive_region_balance: bool = True,
+    training_freeze_mode: str = "none",
+    source_masked_transformer_job_id: Optional[str] = None,
+    negative_label_family_policy_json: Optional[str] = None,
     max_epochs: int = 30,
     early_stop_patience: int = 3,
     val_split: float = 0.1,
@@ -491,9 +582,22 @@ async def create_masked_transformer_job(
         contrastive_region_balance=contrastive_region_balance,
         retrieval_head_enabled=normalized_retrieval_head_enabled,
     )
+    (
+        normalized_training_freeze_mode,
+        normalized_source_masked_transformer_job_id,
+        normalized_negative_label_family_policy_json,
+    ) = normalize_ablation_config(
+        training_freeze_mode=training_freeze_mode,
+        source_masked_transformer_job_id=source_masked_transformer_job_id,
+        negative_label_family_policy_json=negative_label_family_policy_json,
+        retrieval_head_enabled=normalized_retrieval_head_enabled,
+        contrastive_label_source=normalized_contrastive_label_source,
+        contrastive_loss_weight=normalized_contrastive_loss_weight,
+    )
     if (
         normalized_contrastive_loss_weight > 0.0
         and normalized_sequence_construction_mode == "region"
+        and normalized_training_freeze_mode != "transformer_frozen_projection_head_only"
     ):
         raise ValueError(
             "contrastive training requires event-centered or mixed sequence construction"
@@ -514,6 +618,35 @@ async def create_masked_transformer_job(
             "masked-transformer job requires a CRNN region-based upstream "
             f"continuous_embedding_job (got source_kind={source_kind_for(cej.model_version)!r})"
         )
+    if normalized_training_freeze_mode == "transformer_frozen_projection_head_only":
+        source_job = await session.get(
+            MaskedTransformerJob, normalized_source_masked_transformer_job_id
+        )
+        if source_job is None:
+            raise ValueError(
+                "source_masked_transformer_job not found: "
+                f"{normalized_source_masked_transformer_job_id}"
+            )
+        if source_job.status != JobStatus.complete.value:
+            raise ValueError(
+                "source_masked_transformer_job must be completed for "
+                "transformer_frozen_projection_head_only"
+            )
+        if source_job.continuous_embedding_job_id != continuous_embedding_job_id:
+            raise ValueError(
+                "source_masked_transformer_job must use the same "
+                "continuous_embedding_job_id"
+            )
+        if not source_job.retrieval_head_enabled:
+            raise ValueError(
+                "source_masked_transformer_job must have retrieval_head_enabled=true"
+            )
+        if source_job.retrieval_dim != normalized_retrieval_dim:
+            raise ValueError("source retrieval_dim must match ablation retrieval_dim")
+        if source_job.retrieval_hidden_dim != normalized_retrieval_hidden_dim:
+            raise ValueError(
+                "source retrieval_hidden_dim must match ablation retrieval_hidden_dim"
+            )
 
     k_list = parse_k_values(k_values if k_values is not None else [100])
     classify_id_for_signature: Optional[str] = None
@@ -563,6 +696,9 @@ async def create_masked_transformer_job(
         contrastive_events_per_label=normalized_contrastive_events_per_label,
         contrastive_max_unlabeled_fraction=normalized_contrastive_max_unlabeled_fraction,
         contrastive_region_balance=normalized_contrastive_region_balance,
+        training_freeze_mode=normalized_training_freeze_mode,
+        source_masked_transformer_job_id=normalized_source_masked_transformer_job_id,
+        negative_label_family_policy_json=normalized_negative_label_family_policy_json,
         event_classification_job_id=classify_id_for_signature,
         max_epochs=max_epochs,
         early_stop_patience=early_stop_patience,
@@ -629,6 +765,9 @@ async def create_masked_transformer_job(
         contrastive_events_per_label=normalized_contrastive_events_per_label,
         contrastive_max_unlabeled_fraction=normalized_contrastive_max_unlabeled_fraction,
         contrastive_region_balance=normalized_contrastive_region_balance,
+        training_freeze_mode=normalized_training_freeze_mode,
+        source_masked_transformer_job_id=normalized_source_masked_transformer_job_id,
+        negative_label_family_policy_json=normalized_negative_label_family_policy_json,
         max_epochs=int(max_epochs),
         early_stop_patience=int(early_stop_patience),
         val_split=float(val_split),
@@ -1090,12 +1229,14 @@ __all__ = [
     "cancel_masked_transformer_job",
     "compute_training_signature",
     "create_masked_transformer_job",
+    "default_negative_label_family_policy_json",
     "delete_masked_transformer_job",
     "extend_k_sweep_job",
     "generate_interpretations",
     "generate_interpretations_all_k",
     "get_masked_transformer_job",
     "list_masked_transformer_jobs",
+    "normalize_ablation_config",
     "normalize_contrastive_config",
     "normalize_sequence_construction_config",
     "parse_k_values",

@@ -49,7 +49,7 @@ from humpback.sequence_models.masked_transformer import (
     MaskedTransformer,
     MaskedTransformerConfig,
     compute_reconstruction_error,
-    extract_transformer_embeddings,
+    extract_transformer_embeddings_with_pre_l2,
     train_masked_transformer,
 )
 from humpback.sequence_models.contrastive_labels import load_contrastive_event_labels
@@ -93,6 +93,7 @@ from humpback.storage import (
     masked_transformer_model_path,
     masked_transformer_reconstruction_error_path,
     masked_transformer_retrieval_embeddings_path,
+    masked_transformer_retrieval_head_outputs_path,
 )
 from humpback.workers.queue import claim_masked_transformer_job
 
@@ -364,6 +365,28 @@ def _write_retrieval_embeddings(
     )
 
 
+def _write_retrieval_head_outputs(
+    *,
+    storage_root: Path,
+    job_id: str,
+    R_pre_l2_by_seq: list[np.ndarray],
+    region_ids: list[str],
+    starts: list[list[float]],
+    ends: list[list[float]],
+    audio_ids: list[list[Optional[int]]],
+    tier_lists: list[list[str]],
+) -> None:
+    _write_embedding_artifact(
+        dst=masked_transformer_retrieval_head_outputs_path(storage_root, job_id),
+        region_ids=region_ids,
+        embeddings_by_seq=R_pre_l2_by_seq,
+        starts=starts,
+        ends=ends,
+        audio_ids=audio_ids,
+        tier_lists=tier_lists,
+    )
+
+
 def _write_embedding_artifact(
     *,
     dst: Path,
@@ -523,6 +546,38 @@ def _save_model_state(
     atomic_rename(tmp, dst)
 
 
+def _load_model_state(
+    *,
+    storage_root: Path,
+    job: MaskedTransformerJob,
+    feature_dim: int,
+    map_location: torch.device,
+) -> MaskedTransformer:
+    path = masked_transformer_model_path(storage_root, job.id)
+    if not path.exists():
+        raise FileNotFoundError(f"transformer.pt not found for source job {job.id}")
+    config = _config_from_job(job)
+    dims = config.preset_dims()
+    model = MaskedTransformer(
+        input_dim=feature_dim,
+        d_model=dims["d_model"],
+        num_layers=dims["num_layers"],
+        num_heads=dims["num_heads"],
+        ff_dim=dims["ff_dim"],
+        dropout=float(job.dropout),
+        retrieval_head_enabled=bool(job.retrieval_head_enabled),
+        retrieval_dim=job.retrieval_dim,
+        retrieval_hidden_dim=job.retrieval_hidden_dim,
+        retrieval_l2_normalize=bool(job.retrieval_l2_normalize),
+    )
+    payload = torch.load(path, map_location=map_location, weights_only=False)
+    state_dict = payload.get("state_dict") if isinstance(payload, dict) else None
+    if not isinstance(state_dict, dict):
+        raise ValueError(f"invalid transformer checkpoint for source job {job.id}")
+    model.load_state_dict(state_dict)
+    return model
+
+
 # ---------------------------------------------------------------------------
 # Read helpers for follow-up extend-k-sweep passes
 # ---------------------------------------------------------------------------
@@ -629,6 +684,8 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
             job.contrastive_max_unlabeled_fraction
         ),
         contrastive_region_balance=bool(job.contrastive_region_balance),
+        training_freeze_mode=job.training_freeze_mode,  # type: ignore[arg-type]
+        negative_label_family_policy_json=job.negative_label_family_policy_json,
         max_epochs=int(job.max_epochs),
         early_stop_patience=int(job.early_stop_patience),
         val_split=float(job.val_split),
@@ -831,6 +888,9 @@ async def run_masked_transformer_job(
                 config.contrastive_loss_weight > 0.0
                 and config.contrastive_label_source == "human_corrections"
             )
+            projection_head_only = (
+                config.training_freeze_mode == "transformer_frozen_projection_head_only"
+            )
             if contrastive_enabled:
                 event_intervals = await _load_contrastive_event_intervals(
                     session,
@@ -843,6 +903,11 @@ async def run_masked_transformer_job(
                     storage_root=settings.storage_root,
                     cej=cej,
                 )
+            construction_mode = (
+                "event_centered"
+                if projection_head_only
+                else config.sequence_construction_mode
+            )
             constructed = build_masked_transformer_training_sequences(
                 region_ids=region_ids,
                 sequences=sequences,
@@ -850,7 +915,7 @@ async def run_masked_transformer_job(
                 starts=starts,
                 ends=ends,
                 effective_events=event_intervals,
-                mode=config.sequence_construction_mode,
+                mode=construction_mode,
                 event_centered_fraction=config.event_centered_fraction,
                 pre_event_context_sec=config.pre_event_context_sec,
                 post_event_context_sec=config.post_event_context_sec,
@@ -883,18 +948,40 @@ async def run_masked_transformer_job(
                     related_label_pairs=parse_related_label_policy(
                         config.related_label_policy_json
                     ),
+                    strict_cross_region_positive=projection_head_only,
                 )
                 if masks.valid_anchor_count == 0:
                     raise ValueError(
                         "contrastive masked-transformer training found no eligible "
                         "human-correction positive pairs"
                     )
+            initial_model = None
+            if projection_head_only:
+                if not job.source_masked_transformer_job_id:
+                    raise ValueError(
+                        "projection-head-only ablation requires source job"
+                    )
+                source_job = await session.get(
+                    MaskedTransformerJob, job.source_masked_transformer_job_id
+                )
+                if source_job is None:
+                    raise ValueError(
+                        "source masked-transformer job not found: "
+                        f"{job.source_masked_transformer_job_id}"
+                    )
+                initial_model = _load_model_state(
+                    storage_root=settings.storage_root,
+                    job=source_job,
+                    feature_dim=feature_dim,
+                    map_location=chosen_device,
+                )
             train_result = train_masked_transformer(
                 constructed.sequences,
                 config,
                 device=chosen_device,
                 tier_lists=tier_payload,
                 contrastive_events=contrastive_events,
+                initial_model=initial_model,
             )
             full_region_tier_payload: list[Optional[list[str]]] = [
                 t for t in tier_lists
@@ -929,7 +1016,7 @@ async def run_masked_transformer_job(
                 ends=ends,
             )
 
-            Z, R, _ = extract_transformer_embeddings(
+            Z, R, R_pre_l2, _ = extract_transformer_embeddings_with_pre_l2(
                 train_result.model, sequences, device=chosen_device
             )
             _write_contextual_embeddings(
@@ -943,8 +1030,18 @@ async def run_masked_transformer_job(
                 tier_lists=tier_lists,
             )
             if config.retrieval_head_enabled:
-                if R is None:
+                if R is None or R_pre_l2 is None:
                     raise RuntimeError("retrieval head enabled but no retrieval output")
+                _write_retrieval_head_outputs(
+                    storage_root=settings.storage_root,
+                    job_id=job_id,
+                    region_ids=region_ids,
+                    R_pre_l2_by_seq=R_pre_l2,
+                    starts=starts,
+                    ends=ends,
+                    audio_ids=audio_ids,
+                    tier_lists=tier_lists,
+                )
                 _write_retrieval_embeddings(
                     storage_root=settings.storage_root,
                     job_id=job_id,

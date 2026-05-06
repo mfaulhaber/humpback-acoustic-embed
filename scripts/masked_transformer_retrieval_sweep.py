@@ -101,6 +101,16 @@ def plan_submit_runs(args: argparse.Namespace) -> list[SweepRun]:
             replace(run, create_payload={**run.create_payload, "seed": args.seed})
             for run in runs
         ]
+    if not args.geometry_gate_passed:
+        runs = [
+            replace(
+                run,
+                blocked_reason=(
+                    run.blocked_reason or "requires unsaturated retrieval raw geometry"
+                ),
+            )
+            for run in runs
+        ]
     return runs
 
 
@@ -239,6 +249,7 @@ async def compare_runs(args: argparse.Namespace) -> int:
         "retrieval_modes": [REQUIRED_RETRIEVAL_MODE],
         "embedding_variants": list(OUTPUT_VARIANTS),
         "include_event_level": True,
+        "include_geometry_report": True,
     }
     rows: list[ComparisonRow] = []
     if args.include_known_metrics:
@@ -271,6 +282,7 @@ async def compare_runs(args: argparse.Namespace) -> int:
                             tuple[EmbeddingVariant, ...], OUTPUT_VARIANTS
                         ),
                         include_event_level=True,
+                        include_geometry_report=True,
                     )
                     try:
                         report = await build_nearest_neighbor_report(
@@ -348,6 +360,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     submit.add_argument("--dry-run", action="store_true")
     submit.add_argument("--extend-k-sweep", action="store_true")
+    submit.add_argument(
+        "--geometry-gate-passed",
+        action="store_true",
+        help="Allow lambda submissions after an unsaturated retrieval raw geometry report.",
+    )
     submit.add_argument("--output-dir", default="data/retrieval_sweeps")
     submit.add_argument("--manifest-name", default="submit-manifest.json")
 

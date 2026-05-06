@@ -477,6 +477,20 @@ parameter.
     modeling in later batches.
   - `contrastive_region_balance` (default `true`) — prefers distinct
     regions when choosing same-label examples for a batch.
+  - `training_freeze_mode` (default `"none"`, or
+    `"transformer_frozen_projection_head_only"`) — when set to the
+    projection-head-only ablation, the worker loads
+    `source_masked_transformer_job_id`, freezes the transformer, and
+    trains only `retrieval_head.*` with human-correction contrastive
+    supervision. The ablation requires a completed same-upstream source
+    retrieval-head job, `retrieval_head_enabled=true`,
+    `contrastive_label_source="human_corrections"`, and positive
+    `contrastive_loss_weight`.
+  - `source_masked_transformer_job_id` — required for the
+    projection-head-only ablation and ignored for normal training.
+  - `negative_label_family_policy_json` — optional JSON policy used by
+    the projection-head-only ablation to restrict safe different-label
+    negatives to different configured label families.
   - `batch_size` (default `8`) — training mini-batch size. Non-default
     values participate in `training_signature`.
   - `max_epochs`, `early_stop_patience` (default `3`), `val_split`
@@ -504,7 +518,9 @@ parameter.
   `related_label_policy_json`, `contrastive_sampler_enabled`,
   `contrastive_labels_per_batch`, `contrastive_events_per_label`,
   `contrastive_max_unlabeled_fraction`,
-  `contrastive_region_balance`), `chosen_device`, `fallback_reason`,
+  `contrastive_region_balance`), ablation fields (`training_freeze_mode`,
+  `source_masked_transformer_job_id`,
+  `negative_label_family_policy_json`), `chosen_device`, `fallback_reason`,
   `final_train_loss`, `final_val_loss`, `total_epochs`,
   `total_sequences`, `total_chunks`). Full-region extraction artifacts
   remain unchanged regardless of event-centered or contrastive training
@@ -563,6 +579,15 @@ parameter.
     `"whiten_pca"`
   - `include_query_rows`, `include_neighbor_rows`, and
     `include_event_level` booleans (all default `false`)
+  - `include_geometry_report` (default `false`) — when true, appends a
+    projection-head geometry diagnostic section before further lambda
+    sweeps.
+  - `geometry_embedding_spaces` (optional, default all): `"contextual.raw_l2"`,
+    `"contextual.remove_pc10"`, `"contextual.whiten_pca"`,
+    `"retrieval.raw_l2"`, `"retrieval.remove_pc10"`,
+    `"retrieval.whiten_pca"`.
+  - `geometry_random_pairs` (default `20000`, >= 1) and
+    `geometry_pca_components` (default `20`, >= 1).
 
   Response is structured JSON with job metadata, resolved options,
   artifact paths, label coverage, aggregate metrics by retrieval mode
@@ -575,6 +600,18 @@ parameter.
   multi-label effective-event counts so sweep reports can verify the
   intended authoritative single-label research assumption.
 
+  When requested, `geometry_report.spaces` is keyed by embedding space
+  and variant. Each available space reports random-pair cosine
+  percentiles (`p0`, `p1`, `p5`, `p25`, `p50`, `p75`, `p95`, `p99`,
+  `p100`), normalized mean-vector norm and band, effective rank and band,
+  PCA explained variance (`pc1`, `pc1_5`, `pc1_10`), per-dimension
+  standard-deviation summary, pre-L2 norm distribution where available,
+  and warnings. Missing retrieval artifacts are returned as unavailable
+  retrieval spaces instead of failing the whole contextual report. The
+  summary flags `retrieval_raw_saturated` and
+  `lambda_sweeps_blocked`; further lambda sweeps should remain paused
+  while `retrieval.raw_l2` is saturated.
+
   Repeatable research sweeps are driven by
   `scripts/masked_transformer_retrieval_sweep.py`. Use `submit --dry-run`
   to write a deterministic planning manifest, non-dry `submit` to call
@@ -583,7 +620,10 @@ parameter.
   `build_nearest_neighbor_report()` and write `comparison.csv`,
   `comparison.md`, and `comparison.json`. The comparison helper does not
   duplicate nearest-neighbor math; the backend diagnostics remain the
-  source of metric truth.
+  source of metric truth. Compare mode requests the geometry report by
+  default and flattens the raw retrieval geometry gate into the comparison
+  outputs. Lambda preset submission remains blocked unless the caller
+  explicitly confirms the geometry gate has passed.
 
   Status codes: `404` when the job or requested k is missing, `409`
   when the job is incomplete or required artifacts are missing, and
@@ -657,12 +697,14 @@ ReconstructionErrorPoint[] }` where `ReconstructionErrorPoint` is
 embedding_space?: "contextual" | "retrieval", samples?: int, topn?: int,
 seed?: int, retrieval_modes?: list[str], embedding_variants?: list[str],
 include_query_rows?: bool, include_neighbor_rows?: bool,
-include_event_level?: bool }`.
+include_event_level?: bool, include_geometry_report?: bool,
+geometry_embedding_spaces?: list[str], geometry_random_pairs?: int,
+geometry_pca_components?: int }`.
 
 `MaskedTransformerNearestNeighborReportResponse`: structured retrieval
 diagnostics with job metadata, label coverage, aggregate metrics by
 retrieval mode and embedding variant, representative queries, optional
-query rows, and optional neighbor rows.
+query rows, optional neighbor rows, and optional `geometry_report`.
 
 Reused across HMM and masked-transformer detail pages: `OverlayResponse`,
 `ExemplarsResponse`, `LabelDistribution`, `StateTierComposition`.
@@ -687,6 +729,9 @@ Reused across HMM and masked-transformer detail pages: `OverlayResponse`,
   for compatibility and diagnostics, and additionally write
   `retrieval_embeddings.parquet`; their per-k `decoded.parquet` bundles
   are tokenized from retrieval embeddings.
+- Retrieval-head jobs also write `retrieval_head_outputs.parquet` with
+  pre-L2 projection-head vectors. Geometry diagnostics use this artifact
+  for retrieval pre-normalization norm summaries when it is present.
 - Device validation runs forward+backward on a fixed synthetic batch on
   both CPU and the chosen accelerator before training. On tolerance
   failure the worker records `fallback_reason` and proceeds on CPU.

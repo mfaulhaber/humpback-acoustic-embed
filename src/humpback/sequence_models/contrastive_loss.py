@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Iterable, Optional
 
 import torch
@@ -17,6 +18,12 @@ DEFAULT_RELATED_LABEL_EXCLUSIONS: tuple[tuple[str, str], ...] = (
     ("Growl", "Buzz"),
     ("Whup", "Grunt"),
 )
+DEFAULT_NEGATIVE_LABEL_FAMILIES: dict[str, tuple[str, ...]] = {
+    "moan_family": ("Moan", "Ascending Moan", "Descending Moan"),
+    "creak_vibrate_family": ("Creak", "Vibrate"),
+    "growl_buzz_family": ("Growl", "Buzz"),
+    "whup_grunt_family": ("Whup", "Grunt"),
+}
 
 
 @dataclass(frozen=True)
@@ -55,6 +62,29 @@ def parse_related_label_policy(
     return frozenset(frozenset(pair) for pair in pairs if len(pair) == 2)
 
 
+def parse_negative_label_family_policy(
+    policy_json: Optional[str],
+) -> dict[str, str]:
+    """Return label -> safe-family mapping for projection-head ablations."""
+    raw_families: Mapping[str, object]
+    if not policy_json:
+        raw_families = {k: list(v) for k, v in DEFAULT_NEGATIVE_LABEL_FAMILIES.items()}
+    else:
+        parsed = json.loads(policy_json)
+        raw_families = (
+            parsed.get("families", DEFAULT_NEGATIVE_LABEL_FAMILIES)
+            if isinstance(parsed, dict)
+            else DEFAULT_NEGATIVE_LABEL_FAMILIES
+        )
+    out: dict[str, str] = {}
+    for family, labels in raw_families.items():
+        if not isinstance(labels, (list, tuple)):
+            continue
+        for label in labels:
+            out[str(label)] = str(family)
+    return out
+
+
 def compute_eligible_contrastive_labels(
     metadata: list[ContrastiveEventMetadata],
     *,
@@ -83,6 +113,8 @@ def build_contrastive_masks(
     min_regions_per_label: int = 2,
     require_cross_region_positive: bool = True,
     related_label_pairs: Iterable[frozenset[str]] | None = None,
+    strict_cross_region_positive: bool = False,
+    negative_label_families: dict[str, str] | None = None,
     eligible_labels: set[str] | frozenset[str] | None = None,
     device: torch.device | str = "cpu",
 ) -> ContrastiveMaskResult:
@@ -133,6 +165,8 @@ def build_contrastive_masks(
             if require_cross_region_positive and cross_region_candidates
             else positive_candidates
         )
+        if strict_cross_region_positive:
+            selected = cross_region_candidates
         for j in selected:
             positive[i, j] = True
         valid_anchor[i] = bool(selected)
@@ -144,6 +178,17 @@ def build_contrastive_masks(
                 continue
             if any(pair <= (anchor_labels | candidate_labels) for pair in related):
                 continue
+            if negative_label_families is not None:
+                if len(anchor_labels) != 1 or len(candidate_labels) != 1:
+                    continue
+                anchor_label = next(iter(anchor_labels))
+                candidate_label = next(iter(candidate_labels))
+                anchor_family = negative_label_families.get(anchor_label, anchor_label)
+                candidate_family = negative_label_families.get(
+                    candidate_label, candidate_label
+                )
+                if anchor_family == candidate_family:
+                    continue
             negative[i, j] = True
 
     return ContrastiveMaskResult(positive, negative, eligible, valid_anchor)
@@ -157,19 +202,28 @@ def supervised_contrastive_loss(
     min_events_per_label: int = 4,
     min_regions_per_label: int = 2,
     require_cross_region_positive: bool = True,
+    strict_cross_region_positive: bool = False,
     related_label_policy_json: Optional[str] = None,
+    negative_label_family_policy_json: Optional[str] = None,
     eligible_labels: set[str] | frozenset[str] | None = None,
 ) -> tuple[torch.Tensor, ContrastiveMaskResult]:
     """Compute a finite supervised contrastive loss for event embeddings."""
     if embeddings.shape[0] != len(metadata):
         raise ValueError("embedding rows must align with contrastive metadata")
     related_pairs = parse_related_label_policy(related_label_policy_json)
+    negative_families = (
+        parse_negative_label_family_policy(negative_label_family_policy_json)
+        if negative_label_family_policy_json is not None
+        else None
+    )
     masks = build_contrastive_masks(
         metadata,
         min_events_per_label=min_events_per_label,
         min_regions_per_label=min_regions_per_label,
         require_cross_region_positive=require_cross_region_positive,
         related_label_pairs=related_pairs,
+        strict_cross_region_positive=strict_cross_region_positive,
+        negative_label_families=negative_families,
         eligible_labels=eligible_labels,
         device=embeddings.device,
     )
@@ -196,6 +250,7 @@ __all__ = [
     "ContrastiveMaskResult",
     "build_contrastive_masks",
     "compute_eligible_contrastive_labels",
+    "parse_negative_label_family_policy",
     "parse_related_label_policy",
     "supervised_contrastive_loss",
 ]

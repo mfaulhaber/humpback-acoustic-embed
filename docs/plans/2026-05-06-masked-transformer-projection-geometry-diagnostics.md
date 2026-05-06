@@ -12,10 +12,10 @@
 - Modify: `tests/sequence_models/test_retrieval_diagnostics.py`
 
 **Acceptance criteria:**
-- [ ] Geometry helper functions compute random-pair cosine percentiles with `p0`, `p1`, `p5`, `p25`, `p50`, `p75`, `p95`, `p99`, and `p100` keys.
-- [ ] Geometry helper functions compute normalized mean-vector norm, effective rank, effective-rank fraction, PCA explained variance for PC1/PC1-5/PC1-10, per-dimension std summary, and pre-L2 norm distribution.
-- [ ] Helper output includes warning codes for cosine saturation, high mean-vector norm, low effective rank, and dominant PCA components.
-- [ ] Existing nearest-neighbor metrics continue to use the current variant builder semantics for `raw_l2`, `remove_pc10`, and `whiten_pca`.
+- [x] Geometry helper functions compute random-pair cosine percentiles with `p0`, `p1`, `p5`, `p25`, `p50`, `p75`, `p95`, `p99`, and `p100` keys.
+- [x] Geometry helper functions compute normalized mean-vector norm, effective rank, effective-rank fraction, PCA explained variance for PC1/PC1-5/PC1-10, per-dimension std summary, and pre-L2 norm distribution.
+- [x] Helper output includes warning codes for cosine saturation, high mean-vector norm, low effective rank, and dominant PCA components.
+- [x] Existing nearest-neighbor metrics continue to use the current variant builder semantics for `raw_l2`, `remove_pc10`, and `whiten_pca`.
 
 **Tests needed:**
 - Synthetic isotropic, single-cone, and low-rank matrices.
@@ -35,12 +35,12 @@
 - Modify: `tests/integration/test_masked_transformer_retrieval_diagnostics_api.py`
 
 **Acceptance criteria:**
-- [ ] `MaskedTransformerNearestNeighborReportRequest` accepts `include_geometry_report`, `geometry_embedding_spaces`, `geometry_random_pairs`, and `geometry_pca_components`.
-- [ ] The response schema includes nullable `geometry_report` with per-space reports and a top-level geometry summary.
-- [ ] Omitting `include_geometry_report` preserves the existing response shape and behavior for current callers.
-- [ ] Requesting geometry with no explicit spaces reports contextual raw, contextual remove_pc10, contextual whiten_pca, retrieval raw, retrieval remove_pc10, and retrieval whiten_pca.
-- [ ] Missing retrieval artifacts mark retrieval spaces unavailable while still returning contextual geometry when available.
-- [ ] Retrieval raw saturation sets `retrieval_raw_saturated=true` and `lambda_sweeps_blocked=true`.
+- [x] `MaskedTransformerNearestNeighborReportRequest` accepts `include_geometry_report`, `geometry_embedding_spaces`, `geometry_random_pairs`, and `geometry_pca_components`.
+- [x] The response schema includes nullable `geometry_report` with per-space reports and a top-level geometry summary.
+- [x] Omitting `include_geometry_report` preserves the existing response shape and behavior for current callers.
+- [x] Requesting geometry with no explicit spaces reports contextual raw, contextual remove_pc10, contextual whiten_pca, retrieval raw, retrieval remove_pc10, and retrieval whiten_pca.
+- [x] Missing retrieval artifacts mark retrieval spaces unavailable while still returning contextual geometry when available.
+- [x] Retrieval raw saturation sets `retrieval_raw_saturated=true` and `lambda_sweeps_blocked=true`.
 
 **Tests needed:**
 - Schema validation for default and explicit geometry space requests.
@@ -59,10 +59,10 @@
 - Modify: `tests/workers/test_masked_transformer_worker.py`
 
 **Acceptance criteria:**
-- [ ] Retrieval-head extraction can return both raw projection-head outputs before L2 normalization and final retrieval embeddings after configured L2 normalization.
-- [ ] New retrieval-head jobs persist `retrieval_head_outputs.parquet` with row order matching `retrieval_embeddings.parquet`.
-- [ ] Historical jobs without `retrieval_head_outputs.parquet` report retrieval pre-L2 norms as unavailable rather than using post-L2 retrieval norms.
-- [ ] Existing contextual-only jobs and extend-k-sweep jobs continue to work without requiring the new artifact.
+- [x] Retrieval-head extraction can return both raw projection-head outputs before L2 normalization and final retrieval embeddings after configured L2 normalization.
+- [x] New retrieval-head jobs persist `retrieval_head_outputs.parquet` with row order matching `retrieval_embeddings.parquet`.
+- [x] Historical jobs without `retrieval_head_outputs.parquet` report retrieval pre-L2 norms as unavailable rather than using post-L2 retrieval norms.
+- [x] Existing contextual-only jobs and extend-k-sweep jobs continue to work without requiring the new artifact.
 
 **Tests needed:**
 - Model forward/extraction tests proving pre-L2 vectors differ from post-L2 vectors when normalization is enabled.
@@ -83,12 +83,12 @@
 - Modify: `tests/unit/test_sequence_models_schemas.py`
 
 **Acceptance criteria:**
-- [ ] Before running the Alembic migration on any persistent database, read the SQLite path with `DB_PATH=$(grep '^HUMPBACK_DATABASE_URL=' .env | sed 's#^HUMPBACK_DATABASE_URL=sqlite:///##')`, set `BACKUP_PATH="${DB_PATH}.$(date -u +%Y%m%dT%H%M%SZ).bak"`, copy it with `cp "$DB_PATH" "$BACKUP_PATH"`, and verify it with `test -s "$BACKUP_PATH"`; do not run `alembic upgrade head` until the backup exists and has non-zero size.
-- [ ] Migration adds nullable or defaulted columns for `training_freeze_mode`, `source_masked_transformer_job_id`, and `negative_label_family_policy_json` using `op.batch_alter_table()` for SQLite compatibility.
-- [ ] Model and schema expose the new fields with defaults preserving existing job behavior.
-- [ ] Service validation requires a completed source masked-transformer job for `transformer_frozen_projection_head_only`.
-- [ ] Service validation requires matching upstream continuous embedding job, `retrieval_head_enabled=true`, and `contrastive_label_source="human_corrections"` for the ablation.
-- [ ] Training signatures include ablation-affecting fields and continue excluding `k_values`.
+- [x] Before running the Alembic migration on any persistent database, read the SQLite path with `DB_PATH=$(grep '^HUMPBACK_DATABASE_URL=' .env | sed 's#^HUMPBACK_DATABASE_URL=sqlite:///##')`, set `BACKUP_PATH="${DB_PATH}.$(date -u +%Y%m%dT%H%M%SZ).bak"`, copy it with `cp "$DB_PATH" "$BACKUP_PATH"`, and verify it with `test -s "$BACKUP_PATH"`; do not run `alembic upgrade head` until the backup exists and has non-zero size.
+- [x] Migration adds nullable or defaulted columns for `training_freeze_mode`, `source_masked_transformer_job_id`, and `negative_label_family_policy_json` using `op.batch_alter_table()` for SQLite compatibility.
+- [x] Model and schema expose the new fields with defaults preserving existing job behavior.
+- [x] Service validation requires a completed source masked-transformer job for `transformer_frozen_projection_head_only`.
+- [x] Service validation requires matching upstream continuous embedding job, `retrieval_head_enabled=true`, and `contrastive_label_source="human_corrections"` for the ablation.
+- [x] Training signatures include ablation-affecting fields and continue excluding `k_values`.
 
 **Tests needed:**
 - Migration upgrade and downgrade tests.
@@ -109,13 +109,13 @@
 - Modify: `tests/workers/test_masked_transformer_worker.py`
 
 **Acceptance criteria:**
-- [ ] Ablation jobs load the completed source model and freeze transformer/input/output projection parameters.
-- [ ] Only retrieval-head parameters receive optimizer updates in projection-head-only mode.
-- [ ] Conservative positives require same surviving human label and different `region_id`.
-- [ ] Safe negatives require exactly one surviving human label per event, different safe label families, and no related-label exclusion.
-- [ ] Ablation training can run with `sequence_construction_mode="region"` while pooling effective-event embeddings for supervised contrastive loss.
-- [ ] Ablation jobs write fresh `retrieval_head_outputs.parquet`, `retrieval_embeddings.parquet`, and per-k bundles under the new job ID.
-- [ ] Contextual embeddings are reused or copied from the source job without changing their row alignment.
+- [x] Ablation jobs load the completed source model and freeze transformer/input/output projection parameters.
+- [x] Only retrieval-head parameters receive optimizer updates in projection-head-only mode.
+- [x] Conservative positives require same surviving human label and different `region_id`.
+- [x] Safe negatives require exactly one surviving human label per event, different safe label families, and no related-label exclusion.
+- [x] Ablation training can run with `sequence_construction_mode="region"` while pooling effective-event embeddings for supervised contrastive loss.
+- [x] Ablation jobs write fresh `retrieval_head_outputs.parquet`, `retrieval_embeddings.parquet`, and per-k bundles under the new job ID.
+- [x] Contextual embeddings are reused or copied from the source job without changing their row alignment.
 
 **Tests needed:**
 - Parameter-freezing test that detects no source transformer parameter updates.
@@ -134,11 +134,11 @@
 - Modify: `tests/scripts/test_masked_transformer_retrieval_sweep.py`
 
 **Acceptance criteria:**
-- [ ] Compare mode requests `include_geometry_report=true` by default.
-- [ ] Comparison rows flatten retrieval raw p50/p75/p95, mean-vector norm, effective rank, PC1/PC1-5/PC1-10 explained variance, and lambda-blocked status.
-- [ ] Submit mode refuses lambda-sweep submissions when the selected baseline or required ablation report has `lambda_sweeps_blocked=true`.
-- [ ] Initial preset inserts a required projection-head-only ablation before any new lambda run.
-- [ ] Failure rows preserve geometry-gate errors in CSV, Markdown, and JSON outputs.
+- [x] Compare mode requests `include_geometry_report=true` by default.
+- [x] Comparison rows flatten retrieval raw p50/p75/p95, mean-vector norm, effective rank, PC1/PC1-5/PC1-10 explained variance, and lambda-blocked status.
+- [x] Submit mode refuses lambda-sweep submissions when the selected baseline or required ablation report has `lambda_sweeps_blocked=true`.
+- [x] Initial preset inserts a required projection-head-only ablation before any new lambda run.
+- [x] Failure rows preserve geometry-gate errors in CSV, Markdown, and JSON outputs.
 
 **Tests needed:**
 - Comparison flattening tests with saturated and unsaturated geometry reports.
@@ -155,9 +155,9 @@
 - Modify: `docs/backlog.md`
 
 **Acceptance criteria:**
-- [ ] API reference documents geometry request fields and response sections.
-- [ ] Retrieval-aware transformer roadmap names the geometry gate before further lambda sweeps.
-- [ ] Backlog notes any deferred frontend visualization work for geometry diagnostics.
+- [x] API reference documents geometry request fields and response sections.
+- [x] Retrieval-aware transformer roadmap names the geometry gate before further lambda sweeps.
+- [x] Backlog notes any deferred frontend visualization work for geometry diagnostics.
 
 **Tests needed:**
 - Documentation-only review for consistency with implemented schema names and sweep behavior.
