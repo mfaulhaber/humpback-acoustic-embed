@@ -570,6 +570,20 @@ class TestCreateMaskedTransformerJob:
         source.status = JobStatus.complete.value
         await session.commit()
 
+        no_policy, no_policy_created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            sequence_construction_mode="region",
+            contrastive_loss_weight=1.0,
+            contrastive_label_source="human_corrections",
+            training_freeze_mode="transformer_frozen_projection_head_only",
+            source_masked_transformer_job_id=source.id,
+        )
+        assert no_policy_created is True
+        assert no_policy.negative_label_family_policy_json is None
+
         ablation, created = await create_masked_transformer_job(
             session,
             continuous_embedding_job_id=cej.id,
@@ -590,6 +604,33 @@ class TestCreateMaskedTransformerJob:
         assert ablation.source_masked_transformer_job_id == source.id
         assert ablation.negative_label_family_policy_json == '{"families":{}}'
         assert ablation.training_signature != source.training_signature
+
+    async def test_projection_head_ablation_rejects_invalid_negative_family_policy(
+        self, session
+    ):
+        cej = await _seed_crnn_cej(session)
+        source, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+        )
+        source.status = JobStatus.complete.value
+        await session.commit()
+
+        with pytest.raises(ValueError, match="family labels must be lists"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                preset="small",
+                retrieval_head_enabled=True,
+                sequence_construction_mode="region",
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+                negative_label_family_policy_json='{"families":{"bad":"Moan"}}',
+            )
 
     async def test_projection_head_ablation_validates_source_job(self, session):
         cej = await _seed_crnn_cej(session)
@@ -640,6 +681,79 @@ class TestCreateMaskedTransformerJob:
                 session,
                 continuous_embedding_job_id=other_cej.id,
                 retrieval_head_enabled=True,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+            )
+
+    async def test_projection_head_ablation_requires_compatible_source_config(
+        self, session
+    ):
+        cej = await _seed_crnn_cej(session)
+        source, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            retrieval_dim=64,
+            retrieval_hidden_dim=128,
+            retrieval_l2_normalize=False,
+        )
+        source.status = JobStatus.complete.value
+        await session.commit()
+
+        with pytest.raises(ValueError, match="source preset"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                preset="default",
+                retrieval_head_enabled=True,
+                retrieval_dim=64,
+                retrieval_hidden_dim=128,
+                retrieval_l2_normalize=False,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+            )
+        with pytest.raises(ValueError, match="source retrieval_dim"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                preset="small",
+                retrieval_head_enabled=True,
+                retrieval_dim=128,
+                retrieval_hidden_dim=128,
+                retrieval_l2_normalize=False,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+            )
+        with pytest.raises(ValueError, match="source retrieval_hidden_dim"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                preset="small",
+                retrieval_head_enabled=True,
+                retrieval_dim=64,
+                retrieval_hidden_dim=256,
+                retrieval_l2_normalize=False,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+            )
+        with pytest.raises(ValueError, match="source retrieval_l2_normalize"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                preset="small",
+                retrieval_head_enabled=True,
+                retrieval_dim=64,
+                retrieval_hidden_dim=128,
+                retrieval_l2_normalize=True,
                 contrastive_loss_weight=1.0,
                 contrastive_label_source="human_corrections",
                 training_freeze_mode="transformer_frozen_projection_head_only",

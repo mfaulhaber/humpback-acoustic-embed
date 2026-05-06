@@ -25,6 +25,9 @@ from humpback.models.sequence_models import (
     ContinuousEmbeddingJob,
     MaskedTransformerJob,
 )
+from humpback.sequence_models.contrastive_loss import (
+    parse_negative_label_family_policy,
+)
 from humpback.sequence_models.exemplars import WindowMeta, select_exemplars
 from humpback.sequence_models.label_distribution import (
     EffectiveEventLabels,
@@ -288,9 +291,13 @@ def normalize_ablation_config(
             "transformer_frozen_projection_head_only requires positive "
             "contrastive_loss_weight"
         )
-    policy_json = (
-        negative_label_family_policy_json or default_negative_label_family_policy_json()
-    )
+    if negative_label_family_policy_json is None:
+        return (
+            training_freeze_mode,
+            source_masked_transformer_job_id,
+            None,
+        )
+    policy_json = negative_label_family_policy_json
     try:
         parsed = json.loads(policy_json)
     except json.JSONDecodeError as exc:
@@ -299,6 +306,7 @@ def normalize_ablation_config(
         ) from exc
     if not isinstance(parsed, dict):
         raise ValueError("negative_label_family_policy_json must be a JSON object")
+    parse_negative_label_family_policy(policy_json)
     return (
         training_freeze_mode,
         source_masked_transformer_job_id,
@@ -637,6 +645,8 @@ async def create_masked_transformer_job(
                 "source_masked_transformer_job must use the same "
                 "continuous_embedding_job_id"
             )
+        if source_job.preset != preset:
+            raise ValueError("source preset must match ablation preset")
         if not source_job.retrieval_head_enabled:
             raise ValueError(
                 "source_masked_transformer_job must have retrieval_head_enabled=true"
@@ -646,6 +656,11 @@ async def create_masked_transformer_job(
         if source_job.retrieval_hidden_dim != normalized_retrieval_hidden_dim:
             raise ValueError(
                 "source retrieval_hidden_dim must match ablation retrieval_hidden_dim"
+            )
+        if source_job.retrieval_l2_normalize != normalized_retrieval_l2_normalize:
+            raise ValueError(
+                "source retrieval_l2_normalize must match ablation "
+                "retrieval_l2_normalize"
             )
 
     k_list = parse_k_values(k_values if k_values is not None else [100])

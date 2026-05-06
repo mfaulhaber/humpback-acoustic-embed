@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from humpback.services.masked_transformer_service import (
+    default_negative_label_family_policy_json,
     default_related_label_policy_json,
 )
 
@@ -281,9 +282,18 @@ def build_initial_sweep_preset(
                     "early_stop_patience": 2,
                     "training_freeze_mode": "transformer_frozen_projection_head_only",
                     "source_masked_transformer_job_id": PRE_SAMPLER_CONTRASTIVE_JOB_ID,
+                    "negative_label_family_policy_json": (
+                        default_negative_label_family_policy_json()
+                    ),
                 }
             ),
-            metadata=_metadata(chunk_ms=250, sweep_stage="projection_head_ablation"),
+            metadata=_metadata(
+                chunk_ms=250,
+                sweep_stage="projection_head_ablation",
+                source_masked_transformer_job_id=PRE_SAMPLER_CONTRASTIVE_JOB_ID,
+                failure_mode_probe="projection_head_only_metric_learning",
+                stop_rule_group="projection_head_geometry",
+            ),
             blocked_reason=blocked_250,
         )
     )

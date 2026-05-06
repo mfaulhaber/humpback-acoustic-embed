@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import torch
+import pytest
 
 from humpback.sequence_models.contrastive_loss import (
     ContrastiveEventMetadata,
@@ -134,6 +135,40 @@ def test_safe_negative_families_exclude_same_family_and_multilabel() -> None:
     assert not masks.negative_mask[0, 1]
     assert masks.negative_mask[0, 2]
     assert not masks.negative_mask[0, 3]
+
+
+def test_safe_negative_families_interact_with_related_label_policy() -> None:
+    metadata = [
+        _meta("a", "r1", ("Moan",)),
+        _meta("b", "r2", ("Whup",)),
+        _meta("c", "r3", ("Creak",)),
+    ]
+
+    masks = build_contrastive_masks(
+        metadata,
+        min_events_per_label=1,
+        min_regions_per_label=1,
+        related_label_pairs={frozenset({"Moan", "Whup"})},
+        negative_label_families=parse_negative_label_family_policy(
+            '{"families":{"family_a":["Moan"],"family_b":["Whup"],"family_c":["Creak"]}}'
+        ),
+    )
+
+    assert not masks.negative_mask[0, 1]
+    assert masks.negative_mask[0, 2]
+
+
+def test_negative_label_family_policy_rejects_malformed_payloads() -> None:
+    for payload in (
+        "[1, 2]",
+        '{"families":[]}',
+        '{"families":{"bad":"Moan"}}',
+        '{"families":{"":["Moan"]}}',
+        '{"families":{"moan":[""]}}',
+        '{"families":{"a":["Moan"],"b":["Moan"]}}',
+    ):
+        with pytest.raises(ValueError):
+            parse_negative_label_family_policy(payload)
 
 
 def test_supervised_contrastive_loss_is_finite_for_multilabel_events() -> None:

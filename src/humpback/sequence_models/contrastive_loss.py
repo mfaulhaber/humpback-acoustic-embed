@@ -70,18 +70,43 @@ def parse_negative_label_family_policy(
     if not policy_json:
         raw_families = {k: list(v) for k, v in DEFAULT_NEGATIVE_LABEL_FAMILIES.items()}
     else:
-        parsed = json.loads(policy_json)
-        raw_families = (
-            parsed.get("families", DEFAULT_NEGATIVE_LABEL_FAMILIES)
-            if isinstance(parsed, dict)
-            else DEFAULT_NEGATIVE_LABEL_FAMILIES
-        )
+        try:
+            parsed = json.loads(policy_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "negative_label_family_policy_json must be valid JSON"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("negative_label_family_policy_json must be a JSON object")
+        raw = parsed.get("families", DEFAULT_NEGATIVE_LABEL_FAMILIES)
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "negative_label_family_policy_json.families must be an object"
+            )
+        raw_families = raw
     out: dict[str, str] = {}
     for family, labels in raw_families.items():
+        family_name = str(family).strip()
+        if not family_name:
+            raise ValueError(
+                "negative_label_family_policy_json family names must be non-empty"
+            )
         if not isinstance(labels, (list, tuple)):
-            continue
+            raise ValueError(
+                "negative_label_family_policy_json family labels must be lists"
+            )
         for label in labels:
-            out[str(label)] = str(family)
+            label_name = str(label).strip()
+            if not label_name:
+                raise ValueError(
+                    "negative_label_family_policy_json labels must be non-empty"
+                )
+            if label_name in out:
+                raise ValueError(
+                    "negative_label_family_policy_json labels may appear in only "
+                    "one family"
+                )
+            out[label_name] = family_name
     return out
 
 

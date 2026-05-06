@@ -827,6 +827,11 @@ async def test_projection_head_only_ablation_uses_source_model_and_writes_artifa
     assert masked_transformer_retrieval_head_outputs_path(
         settings.storage_root, ablation.id
     ).exists()
+    assert masked_transformer_model_path(settings.storage_root, ablation.id).exists()
+    kmeans_payload = joblib.load(
+        masked_transformer_k_kmeans_path(settings.storage_root, ablation.id, 10)
+    )
+    assert kmeans_payload["kmeans"].cluster_centers_.shape[1] == 6
 
 
 async def test_contrastive_ignores_model_only_labels(session, settings, monkeypatch):

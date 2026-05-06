@@ -749,6 +749,11 @@ def train_masked_transformer(
         trainable_parameters = [
             parameter for parameter in model.parameters() if parameter.requires_grad
         ]
+        if not trainable_parameters:
+            raise ValueError(
+                "projection-head-only training found no trainable retrieval_head "
+                "parameters"
+            )
     else:
         trainable_parameters = list(model.parameters())
 
@@ -988,6 +993,8 @@ def train_masked_transformer(
                     val_loss = (
                         val_loss + config.contrastive_loss_weight * val_contrastive_loss
                     )
+                    if projection_head_only and masks.valid_anchor_count == 0:
+                        val_loss = torch.full_like(val_loss, float("nan"))
                 if config.retrieval_head_enabled and not projection_head_only:
                     target_output = model(
                         val_batch.targets, src_key_padding_mask=val_batch.pad_mask
