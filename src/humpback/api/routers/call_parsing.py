@@ -846,8 +846,8 @@ async def list_classification_jobs_by_segmentation(
 ):
     """Return Classify jobs for a single segmentation, newest first.
 
-    Powers the Sequence Models submit dropdown. ``status=completed``
-    filters to jobs that can be bound by an HMM/MT submit.
+    ``status=completed`` filters to jobs that can be bound by downstream
+    consumers.
     """
     rows = await service.list_classification_jobs_for_segmentation(
         session,

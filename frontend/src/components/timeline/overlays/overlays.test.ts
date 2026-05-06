@@ -1,11 +1,11 @@
 import React from "react";
 import { render } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
-import type { MotifOccurrence } from "@/api/sequenceModels";
 import { MOTIF_PALETTE } from "@/lib/motifColor";
 import { OverlayContext } from "./OverlayContext";
 import { RegionBoundaryMarkers } from "./RegionBoundaryMarkers";
 import { MotifHighlightOverlay } from "./MotifHighlightOverlay";
+import type { MotifOccurrence } from "./motifTypes";
 
 describe("overlay positioning accuracy", () => {
   it("epochToX produces correct pixel positions for known values", () => {
@@ -160,7 +160,7 @@ describe("MotifHighlightOverlay", () => {
         }),
       ),
     );
-    expect(container.querySelectorAll('[data-testid="mt-motif-highlight-band"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-testid="motif-highlight-band"]')).toHaveLength(2);
   });
 
   it("with a colorForMotifKey mapper, distinct keys get distinct background colors", () => {
@@ -184,9 +184,9 @@ describe("MotifHighlightOverlay", () => {
         }),
       ),
     );
-    const bands = container.querySelectorAll<HTMLDivElement>('[data-testid="mt-motif-highlight-band"]');
+    const bands = container.querySelectorAll<HTMLDivElement>('[data-testid="motif-highlight-band"]');
     expect(bands).toHaveLength(3);
-    // Same motif_key → same background; different key → different.
+    // Same motif_key yields the same background; different key yields different.
     expect((bands[0] as HTMLElement).style.background).toEqual(
       (bands[2] as HTMLElement).style.background,
     );
@@ -215,7 +215,7 @@ describe("MotifHighlightOverlay", () => {
         }),
       ),
     );
-    const bands = container.querySelectorAll<HTMLDivElement>('[data-testid="mt-motif-highlight-band"]');
+    const bands = container.querySelectorAll<HTMLDivElement>('[data-testid="motif-highlight-band"]');
     expect((bands[0] as HTMLElement).style.outline).toBe("none");
     expect((bands[1] as HTMLElement).style.outline).toContain("dashed");
     expect((bands[1] as HTMLElement).getAttribute("data-active")).toBe("true");
@@ -238,7 +238,7 @@ describe("MotifHighlightOverlay", () => {
         }),
       ),
     );
-    const bands = container.querySelectorAll<HTMLDivElement>('[data-testid="mt-motif-highlight-band"]');
+    const bands = container.querySelectorAll<HTMLDivElement>('[data-testid="motif-highlight-band"]');
     // Both rectangles share the same fallback hue (legacy single-color
     // behavior); the active rectangle uses the heavier alpha variant.
     expect((bands[0] as HTMLElement).style.outline).toBe("none");

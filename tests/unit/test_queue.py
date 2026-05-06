@@ -8,17 +8,11 @@ from humpback.models.hyperparameter import (
     HyperparameterManifest,
     HyperparameterSearchJob,
 )
-from humpback.models.sequence_models import (
-    ContinuousEmbeddingJob,
-    HMMSequenceJob,
-    MaskedTransformerJob,
-    MotifExtractionJob,
-)
+from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.workers.queue import (
     STALE_JOB_TIMEOUT,
     claim_clustering_job,
     claim_detection_embedding_job,
-    claim_motif_extraction_job,
     recover_stale_jobs,
 )
 
@@ -44,22 +38,6 @@ async def test_claim_detection_embedding_job(session):
     await session.commit()
 
     claimed = await claim_detection_embedding_job(session)
-    assert claimed is not None
-    assert claimed.id == job.id
-    assert claimed.status == "running"
-
-
-async def test_claim_motif_extraction_job(session):
-    job = MotifExtractionJob(
-        status="queued",
-        hmm_sequence_job_id="hmm-1",
-        source_kind="surfperch",
-        config_signature="sig-1",
-    )
-    session.add(job)
-    await session.commit()
-
-    claimed = await claim_motif_extraction_job(session)
     assert claimed is not None
     assert claimed.id == job.id
     assert claimed.status == "running"
@@ -109,27 +87,6 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
         encoding_signature="enc-1",
         updated_at=stale_time,
     )
-    hmm = HMMSequenceJob(
-        status="running",
-        continuous_embedding_job_id="ce-1",
-        n_states=4,
-        pca_dims=8,
-        updated_at=stale_time,
-    )
-    motif = MotifExtractionJob(
-        status="running",
-        hmm_sequence_job_id="hmm-1",
-        source_kind="surfperch",
-        config_signature="sig-1",
-        updated_at=stale_time,
-    )
-    masked_transformer = MaskedTransformerJob(
-        status="running",
-        continuous_embedding_job_id="ce-1",
-        training_signature="mt-sig-1",
-        k_values="[100]",
-        updated_at=stale_time,
-    )
     session.add_all(
         [
             manifest,
@@ -137,15 +94,12 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
             clustering,
             detection_embedding,
             continuous,
-            hmm,
-            motif,
-            masked_transformer,
         ]
     )
     await session.commit()
 
     count = await recover_stale_jobs(session)
-    assert count == 8
+    assert count == 5
 
     for job in (
         manifest,
@@ -153,9 +107,6 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
         clustering,
         detection_embedding,
         continuous,
-        hmm,
-        motif,
-        masked_transformer,
     ):
         await session.refresh(job)
         assert job.status == "queued"

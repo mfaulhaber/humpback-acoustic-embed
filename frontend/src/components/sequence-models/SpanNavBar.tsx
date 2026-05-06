@@ -2,8 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { formatRecordingTime } from "@/utils/format";
 
 export interface SpanInfo {
-  /** Group key from the states.parquet row. SurfPerch source: numeric
-   *  ``merged_span_id``. CRNN source: string ``region_id``. */
+  /** Group key from a sequence visualization row. */
   id: number | string;
   eventId: string;
   regionId: string;
@@ -48,15 +47,15 @@ export function SpanNavBar({
   const region = regions[activeRegionIndex];
 
   return (
-    <div className="flex items-center gap-4 text-sm" data-testid="hmm-span-nav">
+    <div className="flex items-center gap-4 text-sm" data-testid="sequence-span-nav">
       {regions.length > 1 && (
-        <div className="flex items-center gap-1" data-testid="hmm-region-nav">
+        <div className="flex items-center gap-1" data-testid="sequence-region-nav">
           <button
             className="rounded-md border p-1 hover:bg-accent disabled:opacity-30"
             disabled={activeRegionIndex === 0}
             onClick={onPrevRegion}
             title="Previous region"
-            data-testid="hmm-region-prev"
+            data-testid="sequence-region-prev"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -65,7 +64,7 @@ export function SpanNavBar({
             disabled={activeRegionIndex === regions.length - 1}
             onClick={onNextRegion}
             title="Next region"
-            data-testid="hmm-region-next"
+            data-testid="sequence-region-next"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -76,13 +75,13 @@ export function SpanNavBar({
         </div>
       )}
 
-      <div className="flex items-center gap-1" data-testid="hmm-event-nav">
+      <div className="flex items-center gap-1" data-testid="sequence-event-nav">
         <button
           className="rounded-md border p-1 hover:bg-accent disabled:opacity-30"
           disabled={activeIndex === 0}
           onClick={onPrevEvent}
           title={`Previous ${itemLabel.toLowerCase()} (A)`}
-          data-testid="hmm-span-prev"
+          data-testid="sequence-span-prev"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
@@ -91,11 +90,11 @@ export function SpanNavBar({
           disabled={activeIndex === spans.length - 1}
           onClick={onNextEvent}
           title={`Next ${itemLabel.toLowerCase()} (D)`}
-          data-testid="hmm-span-next"
+          data-testid="sequence-span-next"
         >
           <ChevronRight className="h-4 w-4" />
         </button>
-        <span className="text-muted-foreground" data-testid="hmm-span-label">
+        <span className="text-muted-foreground" data-testid="sequence-span-label">
           {itemLabel} {activeIndex + 1}/{spans.length} ·{" "}
           {formatRecordingTime(0, span.startTimestamp)} –{" "}
           {formatRecordingTime(0, span.endTimestamp)}

@@ -21,6 +21,7 @@ export { RegionEditOverlay } from "./overlays/RegionEditOverlay";
 export { RegionBandOverlay } from "./overlays/RegionBandOverlay";
 export { RegionBoundaryMarkers } from "./overlays/RegionBoundaryMarkers";
 export { MotifHighlightOverlay } from "./overlays/MotifHighlightOverlay";
+export type { MotifOccurrence } from "./overlays/motifTypes";
 export { EventBarOverlay } from "./overlays/EventBarOverlay";
 export { OverlayContext, useOverlayContext } from "./overlays/OverlayContext";
 export type { OverlayContextValue } from "./overlays/OverlayContext";

@@ -9,8 +9,7 @@ const SINGLE_ROW_BAR_HEIGHT = 60;
 export interface DiscreteSequenceItem {
   start_timestamp: number;
   end_timestamp: number;
-  /** Discrete category — HMM state index for HMM jobs, k-means token
-   *  index for masked-transformer jobs. */
+  /** Discrete state or token index. */
   label: number;
   /** Confidence, max-state probability, or token confidence in [0,1]. */
   confidence?: number;
@@ -18,11 +17,10 @@ export interface DiscreteSequenceItem {
 
 export interface DiscreteSequenceBarProps {
   items: DiscreteSequenceItem[];
-  /** Total number of distinct labels (HMM states or k tokens).
+  /** Total number of distinct labels.
    *  Drives both the row layout (``rows`` mode) and the color palette. */
   numLabels: number;
-  /** ``rows``: one row per label (HMM-style); ``single-row``: full-height
-   *  fillRect per chunk (masked-transformer-style). */
+  /** ``rows``: one row per label; ``single-row``: full-height fillRect per chunk. */
   mode?: "rows" | "single-row";
   /** Optional region overlay drawn as bright vertical guides. */
   currentRegion?: {

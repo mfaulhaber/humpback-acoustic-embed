@@ -25,13 +25,13 @@
 - Delete: `tests/unit/test_migration_074_masked_transformer_job_sources.py`
 
 **Acceptance criteria:**
-- [ ] Before creating or running the Alembic migration, complete the CLAUDE.md §3.5 database backup step from `.env`: run `DATABASE_URL=$(grep -E '^DATABASE_URL=' .env | cut -d= -f2-)`, run `DB_PATH=${DATABASE_URL#sqlite+aiosqlite:///}` and if unchanged run `DB_PATH=${DATABASE_URL#sqlite:///}`, run `BACKUP_PATH="$DB_PATH.$(date -u +%Y%m%dT%H%M%SZ).bak"`, run `cp "$DB_PATH" "$BACKUP_PATH"`, and run `test -s "$BACKUP_PATH"`.
-- [ ] Alembic upgrade drops `motif_extraction_jobs`, `masked_transformer_job_sources`, `masked_transformer_jobs`, and `hmm_sequence_jobs`.
-- [ ] Alembic upgrade preserves `continuous_embedding_jobs`, its existing rows, and its uniqueness/idempotency constraints.
-- [ ] Alembic downgrade for this destructive retirement is intentionally unsupported or raises a clear backup-restore instruction.
-- [ ] `src/humpback/models/sequence_models.py` exports only retained Continuous Embedding ORM state.
-- [ ] `src/humpback/schemas/sequence_models.py` exports only Continuous Embedding schemas and detail helpers.
-- [ ] `src/humpback/storage.py` retains only Continuous Embedding storage helpers from the retired Sequence Models family.
+- [x] Before creating or running the Alembic migration, complete the CLAUDE.md §3.5 database backup step from `.env`: run `DATABASE_URL=$(grep -E '^DATABASE_URL=' .env | cut -d= -f2-)`, run `DB_PATH=${DATABASE_URL#sqlite+aiosqlite:///}` and if unchanged run `DB_PATH=${DATABASE_URL#sqlite:///}`, run `BACKUP_PATH="$DB_PATH.$(date -u +%Y%m%dT%H%M%SZ).bak"`, run `cp "$DB_PATH" "$BACKUP_PATH"`, and run `test -s "$BACKUP_PATH"`.
+- [x] Alembic upgrade drops `motif_extraction_jobs`, `masked_transformer_job_sources`, `masked_transformer_jobs`, and `hmm_sequence_jobs`.
+- [x] Alembic upgrade preserves `continuous_embedding_jobs`, its existing rows, and its uniqueness/idempotency constraints.
+- [x] Alembic downgrade for this destructive retirement is intentionally unsupported or raises a clear backup-restore instruction.
+- [x] `src/humpback/models/sequence_models.py` exports only retained Continuous Embedding ORM state.
+- [x] `src/humpback/schemas/sequence_models.py` exports only Continuous Embedding schemas and detail helpers.
+- [x] `src/humpback/storage.py` retains only Continuous Embedding storage helpers from the retired Sequence Models family.
 
 **Tests needed:**
 - Migration test proving retired tables are removed and `continuous_embedding_jobs` survives with rows intact.
@@ -66,11 +66,11 @@
 - Delete: `tests/workers/test_motif_extraction_worker.py`
 
 **Acceptance criteria:**
-- [ ] The Sequence Models router registers only Continuous Embedding endpoints.
-- [ ] Requests to retired HMM, MT, and motif endpoint paths receive the normal unregistered-route 404.
-- [ ] `recover_stale_jobs()` does not query dropped HMM/MT/motif tables.
-- [ ] The worker runner polls Continuous Embedding and then idles without importing retired workers.
-- [ ] API and worker startup succeed against a database migrated through revision `075`.
+- [x] The Sequence Models router registers only Continuous Embedding endpoints.
+- [x] Requests to retired HMM, MT, and motif endpoint paths receive the normal unregistered-route 404.
+- [x] `recover_stale_jobs()` does not query dropped HMM/MT/motif tables.
+- [x] The worker runner polls Continuous Embedding and then idles without importing retired workers.
+- [x] API and worker startup succeed against a database migrated through revision `075`.
 
 **Tests needed:**
 - Update Sequence Models integration tests to exercise Continuous Embedding create/list/detail/cancel/delete only.
@@ -127,11 +127,11 @@
 - Delete: `tests/unit/test_masked_transformer_contrastive_sampler_migration.py`
 
 **Acceptance criteria:**
-- [ ] Retained `src/humpback/sequence_models/` modules are limited to Continuous Embedding support utilities.
-- [ ] `chunk_projection.py`, `crnn_features.py`, and `event_overlap_join.py` remain and keep their tests.
-- [ ] `hmmlearn` is removed from `pyproject.toml` and `uv.lock`.
-- [ ] UMAP, HDBSCAN, Torch, Plotly, scikit-learn, joblib, numpy, and pyarrow remain where active non-retired features still need them.
-- [ ] No non-doc import references deleted HMM/MT/motif domain modules.
+- [x] Retained `src/humpback/sequence_models/` modules are limited to Continuous Embedding support utilities.
+- [x] `chunk_projection.py`, `crnn_features.py`, and `event_overlap_join.py` remain and keep their tests.
+- [x] `hmmlearn` is removed from `pyproject.toml` and `uv.lock`.
+- [x] UMAP, HDBSCAN, Torch, Plotly, scikit-learn, joblib, numpy, and pyarrow remain where active non-retired features still need them.
+- [x] No non-doc import references deleted HMM/MT/motif domain modules.
 
 **Tests needed:**
 - Keep and run `tests/sequence_models/test_chunk_projection.py`, `tests/sequence_models/test_crnn_features.py`, and `tests/sequence_models/test_event_overlap_join.py`.
@@ -155,12 +155,12 @@
 - Delete: `frontend/e2e/sequence-models/mt-training.spec.ts`
 
 **Acceptance criteria:**
-- [ ] `/app/sequence-models` redirects to `/app/sequence-models/continuous-embedding`.
-- [ ] Continuous Embedding list and detail routes remain registered.
-- [ ] HMM Sequence, MT Training, MT Motif, and Masked Transformer routes are removed.
-- [ ] Side navigation exposes Sequence Models with Continuous Embedding only.
-- [ ] Breadcrumbs handle Continuous Embedding only for the Sequence Models track.
-- [ ] `frontend/src/api/sequenceModels.ts` exports only Continuous Embedding types and hooks.
+- [x] `/app/sequence-models` redirects to `/app/sequence-models/continuous-embedding`.
+- [x] Continuous Embedding list and detail routes remain registered.
+- [x] HMM Sequence, MT Training, MT Motif, and Masked Transformer routes are removed.
+- [x] Side navigation exposes Sequence Models with Continuous Embedding only.
+- [x] Breadcrumbs handle Continuous Embedding only for the Sequence Models track.
+- [x] `frontend/src/api/sequenceModels.ts` exports only Continuous Embedding types and hooks.
 
 **Tests needed:**
 - Keep and run `frontend/e2e/sequence-models/continuous-embedding.spec.ts`.
@@ -216,11 +216,11 @@
 - Delete: `frontend/src/components/sequence-models/TokenRunLengthHistograms.test.tsx`
 
 **Acceptance criteria:**
-- [ ] Retained motif/state visualization primitives no longer import retired API types.
-- [ ] `MotifHighlightOverlay` uses a neutral visualization-only motif occurrence type.
-- [ ] Timeline provider, spectrogram, tile canvas, playback, and core overlay positioning code are not broadly changed.
-- [ ] Deleted components are not imported by any active route, test, or barrel file.
-- [ ] Plotly dependencies remain because vocalization UMAP still uses them.
+- [x] Retained motif/state visualization primitives no longer import retired API types.
+- [x] `MotifHighlightOverlay` uses a neutral visualization-only motif occurrence type.
+- [x] Timeline provider, spectrogram, tile canvas, playback, and core overlay positioning code are not broadly changed.
+- [x] Deleted components are not imported by any active route, test, or barrel file.
+- [x] Plotly dependencies remain because vocalization UMAP still uses them.
 
 **Tests needed:**
 - Run retained tests for `DiscreteSequenceBar`, `RegionNavBar`, `MotifTimelineLegend`, and motif color utilities.
@@ -236,14 +236,14 @@
 - Create: `tests/scripts/test_cleanup_sequence_model_artifacts.py`
 
 **Acceptance criteria:**
-- [ ] Script defaults to dry-run mode.
-- [ ] Script reads `settings.storage_root` by default and accepts `--storage-root` for tests or emergency use.
-- [ ] Script targets only `hmm_sequences`, `masked_transformer_jobs`, and `motif_extractions` under the resolved storage root.
-- [ ] Script never targets `continuous_embeddings`.
-- [ ] Script refuses symlinks and resolved paths outside the storage root.
-- [ ] Script reports candidate directory count, file count, and bytes.
-- [ ] Script writes a JSON manifest under `cleanup-manifests/{timestamp}-sequence-models-hmm-mt.json`.
-- [ ] Script requires `--apply` before deleting files.
+- [x] Script defaults to dry-run mode.
+- [x] Script reads `settings.storage_root` by default and accepts `--storage-root` for tests or emergency use.
+- [x] Script targets only `hmm_sequences`, `masked_transformer_jobs`, and `motif_extractions` under the resolved storage root.
+- [x] Script never targets `continuous_embeddings`.
+- [x] Script refuses symlinks and resolved paths outside the storage root.
+- [x] Script reports candidate directory count, file count, and bytes.
+- [x] Script writes a JSON manifest under `cleanup-manifests/{timestamp}-sequence-models-hmm-mt.json`.
+- [x] Script requires `--apply` before deleting files.
 
 **Tests needed:**
 - Unit tests with a temporary storage root covering dry-run, apply, continuous-embedding preservation, missing target dirs, symlink refusal, and out-of-root refusal.
@@ -264,10 +264,10 @@
 - Modify: `tests/sequence_models/test_event_overlap_join.py`
 
 **Acceptance criteria:**
-- [ ] Shared fixtures support retained Continuous Embedding and CRNN tests only.
-- [ ] Retired HMM/MT/motif fixtures and helper factories are removed.
-- [ ] Continuous Embedding tests still cover SurfPerch and CRNN source modes.
-- [ ] Test collection succeeds without skipped imports of deleted modules.
+- [x] Shared fixtures support retained Continuous Embedding and CRNN tests only.
+- [x] Retired HMM/MT/motif fixtures and helper factories are removed.
+- [x] Continuous Embedding tests still cover SurfPerch and CRNN source modes.
+- [x] Test collection succeeds without skipped imports of deleted modules.
 
 **Tests needed:**
 - Run `uv run pytest tests/services/test_continuous_embedding_service.py tests/workers/test_continuous_embedding_worker.py tests/sequence_models/test_chunk_projection.py tests/sequence_models/test_crnn_features.py tests/sequence_models/test_event_overlap_join.py`.
@@ -283,12 +283,12 @@
 - Modify: `DECISIONS.md`
 
 **Acceptance criteria:**
-- [ ] Sequence Models API reference documents Continuous Embedding only.
-- [ ] Frontend reference documents Sequence Models navigation as Continuous Embedding only.
-- [ ] Frontend reference documents retained shared motif/state visualization primitives without presenting retired HMM/MT product pages as active.
-- [ ] `DECISIONS.md` removes ADR entries for retired HMM Sequence, Masked Transformer, and motif-extraction product surfaces.
-- [ ] `DECISIONS.md` preserves or rewrites active Continuous Embedding decisions that remain relevant.
-- [ ] Historical specs and plans are left in place.
+- [x] Sequence Models API reference documents Continuous Embedding only.
+- [x] Frontend reference documents Sequence Models navigation as Continuous Embedding only.
+- [x] Frontend reference documents retained shared motif/state visualization primitives without presenting retired HMM/MT product pages as active.
+- [x] `DECISIONS.md` removes ADR entries for retired HMM Sequence, Masked Transformer, and motif-extraction product surfaces.
+- [x] `DECISIONS.md` preserves or rewrites active Continuous Embedding decisions that remain relevant.
+- [x] Historical specs and plans are left in place.
 
 **Tests needed:**
 - Documentation review plus search checks for active-doc references to retired HMM/MT/motif endpoints and routes.

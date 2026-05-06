@@ -19,7 +19,7 @@ describe("MotifTimelineLegend", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders the tokenSelector slot when supplied with no motif/nav (HMM-style consumers see no slot)", () => {
+  it("renders the tokenSelector slot when supplied with no motif/nav", () => {
     render(
       <MotifTimelineLegend
         selectedMotifKey={null}

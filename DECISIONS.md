@@ -296,395 +296,84 @@ Key changes:
 ## ADR-056: Sequence Models track parallel to Call Parsing pipeline
 
 **Date**: 2026-04-27
-**Status**: Accepted
+**Status**: Accepted; updated 2026-05-06 after downstream retirement
 
-**Context**: We need to add a sequence-modeling layer (HMM latent state discovery on SurfPerch embeddings) that consumes Pass-1 region detections without coupling to the four-pass call parsing pipeline. The first PR lands the data-plumbing producer (continuous 1-second-hop embeddings padded around regions); subsequent PRs add HMM training, interpretation visualizations, and motif mining.
+**Context**: We need a sequence-modeling-adjacent data layer that can consume
+Call Parsing outputs without becoming a fifth pass of the four-pass pipeline.
+The retained scope is the Continuous Embedding producer: durable, idempotent
+embedding artifacts that other analysis workflows can consume later.
 
-**Decision**: Introduce a new top-level **Sequence Models** track parallel to Call Parsing rather than extending the four-pass pipeline. PR 1 adds:
-- `continuous_embedding_jobs` SQL table (Alembic 057) with idempotency keyed on `encoding_signature = sha256(region_detection_job_id, model_version, hop_seconds, window_size_seconds, pad_seconds, target_sample_rate, feature_config)`.
-- A new `processing/region_windowing.py` pure-function module: `merge_padded_regions` and `iter_windows`, deterministic and side-effect free.
-- A producer service + worker pair that reads regions from a completed `RegionDetectionJob` and writes `continuous_embeddings/{job_id}/embeddings.parquet` + `manifest.json` atomically.
-- A new FastAPI router under `/sequence-models/` and a corresponding frontend Sequence Models nav section.
-- 1:1 source linkage (one `region_detection_job_id` per producer job); cross-source training and stored-model decode are explicit non-goals for this PR.
+**Decision**: Keep **Sequence Models** as a top-level track parallel to Call
+Parsing, with Continuous Embedding as its active runtime surface. The retained
+implementation includes:
+- `continuous_embedding_jobs` with idempotency keyed on `encoding_signature`.
+- `processing/region_windowing.py` pure functions for padded event span merging
+  and window iteration.
+- A producer service and worker that write
+  `continuous_embeddings/{job_id}/embeddings.parquet` plus `manifest.json`.
+- `/sequence-models/continuous-embeddings` API endpoints and the matching
+  frontend Sequence Models navigation entry.
 
-The SurfPerch model invocation is structured behind an injected `EmbedderProtocol` so the worker is testable without depending on hydrophone audio decoding or model loading.
+The SurfPerch model invocation remains structured behind an injected
+`EmbedderProtocol` so the worker is testable without depending on hydrophone
+audio decoding or model loading.
 
 **Alternatives considered**:
-- Folding the producer into the Call Parsing pipeline (e.g., as a fifth pass): rejected because Sequence Models has independent evolution needs (different embedding model versions, different sequence-model families, no human-correction flow).
-- Stuffing the producer parameters into the existing `region_detection_jobs` row: rejected because the producer is parameterized by hop / pad / model version that are orthogonal to detection.
-- Re-using the cached Pass-1 embeddings parquet as-is: rejected because Pass-1 caches at the detector hop, while the producer needs an arbitrary hop and full SurfPerch coverage of the padded region (not just within-region windows).
+- Folding the producer into the Call Parsing pipeline: rejected because
+  embeddings have independent model/version/idempotency semantics.
+- Storing producer parameters on `region_detection_jobs`: rejected because
+  hop, padding, source mode, and model version are orthogonal to detection.
+- Reusing cached Pass 1 embeddings directly: rejected because the producer
+  needs source-specific coverage and artifact schemas.
 
 **Consequences**:
-- New migration 057 adds `continuous_embedding_jobs` with indices on `encoding_signature` and `status`.
-- New ORM model in `src/humpback/models/sequence_models.py`; reuses the existing `JobStatus` enum from `models/processing.py`.
-- New `/sequence-models/continuous-embeddings` API surface; documented in `docs/reference/sequence-models-api.md`.
-- New `continuous_embeddings/{job_id}/` storage tree with atomic temp-rename writes for both `embeddings.parquet` and `manifest.json`.
-- The default production embedder is intentionally a stub that raises until the SurfPerch + hydrophone-streaming integration lands; the worker contract is finalized today behind the injected `EmbedderProtocol`.
-- Producer idempotency lookup is the service layer's responsibility — the worker never re-checks `encoding_signature` and assumes its job row is canonical.
-- `processing/region_windowing.py` is added to the sensitive-components list because every downstream HMM sequence consumer relies on its merge/window-center semantics.
+- `continuous_embedding_jobs` and `continuous_embeddings/{job_id}/` remain part
+  of the active storage, API, worker, and UI contract.
+- The retired downstream runtime surfaces were removed by the 2026-05-06
+  cleanup and schema migration 075.
+- Producer idempotency lookup is the service layer's responsibility; workers
+  assume their job row is canonical.
 
 ## ADR-057: CRNN region-based chunk embeddings as second Sequence Models source
 
 **Date**: 2026-04-29
-**Status**: Accepted
+**Status**: Accepted; updated 2026-05-06 after downstream retirement
 **Builds on**: ADR-050 (Pass 2 segmentation), ADR-056 (Sequence Models track)
 
-**Context**: SurfPerch event-padded embeddings (ADR-056) cover only the immediate
-neighborhood of Pass 2 events. To explore latent-state structure spanning
-whole detection regions — and to leverage the segmentation CRNN's
-already-learned representations — we want a second Sequence Models embedding
-source: the Pass 2 BiGRU activations sliced into 250 ms chunks, computed per
-Pass 1 detection region, with per-chunk metadata joining against Pass 2
-events. The HMM consumer needs to keep working unchanged for SurfPerch jobs
-while gaining three training-mode options (full-region, event-balanced,
-event-only) for the new source.
+**Context**: SurfPerch event-padded embeddings cover the immediate neighborhood
+of Pass 2 events. We also need a region-scoped Continuous Embedding source that
+uses the segmentation CRNN's learned representations over full Pass 1 detection
+regions.
 
 **Decision**:
 1. **Single-table dispatch on `model_version`**. `continuous_embedding_jobs`
-   and `hmm_sequence_jobs` grow nullable columns (Alembic 061) covering the
-   CRNN-only configuration; the worker, service, and API all dispatch on
-   the `model_version` family. SurfPerch rows leave the new columns null;
-   CRNN rows leave the SurfPerch-only columns null. Alternatives considered:
-   per-source tables (rejected — duplicates HMM consumer code), source-kind
-   discriminator column (rejected — redundant with `model_version`).
-2. **Concat-and-project chunk embeddings with `IdentityProjection` default**.
-   Eight 32 fps frames × 128-d BiGRU width = 1024-d chunk vector, passed
-   through a pluggable `ChunkProjection`. Phase 1 ships `IdentityProjection`
-   as the default (PCA + HMM consumer handles dim-reduction); the
-   abstraction also covers `RandomProjection` and `PCAProjection` for future
-   experiments. Alternative considered: average-pooling 8 frames into a
-   128-d chunk vector — rejected because it discards within-chunk temporal
-   structure that the BiGRU specifically encodes.
-3. **Shared windowing helper extracted from Pass 2 inference**. Both Pass 2
-   and the new CRNN extractor consume `iter_inference_windows()`. The
-   Pass 2 refactor is the only edit to Pass 2 source files and is
-   regression-tested for byte-identical `events.parquet` output before/after.
+   holds nullable CRNN-only columns. SurfPerch rows leave those columns null;
+   CRNN rows leave SurfPerch-only configuration null. Per-source tables were
+   rejected because they duplicate the same job lifecycle and idempotency
+   behavior.
+2. **Concat-and-project chunk embeddings**. Eight 32 fps frames by 128 BiGRU
+   channels produce a 1024-d chunk vector, passed through the `ChunkProjection`
+   abstraction. `IdentityProjection` is the default; random and PCA projection
+   remain available for retained experiments.
+3. **Shared inference windowing**. Pass 2 inference and the CRNN extractor share
+   `iter_inference_windows()`, keeping frame/chunk geometry consistent.
 
 **Consequences**:
-- Migration 061 adds nullable columns to `continuous_embedding_jobs` and
-  `hmm_sequence_jobs`; SurfPerch-only configuration columns are relaxed to
-  nullable so CRNN-source rows can leave them unset.
-- Producer worker (`_run_region_crnn`) and HMM worker (`_run_region_crnn_hmm`)
-  share the public entry points but dispatch internally on source kind.
-- New `embeddings.parquet` schema variant for CRNN source includes
-  `region_id`, `chunk_index_in_region`, `tier`, `event_overlap_fraction`,
-  `nearest_event_id`, `distance_to_nearest_event_seconds`, and
-  `call_probability` (mean per-frame sigmoid over 8 frames).
-- New `states.parquet` schema variant for CRNN-source HMM jobs adds `tier`
-  and `was_used_for_training`. `summary.json` adds per-state
-  `tier_composition` aggregates so the frontend can render a stacked-bar
-  strip without re-aggregating from `states.parquet`.
-- Encoding signature differs between source kinds (CRNN signature folds in
-  `region_detection_job_id`, `event_segmentation_job_id`,
-  `crnn_checkpoint_sha256`, chunk geometry, projection config); SurfPerch
-  signature is unchanged.
-- API: `POST /sequence-models/continuous-embeddings` and
-  `POST /sequence-models/hmm-sequences` return 422 when CRNN-only fields
-  are sent on a SurfPerch source (and vice versa) or when
-  `event_balanced_proportions` does not sum to 1.0 ± 1e-6.
-- Frontend new-job creation forms gain a source-type toggle; the list page
-  gains a `Source` badge column; the HMM detail page renders a per-state
-  `Tier Composition` stacked-bar strip for CRNN-source jobs and uses the
-  generalized `SpanNavBar` `itemLabel` prop (`Region` for CRNN source,
-  `Event` for SurfPerch).
-- Mixing SurfPerch and CRNN sources in a single HMM job is explicitly out
-  of scope for Phase 1.
-
-## ADR-058: First-class HMM motif extraction jobs
-
-**Date**: 2026-04-30
-**Status**: Accepted
-**Builds on**: ADR-056, ADR-057
-
-**Context**: ADR-056 identified motif mining as a downstream Sequence Models
-interpretation stage. After the HMM Sequence workflow gained both SurfPerch
-event-padded and CRNN region-based sources, motif extraction became important
-enough to compare, rerun, cancel, and inspect as durable analysis output rather
-than as a hidden cache behind the HMM detail page.
-
-**Decision**: Add `motif_extraction_jobs` as a first-class Sequence Models job
-type. Each job consumes one completed `hmm_sequence_jobs` row, collapses
-consecutive repeated Viterbi states into symbolic sequences, mines n-grams,
-filters by `minimum_occurrences` and `minimum_event_sources`, ranks motifs with
-configurable weights, and writes `manifest.json`, `motifs.parquet`, and
-`occurrences.parquet` under `motif_extractions/{job_id}/`.
-
-Alternatives considered:
-- On-demand motif cache keyed by config hash: rejected because motifs are a
-  durable research artifact and need status, history, cancellation, and failure
-  visibility.
-- Automatic default motif generation inside the HMM worker: rejected because
-  motif analysis should be an explicit downstream interpretation step, not an
-  implicit side effect of HMM training.
-
-**Consequences**:
-- Migration 062 adds `motif_extraction_jobs` with idempotent
-  `config_signature` lookup among queued/running/complete jobs.
-- The queue and worker runner claim motif extraction jobs after HMM Sequence
-  jobs.
-- The API exposes `/sequence-models/motif-extractions` plus motif summary and
-  occurrence endpoints.
-- The HMM detail page gains a Motifs panel with create/status controls, advanced
-  rank weights, ranked motif table, and event-midpoint aligned examples.
-- CRNN `call_probability` remains optional in ranking; the default weight is
-  null so ranking stays source-neutral unless explicitly enabled.
-
-## ADR-059: Source-agnostic HMM interpretation loader Protocol
-
-**Date**: 2026-05-01
-**Status**: Accepted
-**Builds on**: ADR-056, ADR-057
-
-**Context**: ADR-057 deferred PCA/UMAP overlay, exemplars, and label
-distribution for CRNN-source HMM jobs as Phase 2 of that source's spec. The
-deferred path left `_load_overlay_inputs()` hardcoded to the SurfPerch
-parquet schema, the worker's `_run_region_crnn_hmm()` skipping the
-interpretation call, and the `OverlayPoint` / `ExemplarRecord` schemas
-requiring SurfPerch's `merged_span_id` / `window_index_in_span` int fields —
-none of which fit CRNN region UUIDs and chunk indices. Adding a third
-source family later would compound the dispatch.
-
-**Decision**: Introduce a `SequenceArtifactLoader` Protocol with a single
-implementation per embedding source family (SurfPerch event-padded, CRNN
-region-based). `generate_interpretations()` resolves the right loader at
-runtime via `get_loader(source_kind)`; downstream pure functions
-(`compute_overlay`, `select_exemplars`) consume a generic `OverlayInputs`
-shape and never branch on source kind. The identifier model unifies on
-`(sequence_id: str, position_in_sequence: int)` — SurfPerch stringifies its
-int span id; CRNN passes its region UUID. Source-specific metadata flows
-through `extras: dict[str, str | int | float | None]` on `WindowMeta` and
-`ExemplarRecord` (CRNN populates `extras["tier"]`).
-
-Alternatives considered:
-- Schema-dispatch inside a single `_load_overlay_inputs()`: rejected because
-  the conditional grows with each new source family and bleeds source
-  knowledge into downstream code.
-- Discriminated-union typing of `extras` per source kind: rejected as YAGNI
-  for two source families; the dict shape is documented and extensible
-  without a type tax.
-
-**Consequences**:
-- New module `src/humpback/sequence_models/loaders/` with `__init__.py`
-  (Protocol + registry), `surfperch.py`, and `crnn_region.py`. Adding a
-  new source family is one new loader file plus one registry entry.
-- `overlay.parquet` and `exemplars.json` written by new jobs use the
-  unified column / key names (`sequence_id`, `position_in_sequence`, plus
-  `extras` on exemplars). Pre-PR SurfPerch artifacts on disk remain in the
-  legacy shape; a transitional read-time adapter on `GET /overlay` and
-  `GET /exemplars` translates legacy column / key names in-memory before
-  serializing the response. Disk files are not rewritten by the adapter;
-  the existing Refresh button rewrites them in unified form on demand.
-- `_run_region_crnn_hmm()` now calls `generate_interpretations()` after
-  `summary.json` is written, with the same `try/except` + `logger.warning`
-  swallow pattern the SurfPerch path uses. Interpretation failure is
-  non-fatal; HMM job status remains `complete`.
-- Frontend `ExemplarRecord` interface gains `extras`; the gallery row
-  renders a small tier badge when `record.extras?.tier` is a non-null
-  string. SurfPerch records leave `extras` empty and render no badge.
-  `PcaUmapScatter` is unchanged — it never read identifier columns.
-- Label distribution remains SurfPerch-only pending Phase 2; the loader
-  Protocol does not yet cover the label-distribution flow.
-
-## ADR-060: Source-agnostic HMM label distribution with tier-aware storage
-
-**Date**: 2026-05-01
-**Status**: Accepted
-**Builds on**: ADR-057, ADR-059
-
-**Context**: ADR-059 unified PCA/UMAP overlay and exemplar generation
-across SurfPerch and CRNN HMM jobs but explicitly deferred label
-distribution as Phase 2. The deferred surfaces were:
-`generate_label_distribution()` traversing `cej → EventSegmentationJob →
-RegionDetectionJob → hydrophone_id` (a path that does not exist for CRNN
-CEJs, which carry `region_detection_job_id` directly), the CRNN skip in
-`POST /generate-interpretations/{id}`, and a flat
-`states[state] = {label: count}` JSON shape that left no room to surface
-the per-chunk tier classification CRNN already records on its
-`states.parquet`.
-
-**Decision**: Extend the existing `SequenceArtifactLoader` Protocol with
-`load_label_distribution_inputs()` returning a generic
-`LabelDistributionInputs` (`hydrophone_id`, `state_rows`,
-`tier_per_row`). Each loader owns its source-specific traversal — the
-service keeps the shared DetectionJob + VocalizationLabel SQL fetch and
-the pure compute call. The on-disk shape becomes always-tiered:
-SurfPerch buckets every row to a synthetic `"all"` tier key, CRNN
-buckets each row to its own `event_core` / `near_event` / `background`
-tier. The frontend chart collapses the tier dimension in `useMemo`
-before building Plotly traces — identical visual to today, with the
-richer tier-stratified data preserved on disk for a future tier-aware
-UI.
-
-Alternatives considered:
-- A sibling `LabelDistributionLoader` Protocol: rejected — the same
-  source-resolution knowledge already lives in the Phase 1 loader files,
-  and a parallel Protocol would split that knowledge across two
-  registries.
-- Source-discriminated payload (flat for SurfPerch, nested for CRNN):
-  rejected — two readers, two schemas, two TS types, and frontend code
-  that must branch on source kind. The synthetic `"all"` bucket pays a
-  tiny structural tax for a single reader on both sides.
-- Forced one-shot regeneration of pre-PR SurfPerch files: rejected —
-  Phase 1 already established the read-time legacy adapter pattern; the
-  Refresh button rewrites in unified form on demand.
-
-**Consequences**:
-- New `LabelDistributionInputs` dataclass and Protocol method in
-  `src/humpback/sequence_models/loaders/__init__.py`. Each loader file
-  gains an async method that owns its source's hydrophone-traversal +
-  tier-extraction logic.
-- `compute_label_distribution()` gains a `tier_per_row: list[str] |
-  None` parameter and emits the unified nested shape unconditionally.
-  Length mismatch with `states` raises `ValueError`.
-- `LabelDistributionResponse` becomes
-  `dict[str, dict[str, dict[str, int]]]` and the frontend
-  `LabelDistribution` TS type matches.
-- The CRNN skip in `POST /generate-interpretations/{id}` is removed;
-  `label_distribution_generated` becomes a constant `true` in the
-  response. CRNN HMM jobs now produce label-distribution artifacts via
-  Refresh and on first GET, identical to SurfPerch.
-- A read-time legacy adapter on `GET /label-distribution` projects
-  pre-PR flat-shape SurfPerch JSON to the unified nested shape
-  in-memory; disk files are unchanged until the Refresh button rewrites
-  them. Mirrors the Phase 1 overlay/exemplar adapter pattern; the
-  comment names the adapter as transitional.
-- Frontend `LabelDistributionChart` collapses the tier dimension in
-  `useMemo`. SurfPerch jobs render unchanged; CRNN jobs render the same
-  single-stack chart with bars summed across tiers. The
-  `data-testid="hmm-label-distribution"` attribute and Plotly layout are
-  preserved.
-- The `"all"` tier key is reserved for sources without a tier dimension;
-  future sources with a real tier dimension must pick distinct keys.
-
----
-
-## ADR-061: Masked-transformer sequence model parallel to HMM
-
-**Date**: 2026-05-01
-**Status**: Accepted
-**Builds on**: ADR-056, ADR-057, ADR-058, ADR-059, ADR-060
-
-**Context**: The Sequence Models track shipped HMM-based latent-state
-discovery over CRNN region-based and SurfPerch event-padded continuous
-embeddings, plus motif extraction over collapsed Viterbi-state n-grams
-(ADR-056 through ADR-060). The Event-Conditioned Motif Discovery
-reference pipeline calls for a second consumer parallel to the HMM: a
-masked-span transformer encoder trained on the same continuous
-embeddings, producing contextualized embeddings (Z) that are then
-tokenized via k-means with a softmax-temperature confidence and fed to
-the same motif-extraction pipeline. The k-sweep is intrinsic to the
-workflow — researchers want to explore vocabulary sizes — and one
-training pass should support multiple k-means tokenizers without
-retraining the transformer. The HMM "state" naming is HMM-specific; a
-generalized "label" naming makes the loader/interpretation/motif stack
-source-agnostic across HMM and masked-transformer parents.
-
-**Decision**: Add a `masked_transformer_jobs` table (one row per
-upstream + training config), persist multiple per-k tokenization
-artifacts under `k<N>/` subdirs of the job dir, generalize the existing
-HMM loader stack to read a normalized `decoded.parquet` with column
-`label` (renamed from `state`), and generalize `motif_extraction_jobs`
-to point at either parent kind via a `parent_kind` discriminator + XOR
-parent FKs + a parent-kind-conditional `k` column. Training-signature
-idempotency excludes `k_values` so a completed job can extend its
-k-sweep without retraining. Mask-weight bias scales the loss higher on
-event-adjacent positions when the upstream source carries tier metadata.
-K-means confidence uses softmax with τ auto-fit per job from the median
-pairwise centroid distance, dropping into the existing
-`max_state_probability` UI slots without bespoke chart code. Training
-runs on MPS/CUDA with synthetic-batch validation against CPU and a
-fallback to CPU on validation failure, mirroring Pass 2/3 inference.
-The frontend extracts a generic `DiscreteSequenceBar` (modes `rows` |
-`single-row`) from the existing `HMMStateBar` so both detail pages share
-a single timeline strip implementation.
-
-Alternatives considered:
-- **Separate motif-extraction tables per parent kind**: rejected —
-  duplicates the entire ranking/storage/UI surface for a workflow that
-  is genuinely parent-agnostic at the algorithm level. The XOR + check
-  constraint adds a few lines of schema for one shared codepath.
-- **Per-k separate jobs (one row per (upstream, training, k))**:
-  rejected — forces a full transformer retrain per k, prevents the
-  extend-k-sweep follow-up flow, and clutters the jobs list with many
-  near-duplicate rows.
-- **Custom transformer-token-only motif consumer**: rejected — the
-  motif extraction algorithm is already loader-driven and needs only
-  per-chunk `(label, confidence)` rows + tier metadata. Sharing the
-  loader is the smaller change.
-- **Keep the `state` column name**: rejected — the column is now
-  consumed by both HMM Viterbi states and k-means tokens, and "label"
-  is the right cross-source noun. The HMM API serialization layer maps
-  `label` → `viterbi_state` so the existing HMM API contract and
-  frontend are unchanged.
-- **Token-bigram heatmap on the masked-transformer detail page**:
-  rejected for v1 — k-means tokens are not a Markov chain, so transition
-  matrices are semantically wrong; the existing motif n-gram view is the
-  right semantic surface for token co-occurrence.
-
-**Consequences**:
-- New `masked_transformer_jobs` table (migration 063); new
-  `MaskedTransformer` PyTorch module + `train_masked_transformer` +
-  `extract_contextual_embeddings` (`src/humpback/sequence_models/masked_transformer.py`).
-- New `tokenization.py` module with `fit_kmeans_token_model`,
-  `decode_tokens`, `compute_run_lengths`. τ auto-fit per job; confidence
-  is softmax over `−‖z − μ‖² / τ` and lives in `max_state_probability`
-  on disk for UI parity.
-- Per-k artifact fan-out under `k<N>/` (decoded.parquet, kmeans.joblib,
-  overlay.parquet, exemplars.json, label_distribution.json,
-  run_lengths.json). Atomic write via `k<N>.tmp/` → rename so a failed
-  per-k pass leaves no half-written subdir.
-- Training-signature idempotency excludes `k_values`; a completed job
-  exposes `POST /extend-k-sweep` to add new k values without retraining.
-  The follow-up worker pass writes only the new `k<N>/` subdirs and
-  leaves `transformer.pt` + `contextual_embeddings.parquet` untouched.
-- HMM worker writes `decoded.parquet` with column `label` (renamed from
-  the old `states.parquet` / `state` column). A read-time legacy adapter
-  in the loader stack falls back to the old filename + column on
-  pre-migration HMM job dirs so existing completed jobs remain
-  functional without manual migration. The HMM API serialization layer
-  continues to expose `viterbi_state` field names, and the frontend is
-  unchanged.
-- `motif_extraction_jobs` generalization (migration 064) adds
-  `parent_kind text NOT NULL`, nullable `masked_transformer_job_id` FK,
-  nullable `k`, and makes `hmm_sequence_job_id` nullable. CHECK
-  constraint enforces XOR between parent FKs + consistency with
-  `parent_kind`, and `k IS NOT NULL` iff `parent_kind =
-  "masked_transformer"`. Existing HMM-parent rows backfill with
-  `parent_kind = "hmm"`.
-- `MotifExtractionConfig.config_signature()` gains `parent_kind`, parent
-  FK, and `k`; the worker constructs the loader with the appropriate
-  `decoded_artifact_path` (HMM → `<hmm_job_dir>/decoded.parquet`;
-  masked-transformer → `<mt_job_dir>/k<N>/decoded.parquet`). The
-  extraction algorithm is parent-agnostic.
-- Mask-weight bias scales per-position loss by tier weight (event_core
-  1.5, near_event 1.2, background 0.5) when the source carries tier
-  metadata. Default on for CRNN sources; SurfPerch sources without tier
-  metadata fall back to uniform weighting.
-- Device validation runs forward+backward on a fixed synthetic batch on
-  both CPU and the chosen accelerator before training; outside a
-  tolerance band the worker records `fallback_reason` and proceeds on
-  CPU. `chosen_device` and `fallback_reason` persist on the job row and
-  surface as a UI badge, mirroring Pass 2/3 inference.
-- Frontend extracts a generic `DiscreteSequenceBar` (props add `mode:
-  "rows" | "single-row"`, `numLabels`, `colorPalette`,
-  `tooltipFormatter?`) and a `RegionNavBar` from the existing
-  `HMMSequenceDetailPage`. HMM detail page swaps to
-  `DiscreteSequenceBar mode="rows"` and the extracted region nav, no
-  visual change. `STATE_COLORS` renames to `LABEL_COLORS`; new
-  `labelColor(idx, total)` helper covers `total > 30` via an HSL ramp.
-- A third Sequence Models nav card "Masked Transformer" routes to
-  `/app/sequence-models/masked-transformer` (jobs list) and
-  `/app/sequence-models/masked-transformer/:jobId` (detail). The detail
-  page reads `?k=` from the URL via `useSearchParams`; per-k panels key
-  cache on `(jobId, k)` so KPicker switches don't remount the page.
-- `decoded.parquet` with column `label` becomes the behavioral contract
-  for any future sequence-model consumer — the loader Protocol
-  (ADR-059) reads it from an explicit path so new sources can plug in
-  without touching downstream interpretation or motif code.
-- SurfPerch source for the masked transformer is deferred to a
-  follow-up; the loader and config abstractions stay shaped to allow
-  it. Multi-GPU / distributed training, pretrained transformer
-  initialization, and token-bigram heatmaps are out of scope for v1.
+- CRNN Continuous Embedding rows include `region_detection_job_id`,
+  `event_segmentation_job_id`, `crnn_segmentation_model_id`,
+  `crnn_checkpoint_sha256`, chunk geometry, projection config, and CRNN summary
+  counters.
+- The CRNN `embeddings.parquet` schema records `region_id`,
+  `chunk_index_in_region`, `tier`, `event_overlap_fraction`,
+  `nearest_event_id`, `distance_to_nearest_event_seconds`, `call_probability`,
+  and `embedding`.
+- Encoding signatures differ by source kind: CRNN signatures fold in the region
+  job, Pass 2 disambiguator, checkpoint, chunk geometry, and projection config;
+  SurfPerch signatures include the event source mode and SurfPerch geometry.
+- The Continuous Embedding API rejects CRNN-only fields on SurfPerch requests
+  and SurfPerch-only fields on CRNN requests.
+- The frontend Continuous Embedding create form exposes both retained sources
+  behind a source-type toggle.
 
 ## ADR-062: Segmentation-scoped effective event identity
 
@@ -732,72 +421,3 @@ encoding signature.
   resolved by overlap against the effective event set.
 - Future event-aware consumers must explicitly choose raw versus effective
   event semantics and include that choice in provenance or idempotency keys.
-
-## ADR-063: Sequence Models label source switched to Call Parsing Classify
-
-**Status**: accepted
-**Supersedes**: ADR-060 (tier-aware HMM label distribution storage)
-**Builds on**: ADR-054 (read-time correction overlay), ADR-056, ADR-057, ADR-059, ADR-061, ADR-062
-
-**Context**: HMM and Masked Transformer label-distribution charts and exemplar
-annotations previously consumed manual labels from `vocalization_labels` via the
-`hydrophone_id → DetectionJob[]` fan-out, then center-time-matched every
-sequence window against detection-window `[start_utc, end_utc)` ranges. That
-chain had three problems: it pulled from the older 5-second Vocalization
-Labeling workspace rather than the active Call Parsing Classify (Pass 3)
-pipeline, it walked an indirect join that mixed in unrelated detection-job
-labels on the same hydrophone, and detection windows are coarser than the
-variable-length Pass 2 events. ADR-060's tier-aware storage was a workaround
-that preserved the legacy detection-window structure under the loader Protocol.
-
-**Decision**: Replace the label source with `EventClassificationJob` (Pass 3)
-plus `VocalizationCorrection` and `EventBoundaryCorrection` overlays via
-`load_effective_events()`. HMM and MT job rows gain an explicit
-`event_classification_job_id` FK (migration `066_sequence_models_classify_binding`).
-The submit endpoints accept an optional `event_classification_job_id`; when
-omitted, the server picks the most recent completed `EventClassificationJob`
-for the upstream segmentation, and rejects with 422 when none exists. New
-`POST .../regenerate-label-distribution` endpoints rebuild artifacts and
-optionally re-bind to a different Classify job in a single atomic write
-(validate → temp-then-rename → commit FK). The MT regenerate rebuilds **all**
-`k<N>/label_distribution.json` files in one shot, loading effective events once.
-
-`label_distribution.json` shape simplifies to
-`{n_states, total_windows, states: {state: {label: count}}}`. The tier
-dimension is gone; CRNN's `extras.tier` on `decoded.parquet` and exemplars is
-**unchanged** (it still drives the per-state tier-composition strip, which is
-independent of label distribution). Each exemplar's `extras` gains
-`event_id`, `event_types`, and `event_confidence`; the frontend renders type
-chips that click through to Classify Review for the underlying event, and
-background exemplars get a single `(background)` chip.
-
-Effective type set per event = `human-added types - human-removed types` when
-any overlapping `VocalizationCorrection(add)` rows exist; otherwise
-`model types where above_threshold == True - human-removed types`. This
-authoritative human-correction rule supersedes the original union formula for
-Sequence Models interpretation artifacts.
-Events whose corrected type set is empty are still returned by the loader, but
-their windows fall into the `(background)` bucket so chart and exemplar
-invariants stay consistent (`event_id` is set iff at least one surviving label
-exists).
-
-**Consequences**:
-- ADR-060 is superseded. Pre-existing `label_distribution.json` files are not
-  migrated on the fly; the in-flight rows had been deleted via the UI before
-  the cutover and the artifact directories were wiped. The simplified shape
-  pass-through is enforced by `LabelDistributionResponse`.
-- `vocalization_labels`, `DetectionJob`, and the hydrophone fan-out are no
-  longer consulted by the loader Protocol. Vocalization Labeling workspace
-  retains its own table and workflow.
-- Regenerate is manual (Q7:A): no auto-recompute on `VocalizationCorrection`
-  writes. The detail page exposes a "Regenerate label distribution" button
-  with an optional re-bind dialog; the button invalidates
-  `["hmm-label-distribution", id]` / `["hmm-exemplars", id]` (and MT
-  equivalents) on success.
-- Failure during the artifact-write step leaves the FK and existing files
-  intact (in-memory FK swap is reverted on exception). Recovery from the
-  rare step-3 failure is to re-run regenerate.
-- Sequence Models submit now requires a completed Classify job for the
-  upstream segmentation; the create form's submit button stays disabled with
-  helper text *"Run Pass 3 Classify on this segmentation first"* when none
-  exist.

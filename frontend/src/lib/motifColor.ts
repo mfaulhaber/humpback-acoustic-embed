@@ -1,7 +1,6 @@
 /**
  * Deterministic per-motif color assignment used when many motifs are
- * highlighted on the timeline at once (Token Count: 2 | 3 | 4 selector on
- * the masked-transformer detail page).
+ * highlighted on the timeline at once.
  *
  * Same ``motif_key`` always yields the same palette entry across renders
  * and across page reloads. Distinct keys map to distinct entries when the

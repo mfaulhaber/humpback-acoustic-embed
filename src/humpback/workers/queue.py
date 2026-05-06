@@ -283,12 +283,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count17:
         logger.warning(f"Recovered {count17} stale classifier feedback training job(s)")
 
-    from humpback.models.sequence_models import (
-        ContinuousEmbeddingJob,
-        HMMSequenceJob,
-        MaskedTransformerJob,
-        MotifExtractionJob,
-    )
+    from humpback.models.sequence_models import ContinuousEmbeddingJob
 
     result_cej = await session.execute(
         update(ContinuousEmbeddingJob)
@@ -305,51 +300,6 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count_cej:
         logger.warning(f"Recovered {count_cej} stale continuous embedding job(s)")
 
-    result_hmm = await session.execute(
-        update(HMMSequenceJob)
-        .where(
-            HMMSequenceJob.status == JobStatus.running.value,
-            HMMSequenceJob.updated_at < cutoff,
-        )
-        .values(
-            status=JobStatus.queued.value,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    count_hmm = _rowcount(result_hmm)
-    if count_hmm:
-        logger.warning(f"Recovered {count_hmm} stale HMM sequence job(s)")
-
-    result_motif = await session.execute(
-        update(MotifExtractionJob)
-        .where(
-            MotifExtractionJob.status == JobStatus.running.value,
-            MotifExtractionJob.updated_at < cutoff,
-        )
-        .values(
-            status=JobStatus.queued.value,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    count_motif = _rowcount(result_motif)
-    if count_motif:
-        logger.warning(f"Recovered {count_motif} stale motif extraction job(s)")
-
-    result_mt = await session.execute(
-        update(MaskedTransformerJob)
-        .where(
-            MaskedTransformerJob.status == JobStatus.running.value,
-            MaskedTransformerJob.updated_at < cutoff,
-        )
-        .values(
-            status=JobStatus.queued.value,
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    count_mt = _rowcount(result_mt)
-    if count_mt:
-        logger.warning(f"Recovered {count_mt} stale masked-transformer job(s)")
-
     total = (
         count2
         + count3
@@ -365,9 +315,6 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count_stj
         + count17
         + count_cej
-        + count_hmm
-        + count_motif
-        + count_mt
     )
     if total:
         await session.commit()
@@ -749,57 +696,6 @@ async def claim_continuous_embedding_job(session: AsyncSession):
             queued_value=JobStatus.queued.value,
             running_value=JobStatus.running.value,
             order_attr=ContinuousEmbeddingJob.created_at,
-        )
-        if job is not None:
-            return job
-    return None
-
-
-async def claim_hmm_sequence_job(session: AsyncSession):
-    from humpback.models.sequence_models import HMMSequenceJob
-
-    for _ in range(3):
-        job = await _claim_next_job(
-            session,
-            HMMSequenceJob,
-            status_attr=HMMSequenceJob.status,
-            queued_value=JobStatus.queued.value,
-            running_value=JobStatus.running.value,
-            order_attr=HMMSequenceJob.created_at,
-        )
-        if job is not None:
-            return job
-    return None
-
-
-async def claim_motif_extraction_job(session: AsyncSession):
-    from humpback.models.sequence_models import MotifExtractionJob
-
-    for _ in range(3):
-        job = await _claim_next_job(
-            session,
-            MotifExtractionJob,
-            status_attr=MotifExtractionJob.status,
-            queued_value=JobStatus.queued.value,
-            running_value=JobStatus.running.value,
-            order_attr=MotifExtractionJob.created_at,
-        )
-        if job is not None:
-            return job
-    return None
-
-
-async def claim_masked_transformer_job(session: AsyncSession):
-    from humpback.models.sequence_models import MaskedTransformerJob
-
-    for _ in range(3):
-        job = await _claim_next_job(
-            session,
-            MaskedTransformerJob,
-            status_attr=MaskedTransformerJob.status,
-            queued_value=JobStatus.queued.value,
-            running_value=JobStatus.running.value,
-            order_attr=MaskedTransformerJob.created_at,
         )
         if job is not None:
             return job
