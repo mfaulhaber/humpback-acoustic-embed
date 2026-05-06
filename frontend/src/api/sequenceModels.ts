@@ -1001,6 +1001,7 @@ export type MaskedTransformerSequenceConstructionMode =
 export type MaskedTransformerContrastiveLabelSource =
   | "none"
   | "human_corrections";
+export type MaskedTransformerRetrievalHeadArch = "mlp" | "linear";
 
 export interface MaskedTransformerJob {
   id: string;
@@ -1021,6 +1022,7 @@ export interface MaskedTransformerJob {
   retrieval_dim: number | null;
   retrieval_hidden_dim: number | null;
   retrieval_l2_normalize: boolean;
+  retrieval_head_arch: MaskedTransformerRetrievalHeadArch;
   sequence_construction_mode: MaskedTransformerSequenceConstructionMode;
   event_centered_fraction: number;
   pre_event_context_sec: number | null;
@@ -1081,6 +1083,7 @@ export interface MaskedTransformerJobCreate {
   retrieval_dim?: number | null;
   retrieval_hidden_dim?: number | null;
   retrieval_l2_normalize?: boolean;
+  retrieval_head_arch?: MaskedTransformerRetrievalHeadArch;
   sequence_construction_mode?: MaskedTransformerSequenceConstructionMode;
   event_centered_fraction?: number | null;
   pre_event_context_sec?: number | null;

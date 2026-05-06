@@ -195,6 +195,7 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert contextual.retrieval_dim is None
     assert contextual.retrieval_hidden_dim is None
     assert contextual.retrieval_l2_normalize is True
+    assert contextual.retrieval_head_arch == "mlp"
     assert contextual.sequence_construction_mode == "region"
     assert contextual.event_centered_fraction == 0.0
     assert contextual.pre_event_context_sec is None
@@ -224,6 +225,18 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert retrieval.retrieval_dim == 128
     assert retrieval.retrieval_hidden_dim == 512
     assert retrieval.retrieval_l2_normalize is True
+    assert retrieval.retrieval_head_arch == "mlp"
+
+    linear = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        retrieval_head_enabled=True,
+        retrieval_head_arch="linear",
+        retrieval_hidden_dim=512,
+    )
+    assert linear.retrieval_head_enabled is True
+    assert linear.retrieval_dim == 128
+    assert linear.retrieval_hidden_dim is None
+    assert linear.retrieval_head_arch == "linear"
 
 
 def test_masked_transformer_create_sequence_construction_normalization():
@@ -302,9 +315,20 @@ def test_masked_transformer_create_retrieval_head_validation():
         retrieval_head_enabled=False,
         retrieval_dim=64,
         retrieval_hidden_dim=256,
+        retrieval_head_arch="linear",
     )
     assert disabled.retrieval_dim is None
     assert disabled.retrieval_hidden_dim is None
+    assert disabled.retrieval_head_arch == "mlp"
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate.model_validate(
+            {
+                "continuous_embedding_job_id": "cej-1",
+                "retrieval_head_enabled": True,
+                "retrieval_head_arch": "wide",
+            }
+        )
 
 
 def test_masked_transformer_create_batch_size_validation():
@@ -459,6 +483,7 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "retrieval_dim": 128,
         "retrieval_hidden_dim": 512,
         "retrieval_l2_normalize": True,
+        "retrieval_head_arch": "linear",
         "sequence_construction_mode": "mixed",
         "event_centered_fraction": 0.5,
         "pre_event_context_sec": 1.0,
@@ -502,6 +527,7 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
     assert job.batch_size == 16
     assert job.retrieval_dim == 128
     assert job.retrieval_hidden_dim == 512
+    assert job.retrieval_head_arch == "linear"
     assert job.sequence_construction_mode == "mixed"
     assert job.event_centered_fraction == 0.5
     assert job.pre_event_context_sec == 1.0

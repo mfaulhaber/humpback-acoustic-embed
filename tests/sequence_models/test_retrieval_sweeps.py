@@ -47,6 +47,31 @@ def test_lambda_sweep_allows_caller_overrides() -> None:
     assert runs[0].create_payload["batch_size"] == 12
     assert runs[0].create_payload["contrastive_labels_per_batch"] == 3
     assert runs[0].create_payload["contrastive_events_per_label"] == 5
+    assert runs[0].create_payload["retrieval_head_arch"] == "mlp"
+
+
+def test_lambda_sweep_can_include_linear_head_variant() -> None:
+    runs = sweeps.build_lambda_sweep(
+        continuous_embedding_job_id="cej-250",
+        event_classification_job_id="cls-1",
+        lambda_values=(0.1,),
+        include_linear_head=True,
+    )
+
+    assert [run.run_name for run in runs] == [
+        "lambda-weight-0p10",
+        "lambda-linear-head-weight-0p10",
+    ]
+    assert runs[0].create_payload["retrieval_head_arch"] == "mlp"
+    assert runs[0].create_payload["retrieval_hidden_dim"] == 512
+    assert runs[1].create_payload["retrieval_head_arch"] == "linear"
+    assert runs[1].create_payload["retrieval_hidden_dim"] is None
+    assert runs[1].metadata["failure_mode_probe"] == "linear_projection_head"
+    assert runs[1].metadata["matched_mlp_run_name"] == "lambda-weight-0p10"
+
+    parsed = MaskedTransformerJobCreate.model_validate(runs[1].create_payload)
+    assert parsed.retrieval_head_arch == "linear"
+    assert parsed.retrieval_hidden_dim is None
 
 
 def test_unsupported_hard_negative_policy_is_rejected() -> None:
@@ -63,6 +88,7 @@ def test_generated_contrastive_payload_validates_against_create_schema() -> None
     parsed = MaskedTransformerJobCreate.model_validate(run.create_payload)
 
     assert parsed.retrieval_head_enabled is True
+    assert parsed.retrieval_head_arch == "mlp"
     assert parsed.contrastive_loss_weight == 0.05
     assert parsed.contrastive_label_source == "human_corrections"
     assert parsed.sequence_construction_mode == "mixed"
@@ -91,6 +117,7 @@ def test_initial_sweep_preset_order_and_metadata() -> None:
     assert runs[3].create_payload["training_freeze_mode"] == (
         "transformer_frozen_projection_head_only"
     )
+    assert runs[3].create_payload["retrieval_head_arch"] == "mlp"
     assert (
         runs[3].create_payload["source_masked_transformer_job_id"]
         == sweeps.PRE_SAMPLER_CONTRASTIVE_JOB_ID
@@ -99,7 +126,26 @@ def test_initial_sweep_preset_order_and_metadata() -> None:
     assert (
         runs[3].metadata["failure_mode_probe"] == "projection_head_only_metric_learning"
     )
+    assert runs[3].metadata["retrieval_head_arch"] == "mlp"
     assert "projection-head geometry" in str(runs[4].blocked_reason)
+
+
+def test_initial_sweep_can_include_linear_head_probe() -> None:
+    runs = sweeps.build_initial_sweep_preset(
+        continuous_embedding_job_id_250ms="cej-250",
+        event_classification_job_id="cls-1",
+        include_linear_head=True,
+    )
+
+    linear = next(
+        run for run in runs if run.run_name == "250ms-linear-head-confirm-lambda-0p10"
+    )
+    assert linear.create_payload["retrieval_head_arch"] == "linear"
+    assert linear.create_payload["retrieval_hidden_dim"] is None
+    assert linear.metadata["failure_mode_probe"] == "linear_projection_head"
+    assert (
+        linear.metadata["matched_mlp_run_name"] == "250ms-sampler-confirm-lambda-0p10"
+    )
 
 
 def test_initial_sweep_ablation_payload_validates_against_create_schema() -> None:

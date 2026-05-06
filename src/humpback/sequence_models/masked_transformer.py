@@ -75,6 +75,7 @@ class MaskedTransformerConfig:
     retrieval_dim: int | None = None
     retrieval_hidden_dim: int | None = None
     retrieval_l2_normalize: bool = True
+    retrieval_head_arch: Literal["mlp", "linear"] = "mlp"
     sequence_construction_mode: Literal["region", "event_centered", "mixed"] = "region"
     event_centered_fraction: float = 0.0
     pre_event_context_sec: float | None = None
@@ -156,11 +157,15 @@ class MaskedTransformer(nn.Module):
         retrieval_dim: Optional[int] = None,
         retrieval_hidden_dim: Optional[int] = None,
         retrieval_l2_normalize: bool = True,
+        retrieval_head_arch: Literal["mlp", "linear"] = "mlp",
     ) -> None:
         super().__init__()
         self.input_dim = input_dim
         self.d_model = d_model
         self.retrieval_head_enabled = bool(retrieval_head_enabled)
+        if retrieval_head_arch not in {"mlp", "linear"}:
+            raise ValueError("retrieval_head_arch must be one of mlp/linear")
+        self.retrieval_head_arch = retrieval_head_arch
         self.retrieval_dim = int(retrieval_dim) if retrieval_dim is not None else None
         self.retrieval_hidden_dim = (
             int(retrieval_hidden_dim) if retrieval_hidden_dim is not None else None
@@ -180,15 +185,22 @@ class MaskedTransformer(nn.Module):
         self.output_proj = nn.Linear(d_model, input_dim)
         if self.retrieval_head_enabled:
             resolved_dim = self.retrieval_dim or 128
-            resolved_hidden = self.retrieval_hidden_dim or 512
             self.retrieval_dim = resolved_dim
-            self.retrieval_hidden_dim = resolved_hidden
-            self.retrieval_head = nn.Sequential(
-                nn.LayerNorm(d_model),
-                nn.Linear(d_model, resolved_hidden),
-                nn.GELU(),
-                nn.Linear(resolved_hidden, resolved_dim),
-            )
+            if self.retrieval_head_arch == "linear":
+                self.retrieval_hidden_dim = None
+                self.retrieval_head = nn.Sequential(
+                    nn.LayerNorm(d_model),
+                    nn.Linear(d_model, resolved_dim),
+                )
+            else:
+                resolved_hidden = self.retrieval_hidden_dim or 512
+                self.retrieval_hidden_dim = resolved_hidden
+                self.retrieval_head = nn.Sequential(
+                    nn.LayerNorm(d_model),
+                    nn.Linear(d_model, resolved_hidden),
+                    nn.GELU(),
+                    nn.Linear(resolved_hidden, resolved_dim),
+                )
         else:
             self.retrieval_head = None
 
@@ -739,6 +751,7 @@ def train_masked_transformer(
             retrieval_dim=config.retrieval_dim,
             retrieval_hidden_dim=config.retrieval_hidden_dim,
             retrieval_l2_normalize=config.retrieval_l2_normalize,
+            retrieval_head_arch=config.retrieval_head_arch,
         )
     ).to(device_obj)
     if projection_head_only:

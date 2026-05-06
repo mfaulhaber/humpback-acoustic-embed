@@ -523,6 +523,7 @@ def _save_model_state(
             "retrieval_dim": model.retrieval_dim,
             "retrieval_hidden_dim": model.retrieval_hidden_dim,
             "retrieval_l2_normalize": model.retrieval_l2_normalize,
+            "retrieval_head_arch": model.retrieval_head_arch,
             "batch_size": config.batch_size,
             "sequence_construction_mode": config.sequence_construction_mode,
             "event_centered_fraction": config.event_centered_fraction,
@@ -569,6 +570,7 @@ def _load_model_state(
         retrieval_dim=job.retrieval_dim,
         retrieval_hidden_dim=job.retrieval_hidden_dim,
         retrieval_l2_normalize=bool(job.retrieval_l2_normalize),
+        retrieval_head_arch=job.retrieval_head_arch,  # type: ignore[arg-type]
     )
     payload = torch.load(path, map_location=map_location, weights_only=False)
     state_dict = payload.get("state_dict") if isinstance(payload, dict) else None
@@ -666,6 +668,7 @@ def _config_from_job(job: MaskedTransformerJob) -> MaskedTransformerConfig:
         retrieval_dim=job.retrieval_dim,
         retrieval_hidden_dim=job.retrieval_hidden_dim,
         retrieval_l2_normalize=bool(job.retrieval_l2_normalize),
+        retrieval_head_arch=job.retrieval_head_arch,  # type: ignore[arg-type]
         sequence_construction_mode=job.sequence_construction_mode,  # type: ignore[arg-type]
         event_centered_fraction=float(job.event_centered_fraction),
         pre_event_context_sec=job.pre_event_context_sec,

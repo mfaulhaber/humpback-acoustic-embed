@@ -149,6 +149,7 @@ async def test_create_happy_path(client, app_settings):
     assert body["preset"] == "small"
     assert body["k_values"] == [50, 100]
     assert body["batch_size"] == 16
+    assert body["retrieval_head_arch"] == "mlp"
     assert body["status"] == "queued"
     assert body["sequence_construction_mode"] == "mixed"
     assert body["event_centered_fraction"] == 0.4
@@ -166,6 +167,8 @@ async def test_create_contrastive_round_trips(client, app_settings):
             "continuous_embedding_job_id": cej_id,
             "preset": "small",
             "retrieval_head_enabled": True,
+            "retrieval_head_arch": "linear",
+            "retrieval_hidden_dim": 512,
             "sequence_construction_mode": "mixed",
             "event_centered_fraction": 0.7,
             "contrastive_loss_weight": 0.1,
@@ -183,6 +186,8 @@ async def test_create_contrastive_round_trips(client, app_settings):
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["retrieval_head_enabled"] is True
+    assert body["retrieval_head_arch"] == "linear"
+    assert body["retrieval_hidden_dim"] is None
     assert body["sequence_construction_mode"] == "mixed"
     assert body["event_centered_fraction"] == 0.7
     assert body["contrastive_loss_weight"] == 0.1
@@ -201,6 +206,7 @@ async def test_create_contrastive_round_trips(client, app_settings):
     detail = await client.get(f"/sequence-models/masked-transformers/{body['id']}")
     assert detail.status_code == 200
     detail_job = detail.json()["job"]
+    assert detail_job["retrieval_head_arch"] == "linear"
     assert detail_job["contrastive_labels_per_batch"] == 3
     assert detail_job["contrastive_events_per_label"] == 2
     assert detail_job["contrastive_max_unlabeled_fraction"] == 0.1

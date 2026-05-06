@@ -811,6 +811,7 @@ async def create_masked_transformer(
             retrieval_dim=body.retrieval_dim,
             retrieval_hidden_dim=body.retrieval_hidden_dim,
             retrieval_l2_normalize=body.retrieval_l2_normalize,
+            retrieval_head_arch=body.retrieval_head_arch,
             sequence_construction_mode=body.sequence_construction_mode,
             event_centered_fraction=body.event_centered_fraction,
             pre_event_context_sec=body.pre_event_context_sec,

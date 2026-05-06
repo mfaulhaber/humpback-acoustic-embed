@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   type MaskedTransformerJobCreate,
   type MaskedTransformerPreset,
+  type MaskedTransformerRetrievalHeadArch,
   type MaskedTransformerSequenceConstructionMode,
   continuousEmbeddingSourceKind,
   useContinuousEmbeddingJobs,
@@ -14,6 +15,10 @@ import {
 } from "@/api/sequenceModels";
 
 const PRESETS: MaskedTransformerPreset[] = ["small", "default", "large"];
+const RETRIEVAL_HEAD_ARCHES: MaskedTransformerRetrievalHeadArch[] = [
+  "mlp",
+  "linear",
+];
 
 function parseKValues(input: string): number[] | null {
   const tokens = input
@@ -61,6 +66,8 @@ export function MaskedTransformerCreateForm() {
   const [cosineWeight, setCosineWeight] = useState(0.0);
   const [batchSize, setBatchSize] = useState(8);
   const [retrievalHeadEnabled, setRetrievalHeadEnabled] = useState(false);
+  const [retrievalHeadArch, setRetrievalHeadArch] =
+    useState<MaskedTransformerRetrievalHeadArch>("mlp");
   const [retrievalDim, setRetrievalDim] = useState(128);
   const [retrievalHiddenDim, setRetrievalHiddenDim] = useState(512);
   const [retrievalL2Normalize, setRetrievalL2Normalize] = useState(true);
@@ -118,6 +125,10 @@ export function MaskedTransformerCreateForm() {
     sequenceMode === "region" ||
     (preEventContextSec >= 0.0 && postEventContextSec >= 0.0);
   const contrastiveActive = retrievalHeadEnabled && contrastiveEnabled;
+  const retrievalHiddenDimValid =
+    !retrievalHeadEnabled ||
+    retrievalHeadArch === "linear" ||
+    retrievalHiddenDim > 0;
   const contrastiveValid =
     !contrastiveEnabled ||
     (retrievalHeadEnabled &&
@@ -141,7 +152,7 @@ export function MaskedTransformerCreateForm() {
     contextValid &&
     contrastiveValid &&
     batchSize > 0 &&
-    (!retrievalHeadEnabled || (retrievalDim > 0 && retrievalHiddenDim > 0));
+    (!retrievalHeadEnabled || (retrievalDim > 0 && retrievalHiddenDimValid));
 
   const handleSubmit = () => {
     setError(null);
@@ -161,8 +172,12 @@ export function MaskedTransformerCreateForm() {
       batch_size: batchSize,
       retrieval_head_enabled: retrievalHeadEnabled,
       retrieval_dim: retrievalHeadEnabled ? retrievalDim : null,
-      retrieval_hidden_dim: retrievalHeadEnabled ? retrievalHiddenDim : null,
+      retrieval_hidden_dim:
+        retrievalHeadEnabled && retrievalHeadArch === "mlp"
+          ? retrievalHiddenDim
+          : null,
       retrieval_l2_normalize: retrievalL2Normalize,
+      retrieval_head_arch: retrievalHeadEnabled ? retrievalHeadArch : "mlp",
       sequence_construction_mode: sequenceMode,
       event_centered_fraction:
         sequenceMode === "event_centered"
@@ -375,6 +390,33 @@ export function MaskedTransformerCreateForm() {
               />
               retrieval projection head
             </label>
+            {retrievalHeadEnabled && (
+              <div
+                className="col-span-2 grid gap-2"
+                role="radiogroup"
+                aria-label="Retrieval head architecture"
+              >
+                <span className="text-xs font-medium">retrieval_head_arch</span>
+                <div className="flex flex-wrap gap-3">
+                  {RETRIEVAL_HEAD_ARCHES.map((arch) => (
+                    <label
+                      key={arch}
+                      className="flex items-center gap-1 text-sm"
+                      data-testid={`mt-retrieval-head-arch-${arch}`}
+                    >
+                      <input
+                        type="radio"
+                        name="mt-retrieval-head-arch"
+                        value={arch}
+                        checked={retrievalHeadArch === arch}
+                        onChange={() => setRetrievalHeadArch(arch)}
+                      />
+                      {arch.toUpperCase()}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <Field
               label="retrieval_dim"
               value={retrievalDim}
@@ -383,14 +425,16 @@ export function MaskedTransformerCreateForm() {
               invalid={retrievalHeadEnabled && retrievalDim <= 0}
               onChange={(v) => setRetrievalDim(Math.round(v))}
             />
-            <Field
-              label="retrieval_hidden_dim"
-              value={retrievalHiddenDim}
-              step={1}
-              disabled={!retrievalHeadEnabled}
-              invalid={retrievalHeadEnabled && retrievalHiddenDim <= 0}
-              onChange={(v) => setRetrievalHiddenDim(Math.round(v))}
-            />
+            {retrievalHeadArch === "mlp" && (
+              <Field
+                label="retrieval_hidden_dim"
+                value={retrievalHiddenDim}
+                step={1}
+                disabled={!retrievalHeadEnabled}
+                invalid={retrievalHeadEnabled && retrievalHiddenDim <= 0}
+                onChange={(v) => setRetrievalHiddenDim(Math.round(v))}
+              />
+            )}
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input
                 type="checkbox"

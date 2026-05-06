@@ -647,6 +647,7 @@ class MaskedTransformerJobCreate(BaseModel):
     retrieval_dim: Optional[int] = Field(default=None, gt=0)
     retrieval_hidden_dim: Optional[int] = Field(default=None, gt=0)
     retrieval_l2_normalize: bool = True
+    retrieval_head_arch: Literal["mlp", "linear"] = "mlp"
     sequence_construction_mode: Literal["region", "event_centered", "mixed"] = "region"
     event_centered_fraction: Optional[float] = Field(default=0.0, ge=0.0, le=1.0)
     pre_event_context_sec: Optional[float] = Field(default=None, ge=0.0)
@@ -690,11 +691,14 @@ class MaskedTransformerJobCreate(BaseModel):
         if self.retrieval_head_enabled:
             if self.retrieval_dim is None:
                 self.retrieval_dim = 128
-            if self.retrieval_hidden_dim is None:
+            if self.retrieval_head_arch == "linear":
+                self.retrieval_hidden_dim = None
+            elif self.retrieval_hidden_dim is None:
                 self.retrieval_hidden_dim = 512
         else:
             self.retrieval_dim = None
             self.retrieval_hidden_dim = None
+            self.retrieval_head_arch = "mlp"
         if self.sequence_construction_mode == "region":
             self.event_centered_fraction = 0.0
             self.pre_event_context_sec = None
@@ -782,6 +786,7 @@ class MaskedTransformerJobOut(BaseModel):
     retrieval_dim: Optional[int] = None
     retrieval_hidden_dim: Optional[int] = None
     retrieval_l2_normalize: bool = True
+    retrieval_head_arch: str = "mlp"
     sequence_construction_mode: str = "region"
     event_centered_fraction: float = 0.0
     pre_event_context_sec: Optional[float] = None

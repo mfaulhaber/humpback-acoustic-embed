@@ -164,15 +164,19 @@ def _base_contrastive_payload(
     post_context: float = 2.0,
     require_cross_region_positive: bool = True,
     related_label_policy_json: str | None = None,
+    retrieval_head_arch: Literal["mlp", "linear"] = "mlp",
 ) -> dict[str, Any]:
+    if retrieval_head_arch not in {"mlp", "linear"}:
+        raise ValueError("retrieval_head_arch must be one of mlp/linear")
     payload: dict[str, Any] = {
         "continuous_embedding_job_id": continuous_embedding_job_id,
         "event_classification_job_id": event_classification_job_id,
         "k_values": list(k_values),
         "retrieval_head_enabled": True,
         "retrieval_dim": 128,
-        "retrieval_hidden_dim": 512,
+        "retrieval_hidden_dim": 512 if retrieval_head_arch == "mlp" else None,
         "retrieval_l2_normalize": True,
+        "retrieval_head_arch": retrieval_head_arch,
         "sequence_construction_mode": "mixed",
         "event_centered_fraction": 0.7,
         "pre_event_context_sec": pre_context,
@@ -203,6 +207,7 @@ def build_initial_sweep_preset(
     continuous_embedding_job_id_100ms: str | None = None,
     event_classification_job_id: str | None = None,
     k_values: tuple[int, ...] = DEFAULT_K_VALUES,
+    include_linear_head: bool = False,
 ) -> list[SweepRun]:
     """Return the ordered first sweep plan from the Phase 5 implementation plan."""
     runs: list[SweepRun] = [
@@ -291,6 +296,7 @@ def build_initial_sweep_preset(
                 chunk_ms=250,
                 sweep_stage="projection_head_ablation",
                 source_masked_transformer_job_id=PRE_SAMPLER_CONTRASTIVE_JOB_ID,
+                retrieval_head_arch="mlp",
                 failure_mode_probe="projection_head_only_metric_learning",
                 stop_rule_group="projection_head_geometry",
             ),
@@ -319,6 +325,37 @@ def build_initial_sweep_preset(
             blocked_reason=blocked_250 or "awaits unsaturated projection-head geometry",
         )
     )
+    if include_linear_head:
+        runs.append(
+            SweepRun(
+                run_name="250ms-linear-head-confirm-lambda-0p10",
+                action="submit",
+                k_values=k_values,
+                create_payload=(
+                    {}
+                    if continuous_embedding_job_id_250ms is None
+                    else _base_contrastive_payload(
+                        continuous_embedding_job_id_250ms,
+                        event_classification_job_id=event_classification_job_id,
+                        k_values=k_values,
+                        contrastive_loss_weight=0.10,
+                        batch_size=16,
+                        labels_per_batch=4,
+                        events_per_label=4,
+                        retrieval_head_arch="linear",
+                    )
+                ),
+                metadata=_metadata(
+                    chunk_ms=250,
+                    sweep_stage="head_architecture",
+                    retrieval_head_arch="linear",
+                    failure_mode_probe="linear_projection_head",
+                    matched_mlp_run_name="250ms-sampler-confirm-lambda-0p10",
+                ),
+                blocked_reason=blocked_250
+                or "awaits matched MLP retrieval-head comparison",
+            )
+        )
 
     for weight in DEFAULT_LAMBDAS:
         runs.append(
@@ -505,6 +542,7 @@ def build_lambda_sweep(
     labels_per_batch: int = 4,
     events_per_label: int = 4,
     policy_variant: dict[str, Any] | None = None,
+    include_linear_head: bool = False,
 ) -> list[SweepRun]:
     """Build an ad hoc contrastive lambda sweep."""
     policy = validate_policy_variant(policy_variant or {})
@@ -526,9 +564,36 @@ def build_lambda_sweep(
                 action="submit",
                 k_values=k_values,
                 create_payload=payload,
-                metadata=_metadata(),
+                metadata=_metadata(retrieval_head_arch="mlp"),
             )
         )
+        if include_linear_head:
+            linear_payload = _base_contrastive_payload(
+                continuous_embedding_job_id,
+                event_classification_job_id=event_classification_job_id,
+                k_values=k_values,
+                contrastive_loss_weight=weight,
+                batch_size=batch_size,
+                labels_per_batch=labels_per_batch,
+                events_per_label=events_per_label,
+                retrieval_head_arch="linear",
+            )
+            linear_payload.update(policy)
+            runs.append(
+                SweepRun(
+                    run_name=_run_name("lambda-linear-head", weight=f"{weight:.2f}"),
+                    action="submit",
+                    k_values=k_values,
+                    create_payload=linear_payload,
+                    metadata=_metadata(
+                        retrieval_head_arch="linear",
+                        failure_mode_probe="linear_projection_head",
+                        matched_mlp_run_name=_run_name(
+                            "lambda", weight=f"{weight:.2f}"
+                        ),
+                    ),
+                )
+            )
     return runs
 
 

@@ -144,6 +144,7 @@ class TestCreateMaskedTransformerJob:
         assert job.retrieval_dim is None
         assert job.retrieval_hidden_dim is None
         assert job.retrieval_l2_normalize is True
+        assert job.retrieval_head_arch == "mlp"
         assert job.sequence_construction_mode == "region"
         assert job.event_centered_fraction == pytest.approx(0.0)
         assert job.pre_event_context_sec is None
@@ -260,6 +261,50 @@ class TestCreateMaskedTransformerJob:
         assert retrieval.retrieval_dim == 128
         assert retrieval.retrieval_hidden_dim == 512
         assert retrieval.retrieval_l2_normalize is True
+        assert retrieval.retrieval_head_arch == "mlp"
+
+    async def test_retrieval_head_arch_participates_in_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        mlp, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+        )
+        linear, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            retrieval_head_arch="linear",
+            retrieval_hidden_dim=512,
+        )
+
+        assert created is True
+        assert linear.id != mlp.id
+        assert linear.training_signature != mlp.training_signature
+        assert linear.retrieval_head_arch == "linear"
+        assert linear.retrieval_dim == 128
+        assert linear.retrieval_hidden_dim is None
+
+    async def test_default_mlp_arch_preserves_existing_signature(self, session):
+        cej = await _seed_crnn_cej(session)
+        implicit, _ = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+        )
+        explicit, created = await create_masked_transformer_job(
+            session,
+            continuous_embedding_job_id=cej.id,
+            preset="small",
+            retrieval_head_enabled=True,
+            retrieval_head_arch="mlp",
+        )
+
+        assert created is False
+        assert explicit.id == implicit.id
 
     async def test_retrieval_head_dimensions_participate_in_signature(self, session):
         cej = await _seed_crnn_cej(session)
@@ -759,6 +804,21 @@ class TestCreateMaskedTransformerJob:
                 training_freeze_mode="transformer_frozen_projection_head_only",
                 source_masked_transformer_job_id=source.id,
             )
+        with pytest.raises(ValueError, match="source retrieval_head_arch"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                preset="small",
+                retrieval_head_enabled=True,
+                retrieval_dim=64,
+                retrieval_hidden_dim=128,
+                retrieval_head_arch="linear",
+                retrieval_l2_normalize=False,
+                contrastive_loss_weight=1.0,
+                contrastive_label_source="human_corrections",
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id=source.id,
+            )
 
     async def test_rejects_nonexistent_upstream(self, session):
         with pytest.raises(ValueError, match="continuous_embedding_job not found"):
@@ -809,6 +869,13 @@ class TestCreateMaskedTransformerJob:
                 continuous_embedding_job_id=cej.id,
                 retrieval_head_enabled=True,
                 retrieval_hidden_dim=0,
+            )
+        with pytest.raises(ValueError, match="retrieval_head_arch"):
+            await create_masked_transformer_job(
+                session,
+                continuous_embedding_job_id=cej.id,
+                retrieval_head_enabled=True,
+                retrieval_head_arch="wide",
             )
 
 

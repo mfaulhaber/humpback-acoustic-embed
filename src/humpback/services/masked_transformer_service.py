@@ -100,6 +100,7 @@ def compute_training_signature(
     retrieval_dim: Optional[int] = None,
     retrieval_hidden_dim: Optional[int] = None,
     retrieval_l2_normalize: bool = True,
+    retrieval_head_arch: str = "mlp",
     sequence_construction_mode: str = "region",
     event_centered_fraction: float = 0.0,
     pre_event_context_sec: Optional[float] = None,
@@ -155,6 +156,8 @@ def compute_training_signature(
                 "retrieval_l2_normalize": bool(retrieval_l2_normalize),
             }
         )
+        if retrieval_head_arch != "mlp":
+            payload["retrieval_head_arch"] = retrieval_head_arch
     if sequence_construction_mode != "region":
         payload.update(
             {
@@ -320,7 +323,10 @@ def normalize_retrieval_head_config(
     retrieval_dim: Optional[int] = None,
     retrieval_hidden_dim: Optional[int] = None,
     retrieval_l2_normalize: bool = True,
-) -> tuple[bool, Optional[int], Optional[int], bool]:
+    retrieval_head_arch: str = "mlp",
+) -> tuple[bool, Optional[int], Optional[int], bool, str]:
+    if retrieval_head_arch not in {"mlp", "linear"}:
+        raise ValueError("retrieval_head_arch must be one of mlp/linear")
     enabled = bool(retrieval_head_enabled)
     l2_normalize = bool(retrieval_l2_normalize)
     if not enabled:
@@ -328,21 +334,26 @@ def normalize_retrieval_head_config(
             raise ValueError("retrieval_dim must be positive when provided")
         if retrieval_hidden_dim is not None and int(retrieval_hidden_dim) <= 0:
             raise ValueError("retrieval_hidden_dim must be positive when provided")
-        return False, None, None, l2_normalize
+        return False, None, None, l2_normalize, "mlp"
 
     resolved_dim = 128 if retrieval_dim is None else int(retrieval_dim)
-    resolved_hidden_dim = (
-        512 if retrieval_hidden_dim is None else int(retrieval_hidden_dim)
-    )
     if resolved_dim <= 0:
         raise ValueError(
             "retrieval_dim must be positive when retrieval head is enabled"
         )
+    if retrieval_head_arch == "linear":
+        if retrieval_hidden_dim is not None and int(retrieval_hidden_dim) <= 0:
+            raise ValueError("retrieval_hidden_dim must be positive when provided")
+        return True, resolved_dim, None, l2_normalize, "linear"
+
+    resolved_hidden_dim = (
+        512 if retrieval_hidden_dim is None else int(retrieval_hidden_dim)
+    )
     if resolved_hidden_dim <= 0:
         raise ValueError(
             "retrieval_hidden_dim must be positive when retrieval head is enabled"
         )
-    return True, resolved_dim, resolved_hidden_dim, l2_normalize
+    return True, resolved_dim, resolved_hidden_dim, l2_normalize, "mlp"
 
 
 def normalize_sequence_construction_config(
@@ -497,6 +508,7 @@ async def create_masked_transformer_job(
     retrieval_dim: Optional[int] = None,
     retrieval_hidden_dim: Optional[int] = None,
     retrieval_l2_normalize: bool = True,
+    retrieval_head_arch: str = "mlp",
     sequence_construction_mode: str = "region",
     event_centered_fraction: Optional[float] = 0.0,
     pre_event_context_sec: Optional[float] = None,
@@ -545,11 +557,13 @@ async def create_masked_transformer_job(
         normalized_retrieval_dim,
         normalized_retrieval_hidden_dim,
         normalized_retrieval_l2_normalize,
+        normalized_retrieval_head_arch,
     ) = normalize_retrieval_head_config(
         retrieval_head_enabled=retrieval_head_enabled,
         retrieval_dim=retrieval_dim,
         retrieval_hidden_dim=retrieval_hidden_dim,
         retrieval_l2_normalize=retrieval_l2_normalize,
+        retrieval_head_arch=retrieval_head_arch,
     )
     (
         normalized_sequence_construction_mode,
@@ -653,6 +667,10 @@ async def create_masked_transformer_job(
             )
         if source_job.retrieval_dim != normalized_retrieval_dim:
             raise ValueError("source retrieval_dim must match ablation retrieval_dim")
+        if source_job.retrieval_head_arch != normalized_retrieval_head_arch:
+            raise ValueError(
+                "source retrieval_head_arch must match ablation retrieval_head_arch"
+            )
         if source_job.retrieval_hidden_dim != normalized_retrieval_hidden_dim:
             raise ValueError(
                 "source retrieval_hidden_dim must match ablation retrieval_hidden_dim"
@@ -695,6 +713,7 @@ async def create_masked_transformer_job(
         retrieval_dim=normalized_retrieval_dim,
         retrieval_hidden_dim=normalized_retrieval_hidden_dim,
         retrieval_l2_normalize=normalized_retrieval_l2_normalize,
+        retrieval_head_arch=normalized_retrieval_head_arch,
         sequence_construction_mode=normalized_sequence_construction_mode,
         event_centered_fraction=normalized_event_centered_fraction,
         pre_event_context_sec=normalized_pre_event_context_sec,
@@ -764,6 +783,7 @@ async def create_masked_transformer_job(
         retrieval_dim=normalized_retrieval_dim,
         retrieval_hidden_dim=normalized_retrieval_hidden_dim,
         retrieval_l2_normalize=normalized_retrieval_l2_normalize,
+        retrieval_head_arch=normalized_retrieval_head_arch,
         sequence_construction_mode=normalized_sequence_construction_mode,
         event_centered_fraction=normalized_event_centered_fraction,
         pre_event_context_sec=normalized_pre_event_context_sec,
