@@ -71,6 +71,9 @@ class SweepRun:
     def to_manifest_row(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["runnable"] = self.runnable
+        if not self.runnable:
+            payload["planned_action"] = payload["action"]
+            payload["action"] = "blocked"
         return payload
 
 
@@ -98,6 +101,15 @@ class ComparisonRow:
     single_label_effective_events: int | None = None
     multi_label_effective_events: int | None = None
     skipped_contrastive_batches: float | None = None
+    retrieval_raw_geometry_p50: float | None = None
+    retrieval_raw_geometry_p75: float | None = None
+    retrieval_raw_geometry_p95: float | None = None
+    retrieval_raw_mean_vector_norm: float | None = None
+    retrieval_raw_effective_rank: float | None = None
+    retrieval_raw_pc1: float | None = None
+    retrieval_raw_pc1_5: float | None = None
+    retrieval_raw_pc1_10: float | None = None
+    lambda_sweeps_blocked: bool | None = None
     variant_same_human_label: dict[str, float] = field(default_factory=dict)
     random_pair_percentiles: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -244,6 +256,39 @@ def build_initial_sweep_preset(
         blocked_250 = None
     runs.append(
         SweepRun(
+            run_name="250ms-projection-head-only-ablation",
+            action="submit",
+            k_values=k_values,
+            create_payload=(
+                {}
+                if continuous_embedding_job_id_250ms is None
+                else {
+                    **_base_contrastive_payload(
+                        continuous_embedding_job_id_250ms,
+                        event_classification_job_id=event_classification_job_id,
+                        k_values=k_values,
+                        contrastive_loss_weight=1.0,
+                        batch_size=16,
+                        labels_per_batch=4,
+                        events_per_label=4,
+                    ),
+                    "sequence_construction_mode": "region",
+                    "event_centered_fraction": 0.0,
+                    "pre_event_context_sec": None,
+                    "post_event_context_sec": None,
+                    "contrastive_temperature": 0.10,
+                    "max_epochs": 10,
+                    "early_stop_patience": 2,
+                    "training_freeze_mode": "transformer_frozen_projection_head_only",
+                    "source_masked_transformer_job_id": PRE_SAMPLER_CONTRASTIVE_JOB_ID,
+                }
+            ),
+            metadata=_metadata(chunk_ms=250, sweep_stage="projection_head_ablation"),
+            blocked_reason=blocked_250,
+        )
+    )
+    runs.append(
+        SweepRun(
             run_name="250ms-sampler-confirm-lambda-0p10",
             action="submit",
             k_values=k_values,
@@ -261,7 +306,7 @@ def build_initial_sweep_preset(
                 )
             ),
             metadata=_metadata(chunk_ms=250, sweep_stage="sampler_confirmation"),
-            blocked_reason=blocked_250,
+            blocked_reason=blocked_250 or "awaits unsaturated projection-head geometry",
         )
     )
 
@@ -285,9 +330,8 @@ def build_initial_sweep_preset(
                     )
                 ),
                 metadata=_metadata(chunk_ms=250, sweep_stage="lambda"),
-                blocked_reason=(
-                    blocked_250 or "awaits sampler-confirmation contrastive-batch check"
-                ),
+                blocked_reason=blocked_250
+                or "awaits unsaturated projection-head geometry",
             )
         )
 
@@ -502,6 +546,13 @@ def comparison_row_from_report(
     label_coverage = report.get("label_coverage", {}) or {}
     job = report.get("job", {}) or {}
     options = report.get("options", {}) or {}
+    geometry = report.get("geometry_report") or {}
+    retrieval_raw_geometry = (geometry.get("spaces") or {}).get(
+        "retrieval.raw_l2"
+    ) or {}
+    retrieval_raw_cosine = retrieval_raw_geometry.get("random_pair_percentiles") or {}
+    retrieval_raw_pca = retrieval_raw_geometry.get("pca_explained_variance") or {}
+    geometry_summary = geometry.get("summary") or {}
     meta = dict(metadata or {})
     return ComparisonRow(
         run_name=run_name,
@@ -533,6 +584,23 @@ def comparison_row_from_report(
         ),
         skipped_contrastive_batches=_optional_float(
             meta.get("skipped_contrastive_batches")
+        ),
+        retrieval_raw_geometry_p50=_optional_float(retrieval_raw_cosine.get("p50")),
+        retrieval_raw_geometry_p75=_optional_float(retrieval_raw_cosine.get("p75")),
+        retrieval_raw_geometry_p95=_optional_float(retrieval_raw_cosine.get("p95")),
+        retrieval_raw_mean_vector_norm=_optional_float(
+            retrieval_raw_geometry.get("mean_vector_norm")
+        ),
+        retrieval_raw_effective_rank=_optional_float(
+            retrieval_raw_geometry.get("effective_rank")
+        ),
+        retrieval_raw_pc1=_optional_float(retrieval_raw_pca.get("pc1")),
+        retrieval_raw_pc1_5=_optional_float(retrieval_raw_pca.get("pc1_5")),
+        retrieval_raw_pc1_10=_optional_float(retrieval_raw_pca.get("pc1_10")),
+        lambda_sweeps_blocked=(
+            bool(geometry_summary["lambda_sweeps_blocked"])
+            if "lambda_sweeps_blocked" in geometry_summary
+            else None
         ),
         variant_same_human_label=variant_same,
         random_pair_percentiles={
@@ -607,8 +675,16 @@ def evaluate_first_sweep_stop_rules(
     retrieval_raw_values = [v for v in retrieval_raw if v is not None]
     contextual_raw_values = [v for v in contextual_raw if v is not None]
     contextual_whitened_values = [v for v in contextual_whitened if v is not None]
+    geometry_blocked = [
+        row.lambda_sweeps_blocked
+        for row in rows
+        if row.lambda_sweeps_blocked is not None
+    ]
 
     return {
+        "retrieval_raw_geometry_unsaturated": (
+            None if not geometry_blocked else not any(geometry_blocked)
+        ),
         "skipped_batches_below_baseline": (
             None
             if not skipped_values
@@ -683,8 +759,8 @@ def render_markdown_comparison(
         "",
         "## Ranked Results",
         "",
-        "| Run | Space | Status | Raw | Event Raw | Remove PC10 | Whiten | Same Region | Good | Error |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Run | Space | Status | Raw | Event Raw | Remove PC10 | Whiten | Retrieval p75 | Rank | Blocked | Error |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for row in ranked:
         lines.append(
@@ -698,8 +774,11 @@ def render_markdown_comparison(
                     _fmt_pct(row.event_level_primary_metric),
                     _fmt_pct(row.variant_same_human_label.get("remove_pc10")),
                     _fmt_pct(row.variant_same_human_label.get("whiten_pca")),
-                    _fmt_pct(row.same_region_rate),
-                    "" if row.good_queries is None else str(row.good_queries),
+                    _fmt_float(row.retrieval_raw_geometry_p75),
+                    _fmt_float(row.retrieval_raw_effective_rank),
+                    ""
+                    if row.lambda_sweeps_blocked is None
+                    else str(row.lambda_sweeps_blocked),
                     row.error or "",
                 ]
             )
@@ -779,6 +858,15 @@ def _comparison_fieldnames(rows: list[dict[str, Any]]) -> list[str]:
         "single_label_effective_events",
         "multi_label_effective_events",
         "skipped_contrastive_batches",
+        "retrieval_raw_geometry_p50",
+        "retrieval_raw_geometry_p75",
+        "retrieval_raw_geometry_p95",
+        "retrieval_raw_mean_vector_norm",
+        "retrieval_raw_effective_rank",
+        "retrieval_raw_pc1",
+        "retrieval_raw_pc1_5",
+        "retrieval_raw_pc1_10",
+        "lambda_sweeps_blocked",
     ]
     seen = set(preferred)
     extras = sorted({key for row in rows for key in row if key not in seen})
@@ -795,6 +883,10 @@ def _optional_int(value: Any) -> int | None:
 
 def _fmt_pct(value: float | None) -> str:
     return "" if value is None else f"{value * 100:.1f}%"
+
+
+def _fmt_float(value: float | None) -> str:
+    return "" if value is None else f"{value:.3g}"
 
 
 def _fmt_int(value: int | None) -> str:

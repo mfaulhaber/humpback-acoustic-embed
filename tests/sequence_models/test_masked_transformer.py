@@ -154,9 +154,13 @@ class TestForwardShape:
         assert output.reconstructed.shape == (2, 8, D_input)
         assert output.hidden.shape == (2, 8, d_model)
         assert output.retrieval is not None
+        assert output.retrieval_pre_l2 is not None
         assert output.retrieval.shape == (2, 8, retrieval_dim)
+        assert output.retrieval_pre_l2.shape == (2, 8, retrieval_dim)
         norms = torch.linalg.vector_norm(output.retrieval, ord=2, dim=-1)
         torch.testing.assert_close(norms, torch.ones_like(norms), atol=1e-5, rtol=1e-5)
+        pre_l2_norms = torch.linalg.vector_norm(output.retrieval_pre_l2, ord=2, dim=-1)
+        assert not torch.allclose(pre_l2_norms, torch.ones_like(pre_l2_norms))
 
 
 class TestTrainConvergence:
@@ -237,6 +241,65 @@ class TestTrainConvergence:
         assert result.loss_curve["train_contrastive_valid_batches"] == [0.0]
         assert result.loss_curve["train_contrastive_valid_anchor_count"] == [0.0]
         assert result.loss_curve["train_contrastive_positive_pair_count"] == [0.0]
+
+    def test_projection_head_only_freezes_transformer_parameters(self):
+        sequences = _make_synthetic_sequences(n_seq=2, T=8, D=6, seed=41)
+        initial = MaskedTransformer(
+            input_dim=6,
+            d_model=128,
+            num_layers=2,
+            num_heads=4,
+            ff_dim=512,
+            dropout=0.0,
+            retrieval_head_enabled=True,
+            retrieval_dim=5,
+            retrieval_hidden_dim=10,
+        )
+        before = {name: p.detach().clone() for name, p in initial.named_parameters()}
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_fraction=0.20,
+            span_length_min=2,
+            span_length_max=4,
+            dropout=0.0,
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=7,
+            batch_size=2,
+            retrieval_head_enabled=True,
+            retrieval_dim=5,
+            retrieval_hidden_dim=10,
+            contrastive_loss_weight=1.0,
+            contrastive_label_source="human_corrections",
+            contrastive_min_events_per_label=2,
+            contrastive_min_regions_per_label=2,
+            training_freeze_mode="transformer_frozen_projection_head_only",
+        )
+        metadata = [
+            ContrastiveEventMetadata("e1", "r1", ("Moan",), 0, 8),
+            ContrastiveEventMetadata("e2", "r2", ("Moan",), 0, 8),
+        ]
+
+        result = train_masked_transformer(
+            sequences,
+            config,
+            device="cpu",
+            contrastive_events=metadata,
+            initial_model=initial,
+        )
+
+        after = dict(result.model.named_parameters())
+        frozen_names = [
+            name for name in before if not name.startswith("retrieval_head.")
+        ]
+        assert all(torch.allclose(before[name], after[name]) for name in frozen_names)
+        assert any(
+            not torch.allclose(before[name], after[name])
+            for name in before
+            if name.startswith("retrieval_head.")
+        )
 
     def test_contrastive_training_records_separated_loss_curves(self):
         sequences = _make_synthetic_sequences(n_seq=4, T=10, D=8, seed=23)
@@ -576,6 +639,7 @@ class TestExtractContextualEmbeddings:
     def test_retrieval_extraction_shape(self):
         from humpback.sequence_models.masked_transformer import (
             extract_transformer_embeddings,
+            extract_transformer_embeddings_with_pre_l2,
         )
 
         sequences = [
@@ -610,6 +674,19 @@ class TestExtractContextualEmbeddings:
         assert R[0].shape == (5, 6)
         assert R[1].shape == (12, 6)
         np.testing.assert_allclose(np.linalg.norm(R[0], axis=1), np.ones(5), atol=1e-5)
+
+        Z2, R2, R_pre_l2, lengths2 = extract_transformer_embeddings_with_pre_l2(
+            result.model, sequences, device="cpu", batch_size=2
+        )
+        assert lengths2 == lengths
+        assert len(Z2) == len(Z)
+        assert R2 is not None
+        assert R_pre_l2 is not None
+        assert R_pre_l2[0].shape == R2[0].shape
+        assert not np.allclose(
+            np.linalg.norm(R_pre_l2[0], axis=1),
+            np.linalg.norm(R2[0], axis=1),
+        )
 
     def test_ordering_is_preserved_against_single_pass(self):
         sequences = [

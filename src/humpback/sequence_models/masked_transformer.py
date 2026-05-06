@@ -91,6 +91,10 @@ class MaskedTransformerConfig:
     contrastive_events_per_label: int = 4
     contrastive_max_unlabeled_fraction: float = 0.25
     contrastive_region_balance: bool = True
+    training_freeze_mode: Literal["none", "transformer_frozen_projection_head_only"] = (
+        "none"
+    )
+    negative_label_family_policy_json: str | None = None
     max_epochs: int = 30
     early_stop_patience: int = 3
     val_split: float = 0.1
@@ -125,6 +129,7 @@ class MaskedTransformerForward:
     reconstructed: torch.Tensor
     hidden: torch.Tensor
     retrieval: Optional[torch.Tensor] = None
+    retrieval_pre_l2: Optional[torch.Tensor] = None
 
     def __iter__(self):
         yield self.reconstructed
@@ -197,9 +202,11 @@ class MaskedTransformer(nn.Module):
         )
         reconstructed = self.output_proj(hidden)
         retrieval: Optional[torch.Tensor] = None
+        retrieval_pre_l2: Optional[torch.Tensor] = None
         head = self.retrieval_head
         if head is not None:
-            retrieval = head(hidden)
+            retrieval_pre_l2 = head(hidden)
+            retrieval = retrieval_pre_l2
             if self.retrieval_l2_normalize:
                 assert retrieval is not None
                 retrieval = F.normalize(retrieval, p=2, dim=-1, eps=1e-12)
@@ -207,6 +214,7 @@ class MaskedTransformer(nn.Module):
             reconstructed=reconstructed,
             hidden=hidden,
             retrieval=retrieval,
+            retrieval_pre_l2=retrieval_pre_l2,
         )
 
 
@@ -664,6 +672,7 @@ def train_masked_transformer(
     *,
     tier_lists: Optional[list[Optional[list[str]]]] = None,
     contrastive_events: Optional[Sequence[Optional[ContrastiveEventMetadata]]] = None,
+    initial_model: Optional[MaskedTransformer] = None,
 ) -> TrainResult:
     """Train a masked-span transformer on per-region CRNN embeddings.
 
@@ -701,28 +710,49 @@ def train_masked_transformer(
         config.contrastive_loss_weight > 0.0
         and config.contrastive_label_source == "human_corrections"
     )
+    projection_head_only = (
+        config.training_freeze_mode == "transformer_frozen_projection_head_only"
+    )
     if contrastive_enabled and not config.retrieval_head_enabled:
         raise ValueError("contrastive training requires retrieval_head_enabled=true")
+    if projection_head_only and not contrastive_enabled:
+        raise ValueError(
+            "projection-head-only training requires human-correction contrastive loss"
+        )
 
     dims = config.preset_dims()
     torch.manual_seed(config.seed)
     rng = np.random.default_rng(config.seed)
     device_obj = _device_obj(device)
 
-    model = MaskedTransformer(
-        input_dim=feature_dim,
-        d_model=dims["d_model"],
-        num_layers=dims["num_layers"],
-        num_heads=dims["num_heads"],
-        ff_dim=dims["ff_dim"],
-        dropout=config.dropout,
-        retrieval_head_enabled=config.retrieval_head_enabled,
-        retrieval_dim=config.retrieval_dim,
-        retrieval_hidden_dim=config.retrieval_hidden_dim,
-        retrieval_l2_normalize=config.retrieval_l2_normalize,
+    model = (
+        initial_model
+        if initial_model is not None
+        else MaskedTransformer(
+            input_dim=feature_dim,
+            d_model=dims["d_model"],
+            num_layers=dims["num_layers"],
+            num_heads=dims["num_heads"],
+            ff_dim=dims["ff_dim"],
+            dropout=config.dropout,
+            retrieval_head_enabled=config.retrieval_head_enabled,
+            retrieval_dim=config.retrieval_dim,
+            retrieval_hidden_dim=config.retrieval_hidden_dim,
+            retrieval_l2_normalize=config.retrieval_l2_normalize,
+        )
     ).to(device_obj)
+    if projection_head_only:
+        if model.retrieval_head is None:
+            raise ValueError("projection-head-only training requires retrieval head")
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad = name.startswith("retrieval_head.")
+        trainable_parameters = [
+            parameter for parameter in model.parameters() if parameter.requires_grad
+        ]
+    else:
+        trainable_parameters = list(model.parameters())
 
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    optim = torch.optim.AdamW(trainable_parameters, lr=1e-3)
 
     training_mask, train_idx, val_idx = _train_val_split(
         len(sequences), config.val_split, rng
@@ -839,7 +869,7 @@ def train_masked_transformer(
                 batch.weights,
                 config.cosine_loss_weight,
             )
-            loss = masked_loss
+            loss = output.hidden.sum() * 0.0 if projection_head_only else masked_loss
             contrastive_loss = output.hidden.sum() * 0.0
             if contrastive_enabled:
                 event_embeddings, event_metadata = _pool_event_retrieval_embeddings(
@@ -852,7 +882,13 @@ def train_masked_transformer(
                     min_events_per_label=config.contrastive_min_events_per_label,
                     min_regions_per_label=config.contrastive_min_regions_per_label,
                     require_cross_region_positive=config.require_cross_region_positive,
+                    strict_cross_region_positive=projection_head_only,
                     related_label_policy_json=config.related_label_policy_json,
+                    negative_label_family_policy_json=(
+                        config.negative_label_family_policy_json
+                        if projection_head_only
+                        else None
+                    ),
                     eligible_labels=train_eligible_labels,
                 )
                 if masks.valid_anchor_count == 0:
@@ -864,7 +900,7 @@ def train_masked_transformer(
                 epoch_train_labeled_event_count += len(event_metadata)
                 epoch_train_unlabeled_fill_count += len(batch_idx) - len(event_metadata)
                 loss = loss + config.contrastive_loss_weight * contrastive_loss
-            if config.retrieval_head_enabled:
+            if config.retrieval_head_enabled and not projection_head_only:
                 with torch.no_grad():
                     target_output = model(
                         batch.targets, src_key_padding_mask=batch.pad_mask
@@ -922,7 +958,11 @@ def train_masked_transformer(
                     val_batch.weights,
                     config.cosine_loss_weight,
                 )
-                val_loss = val_masked_loss
+                val_loss = (
+                    output.hidden.sum() * 0.0
+                    if projection_head_only
+                    else val_masked_loss
+                )
                 val_contrastive_loss = output.hidden.sum() * 0.0
                 val_skipped = 0.0
                 if contrastive_enabled:
@@ -936,13 +976,19 @@ def train_masked_transformer(
                         min_events_per_label=config.contrastive_min_events_per_label,
                         min_regions_per_label=config.contrastive_min_regions_per_label,
                         require_cross_region_positive=config.require_cross_region_positive,
+                        strict_cross_region_positive=projection_head_only,
                         related_label_policy_json=config.related_label_policy_json,
+                        negative_label_family_policy_json=(
+                            config.negative_label_family_policy_json
+                            if projection_head_only
+                            else None
+                        ),
                     )
                     val_skipped = 1.0 if masks.valid_anchor_count == 0 else 0.0
                     val_loss = (
                         val_loss + config.contrastive_loss_weight * val_contrastive_loss
                     )
-                if config.retrieval_head_enabled:
+                if config.retrieval_head_enabled and not projection_head_only:
                     target_output = model(
                         val_batch.targets, src_key_padding_mask=val_batch.pad_mask
                     )
@@ -1146,8 +1192,28 @@ def extract_transformer_embeddings(
     batch_size: int = 8,
 ) -> tuple[list[np.ndarray], list[np.ndarray] | None, list[int]]:
     """Run encoder forward and return contextual plus optional retrieval embeddings."""
+    Z, R, _R_pre, lengths = extract_transformer_embeddings_with_pre_l2(
+        model,
+        sequences,
+        device=device,
+        batch_size=batch_size,
+    )
+    return Z, R, lengths
+
+
+def extract_transformer_embeddings_with_pre_l2(
+    model: MaskedTransformer,
+    sequences: list[np.ndarray],
+    device: str | torch.device = "cpu",
+    *,
+    batch_size: int = 8,
+) -> tuple[
+    list[np.ndarray], list[np.ndarray] | None, list[np.ndarray] | None, list[int]
+]:
+    """Run encoder forward and include optional raw retrieval-head outputs."""
     if not sequences:
-        return [], [] if model.retrieval_head_enabled else None, []
+        empty_retrieval = [] if model.retrieval_head_enabled else None
+        return [], empty_retrieval, empty_retrieval, []
 
     device_obj = _device_obj(device)
     model = model.to(device_obj)
@@ -1155,6 +1221,7 @@ def extract_transformer_embeddings(
 
     Z: list[np.ndarray] = []
     R: list[np.ndarray] | None = [] if model.retrieval_head_enabled else None
+    R_pre: list[np.ndarray] | None = [] if model.retrieval_head_enabled else None
     lengths: list[int] = [int(seq.shape[0]) for seq in sequences]
     with torch.no_grad():
         for start in range(0, len(sequences), max(1, batch_size)):
@@ -1167,11 +1234,20 @@ def extract_transformer_embeddings(
             retrieval_np = (
                 output.retrieval.cpu().numpy() if output.retrieval is not None else None
             )
+            retrieval_pre_l2_np = (
+                output.retrieval_pre_l2.cpu().numpy()
+                if output.retrieval_pre_l2 is not None
+                else None
+            )
             for i, L in enumerate(batch_lengths):
                 Z.append(hidden_np[i, :L].astype(np.float32, copy=True))
                 if R is not None and retrieval_np is not None:
                     R.append(retrieval_np[i, :L].astype(np.float32, copy=True))
-    return Z, R, lengths
+                if R_pre is not None and retrieval_pre_l2_np is not None:
+                    R_pre.append(
+                        retrieval_pre_l2_np[i, :L].astype(np.float32, copy=True)
+                    )
+    return Z, R, R_pre, lengths
 
 
 __all__ = [
@@ -1184,5 +1260,6 @@ __all__ = [
     "compute_reconstruction_error",
     "extract_contextual_embeddings",
     "extract_transformer_embeddings",
+    "extract_transformer_embeddings_with_pre_l2",
     "train_masked_transformer",
 ]

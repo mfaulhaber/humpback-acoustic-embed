@@ -211,6 +211,9 @@ def test_masked_transformer_create_retrieval_head_defaults():
     assert contextual.contrastive_events_per_label == 4
     assert contextual.contrastive_max_unlabeled_fraction == 0.25
     assert contextual.contrastive_region_balance is True
+    assert contextual.training_freeze_mode == "none"
+    assert contextual.source_masked_transformer_job_id is None
+    assert contextual.negative_label_family_policy_json is None
     assert contextual.batch_size == 8
 
     retrieval = MaskedTransformerJobCreate(
@@ -389,6 +392,53 @@ def test_masked_transformer_create_contrastive_validation():
     assert payload.contrastive_region_balance is False
 
 
+def test_masked_transformer_create_projection_head_ablation_validation():
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            contrastive_loss_weight=1.0,
+            contrastive_label_source="human_corrections",
+            training_freeze_mode="transformer_frozen_projection_head_only",
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=False,
+            contrastive_loss_weight=1.0,
+            contrastive_label_source="human_corrections",
+            training_freeze_mode="transformer_frozen_projection_head_only",
+            source_masked_transformer_job_id="mt-source",
+        )
+
+    with pytest.raises(ValidationError):
+        MaskedTransformerJobCreate(
+            continuous_embedding_job_id="cej-1",
+            retrieval_head_enabled=True,
+            contrastive_loss_weight=0.0,
+            contrastive_label_source="human_corrections",
+            training_freeze_mode="transformer_frozen_projection_head_only",
+            source_masked_transformer_job_id="mt-source",
+        )
+
+    payload = MaskedTransformerJobCreate(
+        continuous_embedding_job_id="cej-1",
+        retrieval_head_enabled=True,
+        sequence_construction_mode="region",
+        contrastive_loss_weight=1.0,
+        contrastive_label_source="human_corrections",
+        training_freeze_mode="transformer_frozen_projection_head_only",
+        source_masked_transformer_job_id="mt-source",
+        negative_label_family_policy_json='{"families":{}}',
+    )
+
+    assert payload.sequence_construction_mode == "region"
+    assert payload.training_freeze_mode == "transformer_frozen_projection_head_only"
+    assert payload.source_masked_transformer_job_id == "mt-source"
+    assert payload.negative_label_family_policy_json == '{"families":{}}'
+
+
 def test_masked_transformer_job_out_serializes_retrieval_fields():
     payload = {
         "id": "mt-1",
@@ -425,6 +475,9 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
         "contrastive_events_per_label": 4,
         "contrastive_max_unlabeled_fraction": 0.25,
         "contrastive_region_balance": True,
+        "training_freeze_mode": "transformer_frozen_projection_head_only",
+        "source_masked_transformer_job_id": "mt-source",
+        "negative_label_family_policy_json": '{"families":{}}',
         "max_epochs": 30,
         "early_stop_patience": 3,
         "val_split": 0.1,
@@ -456,6 +509,9 @@ def test_masked_transformer_job_out_serializes_retrieval_fields():
     assert job.contrastive_loss_weight == 0.1
     assert job.contrastive_label_source == "human_corrections"
     assert job.related_label_policy_json == '{"exclude_pairs":[]}'
+    assert job.training_freeze_mode == "transformer_frozen_projection_head_only"
+    assert job.source_masked_transformer_job_id == "mt-source"
+    assert job.negative_label_family_policy_json == '{"families":{}}'
     assert job.k_values == [100]
 
 
@@ -480,6 +536,33 @@ def test_nearest_neighbor_report_request_rejects_invalid_options():
         MaskedTransformerNearestNeighborReportRequest.model_validate(
             {"embedding_variants": ["raw"]}
         )
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest(geometry_embedding_spaces=[])
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest(geometry_random_pairs=0)
+    with pytest.raises(ValidationError):
+        MaskedTransformerNearestNeighborReportRequest.model_validate(
+            {"geometry_embedding_spaces": ["contextual.centered_l2"]}
+        )
+
+
+def test_nearest_neighbor_report_request_accepts_geometry_options():
+    request = MaskedTransformerNearestNeighborReportRequest.model_validate(
+        {
+            "include_geometry_report": True,
+            "geometry_embedding_spaces": ["contextual.raw_l2", "retrieval.raw_l2"],
+            "geometry_random_pairs": 123,
+            "geometry_pca_components": 7,
+        }
+    )
+
+    assert request.include_geometry_report is True
+    assert request.geometry_embedding_spaces == [
+        "contextual.raw_l2",
+        "retrieval.raw_l2",
+    ]
+    assert request.geometry_random_pairs == 123
+    assert request.geometry_pca_components == 7
 
 
 def test_nearest_neighbor_report_response_serializes_detail_rows():

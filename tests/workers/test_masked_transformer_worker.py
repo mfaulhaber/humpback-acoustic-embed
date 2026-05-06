@@ -41,6 +41,7 @@ from humpback.storage import (
     masked_transformer_model_path,
     masked_transformer_reconstruction_error_path,
     masked_transformer_retrieval_embeddings_path,
+    masked_transformer_retrieval_head_outputs_path,
 )
 from humpback.workers.masked_transformer_worker import run_masked_transformer_job
 from tests.fixtures.sequence_models.classify_binding import (
@@ -299,6 +300,7 @@ async def test_happy_path_persists_all_artifacts(session, settings, monkeypatch)
     assert masked_transformer_reconstruction_error_path(sr, job.id).exists()
     assert masked_transformer_contextual_embeddings_path(sr, job.id).exists()
     assert not masked_transformer_retrieval_embeddings_path(sr, job.id).exists()
+    assert not masked_transformer_retrieval_head_outputs_path(sr, job.id).exists()
     # Per-k bundle.
     k = 10
     k_dir = masked_transformer_k_dir(sr, job.id, k)
@@ -429,17 +431,27 @@ async def test_retrieval_head_job_persists_and_tokenizes_retrieval_embeddings(
     sr = settings.storage_root
     contextual_path = masked_transformer_contextual_embeddings_path(sr, job.id)
     retrieval_path = masked_transformer_retrieval_embeddings_path(sr, job.id)
+    retrieval_pre_l2_path = masked_transformer_retrieval_head_outputs_path(sr, job.id)
     assert contextual_path.exists()
     assert retrieval_path.exists()
+    assert retrieval_pre_l2_path.exists()
 
     contextual = pq.read_table(contextual_path)
     retrieval = pq.read_table(retrieval_path)
+    retrieval_pre_l2 = pq.read_table(retrieval_pre_l2_path)
     assert contextual.num_rows == retrieval.num_rows
+    assert retrieval_pre_l2.num_rows == retrieval.num_rows
     assert retrieval.column_names == contextual.column_names
+    assert retrieval_pre_l2.column_names == retrieval.column_names
     retrieval_vectors = retrieval.column("embedding").to_pylist()
+    retrieval_pre_l2_vectors = retrieval_pre_l2.column("embedding").to_pylist()
     assert len(retrieval_vectors[0]) == 6
     norms = np.linalg.norm(np.asarray(retrieval_vectors, dtype=np.float32), axis=1)
     np.testing.assert_allclose(norms, np.ones_like(norms), atol=1e-5)
+    pre_l2_norms = np.linalg.norm(
+        np.asarray(retrieval_pre_l2_vectors, dtype=np.float32), axis=1
+    )
+    assert not np.allclose(pre_l2_norms, norms)
 
     kmeans_payload = joblib.load(masked_transformer_k_kmeans_path(sr, job.id, 10))
     assert kmeans_payload["kmeans"].cluster_centers_.shape[1] == 6
@@ -732,6 +744,89 @@ async def test_contrastive_event_centered_passes_human_labels_to_training(
     assert len(loss_payload["train_loss"]) == len(
         loss_payload["train_contrastive_valid_batches"]
     )
+
+
+async def test_projection_head_only_ablation_uses_source_model_and_writes_artifacts(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    source, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+        },
+    )
+    await _bind_classify(
+        session,
+        settings,
+        cej,
+        source,
+        events=[
+            Event("e1", "region-00", 1.0, 2.0, 1.5, 0.9),
+            Event("e2", "region-01", 11.0, 12.0, 11.5, 0.8),
+        ],
+    )
+    await run_masked_transformer_job(session, source, settings)
+    await session.refresh(source)
+    assert source.status == JobStatus.complete.value, source.error_message
+
+    await _add_vocalization_correction(
+        session, cej, start_sec=1.0, end_sec=2.0, type_name="Moan"
+    )
+    await _add_vocalization_correction(
+        session, cej, start_sec=11.0, end_sec=12.0, type_name="Moan"
+    )
+    ablation, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+            "sequence_construction_mode": "region",
+            "contrastive_loss_weight": 1.0,
+            "contrastive_label_source": "human_corrections",
+            "contrastive_min_events_per_label": 2,
+            "contrastive_min_regions_per_label": 2,
+            "training_freeze_mode": "transformer_frozen_projection_head_only",
+            "source_masked_transformer_job_id": source.id,
+            "max_epochs": 1,
+            "val_split": 0.0,
+        },
+    )
+
+    import humpback.workers.masked_transformer_worker as worker_mod
+
+    real_train = worker_mod.train_masked_transformer
+    observed_initial_model = False
+
+    def _spy_train(sequences, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal observed_initial_model
+        observed_initial_model = kwargs.get("initial_model") is not None
+        return real_train(sequences, *args, **kwargs)
+
+    monkeypatch.setattr(worker_mod, "train_masked_transformer", _spy_train)
+
+    await run_masked_transformer_job(session, ablation, settings)
+    await session.refresh(ablation)
+
+    assert ablation.status == JobStatus.complete.value, ablation.error_message
+    assert observed_initial_model is True
+    assert masked_transformer_contextual_embeddings_path(
+        settings.storage_root, ablation.id
+    ).exists()
+    assert masked_transformer_retrieval_embeddings_path(
+        settings.storage_root, ablation.id
+    ).exists()
+    assert masked_transformer_retrieval_head_outputs_path(
+        settings.storage_root, ablation.id
+    ).exists()
 
 
 async def test_contrastive_ignores_model_only_labels(session, settings, monkeypatch):

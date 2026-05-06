@@ -15,3 +15,15 @@ Items identified during development that are out of scope for the current task.
 **Impact:** The confidence heatmap is sparse and not useful for jobs where diagnostics are incomplete. Users see detections/labels with no corresponding heatmap indication.
 
 **Expected behavior:** The diagnostics parquet should contain one row per detection window for every audio segment the detector processed, not just the segments that yielded high-confidence detections. This would give the heatmap full timeline coverage.
+
+---
+
+## Frontend visualization for masked-transformer geometry diagnostics
+
+**Found:** 2026-05-06 during projection-head geometry diagnostics.
+
+**Symptom:** The backend nearest-neighbor report now returns per-space geometry diagnostics and sweep-gating verdicts, but there is no dedicated UI for comparing contextual/retrieval cone collapse, PCA dominance, effective rank, pre-L2 norm spread, or per-dimension standard-deviation summaries.
+
+**Impact:** Researchers must inspect API JSON, sweep CSV/Markdown, or saved comparison artifacts to understand whether retrieval raw geometry is saturated before continuing lambda sweeps.
+
+**Expected behavior:** Add a masked-transformer diagnostics panel that renders geometry spaces side by side, highlights red-flag thresholds, and clearly shows whether `retrieval.raw_l2` blocks further lambda sweeps.

@@ -36,10 +36,19 @@ from humpback.storage import (
     masked_transformer_contextual_embeddings_path,
     masked_transformer_k_decoded_path,
     masked_transformer_retrieval_embeddings_path,
+    masked_transformer_retrieval_head_outputs_path,
 )
 
 FloatArray = NDArray[np.floating[Any]]
 EmbeddingSpace = Literal["contextual", "retrieval"]
+GeometryEmbeddingSpace = Literal[
+    "contextual.raw_l2",
+    "contextual.remove_pc10",
+    "contextual.whiten_pca",
+    "retrieval.raw_l2",
+    "retrieval.remove_pc10",
+    "retrieval.whiten_pca",
+]
 RetrievalMode = Literal[
     "unrestricted", "exclude_same_event", "exclude_same_event_and_region"
 ]
@@ -67,6 +76,15 @@ DEFAULT_EMBEDDING_VARIANTS: tuple[EmbeddingVariant, ...] = (
     "remove_pc10",
     "whiten_pca",
 )
+DEFAULT_GEOMETRY_SPACES: tuple[GeometryEmbeddingSpace, ...] = (
+    "contextual.raw_l2",
+    "contextual.remove_pc10",
+    "contextual.whiten_pca",
+    "retrieval.raw_l2",
+    "retrieval.remove_pc10",
+    "retrieval.whiten_pca",
+)
+_PERCENTILES: tuple[int, ...] = (0, 1, 5, 25, 50, 75, 95, 99, 100)
 
 
 class RetrievalDiagnosticsError(Exception):
@@ -99,6 +117,10 @@ class RetrievalReportOptions:
     include_query_rows: bool = False
     include_neighbor_rows: bool = False
     include_event_level: bool = False
+    include_geometry_report: bool = False
+    geometry_embedding_spaces: tuple[GeometryEmbeddingSpace, ...] | None = None
+    geometry_random_pairs: int = 20_000
+    geometry_pca_components: int = 20
 
 
 @dataclass(frozen=True)
@@ -478,6 +500,42 @@ def _whiten_embeddings(
     return _normalize_rows(x_white)
 
 
+def _geometry_variant_matrices(
+    raw_vectors: FloatArray,
+    *,
+    variant: EmbeddingVariant,
+    seed: int,
+) -> tuple[FloatArray, FloatArray]:
+    """Return ``(pre_l2_matrix, evaluation_matrix)`` for geometry diagnostics."""
+    raw = raw_vectors.astype(np.float32, copy=False)
+    if variant == "raw_l2":
+        pre_l2 = raw
+    elif variant.startswith("remove_pc"):
+        count = int(variant.replace("remove_pc", ""))
+        x_centered = raw - raw.mean(axis=0, keepdims=True)
+        n_components = _safe_pca_components(raw, count)
+        if n_components <= 0:
+            pre_l2 = x_centered
+        else:
+            pca = PCA(n_components=n_components, random_state=seed)
+            pca.fit(x_centered)
+            x_proj = pca.inverse_transform(pca.transform(x_centered))
+            pre_l2 = cast(FloatArray, x_centered - x_proj)
+    elif variant == "whiten_pca":
+        x_centered = raw - raw.mean(axis=0, keepdims=True)
+        safe_components = _safe_pca_components(raw, 128)
+        if safe_components <= 0:
+            pre_l2 = x_centered
+        else:
+            pca = PCA(n_components=safe_components, whiten=True, random_state=seed)
+            pre_l2 = cast(FloatArray, pca.fit_transform(x_centered))
+    else:
+        raise RetrievalDiagnosticsInvalid(
+            f"unsupported geometry embedding variant: {variant}"
+        )
+    return pre_l2.astype(np.float32, copy=False), _normalize_rows(pre_l2)
+
+
 def build_embedding_variants(
     raw_vectors: FloatArray,
     *,
@@ -699,6 +757,375 @@ def _cosine_baseline(
             [0, 1, 5, 25, 50, 75, 95, 99, 100],
             np.percentile(cosine, [0, 1, 5, 25, 50, 75, 95, 99, 100]),
         )
+    }
+
+
+def _cosine_percentiles(
+    vectors: FloatArray, *, seed: int, n_pairs: int = 20_000
+) -> dict[str, float]:
+    if vectors.shape[0] < 2:
+        return {f"p{p}": 0.0 for p in _PERCENTILES}
+    rng = np.random.default_rng(seed)
+    a = rng.integers(0, vectors.shape[0], size=n_pairs)
+    b = rng.integers(0, vectors.shape[0], size=n_pairs)
+    mask = a != b
+    cosine = np.sum(vectors[a[mask]] * vectors[b[mask]], axis=1)
+    return {
+        f"p{p}": float(v)
+        for p, v in zip(_PERCENTILES, np.percentile(cosine, _PERCENTILES))
+    }
+
+
+def _percentile_summary(values: FloatArray) -> dict[str, float]:
+    flat = np.asarray(values, dtype=np.float64).reshape(-1)
+    if flat.size == 0:
+        out = {name: 0.0 for name in ("min", "max", "mean")}
+        out.update({f"p{p}": 0.0 for p in _PERCENTILES if p not in {0, 100}})
+        return out
+    percentiles = {
+        f"p{p}": float(v)
+        for p, v in zip(_PERCENTILES, np.percentile(flat, _PERCENTILES))
+        if p not in {0, 100}
+    }
+    return {
+        "min": float(np.min(flat)),
+        **percentiles,
+        "max": float(np.max(flat)),
+        "mean": float(np.mean(flat)),
+    }
+
+
+def _dimension_std_summary(pre_l2_vectors: FloatArray) -> dict[str, float]:
+    if pre_l2_vectors.size == 0:
+        summary = _percentile_summary(np.asarray([], dtype=np.float32))
+        summary["near_zero_fraction"] = 0.0
+        summary["dominance_ratio"] = 0.0
+        return summary
+    std = np.asarray(pre_l2_vectors, dtype=np.float64).std(axis=0)
+    summary = _percentile_summary(cast(FloatArray, std))
+    mean_std = float(np.mean(std)) if std.size else 0.0
+    summary["near_zero_fraction"] = float(np.mean(std < 1e-5)) if std.size else 0.0
+    summary["dominance_ratio"] = (
+        float(np.max(std) / mean_std) if mean_std > 0.0 and std.size else 0.0
+    )
+    return summary
+
+
+def _mean_vector_norm(vectors: FloatArray) -> float:
+    if vectors.size == 0:
+        return 0.0
+    normalized = _normalize_rows(vectors)
+    mean_vec = normalized.mean(axis=0)
+    return float(np.linalg.norm(mean_vec))
+
+
+def _mean_vector_band(value: float) -> str:
+    if value < 0.05:
+        return "good"
+    if value < 0.15:
+        return "okay"
+    if value < 0.30:
+        return "suspicious"
+    return "collapse_risk"
+
+
+def _effective_rank(vectors: FloatArray) -> float:
+    if vectors.shape[0] == 0 or vectors.shape[1] == 0:
+        return 0.0
+    centered = vectors.astype(np.float64, copy=False) - vectors.mean(
+        axis=0, keepdims=True
+    )
+    s = np.linalg.svd(centered, compute_uv=False)
+    total = float(s.sum())
+    if total <= 0.0:
+        return 0.0
+    p = s / total
+    entropy = float(-(p * np.log(p + 1e-12)).sum())
+    return float(np.exp(entropy))
+
+
+def _effective_rank_band(value: float) -> str:
+    if value < 10.0:
+        return "severe_collapse"
+    if value < 30.0:
+        return "weak"
+    if value < 80.0:
+        return "plausible"
+    return "broad"
+
+
+def _pca_explained_variance(
+    vectors: FloatArray, *, n_components: int, seed: int
+) -> dict[str, float | int]:
+    safe_components = _safe_pca_components(vectors, n_components)
+    if safe_components <= 0:
+        return {"pc1": 0.0, "pc1_5": 0.0, "pc1_10": 0.0, "components_available": 0}
+    centered = vectors.astype(np.float32, copy=False) - vectors.mean(
+        axis=0, keepdims=True
+    )
+    pca = PCA(n_components=safe_components, random_state=seed)
+    pca.fit(centered)
+    ratios = np.asarray(pca.explained_variance_ratio_, dtype=np.float64)
+
+    def _clamped_sum(count: int) -> float:
+        return float(np.clip(ratios[: min(count, ratios.size)].sum(), 0.0, 1.0))
+
+    return {
+        "pc1": _clamped_sum(1) if ratios.size >= 1 else 0.0,
+        "pc1_5": _clamped_sum(5),
+        "pc1_10": _clamped_sum(10),
+        "components_available": int(safe_components),
+    }
+
+
+def _norm_distribution(
+    vectors: FloatArray | None,
+    *,
+    available: bool,
+    source: str,
+) -> dict[str, float | bool | str]:
+    if not available or vectors is None:
+        return {"available": False, "source": source}
+    norms = np.linalg.norm(vectors, axis=1)
+    return {"available": True, "source": source, **_percentile_summary(norms)}
+
+
+def _dimension_std_vectors(
+    *,
+    source_space: EmbeddingSpace,
+    variant_pre_l2_matrix: FloatArray,
+    retrieval_pre_l2_vectors: FloatArray | None,
+    retrieval_pre_l2_source: str | None,
+) -> tuple[FloatArray, str]:
+    if source_space == "retrieval":
+        if retrieval_pre_l2_vectors is not None:
+            return retrieval_pre_l2_vectors, (
+                retrieval_pre_l2_source or "retrieval_head_outputs"
+            )
+        return variant_pre_l2_matrix, "retrieval_post_l2_artifact"
+    return variant_pre_l2_matrix, "contextual_artifact"
+
+
+def _geometry_warnings(
+    *,
+    cosine: dict[str, float],
+    mean_norm: float,
+    effective_rank: float,
+    pca_variance: dict[str, float | int],
+) -> list[str]:
+    warnings: list[str] = []
+    if cosine.get("p50", 0.0) > 0.30:
+        warnings.append("median_gt_0p3")
+    if cosine.get("p75", 0.0) > 0.70:
+        warnings.append("p75_gt_0p7")
+    if cosine.get("p95", 0.0) > 0.95:
+        warnings.append("p95_gt_0p95")
+    if mean_norm >= 0.30:
+        warnings.append("mean_norm_collapse_risk")
+    elif mean_norm >= 0.15:
+        warnings.append("mean_norm_suspicious")
+    if effective_rank < 10.0:
+        warnings.append("effective_rank_severe_collapse")
+    elif effective_rank < 30.0:
+        warnings.append("effective_rank_weak")
+    pc1 = float(pca_variance.get("pc1", 0.0))
+    pc1_5 = float(pca_variance.get("pc1_5", 0.0))
+    pc1_10 = float(pca_variance.get("pc1_10", 0.0))
+    if pc1 >= 0.30:
+        warnings.append("pc1_dominant")
+    if pc1_5 >= 0.70:
+        warnings.append("pc5_dominant")
+    if pc1_10 >= 0.85:
+        warnings.append("pc10_dominant")
+    return warnings
+
+
+def _is_saturated_retrieval_raw(report: dict[str, Any]) -> bool:
+    cosine = report.get("random_pair_percentiles", {}) or {}
+    pca_variance = report.get("pca_explained_variance", {}) or {}
+    return bool(
+        float(cosine.get("p75", 0.0)) > 0.70
+        or float(cosine.get("p95", 0.0)) > 0.95
+        or float(report.get("mean_vector_norm") or 0.0) >= 0.30
+        or float(report.get("effective_rank") or 0.0) < 10.0
+        or float(pca_variance.get("pc1", 0.0)) >= 0.30
+        or float(pca_variance.get("pc1_5", 0.0)) >= 0.70
+    )
+
+
+def build_geometry_space_report(
+    *,
+    raw_vectors: FloatArray,
+    source_space: EmbeddingSpace,
+    variant: EmbeddingVariant,
+    seed: int,
+    random_pairs: int,
+    pca_components: int,
+    artifact_path: str | None = None,
+    pre_l2_vectors: FloatArray | None = None,
+    pre_l2_source: str | None = None,
+) -> dict[str, Any]:
+    pre_l2_matrix, vectors = _geometry_variant_matrices(
+        raw_vectors, variant=variant, seed=seed
+    )
+    cosine = _cosine_percentiles(vectors, seed=seed, n_pairs=random_pairs)
+    mean_norm = _mean_vector_norm(vectors)
+    rank = _effective_rank(vectors)
+    pca_variance = _pca_explained_variance(
+        vectors, n_components=pca_components, seed=seed
+    )
+    vector_dim = int(vectors.shape[1]) if vectors.ndim == 2 else 0
+    norm_source = pre_l2_source or (
+        "contextual_artifact" if source_space == "contextual" else "unavailable"
+    )
+    norm_vectors = (
+        pre_l2_vectors
+        if source_space == "retrieval" and pre_l2_vectors is not None
+        else pre_l2_matrix
+        if source_space == "contextual"
+        else None
+    )
+    norm_available = bool(source_space == "contextual" or pre_l2_vectors is not None)
+    dimension_vectors, dimension_source = _dimension_std_vectors(
+        source_space=source_space,
+        variant_pre_l2_matrix=pre_l2_matrix,
+        retrieval_pre_l2_vectors=pre_l2_vectors,
+        retrieval_pre_l2_source=pre_l2_source,
+    )
+    return {
+        "available": True,
+        "reason": None,
+        "artifact_path": artifact_path,
+        "source_space": source_space,
+        "variant": variant,
+        "row_count": int(vectors.shape[0]),
+        "vector_dim": vector_dim,
+        "random_pair_percentiles": cosine,
+        "mean_vector_norm": mean_norm,
+        "mean_vector_band": _mean_vector_band(mean_norm),
+        "effective_rank": rank,
+        "effective_rank_fraction": rank / max(vector_dim, 1),
+        "effective_rank_band": _effective_rank_band(rank),
+        "pca_explained_variance": pca_variance,
+        "dimension_std": _dimension_std_summary(dimension_vectors),
+        "dimension_std_source": dimension_source,
+        "pre_l2_norm_distribution": _norm_distribution(
+            norm_vectors, available=norm_available, source=norm_source
+        ),
+        "warnings": _geometry_warnings(
+            cosine=cosine,
+            mean_norm=mean_norm,
+            effective_rank=rank,
+            pca_variance=pca_variance,
+        ),
+    }
+
+
+def _unavailable_geometry_space_report(
+    *,
+    space: GeometryEmbeddingSpace,
+    reason: str,
+    artifact_path: str | None,
+) -> dict[str, Any]:
+    source_space, variant = space.split(".", 1)
+    return {
+        "available": False,
+        "reason": reason,
+        "artifact_path": artifact_path,
+        "source_space": source_space,
+        "variant": variant,
+        "row_count": 0,
+        "vector_dim": 0,
+        "random_pair_percentiles": {},
+        "mean_vector_norm": None,
+        "mean_vector_band": None,
+        "effective_rank": None,
+        "effective_rank_fraction": None,
+        "effective_rank_band": None,
+        "pca_explained_variance": {},
+        "dimension_std": {},
+        "dimension_std_source": "unavailable",
+        "pre_l2_norm_distribution": {"available": False, "source": "unavailable"},
+        "warnings": [reason],
+    }
+
+
+def _read_embedding_vectors(path: Path) -> FloatArray:
+    rows = _read_table_rows(path)
+    return np.asarray([row["embedding"] for row in rows], dtype=np.float32)
+
+
+def _retrieval_head_outputs_path(storage_root: Path, job_id: str) -> Path:
+    return masked_transformer_retrieval_head_outputs_path(storage_root, job_id)
+
+
+def build_geometry_report(
+    *,
+    storage_root: Path,
+    job_id: str,
+    options: RetrievalReportOptions,
+) -> dict[str, Any]:
+    """Build geometry diagnostics across requested contextual/retrieval spaces."""
+    requested_spaces = options.geometry_embedding_spaces or DEFAULT_GEOMETRY_SPACES
+    spaces: dict[str, dict[str, Any]] = {}
+    raw_cache: dict[EmbeddingSpace, tuple[Path, FloatArray] | None] = {}
+    retrieval_pre_l2: FloatArray | None = None
+    retrieval_pre_l2_path = _retrieval_head_outputs_path(storage_root, job_id)
+    if retrieval_pre_l2_path.exists():
+        retrieval_pre_l2 = _read_embedding_vectors(retrieval_pre_l2_path)
+
+    for space in requested_spaces:
+        source_name, variant_name = space.split(".", 1)
+        source_space = cast(EmbeddingSpace, source_name)
+        variant = cast(EmbeddingVariant, variant_name)
+        if source_space not in raw_cache:
+            path = _embedding_path(storage_root, job_id, source_space)
+            if path.exists():
+                raw_cache[source_space] = (path, _read_embedding_vectors(path))
+            else:
+                raw_cache[source_space] = None
+        cached = raw_cache[source_space]
+        if cached is None:
+            spaces[space] = _unavailable_geometry_space_report(
+                space=space,
+                reason=f"{source_space}_artifact_unavailable",
+                artifact_path=str(_embedding_path(storage_root, job_id, source_space)),
+            )
+            continue
+        path, raw_vectors = cached
+        spaces[space] = build_geometry_space_report(
+            raw_vectors=raw_vectors,
+            source_space=source_space,
+            variant=variant,
+            seed=options.seed,
+            random_pairs=options.geometry_random_pairs,
+            pca_components=options.geometry_pca_components,
+            artifact_path=str(path),
+            pre_l2_vectors=retrieval_pre_l2 if source_space == "retrieval" else None,
+            pre_l2_source=(
+                "retrieval_head_outputs"
+                if source_space == "retrieval" and retrieval_pre_l2 is not None
+                else None
+            ),
+        )
+
+    retrieval_raw = spaces.get("retrieval.raw_l2")
+    retrieval_raw_saturated = False
+    if retrieval_raw is not None and retrieval_raw.get("available"):
+        retrieval_raw_saturated = _is_saturated_retrieval_raw(retrieval_raw)
+    warnings: list[str] = []
+    if retrieval_raw_saturated:
+        warnings.append("retrieval_raw_saturated")
+    for name, report in spaces.items():
+        for warning in report.get("warnings", []):
+            warnings.append(f"{name}:{warning}")
+    return {
+        "spaces": spaces,
+        "summary": {
+            "retrieval_raw_saturated": retrieval_raw_saturated,
+            "lambda_sweeps_blocked": retrieval_raw_saturated,
+            "warnings": warnings,
+        },
     }
 
 
@@ -940,6 +1367,16 @@ async def build_nearest_neighbor_report(
         else:
             event_level_results = {}
 
+    geometry_report = (
+        build_geometry_report(
+            storage_root=storage_root,
+            job_id=job_id,
+            options=options,
+        )
+        if options.include_geometry_report
+        else None
+    )
+
     response = {
         "job": {
             "job_id": context.job.id,
@@ -965,6 +1402,12 @@ async def build_nearest_neighbor_report(
             "include_query_rows": options.include_query_rows,
             "include_neighbor_rows": options.include_neighbor_rows,
             "include_event_level": options.include_event_level,
+            "include_geometry_report": options.include_geometry_report,
+            "geometry_embedding_spaces": list(
+                options.geometry_embedding_spaces or DEFAULT_GEOMETRY_SPACES
+            ),
+            "geometry_random_pairs": options.geometry_random_pairs,
+            "geometry_pca_components": options.geometry_pca_components,
         },
         "artifacts": artifacts,
         "label_coverage": {
@@ -996,15 +1439,18 @@ async def build_nearest_neighbor_report(
         "representative_risky_queries": risky,
         "query_rows": query_summaries if options.include_query_rows else [],
         "neighbor_rows": neighbor_records if options.include_neighbor_rows else [],
+        "geometry_report": geometry_report,
     }
     return response
 
 
 __all__ = [
     "DEFAULT_EMBEDDING_VARIANTS",
+    "DEFAULT_GEOMETRY_SPACES",
     "DEFAULT_RETRIEVAL_MODES",
     "EmbeddingSpace",
     "EmbeddingVariant",
+    "GeometryEmbeddingSpace",
     "HumanLabeledEvent",
     "RetrievalDiagnosticsConflict",
     "RetrievalDiagnosticsError",
@@ -1014,6 +1460,8 @@ __all__ = [
     "RetrievalReportOptions",
     "analyze_neighbors",
     "build_embedding_variants",
+    "build_geometry_report",
+    "build_geometry_space_report",
     "build_nearest_neighbor_report",
     "load_human_correction_events",
     "run_variant_matrix",

@@ -34,6 +34,9 @@ def _rows() -> list[ComparisonRow]:
             primary_metric=0.4,
             variant_same_human_label={"raw_l2": 0.4, "remove_pc10": 0.5},
             random_pair_percentiles={"50": cast(Any, np.float32(0.12))},
+            retrieval_raw_geometry_p75=cast(Any, np.float32(0.82)),
+            retrieval_raw_effective_rank=6.0,
+            lambda_sweeps_blocked=True,
             human_labeled_effective_events=5,
             single_label_effective_events=5,
         ),
@@ -80,3 +83,5 @@ def test_json_output_is_plain_serializable(tmp_path) -> None:
 
     assert payload["rows"][0]["run_name"] == "run-a"
     assert isinstance(payload["rows"][0]["random_pair_percentiles"]["50"], float)
+    assert isinstance(payload["rows"][0]["retrieval_raw_geometry_p75"], float)
+    assert payload["rows"][0]["lambda_sweeps_blocked"] is True

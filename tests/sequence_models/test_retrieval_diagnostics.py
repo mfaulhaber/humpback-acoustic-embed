@@ -234,6 +234,105 @@ def test_label_specific_metric_aggregates_by_query_label():
     assert label_metrics["Moan"]["same_human_label"] == 1.0
 
 
+def test_geometry_report_detects_single_cone_saturation():
+    rng = np.random.default_rng(5)
+    cone_axis = np.ones((96, 1), dtype=np.float32)
+    small_noise = rng.normal(scale=0.01, size=(96, 7)).astype(np.float32)
+    vectors = np.concatenate([cone_axis, small_noise], axis=1)
+
+    report = diag.build_geometry_space_report(
+        raw_vectors=vectors,
+        source_space="retrieval",
+        variant="raw_l2",
+        seed=7,
+        random_pairs=2_000,
+        pca_components=8,
+        artifact_path="retrieval_embeddings.parquet",
+    )
+
+    assert set(report["random_pair_percentiles"]) == {
+        "p0",
+        "p1",
+        "p5",
+        "p25",
+        "p50",
+        "p75",
+        "p95",
+        "p99",
+        "p100",
+    }
+    assert report["random_pair_percentiles"]["p75"] > 0.70
+    assert report["mean_vector_norm"] >= 0.30
+    assert "p75_gt_0p7" in report["warnings"]
+    assert "mean_norm_collapse_risk" in report["warnings"]
+    assert report["pre_l2_norm_distribution"]["available"] is False
+    assert report["dimension_std_source"] == "retrieval_post_l2_artifact"
+
+
+def test_geometry_report_classifies_low_rank_effective_rank():
+    rng = np.random.default_rng(9)
+    basis = rng.normal(size=(96, 2)).astype(np.float32)
+    projection = rng.normal(size=(2, 16)).astype(np.float32)
+    vectors = basis @ projection
+
+    report = diag.build_geometry_space_report(
+        raw_vectors=vectors,
+        source_space="contextual",
+        variant="raw_l2",
+        seed=3,
+        random_pairs=1_000,
+        pca_components=20,
+    )
+
+    assert report["effective_rank"] < 10.0
+    assert report["effective_rank_band"] == "severe_collapse"
+    assert "effective_rank_severe_collapse" in report["warnings"]
+    assert report["pre_l2_norm_distribution"]["available"] is True
+    assert report["pre_l2_norm_distribution"]["source"] == "contextual_artifact"
+    assert report["dimension_std_source"] == "contextual_artifact"
+
+
+def test_geometry_pca_handles_fewer_than_ten_components():
+    vectors = np.eye(4, dtype=np.float32)
+
+    report = diag.build_geometry_space_report(
+        raw_vectors=vectors,
+        source_space="contextual",
+        variant="whiten_pca",
+        seed=1,
+        random_pairs=500,
+        pca_components=20,
+    )
+
+    assert report["pca_explained_variance"]["components_available"] == 4
+    assert 0.0 <= report["pca_explained_variance"]["pc1"] <= 1.0
+    assert 0.0 <= report["pca_explained_variance"]["pc1_10"] <= 1.0
+
+
+def test_geometry_retrieval_pre_l2_norm_distribution_when_available():
+    raw = np.asarray([[2.0, 0.0], [0.0, 3.0], [4.0, 0.0]], dtype=np.float32)
+    post_l2 = raw / np.linalg.norm(raw, axis=1, keepdims=True)
+
+    report = diag.build_geometry_space_report(
+        raw_vectors=post_l2,
+        source_space="retrieval",
+        variant="raw_l2",
+        seed=1,
+        random_pairs=500,
+        pca_components=2,
+        pre_l2_vectors=raw,
+        pre_l2_source="retrieval_head_outputs",
+    )
+
+    norms = report["pre_l2_norm_distribution"]
+    assert norms["available"] is True
+    assert norms["source"] == "retrieval_head_outputs"
+    assert norms["min"] == 2.0
+    assert norms["max"] == 4.0
+    assert report["dimension_std_source"] == "retrieval_head_outputs"
+    assert report["dimension_std"]["max"] > 1.0
+
+
 async def test_human_corrections_support_multiple_labels(session, tmp_storage):
     rdj_id, seg_id, _cls_id = await _seed_chain(session, tmp_storage)
     write_events(

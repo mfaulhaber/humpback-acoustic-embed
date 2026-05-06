@@ -663,6 +663,11 @@ class MaskedTransformerJobCreate(BaseModel):
     contrastive_events_per_label: int = Field(default=4, ge=1)
     contrastive_max_unlabeled_fraction: float = Field(default=0.25, ge=0.0, lt=1.0)
     contrastive_region_balance: bool = True
+    training_freeze_mode: Literal["none", "transformer_frozen_projection_head_only"] = (
+        "none"
+    )
+    source_masked_transformer_job_id: Optional[str] = None
+    negative_label_family_policy_json: Optional[str] = None
     max_epochs: int = Field(default=30, ge=1)
     early_stop_patience: int = Field(default=3, ge=1)
     val_split: float = Field(default=0.1, ge=0.0, lt=1.0)
@@ -711,12 +716,39 @@ class MaskedTransformerJobCreate(BaseModel):
                 self.pre_event_context_sec = 2.0
             if self.post_event_context_sec is None:
                 self.post_event_context_sec = 2.0
-        if self.contrastive_loss_weight == 0.0:
+        projection_head_only = (
+            self.training_freeze_mode == "transformer_frozen_projection_head_only"
+        )
+        if projection_head_only:
+            if self.source_masked_transformer_job_id is None:
+                raise ValueError(
+                    "source_masked_transformer_job_id is required for "
+                    "transformer_frozen_projection_head_only"
+                )
+            if not self.retrieval_head_enabled:
+                raise ValueError(
+                    "transformer_frozen_projection_head_only requires "
+                    "retrieval_head_enabled"
+                )
+            if self.contrastive_label_source != "human_corrections":
+                raise ValueError(
+                    "transformer_frozen_projection_head_only requires "
+                    "contrastive_label_source='human_corrections'"
+                )
+            if self.contrastive_loss_weight <= 0.0:
+                raise ValueError(
+                    "transformer_frozen_projection_head_only requires positive "
+                    "contrastive_loss_weight"
+                )
+        else:
+            self.source_masked_transformer_job_id = None
+            self.negative_label_family_policy_json = None
+        if self.contrastive_loss_weight == 0.0 and not projection_head_only:
             self.contrastive_label_source = "none"
         else:
             if not self.retrieval_head_enabled:
                 raise ValueError("contrastive training requires retrieval_head_enabled")
-            if self.sequence_construction_mode == "region":
+            if self.sequence_construction_mode == "region" and not projection_head_only:
                 raise ValueError(
                     "contrastive training requires event-centered or mixed "
                     "sequence construction"
@@ -766,6 +798,9 @@ class MaskedTransformerJobOut(BaseModel):
     contrastive_events_per_label: int = 4
     contrastive_max_unlabeled_fraction: float = 0.25
     contrastive_region_balance: bool = True
+    training_freeze_mode: str = "none"
+    source_masked_transformer_job_id: Optional[str] = None
+    negative_label_family_policy_json: Optional[str] = None
     max_epochs: int
     early_stop_patience: int
     val_split: float
@@ -861,6 +896,14 @@ RetrievalEmbeddingVariant = Literal[
     "remove_pc10",
     "whiten_pca",
 ]
+GeometryEmbeddingSpace = Literal[
+    "contextual.raw_l2",
+    "contextual.remove_pc10",
+    "contextual.whiten_pca",
+    "retrieval.raw_l2",
+    "retrieval.remove_pc10",
+    "retrieval.whiten_pca",
+]
 
 
 class MaskedTransformerNearestNeighborReportRequest(BaseModel):
@@ -892,6 +935,10 @@ class MaskedTransformerNearestNeighborReportRequest(BaseModel):
     include_query_rows: bool = False
     include_neighbor_rows: bool = False
     include_event_level: bool = False
+    include_geometry_report: bool = False
+    geometry_embedding_spaces: Optional[list[GeometryEmbeddingSpace]] = None
+    geometry_random_pairs: int = Field(default=20_000, ge=1)
+    geometry_pca_components: int = Field(default=20, ge=1)
 
     @field_validator("retrieval_modes")
     @classmethod
@@ -907,6 +954,15 @@ class MaskedTransformerNearestNeighborReportRequest(BaseModel):
     ) -> list[RetrievalEmbeddingVariant]:
         if not v:
             raise ValueError("embedding_variants must be non-empty")
+        return v
+
+    @field_validator("geometry_embedding_spaces")
+    @classmethod
+    def _validate_geometry_embedding_spaces(
+        cls, v: Optional[list[GeometryEmbeddingSpace]]
+    ) -> Optional[list[GeometryEmbeddingSpace]]:
+        if v is not None and not v:
+            raise ValueError("geometry_embedding_spaces must be non-empty when set")
         return v
 
 
@@ -939,6 +995,12 @@ class RetrievalDiagnosticsOptionsOut(BaseModel):
     include_query_rows: bool
     include_neighbor_rows: bool
     include_event_level: bool = False
+    include_geometry_report: bool = False
+    geometry_embedding_spaces: list[GeometryEmbeddingSpace] = Field(
+        default_factory=list
+    )
+    geometry_random_pairs: int = 20_000
+    geometry_pca_components: int = 20
 
 
 class RetrievalDiagnosticsLabelMetric(BaseModel):
@@ -1053,6 +1115,46 @@ class RetrievalDiagnosticsLabelCoverage(BaseModel):
     corrections_by_type: dict[str, int] = Field(default_factory=dict)
 
 
+class GeometrySpaceReport(BaseModel):
+    """Geometry diagnostics for one embedding space and variant."""
+
+    available: bool
+    reason: Optional[str] = None
+    artifact_path: Optional[str] = None
+    source_space: RetrievalEmbeddingSpace
+    variant: RetrievalEmbeddingVariant
+    row_count: int
+    vector_dim: int
+    random_pair_percentiles: dict[str, float] = Field(default_factory=dict)
+    mean_vector_norm: Optional[float] = None
+    mean_vector_band: Optional[str] = None
+    effective_rank: Optional[float] = None
+    effective_rank_fraction: Optional[float] = None
+    effective_rank_band: Optional[str] = None
+    pca_explained_variance: dict[str, float | int] = Field(default_factory=dict)
+    dimension_std: dict[str, float] = Field(default_factory=dict)
+    dimension_std_source: str = "unavailable"
+    pre_l2_norm_distribution: dict[str, float | bool | str] = Field(
+        default_factory=dict
+    )
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GeometrySummary(BaseModel):
+    """Top-level geometry verdict for sweep gating."""
+
+    retrieval_raw_saturated: bool
+    lambda_sweeps_blocked: bool
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GeometryReport(BaseModel):
+    """Projection-head geometry diagnostics keyed by requested space."""
+
+    spaces: dict[GeometryEmbeddingSpace, GeometrySpaceReport]
+    summary: GeometrySummary
+
+
 class MaskedTransformerNearestNeighborReportResponse(BaseModel):
     """Structured nearest-neighbor diagnostics for one MT job."""
 
@@ -1072,6 +1174,7 @@ class MaskedTransformerNearestNeighborReportResponse(BaseModel):
     )
     query_rows: list[RetrievalDiagnosticsQuerySummary] = Field(default_factory=list)
     neighbor_rows: list[RetrievalDiagnosticsNeighborRow] = Field(default_factory=list)
+    geometry_report: Optional[GeometryReport] = None
 
 
 class LossCurveResponse(BaseModel):

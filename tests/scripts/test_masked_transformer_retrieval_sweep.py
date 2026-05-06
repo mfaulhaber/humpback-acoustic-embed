@@ -74,7 +74,10 @@ def test_dry_run_initial_preset_writes_manifest(tmp_path, capsys) -> None:
     manifest = json.loads((tmp_path / "submit-manifest.json").read_text())
     assert manifest["dry_run"] is True
     assert manifest["runs"][0]["action"] == "compare_existing"
-    assert manifest["runs"][3]["run_name"] == "250ms-sampler-confirm-lambda-0p10"
+    assert manifest["runs"][3]["run_name"] == "250ms-projection-head-only-ablation"
+    assert manifest["runs"][3]["action"] == "submit"
+    assert manifest["runs"][4]["run_name"] == "250ms-sampler-confirm-lambda-0p10"
+    assert manifest["runs"][4]["action"] == "blocked"
     assert "wrote" in capsys.readouterr().out
 
 
@@ -108,6 +111,7 @@ def test_submit_calls_services_with_normalized_payloads(tmp_path, monkeypatch) -
             "--k-values",
             "150,300",
             "--extend-k-sweep",
+            "--geometry-gate-passed",
             "--output-dir",
             str(tmp_path),
         ]
@@ -137,6 +141,7 @@ def test_submit_records_service_error(tmp_path, monkeypatch) -> None:
             "cej-250",
             "--lambda-values",
             "0.10",
+            "--geometry-gate-passed",
             "--output-dir",
             str(tmp_path),
         ]
@@ -146,6 +151,38 @@ def test_submit_records_service_error(tmp_path, monkeypatch) -> None:
     manifest = json.loads((tmp_path / "submit-manifest.json").read_text())
     assert manifest["runs"][0]["submission_status"] == "failed"
     assert "Classify binding" in manifest["runs"][0]["error"]
+
+
+def test_submit_blocks_lambda_without_geometry_gate(tmp_path, monkeypatch) -> None:
+    calls: list[dict] = []
+
+    async def fake_create(_session, **payload):
+        calls.append(payload)
+        return _FakeJob("job-1"), True
+
+    monkeypatch.setattr(cli, "create_engine", lambda _url: _FakeEngine())
+    monkeypatch.setattr(cli, "create_session_factory", lambda _engine: _FakeFactory())
+    monkeypatch.setattr(cli, "create_masked_transformer_job", fake_create)
+
+    exit_code = cli.main(
+        [
+            "submit",
+            "--preset",
+            "lambda",
+            "--continuous-embedding-job-id",
+            "cej-250",
+            "--lambda-values",
+            "0.10",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((tmp_path / "submit-manifest.json").read_text())
+    assert manifest["runs"][0]["submission_status"] == "blocked"
+    assert "unsaturated retrieval raw geometry" in manifest["runs"][0]["blocked_reason"]
+    assert calls == []
 
 
 def test_compare_keeps_failed_jobs_in_outputs(tmp_path, monkeypatch) -> None:
@@ -192,6 +229,7 @@ def test_compare_manifest_uses_row_k_when_no_override(tmp_path, monkeypatch) -> 
 
     async def fake_report(_session, *, storage_root, job_id, options):
         seen.append(options.k)
+        assert options.include_geometry_report is True
         return {
             "job": {"job_id": job_id, "k": options.k},
             "options": {"embedding_space": options.embedding_space},

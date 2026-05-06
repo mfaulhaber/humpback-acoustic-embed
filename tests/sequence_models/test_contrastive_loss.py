@@ -7,6 +7,7 @@ import torch
 from humpback.sequence_models.contrastive_loss import (
     ContrastiveEventMetadata,
     build_contrastive_masks,
+    parse_negative_label_family_policy,
     supervised_contrastive_loss,
 )
 
@@ -95,6 +96,44 @@ def test_cross_region_positive_preference_excludes_same_region_when_available() 
 
     assert not masks.positive_mask[0, 1]
     assert masks.positive_mask[0, 2]
+
+
+def test_strict_cross_region_positive_does_not_fall_back_to_same_region() -> None:
+    metadata = [
+        _meta("a", "r1", ("Moan",)),
+        _meta("b", "r1", ("Moan",)),
+    ]
+
+    masks = build_contrastive_masks(
+        metadata,
+        min_events_per_label=1,
+        min_regions_per_label=1,
+        require_cross_region_positive=True,
+        strict_cross_region_positive=True,
+    )
+
+    assert masks.valid_anchor_count == 0
+    assert not masks.positive_mask.any()
+
+
+def test_safe_negative_families_exclude_same_family_and_multilabel() -> None:
+    metadata = [
+        _meta("a", "r1", ("Moan",)),
+        _meta("b", "r2", ("Ascending Moan",)),
+        _meta("c", "r3", ("Whup",)),
+        _meta("d", "r4", ("Growl", "Buzz")),
+    ]
+
+    masks = build_contrastive_masks(
+        metadata,
+        min_events_per_label=1,
+        min_regions_per_label=1,
+        negative_label_families=parse_negative_label_family_policy(None),
+    )
+
+    assert not masks.negative_mask[0, 1]
+    assert masks.negative_mask[0, 2]
+    assert not masks.negative_mask[0, 3]
 
 
 def test_supervised_contrastive_loss_is_finite_for_multilabel_events() -> None:

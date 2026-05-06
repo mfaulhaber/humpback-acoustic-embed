@@ -181,6 +181,13 @@ class MaskedTransformerJob(UUIDMixin, TimestampMixin, Base):
         Float, default=0.25
     )
     contrastive_region_balance: Mapped[bool] = mapped_column(Boolean, default=True)
+    training_freeze_mode: Mapped[str] = mapped_column(Text, default="none")
+    source_masked_transformer_job_id: Mapped[Optional[str]] = mapped_column(
+        default=None
+    )
+    negative_label_family_policy_json: Mapped[Optional[str]] = mapped_column(
+        Text, default=None
+    )
     max_epochs: Mapped[int] = mapped_column(Integer, default=30)
     early_stop_patience: Mapped[int] = mapped_column(Integer, default=3)
     val_split: Mapped[float] = mapped_column(Float, default=0.1)
