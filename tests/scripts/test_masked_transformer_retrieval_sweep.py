@@ -76,6 +76,12 @@ def test_dry_run_initial_preset_writes_manifest(tmp_path, capsys) -> None:
     assert manifest["runs"][0]["action"] == "compare_existing"
     assert manifest["runs"][3]["run_name"] == "250ms-projection-head-only-ablation"
     assert manifest["runs"][3]["action"] == "submit"
+    assert manifest["runs"][3]["metadata"]["source_masked_transformer_job_id"]
+    assert (
+        manifest["runs"][3]["metadata"]["failure_mode_probe"]
+        == "projection_head_only_metric_learning"
+    )
+    assert "negative_label_family_policy_json" in manifest["runs"][3]["create_payload"]
     assert manifest["runs"][4]["run_name"] == "250ms-sampler-confirm-lambda-0p10"
     assert manifest["runs"][4]["action"] == "blocked"
     assert "wrote" in capsys.readouterr().out

@@ -301,6 +301,85 @@ class TestTrainConvergence:
             if name.startswith("retrieval_head.")
         )
 
+    def test_projection_head_only_total_loss_excludes_masked_loss(self):
+        sequences = _make_synthetic_sequences(n_seq=4, T=10, D=8, seed=42)
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_fraction=0.25,
+            span_length_min=2,
+            span_length_max=4,
+            dropout=0.0,
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=42,
+            batch_size=4,
+            retrieval_head_enabled=True,
+            retrieval_dim=8,
+            retrieval_hidden_dim=16,
+            contrastive_loss_weight=0.5,
+            contrastive_label_source="human_corrections",
+            contrastive_min_events_per_label=2,
+            contrastive_min_regions_per_label=2,
+            training_freeze_mode="transformer_frozen_projection_head_only",
+        )
+        metadata = [
+            ContrastiveEventMetadata("a", "r1", ("Moan",), 2, 6),
+            ContrastiveEventMetadata("b", "r2", ("Moan",), 2, 6),
+            ContrastiveEventMetadata("c", "r1", ("Whup",), 2, 6),
+            ContrastiveEventMetadata("d", "r2", ("Whup",), 2, 6),
+        ]
+
+        result = train_masked_transformer(
+            sequences, config, device="cpu", contrastive_events=metadata
+        )
+
+        train_total = result.loss_curve["train_total"][0]
+        train_masked = result.loss_curve["train_masked"][0]
+        train_contrastive = result.loss_curve["train_contrastive"][0]
+        assert train_masked > 0.0
+        assert train_total == pytest.approx(0.5 * train_contrastive)
+        assert train_total != pytest.approx(train_masked + 0.5 * train_contrastive)
+
+    def test_projection_head_only_val_without_valid_anchor_is_skipped_not_zero(self):
+        sequences = _make_synthetic_sequences(n_seq=4, T=10, D=8, seed=43)
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_fraction=0.25,
+            span_length_min=2,
+            span_length_max=4,
+            dropout=0.0,
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.5,
+            seed=43,
+            batch_size=4,
+            retrieval_head_enabled=True,
+            retrieval_dim=8,
+            retrieval_hidden_dim=16,
+            contrastive_loss_weight=1.0,
+            contrastive_label_source="human_corrections",
+            contrastive_min_events_per_label=1,
+            contrastive_min_regions_per_label=1,
+            training_freeze_mode="transformer_frozen_projection_head_only",
+        )
+        metadata = [
+            ContrastiveEventMetadata("a", "r1", ("Moan",), 2, 6),
+            ContrastiveEventMetadata("b", "r2", ("Whup",), 2, 6),
+            ContrastiveEventMetadata("c", "r3", ("Creak",), 2, 6),
+            ContrastiveEventMetadata("d", "r4", ("Buzz",), 2, 6),
+        ]
+
+        result = train_masked_transformer(
+            sequences, config, device="cpu", contrastive_events=metadata
+        )
+
+        assert result.loss_curve["val_contrastive_skipped_batches"] == [1.0]
+        assert np.isnan(result.loss_curve["val_total"][0])
+        assert np.isnan(result.val_metrics["final_val_total_loss"])
+
     def test_contrastive_training_records_separated_loss_curves(self):
         sequences = _make_synthetic_sequences(n_seq=4, T=10, D=8, seed=23)
         events = [

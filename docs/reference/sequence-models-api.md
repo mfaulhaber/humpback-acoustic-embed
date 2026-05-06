@@ -449,7 +449,8 @@ parameter.
     `contrastive_label_source="human_corrections"`. Positive contrastive
     loss also requires `sequence_construction_mode` to be
     `"event_centered"` or `"mixed"` so event-level human labels can align
-    to training windows.
+    to training windows, except for the projection-head-only ablation
+    described below.
   - `contrastive_temperature` (default `0.07`) — positive supervised
     contrastive temperature.
   - `contrastive_label_source` (default `"none"`, one of `"none"` |
@@ -485,7 +486,10 @@ parameter.
     supervision. The ablation requires a completed same-upstream source
     retrieval-head job, `retrieval_head_enabled=true`,
     `contrastive_label_source="human_corrections"`, and positive
-    `contrastive_loss_weight`.
+    `contrastive_loss_weight`. The source job must match the requested
+    `preset`, `retrieval_dim`, `retrieval_hidden_dim`, and
+    `retrieval_l2_normalize` so the ablation checkpoint can be reloaded
+    under its own job metadata.
   - `source_masked_transformer_job_id` — required for the
     projection-head-only ablation and ignored for normal training.
   - `negative_label_family_policy_json` — optional JSON policy used by
@@ -733,6 +737,10 @@ Reused across HMM and masked-transformer detail pages: `OverlayResponse`,
 - Retrieval-head jobs also write `retrieval_head_outputs.parquet` with
   pre-L2 projection-head vectors. Geometry diagnostics use this artifact
   for retrieval pre-normalization norm summaries when it is present.
+- Projection-head-only ablation jobs still write normal masked-transformer
+  artifacts under a new job ID. Their trainable loss is the weighted
+  supervised contrastive loss only; masked reconstruction loss is retained
+  as a diagnostic series and does not update frozen transformer weights.
 - Device validation runs forward+backward on a fixed synthetic batch on
   both CPU and the chosen accelerator before training. On tolerance
   failure the worker records `fallback_reason` and proceeds on CPU.

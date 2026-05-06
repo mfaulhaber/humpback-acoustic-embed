@@ -91,7 +91,30 @@ def test_initial_sweep_preset_order_and_metadata() -> None:
     assert runs[3].create_payload["training_freeze_mode"] == (
         "transformer_frozen_projection_head_only"
     )
+    assert (
+        runs[3].create_payload["source_masked_transformer_job_id"]
+        == sweeps.PRE_SAMPLER_CONTRASTIVE_JOB_ID
+    )
+    assert "negative_label_family_policy_json" in runs[3].create_payload
+    assert (
+        runs[3].metadata["failure_mode_probe"] == "projection_head_only_metric_learning"
+    )
     assert "projection-head geometry" in str(runs[4].blocked_reason)
+
+
+def test_initial_sweep_ablation_payload_validates_against_create_schema() -> None:
+    run = sweeps.build_initial_sweep_preset(
+        continuous_embedding_job_id_250ms="cej-250",
+        event_classification_job_id="cls-1",
+    )[3]
+
+    parsed = MaskedTransformerJobCreate.model_validate(run.create_payload)
+
+    assert parsed.training_freeze_mode == "transformer_frozen_projection_head_only"
+    assert parsed.source_masked_transformer_job_id == (
+        sweeps.PRE_SAMPLER_CONTRASTIVE_JOB_ID
+    )
+    assert parsed.negative_label_family_policy_json is not None
 
 
 def test_rank_uses_cross_region_raw_same_human_label() -> None:

@@ -22,6 +22,12 @@ The design is intentionally split into implementation phases. Each phase can
 receive its own implementation plan and feature branch while this document
 remains the long-range specification.
 
+The frozen-transformer projection-head-only ablation now has its own focused
+spec at `docs/specs/2026-05-06-freeze-transformer-projection-head-design.md`.
+That experiment keeps the source transformer fixed, trains only
+`retrieval_head.*`, and uses conservative human-correction contrastive
+supervision to separate projection-head collapse from transformer damage.
+
 ## 2. Current Baseline
 
 Existing masked-transformer flow:
@@ -652,9 +658,9 @@ Current label assumption:
 Scope:
 
 - Add script helpers for lambda sweeps.
-- Add script helpers for currently persisted sampler and related-label policy
-  sweeps. True hard-negative training policies remain out of scope until the
-  Phase 4 schema fields exist.
+- Add script helpers for currently persisted sampler, related-label policy,
+  and projection-head-only safe-family policy sweeps. Broader hard-negative
+  mining policies remain out of scope.
 - Produce a compact comparison markdown/CSV across jobs.
 - Use Stage 0/1 metrics as the primary model-selection criteria.
 

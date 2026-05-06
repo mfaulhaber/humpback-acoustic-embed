@@ -134,6 +134,13 @@ uv run python scripts/masked_transformer_retrieval_sweep.py submit \
     --output-dir data/retrieval_sweeps
 ```
 
+The initial preset includes the frozen-transformer projection-head-only
+ablation before any new lambda run. That row uses
+`training_freeze_mode=transformer_frozen_projection_head_only`, references the
+pre-sampler contrastive source job, and includes the default safe
+negative-label-family policy. Subsequent 250 ms lambda rows remain blocked in
+the manifest until projection-head geometry is no longer saturated.
+
 Submit an ad hoc lambda sweep:
 
 ```bash
