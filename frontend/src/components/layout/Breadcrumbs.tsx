@@ -42,22 +42,6 @@ const staticRoutes: Record<string, Crumb[]> = {
     { label: "Sequence Models", to: "/app/sequence-models" },
     { label: "Continuous Embedding" },
   ],
-  "/app/sequence-models/hmm-sequence": [
-    { label: "Sequence Models", to: "/app/sequence-models" },
-    { label: "HMM Sequence" },
-  ],
-  "/app/sequence-models/mt-training": [
-    { label: "Sequence Models", to: "/app/sequence-models" },
-    { label: "MT Training" },
-  ],
-  "/app/sequence-models/mt-motif": [
-    { label: "Sequence Models", to: "/app/sequence-models" },
-    { label: "MT Motif" },
-  ],
-  "/app/sequence-models/masked-transformer": [
-    { label: "Sequence Models", to: "/app/sequence-models" },
-    { label: "MT Motif" },
-  ],
   "/app/admin": [{ label: "Admin" }],
 };
 
@@ -76,51 +60,6 @@ export function Breadcrumbs() {
       {
         label: "Continuous Embedding",
         to: "/app/sequence-models/continuous-embedding",
-      },
-      { label: `Job ${jobId.slice(0, 8)}` },
-    ];
-  } else if (
-    jobId &&
-    pathname.startsWith("/app/sequence-models/hmm-sequence/")
-  ) {
-    crumbs = [
-      { label: "Sequence Models", to: "/app/sequence-models" },
-      { label: "HMM Sequence", to: "/app/sequence-models/hmm-sequence" },
-      { label: `Job ${jobId.slice(0, 8)}` },
-    ];
-  } else if (
-    jobId &&
-    pathname.startsWith("/app/sequence-models/mt-training/") &&
-    pathname.endsWith("/analysis")
-  ) {
-    crumbs = [
-      { label: "Sequence Models", to: "/app/sequence-models" },
-      { label: "MT Training", to: "/app/sequence-models/mt-training" },
-      {
-        label: `Job ${jobId.slice(0, 8)}`,
-        to: `/app/sequence-models/mt-training/${jobId}`,
-      },
-      { label: "Analysis" },
-    ];
-  } else if (
-    jobId &&
-    pathname.startsWith("/app/sequence-models/mt-training/")
-  ) {
-    crumbs = [
-      { label: "Sequence Models", to: "/app/sequence-models" },
-      { label: "MT Training", to: "/app/sequence-models/mt-training" },
-      { label: `Job ${jobId.slice(0, 8)}` },
-    ];
-  } else if (
-    jobId &&
-    (pathname.startsWith("/app/sequence-models/mt-motif/") ||
-      pathname.startsWith("/app/sequence-models/masked-transformer/"))
-  ) {
-    crumbs = [
-      { label: "Sequence Models", to: "/app/sequence-models" },
-      {
-        label: "MT Motif",
-        to: "/app/sequence-models/mt-motif",
       },
       { label: `Job ${jobId.slice(0, 8)}` },
     ];

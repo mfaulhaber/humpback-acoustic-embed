@@ -1,4 +1,4 @@
-"""Tests for Sequence Models PR 1 Pydantic schemas."""
+"""Tests for retained Sequence Models / Continuous Embedding schemas."""
 
 import pytest
 from pydantic import ValidationError
@@ -6,14 +6,8 @@ from pydantic import ValidationError
 from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobCreate,
     ContinuousEmbeddingJobManifest,
+    ContinuousEmbeddingRegionSummary,
     ContinuousEmbeddingSpanSummary,
-    ExemplarRecord,
-    MaskedTransformerJobCreate,
-    MaskedTransformerJobOut,
-    MaskedTransformerJobSourceCreate,
-    MaskedTransformerNearestNeighborReportRequest,
-    MaskedTransformerNearestNeighborReportResponse,
-    OverlayPoint,
 )
 
 
@@ -22,6 +16,7 @@ def test_continuous_embedding_job_create_defaults():
     assert payload.model_version == "surfperch-tensorflow2"
     assert payload.hop_seconds == 1.0
     assert payload.pad_seconds == 2.0
+    assert payload.event_source_mode == "raw"
 
 
 def test_continuous_embedding_job_create_rejects_non_positive_hop():
@@ -46,7 +41,47 @@ def test_continuous_embedding_job_create_accepts_zero_pad():
     assert payload.pad_seconds == 0.0
 
 
-def test_continuous_embedding_job_manifest_round_trip():
+def test_continuous_embedding_job_create_requires_source_id():
+    with pytest.raises(ValidationError) as excinfo:
+        ContinuousEmbeddingJobCreate()
+    assert "event_segmentation_job_id is required" in str(excinfo.value)
+
+
+def test_continuous_embedding_job_create_rejects_crnn_fields_on_surfperch():
+    with pytest.raises(ValidationError) as excinfo:
+        ContinuousEmbeddingJobCreate(
+            event_segmentation_job_id="sj-1",
+            chunk_size_seconds=0.25,
+        )
+    assert "CRNN-only fields cannot be set" in str(excinfo.value)
+
+
+def test_continuous_embedding_job_create_requires_crnn_fields():
+    with pytest.raises(ValidationError) as excinfo:
+        ContinuousEmbeddingJobCreate(
+            event_segmentation_job_id="sj-1",
+            region_detection_job_id="rd-1",
+        )
+    assert "CRNN region-based source requires" in str(excinfo.value)
+
+
+def test_continuous_embedding_job_create_accepts_crnn_source():
+    payload = ContinuousEmbeddingJobCreate(
+        event_segmentation_job_id="sj-1",
+        region_detection_job_id="rd-1",
+        crnn_segmentation_model_id="seg-model-1",
+        chunk_size_seconds=0.25,
+        chunk_hop_seconds=0.125,
+        projection_kind="pca",
+        projection_dim=64,
+    )
+
+    assert payload.region_detection_job_id == "rd-1"
+    assert payload.projection_kind == "pca"
+    assert payload.projection_dim == 64
+
+
+def test_continuous_embedding_job_manifest_round_trip_surfperch():
     manifest = ContinuousEmbeddingJobManifest(
         job_id="cej-1",
         model_version="surfperch-tensorflow2",
@@ -75,718 +110,33 @@ def test_continuous_embedding_job_manifest_round_trip():
     assert restored.spans[0].window_count == 20
 
 
-def test_exemplar_record_accepts_null_audio_file_id_for_hydrophone_jobs():
-    record = ExemplarRecord(
-        sequence_id="0",
-        position_in_sequence=3,
-        audio_file_id=None,
-        start_timestamp=10.0,
-        end_timestamp=15.0,
-        max_state_probability=0.93,
-        exemplar_type="high_confidence",
+def test_continuous_embedding_job_manifest_round_trip_crnn():
+    manifest = ContinuousEmbeddingJobManifest(
+        job_id="cej-crnn",
+        model_version="crnn-call-parsing-pytorch",
+        source_kind="region_crnn",
+        vector_dim=64,
+        target_sample_rate=32000,
+        event_segmentation_job_id="sj-1",
+        region_detection_job_id="rd-1",
+        crnn_checkpoint_sha256="abc123",
+        chunk_size_seconds=0.25,
+        chunk_hop_seconds=0.125,
+        projection_kind="pca",
+        projection_dim=64,
+        total_regions=2,
+        total_chunks=10,
+        regions=[
+            ContinuousEmbeddingRegionSummary(
+                region_id="r1",
+                start_timestamp=10.0,
+                end_timestamp=12.0,
+                chunk_count=10,
+            )
+        ],
     )
 
-    assert record.audio_file_id is None
-    assert record.extras == {}
-
-
-def test_exemplar_record_carries_extras_for_crnn_tier():
-    record = ExemplarRecord(
-        sequence_id="region-uuid-1",
-        position_in_sequence=17,
-        audio_file_id=42,
-        start_timestamp=10.0,
-        end_timestamp=10.25,
-        max_state_probability=0.93,
-        exemplar_type="high_confidence",
-        extras={"tier": "event_core"},
-    )
-    assert record.extras["tier"] == "event_core"
-
-
-def test_exemplar_record_accepts_classify_event_extras():
-    """Spec ADR-063: extras carries event_types (list) and event_confidence (dict)."""
-    record = ExemplarRecord(
-        sequence_id="0",
-        position_in_sequence=3,
-        audio_file_id=None,
-        start_timestamp=10.0,
-        end_timestamp=15.0,
-        max_state_probability=0.93,
-        exemplar_type="high_confidence",
-        extras={
-            "event_id": 7,
-            "event_types": ["moan", "song"],
-            "event_confidence": {"moan": 0.9, "song": 0.7},
-        },
-    )
-    assert record.extras["event_types"] == ["moan", "song"]
-    assert record.extras["event_confidence"] == {"moan": 0.9, "song": 0.7}
-
-    background = ExemplarRecord(
-        sequence_id="0",
-        position_in_sequence=4,
-        audio_file_id=None,
-        start_timestamp=15.0,
-        end_timestamp=20.0,
-        max_state_probability=0.5,
-        exemplar_type="boundary",
-        extras={"event_id": None, "event_types": [], "event_confidence": {}},
-    )
-    assert background.extras["event_types"] == []
-    assert background.extras["event_confidence"] == {}
-
-
-def test_overlay_point_validates_unified_shape_and_rejects_missing_sequence_id():
-    OverlayPoint(
-        sequence_id="0",
-        position_in_sequence=1,
-        start_timestamp=10.0,
-        end_timestamp=15.0,
-        pca_x=0.0,
-        pca_y=0.0,
-        umap_x=0.0,
-        umap_y=0.0,
-        viterbi_state=2,
-        max_state_probability=0.5,
-    )
-    with pytest.raises(ValidationError):
-        OverlayPoint.model_validate(
-            {
-                "position_in_sequence": 1,
-                "start_timestamp": 10.0,
-                "end_timestamp": 15.0,
-                "pca_x": 0.0,
-                "pca_y": 0.0,
-                "umap_x": 0.0,
-                "umap_y": 0.0,
-                "viterbi_state": 2,
-                "max_state_probability": 0.5,
-            }
-        )
-
-
-def test_nearest_neighbor_report_request_defaults():
-    payload = MaskedTransformerNearestNeighborReportRequest()
-
-    assert payload.embedding_space == "contextual"
-    assert payload.samples == 50
-    assert payload.topn == 10
-    assert payload.retrieval_modes == [
-        "unrestricted",
-        "exclude_same_event",
-        "exclude_same_event_and_region",
-    ]
-    assert payload.embedding_variants == [
-        "raw_l2",
-        "centered_l2",
-        "remove_pc1",
-        "remove_pc3",
-        "remove_pc5",
-        "remove_pc10",
-        "whiten_pca",
-    ]
-    assert payload.include_query_rows is False
-    assert payload.include_neighbor_rows is False
-
-
-def test_masked_transformer_create_retrieval_head_defaults():
-    contextual = MaskedTransformerJobCreate(continuous_embedding_job_id="cej-1")
-    assert contextual.retrieval_head_enabled is False
-    assert contextual.retrieval_dim is None
-    assert contextual.retrieval_hidden_dim is None
-    assert contextual.retrieval_l2_normalize is True
-    assert contextual.retrieval_head_arch == "mlp"
-    assert contextual.sequence_construction_mode == "region"
-    assert contextual.event_centered_fraction == 0.0
-    assert contextual.pre_event_context_sec is None
-    assert contextual.post_event_context_sec is None
-    assert contextual.contrastive_loss_weight == 0.0
-    assert contextual.contrastive_temperature == 0.07
-    assert contextual.contrastive_label_source == "none"
-    assert contextual.contrastive_min_events_per_label == 4
-    assert contextual.contrastive_min_regions_per_label == 2
-    assert contextual.require_cross_region_positive is True
-    assert contextual.related_label_policy_json is None
-    assert contextual.contrastive_sampler_enabled is True
-    assert contextual.contrastive_labels_per_batch == 4
-    assert contextual.contrastive_events_per_label == 4
-    assert contextual.contrastive_max_unlabeled_fraction == 0.25
-    assert contextual.contrastive_region_balance is True
-    assert contextual.training_freeze_mode == "none"
-    assert contextual.source_masked_transformer_job_id is None
-    assert contextual.negative_label_family_policy_json is None
-    assert contextual.batch_size == 8
-
-    retrieval = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        retrieval_head_enabled=True,
-    )
-    assert retrieval.retrieval_head_enabled is True
-    assert retrieval.retrieval_dim == 128
-    assert retrieval.retrieval_hidden_dim == 512
-    assert retrieval.retrieval_l2_normalize is True
-    assert retrieval.retrieval_head_arch == "mlp"
-
-    linear = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        retrieval_head_enabled=True,
-        retrieval_head_arch="linear",
-        retrieval_hidden_dim=512,
-    )
-    assert linear.retrieval_head_enabled is True
-    assert linear.retrieval_dim == 128
-    assert linear.retrieval_hidden_dim is None
-    assert linear.retrieval_head_arch == "linear"
-
-
-def test_masked_transformer_create_sequence_construction_normalization():
-    region = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        sequence_construction_mode="region",
-        event_centered_fraction=0.5,
-        pre_event_context_sec=4.0,
-        post_event_context_sec=5.0,
-    )
-    assert region.event_centered_fraction == 0.0
-    assert region.pre_event_context_sec is None
-    assert region.post_event_context_sec is None
-
-    event_centered = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        sequence_construction_mode="event_centered",
-    )
-    assert event_centered.event_centered_fraction == 1.0
-    assert event_centered.pre_event_context_sec == 2.0
-    assert event_centered.post_event_context_sec == 2.0
-
-    mixed = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        sequence_construction_mode="mixed",
-        event_centered_fraction=0.4,
-        pre_event_context_sec=1.5,
-        post_event_context_sec=2.5,
-    )
-    assert mixed.event_centered_fraction == 0.4
-    assert mixed.pre_event_context_sec == 1.5
-    assert mixed.post_event_context_sec == 2.5
-
-
-def test_masked_transformer_create_sequence_construction_validation():
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate.model_validate(
-            {
-                "continuous_embedding_job_id": "cej-1",
-                "sequence_construction_mode": "bad",
-            }
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            sequence_construction_mode="mixed",
-            event_centered_fraction=0.0,
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            sequence_construction_mode="event_centered",
-            pre_event_context_sec=-1.0,
-        )
-
-
-def test_masked_transformer_create_retrieval_head_validation():
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=True,
-            retrieval_dim=0,
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=True,
-            retrieval_hidden_dim=-1,
-        )
-
-    disabled = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        retrieval_head_enabled=False,
-        retrieval_dim=64,
-        retrieval_hidden_dim=256,
-        retrieval_head_arch="linear",
-    )
-    assert disabled.retrieval_dim is None
-    assert disabled.retrieval_hidden_dim is None
-    assert disabled.retrieval_head_arch == "mlp"
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate.model_validate(
-            {
-                "continuous_embedding_job_id": "cej-1",
-                "retrieval_head_enabled": True,
-                "retrieval_head_arch": "wide",
-            }
-        )
-
-
-def test_masked_transformer_create_batch_size_validation():
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            batch_size=0,
-        )
-
-
-def test_masked_transformer_create_requires_source_identity():
-    with pytest.raises(ValidationError, match="continuous_embedding_job_id"):
-        MaskedTransformerJobCreate()
-
-
-def test_masked_transformer_create_accepts_ordered_sources():
-    payload = MaskedTransformerJobCreate(
-        sources=[
-            MaskedTransformerJobSourceCreate(
-                continuous_embedding_job_id="cej-1",
-                event_classification_job_id="cls-1",
-                source_alias="day one",
-            ),
-            MaskedTransformerJobSourceCreate(
-                continuous_embedding_job_id="cej-2",
-                event_classification_job_id="cls-2",
-            ),
-        ]
-    )
-
-    assert payload.continuous_embedding_job_id == "cej-1"
-    assert payload.event_classification_job_id == "cls-1"
-    assert payload.sources is not None
-    assert [source.continuous_embedding_job_id for source in payload.sources] == [
-        "cej-1",
-        "cej-2",
-    ]
-    assert payload.sources[0].source_alias == "day one"
-    assert payload.contrastive_loss_weight == 0.0
-    assert payload.contrastive_label_source == "none"
-    assert payload.training_freeze_mode == "none"
-
-
-def test_masked_transformer_create_rejects_duplicate_source_pairs():
-    with pytest.raises(ValidationError, match="duplicate"):
-        MaskedTransformerJobCreate(
-            sources=[
-                MaskedTransformerJobSourceCreate(
-                    continuous_embedding_job_id="cej-1",
-                    event_classification_job_id="cls-1",
-                ),
-                MaskedTransformerJobSourceCreate(
-                    continuous_embedding_job_id="cej-1",
-                    event_classification_job_id="cls-1",
-                ),
-            ]
-        )
-
-
-def test_masked_transformer_create_rejects_contrastive_for_multi_source():
-    with pytest.raises(ValidationError, match="contrastive"):
-        MaskedTransformerJobCreate(
-            sources=[
-                MaskedTransformerJobSourceCreate(
-                    continuous_embedding_job_id="cej-1",
-                    event_classification_job_id="cls-1",
-                )
-            ],
-            retrieval_head_enabled=True,
-            sequence_construction_mode="mixed",
-            event_centered_fraction=0.5,
-            contrastive_loss_weight=0.1,
-            contrastive_label_source="human_corrections",
-        )
-
-
-def test_masked_transformer_create_contrastive_validation():
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            contrastive_loss_weight=0.1,
-            contrastive_label_source="human_corrections",
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=True,
-            contrastive_loss_weight=0.1,
-            contrastive_label_source="none",
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=True,
-            contrastive_temperature=0.0,
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            contrastive_labels_per_batch=0,
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            contrastive_events_per_label=0,
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            contrastive_max_unlabeled_fraction=1.0,
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=True,
-            sequence_construction_mode="region",
-            contrastive_loss_weight=0.1,
-            contrastive_label_source="human_corrections",
-        )
-
-    payload = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        retrieval_head_enabled=True,
-        sequence_construction_mode="mixed",
-        event_centered_fraction=0.7,
-        contrastive_loss_weight=0.1,
-        contrastive_label_source="human_corrections",
-        contrastive_min_events_per_label=2,
-        contrastive_min_regions_per_label=1,
-        require_cross_region_positive=False,
-        contrastive_labels_per_batch=3,
-        contrastive_events_per_label=2,
-        contrastive_max_unlabeled_fraction=0.1,
-        contrastive_region_balance=False,
-    )
-    assert payload.contrastive_label_source == "human_corrections"
-    assert payload.sequence_construction_mode == "mixed"
-    assert payload.event_centered_fraction == 0.7
-    assert payload.contrastive_min_events_per_label == 2
-    assert payload.contrastive_min_regions_per_label == 1
-    assert payload.require_cross_region_positive is False
-    assert payload.contrastive_labels_per_batch == 3
-    assert payload.contrastive_events_per_label == 2
-    assert payload.contrastive_max_unlabeled_fraction == 0.1
-    assert payload.contrastive_region_balance is False
-
-
-def test_masked_transformer_create_projection_head_ablation_validation():
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=True,
-            contrastive_loss_weight=1.0,
-            contrastive_label_source="human_corrections",
-            training_freeze_mode="transformer_frozen_projection_head_only",
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=False,
-            contrastive_loss_weight=1.0,
-            contrastive_label_source="human_corrections",
-            training_freeze_mode="transformer_frozen_projection_head_only",
-            source_masked_transformer_job_id="mt-source",
-        )
-
-    with pytest.raises(ValidationError):
-        MaskedTransformerJobCreate(
-            continuous_embedding_job_id="cej-1",
-            retrieval_head_enabled=True,
-            contrastive_loss_weight=0.0,
-            contrastive_label_source="human_corrections",
-            training_freeze_mode="transformer_frozen_projection_head_only",
-            source_masked_transformer_job_id="mt-source",
-        )
-
-    payload = MaskedTransformerJobCreate(
-        continuous_embedding_job_id="cej-1",
-        retrieval_head_enabled=True,
-        sequence_construction_mode="region",
-        contrastive_loss_weight=1.0,
-        contrastive_label_source="human_corrections",
-        training_freeze_mode="transformer_frozen_projection_head_only",
-        source_masked_transformer_job_id="mt-source",
-        negative_label_family_policy_json='{"families":{}}',
-    )
-
-    assert payload.sequence_construction_mode == "region"
-    assert payload.training_freeze_mode == "transformer_frozen_projection_head_only"
-    assert payload.source_masked_transformer_job_id == "mt-source"
-    assert payload.negative_label_family_policy_json == '{"families":{}}'
-
-
-def test_masked_transformer_job_out_serializes_retrieval_fields():
-    payload = {
-        "id": "mt-1",
-        "status": "queued",
-        "status_reason": None,
-        "continuous_embedding_job_id": "cej-1",
-        "event_classification_job_id": "cls-1",
-        "training_signature": "sig",
-        "preset": "default",
-        "mask_fraction": 0.2,
-        "span_length_min": 2,
-        "span_length_max": 6,
-        "dropout": 0.1,
-        "mask_weight_bias": True,
-        "cosine_loss_weight": 0.0,
-        "batch_size": 16,
-        "retrieval_head_enabled": True,
-        "retrieval_dim": 128,
-        "retrieval_hidden_dim": 512,
-        "retrieval_l2_normalize": True,
-        "retrieval_head_arch": "linear",
-        "sequence_construction_mode": "mixed",
-        "event_centered_fraction": 0.5,
-        "pre_event_context_sec": 1.0,
-        "post_event_context_sec": 3.0,
-        "contrastive_loss_weight": 0.1,
-        "contrastive_temperature": 0.07,
-        "contrastive_label_source": "human_corrections",
-        "contrastive_min_events_per_label": 4,
-        "contrastive_min_regions_per_label": 2,
-        "require_cross_region_positive": True,
-        "related_label_policy_json": '{"exclude_pairs":[]}',
-        "contrastive_sampler_enabled": True,
-        "contrastive_labels_per_batch": 4,
-        "contrastive_events_per_label": 4,
-        "contrastive_max_unlabeled_fraction": 0.25,
-        "contrastive_region_balance": True,
-        "training_freeze_mode": "transformer_frozen_projection_head_only",
-        "source_masked_transformer_job_id": "mt-source",
-        "negative_label_family_policy_json": '{"families":{}}',
-        "max_epochs": 30,
-        "early_stop_patience": 3,
-        "val_split": 0.1,
-        "seed": 42,
-        "k_values": "[100]",
-        "chosen_device": None,
-        "fallback_reason": None,
-        "final_train_loss": None,
-        "final_val_loss": None,
-        "total_epochs": None,
-        "job_dir": None,
-        "total_sequences": None,
-        "total_chunks": None,
-        "error_message": None,
-        "created_at": "2026-05-05T00:00:00",
-        "updated_at": "2026-05-05T00:00:00",
-    }
-
-    job = MaskedTransformerJobOut.model_validate(payload)
-
-    assert job.retrieval_head_enabled is True
-    assert job.batch_size == 16
-    assert job.retrieval_dim == 128
-    assert job.retrieval_hidden_dim == 512
-    assert job.retrieval_head_arch == "linear"
-    assert job.sequence_construction_mode == "mixed"
-    assert job.event_centered_fraction == 0.5
-    assert job.pre_event_context_sec == 1.0
-    assert job.post_event_context_sec == 3.0
-    assert job.contrastive_loss_weight == 0.1
-    assert job.contrastive_label_source == "human_corrections"
-    assert job.related_label_policy_json == '{"exclude_pairs":[]}'
-    assert job.training_freeze_mode == "transformer_frozen_projection_head_only"
-    assert job.source_masked_transformer_job_id == "mt-source"
-    assert job.negative_label_family_policy_json == '{"families":{}}'
-    assert job.k_values == [100]
-
-
-def test_nearest_neighbor_report_request_rejects_invalid_options():
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest.model_validate(
-            {"embedding_space": "bad"}
-        )
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest(samples=0)
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest(topn=0)
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest(retrieval_modes=[])
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest(embedding_variants=[])
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest.model_validate(
-            {"retrieval_modes": ["exclude_same_region"]}
-        )
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest.model_validate(
-            {"embedding_variants": ["raw"]}
-        )
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest(geometry_embedding_spaces=[])
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest(geometry_random_pairs=0)
-    with pytest.raises(ValidationError):
-        MaskedTransformerNearestNeighborReportRequest.model_validate(
-            {"geometry_embedding_spaces": ["contextual.centered_l2"]}
-        )
-
-
-def test_nearest_neighbor_report_request_accepts_geometry_options():
-    request = MaskedTransformerNearestNeighborReportRequest.model_validate(
-        {
-            "include_geometry_report": True,
-            "geometry_embedding_spaces": ["contextual.raw_l2", "retrieval.raw_l2"],
-            "geometry_random_pairs": 123,
-            "geometry_pca_components": 7,
-        }
-    )
-
-    assert request.include_geometry_report is True
-    assert request.geometry_embedding_spaces == [
-        "contextual.raw_l2",
-        "retrieval.raw_l2",
-    ]
-    assert request.geometry_random_pairs == 123
-    assert request.geometry_pca_components == 7
-
-
-def test_nearest_neighbor_report_response_serializes_detail_rows():
-    response = MaskedTransformerNearestNeighborReportResponse.model_validate(
-        {
-            "job": {
-                "job_id": "mt-1",
-                "status": "complete",
-                "continuous_embedding_job_id": "cej-1",
-                "event_classification_job_id": None,
-                "region_detection_job_id": "rdj-1",
-                "k_values": [100],
-                "k": 100,
-            },
-            "options": {
-                "embedding_space": "contextual",
-                "samples": 1,
-                "topn": 1,
-                "seed": 1,
-                "retrieval_modes": ["unrestricted"],
-                "embedding_variants": ["raw_l2"],
-                "include_query_rows": True,
-                "include_neighbor_rows": True,
-            },
-            "artifacts": {"embedding_path": "/tmp/contextual_embeddings.parquet"},
-            "label_coverage": {
-                "embedding_rows": 2,
-                "sampled_queries": 1,
-                "human_labeled_query_pool_rows": 1,
-                "human_labeled_effective_events": 1,
-                "vocalization_correction_rows": 1,
-                "human_label_chunk_counts": {"moan": 1},
-                "human_label_event_counts": {"moan": 1},
-                "corrections_by_type": {"add:moan": 1},
-            },
-            "results": {
-                "unrestricted": {
-                    "raw_l2": {
-                        "same_human_label": 1.0,
-                        "exact_human_label_set": 1.0,
-                        "same_event": 0.0,
-                        "same_region": 0.0,
-                        "adjacent_1s": 0.0,
-                        "nearby_5s": 0.0,
-                        "same_token": 0.0,
-                        "similar_duration": 1.0,
-                        "without_human_label": 0.0,
-                        "low_event_overlap": 0.0,
-                        "avg_cosine": 0.9,
-                        "median_cosine": 0.9,
-                        "random_pair_percentiles": {"50": 0.1},
-                        "verdicts": {"good": 1},
-                        "label_specific_same_human_label": {
-                            "moan": {
-                                "query_count": 1,
-                                "neighbor_count": 1,
-                                "same_human_label": 1.0,
-                            }
-                        },
-                    }
-                }
-            },
-            "representative_good_queries": [
-                {
-                    "query_order": 1,
-                    "query_idx": 0,
-                    "query_region": "r1",
-                    "query_chunk": 0,
-                    "query_start_timestamp": 10.0,
-                    "query_human_types": "moan",
-                    "query_event_id": "E1",
-                    "query_duration": 0.5,
-                    "query_token": 3,
-                    "neighbor_count": 1,
-                    "same_human_label_rate": 1.0,
-                    "exact_human_label_set_rate": 1.0,
-                    "same_event_rate": 0.0,
-                    "same_region_rate": 0.0,
-                    "adjacent_1s_rate": 0.0,
-                    "nearby_5s_rate": 0.0,
-                    "same_token_rate": 0.0,
-                    "similar_duration_rate": 1.0,
-                    "neighbor_without_human_label_rate": 0.0,
-                    "neighbor_low_event_overlap_rate": 0.0,
-                    "avg_cosine": 0.9,
-                    "verdict": "good",
-                }
-            ],
-            "representative_risky_queries": [],
-            "query_rows": [],
-            "neighbor_rows": [
-                {
-                    "query_order": 1,
-                    "query_idx": 0,
-                    "rank": 1,
-                    "neighbor_idx": 1,
-                    "cosine": 0.9,
-                    "query_region": "r1",
-                    "neighbor_region": "r2",
-                    "query_chunk": 0,
-                    "neighbor_chunk": 0,
-                    "center_delta_sec": 2.0,
-                    "same_region": False,
-                    "adjacent_1s": False,
-                    "nearby_5s": False,
-                    "query_human_types": "moan",
-                    "neighbor_human_types": "moan",
-                    "same_human_label": True,
-                    "exact_human_label_set": True,
-                    "query_event_id": "E1",
-                    "neighbor_event_id": "E2",
-                    "same_event": False,
-                    "query_duration": 0.5,
-                    "neighbor_duration": 0.5,
-                    "similar_duration": True,
-                    "query_token": 3,
-                    "neighbor_token": 4,
-                    "same_token": False,
-                    "query_tier": "event_core",
-                    "neighbor_tier": "event_core",
-                    "query_overlap": 1.0,
-                    "neighbor_overlap": 1.0,
-                    "query_call_probability": 0.9,
-                    "neighbor_call_probability": 0.8,
-                    "query_start_timestamp": 10.0,
-                    "neighbor_start_timestamp": 12.0,
-                }
-            ],
-        }
-    )
-
-    dumped = response.model_dump()
-    assert dumped["job"]["job_id"] == "mt-1"
-    assert dumped["neighbor_rows"][0]["neighbor_region"] == "r2"
+    restored = ContinuousEmbeddingJobManifest.model_validate(manifest.model_dump())
+    assert restored.source_kind == "region_crnn"
+    assert restored.regions[0].region_id == "r1"
+    assert restored.total_chunks == 10

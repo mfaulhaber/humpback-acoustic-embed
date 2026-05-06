@@ -384,63 +384,6 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
-        # Then HMM sequence jobs
-        hmmjob = None
-        async with session_factory() as session:
-            from humpback.workers.queue import claim_hmm_sequence_job
-
-            hmmjob = await claim_hmm_sequence_job(session)
-        if hmmjob:
-            logger.info(f"HMM sequence job {hmmjob.id}")
-            from humpback.workers.hmm_sequence_worker import (
-                run_hmm_sequence_job,
-            )
-
-            async with session_factory() as session:
-                await run_hmm_sequence_job(session, hmmjob, settings)
-            claimed = True
-
-        if claimed:
-            continue
-
-        # Then motif extraction jobs
-        motifjob = None
-        async with session_factory() as session:
-            from humpback.workers.queue import claim_motif_extraction_job
-
-            motifjob = await claim_motif_extraction_job(session)
-        if motifjob:
-            logger.info(f"Motif extraction job {motifjob.id}")
-            from humpback.workers.motif_extraction_worker import (
-                run_motif_extraction_job,
-            )
-
-            async with session_factory() as session:
-                await run_motif_extraction_job(session, motifjob, settings)
-            claimed = True
-
-        if claimed:
-            continue
-
-        # Then masked-transformer jobs (ADR-061)
-        mtjob = None
-        async with session_factory() as session:
-            from humpback.workers.queue import claim_masked_transformer_job
-
-            mtjob = await claim_masked_transformer_job(session)
-        if mtjob:
-            logger.info(f"Masked-transformer job {mtjob.id}")
-            from humpback.workers.masked_transformer_worker import (
-                run_masked_transformer_job,
-            )
-
-            async with session_factory() as session:
-                await run_masked_transformer_job(session, mtjob, settings)
-            claimed = True
-
-        if claimed:
-            continue
-
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

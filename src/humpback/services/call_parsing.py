@@ -492,9 +492,9 @@ async def list_classification_jobs_for_segmentation(
 ) -> list[dict]:
     """Return Classify jobs bound to one segmentation, newest first.
 
-    Joins ``vocalization_models`` so callers (the Sequence Models submit
-    dropdown) can render the option label without a second round-trip.
-    Each row is a dict shaped to ``ClassificationJobForSegmentation``.
+    Joins ``vocalization_models`` so clients can render the option label
+    without a second round-trip. Each row is a dict shaped to
+    ``ClassificationJobForSegmentation``.
     """
     from humpback.models.vocalization import VocalizationClassifierModel
 

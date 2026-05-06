@@ -1,1 +1,1 @@
-"""Sequence Models package — HMM latent state discovery on SurfPerch embeddings."""
+"""Continuous Embedding support utilities for the Sequence Models track."""

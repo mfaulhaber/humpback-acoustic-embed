@@ -175,8 +175,8 @@ class ClassificationJobWithCorrectionCount(EventClassificationJobSummary):
 class ClassificationJobForSegmentation(BaseModel):
     """Slim listing entry for a Classify job belonging to one segmentation.
 
-    Powers the Sequence Models submit dropdown (HMM and masked-transformer
-    create pages). Joined model name lets the option label be self-contained.
+    Joined model name lets segmentation-scoped option labels be
+    self-contained for clients that need to bind a completed Classify job.
     """
 
     id: str

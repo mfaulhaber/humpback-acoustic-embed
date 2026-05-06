@@ -18,9 +18,7 @@ export interface MotifTimelineLegendProps {
   palette?: readonly string[];
   /**
    * Optional content rendered to the right of the prev/next controls.
-   * Used by the masked-transformer detail page to host the Token Count
-   * selector. When omitted (e.g., on the HMM detail page) the legend
-   * renders identically to its prior shape.
+   * Callers can use it for a local selector without changing the core legend.
    */
   tokenSelector?: ReactNode;
   /**
@@ -62,7 +60,7 @@ export function MotifTimelineLegend({
 }: MotifTimelineLegendProps) {
   const hasSingleMotif = selectedMotifKey != null;
   // Render the legend whenever there's something to show: either a
-  // single-motif selection, navigable occurrences (byLength mode), or a
+  // single-motif selection, navigable occurrences, or a
   // tokenSelector slot supplied by the caller.
   const hasNavigation = occurrencesTotal > 0;
   if (!hasSingleMotif && !hasNavigation && !tokenSelector) return null;

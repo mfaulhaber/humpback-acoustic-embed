@@ -100,7 +100,7 @@ def _stamp_pre_061(db_path: Path) -> None:
                 random_seed INTEGER NOT NULL DEFAULT 42,
                 min_sequence_length_frames INTEGER NOT NULL DEFAULT 3,
                 tol FLOAT NOT NULL DEFAULT 0.0001,
-                library VARCHAR NOT NULL DEFAULT 'hmmlearn',
+                library VARCHAR NOT NULL DEFAULT 'legacy',
                 train_log_likelihood FLOAT,
                 n_train_sequences INTEGER,
                 n_train_frames INTEGER,

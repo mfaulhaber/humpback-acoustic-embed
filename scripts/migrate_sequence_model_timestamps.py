@@ -7,9 +7,6 @@ The script handles only Sequence Models artifacts:
 
 - ``continuous_embeddings/<id>/embeddings.parquet``
 - ``continuous_embeddings/<id>/manifest.json``
-- ``hmm_sequences/<id>/states.parquet``
-- ``hmm_sequences/<id>/pca_overlay.parquet``
-- ``hmm_sequences/<id>/exemplars/exemplars.json``
 
 Legacy ``start_time_sec`` / ``end_time_sec`` fields are replaced by
 ``start_timestamp`` / ``end_timestamp``. If legacy values are job-relative,
@@ -305,41 +302,6 @@ def migrate_manifest(
         summary.add_failure(path, exc)
 
 
-def migrate_exemplars(
-    path: Path,
-    *,
-    job_start: float,
-    job_end: float,
-    apply: bool,
-    summary: Summary,
-) -> None:
-    summary.scanned += 1
-    if not path.exists():
-        summary.missing += 1
-        return
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        changed = False
-        for records in payload.get("states", {}).values():
-            for record in records:
-                changed = (
-                    _rewrite_record_times(
-                        record, path=path, job_start=job_start, job_end=job_end
-                    )
-                    or changed
-                )
-        if not changed:
-            summary.canonical += 1
-            return
-        if apply:
-            _atomic_write_json(payload, path)
-            summary.migrated += 1
-        else:
-            summary.would_migrate += 1
-    except Exception as exc:
-        summary.add_failure(path, exc)
-
-
 def _print_summary(name: str, summary: Summary) -> None:
     print(
         f"{name}: scanned={summary.scanned} missing={summary.missing} "
@@ -365,9 +327,6 @@ def main() -> int:
     summaries = {
         "cej_parquet": Summary(),
         "cej_manifest": Summary(),
-        "hmm_states": Summary(),
-        "hmm_overlay": Summary(),
-        "hmm_exemplars": Summary(),
     }
 
     conn = sqlite3.connect(str(db_path))
@@ -399,44 +358,6 @@ def main() -> int:
                 job_end=float(job_end),
                 apply=args.apply,
                 summary=summaries["cej_manifest"],
-            )
-
-        hmm_rows = conn.execute(
-            """
-            SELECT hmm.id, hmm.artifact_dir, rd.start_timestamp, rd.end_timestamp
-            FROM hmm_sequence_jobs hmm
-            JOIN continuous_embedding_jobs ce ON ce.id = hmm.continuous_embedding_job_id
-            JOIN region_detection_jobs rd ON rd.id = ce.region_detection_job_id
-            WHERE rd.start_timestamp IS NOT NULL
-              AND rd.end_timestamp IS NOT NULL
-            """
-        ).fetchall()
-        for hmm_id, artifact_dir, job_start, job_end in hmm_rows:
-            hmm_dir = (
-                Path(artifact_dir)
-                if artifact_dir
-                else storage_root / "hmm_sequences" / hmm_id
-            )
-            migrate_parquet(
-                hmm_dir / "states.parquet",
-                job_start=float(job_start),
-                job_end=float(job_end),
-                apply=args.apply,
-                summary=summaries["hmm_states"],
-            )
-            migrate_parquet(
-                hmm_dir / "pca_overlay.parquet",
-                job_start=float(job_start),
-                job_end=float(job_end),
-                apply=args.apply,
-                summary=summaries["hmm_overlay"],
-            )
-            migrate_exemplars(
-                hmm_dir / "exemplars" / "exemplars.json",
-                job_start=float(job_start),
-                job_end=float(job_end),
-                apply=args.apply,
-                summary=summaries["hmm_exemplars"],
             )
     finally:
         conn.close()

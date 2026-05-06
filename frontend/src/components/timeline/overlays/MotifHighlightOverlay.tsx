@@ -1,7 +1,7 @@
-import { type MotifOccurrence } from "@/api/sequenceModels";
 import { labelColor } from "@/components/sequence-models/constants";
 import type { MotifColor } from "@/lib/motifColor";
 import { useOverlayContext } from "./OverlayContext";
+import type { MotifOccurrence } from "./motifTypes";
 
 interface MotifHighlightOverlayProps {
   occurrences: MotifOccurrence[];
@@ -12,9 +12,8 @@ interface MotifHighlightOverlayProps {
   numLabels: number;
   /**
    * When provided, each occurrence is colored by its ``motif_key`` using
-   * the supplied mapper — used by the masked-transformer page to render
-   * many length-N motifs at once with distinct hues. When omitted, the
-   * overlay falls back to the legacy single-color behavior driven by
+   * the supplied mapper for multi-motif displays. When omitted, the
+   * overlay falls back to the single-color behavior driven by
    * ``colorIndex``/``numLabels``.
    */
   colorForMotifKey?: (motifKey: string) => MotifColor;
@@ -54,7 +53,7 @@ export function MotifHighlightOverlay({
   return (
     <div
       style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
-      data-testid="mt-motif-highlight-layer"
+      data-testid="motif-highlight-layer"
     >
       {occurrences.map((occ, idx) => {
         const start = occ.start_timestamp;
@@ -89,7 +88,7 @@ export function MotifHighlightOverlay({
         return (
           <div
             key={occ.occurrence_id}
-            data-testid="mt-motif-highlight-band"
+            data-testid="motif-highlight-band"
             data-active={isActive ? "true" : "false"}
             data-occurrence-index={idx}
             data-motif-key={occ.motif_key}

@@ -57,7 +57,7 @@ def test_migrate_parquet_converts_relative_legacy_columns(tmp_path):
 
 
 def test_migrate_parquet_dry_run_does_not_rewrite(tmp_path):
-    path = tmp_path / "states.parquet"
+    path = tmp_path / "embeddings.parquet"
     pq.write_table(
         pa.table(
             {
@@ -82,17 +82,10 @@ def test_migrate_parquet_dry_run_does_not_rewrite(tmp_path):
     assert table.column_names == ["start_time_sec", "end_time_sec"]
 
 
-def test_migrate_manifest_and_exemplars_rename_epoch_values(tmp_path):
+def test_migrate_manifest_renames_epoch_values(tmp_path):
     manifest_path = tmp_path / "manifest.json"
-    exemplars_path = tmp_path / "exemplars.json"
     manifest_path.write_text(
         json.dumps({"spans": [{"start_time_sec": 1010.0, "end_time_sec": 1015.0}]}),
-        encoding="utf-8",
-    )
-    exemplars_path.write_text(
-        json.dumps(
-            {"states": {"0": [{"start_time_sec": 1020.0, "end_time_sec": 1025.0}]}}
-        ),
         encoding="utf-8",
     )
 
@@ -104,24 +97,12 @@ def test_migrate_manifest_and_exemplars_rename_epoch_values(tmp_path):
         apply=True,
         summary=summary,
     )
-    migration.migrate_exemplars(
-        exemplars_path,
-        job_start=1000.0,
-        job_end=1300.0,
-        apply=True,
-        summary=summary,
-    )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    exemplars = json.loads(exemplars_path.read_text(encoding="utf-8"))
-    assert summary.migrated == 2
+    assert summary.migrated == 1
     assert manifest["spans"][0] == {
         "start_timestamp": 1010.0,
         "end_timestamp": 1015.0,
-    }
-    assert exemplars["states"]["0"][0] == {
-        "start_timestamp": 1020.0,
-        "end_timestamp": 1025.0,
     }
 
 
