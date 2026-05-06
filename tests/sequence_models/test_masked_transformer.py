@@ -117,6 +117,49 @@ class TestApplySpanMask:
 
 
 class TestForwardShape:
+    def test_mlp_retrieval_head_layout(self):
+        model = MaskedTransformer(
+            input_dim=8,
+            d_model=128,
+            num_layers=2,
+            num_heads=4,
+            ff_dim=512,
+            retrieval_head_enabled=True,
+            retrieval_dim=16,
+            retrieval_hidden_dim=32,
+        )
+
+        assert model.retrieval_head_arch == "mlp"
+        assert model.retrieval_head is not None
+        assert [type(layer) for layer in model.retrieval_head] == [
+            torch.nn.LayerNorm,
+            torch.nn.Linear,
+            torch.nn.GELU,
+            torch.nn.Linear,
+        ]
+        assert model.retrieval_hidden_dim == 32
+
+    def test_linear_retrieval_head_layout(self):
+        model = MaskedTransformer(
+            input_dim=8,
+            d_model=128,
+            num_layers=2,
+            num_heads=4,
+            ff_dim=512,
+            retrieval_head_enabled=True,
+            retrieval_dim=16,
+            retrieval_hidden_dim=32,
+            retrieval_head_arch="linear",
+        )
+
+        assert model.retrieval_head_arch == "linear"
+        assert model.retrieval_head is not None
+        assert [type(layer) for layer in model.retrieval_head] == [
+            torch.nn.LayerNorm,
+            torch.nn.Linear,
+        ]
+        assert model.retrieval_hidden_dim is None
+
     def test_forward_returns_reconstructed_and_hidden(self):
         torch.manual_seed(0)
         D_input, d_model = 16, 32
@@ -161,6 +204,44 @@ class TestForwardShape:
         torch.testing.assert_close(norms, torch.ones_like(norms), atol=1e-5, rtol=1e-5)
         pre_l2_norms = torch.linalg.vector_norm(output.retrieval_pre_l2, ord=2, dim=-1)
         assert not torch.allclose(pre_l2_norms, torch.ones_like(pre_l2_norms))
+
+    def test_forward_returns_linear_retrieval_when_enabled(self):
+        torch.manual_seed(0)
+        D_input, d_model, retrieval_dim = 16, 32, 7
+        model = MaskedTransformer(
+            input_dim=D_input,
+            d_model=d_model,
+            num_layers=1,
+            num_heads=4,
+            ff_dim=64,
+            dropout=0.0,
+            retrieval_head_enabled=True,
+            retrieval_dim=retrieval_dim,
+            retrieval_hidden_dim=24,
+            retrieval_head_arch="linear",
+        )
+        x = torch.randn(2, 8, D_input)
+
+        output = model(x)
+
+        assert output.retrieval is not None
+        assert output.retrieval_pre_l2 is not None
+        assert output.retrieval.shape == (2, 8, retrieval_dim)
+        assert output.retrieval_pre_l2.shape == (2, 8, retrieval_dim)
+        norms = torch.linalg.vector_norm(output.retrieval, ord=2, dim=-1)
+        torch.testing.assert_close(norms, torch.ones_like(norms), atol=1e-5, rtol=1e-5)
+
+    def test_unknown_retrieval_head_arch_raises(self):
+        with pytest.raises(ValueError, match="retrieval_head_arch"):
+            MaskedTransformer(
+                input_dim=8,
+                d_model=128,
+                num_layers=2,
+                num_heads=4,
+                ff_dim=512,
+                retrieval_head_enabled=True,
+                retrieval_head_arch="wide",  # type: ignore[arg-type]
+            )
 
 
 class TestTrainConvergence:
@@ -271,6 +352,65 @@ class TestTrainConvergence:
             retrieval_head_enabled=True,
             retrieval_dim=5,
             retrieval_hidden_dim=10,
+            contrastive_loss_weight=1.0,
+            contrastive_label_source="human_corrections",
+            contrastive_min_events_per_label=2,
+            contrastive_min_regions_per_label=2,
+            training_freeze_mode="transformer_frozen_projection_head_only",
+        )
+        metadata = [
+            ContrastiveEventMetadata("e1", "r1", ("Moan",), 0, 8),
+            ContrastiveEventMetadata("e2", "r2", ("Moan",), 0, 8),
+        ]
+
+        result = train_masked_transformer(
+            sequences,
+            config,
+            device="cpu",
+            contrastive_events=metadata,
+            initial_model=initial,
+        )
+
+        after = dict(result.model.named_parameters())
+        frozen_names = [
+            name for name in before if not name.startswith("retrieval_head.")
+        ]
+        assert all(torch.allclose(before[name], after[name]) for name in frozen_names)
+        assert any(
+            not torch.allclose(before[name], after[name])
+            for name in before
+            if name.startswith("retrieval_head.")
+        )
+
+    def test_projection_head_only_freezes_transformer_parameters_for_linear_head(self):
+        sequences = _make_synthetic_sequences(n_seq=2, T=8, D=6, seed=43)
+        initial = MaskedTransformer(
+            input_dim=6,
+            d_model=128,
+            num_layers=2,
+            num_heads=4,
+            ff_dim=512,
+            dropout=0.0,
+            retrieval_head_enabled=True,
+            retrieval_dim=5,
+            retrieval_head_arch="linear",
+        )
+        before = {name: p.detach().clone() for name, p in initial.named_parameters()}
+        config = MaskedTransformerConfig(
+            preset="small",
+            mask_fraction=0.20,
+            span_length_min=2,
+            span_length_max=4,
+            dropout=0.0,
+            mask_weight_bias=False,
+            max_epochs=1,
+            early_stop_patience=10,
+            val_split=0.0,
+            seed=7,
+            batch_size=2,
+            retrieval_head_enabled=True,
+            retrieval_dim=5,
+            retrieval_head_arch="linear",
             contrastive_loss_weight=1.0,
             contrastive_label_source="human_corrections",
             contrastive_min_events_per_label=2,

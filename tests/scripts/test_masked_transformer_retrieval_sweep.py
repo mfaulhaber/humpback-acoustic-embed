@@ -54,6 +54,7 @@ def test_submit_parser_defaults() -> None:
     assert args.preset == cli.INITIAL_SWEEP_PRESET
     assert args.k_values == cli.DEFAULT_K_VALUES
     assert args.lambda_values == cli.DEFAULT_LAMBDAS
+    assert args.include_linear_head is False
 
 
 def test_dry_run_initial_preset_writes_manifest(tmp_path, capsys) -> None:
@@ -87,6 +88,31 @@ def test_dry_run_initial_preset_writes_manifest(tmp_path, capsys) -> None:
     assert "wrote" in capsys.readouterr().out
 
 
+def test_dry_run_initial_preset_can_include_linear_head(tmp_path) -> None:
+    exit_code = cli.main(
+        [
+            "submit",
+            "--dry-run",
+            "--include-linear-head",
+            "--output-dir",
+            str(tmp_path),
+            "--continuous-embedding-job-id-250ms",
+            "cej-250",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((tmp_path / "submit-manifest.json").read_text())
+    linear = next(
+        run
+        for run in manifest["runs"]
+        if run["run_name"] == "250ms-linear-head-confirm-lambda-0p10"
+    )
+    assert linear["create_payload"]["retrieval_head_arch"] == "linear"
+    assert linear["create_payload"]["retrieval_hidden_dim"] is None
+    assert linear["metadata"]["failure_mode_probe"] == "linear_projection_head"
+
+
 def test_submit_calls_services_with_normalized_payloads(tmp_path, monkeypatch) -> None:
     calls: list[dict] = []
 
@@ -114,6 +140,7 @@ def test_submit_calls_services_with_normalized_payloads(tmp_path, monkeypatch) -
             "cls-1",
             "--lambda-values",
             "0.10",
+            "--include-linear-head",
             "--k-values",
             "150,300",
             "--extend-k-sweep",
@@ -126,8 +153,12 @@ def test_submit_calls_services_with_normalized_payloads(tmp_path, monkeypatch) -
     assert exit_code == 0
     assert calls[0]["continuous_embedding_job_id"] == "cej-250"
     assert calls[0]["contrastive_loss_weight"] == 0.10
+    assert calls[0]["retrieval_head_arch"] == "mlp"
     assert calls[0]["k_values"] == [150, 300]
     assert calls[1] == {"extend": "job-1", "k_values": [150, 300]}
+    assert calls[2]["retrieval_head_arch"] == "linear"
+    assert calls[2]["retrieval_hidden_dim"] is None
+    assert calls[3] == {"extend": "job-1", "k_values": [150, 300]}
 
 
 def test_submit_records_service_error(tmp_path, monkeypatch) -> None:

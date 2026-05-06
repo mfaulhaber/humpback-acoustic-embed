@@ -163,6 +163,7 @@ class MaskedTransformerJob(UUIDMixin, TimestampMixin, Base):
     retrieval_dim: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     retrieval_hidden_dim: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     retrieval_l2_normalize: Mapped[bool] = mapped_column(Boolean, default=True)
+    retrieval_head_arch: Mapped[str] = mapped_column(Text, default="mlp")
     sequence_construction_mode: Mapped[str] = mapped_column(Text, default="region")
     event_centered_fraction: Mapped[float] = mapped_column(Float, default=0.0)
     pre_event_context_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)

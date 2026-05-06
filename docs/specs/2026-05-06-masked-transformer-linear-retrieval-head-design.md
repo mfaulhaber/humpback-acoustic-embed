@@ -2,6 +2,9 @@
 
 **Date:** 2026-05-06
 **Status:** Draft
+**Implementation note:** Linear-head support is intended to be exposed through
+the API, the Masked Transformer create form, and opt-in retrieval sweep
+manifests.
 
 ## 1. Purpose
 
@@ -505,8 +508,8 @@ uv run ruff format --check src/humpback/sequence_models/masked_transformer.py sr
 uv run ruff check src/humpback/sequence_models/masked_transformer.py src/humpback/services/masked_transformer_service.py src/humpback/models/sequence_models.py src/humpback/schemas/sequence_models.py src/humpback/workers/masked_transformer_worker.py tests/sequence_models/test_masked_transformer.py tests/services/test_masked_transformer_service.py tests/workers/test_masked_transformer_worker.py tests/unit/test_sequence_models_schemas.py
 uv run pyright src/humpback/sequence_models/masked_transformer.py src/humpback/services/masked_transformer_service.py src/humpback/models/sequence_models.py src/humpback/schemas/sequence_models.py src/humpback/workers/masked_transformer_worker.py
 uv run pytest tests/sequence_models/test_masked_transformer.py tests/services/test_masked_transformer_service.py tests/workers/test_masked_transformer_worker.py tests/unit/test_sequence_models_schemas.py
-cd frontend && npm run typecheck
-cd frontend && npm test -- MaskedTransformerCreateForm
+cd frontend && npx tsc --noEmit
+cd frontend && npx vitest run src/components/sequence-models/MaskedTransformerCreateForm.test.tsx
 uv run pytest tests/
 ```
 

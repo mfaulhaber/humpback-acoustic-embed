@@ -172,6 +172,7 @@ async def test_round_trip_masked_transformer_job_row(tmp_path: Path) -> None:
             assert fetched.span_length_min == 2
             assert fetched.span_length_max == 6
             assert fetched.mask_weight_bias is True
+            assert fetched.retrieval_head_arch == "mlp"
             assert fetched.k_values == "[100]"
             assert fetched.created_at is not None
             assert fetched.updated_at is not None

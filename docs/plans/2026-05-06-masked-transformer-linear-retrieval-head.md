@@ -13,12 +13,12 @@
 - Modify: `src/humpback/models/sequence_models.py`
 
 **Acceptance criteria:**
-- [ ] Before running or testing the migration against any existing SQLite database, perform the CLAUDE.md §3.5 backup step: read the SQLite path from `.env` with `grep -E '^HUMPBACK_DATABASE_URL=' .env`, derive the file path from the `sqlite` URL, copy it to a UTC-stamped backup path with `cp "$DB_PATH" "$DB_PATH.backup.$(date -u +%Y%m%dT%H%M%SZ)"`, and verify the backup is non-zero with `test -s "$BACKUP_PATH"`.
-- [ ] Alembic revision 073 adds `masked_transformer_jobs.retrieval_head_arch` as non-null text with default `mlp`.
-- [ ] Migration uses `op.batch_alter_table()` for SQLite compatibility.
-- [ ] Existing masked-transformer job rows read back with `retrieval_head_arch='mlp'` after upgrade.
-- [ ] Downgrade removes `retrieval_head_arch`.
-- [ ] SQLAlchemy `MaskedTransformerJob` exposes `retrieval_head_arch` with default `mlp`.
+- [x] Before running or testing the migration against any existing SQLite database, perform the CLAUDE.md §3.5 backup step: read the SQLite path from `.env` with `grep -E '^HUMPBACK_DATABASE_URL=' .env`, derive the file path from the `sqlite` URL, copy it to a UTC-stamped backup path with `cp "$DB_PATH" "$DB_PATH.backup.$(date -u +%Y%m%dT%H%M%SZ)"`, and verify the backup is non-zero with `test -s "$BACKUP_PATH"`.
+- [x] Alembic revision 073 adds `masked_transformer_jobs.retrieval_head_arch` as non-null text with default `mlp`.
+- [x] Migration uses `op.batch_alter_table()` for SQLite compatibility.
+- [x] Existing masked-transformer job rows read back with `retrieval_head_arch='mlp'` after upgrade.
+- [x] Downgrade removes `retrieval_head_arch`.
+- [x] SQLAlchemy `MaskedTransformerJob` exposes `retrieval_head_arch` with default `mlp`.
 
 **Tests needed:**
 - Unit migration test covering upgrade defaults, existing-row backfill behavior, and downgrade column removal.
@@ -37,16 +37,16 @@
 - Modify: `tests/integration/test_masked_transformer_api.py`
 
 **Acceptance criteria:**
-- [ ] `MaskedTransformerJobCreate` accepts `retrieval_head_arch` as `mlp` or `linear`, defaulting to `mlp`.
-- [ ] `MaskedTransformerJobOut` returns `retrieval_head_arch`.
-- [ ] Disabled retrieval heads normalize architecture to `mlp` and dimensions to `None`.
-- [ ] MLP retrieval heads keep current defaults: `retrieval_dim=128`, `retrieval_hidden_dim=512`.
-- [ ] Linear retrieval heads default `retrieval_dim=128` and normalize `retrieval_hidden_dim` to `None`.
-- [ ] `create_masked_transformer_job()` accepts, normalizes, stores, and returns `retrieval_head_arch`.
-- [ ] Training signatures differ between otherwise identical MLP and linear retrieval-head jobs.
-- [ ] Historical MLP idempotency behavior is preserved for callers that omit `retrieval_head_arch`.
-- [ ] Projection-head-only freeze mode rejects a source job whose architecture does not match the requested architecture.
-- [ ] API create route passes `retrieval_head_arch` through to the service and returns it in responses.
+- [x] `MaskedTransformerJobCreate` accepts `retrieval_head_arch` as `mlp` or `linear`, defaulting to `mlp`.
+- [x] `MaskedTransformerJobOut` returns `retrieval_head_arch`.
+- [x] Disabled retrieval heads normalize architecture to `mlp` and dimensions to `None`.
+- [x] MLP retrieval heads keep current defaults: `retrieval_dim=128`, `retrieval_hidden_dim=512`.
+- [x] Linear retrieval heads default `retrieval_dim=128` and normalize `retrieval_hidden_dim` to `None`.
+- [x] `create_masked_transformer_job()` accepts, normalizes, stores, and returns `retrieval_head_arch`.
+- [x] Training signatures differ between otherwise identical MLP and linear retrieval-head jobs.
+- [x] Historical MLP idempotency behavior is preserved for callers that omit `retrieval_head_arch`.
+- [x] Projection-head-only freeze mode rejects a source job whose architecture does not match the requested architecture.
+- [x] API create route passes `retrieval_head_arch` through to the service and returns it in responses.
 
 **Tests needed:**
 - Schema tests for defaults, linear normalization, invalid architecture rejection, and disabled-head normalization.
@@ -62,14 +62,14 @@
 - Modify: `tests/sequence_models/test_masked_transformer.py`
 
 **Acceptance criteria:**
-- [ ] `MaskedTransformerConfig` carries `retrieval_head_arch` with default `mlp`.
-- [ ] `MaskedTransformer` validates supported head architectures when a retrieval head is enabled.
-- [ ] MLP construction remains `LayerNorm`, `Linear`, `GELU`, `Linear`.
-- [ ] Linear construction is exactly `LayerNorm`, `Linear(d_model -> retrieval_dim)`.
-- [ ] Forward output shape and pre-L2 output shape remain `(batch, time, retrieval_dim)` for both architectures.
-- [ ] L2 normalization behavior is unchanged for both architectures.
-- [ ] Event-level pooling reuses the selected head without architecture-specific branches.
-- [ ] Projection-head-only freeze mode continues to train only parameters whose names start with `retrieval_head.`.
+- [x] `MaskedTransformerConfig` carries `retrieval_head_arch` with default `mlp`.
+- [x] `MaskedTransformer` validates supported head architectures when a retrieval head is enabled.
+- [x] MLP construction remains `LayerNorm`, `Linear`, `GELU`, `Linear`.
+- [x] Linear construction is exactly `LayerNorm`, `Linear(d_model -> retrieval_dim)`.
+- [x] Forward output shape and pre-L2 output shape remain `(batch, time, retrieval_dim)` for both architectures.
+- [x] L2 normalization behavior is unchanged for both architectures.
+- [x] Event-level pooling reuses the selected head without architecture-specific branches.
+- [x] Projection-head-only freeze mode continues to train only parameters whose names start with `retrieval_head.`.
 
 **Tests needed:**
 - Unit tests checking module layout for MLP and linear heads.
@@ -86,13 +86,13 @@
 - Modify: `tests/workers/test_masked_transformer_worker.py`
 
 **Acceptance criteria:**
-- [ ] Worker passes `job.retrieval_head_arch` into `MaskedTransformerConfig`.
-- [ ] Worker checkpoint metadata records `retrieval_head_arch` beside retrieval dimensions and L2 normalization.
-- [ ] Completed linear-head jobs write `contextual_embeddings.parquet`.
-- [ ] Completed linear-head jobs write `retrieval_embeddings.parquet`.
-- [ ] Completed linear-head jobs write `retrieval_head_outputs.parquet`.
-- [ ] Completed linear-head jobs produce per-k tokenization artifacts from retrieval embeddings.
-- [ ] Strict checkpoint loading prevents MLP and linear head state dicts from being used interchangeably in freeze mode.
+- [x] Worker passes `job.retrieval_head_arch` into `MaskedTransformerConfig`.
+- [x] Worker checkpoint metadata records `retrieval_head_arch` beside retrieval dimensions and L2 normalization.
+- [x] Completed linear-head jobs write `contextual_embeddings.parquet`.
+- [x] Completed linear-head jobs write `retrieval_embeddings.parquet`.
+- [x] Completed linear-head jobs write `retrieval_head_outputs.parquet`.
+- [x] Completed linear-head jobs produce per-k tokenization artifacts from retrieval embeddings.
+- [x] Strict checkpoint loading prevents MLP and linear head state dicts from being used interchangeably in freeze mode.
 
 **Tests needed:**
 - Worker test for completed linear-head job artifact creation and metadata.
@@ -109,13 +109,13 @@
 - Create: `frontend/src/components/sequence-models/MaskedTransformerCreateForm.test.tsx`
 
 **Acceptance criteria:**
-- [ ] API type for masked-transformer create payload includes `retrieval_head_arch`.
-- [ ] Job response type includes `retrieval_head_arch`.
-- [ ] Create form shows an MLP/Linear architecture selector only when retrieval head is enabled.
-- [ ] MLP remains the default selected architecture.
-- [ ] Linear selection hides or disables the hidden-dimension input.
-- [ ] Linear submission sends `retrieval_head_arch='linear'` and `retrieval_hidden_dim=null`.
-- [ ] MLP submission preserves current hidden-dimension behavior.
+- [x] API type for masked-transformer create payload includes `retrieval_head_arch`.
+- [x] Job response type includes `retrieval_head_arch`.
+- [x] Create form shows an MLP/Linear architecture selector only when retrieval head is enabled.
+- [x] MLP remains the default selected architecture.
+- [x] Linear selection hides or disables the hidden-dimension input.
+- [x] Linear submission sends `retrieval_head_arch='linear'` and `retrieval_hidden_dim=null`.
+- [x] MLP submission preserves current hidden-dimension behavior.
 
 **Tests needed:**
 - Component test for default MLP selection after enabling retrieval head.
@@ -134,11 +134,11 @@
 - Modify: `tests/scripts/test_masked_transformer_retrieval_sweep.py`
 
 **Acceptance criteria:**
-- [ ] Sweep manifests can emit a matched linear-head variant for retrieval-aware runs.
-- [ ] Projection-head-only ablation sweep entries carry `retrieval_head_arch` and require matching source architecture.
-- [ ] Linear-head sweep metadata includes `failure_mode_probe='linear_projection_head'`.
-- [ ] Sweep comparison keeps linear and MLP rows comparable without changing existing diagnostic metrics.
-- [ ] Existing sweep defaults remain unchanged unless the user opts into the linear-head comparison.
+- [x] Sweep manifests can emit a matched linear-head variant for retrieval-aware runs.
+- [x] Projection-head-only ablation sweep entries carry `retrieval_head_arch` and require matching source architecture.
+- [x] Linear-head sweep metadata includes `failure_mode_probe='linear_projection_head'`.
+- [x] Sweep comparison keeps linear and MLP rows comparable without changing existing diagnostic metrics.
+- [x] Existing sweep defaults remain unchanged unless the user opts into the linear-head comparison.
 
 **Tests needed:**
 - Sweep unit test asserting linear create payload includes `retrieval_head_arch='linear'` and `retrieval_hidden_dim=null`.
@@ -155,11 +155,11 @@
 - Modify: `DECISIONS.md` only if implementation discovers a durable architectural decision not already captured by existing ADRs
 
 **Acceptance criteria:**
-- [ ] Spec is updated only for implementation discoveries or clarified decisions.
-- [ ] Plan checkboxes are updated as tasks complete.
-- [ ] No unrelated docs are changed.
-- [ ] If no new ADR-worthy decision appears, `DECISIONS.md` remains unchanged.
-- [ ] Final implementation summary names whether linear-head support is API-only, frontend-exposed, or both.
+- [x] Spec is updated only for implementation discoveries or clarified decisions.
+- [x] Plan checkboxes are updated as tasks complete.
+- [x] No unrelated docs are changed.
+- [x] If no new ADR-worthy decision appears, `DECISIONS.md` remains unchanged.
+- [x] Final implementation summary names whether linear-head support is API-only, frontend-exposed, or both.
 
 **Tests needed:**
 - Documentation review for consistency with implemented field names, defaults, and verification results.
@@ -175,5 +175,5 @@ Run in order after all tasks:
 3. `uv run pyright src/humpback/sequence_models/masked_transformer.py src/humpback/services/masked_transformer_service.py src/humpback/models/sequence_models.py src/humpback/schemas/sequence_models.py src/humpback/workers/masked_transformer_worker.py src/humpback/sequence_models/retrieval_sweeps.py scripts/masked_transformer_retrieval_sweep.py`
 4. `uv run pytest tests/unit/test_migration_073_masked_transformer_retrieval_head_arch.py tests/sequence_models/test_masked_transformer.py tests/services/test_masked_transformer_service.py tests/workers/test_masked_transformer_worker.py tests/unit/test_sequence_models_schemas.py tests/integration/test_masked_transformer_api.py tests/sequence_models/test_retrieval_sweeps.py tests/scripts/test_masked_transformer_retrieval_sweep.py`
 5. `cd frontend && npx tsc --noEmit`
-6. `cd frontend && npm test -- MaskedTransformerCreateForm`
+6. `cd frontend && npx vitest run src/components/sequence-models/MaskedTransformerCreateForm.test.tsx`
 7. `uv run pytest tests/`

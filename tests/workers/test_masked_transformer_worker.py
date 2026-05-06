@@ -455,6 +455,62 @@ async def test_retrieval_head_job_persists_and_tokenizes_retrieval_embeddings(
 
     kmeans_payload = joblib.load(masked_transformer_k_kmeans_path(sr, job.id, 10))
     assert kmeans_payload["kmeans"].cluster_centers_.shape[1] == 6
+    checkpoint = torch.load(
+        masked_transformer_model_path(sr, job.id),
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert checkpoint["config"]["retrieval_head_arch"] == "mlp"
+
+
+async def test_linear_retrieval_head_job_persists_artifacts_and_metadata(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej = await _seed_crnn_ce_job(session, settings)
+    job, _ = await create_masked_transformer_job(
+        session,
+        continuous_embedding_job_id=cej.id,
+        **{
+            **_tiny_config(),
+            "retrieval_head_enabled": True,
+            "retrieval_head_arch": "linear",
+            "retrieval_dim": 6,
+            "retrieval_hidden_dim": 12,
+        },
+    )
+    await _bind_classify(session, settings, cej, job)
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert job.retrieval_head_arch == "linear"
+    assert job.retrieval_hidden_dim is None
+    sr = settings.storage_root
+    assert masked_transformer_contextual_embeddings_path(sr, job.id).exists()
+    retrieval_path = masked_transformer_retrieval_embeddings_path(sr, job.id)
+    retrieval_pre_l2_path = masked_transformer_retrieval_head_outputs_path(sr, job.id)
+    assert retrieval_path.exists()
+    assert retrieval_pre_l2_path.exists()
+
+    retrieval = pq.read_table(retrieval_path)
+    retrieval_pre_l2 = pq.read_table(retrieval_pre_l2_path)
+    assert retrieval_pre_l2.num_rows == retrieval.num_rows
+    retrieval_vectors = retrieval.column("embedding").to_pylist()
+    assert len(retrieval_vectors[0]) == 6
+    norms = np.linalg.norm(np.asarray(retrieval_vectors, dtype=np.float32), axis=1)
+    np.testing.assert_allclose(norms, np.ones_like(norms), atol=1e-5)
+
+    kmeans_payload = joblib.load(masked_transformer_k_kmeans_path(sr, job.id, 10))
+    assert kmeans_payload["kmeans"].cluster_centers_.shape[1] == 6
+    checkpoint = torch.load(
+        masked_transformer_model_path(sr, job.id),
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert checkpoint["config"]["retrieval_head_arch"] == "linear"
+    assert checkpoint["config"]["retrieval_hidden_dim"] is None
 
 
 async def test_retrieval_head_extend_k_sweep_reuses_retrieval_artifact(
@@ -571,6 +627,7 @@ async def test_retrieval_head_event_centered_keeps_retrieval_rows_full_region(
         **{
             **_tiny_config(),
             "retrieval_head_enabled": True,
+            "retrieval_head_arch": "linear",
             "retrieval_dim": 6,
             "retrieval_hidden_dim": 12,
             "sequence_construction_mode": "event_centered",
@@ -757,6 +814,7 @@ async def test_projection_head_only_ablation_uses_source_model_and_writes_artifa
         **{
             **_tiny_config(),
             "retrieval_head_enabled": True,
+            "retrieval_head_arch": "linear",
             "retrieval_dim": 6,
             "retrieval_hidden_dim": 12,
         },
@@ -787,6 +845,7 @@ async def test_projection_head_only_ablation_uses_source_model_and_writes_artifa
         **{
             **_tiny_config(),
             "retrieval_head_enabled": True,
+            "retrieval_head_arch": "linear",
             "retrieval_dim": 6,
             "retrieval_hidden_dim": 12,
             "sequence_construction_mode": "region",

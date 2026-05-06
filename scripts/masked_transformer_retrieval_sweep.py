@@ -74,6 +74,7 @@ def plan_submit_runs(args: argparse.Namespace) -> list[SweepRun]:
             continuous_embedding_job_id_100ms=args.continuous_embedding_job_id_100ms,
             event_classification_job_id=args.event_classification_job_id,
             k_values=k_values,
+            include_linear_head=args.include_linear_head,
         )
     if args.continuous_embedding_job_id is None:
         raise SystemExit("--continuous-embedding-job-id is required for lambda sweeps")
@@ -95,6 +96,7 @@ def plan_submit_runs(args: argparse.Namespace) -> list[SweepRun]:
         labels_per_batch=args.labels_per_batch,
         events_per_label=args.events_per_label,
         policy_variant=policy_variant,
+        include_linear_head=args.include_linear_head,
     )
     if args.seed != 42:
         runs = [
@@ -360,6 +362,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     submit.add_argument("--dry-run", action="store_true")
     submit.add_argument("--extend-k-sweep", action="store_true")
+    submit.add_argument(
+        "--include-linear-head",
+        action="store_true",
+        help="Include matched linear retrieval-head comparison rows.",
+    )
     submit.add_argument(
         "--geometry-gate-passed",
         action="store_true",
