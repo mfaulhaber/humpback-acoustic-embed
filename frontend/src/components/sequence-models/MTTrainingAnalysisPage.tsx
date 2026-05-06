@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { useLatestMaskedTransformerAnalysis } from "@/api/sequenceModels";
 import { MTAnalysisReportTables } from "./MTAnalysisReportTables";
+import { MTAnalysisSummaryPanel } from "./MTAnalysisSummaryPanel";
 
 export function MTTrainingAnalysisPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
@@ -24,7 +25,10 @@ export function MTTrainingAnalysisPage() {
           No analysis report has been generated for this job.
         </div>
       ) : data ? (
-        <MTAnalysisReportTables report={data} />
+        <>
+          <MTAnalysisSummaryPanel report={data} />
+          <MTAnalysisReportTables report={data} />
+        </>
       ) : null}
     </div>
   );

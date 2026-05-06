@@ -512,6 +512,8 @@ test.describe("Sequence Models - MT Training", () => {
         "exclude_same_event_and_region",
       ],
     });
+    await expect(page.getByTestId("mt-analysis-summary-panel")).toBeVisible();
+    await expect(page.getByText("Recommended Spaces")).toBeVisible();
     await expect(page.getByText("Label Coverage")).toBeVisible();
     await expect(page.getByText("Aggregate Retrieval Metrics")).toBeVisible();
     await expect(page.getByText("Geometry Diagnostics")).toBeVisible();
