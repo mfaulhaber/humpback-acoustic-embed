@@ -1,7 +1,7 @@
 # MT Training And MT Motif Split - Design
 
 **Date:** 2026-05-06
-**Status:** Draft
+**Status:** Implemented
 
 ## 1. Purpose
 
@@ -153,8 +153,9 @@ All selected source pairs must satisfy:
   `model_version`, `chunk_size_seconds`, `chunk_hop_seconds`,
   `projection_kind`, and `projection_dim`.
 
-Open question: whether `crnn_checkpoint_sha256` must also match. The safer
-default is to require it when present, but older rows may have null values.
+Implementation resolution: `crnn_checkpoint_sha256` must match when every
+selected source has a non-null value. Null checkpoint values from older rows do
+not block otherwise compatible source sets.
 
 ### 5.4 MT Training List Page
 
@@ -229,9 +230,8 @@ The child page displays:
 - representative good queries table
 - representative risky queries table
 
-The first implementation can keep the report in React Query cache after the
-button run. A small persisted report artifact is preferable if reloadability is
-important:
+The implementation persists the latest report artifact so the analysis child
+page can reload independently of React Query cache state:
 
 - `masked_transformer_jobs/{job_id}/analysis/latest_report.json`
 - `GET /sequence-models/masked-transformers/{job_id}/nearest-neighbor-report/latest`
@@ -592,4 +592,3 @@ Verification gates remain the project gates from `CLAUDE.md`:
 - `uv run pyright ...`
 - `uv run pytest tests/`
 - frontend `npm` checks from `frontend/`
-

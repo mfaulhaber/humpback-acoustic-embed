@@ -7,8 +7,16 @@ events. Idempotent on ``encoding_signature``.
 
 from typing import Optional
 
-from sqlalchemy import Boolean, Float, Index, Integer, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import (
+    Boolean,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from humpback.database import Base, TimestampMixin, UUIDMixin
 from humpback.models.processing import JobStatus
@@ -18,6 +26,7 @@ __all__ = [
     "HMMSequenceJob",
     "JobStatus",
     "MaskedTransformerJob",
+    "MaskedTransformerJobSource",
     "MotifExtractionJob",
 ]
 
@@ -207,6 +216,54 @@ class MaskedTransformerJob(UUIDMixin, TimestampMixin, Base):
     total_sequences: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     total_chunks: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    sources: Mapped[list["MaskedTransformerJobSource"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="MaskedTransformerJobSource.source_order",
+    )
+
+    @property
+    def source_count(self) -> int:
+        """Number of configured training source pairs, legacy rows count as one."""
+        return len(self.sources) or 1
+
+
+class MaskedTransformerJobSource(UUIDMixin, TimestampMixin, Base):
+    """One source pair used to train a masked-transformer job."""
+
+    __tablename__ = "masked_transformer_job_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "masked_transformer_job_id",
+            "source_order",
+            name="uq_masked_transformer_job_sources_order",
+        ),
+        UniqueConstraint(
+            "masked_transformer_job_id",
+            "continuous_embedding_job_id",
+            "event_classification_job_id",
+            name="uq_masked_transformer_job_sources_pair",
+        ),
+        Index(
+            "ix_masked_transformer_job_sources_job_id",
+            "masked_transformer_job_id",
+        ),
+        Index(
+            "ix_masked_transformer_job_sources_continuous_embedding_job_id",
+            "continuous_embedding_job_id",
+        ),
+    )
+
+    masked_transformer_job_id: Mapped[str] = mapped_column(
+        ForeignKey("masked_transformer_jobs.id", ondelete="CASCADE")
+    )
+    source_order: Mapped[int] = mapped_column(Integer)
+    continuous_embedding_job_id: Mapped[str] = mapped_column(
+        ForeignKey("continuous_embedding_jobs.id")
+    )
+    event_classification_job_id: Mapped[str]
+    source_alias: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    job: Mapped["MaskedTransformerJob"] = relationship(back_populates="sources")
 
 
 class MotifExtractionJob(UUIDMixin, TimestampMixin, Base):

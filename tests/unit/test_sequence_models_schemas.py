@@ -10,6 +10,7 @@ from humpback.schemas.sequence_models import (
     ExemplarRecord,
     MaskedTransformerJobCreate,
     MaskedTransformerJobOut,
+    MaskedTransformerJobSourceCreate,
     MaskedTransformerNearestNeighborReportRequest,
     MaskedTransformerNearestNeighborReportResponse,
     OverlayPoint,
@@ -336,6 +337,72 @@ def test_masked_transformer_create_batch_size_validation():
         MaskedTransformerJobCreate(
             continuous_embedding_job_id="cej-1",
             batch_size=0,
+        )
+
+
+def test_masked_transformer_create_requires_source_identity():
+    with pytest.raises(ValidationError, match="continuous_embedding_job_id"):
+        MaskedTransformerJobCreate()
+
+
+def test_masked_transformer_create_accepts_ordered_sources():
+    payload = MaskedTransformerJobCreate(
+        sources=[
+            MaskedTransformerJobSourceCreate(
+                continuous_embedding_job_id="cej-1",
+                event_classification_job_id="cls-1",
+                source_alias="day one",
+            ),
+            MaskedTransformerJobSourceCreate(
+                continuous_embedding_job_id="cej-2",
+                event_classification_job_id="cls-2",
+            ),
+        ]
+    )
+
+    assert payload.continuous_embedding_job_id == "cej-1"
+    assert payload.event_classification_job_id == "cls-1"
+    assert payload.sources is not None
+    assert [source.continuous_embedding_job_id for source in payload.sources] == [
+        "cej-1",
+        "cej-2",
+    ]
+    assert payload.sources[0].source_alias == "day one"
+    assert payload.contrastive_loss_weight == 0.0
+    assert payload.contrastive_label_source == "none"
+    assert payload.training_freeze_mode == "none"
+
+
+def test_masked_transformer_create_rejects_duplicate_source_pairs():
+    with pytest.raises(ValidationError, match="duplicate"):
+        MaskedTransformerJobCreate(
+            sources=[
+                MaskedTransformerJobSourceCreate(
+                    continuous_embedding_job_id="cej-1",
+                    event_classification_job_id="cls-1",
+                ),
+                MaskedTransformerJobSourceCreate(
+                    continuous_embedding_job_id="cej-1",
+                    event_classification_job_id="cls-1",
+                ),
+            ]
+        )
+
+
+def test_masked_transformer_create_rejects_contrastive_for_multi_source():
+    with pytest.raises(ValidationError, match="contrastive"):
+        MaskedTransformerJobCreate(
+            sources=[
+                MaskedTransformerJobSourceCreate(
+                    continuous_embedding_job_id="cej-1",
+                    event_classification_job_id="cls-1",
+                )
+            ],
+            retrieval_head_enabled=True,
+            sequence_construction_mode="mixed",
+            event_centered_fraction=0.5,
+            contrastive_loss_weight=0.1,
+            contrastive_label_source="human_corrections",
         )
 
 

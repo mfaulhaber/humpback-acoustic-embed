@@ -64,12 +64,69 @@ async def _seed_crnn_cej(
             region_detection_job_id=region_job.id,
             model_version="crnn-call-parsing-pytorch",
             target_sample_rate=32000,
+            vector_dim=8,
+            chunk_size_seconds=0.25,
+            chunk_hop_seconds=0.25,
+            crnn_checkpoint_sha256="test-crnn-checkpoint",
+            projection_kind="identity",
+            projection_dim=8,
             encoding_signature=f"enc-mt-{status}",
         )
         session.add(cej)
         await session.commit()
         await session.refresh(cej)
         return cej.id
+
+
+async def _seed_crnn_source_pair(app_settings, suffix: str) -> tuple[str, str]:
+    from humpback.models.call_parsing import (
+        EventClassificationJob,
+        EventSegmentationJob,
+        RegionDetectionJob,
+    )
+
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        region_job = RegionDetectionJob(
+            status=JobStatus.complete.value,
+            hydrophone_id="rpi_orcasound_lab",
+            start_timestamp=1000.0,
+            end_timestamp=1600.0,
+        )
+        session.add(region_job)
+        await session.flush()
+        seg_job = EventSegmentationJob(
+            status=JobStatus.complete.value,
+            region_detection_job_id=region_job.id,
+        )
+        session.add(seg_job)
+        await session.flush()
+        classify = EventClassificationJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+        )
+        session.add(classify)
+        await session.flush()
+        cej = ContinuousEmbeddingJob(
+            status=JobStatus.complete.value,
+            event_segmentation_job_id=seg_job.id,
+            region_detection_job_id=region_job.id,
+            model_version="crnn-call-parsing-pytorch",
+            target_sample_rate=32000,
+            vector_dim=8,
+            chunk_size_seconds=0.25,
+            chunk_hop_seconds=0.25,
+            crnn_checkpoint_sha256="test-crnn-checkpoint",
+            projection_kind="identity",
+            projection_dim=8,
+            encoding_signature=f"enc-mt-source-{suffix}",
+        )
+        session.add(cej)
+        await session.commit()
+        await session.refresh(cej)
+        await session.refresh(classify)
+        return cej.id, classify.id
 
 
 async def _seed_surfperch_cej(app_settings) -> str:
@@ -157,6 +214,56 @@ async def test_create_happy_path(client, app_settings):
     assert body["post_event_context_sec"] == 2.5
     assert body["contrastive_loss_weight"] == 0.0
     assert body["contrastive_label_source"] == "none"
+
+
+async def test_create_accepts_source_pairs_and_detail_returns_sources(
+    client, app_settings
+):
+    cej1_id, classify1_id = await _seed_crnn_source_pair(app_settings, "one")
+    cej2_id, classify2_id = await _seed_crnn_source_pair(app_settings, "two")
+
+    response = await client.post(
+        "/sequence-models/masked-transformers",
+        json={
+            "sources": [
+                {
+                    "continuous_embedding_job_id": cej1_id,
+                    "event_classification_job_id": classify1_id,
+                    "source_alias": "first",
+                },
+                {
+                    "continuous_embedding_job_id": cej2_id,
+                    "event_classification_job_id": classify2_id,
+                    "source_alias": "second",
+                },
+            ],
+            "preset": "small",
+            "k_values": [50, 100],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["continuous_embedding_job_id"] == cej1_id
+    assert body["event_classification_job_id"] == classify1_id
+    assert body["source_count"] == 2
+    assert body["contrastive_loss_weight"] == 0.0
+    assert body["contrastive_label_source"] == "none"
+
+    detail = await client.get(f"/sequence-models/masked-transformers/{body['id']}")
+    assert detail.status_code == 200, detail.text
+    detail_body = detail.json()
+    assert [source["source_order"] for source in detail_body["sources"]] == [0, 1]
+    assert [
+        source["continuous_embedding_job_id"] for source in detail_body["sources"]
+    ] == [cej1_id, cej2_id]
+    assert [
+        source["event_classification_job_id"] for source in detail_body["sources"]
+    ] == [classify1_id, classify2_id]
+    assert [source["source_alias"] for source in detail_body["sources"]] == [
+        "first",
+        "second",
+    ]
 
 
 async def test_create_contrastive_round_trips(client, app_settings):

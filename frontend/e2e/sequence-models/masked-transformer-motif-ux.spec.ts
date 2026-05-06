@@ -372,7 +372,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("renders motif highlight bands in timeline column", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("masked-transformer-detail-page")).toBeVisible();
     await expect(page.getByTestId("motif-table")).toBeVisible();
@@ -397,7 +397,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("Jump moves the active band to the clicked occurrence", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("motif-example-row-0")).toBeVisible();
     // Row 2's Jump button — choose a row whose data-active should flip to true.
@@ -414,7 +414,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("Play requests motif-bounded audio with no padding", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("motif-example-row-3")).toBeVisible();
     await page
@@ -445,7 +445,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("conf and recon strips are hidden", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("masked-transformer-detail-page")).toBeVisible();
     await expect(page.getByTestId("mt-token-confidence-strip")).toHaveCount(0);
@@ -455,7 +455,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("Token Count selector starts unset and toggles byLength mode", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("motif-token-count-selector")).toBeVisible();
     // Selector starts unset; single-mode highlight should be active for
@@ -495,7 +495,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("byLength mode prev/next walks the visible occurrence set", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("motif-token-count-selector")).toBeVisible();
     await page.getByTestId("motif-token-count-2").click();
@@ -516,7 +516,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("Picking a motif row exits byLength mode", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await page.getByTestId("motif-token-count-3").click();
     await expect(page.getByTestId("motif-token-count-3")).toHaveAttribute(
@@ -535,7 +535,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("byLength legend Play requests audio for the active occurrence", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await page.getByTestId("motif-token-count-2").click();
     await expect(page.getByTestId("motif-timeline-legend-play")).toBeVisible();
@@ -548,7 +548,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("alignment list shows up to 20 rows and scrolls", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("motif-example-list")).toBeVisible();
     // 25 occurrences exist; the list caps at 20 rows.
@@ -565,7 +565,7 @@ test.describe("Masked Transformer Motif UX", () => {
   test("overlay band layer clips children; tooltip layer is unclipped", async ({ page }) => {
     const state: MockState = { audioSliceUrls: [] };
     await setupMocks(page, state);
-    await page.goto(`/app/sequence-models/masked-transformer/${COMPLETE_JOB.id}`);
+    await page.goto(`/app/sequence-models/mt-motif/${COMPLETE_JOB.id}`);
 
     await expect(page.getByTestId("masked-transformer-detail-page")).toBeVisible();
     await expect(page.getByTestId("mt-motif-highlight-layer")).toBeVisible();

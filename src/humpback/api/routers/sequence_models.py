@@ -39,6 +39,7 @@ from humpback.schemas.sequence_models import (
     MaskedTransformerJobCreate,
     MaskedTransformerJobDetail,
     MaskedTransformerJobOut,
+    MaskedTransformerJobSourceOut,
     MotifExtractionJobCreate,
     MotifExtractionJobDetail,
     MotifExtractionJobOut,
@@ -103,6 +104,7 @@ from humpback.services.motif_extraction_service import (
     list_motif_extraction_jobs,
 )
 from humpback.storage import (
+    atomic_rename,
     hmm_sequence_exemplars_path,
     hmm_sequence_label_distribution_path,
     hmm_sequence_overlay_path,
@@ -114,6 +116,7 @@ from humpback.storage import (
     masked_transformer_k_label_distribution_path,
     masked_transformer_k_overlay_path,
     masked_transformer_k_run_lengths_path,
+    masked_transformer_latest_analysis_report_path,
     masked_transformer_loss_curve_path,
     masked_transformer_reconstruction_error_path,
     motif_extraction_manifest_path,
@@ -799,6 +802,9 @@ async def create_masked_transformer(
             session,
             continuous_embedding_job_id=body.continuous_embedding_job_id,
             event_classification_job_id=body.event_classification_job_id,
+            sources=[source.model_dump() for source in body.sources]
+            if body.sources is not None
+            else None,
             preset=body.preset,
             mask_fraction=body.mask_fraction,
             span_length_min=body.span_length_min,
@@ -882,6 +888,10 @@ async def get_masked_transformer(
 
     return MaskedTransformerJobDetail(
         job=_mt_to_out(job),
+        sources=[
+            MaskedTransformerJobSourceOut.model_validate(source)
+            for source in job.sources
+        ],
         region_detection_job_id=region_detection_job_id,
         region_start_timestamp=region_start,
         region_end_timestamp=region_end,
@@ -1040,6 +1050,25 @@ async def get_mt_nearest_neighbor_report(
         raise HTTPException(status_code=409, detail=str(exc))
     except retrieval_diagnostics.RetrievalDiagnosticsInvalid as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    latest_path = masked_transformer_latest_analysis_report_path(
+        settings.storage_root, job_id
+    )
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = latest_path.with_suffix(latest_path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+    atomic_rename(tmp_path, latest_path)
+    return MaskedTransformerNearestNeighborReportResponse.model_validate(payload)
+
+
+@router.get("/masked-transformers/{job_id}/nearest-neighbor-report/latest")
+async def get_latest_mt_nearest_neighbor_report(
+    job_id: str,
+    settings: SettingsDep,
+) -> MaskedTransformerNearestNeighborReportResponse:
+    path = masked_transformer_latest_analysis_report_path(settings.storage_root, job_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="nearest-neighbor report not found")
+    payload = json.loads(path.read_text(encoding="utf-8"))
     return MaskedTransformerNearestNeighborReportResponse.model_validate(payload)
 
 

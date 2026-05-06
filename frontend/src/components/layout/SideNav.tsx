@@ -71,8 +71,12 @@ const navItems: NavItem[] = [
         to: "/app/sequence-models/hmm-sequence",
       },
       {
-        label: "Masked Transformer",
-        to: "/app/sequence-models/masked-transformer",
+        label: "MT Training",
+        to: "/app/sequence-models/mt-training",
+      },
+      {
+        label: "MT Motif",
+        to: "/app/sequence-models/mt-motif",
       },
     ],
   },

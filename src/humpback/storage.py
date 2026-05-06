@@ -182,6 +182,10 @@ def masked_transformer_manifest_path(storage_root: Path, job_id: str) -> Path:
     return masked_transformer_dir(storage_root, job_id) / "manifest.json"
 
 
+def masked_transformer_inference_manifest_path(storage_root: Path, job_id: str) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / "inference_manifest.json"
+
+
 def masked_transformer_model_path(storage_root: Path, job_id: str) -> Path:
     return masked_transformer_dir(storage_root, job_id) / "transformer.pt"
 
@@ -254,6 +258,16 @@ def masked_transformer_k_label_distribution_path(
     storage_root: Path, job_id: str, k: int
 ) -> Path:
     return masked_transformer_k_dir(storage_root, job_id, k) / "label_distribution.json"
+
+
+def masked_transformer_analysis_dir(storage_root: Path, job_id: str) -> Path:
+    return masked_transformer_dir(storage_root, job_id) / "analysis"
+
+
+def masked_transformer_latest_analysis_report_path(
+    storage_root: Path, job_id: str
+) -> Path:
+    return masked_transformer_analysis_dir(storage_root, job_id) / "latest_report.json"
 
 
 def motif_extraction_dir(storage_root: Path, job_id: str) -> Path:

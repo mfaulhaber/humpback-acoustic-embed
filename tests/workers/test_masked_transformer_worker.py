@@ -12,6 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import torch
+from sqlalchemy import select
 
 from humpback.call_parsing.storage import classification_job_dir, write_typed_events
 from humpback.call_parsing.types import Event, TypedEvent
@@ -30,6 +31,7 @@ from humpback.storage import (
     continuous_embedding_dir,
     masked_transformer_contextual_embeddings_path,
     masked_transformer_dir,
+    masked_transformer_inference_manifest_path,
     masked_transformer_k_decoded_path,
     masked_transformer_k_dir,
     masked_transformer_k_exemplars_path,
@@ -213,6 +215,11 @@ async def _seed_crnn_ce_job(session, settings) -> ContinuousEmbeddingJob:
         encoding_signature=f"crnn-mt-sig-{seg_job.id}",
         status=JobStatus.complete.value,
         vector_dim=CRNN_VECTOR_DIM,
+        chunk_size_seconds=0.25,
+        chunk_hop_seconds=0.25,
+        crnn_checkpoint_sha256="test-crnn-checkpoint",
+        projection_kind="identity",
+        projection_dim=CRNN_VECTOR_DIM,
         total_chunks=72,
         parquet_path="set-below",
     )
@@ -225,6 +232,19 @@ async def _seed_crnn_ce_job(session, settings) -> ContinuousEmbeddingJob:
     ce_job.parquet_path = str(parquet_path)
     await session.commit()
     return ce_job
+
+
+async def _latest_classify_id_for_cej(session, cej: ContinuousEmbeddingJob) -> str:
+    result = await session.execute(
+        select(EventClassificationJob.id)
+        .where(
+            EventClassificationJob.event_segmentation_job_id
+            == cej.event_segmentation_job_id
+        )
+        .order_by(EventClassificationJob.created_at.desc())
+        .limit(1)
+    )
+    return str(result.scalar_one())
 
 
 async def _seed_surfperch_ce_job(session) -> ContinuousEmbeddingJob:
@@ -348,6 +368,121 @@ async def test_happy_path_persists_all_artifacts(session, settings, monkeypatch)
     assert job.chosen_device == "cpu"
 
 
+async def test_multi_source_worker_concatenates_sources_and_writes_manifest(
+    session, settings, monkeypatch
+):
+    monkeypatch.setenv("HUMPBACK_FORCE_CPU", "1")
+    cej1 = await _seed_crnn_ce_job(session, settings)
+    cej2 = await _seed_crnn_ce_job(session, settings)
+    classify1 = await seed_classify_for_segmentation(
+        session,
+        settings.storage_root,
+        event_segmentation_job_id=cej1.event_segmentation_job_id or "",
+    )
+    classify2 = await seed_classify_for_segmentation(
+        session,
+        settings.storage_root,
+        event_segmentation_job_id=cej2.event_segmentation_job_id or "",
+    )
+    job, _ = await create_masked_transformer_job(
+        session,
+        sources=[
+            {
+                "continuous_embedding_job_id": cej1.id,
+                "event_classification_job_id": classify1,
+                "source_alias": "source-one",
+            },
+            {
+                "continuous_embedding_job_id": cej2.id,
+                "event_classification_job_id": classify2,
+                "source_alias": "source-two",
+            },
+        ],
+        **_tiny_config(),
+    )
+
+    import humpback.workers.masked_transformer_worker as worker_mod
+
+    real_train = worker_mod.train_masked_transformer
+    train_calls = 0
+    observed_sequence_count = 0
+
+    def _spy_train(sequences, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal train_calls, observed_sequence_count
+        train_calls += 1
+        observed_sequence_count = len(sequences)
+        return real_train(sequences, *args, **kwargs)
+
+    monkeypatch.setattr(worker_mod, "train_masked_transformer", _spy_train)
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert train_calls == 1
+    assert observed_sequence_count == 6
+    assert job.total_sequences == 6
+    assert job.total_chunks == 144
+
+    sr = settings.storage_root
+    metadata_columns = {
+        "source_index",
+        "continuous_embedding_job_id",
+        "event_classification_job_id",
+        "original_region_id",
+    }
+    contextual = pq.read_table(
+        masked_transformer_contextual_embeddings_path(sr, job.id)
+    )
+    decoded = pq.read_table(masked_transformer_k_decoded_path(sr, job.id, 10))
+    reconstruction = pq.read_table(
+        masked_transformer_reconstruction_error_path(sr, job.id)
+    )
+    assert contextual.num_rows == 144
+    assert decoded.num_rows == 144
+    assert reconstruction.num_rows == 144
+    assert metadata_columns <= set(contextual.column_names)
+    assert metadata_columns <= set(decoded.column_names)
+    assert metadata_columns <= set(reconstruction.column_names)
+    assert {"0:region-00", "1:region-00"} <= set(
+        contextual.column("region_id").to_pylist()
+    )
+    assert {0, 1} == set(contextual.column("source_index").to_pylist())
+    assert "region-00" in set(contextual.column("original_region_id").to_pylist())
+
+    manifest_path = masked_transformer_inference_manifest_path(sr, job.id)
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["sequence_id_strategy"] == "source_index_prefix"
+    assert manifest["model_path"] == str(masked_transformer_model_path(sr, job.id))
+    assert manifest["k_values"] == [10]
+    assert sorted(source["source_index"] for source in manifest["sources"]) == [0, 1]
+    assert {
+        source["continuous_embedding_job_id"] for source in manifest["sources"]
+    } == {cej1.id, cej2.id}
+
+    transformer_path = masked_transformer_model_path(sr, job.id)
+    contextual_path = masked_transformer_contextual_embeddings_path(sr, job.id)
+    mtimes = {
+        "transformer": transformer_path.stat().st_mtime_ns,
+        "contextual": contextual_path.stat().st_mtime_ns,
+    }
+    job.k_values = json.dumps([10, 12])
+    job.status = JobStatus.queued.value
+    await session.commit()
+
+    await run_masked_transformer_job(session, job, settings)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert train_calls == 1
+    assert transformer_path.stat().st_mtime_ns == mtimes["transformer"]
+    assert contextual_path.stat().st_mtime_ns == mtimes["contextual"]
+    assert masked_transformer_k_decoded_path(sr, job.id, 12).exists()
+    updated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert updated_manifest["k_values"] == [10, 12]
+
+
 async def test_interpretations_use_human_adds_as_replacement_labels(
     session, settings, monkeypatch
 ):
@@ -439,10 +574,18 @@ async def test_retrieval_head_job_persists_and_tokenizes_retrieval_embeddings(
     contextual = pq.read_table(contextual_path)
     retrieval = pq.read_table(retrieval_path)
     retrieval_pre_l2 = pq.read_table(retrieval_pre_l2_path)
+    metadata_columns = {
+        "source_index",
+        "continuous_embedding_job_id",
+        "event_classification_job_id",
+        "original_region_id",
+    }
     assert contextual.num_rows == retrieval.num_rows
     assert retrieval_pre_l2.num_rows == retrieval.num_rows
     assert retrieval.column_names == contextual.column_names
     assert retrieval_pre_l2.column_names == retrieval.column_names
+    assert metadata_columns <= set(retrieval.column_names)
+    assert set(retrieval.column("source_index").to_pylist()) == {0}
     retrieval_vectors = retrieval.column("embedding").to_pylist()
     retrieval_pre_l2_vectors = retrieval_pre_l2.column("embedding").to_pylist()
     assert len(retrieval_vectors[0]) == 6

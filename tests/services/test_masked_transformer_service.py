@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from sqlalchemy import select
 
 from humpback.models.call_parsing import (
     EventClassificationJob,
@@ -29,6 +30,12 @@ async def _seed_crnn_cej(
     session,
     *,
     status: str = JobStatus.complete.value,
+    vector_dim: int | None = 8,
+    chunk_size_seconds: float | None = 0.25,
+    chunk_hop_seconds: float | None = 0.25,
+    projection_kind: str | None = "identity",
+    projection_dim: int | None = 8,
+    crnn_checkpoint_sha256: str | None = "test-crnn-checkpoint",
 ) -> ContinuousEmbeddingJob:
     region_job = RegionDetectionJob(
         status=JobStatus.complete.value,
@@ -61,12 +68,32 @@ async def _seed_crnn_cej(
         model_version="crnn-call-parsing-pytorch",
         target_sample_rate=16000,
         encoding_signature=f"sig-crnn-{seg_job.id}",
+        vector_dim=vector_dim,
+        chunk_size_seconds=chunk_size_seconds,
+        chunk_hop_seconds=chunk_hop_seconds,
+        projection_kind=projection_kind,
+        projection_dim=projection_dim,
+        crnn_checkpoint_sha256=crnn_checkpoint_sha256,
         status=status,
     )
     session.add(cej)
     await session.commit()
     await session.refresh(cej)
     return cej
+
+
+async def _classify_id_for_cej(session, cej: ContinuousEmbeddingJob) -> str:
+    result = await session.execute(
+        select(EventClassificationJob.id)
+        .where(
+            EventClassificationJob.event_segmentation_job_id
+            == cej.event_segmentation_job_id
+        )
+        .order_by(EventClassificationJob.created_at.desc())
+        .limit(1)
+    )
+    classify_id = result.scalar_one()
+    return str(classify_id)
 
 
 async def _seed_surfperch_cej(session) -> ContinuousEmbeddingJob:
@@ -161,6 +188,261 @@ class TestCreateMaskedTransformerJob:
         assert job.contrastive_events_per_label == 4
         assert job.contrastive_max_unlabeled_fraction == pytest.approx(0.25)
         assert job.contrastive_region_balance is True
+
+    async def test_create_accepts_ordered_source_pairs(self, session):
+        cej1 = await _seed_crnn_cej(session)
+        cej2 = await _seed_crnn_cej(session)
+        classify1 = await _classify_id_for_cej(session, cej1)
+        classify2 = await _classify_id_for_cej(session, cej2)
+
+        job, created = await create_masked_transformer_job(
+            session,
+            sources=[
+                {
+                    "continuous_embedding_job_id": cej1.id,
+                    "event_classification_job_id": classify1,
+                    "source_alias": "north",
+                },
+                {
+                    "continuous_embedding_job_id": cej2.id,
+                    "event_classification_job_id": classify2,
+                    "source_alias": "south",
+                },
+            ],
+            preset="small",
+            k_values=[50, 100],
+        )
+
+        assert created is True
+        assert job.continuous_embedding_job_id == cej1.id
+        assert job.event_classification_job_id == classify1
+        assert [source.source_order for source in job.sources] == [0, 1]
+        assert [source.continuous_embedding_job_id for source in job.sources] == [
+            cej1.id,
+            cej2.id,
+        ]
+        assert [source.event_classification_job_id for source in job.sources] == [
+            classify1,
+            classify2,
+        ]
+        assert [source.source_alias for source in job.sources] == ["north", "south"]
+
+        fetched = await get_masked_transformer_job(session, job.id)
+        assert fetched is not None
+        assert [source.source_order for source in fetched.sources] == [0, 1]
+
+    async def test_multi_source_idempotency_excludes_k_values(self, session):
+        cej1 = await _seed_crnn_cej(session)
+        cej2 = await _seed_crnn_cej(session)
+        classify1 = await _classify_id_for_cej(session, cej1)
+        classify2 = await _classify_id_for_cej(session, cej2)
+        sources = [
+            {
+                "continuous_embedding_job_id": cej1.id,
+                "event_classification_job_id": classify1,
+            },
+            {
+                "continuous_embedding_job_id": cej2.id,
+                "event_classification_job_id": classify2,
+            },
+        ]
+
+        first, created1 = await create_masked_transformer_job(
+            session,
+            sources=sources,
+            preset="small",
+            k_values=[50],
+        )
+        second, created2 = await create_masked_transformer_job(
+            session,
+            sources=sources,
+            preset="small",
+            k_values=[200, 300],
+        )
+
+        assert created1 is True
+        assert created2 is False
+        assert first.id == second.id
+        assert json.loads(second.k_values) == [50]
+
+    async def test_multi_source_order_participates_in_signature(self, session):
+        cej1 = await _seed_crnn_cej(session)
+        cej2 = await _seed_crnn_cej(session)
+        classify1 = await _classify_id_for_cej(session, cej1)
+        classify2 = await _classify_id_for_cej(session, cej2)
+
+        first, _ = await create_masked_transformer_job(
+            session,
+            sources=[
+                {
+                    "continuous_embedding_job_id": cej1.id,
+                    "event_classification_job_id": classify1,
+                },
+                {
+                    "continuous_embedding_job_id": cej2.id,
+                    "event_classification_job_id": classify2,
+                },
+            ],
+            preset="small",
+        )
+        second, created = await create_masked_transformer_job(
+            session,
+            sources=[
+                {
+                    "continuous_embedding_job_id": cej2.id,
+                    "event_classification_job_id": classify2,
+                },
+                {
+                    "continuous_embedding_job_id": cej1.id,
+                    "event_classification_job_id": classify1,
+                },
+            ],
+            preset="small",
+        )
+
+        assert created is True
+        assert first.id != second.id
+        assert first.training_signature != second.training_signature
+
+    async def test_multi_source_rejects_duplicate_pairs(self, session):
+        cej = await _seed_crnn_cej(session)
+        classify_id = await _classify_id_for_cej(session, cej)
+
+        with pytest.raises(ValueError, match="duplicate"):
+            await create_masked_transformer_job(
+                session,
+                sources=[
+                    {
+                        "continuous_embedding_job_id": cej.id,
+                        "event_classification_job_id": classify_id,
+                    },
+                    {
+                        "continuous_embedding_job_id": cej.id,
+                        "event_classification_job_id": classify_id,
+                    },
+                ],
+            )
+
+    async def test_multi_source_rejects_mismatched_classify_job(self, session):
+        cej1 = await _seed_crnn_cej(session)
+        cej2 = await _seed_crnn_cej(session)
+        classify1 = await _classify_id_for_cej(session, cej1)
+
+        with pytest.raises(ValueError, match="does not match"):
+            await create_masked_transformer_job(
+                session,
+                sources=[
+                    {
+                        "continuous_embedding_job_id": cej1.id,
+                        "event_classification_job_id": classify1,
+                    },
+                    {
+                        "continuous_embedding_job_id": cej2.id,
+                        "event_classification_job_id": classify1,
+                    },
+                ],
+            )
+
+    async def test_multi_source_rejects_incompatible_embedding_jobs(self, session):
+        cej1 = await _seed_crnn_cej(session, vector_dim=8)
+        cej2 = await _seed_crnn_cej(session, vector_dim=16)
+        classify1 = await _classify_id_for_cej(session, cej1)
+        classify2 = await _classify_id_for_cej(session, cej2)
+
+        with pytest.raises(ValueError, match="compatible vector_dim"):
+            await create_masked_transformer_job(
+                session,
+                sources=[
+                    {
+                        "continuous_embedding_job_id": cej1.id,
+                        "event_classification_job_id": classify1,
+                    },
+                    {
+                        "continuous_embedding_job_id": cej2.id,
+                        "event_classification_job_id": classify2,
+                    },
+                ],
+            )
+
+    async def test_multi_source_rejects_checkpoint_mismatch_when_known(self, session):
+        cej1 = await _seed_crnn_cej(session, crnn_checkpoint_sha256="ckpt-a")
+        cej2 = await _seed_crnn_cej(session, crnn_checkpoint_sha256="ckpt-b")
+        classify1 = await _classify_id_for_cej(session, cej1)
+        classify2 = await _classify_id_for_cej(session, cej2)
+
+        with pytest.raises(ValueError, match="crnn_checkpoint_sha256"):
+            await create_masked_transformer_job(
+                session,
+                sources=[
+                    {
+                        "continuous_embedding_job_id": cej1.id,
+                        "event_classification_job_id": classify1,
+                    },
+                    {
+                        "continuous_embedding_job_id": cej2.id,
+                        "event_classification_job_id": classify2,
+                    },
+                ],
+            )
+
+    async def test_multi_source_allows_unknown_checkpoint_mixed_with_known(
+        self, session
+    ):
+        cej1 = await _seed_crnn_cej(session, crnn_checkpoint_sha256=None)
+        cej2 = await _seed_crnn_cej(session, crnn_checkpoint_sha256="ckpt-b")
+        classify1 = await _classify_id_for_cej(session, cej1)
+        classify2 = await _classify_id_for_cej(session, cej2)
+
+        job, created = await create_masked_transformer_job(
+            session,
+            sources=[
+                {
+                    "continuous_embedding_job_id": cej1.id,
+                    "event_classification_job_id": classify1,
+                },
+                {
+                    "continuous_embedding_job_id": cej2.id,
+                    "event_classification_job_id": classify2,
+                },
+            ],
+        )
+
+        assert created is True
+        assert len(job.sources) == 2
+
+    async def test_multi_source_rejects_contrastive_and_ablation(self, session):
+        cej1 = await _seed_crnn_cej(session)
+        cej2 = await _seed_crnn_cej(session)
+        classify1 = await _classify_id_for_cej(session, cej1)
+        classify2 = await _classify_id_for_cej(session, cej2)
+        sources = [
+            {
+                "continuous_embedding_job_id": cej1.id,
+                "event_classification_job_id": classify1,
+            },
+            {
+                "continuous_embedding_job_id": cej2.id,
+                "event_classification_job_id": classify2,
+            },
+        ]
+
+        with pytest.raises(ValueError, match="does not support contrastive"):
+            await create_masked_transformer_job(
+                session,
+                sources=sources,
+                retrieval_head_enabled=True,
+                sequence_construction_mode="mixed",
+                event_centered_fraction=0.5,
+                contrastive_loss_weight=0.1,
+                contrastive_label_source="human_corrections",
+            )
+        with pytest.raises(ValueError, match="projection-head-only"):
+            await create_masked_transformer_job(
+                session,
+                sources=sources,
+                training_freeze_mode="transformer_frozen_projection_head_only",
+                source_masked_transformer_job_id="source",
+            )
 
     async def test_idempotent_returns_existing(self, session):
         cej = await _seed_crnn_cej(session)

@@ -1002,6 +1002,26 @@ export type MaskedTransformerContrastiveLabelSource =
   | "none"
   | "human_corrections";
 export type MaskedTransformerRetrievalHeadArch = "mlp" | "linear";
+export type MaskedTransformerTrainingFreezeMode =
+  | "none"
+  | "transformer_frozen_projection_head_only";
+
+export interface MaskedTransformerJobSourceCreate {
+  continuous_embedding_job_id: string;
+  event_classification_job_id: string;
+  source_alias?: string | null;
+}
+
+export interface MaskedTransformerJobSource {
+  id: string;
+  masked_transformer_job_id: string;
+  source_order: number;
+  continuous_embedding_job_id: string;
+  event_classification_job_id: string;
+  source_alias: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface MaskedTransformerJob {
   id: string;
@@ -1009,6 +1029,7 @@ export interface MaskedTransformerJob {
   status_reason: string | null;
   continuous_embedding_job_id: string;
   event_classification_job_id: string | null;
+  source_count: number;
   training_signature: string;
   preset: MaskedTransformerPreset;
   mask_fraction: number;
@@ -1039,6 +1060,9 @@ export interface MaskedTransformerJob {
   contrastive_events_per_label: number;
   contrastive_max_unlabeled_fraction: number;
   contrastive_region_balance: boolean;
+  training_freeze_mode: MaskedTransformerTrainingFreezeMode;
+  source_masked_transformer_job_id: string | null;
+  negative_label_family_policy_json: string | null;
   max_epochs: number;
   early_stop_patience: number;
   val_split: number;
@@ -1059,6 +1083,7 @@ export interface MaskedTransformerJob {
 
 export interface MaskedTransformerJobDetail {
   job: MaskedTransformerJob;
+  sources: MaskedTransformerJobSource[];
   region_detection_job_id: string | null;
   region_start_timestamp: number | null;
   region_end_timestamp: number | null;
@@ -1067,9 +1092,10 @@ export interface MaskedTransformerJobDetail {
 }
 
 export interface MaskedTransformerJobCreate {
-  continuous_embedding_job_id: string;
+  continuous_embedding_job_id?: string;
   // Optional explicit Classify binding; defaults to most recent completed.
   event_classification_job_id?: string;
+  sources?: MaskedTransformerJobSourceCreate[];
   preset?: MaskedTransformerPreset;
   k_values?: number[];
   mask_fraction?: number;
@@ -1100,6 +1126,9 @@ export interface MaskedTransformerJobCreate {
   contrastive_events_per_label?: number;
   contrastive_max_unlabeled_fraction?: number;
   contrastive_region_balance?: boolean;
+  training_freeze_mode?: MaskedTransformerTrainingFreezeMode;
+  source_masked_transformer_job_id?: string | null;
+  negative_label_family_policy_json?: string | null;
   max_epochs?: number;
   early_stop_patience?: number;
   val_split?: number;
@@ -1174,6 +1203,40 @@ export interface GenerateMaskedTransformerInterpretationsRequest {
   k_values?: number[] | null;
 }
 
+export interface MaskedTransformerAnalysisRequest {
+  k?: number | null;
+  embedding_space?: "contextual" | "retrieval";
+  samples?: number;
+  topn?: number;
+  seed?: number;
+  retrieval_modes?: string[];
+  embedding_variants?: string[];
+  include_query_rows?: boolean;
+  include_neighbor_rows?: boolean;
+  include_event_level?: boolean;
+  include_geometry_report?: boolean;
+  geometry_embedding_spaces?: string[] | null;
+  geometry_random_pairs?: number;
+  geometry_pca_components?: number;
+}
+
+export interface MaskedTransformerAnalysisReport {
+  job: Record<string, unknown>;
+  options: Record<string, unknown>;
+  artifacts: Record<string, unknown>;
+  label_coverage: Record<string, unknown>;
+  results: Record<string, Record<string, Record<string, unknown>>>;
+  event_level_results: Record<string, Record<string, Record<string, unknown>>> | null;
+  representative_good_queries: Record<string, unknown>[];
+  representative_risky_queries: Record<string, unknown>[];
+  query_rows: Record<string, unknown>[];
+  neighbor_rows: Record<string, unknown>[];
+  geometry_report: {
+    spaces: Record<string, Record<string, unknown>>;
+    summary: Record<string, unknown>;
+  } | null;
+}
+
 export function fetchMaskedTransformerJobs(params?: {
   status?: string;
   continuous_embedding_job_id?: string;
@@ -1234,6 +1297,23 @@ export function postGenerateMaskedTransformerInterpretations(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+export function postMaskedTransformerAnalysisReport(
+  jobId: string,
+  body: MaskedTransformerAnalysisRequest,
+): Promise<MaskedTransformerAnalysisReport> {
+  return request(`${MT_ROOT}/${jobId}/nearest-neighbor-report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchLatestMaskedTransformerAnalysisReport(
+  jobId: string,
+): Promise<MaskedTransformerAnalysisReport> {
+  return request(`${MT_ROOT}/${jobId}/nearest-neighbor-report/latest`);
 }
 
 export function fetchMaskedTransformerLossCurve(
@@ -1404,6 +1484,36 @@ export function useGenerateMaskedTransformerInterpretations() {
         queryKey: ["masked-transformer-label-distribution", vars.jobId],
       });
     },
+  });
+}
+
+export function useRunMaskedTransformerAnalysis() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      body,
+    }: {
+      jobId: string;
+      body: MaskedTransformerAnalysisRequest;
+    }) => postMaskedTransformerAnalysisReport(jobId, body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({
+        queryKey: ["masked-transformer-analysis", vars.jobId],
+      });
+    },
+  });
+}
+
+export function useLatestMaskedTransformerAnalysis(
+  jobId: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["masked-transformer-analysis", jobId],
+    queryFn: () => fetchLatestMaskedTransformerAnalysisReport(jobId as string),
+    enabled: enabled && jobId != null,
+    retry: false,
   });
 }
 

@@ -120,7 +120,7 @@ function JobTable({
               <div className="flex items-center gap-2">
                 {job.status === "complete" && (
                   <Link
-                    to={`/app/sequence-models/masked-transformer/${job.id}`}
+                    to={`/app/sequence-models/mt-motif/${job.id}`}
                     className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
                     data-testid={`mt-job-open-${job.id}`}
                   >

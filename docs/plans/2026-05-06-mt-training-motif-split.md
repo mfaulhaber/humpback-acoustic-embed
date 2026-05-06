@@ -14,14 +14,14 @@
 - Modify: `src/humpback/schemas/sequence_models.py`
 
 **Acceptance criteria:**
-- [ ] Before running migration commands against a local database, back up the configured SQLite DB from `.env`: run `DB_PATH=$(awk -F= '/^HUMPBACK_DATABASE_URL=/{print $2}' .env | sed 's#^sqlite+aiosqlite:///##; s#^sqlite:///##')`, run `BACKUP="${DB_PATH}.$(date -u +%Y%m%dT%H%M%SZ).bak"`, run `cp "$DB_PATH" "$BACKUP"`, and run `test -s "$BACKUP"`.
-- [ ] Migration `074` creates `masked_transformer_job_sources` with source order, parent job ID, continuous-embedding job ID, event-classification job ID, optional source alias, and timestamps.
-- [ ] Migration uses `op.batch_alter_table()` for any changes to existing SQLite tables.
-- [ ] Migration adds uniqueness guarantees for `(masked_transformer_job_id, source_order)` and `(masked_transformer_job_id, continuous_embedding_job_id, event_classification_job_id)`.
-- [ ] SQLAlchemy model exposes `MaskedTransformerJobSource` and a relationship from `MaskedTransformerJob`.
-- [ ] Pydantic schemas include source create/output models and allow MT create payloads to carry `sources`.
-- [ ] Existing single-source fields on `masked_transformer_jobs` remain available and continue to represent the first source pair.
-- [ ] No historical row backfill is required because existing MT and embedding jobs have been deleted.
+- [x] Before running migration commands against a local database, back up the configured SQLite DB from `.env`: run `DB_PATH=$(awk -F= '/^HUMPBACK_DATABASE_URL=/{print $2}' .env | sed 's#^sqlite+aiosqlite:///##; s#^sqlite:///##')`, run `BACKUP="${DB_PATH}.$(date -u +%Y%m%dT%H%M%SZ).bak"`, run `cp "$DB_PATH" "$BACKUP"`, and run `test -s "$BACKUP"`.
+- [x] Migration `074` creates `masked_transformer_job_sources` with source order, parent job ID, continuous-embedding job ID, event-classification job ID, optional source alias, and timestamps.
+- [x] Migration uses `op.batch_alter_table()` for any changes to existing SQLite tables.
+- [x] Migration adds uniqueness guarantees for `(masked_transformer_job_id, source_order)` and `(masked_transformer_job_id, continuous_embedding_job_id, event_classification_job_id)`.
+- [x] SQLAlchemy model exposes `MaskedTransformerJobSource` and a relationship from `MaskedTransformerJob`.
+- [x] Pydantic schemas include source create/output models and allow MT create payloads to carry `sources`.
+- [x] Existing single-source fields on `masked_transformer_jobs` remain available and continue to represent the first source pair.
+- [x] No historical row backfill is required because existing MT and embedding jobs have been deleted.
 
 **Tests needed:**
 - Migration upgrade/downgrade tests assert the new table, constraints, nullable fields, and downgrade removal.
@@ -41,16 +41,16 @@
 - Modify: `tests/integration/test_sequence_models_submit.py`
 
 **Acceptance criteria:**
-- [ ] `create_masked_transformer_job` accepts either the legacy single-source fields or the new `sources` list.
-- [ ] Multi-source create requires every continuous-embedding job to be complete, `region_crnn`, and backed by an event-segmentation job.
-- [ ] Every selected Classify job must be complete and belong to the same segmentation as its paired embedding job.
-- [ ] Duplicate source pairs are rejected before the DB insert.
-- [ ] Source compatibility validation requires matching vector dimension, `model_version`, `chunk_size_seconds`, `chunk_hop_seconds`, `projection_kind`, and `projection_dim`.
-- [ ] Open spec question is resolved conservatively: `crnn_checkpoint_sha256` must match when every selected source has a non-null value; null values do not block mixed older rows.
-- [ ] Source rows are persisted in the selected order, and the first pair is also mirrored into the existing `continuous_embedding_job_id` and `event_classification_job_id` columns.
-- [ ] Training signature includes the normalized source-pair list and excludes `k_values`.
-- [ ] When `sources` is present, contrastive and projection-head-only ablation settings are forced to the non-contrastive defaults or rejected with a clear validation error.
-- [ ] Legacy single-source creation keeps existing contrastive functionality and existing idempotency behavior.
+- [x] `create_masked_transformer_job` accepts either the legacy single-source fields or the new `sources` list.
+- [x] Multi-source create requires every continuous-embedding job to be complete, `region_crnn`, and backed by an event-segmentation job.
+- [x] Every selected Classify job must be complete and belong to the same segmentation as its paired embedding job.
+- [x] Duplicate source pairs are rejected before the DB insert.
+- [x] Source compatibility validation requires matching vector dimension, `model_version`, `chunk_size_seconds`, `chunk_hop_seconds`, `projection_kind`, and `projection_dim`.
+- [x] Open spec question is resolved conservatively: `crnn_checkpoint_sha256` must match when every selected source has a non-null value; null values do not block mixed older rows.
+- [x] Source rows are persisted in the selected order, and the first pair is also mirrored into the existing `continuous_embedding_job_id` and `event_classification_job_id` columns.
+- [x] Training signature includes the normalized source-pair list and excludes `k_values`.
+- [x] When `sources` is present, contrastive and projection-head-only ablation settings are forced to the non-contrastive defaults or rejected with a clear validation error.
+- [x] Legacy single-source creation keeps existing contrastive functionality and existing idempotency behavior.
 
 **Tests needed:**
 - Service tests for multi-source success, source ordering, duplicate rejection, compatibility failures, segmentation mismatch, signature identity, and k-sweep exclusion.
@@ -68,15 +68,15 @@
 - Modify: `tests/services/test_masked_transformer_service.py`
 
 **Acceptance criteria:**
-- [ ] Worker loads all persisted source rows for a job and falls back to the mirrored single-source columns only for legacy single-source jobs.
-- [ ] Region sequence IDs are namespaced as `<source_index>:<region_id>` to avoid collisions.
-- [ ] Output rows in contextual embeddings, retrieval embeddings, retrieval head outputs, reconstruction error, and decoded token parquets preserve source metadata where practical: source index, continuous-embedding job ID, event-classification job ID, and original region ID.
-- [ ] The transformer trains once over the concatenated training sequences from all selected sources.
-- [ ] Per-k k-means tokenizers are fitted over the combined token embedding space.
-- [ ] Extend-k-sweep continues to reuse the trained model and embedding artifacts without retraining.
-- [ ] Per-k overlay, exemplar, and run-length artifacts remain generated for MT Training detail analysis.
-- [ ] Label distribution generation remains available for legacy/single-source jobs, but MT Training UI does not depend on it.
-- [ ] Worker writes `inference_manifest.json` with the model, tokenizer, source compatibility, and sequence-construction metadata required by the future MT Motif inference page.
+- [x] Worker loads all persisted source rows for a job and falls back to the mirrored single-source columns only for legacy single-source jobs.
+- [x] Region sequence IDs are namespaced as `<source_index>:<region_id>` to avoid collisions.
+- [x] Output rows in contextual embeddings, retrieval embeddings, retrieval head outputs, reconstruction error, and decoded token parquets preserve source metadata where practical: source index, continuous-embedding job ID, event-classification job ID, and original region ID.
+- [x] The transformer trains once over the concatenated training sequences from all selected sources.
+- [x] Per-k k-means tokenizers are fitted over the combined token embedding space.
+- [x] Extend-k-sweep continues to reuse the trained model and embedding artifacts without retraining.
+- [x] Per-k overlay, exemplar, and run-length artifacts remain generated for MT Training detail analysis.
+- [x] Label distribution generation remains available for legacy/single-source jobs, but MT Training UI does not depend on it.
+- [x] Worker writes `inference_manifest.json` with the model, tokenizer, source compatibility, and sequence-construction metadata required by the future MT Motif inference page.
 
 **Tests needed:**
 - Worker tests with two synthetic source parquets assert one combined training run, namespaced sequence IDs, source metadata columns, per-k bundles, and inference manifest contents.
@@ -95,13 +95,13 @@
 - Modify: `tests/integration/test_masked_transformer_retrieval_diagnostics_api.py`
 
 **Acceptance criteria:**
-- [ ] Nearest-neighbor diagnostics read source metadata from MT artifacts and source rows when present.
-- [ ] Label coverage and neighbor metrics resolve human labels using each row's own `event_classification_job_id`.
-- [ ] Existing single-source diagnostics continue to work unchanged.
-- [ ] `include_geometry_report=true` still returns contextual and retrieval geometry diagnostics, including unavailable retrieval rows when a job has no retrieval head.
-- [ ] Analysis POST can persist the latest report to `masked_transformer_jobs/{job_id}/analysis/latest_report.json`.
-- [ ] A GET endpoint returns the latest persisted report for page reloads, returning 404 when no report has been generated.
-- [ ] Persisted reports are produced by the existing Phase 0 report builder; no second diagnostics implementation is introduced.
+- [x] Nearest-neighbor diagnostics read source metadata from MT artifacts and source rows when present.
+- [x] Label coverage and neighbor metrics resolve human labels using each row's own `event_classification_job_id`.
+- [x] Existing single-source diagnostics continue to work unchanged.
+- [x] `include_geometry_report=true` still returns contextual and retrieval geometry diagnostics, including unavailable retrieval rows when a job has no retrieval head.
+- [x] Analysis POST can persist the latest report to `masked_transformer_jobs/{job_id}/analysis/latest_report.json`.
+- [x] A GET endpoint returns the latest persisted report for page reloads, returning 404 when no report has been generated.
+- [x] Persisted reports are produced by the existing Phase 0 report builder; no second diagnostics implementation is introduced.
 
 **Tests needed:**
 - Unit tests for multi-source label joins and mixed source metadata.
@@ -121,12 +121,12 @@
 - Create: `frontend/e2e/sequence-models/mt-training.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Sequence Models nav shows `MT Training` and `MT Motif`.
-- [ ] Current Masked Transformer routes redirect to or remain compatible with the renamed MT Motif route.
-- [ ] MT Training routes exist for list, detail, and analysis child pages.
-- [ ] Breadcrumbs distinguish MT Training job detail, MT Training analysis, and MT Motif.
-- [ ] Frontend API types include source create/output payloads and latest analysis report fetch/post hooks.
-- [ ] Existing MT Motif behavior remains available under the renamed nav entry.
+- [x] Sequence Models nav shows `MT Training` and `MT Motif`.
+- [x] Current Masked Transformer routes redirect to or remain compatible with the renamed MT Motif route.
+- [x] MT Training routes exist for list, detail, and analysis child pages.
+- [x] Breadcrumbs distinguish MT Training job detail, MT Training analysis, and MT Motif.
+- [x] Frontend API types include source create/output payloads and latest analysis report fetch/post hooks.
+- [x] Existing MT Motif behavior remains available under the renamed nav entry.
 
 **Tests needed:**
 - E2E tests for nav visibility, MT Motif route compatibility, MT Training route rendering, and breadcrumb labels.
@@ -140,7 +140,7 @@
 - Create: `frontend/src/components/sequence-models/MTTrainingJobsPage.tsx`
 - Create: `frontend/src/components/sequence-models/MTTrainingCreateForm.tsx`
 - Create: `frontend/src/components/sequence-models/MTTrainingDetailPage.tsx`
-- Create: `frontend/src/components/sequence-models/MTTrainingAnalysisSections.tsx`
+- Create: `frontend/src/components/sequence-models/MTAnalysisReportTables.tsx`
 - Modify: `frontend/src/components/sequence-models/MaskedTransformerDetailPage.tsx`
 - Modify: `frontend/src/components/sequence-models/MaskedTransformerCreateForm.test.tsx`
 - Create: `frontend/src/components/sequence-models/MTTrainingCreateForm.test.tsx`
@@ -148,15 +148,15 @@
 - Modify: `frontend/e2e/sequence-models/mt-training.spec.ts`
 
 **Acceptance criteria:**
-- [ ] MT Training create form supports adding and removing one or more source-pair rows.
-- [ ] Each source row filters Classify choices to the selected embedding job's segmentation.
-- [ ] Create form blocks duplicate pairs and incompatible selected sources before submit.
-- [ ] Create form does not render contrastive or projection-head-only ablation controls.
-- [ ] Submit payload sends `sources` and contrastive-off defaults.
-- [ ] MT Training list displays active and previous jobs with source count, total chunks, preset, k values, retrieval head mode, status/device, and actions.
-- [ ] MT Training detail shows metadata, source-pair table, model/artifact summary, loss curve, run-length histograms, UMAP/token overlay, exemplar gallery, and Analysis button.
-- [ ] MT Training detail omits token timeline, spectrogram playback, motif extraction, motif occurrence navigation, label distribution, and exemplar vocalization label badges.
-- [ ] Existing Masked Transformer detail code is reused or extracted where practical without changing MT Motif behavior.
+- [x] MT Training create form supports adding and removing one or more source-pair rows.
+- [x] Each source row filters Classify choices to the selected embedding job's segmentation.
+- [x] Create form blocks duplicate pairs and incompatible selected sources before submit.
+- [x] Create form does not render contrastive or projection-head-only ablation controls.
+- [x] Submit payload sends `sources` and contrastive-off defaults.
+- [x] MT Training list displays active and previous jobs with source count, total chunks, preset, k values, retrieval head mode, status/device, and actions.
+- [x] MT Training detail shows metadata, source-pair table, model/artifact summary, loss curve, run-length histograms, UMAP/token overlay, exemplar gallery, and Analysis button.
+- [x] MT Training detail omits token timeline, spectrogram playback, motif extraction, motif occurrence navigation, label distribution, and exemplar vocalization label badges.
+- [x] Existing Masked Transformer detail code is reused or extracted where practical without changing MT Motif behavior.
 
 **Tests needed:**
 - Component tests for source row interactions, filtered Classify dropdowns, submit payload, missing contrastive controls, and detail-page omission of disallowed sections.
@@ -174,13 +174,13 @@
 - Modify: `frontend/e2e/sequence-models/mt-training.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Analysis button posts to the Phase 0 nearest-neighbor report endpoint with all default retrieval modes, all default embedding variants, `include_event_level=true`, `include_geometry_report=true`, `include_query_rows=true`, and selected k.
-- [ ] Successful analysis navigates to `/app/sequence-models/mt-training/:jobId/analysis`.
-- [ ] Analysis child page loads the latest persisted report when the React Query cache is empty.
-- [ ] Report metadata, label coverage, aggregate retrieval metrics, event-level metrics, geometry diagnostics, representative good queries, and representative risky queries render as tables.
-- [ ] Green/yellow/red indicators are applied only to metrics with clear directionality from the spec.
-- [ ] Deferred metrics without clear directionality render without invented color thresholds.
-- [ ] Geometry diagnostic rows include backend bands, warnings, and unavailable-artifact status.
+- [x] Analysis button posts to the Phase 0 nearest-neighbor report endpoint with all default retrieval modes, all default embedding variants, `include_event_level=true`, `include_geometry_report=true`, `include_query_rows=true`, and selected k.
+- [x] Successful analysis navigates to `/app/sequence-models/mt-training/:jobId/analysis`.
+- [x] Analysis child page loads the latest persisted report when the React Query cache is empty.
+- [x] Report metadata, label coverage, aggregate retrieval metrics, event-level metrics, geometry diagnostics, representative good queries, and representative risky queries render as tables.
+- [x] Green/yellow/red indicators are applied only to metrics with clear directionality from the spec.
+- [x] Deferred metrics without clear directionality render without invented color thresholds.
+- [x] Geometry diagnostic rows include backend bands, warnings, and unavailable-artifact status.
 
 **Tests needed:**
 - Component tests for color classification rules and deferred uncolored metrics.
@@ -196,10 +196,10 @@
 - Modify: `DECISIONS.md`, if implementation resolves a durable architecture decision that should be recorded as an ADR
 
 **Acceptance criteria:**
-- [ ] Spec open questions resolved during implementation are updated or explicitly left deferred.
-- [ ] Plan checkboxes are updated to reflect completed work.
-- [ ] Any new durable architecture decision is captured in `DECISIONS.md`.
-- [ ] No unrelated documentation churn is introduced.
+- [x] Spec open questions resolved during implementation are updated or explicitly left deferred.
+- [x] Plan checkboxes are updated to reflect completed work.
+- [x] No new durable architecture decision required a `DECISIONS.md` entry.
+- [x] No unrelated documentation churn is introduced.
 
 **Tests needed:**
 - Documentation-only changes do not need dedicated tests beyond the full verification gates.

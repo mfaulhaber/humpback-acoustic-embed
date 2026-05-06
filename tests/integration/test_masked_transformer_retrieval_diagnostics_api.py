@@ -17,7 +17,11 @@ from humpback.models.call_parsing import (
     VocalizationCorrection,
 )
 from humpback.models.processing import JobStatus
-from humpback.models.sequence_models import ContinuousEmbeddingJob, MaskedTransformerJob
+from humpback.models.sequence_models import (
+    ContinuousEmbeddingJob,
+    MaskedTransformerJob,
+    MaskedTransformerJobSource,
+)
 from humpback.services.masked_transformer_service import serialize_k_values
 from humpback.storage import (
     continuous_embedding_parquet_path,
@@ -25,6 +29,7 @@ from humpback.storage import (
     masked_transformer_dir,
     masked_transformer_k_decoded_path,
     masked_transformer_k_dir,
+    masked_transformer_latest_analysis_report_path,
     masked_transformer_retrieval_embeddings_path,
 )
 
@@ -356,6 +361,161 @@ async def _seed_diagnostics_job(
         return mt.id
 
 
+async def _seed_multisource_diagnostics_job(app_settings) -> str:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    async with sf() as session:
+        source_records = []
+        for source_index, label in [(0, "Moan"), (1, "Growl")]:
+            rdj = RegionDetectionJob(
+                status=JobStatus.complete.value,
+                hydrophone_id="rpi_orcasound_lab",
+                start_timestamp=1_000.0,
+                end_timestamp=1_100.0,
+            )
+            session.add(rdj)
+            await session.flush()
+            seg = EventSegmentationJob(
+                status=JobStatus.complete.value,
+                region_detection_job_id=rdj.id,
+            )
+            session.add(seg)
+            await session.flush()
+            cls = EventClassificationJob(
+                status=JobStatus.complete.value,
+                event_segmentation_job_id=seg.id,
+            )
+            session.add(cls)
+            await session.flush()
+            cej = ContinuousEmbeddingJob(
+                status=JobStatus.complete.value,
+                event_segmentation_job_id=seg.id,
+                region_detection_job_id=rdj.id,
+                model_version="crnn-call-parsing-pytorch",
+                target_sample_rate=32000,
+                encoding_signature=f"retrieval-diag-ms-{seg.id}",
+                total_chunks=1,
+                total_regions=1,
+                vector_dim=3,
+            )
+            session.add(cej)
+            await session.flush()
+            session.add(
+                VocalizationCorrection(
+                    region_detection_job_id=rdj.id,
+                    start_sec=0.0,
+                    end_sec=0.5,
+                    type_name=label,
+                    correction_type="add",
+                )
+            )
+            source_records.append((source_index, rdj, seg, cls, cej, label))
+
+        first = source_records[0]
+        mt = MaskedTransformerJob(
+            status=JobStatus.complete.value,
+            continuous_embedding_job_id=first[4].id,
+            event_classification_job_id=first[3].id,
+            training_signature=f"retrieval-diag-ms-mt-{first[2].id}",
+            k_values=serialize_k_values([100]),
+            total_sequences=2,
+            total_chunks=2,
+        )
+        session.add(mt)
+        await session.flush()
+        for source_index, _rdj, _seg, cls, cej, label in source_records:
+            session.add(
+                MaskedTransformerJobSource(
+                    masked_transformer_job_id=mt.id,
+                    source_order=source_index,
+                    continuous_embedding_job_id=cej.id,
+                    event_classification_job_id=cls.id,
+                    source_alias=label,
+                )
+            )
+        await session.commit()
+        await session.refresh(mt)
+
+        embedding_rows = []
+        decoded_rows = []
+        for source_index, _rdj, seg, cls, cej, _label in source_records:
+            segmentation_job_dir(app_settings.storage_root, seg.id).mkdir(
+                parents=True, exist_ok=True
+            )
+            write_events(
+                segmentation_job_dir(app_settings.storage_root, seg.id)
+                / "events.parquet",
+                [_event("E1", "R1", 0.0, 0.5)],
+            )
+            ce_row = {
+                "region_id": "R1",
+                "hydrophone_id": "rpi_orcasound_lab",
+                "chunk_index_in_region": 0,
+                "audio_file_id": source_index + 1,
+                "start_timestamp": 1_000.0,
+                "end_timestamp": 1_000.25,
+                "is_in_pad": False,
+                "call_probability": 0.95,
+                "event_overlap_fraction": 1.0,
+                "nearest_event_id": "E1",
+                "distance_to_nearest_event_seconds": 0.0,
+                "tier": "event_core",
+                "embedding": [1.0, float(source_index), 0.0],
+            }
+            continuous_embedding_parquet_path(
+                app_settings.storage_root, cej.id
+            ).parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(
+                pa.Table.from_pylist([ce_row]),
+                continuous_embedding_parquet_path(app_settings.storage_root, cej.id),
+            )
+            namespaced_region = f"{source_index}:R1"
+            source_metadata = {
+                "source_index": source_index,
+                "continuous_embedding_job_id": cej.id,
+                "event_classification_job_id": cls.id,
+                "original_region_id": "R1",
+            }
+            embedding_rows.append(
+                {
+                    **ce_row,
+                    **source_metadata,
+                    "region_id": namespaced_region,
+                }
+            )
+            decoded_rows.append(
+                {
+                    "sequence_id": namespaced_region,
+                    "position": 0,
+                    "label": source_index,
+                    "confidence": 0.75,
+                    "audio_file_id": source_index + 1,
+                    "start_timestamp": 1_000.0,
+                    "end_timestamp": 1_000.25,
+                    "tier": "event_core",
+                    "chunk_index_in_region": 0,
+                    "region_id": namespaced_region,
+                    **source_metadata,
+                }
+            )
+
+        mt_dir = masked_transformer_dir(app_settings.storage_root, mt.id)
+        mt_dir.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.Table.from_pylist(embedding_rows),
+            masked_transformer_contextual_embeddings_path(
+                app_settings.storage_root, mt.id
+            ),
+        )
+        k_dir = masked_transformer_k_dir(app_settings.storage_root, mt.id, 100)
+        k_dir.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.Table.from_pylist(decoded_rows),
+            masked_transformer_k_decoded_path(app_settings.storage_root, mt.id, 100),
+        )
+        return mt.id
+
+
 async def test_nearest_neighbor_report_returns_aggregate_metrics(client, app_settings):
     job_id = await _seed_diagnostics_job(app_settings)
 
@@ -388,6 +548,39 @@ async def test_nearest_neighbor_report_returns_aggregate_metrics(client, app_set
     assert body["geometry_report"] is None
 
 
+async def test_nearest_neighbor_report_uses_each_source_label_context(
+    client, app_settings
+):
+    job_id = await _seed_multisource_diagnostics_job(app_settings)
+
+    response = await client.post(
+        f"/sequence-models/masked-transformers/{job_id}/nearest-neighbor-report",
+        json={
+            "k": 100,
+            "samples": 2,
+            "topn": 1,
+            "retrieval_modes": ["unrestricted"],
+            "embedding_variants": ["raw_l2"],
+            "include_query_rows": True,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["label_coverage"]["human_label_chunk_counts"] == {
+        "Moan": 1,
+        "Growl": 1,
+    }
+    assert body["label_coverage"]["human_label_event_counts"] == {
+        "Moan": 1,
+        "Growl": 1,
+    }
+    assert {row["query_human_types"] for row in body["query_rows"]} == {
+        "Moan",
+        "Growl",
+    }
+
+
 async def test_nearest_neighbor_report_returns_geometry_when_requested(
     client, app_settings
 ):
@@ -418,6 +611,50 @@ async def test_nearest_neighbor_report_returns_geometry_when_requested(
         == "retrieval_artifact_unavailable"
     )
     assert geometry["summary"]["lambda_sweeps_blocked"] is False
+
+
+async def test_nearest_neighbor_report_persists_latest_report(client, app_settings):
+    job_id = await _seed_diagnostics_job(app_settings)
+
+    response = await client.post(
+        f"/sequence-models/masked-transformers/{job_id}/nearest-neighbor-report",
+        json={
+            "k": 100,
+            "samples": 1,
+            "topn": 1,
+            "include_event_level": True,
+            "include_geometry_report": True,
+            "geometry_random_pairs": 500,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    path = masked_transformer_latest_analysis_report_path(
+        app_settings.storage_root, job_id
+    )
+    assert path.exists()
+
+    latest = await client.get(
+        f"/sequence-models/masked-transformers/{job_id}/nearest-neighbor-report/latest"
+    )
+
+    assert latest.status_code == 200, latest.text
+    latest_body = latest.json()
+    assert latest_body["job"]["job_id"] == job_id
+    assert latest_body["options"]["include_geometry_report"] is True
+    assert latest_body["geometry_report"] is not None
+
+
+async def test_latest_nearest_neighbor_report_returns_404_before_run(
+    client, app_settings
+):
+    job_id = await _seed_diagnostics_job(app_settings)
+
+    response = await client.get(
+        f"/sequence-models/masked-transformers/{job_id}/nearest-neighbor-report/latest"
+    )
+
+    assert response.status_code == 404
 
 
 async def test_nearest_neighbor_report_flags_saturated_retrieval_geometry(
