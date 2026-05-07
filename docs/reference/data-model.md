@@ -1,6 +1,8 @@
 # Data Model Summary
 
-> Read this when working on database models, migrations, or API schemas.
+> Agent startup context lives in `docs/agent-context/`. Read the relevant
+> domain capsule first. Use this file when working on database models,
+> migrations, or API schemas.
 
 Condensed model reference. For full field lists, see `src/humpback/database.py`.
 

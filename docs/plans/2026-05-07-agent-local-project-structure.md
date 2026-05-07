@@ -2,6 +2,8 @@
 
 **Goal:** Implement the Option B documentation structure so agents start from small domain-local context capsules while preserving existing reference docs and full verification gates.
 **Spec:** [docs/specs/2026-05-07-agent-local-project-structure-design.md](../specs/2026-05-07-agent-local-project-structure-design.md)
+**Primary domain:** `core-platform`
+**Neighbor domains:** `frontend-shell`, `signal-timeline`, `ingest-detection`, `vocalization-clustering`, `call-parsing`, `sequence-models`
 
 ---
 
@@ -15,11 +17,11 @@
 - Create: `docs/agent-context/test-map.md`
 
 **Acceptance criteria:**
-- [ ] `README.md` explains that `CLAUDE.md` stays global and `docs/agent-context/` is the domain-local loading layer.
-- [ ] `domain-map.md` maps task keywords and changed file paths to one primary domain and likely neighbor domains.
-- [ ] `global-invariants.md` contains only cross-domain invariants that all implementation agents should know.
-- [ ] `current-state.md` moves active capability summaries out of global startup context and groups them by domain.
-- [ ] `test-map.md` lists domain-oriented backend and frontend verification commands without weakening the full-suite gate.
+- [x] `README.md` explains that `CLAUDE.md` stays global and `docs/agent-context/` is the domain-local loading layer.
+- [x] `domain-map.md` maps task keywords and changed file paths to one primary domain and likely neighbor domains.
+- [x] `global-invariants.md` contains only cross-domain invariants that all implementation agents should know.
+- [x] `current-state.md` moves active capability summaries out of global startup context and groups them by domain.
+- [x] `test-map.md` lists domain-oriented backend and frontend verification commands without weakening the full-suite gate.
 
 **Tests needed:**
 - Documentation review for consistency with the design spec.
@@ -60,11 +62,11 @@
 - Create: `docs/agent-context/domains/frontend-shell/references.md`
 
 **Acceptance criteria:**
-- [ ] Each domain `README.md` states when to load the domain, source paths, service/API/worker paths, frontend paths, artifact roots, and likely neighbor domains.
-- [ ] Each `invariants.md` contains only local non-obvious rules that affect correctness or agent decision-making.
-- [ ] Each `tests.md` gives a small smoke command, normal domain command, and expansion commands for API/frontend/storage changes.
-- [ ] Each `references.md` points to existing `docs/reference/` files and ADR headings rather than duplicating long reference material.
-- [ ] Capsules remain short enough that agents can load one primary domain and one neighbor domain without pulling in broad unrelated context.
+- [x] Each domain `README.md` states when to load the domain, source paths, service/API/worker paths, frontend paths, artifact roots, and likely neighbor domains.
+- [x] Each `invariants.md` contains only local non-obvious rules that affect correctness or agent decision-making.
+- [x] Each `tests.md` gives a small smoke command, normal domain command, and expansion commands for API/frontend/storage changes.
+- [x] Each `references.md` points to existing `docs/reference/` files and ADR headings rather than duplicating long reference material.
+- [x] Capsules remain short enough that agents can load one primary domain and one neighbor domain without pulling in broad unrelated context.
 
 **Tests needed:**
 - Documentation review against current source, test, frontend, and reference paths.
@@ -79,11 +81,11 @@
 - Modify: `AGENTS.md`
 
 **Acceptance criteria:**
-- [ ] `CLAUDE.md` keeps universal development rules, universal invariants, workflow pointers, and final verification gates.
-- [ ] `CLAUDE.md` routes domain-specific work to `docs/agent-context/README.md` and `docs/agent-context/domain-map.md`.
-- [ ] Long current-state, schema, sensitive-component, API-surface, timeline, and sequence-model details are removed from global context or reduced to short pointers.
-- [ ] `AGENTS.md` tells Codex to load the relevant domain capsule during Context and before planning/implementing.
-- [ ] The rule that `CLAUDE.md` remains authoritative is preserved.
+- [x] `CLAUDE.md` keeps universal development rules, universal invariants, workflow pointers, and final verification gates.
+- [x] `CLAUDE.md` routes domain-specific work to `docs/agent-context/README.md` and `docs/agent-context/domain-map.md`.
+- [x] Long current-state, schema, sensitive-component, API-surface, timeline, and sequence-model details are removed from global context or reduced to short pointers.
+- [x] `AGENTS.md` tells Codex to load the relevant domain capsule during Context and before planning/implementing.
+- [x] The rule that `CLAUDE.md` remains authoritative is preserved.
 
 **Tests needed:**
 - Documentation review to confirm no universal safety rule was removed.
@@ -100,11 +102,11 @@
 - Modify: `docs/workflows/session-review.md`
 
 **Acceptance criteria:**
-- [ ] `session-begin` summarizes project state without requiring agents to read every domain capsule.
-- [ ] `session-plan` requires selecting the primary domain and likely neighbor domains before writing a plan.
-- [ ] `session-implement` requires loading the selected domain capsules and using `docs/agent-context/test-map.md` before falling back to filename heuristics.
-- [ ] `session-review` checks that modified docs updated the matching domain capsule or intentionally left it unchanged.
-- [ ] Existing branch, commit, database-backup, and final-verification behavior remains intact.
+- [x] `session-begin` summarizes project state without requiring agents to read every domain capsule.
+- [x] `session-plan` requires selecting the primary domain and likely neighbor domains before writing a plan.
+- [x] `session-implement` requires loading the selected domain capsules and using `docs/agent-context/test-map.md` before falling back to filename heuristics.
+- [x] `session-review` checks that modified docs updated the matching domain capsule or intentionally left it unchanged.
+- [x] Existing branch, commit, database-backup, and final-verification behavior remains intact.
 
 **Tests needed:**
 - Documentation review against the current workflow order.
@@ -125,11 +127,11 @@
 - Modify: `docs/agent-context/domains/frontend-shell/tests.md`
 
 **Acceptance criteria:**
-- [ ] Every domain has one fast backend command when backend files are touched.
-- [ ] Every frontend-relevant domain points to the matching Playwright specs or TypeScript checks.
-- [ ] Cross-domain changes have explicit expansion guidance rather than defaulting immediately to full-suite-only feedback.
-- [ ] The docs clearly state that `uv run pytest tests/` remains the authoritative final backend gate.
-- [ ] No pytest markers, Make targets, or helper scripts are required in this first implementation.
+- [x] Every domain has one fast backend command when backend files are touched.
+- [x] Every frontend-relevant domain points to the matching Playwright specs or TypeScript checks.
+- [x] Cross-domain changes have explicit expansion guidance rather than defaulting immediately to full-suite-only feedback.
+- [x] The docs clearly state that `uv run pytest tests/` remains the authoritative final backend gate.
+- [x] No pytest markers, Make targets, or helper scripts are required in this first implementation.
 
 **Tests needed:**
 - Run representative documented backend commands for at least `call-parsing`, `sequence-models`, and `signal-timeline` if time permits.
@@ -146,10 +148,10 @@
 - Modify: `docs/reference/testing.md`
 
 **Acceptance criteria:**
-- [ ] Existing top-level reference docs remain valid and do not become broken stubs.
-- [ ] Each broad reference file points agents toward the new domain capsules for task startup context.
-- [ ] No historical specs, plans, or ADR links need to change.
-- [ ] The design's later reference split remains documented as future work, not silently started in this implementation.
+- [x] Existing top-level reference docs remain valid and do not become broken stubs.
+- [x] Each broad reference file points agents toward the new domain capsules for task startup context.
+- [x] No historical specs, plans, or ADR links need to change.
+- [x] The design's later reference split remains documented as future work, not silently started in this implementation.
 
 **Tests needed:**
 - Documentation review for link compatibility.
@@ -166,4 +168,3 @@ Run in order after all tasks:
 3. `git status --short`
 
 No Python or frontend source files are expected. If implementation unexpectedly modifies Python files, also run `uv run ruff format --check <modified-python-files>`, `uv run ruff check <modified-python-files>`, and `uv run pyright <modified-python-files>`. If implementation unexpectedly modifies frontend files, also run `cd frontend && npx tsc --noEmit`.
-

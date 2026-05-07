@@ -1,6 +1,9 @@
 # Testing Requirements
 
-> Read this when adding tests, setting up test infrastructure, or working on CI.
+> Agent startup context lives in `docs/agent-context/`. Read
+> `docs/agent-context/test-map.md` and the relevant domain `tests.md` first.
+> Use this file when adding tests, setting up test infrastructure, or working
+> on CI.
 
 Testing is not optional. Every meaningful change must include:
 - unit tests for new logic

@@ -24,9 +24,12 @@ When using the superpowers brainstorming skill before this step:
 3. **Create feature branch** — `feature/<feature-name>` from main
 
 4. **Break the spec into discrete implementation tasks**
+   - Select one primary domain and any directly affected neighbor domains using `docs/agent-context/domain-map.md`
+   - Read the selected domain capsules before writing tasks
+   - Record the selected domains near the top of the plan
    - Each task has: title, file paths (create/modify), acceptance criteria (checkboxes), test requirements
    - No code blocks in tasks — describe what to do, not how
-   - If any task includes an Alembic migration, its first acceptance criterion must be the CLAUDE.md §3.5 database backup step with the explicit commands (read path from `.env`, copy with UTC timestamp, verify non-zero size). This is not a parenthetical — it is a blocking prerequisite.
+   - If any task includes an Alembic migration, its first acceptance criterion must be the CLAUDE.md database backup rule with the explicit commands (read path from `.env`, copy with UTC timestamp, verify non-zero size). This is not a parenthetical — it is a blocking prerequisite.
    - Include a verification section at the end with the exact commands to run
 
 5. **Write the plan** to `docs/plans/YYYY-MM-DD-<feature>.md`
@@ -40,6 +43,8 @@ When using the superpowers brainstorming skill before this step:
 
 **Goal:** One sentence describing what this builds
 **Spec:** Link to docs/specs/ file
+**Primary domain:** domain name from docs/agent-context/domain-map.md
+**Neighbor domains:** domain names, or "none"
 
 ---
 

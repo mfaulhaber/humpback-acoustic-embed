@@ -12,6 +12,7 @@ Work through the plan tasks sequentially, then commit all changes as a single ba
 1. **Confirm branch and read plan**
    - Verify you are on a `feature/*` branch; if on main, stop
    - Read the plan from `docs/plans/`
+   - Read the selected domain capsule(s) recorded in the plan; if the plan predates domain capsules, select domains with `docs/agent-context/domain-map.md`
    - Restate the task scope in one sentence
 
 2. **Identify affected files** before editing anything
@@ -31,14 +32,15 @@ Work through the plan tasks sequentially, then commit all changes as a single ba
    - Check off acceptance criteria in the plan as you go
    - **Per-task testing** — after completing each task:
      1. Identify source files modified in this task
-     2. Map them to test files using path conventions:
+     2. Use `docs/agent-context/test-map.md` and the selected domain `tests.md` files to choose targeted tests
+     3. If the domain map does not cover the modified source files, map them to test files using path conventions:
         - `src/humpback/<module>.py` → `tests/unit/test_<module>*.py`
         - `src/humpback/<subdir>/<module>.py` → `tests/unit/test_<subdir>_<module>*.py` and `tests/unit/test_<module>*.py`
         - API routes in `src/humpback/api/` → also include matching `tests/integration/` files
         - Union all mapped test files into a single `pytest` invocation
-     3. Run the targeted tests inline (skip if no matching test files found)
-     4. Spawn a background sub-agent (`run_in_background: true`) to run the full suite (`uv run pytest tests/ -q`). The agent reports only a summary: pass/fail counts and, on failure, test names with short error descriptions. Do not include full pytest output in the summary. Only one background test agent at a time — skip spawning if one is already in flight.
-     5. If a background agent reports failures, pause and fix the regression before continuing to the next task
+     4. Run the targeted tests inline (skip only when no matching test command or file exists, as with docs-only tasks)
+     5. If the current agent tooling supports explicitly delegated background testing, run one background full suite (`uv run pytest tests/ -q`) at a time and consume only its short pass/fail summary. If not, rely on the final full-suite gate.
+     6. If any targeted or background test reports failures, pause and fix the regression before continuing to the next task
 
 6. **Run verification gates** after all tasks complete:
    - `uv run ruff format --check` on modified Python files
@@ -49,7 +51,8 @@ Work through the plan tasks sequentially, then commit all changes as a single ba
 
 7. **Fix any verification failures**
 
-8. **Update documentation** per CLAUDE.md §3.6 doc-update matrix
+8. **Update documentation** per CLAUDE.md documentation rules
+   - Also update the relevant `docs/agent-context/domains/*/` capsule when the change affects domain-local agent operating context
 
 9. **Single batched commit** covering all tasks and test additions
 

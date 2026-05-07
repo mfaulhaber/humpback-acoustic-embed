@@ -1,5 +1,9 @@
 # Behavioral Constraints
 
+> Agent startup context lives in `docs/agent-context/`. Read the relevant
+> domain capsule first, then use this file for detailed cross-domain behavioral
+> constraints.
+
 Non-obvious constraints that are not immediately derivable from code.
 
 ## Job System
