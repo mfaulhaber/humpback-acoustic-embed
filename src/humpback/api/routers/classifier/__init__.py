@@ -8,9 +8,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from humpback.api.routers.classifier.autoresearch import (
-    router as autoresearch_router,
-)
 from humpback.api.routers.classifier.detection import (
     _DecodedAudioCache,
     _NoaaPlaybackProviderRegistry,
@@ -34,7 +31,6 @@ from humpback.api.routers.classifier.training import router as training_router
 from humpback.classifier.providers import build_archive_playback_provider
 
 router = APIRouter(prefix="/classifier", tags=["classifier"])
-router.include_router(autoresearch_router)
 router.include_router(models_router)
 router.include_router(training_router)
 router.include_router(detection_router)

@@ -60,9 +60,6 @@
                                            (PCEN-normalized spectrogram tiles; renderer id/version and tile geometry are cache identity)
   {job_id}/.cache_version                  (legacy per-job cache marker; current is 2. Migrations run on first legacy access)
   {job_id}/.prepare.lock                   (advisory flock for exclusive classifier prepare ownership)
-/cleanup-manifests/
-  {timestamp}-legacy-workflow-removal.json (manifest written by scripts/cleanup_legacy_workflows.py)
-  {timestamp}-sequence-models-hmm-mt.json (manifest written by scripts/cleanup_sequence_model_artifacts.py)
 ```
 
 Timeline tile image writes now use the shared `spans/{span_key}/...`
@@ -72,7 +69,7 @@ timestamps. Classifier timelines, region timelines, and review workspaces share
 one tile set when they point at the same hydrophone span. The legacy
 `{job_id}/...` layout is kept only for migration/version-marker compatibility.
 
-Legacy roots removed by archive-backed cleanup:
+Legacy roots retired from the active storage contract:
 
 - `/audio/raw/`
 - `/embeddings/`
@@ -81,9 +78,8 @@ Legacy roots removed by archive-backed cleanup:
 - `/masked_transformer_jobs/`
 - `/motif_extractions/`
 
-Those paths may still exist in historical environments until
-`scripts/cleanup_legacy_workflows.py --apply --archive-root ...` is run, but
-they are no longer part of the active storage contract.
+Those paths may still exist in historical environments, but current runtime
+code should not create or depend on them.
 
 Timeline audio endpoint supports `format=mp3` for compressed playback (128kbps mono, up to 600s segments). Playback audio is RMS-scaled to `playback_target_rms_dbfs` with a `tanh` soft-clip before encoding.
 

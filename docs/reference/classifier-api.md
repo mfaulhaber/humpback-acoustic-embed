@@ -32,7 +32,8 @@ UI-driven manifest generation + random search:
 
 ## Autoresearch Candidate Review and Promotion
 
-Relocated under `/classifier/hyperparameter/candidates/*`; old `/classifier/autoresearch-candidates/*` paths still work:
+Candidate review and promotion lives under
+`/classifier/hyperparameter/candidates/*`:
 
 - `POST /classifier/hyperparameter/candidates/import`
 - `GET /classifier/hyperparameter/candidates`
@@ -40,7 +41,7 @@ Relocated under `/classifier/hyperparameter/candidates/*`; old `/classifier/auto
 - `DELETE /classifier/hyperparameter/candidates/{candidate_id}` — delete candidate
 - `POST /classifier/hyperparameter/candidates/{candidate_id}/training-jobs`
 
-Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model. After candidate-backed training completes, the training job's `source_comparison_context` and the model's `training_summary` include a `replay_verification` dict with status (`"verified"`/`"mismatch"`), per-split metric comparisons, and effective config. The candidate detail endpoint (`GET /classifier/autoresearch-candidates/{id}`) also exposes `replay_verification` when the linked model exists.
+Candidate-backed promotion imports reviewed autoresearch artifacts, persists a durable `AutoresearchCandidate`, and creates manifest-backed training jobs that keep source candidate and comparison provenance on both the training job and resulting classifier model. After candidate-backed training completes, the training job's `source_comparison_context` and the model's `training_summary` include a `replay_verification` dict with status (`"verified"`/`"mismatch"`), per-split metric comparisons, and effective config. The candidate detail endpoint (`GET /classifier/hyperparameter/candidates/{id}`) also exposes `replay_verification` when the linked model exists.
 
 ## Retired Embedding-Set Training
 
@@ -73,4 +74,4 @@ creation is retired: `GET /retrain-info` returns 404 for current models, and
 
 ## Timeline Export
 
-- `POST /classifier/detection-jobs/{id}/timeline/export` — export a completed detection job's timeline as a self-contained static bundle (tiles, MP3 audio, JSON manifest) for hosting as a readonly viewer on S3. Also available as `scripts/export_timeline.py` CLI.
+- `POST /classifier/detection-jobs/{id}/timeline/export` — export a completed detection job's timeline as a self-contained static bundle (tiles, MP3 audio, JSON manifest) for hosting as a readonly viewer on S3.
