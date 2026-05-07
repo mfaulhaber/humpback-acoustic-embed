@@ -81,7 +81,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"status": "starting", "db": "unknown"}
 
     import humpback.models.classifier  # noqa: F401 — register tables
-    import humpback.models.label_processing  # noqa: F401 — register tables
     import humpback.models.labeling  # noqa: F401 — register tables
     import humpback.models.vocalization  # noqa: F401 — register tables
 

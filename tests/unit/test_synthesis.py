@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from humpback.classifier.label_processor import (
+from tests.helpers.synthesis import (
     _raised_cosine_fade,
     synthesize_clean_window,
     synthesize_variants,

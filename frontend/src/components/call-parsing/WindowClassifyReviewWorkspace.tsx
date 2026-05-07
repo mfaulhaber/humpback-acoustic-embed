@@ -11,7 +11,6 @@ import {
   useUpsertEventBoundaryCorrections,
 } from "@/hooks/queries/useCallParsing";
 import { useVocClassifierModel } from "@/hooks/queries/useVocalization";
-import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { regionTileUrl } from "@/api/client";
 import type {
   Region,
@@ -95,7 +94,6 @@ export function WindowClassifyReviewWorkspace({
   initialJobId?: string;
 }) {
   const { data: wcJobs = [] } = useWindowClassificationJobs(0);
-  const { data: hydrophones = [] } = useHydrophones();
   const { data: segJobs = [] } = useSegmentationJobs(0);
 
   const completeJobs = useMemo(
@@ -1091,7 +1089,6 @@ export function WindowClassifyReviewWorkspace({
                 stripScores={stripScores}
                 selectedEventId={selectedEventId}
                 allEvents={allEvents}
-                allScoreRows={allScoreRows}
                 onSelectEvent={(idx) => {
                   setSelectedEventIdx(idx);
                   setSelectedAddedEventId(null);
@@ -1151,7 +1148,6 @@ interface WindowClassifyViewerBodyProps {
   stripScores: (number | null)[];
   selectedEventId: string | null;
   allEvents: EventWithRegion[];
-  allScoreRows: WindowScoreRow[];
   onSelectEvent: (globalIndex: number) => void;
   onSelectAddedEvent: (eventId: string) => void;
   regionEffectiveEvents: EffectiveEvent[];
@@ -1168,7 +1164,6 @@ function WindowClassifyViewerBody({
   stripScores,
   selectedEventId,
   allEvents,
-  allScoreRows,
   onSelectEvent,
   onSelectAddedEvent,
   regionEffectiveEvents,

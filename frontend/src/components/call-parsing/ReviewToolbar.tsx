@@ -12,7 +12,6 @@ export interface RetrainStatus {
 
 interface ReviewToolbarProps {
   region: Region | null;
-  eventCount: number;
   pendingChangeCount: number;
   isDirty: boolean;
   addMode: boolean;
@@ -38,7 +37,6 @@ interface ReviewToolbarProps {
 
 export function ReviewToolbar({
   region,
-  eventCount,
   pendingChangeCount,
   isDirty,
   addMode,

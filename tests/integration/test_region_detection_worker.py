@@ -11,9 +11,6 @@ Hydrophone-source worker integration is deferred — see
 
 from __future__ import annotations
 
-import math
-import struct
-import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,6 +29,7 @@ from humpback.processing.inference import FakeTFLiteModel
 from humpback.schemas.call_parsing import RegionDetectionConfig
 from humpback.workers.queue import recover_stale_jobs
 from humpback.workers.region_detection_worker import run_one_iteration
+from tests.helpers.audio import write_sine_wav
 
 
 @pytest.fixture
@@ -53,20 +51,6 @@ def _make_settings(tmp_path: Path) -> Settings:
     )
 
 
-def _write_sine_wav(path: Path, duration_sec: float, sample_rate: int = 16000) -> None:
-    n = int(sample_rate * duration_sec)
-    samples = [
-        int(32767 * 0.7 * math.sin(2 * math.pi * 440 * i / sample_rate))
-        for i in range(n)
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{n}h", *samples))
-
-
 def _synthetic_classifier() -> Pipeline:
     """Real sklearn Pipeline trained to fire on sin-shaped embeddings.
 
@@ -85,7 +69,7 @@ def _synthetic_classifier() -> Pipeline:
 async def _seed_fixture(session_factory, tmp_path: Path) -> tuple[str, str, str]:
     audio_dir = tmp_path / "audio_src"
     audio_path = audio_dir / "sample_20260411T000000Z.wav"
-    _write_sine_wav(audio_path, duration_sec=12.0)
+    write_sine_wav(audio_path, duration_sec=12.0)
 
     async with session_factory() as session:
         audio_file = AudioFile(

@@ -7,7 +7,7 @@ import {
   detectionSpectrogramUrl,
   detectionAudioSliceUrl,
 } from "@/api/client";
-import type { DetectionJob, DetectionRow, NeighborHit } from "@/api/types";
+import type { DetectionJob, NeighborHit } from "@/api/types";
 import {
   useLabelingSummary,
   useVocalizationLabels,
@@ -29,10 +29,6 @@ import {
 
 type FilterMode = "all" | "unlabeled" | "labeled";
 type SortMode = "confidence" | "time";
-
-function normalizeLabel(raw: string): string {
-  return raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 function formatUtcDateTime(timestampSeconds: number): string {
   const date = new Date(timestampSeconds * 1000);
@@ -253,20 +249,6 @@ export function LabelingTab() {
     [],
   );
 
-  // Unique normalized inferred labels from neighbor hits for annotation dropdown
-  const inferredLabelOptions = useMemo(() => {
-    const hits = neighborsQuery.data?.hits ?? [];
-    const seen = new Set<string>();
-    const options: { value: string; raw: string }[] = [];
-    for (const hit of hits) {
-      if (hit.inferred_label && !seen.has(hit.inferred_label)) {
-        seen.add(hit.inferred_label);
-        options.push({ value: normalizeLabel(hit.inferred_label), raw: hit.inferred_label });
-      }
-    }
-    return options;
-  }, [neighborsQuery.data]);
-
   // ---- Navigation helpers ----
   const goNext = useCallback(() => {
     setCurrentIndex((i) => Math.min(i + 1, filteredRows.length - 1));
@@ -364,10 +346,6 @@ export function LabelingTab() {
       currentClip.durationSec,
     );
   }, [selectedJobId, currentClip]);
-
-  const currentClipDuration = useMemo(() => {
-    return currentClip?.durationSec ?? 0;
-  }, [currentClip]);
 
   const currentDetectionName = useMemo(() => {
     if (!currentRow) return null;

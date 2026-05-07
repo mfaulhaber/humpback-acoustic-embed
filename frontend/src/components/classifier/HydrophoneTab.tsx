@@ -1689,7 +1689,6 @@ function HydrophoneContentTable({
   onClearRowEdit: (jobId: string, rk: string) => void;
   labelEdits: Map<string, Partial<Record<LabelField, number | null>>> | null;
 }) {
-  const navigate = useNavigate();
   const { data: rows = [], isLoading } = useDetectionContent(
     jobId,
     isRunning ? 3000 : undefined,

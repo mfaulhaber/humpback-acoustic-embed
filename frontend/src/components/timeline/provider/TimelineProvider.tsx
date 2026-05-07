@@ -1,4 +1,4 @@
-import React, { createContext, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef } from "react";
+import { createContext, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef } from "react";
 import type { TimelineContextValue, TimelinePlaybackHandle, TimelineProviderProps, ZoomPreset } from "./types";
 import { usePlayback } from "./usePlayback";
 

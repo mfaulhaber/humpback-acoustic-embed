@@ -21,11 +21,11 @@
 - Delete: `frontend/src/utils/audio.ts`
 
 **Acceptance criteria:**
-- [ ] Production import search confirms every deleted file has no remaining frontend import.
-- [ ] The provider-based `frontend/src/components/timeline/overlays/RegionEditOverlay.tsx` remains the only active region edit overlay.
-- [ ] Legacy embedding-set and audio-file query hooks are removed rather than returning empty placeholder data.
-- [ ] `cd frontend && npx tsc --noEmit` passes after deletions.
-- [ ] Knip no longer reports the deleted files.
+- [x] Production import search confirms every deleted file has no remaining frontend import.
+- [x] The provider-based `frontend/src/components/timeline/overlays/RegionEditOverlay.tsx` remains the only active region edit overlay.
+- [x] Legacy embedding-set and audio-file query hooks are removed rather than returning empty placeholder data.
+- [x] `cd frontend && npx tsc --noEmit` passes after deletions.
+- [x] Knip no longer reports the deleted files.
 
 **Tests needed:**
 - Frontend TypeScript check.
@@ -48,11 +48,11 @@
 - Modify: `frontend/src/components/timeline/provider/TimelineProvider.tsx`
 
 **Acceptance criteria:**
-- [ ] Strict TypeScript unused-symbol mode no longer reports the touched files.
-- [ ] `markNegative` and `handleReclassify` are removed if no visible control consumes them.
-- [ ] No removed callback changes visible review behavior or route behavior.
-- [ ] Any prop removed from a component is also removed from all callers.
-- [ ] Retained generic visualization primitives are not removed as part of this task.
+- [x] Strict TypeScript unused-symbol mode no longer reports the touched files.
+- [x] `markNegative` and `handleReclassify` are removed if no visible control consumes them.
+- [x] No removed callback changes visible review behavior or route behavior.
+- [x] Any prop removed from a component is also removed from all callers.
+- [x] Retained generic visualization primitives are not removed as part of this task.
 
 **Tests needed:**
 - `cd frontend && npm exec tsc -- --noEmit --noUnusedLocals --noUnusedParameters`
@@ -70,11 +70,11 @@
 - Modify: `tests/unit/test_synthesis.py`
 
 **Acceptance criteria:**
-- [ ] `src/humpback/api/app.py` no longer imports the empty `humpback.models.label_processing` stub for table registration.
-- [ ] Synthesis helpers currently tested through `label_processor.py` either move to `tests/helpers/synthesis.py` or get an explicitly active production owner.
-- [ ] If `label_processor.py` is deleted, no production, script, or test import still references it.
-- [ ] `models/processing.py` remains because current code still imports `JobStatus`.
-- [ ] Empty retired model stubs are not removed unless import search proves they are unused and no compatibility purpose remains.
+- [x] `src/humpback/api/app.py` no longer imports the empty `humpback.models.label_processing` stub for table registration.
+- [x] Synthesis helpers currently tested through `label_processor.py` either move to `tests/helpers/synthesis.py` or get an explicitly active production owner.
+- [x] If `label_processor.py` is deleted, no production, script, or test import still references it.
+- [x] `models/processing.py` remains because current code still imports `JobStatus`.
+- [x] Empty retired model stubs are not removed unless import search proves they are unused and no compatibility purpose remains.
 
 **Tests needed:**
 - `uv run pytest tests/unit/test_health.py tests/integration/test_trusted_hosts.py -q`
@@ -93,11 +93,11 @@
 - Modify: `tests/db/test_migration_061.py`
 
 **Acceptance criteria:**
-- [ ] Shared helper covers Alembic config creation from repo root.
-- [ ] Shared helper covers async current-schema database creation when tests need it.
-- [ ] Shared helper covers SQLite table, column, index, and table-existence introspection without hiding each test's migration-specific assertions.
-- [ ] At least one migration-test cluster is migrated to prove the helper pattern.
-- [ ] No migration behavior or revision target changes.
+- [x] Shared helper covers Alembic config creation from repo root.
+- [x] Shared helper covers async current-schema database creation when tests need it.
+- [x] Shared helper covers SQLite table, column, index, and table-existence introspection without hiding each test's migration-specific assertions.
+- [x] At least one migration-test cluster is migrated to prove the helper pattern.
+- [x] No migration behavior or revision target changes.
 
 **Tests needed:**
 - Targeted migrated migration tests.
@@ -119,11 +119,11 @@
 - Modify: `tests/integration/test_classifier_api.py`
 
 **Acceptance criteria:**
-- [ ] Sine WAV writing is provided by one test helper and reused by at least two existing tests.
-- [ ] Detection embedding parquet writing is provided by one test helper and reused by classifier worker, trainer, or API tests.
-- [ ] Embedding-set parquet writing is provided by one test helper only where historical fixture coverage still requires it.
-- [ ] Helper names make legacy fixture intent explicit where embedding-set fixtures are retained for historical compatibility tests.
-- [ ] Test helper consolidation does not broaden runtime imports or change fixture data semantics.
+- [x] Sine WAV writing is provided by one test helper and reused by at least two existing tests.
+- [x] Detection embedding parquet writing is provided by one test helper and reused by classifier worker, trainer, or API tests.
+- [x] Embedding-set parquet writing is provided by one test helper only where historical fixture coverage still requires it.
+- [x] Helper names make legacy fixture intent explicit where embedding-set fixtures are retained for historical compatibility tests.
+- [x] Test helper consolidation does not broaden runtime imports or change fixture data semantics.
 
 **Tests needed:**
 - Targeted tests for each migrated fixture group.
@@ -139,11 +139,11 @@
 - Modify: `docs/agent-context/domains/sequence-models/README.md`
 
 **Acceptance criteria:**
-- [ ] `docs/reference/frontend.md` no longer lists deleted components as active.
-- [ ] Retained generic visualization primitives are documented as future-use primitives, not active Sequence Models workflows.
-- [ ] `SpanNavBar`, `DiscreteSequenceBar`, `MotifTimelineLegend`, `MotifHighlightOverlay`, and `CollapsiblePanelCard` remain documented as retained generic primitives with tests.
-- [ ] Active routes remain documented for Classifier, Vocalization, Call Parsing, Sequence Models Continuous Embedding, and Admin.
-- [ ] Agent-context docs are touched only if the cleanup changes what agents need to load or know.
+- [x] `docs/reference/frontend.md` no longer lists deleted components as active.
+- [x] Retained generic visualization primitives are documented as future-use primitives, not active Sequence Models workflows.
+- [x] `SpanNavBar`, `DiscreteSequenceBar`, `MotifTimelineLegend`, `MotifHighlightOverlay`, and `CollapsiblePanelCard` remain documented as retained generic primitives with tests.
+- [x] Active routes remain documented for Classifier, Vocalization, Call Parsing, Sequence Models Continuous Embedding, and Admin.
+- [x] Agent-context docs are touched only if the cleanup changes what agents need to load or know.
 
 **Tests needed:**
 - Documentation review and path spot-checks.
@@ -159,11 +159,11 @@
 - Modify: `docs/reference/frontend.md` if dependency notes need updating
 
 **Acceptance criteria:**
-- [ ] `@radix-ui/react-toast` is removed if confirmed unused by imports and build.
-- [ ] `@types/uuid` is removed if `uuid` continues to typecheck through bundled types.
-- [ ] `plotly.js-basic-dist-min` is removed only if `react-plotly.js` and the UMAP plot still build without relying on it.
-- [ ] Remaining knip reports for retained generic primitives are documented as intentional.
-- [ ] `npm install` or the equivalent npm lockfile update is run from `frontend/` after package changes.
+- [x] `@radix-ui/react-toast` is removed if confirmed unused by imports and build.
+- [x] `@types/uuid` is removed if `uuid` continues to typecheck through bundled types.
+- [x] `plotly.js-basic-dist-min` is removed only if `react-plotly.js` and the UMAP plot still build without relying on it.
+- [x] Remaining knip reports for retained generic primitives are documented as intentional.
+- [x] `npm install` or the equivalent npm lockfile update is run from `frontend/` after package changes.
 
 **Tests needed:**
 - `cd frontend && npx tsc --noEmit`

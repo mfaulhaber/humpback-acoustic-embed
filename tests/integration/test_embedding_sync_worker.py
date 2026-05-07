@@ -1,9 +1,6 @@
 """Integration tests for sync mode of detection_embedding_worker."""
 
 import json
-import math
-import struct
-import wave
 from pathlib import Path
 
 import numpy as np
@@ -28,24 +25,11 @@ from humpback.storage import (
     ensure_dir,
 )
 from humpback.workers.detection_embedding_worker import run_detection_embedding_job
+from tests.helpers.audio import write_sine_wav
 
 # 2021-11-01T08:50:00Z
 _BASE_EPOCH = 1635756600.0
 _SAMPLE_RATE = 32000
-
-
-def _write_wav(path: Path, duration: float = 10.0, sample_rate: int = _SAMPLE_RATE):
-    n_samples = int(sample_rate * duration)
-    samples = [
-        int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate))
-        for i in range(n_samples)
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{n_samples}h", *samples))
 
 
 _ROW_COUNTER = 0
@@ -133,7 +117,12 @@ async def test_sync_adds_missing_and_removes_orphans(app_settings):
     # Create audio folder with a 10-second file
     audio_folder = app_settings.storage_root / "test-audio"
     audio_folder.mkdir(parents=True, exist_ok=True)
-    _write_wav(audio_folder / "20211101T085000Z.wav", duration=10.0)
+    write_sine_wav(
+        audio_folder / "20211101T085000Z.wav",
+        duration_sec=10.0,
+        sample_rate=_SAMPLE_RATE,
+        amplitude=1.0,
+    )
 
     job_id, cm_id = await _setup_detection_job(sf, app_settings, audio_folder)
 
@@ -215,7 +204,12 @@ async def test_sync_already_in_sync(app_settings):
 
     audio_folder = app_settings.storage_root / "test-audio"
     audio_folder.mkdir(parents=True, exist_ok=True)
-    _write_wav(audio_folder / "20211101T085000Z.wav", duration=10.0)
+    write_sine_wav(
+        audio_folder / "20211101T085000Z.wav",
+        duration_sec=10.0,
+        sample_rate=_SAMPLE_RATE,
+        amplitude=1.0,
+    )
 
     job_id, cm_id = await _setup_detection_job(sf, app_settings, audio_folder)
 
@@ -271,7 +265,12 @@ async def test_sync_skips_when_audio_unavailable(app_settings):
     audio_folder = app_settings.storage_root / "test-audio"
     audio_folder.mkdir(parents=True, exist_ok=True)
     # Only 10s of audio
-    _write_wav(audio_folder / "20211101T085000Z.wav", duration=10.0)
+    write_sine_wav(
+        audio_folder / "20211101T085000Z.wav",
+        duration_sec=10.0,
+        sample_rate=_SAMPLE_RATE,
+        amplitude=1.0,
+    )
 
     job_id, _ = await _setup_detection_job(sf, app_settings, audio_folder)
 
@@ -337,7 +336,12 @@ async def test_sync_fractional_second_timestamps(app_settings):
 
     audio_folder = app_settings.storage_root / "test-audio"
     audio_folder.mkdir(parents=True, exist_ok=True)
-    _write_wav(audio_folder / "20211101T085000Z.wav", duration=15.0)
+    write_sine_wav(
+        audio_folder / "20211101T085000Z.wav",
+        duration_sec=15.0,
+        sample_rate=_SAMPLE_RATE,
+        amplitude=1.0,
+    )
 
     job_id, _ = await _setup_detection_job(sf, app_settings, audio_folder)
 

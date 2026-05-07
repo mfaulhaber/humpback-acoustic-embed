@@ -21,7 +21,6 @@ import {
   useTrainingJobs,
   useClassifierModels,
   useCreateTrainingJob,
-  useDeleteClassifierModel,
   useBulkDeleteTrainingJobs,
   useBulkDeleteClassifierModels,
   useRetrainInfo,
@@ -48,7 +47,6 @@ export function TrainingTab() {
   const { data: trainingJobs = [] } = useTrainingJobs(3000);
   const { data: models = [] } = useClassifierModels();
   const createMutation = useCreateTrainingJob();
-  const deleteMutation = useDeleteClassifierModel();
   const bulkDeleteJobsMutation = useBulkDeleteTrainingJobs();
   const bulkDeleteModelsMutation = useBulkDeleteClassifierModels();
 
@@ -379,7 +377,6 @@ export function TrainingTab() {
                   model={m}
                   checked={selectedModelIds.has(m.id)}
                   onToggle={() => toggleModelId(m.id)}
-                  onDelete={() => deleteMutation.mutate(m.id)}
                   retrainWorkflow={retrainWorkflows.find(
                     (w) => w.source_model_id === m.id
                   )}
@@ -708,14 +705,12 @@ function ModelTableRow({
   model,
   checked,
   onToggle,
-  onDelete,
   retrainWorkflow,
   trainingJobs,
 }: {
   model: ClassifierModelInfo;
   checked: boolean;
   onToggle: () => void;
-  onDelete: () => void;
   retrainWorkflow?: RetrainWorkflowType;
   trainingJobs: ClassifierTrainingJob[];
 }) {

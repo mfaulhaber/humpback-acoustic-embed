@@ -1,8 +1,8 @@
 # Sequence Models Domain
 
 Load this domain for Continuous Embedding jobs, continuous embedding API,
-continuous embedding worker/service behavior, CRNN region chunk helpers, or
-Sequence Models UI.
+continuous embedding worker/service behavior, CRNN region chunk helpers, or the
+retained Continuous Embedding UI.
 
 ## Primary Paths
 
@@ -15,6 +15,16 @@ Sequence Models UI.
 - `frontend/src/components/sequence-models/`
 - `frontend/src/api/sequenceModels.ts`
 - `frontend/e2e/sequence-models/continuous-embedding.spec.ts`
+
+## Frontend Scope
+
+- Active Sequence Models UI means the Continuous Embedding jobs, create form,
+  job table, and detail page.
+- `DiscreteSequenceBar`, `RegionNavBar`, `SpanNavBar`,
+  `MotifTimelineLegend`, `MotifHighlightOverlay`, and `CollapsiblePanelCard`
+  are retained generic visualization primitives for future analysis/review
+  surfaces. Do not treat them as active downstream Sequence Models workflows.
+- Focused component tests document the retained generic primitive contracts.
 
 ## Artifact Roots
 

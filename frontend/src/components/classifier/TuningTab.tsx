@@ -25,11 +25,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -633,10 +628,6 @@ function SearchesSection() {
       },
     );
   };
-
-  const hasRunning = searches.some(
-    (s) => s.status === "queued" || s.status === "running",
-  );
 
   return (
     <Card>
