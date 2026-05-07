@@ -1,1 +1,1 @@
-"""Continuous Embedding support utilities for the Sequence Models track."""
+"""Retained Sequence Models utility modules."""

@@ -8,7 +8,7 @@ Non-obvious constraints that are not immediately derivable from code.
 
 ## Job System
 
-- **Worker priority order**: clustering -> classifier training -> detection -> hydrophone detection -> extraction -> detection embedding generation -> retrain retirement sweep -> vocalization training -> vocalization inference -> region detection -> event segmentation -> event classification -> segmentation training -> classifier feedback training -> window classification -> manifest generation -> hyperparameter search -> continuous embedding
+- **Worker priority order**: clustering -> classifier training -> detection -> hydrophone detection -> extraction -> detection embedding generation -> retrain retirement sweep -> vocalization training -> vocalization inference -> region detection -> event segmentation -> event classification -> segmentation training -> classifier feedback training -> window classification -> manifest generation -> hyperparameter search -> continuous embedding -> event encoder
 - **Job claim semantics**: Workers claim queued jobs via atomic compare-and-set (`WHERE id=:candidate AND status='queued'`). SQLite has no true row-level locks; correctness relies on atomic status updates, not `SELECT ... FOR UPDATE`.
 - **Job status transitions**: `queued -> running -> complete`, `queued -> running -> failed`, `queued -> canceled`
 - **Detection embedding uniqueness**: one canonical detection-embedding output exists per `(detection_job_id, model_version)` pair; sync/full generation updates that single canonical target rather than creating parallel rows
@@ -71,6 +71,9 @@ Non-obvious constraints that are not immediately derivable from code.
 - **Continuous embedding idempotency**: one canonical Continuous Embedding output exists per `encoding_signature`. Re-submitting an in-flight or completed signature reuses the existing row; re-submitting a failed or canceled signature resets that row to `queued`.
 - **Continuous embedding event source mode (ADR-062)**: SurfPerch Continuous Embedding jobs default to `event_source_mode="raw"` and read `events.parquet` exactly. `event_source_mode="effective"` reads `load_effective_events()` and includes a correction revision fingerprint in `encoding_signature`.
 - **CRNN Continuous Embedding source restriction**: CRNN-region Continuous Embedding jobs require a completed Pass 1 `region_detection_job_id`, a completed Pass 2 disambiguator whose parent matches that region job, and a segmentation CRNN model. Effective event mode is rejected for this source because the artifact is region-scoped rather than event-padded.
+- **Event Encoder idempotency**: one canonical Event Encoder output exists per `tokenization_signature`. The signature includes tokenizer version, selected event source mode, effective-event correction revision when applicable, Continuous Embedding provenance/signature, pooling/descriptor/preprocessing configs, k values, and random seed. Re-submitting in-flight or complete work reuses the row; failed or canceled rows reset to `queued`.
+- **Event Encoder source contract**: Event Encoder jobs require a completed Pass 2 segmentation job and a completed matching `region_crnn` Continuous Embedding job. The worker recomputes chunk overlap against the selected raw or effective event set; it does not trust upstream `nearest_event_id` assignments from the CRNN embedding artifact.
+- **Event Encoder raw/effective semantics**: raw mode reads the immutable `events.parquet`; effective mode reads `load_effective_events()` and includes the correction revision in the tokenization signature so reviewed boundary changes produce a distinct tokenizer job.
 
 ## Timeline Compound-Component Architecture
 

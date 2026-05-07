@@ -8,6 +8,9 @@ from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobManifest,
     ContinuousEmbeddingRegionSummary,
     ContinuousEmbeddingSpanSummary,
+    EventEncoderJobCreate,
+    EventEncoderPoolingConfig,
+    EventEncoderPreprocessingConfig,
 )
 
 
@@ -140,3 +143,86 @@ def test_continuous_embedding_job_manifest_round_trip_crnn():
     assert restored.source_kind == "region_crnn"
     assert restored.regions[0].region_id == "r1"
     assert restored.total_chunks == 10
+
+
+def test_event_encoder_job_create_defaults():
+    payload = EventEncoderJobCreate(
+        event_segmentation_job_id="seg-1",
+        continuous_embedding_job_id="cej-1",
+    )
+
+    assert payload.event_source_mode == "raw"
+    assert payload.tokenizer_version == "crnn-event-encoder-v1"
+    assert payload.pooling.enabled_pools == [
+        "mean_pool",
+        "top_k_pool",
+        "start_pool",
+        "middle_pool",
+        "end_pool",
+    ]
+    assert payload.preprocessing.pca_dim == 128
+    assert payload.k_values == [50, 100, 200]
+    assert payload.random_seed == 0
+
+
+def test_event_encoder_job_create_sorts_k_values():
+    payload = EventEncoderJobCreate(
+        event_segmentation_job_id="seg-1",
+        continuous_embedding_job_id="cej-1",
+        k_values=[200, 50, 100],
+    )
+    assert payload.k_values == [50, 100, 200]
+
+
+def test_event_encoder_job_create_rejects_invalid_k_values():
+    with pytest.raises(ValidationError, match="k_values"):
+        EventEncoderJobCreate(
+            event_segmentation_job_id="seg-1",
+            continuous_embedding_job_id="cej-1",
+            k_values=[50, 50],
+        )
+    with pytest.raises(ValidationError, match="k_values"):
+        EventEncoderJobCreate(
+            event_segmentation_job_id="seg-1",
+            continuous_embedding_job_id="cej-1",
+            k_values=[0],
+        )
+
+
+def test_event_encoder_pooling_config_rejects_invalid_values():
+    with pytest.raises(ValidationError, match="enabled_pools"):
+        EventEncoderPoolingConfig(enabled_pools=[])
+    with pytest.raises(ValidationError, match="enabled_pools"):
+        EventEncoderPoolingConfig(enabled_pools=["mean_pool", "mean_pool"])
+    with pytest.raises(ValidationError, match="top_k_fraction"):
+        EventEncoderPoolingConfig(top_k_fraction=0)
+    with pytest.raises(ValidationError, match="min_overlap_fraction"):
+        EventEncoderPoolingConfig(min_overlap_fraction=1.5)
+    with pytest.raises(ValidationError, match="min_chunks_per_event"):
+        EventEncoderPoolingConfig(min_chunks_per_event=0)
+
+
+def test_event_encoder_preprocessing_restricts_pca_dim_and_weights():
+    with pytest.raises(ValidationError, match="pca_dim"):
+        EventEncoderPreprocessingConfig.model_validate({"pca_dim": 32})
+    with pytest.raises(ValidationError, match="feature weights"):
+        EventEncoderPreprocessingConfig(embedding_weight=-1.0)
+    with pytest.raises(ValidationError, match="at least one feature weight"):
+        EventEncoderPreprocessingConfig(
+            embedding_weight=0.0,
+            descriptor_weight=0.0,
+        )
+
+
+def test_event_encoder_job_create_accepts_effective_mode():
+    payload = EventEncoderJobCreate(
+        event_segmentation_job_id="seg-1",
+        event_source_mode="effective",
+        continuous_embedding_job_id="cej-1",
+        preprocessing=EventEncoderPreprocessingConfig(pca_dim=64),
+        k_values=[50],
+    )
+
+    assert payload.event_source_mode == "effective"
+    assert payload.preprocessing.pca_dim == 64
+    assert payload.k_values == [50]

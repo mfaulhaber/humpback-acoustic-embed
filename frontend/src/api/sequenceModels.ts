@@ -81,6 +81,67 @@ export interface ContinuousEmbeddingJobDetail {
   extra?: Record<string, unknown> | null;
 }
 
+export interface EventEncoderPoolingConfig {
+  enabled_pools?: (
+    | "mean_pool"
+    | "top_k_pool"
+    | "start_pool"
+    | "middle_pool"
+    | "end_pool"
+  )[];
+  top_k_fraction?: number;
+  min_overlap_fraction?: number;
+  min_chunks_per_event?: number;
+}
+
+export interface EventEncoderDescriptorConfig {
+  target_sample_rate?: number;
+  n_fft?: number;
+  hop_length?: number;
+  eps?: number;
+}
+
+export interface EventEncoderPreprocessingConfig {
+  l2_normalize_pools?: boolean;
+  pca_dim?: 64 | 128;
+  embedding_weight?: number;
+  descriptor_weight?: number;
+}
+
+export interface EventEncoderJob {
+  id: string;
+  status: string;
+  event_segmentation_job_id: string;
+  event_source_mode: "raw" | "effective";
+  continuous_embedding_job_id: string;
+  continuous_embedding_signature: string;
+  tokenizer_version: string;
+  pooling_config_json: string;
+  descriptor_config_json: string;
+  preprocessing_config_json: string;
+  k_values_json: string;
+  random_seed: number;
+  tokenization_signature: string;
+  event_vector_dim: number | null;
+  total_events: number | null;
+  encoded_events: number | null;
+  skipped_events: number | null;
+  event_vectors_path: string | null;
+  event_tokens_path: string | null;
+  token_sequences_path: string | null;
+  manifest_path: string | null;
+  report_path: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventEncoderJobDetail {
+  job: EventEncoderJob;
+  manifest: Record<string, unknown> | null;
+  report: Record<string, unknown> | null;
+}
+
 export interface CreateContinuousEmbeddingJobRequest {
   event_segmentation_job_id?: string;
   event_source_mode?: "raw" | "effective";
@@ -95,6 +156,18 @@ export interface CreateContinuousEmbeddingJobRequest {
   projection_dim?: number;
 }
 
+export interface CreateEventEncoderJobRequest {
+  event_segmentation_job_id: string;
+  event_source_mode?: "raw" | "effective";
+  continuous_embedding_job_id: string;
+  tokenizer_version?: string;
+  pooling?: EventEncoderPoolingConfig;
+  descriptor?: EventEncoderDescriptorConfig;
+  preprocessing?: EventEncoderPreprocessingConfig;
+  k_values?: number[];
+  random_seed?: number;
+}
+
 export function continuousEmbeddingSourceKind(
   job: Pick<ContinuousEmbeddingJob, "model_version" | "region_detection_job_id">,
 ): ContinuousEmbeddingSourceKind {
@@ -104,6 +177,7 @@ export function continuousEmbeddingSourceKind(
 }
 
 const ROOT = "/sequence-models/continuous-embeddings";
+const EVENT_ENCODER_ROOT = "/sequence-models/event-encoders";
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -156,10 +230,49 @@ export function deleteContinuousEmbeddingJob(jobId: string): Promise<void> {
   return request<void>(`${ROOT}/${jobId}`, { method: "DELETE" });
 }
 
+export function fetchEventEncoderJobs(
+  status?: string,
+): Promise<EventEncoderJob[]> {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return request<EventEncoderJob[]>(`${EVENT_ENCODER_ROOT}${q}`);
+}
+
+export function fetchEventEncoderJob(
+  jobId: string,
+): Promise<EventEncoderJobDetail> {
+  return request<EventEncoderJobDetail>(`${EVENT_ENCODER_ROOT}/${jobId}`);
+}
+
+export function createEventEncoderJob(
+  body: CreateEventEncoderJobRequest,
+): Promise<EventEncoderJob> {
+  return request<EventEncoderJob>(EVENT_ENCODER_ROOT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function cancelEventEncoderJob(jobId: string): Promise<EventEncoderJob> {
+  return request<EventEncoderJob>(`${EVENT_ENCODER_ROOT}/${jobId}/cancel`, {
+    method: "POST",
+  });
+}
+
+export function deleteEventEncoderJob(jobId: string): Promise<void> {
+  return request<void>(`${EVENT_ENCODER_ROOT}/${jobId}`, { method: "DELETE" });
+}
+
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 export function isContinuousEmbeddingJobActive(
   job: Pick<ContinuousEmbeddingJob, "status">,
+): boolean {
+  return ACTIVE_STATUSES.has(job.status);
+}
+
+export function isEventEncoderJobActive(
+  job: Pick<EventEncoderJob, "status">,
 ): boolean {
   return ACTIVE_STATUSES.has(job.status);
 }
@@ -185,6 +298,27 @@ export function useContinuousEmbeddingJob(jobId: string | null) {
   });
 }
 
+export function useEventEncoderJobs(refetchInterval = 3000) {
+  return useQuery({
+    queryKey: ["event-encoder-jobs"],
+    queryFn: () => fetchEventEncoderJobs(),
+    refetchInterval,
+  });
+}
+
+export function useEventEncoderJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["event-encoder-job", jobId],
+    queryFn: () => fetchEventEncoderJob(jobId as string),
+    enabled: jobId != null,
+    refetchInterval: (query) => {
+      const data = query.state.data as EventEncoderJobDetail | undefined;
+      if (!data) return 3000;
+      return isEventEncoderJobActive(data.job) ? 3000 : false;
+    },
+  });
+}
+
 export function useCreateContinuousEmbeddingJob() {
   const qc = useQueryClient();
   return useMutation({
@@ -192,6 +326,17 @@ export function useCreateContinuousEmbeddingJob() {
       createContinuousEmbeddingJob(body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["continuous-embedding-jobs"] });
+    },
+  });
+}
+
+export function useCreateEventEncoderJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateEventEncoderJobRequest) =>
+      createEventEncoderJob(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["event-encoder-jobs"] });
     },
   });
 }
@@ -213,6 +358,27 @@ export function useDeleteContinuousEmbeddingJob() {
     mutationFn: (jobId: string) => deleteContinuousEmbeddingJob(jobId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["continuous-embedding-jobs"] });
+    },
+  });
+}
+
+export function useCancelEventEncoderJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => cancelEventEncoderJob(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["event-encoder-jobs"] });
+      qc.invalidateQueries({ queryKey: ["event-encoder-job", jobId] });
+    },
+  });
+}
+
+export function useDeleteEventEncoderJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => deleteEventEncoderJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["event-encoder-jobs"] });
     },
   });
 }

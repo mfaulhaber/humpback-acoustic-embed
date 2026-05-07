@@ -8,9 +8,10 @@ from humpback.models.hyperparameter import (
     HyperparameterManifest,
     HyperparameterSearchJob,
 )
-from humpback.models.sequence_models import ContinuousEmbeddingJob
+from humpback.models.sequence_models import ContinuousEmbeddingJob, EventEncoderJob
 from humpback.workers.queue import (
     STALE_JOB_TIMEOUT,
+    claim_event_encoder_job,
     claim_clustering_job,
     claim_detection_embedding_job,
     recover_stale_jobs,
@@ -38,6 +39,29 @@ async def test_claim_detection_embedding_job(session):
     await session.commit()
 
     claimed = await claim_detection_embedding_job(session)
+    assert claimed is not None
+    assert claimed.id == job.id
+    assert claimed.status == "running"
+
+
+async def test_claim_event_encoder_job(session):
+    job = EventEncoderJob(
+        status="queued",
+        event_segmentation_job_id="seg-1",
+        event_source_mode="raw",
+        continuous_embedding_job_id="cej-1",
+        continuous_embedding_signature="cej-sig",
+        pooling_config_json="{}",
+        descriptor_config_json="{}",
+        preprocessing_config_json="{}",
+        k_values_json="[50]",
+        random_seed=0,
+        tokenization_signature="tok-sig",
+    )
+    session.add(job)
+    await session.commit()
+
+    claimed = await claim_event_encoder_job(session)
     assert claimed is not None
     assert claimed.id == job.id
     assert claimed.status == "running"
@@ -87,6 +111,20 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
         encoding_signature="enc-1",
         updated_at=stale_time,
     )
+    event_encoder = EventEncoderJob(
+        status="running",
+        event_segmentation_job_id="seg-1",
+        event_source_mode="raw",
+        continuous_embedding_job_id="cej-1",
+        continuous_embedding_signature="enc-1",
+        pooling_config_json="{}",
+        descriptor_config_json="{}",
+        preprocessing_config_json="{}",
+        k_values_json="[50]",
+        random_seed=0,
+        tokenization_signature="tok-1",
+        updated_at=stale_time,
+    )
     session.add_all(
         [
             manifest,
@@ -94,12 +132,13 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
             clustering,
             detection_embedding,
             continuous,
+            event_encoder,
         ]
     )
     await session.commit()
 
     count = await recover_stale_jobs(session)
-    assert count == 5
+    assert count == 6
 
     for job in (
         manifest,
@@ -107,6 +146,7 @@ async def test_recover_stale_jobs_requeues_retained_job_types(session):
         clustering,
         detection_embedding,
         continuous,
+        event_encoder,
     ):
         await session.refresh(job)
         assert job.status == "queued"

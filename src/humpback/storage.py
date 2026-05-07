@@ -98,6 +98,38 @@ def continuous_embedding_manifest_path(storage_root: Path, job_id: str) -> Path:
     return continuous_embedding_dir(storage_root, job_id) / "manifest.json"
 
 
+def event_encoder_dir(storage_root: Path, job_id: str) -> Path:
+    return storage_root / "event_encoders" / job_id
+
+
+def event_encoder_manifest_path(storage_root: Path, job_id: str) -> Path:
+    return event_encoder_dir(storage_root, job_id) / "manifest.json"
+
+
+def event_encoder_report_path(storage_root: Path, job_id: str) -> Path:
+    return event_encoder_dir(storage_root, job_id) / "report.json"
+
+
+def event_encoder_vectors_path(storage_root: Path, job_id: str) -> Path:
+    return event_encoder_dir(storage_root, job_id) / "event_vectors.parquet"
+
+
+def event_encoder_tokens_path(storage_root: Path, job_id: str) -> Path:
+    return event_encoder_dir(storage_root, job_id) / "event_tokens.parquet"
+
+
+def event_encoder_sequences_path(storage_root: Path, job_id: str) -> Path:
+    return event_encoder_dir(storage_root, job_id) / "token_sequences.parquet"
+
+
+def event_encoder_preprocess_path(storage_root: Path, job_id: str) -> Path:
+    return event_encoder_dir(storage_root, job_id) / "preprocess.joblib"
+
+
+def event_encoder_kmeans_path(storage_root: Path, job_id: str, k: int) -> Path:
+    return event_encoder_dir(storage_root, job_id) / f"kmeans_k{k}.joblib"
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 

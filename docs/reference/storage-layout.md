@@ -51,6 +51,14 @@
   {job_id}/manifest.json       (source_kind discriminator + per-source counters)
                                  SurfPerch: vector_dim, hop/pad/window settings, total_events, merged_spans, total_windows, per-span summaries
                                  CRNN: vector_dim, region_detection_job_id, event_segmentation_job_id, crnn_checkpoint_sha256, chunk_size/hop, projection_kind/dim, total_regions, total_chunks, per-region summaries
+/event_encoders/
+  {job_id}/event_vectors.parquet    (event_id, timing/provenance, descriptors, pooled embedding block, descriptor vector, final event vector)
+  {job_id}/event_tokens.parquet     (one row per valid k/event: token_id, token_label, distances, token_confidence, descriptors)
+  {job_id}/token_sequences.parquet  (one ordered token sequence per valid k/source_sequence_key)
+  {job_id}/manifest.json            (source job ids, tokenizer/provenance signatures, configs, valid/invalid k values, counters)
+  {job_id}/report.json              (summary, token distributions, exemplar event ids, descriptor summaries, sequence preview)
+  {job_id}/preprocess.joblib        (PCA model when used plus descriptor robust-scaling state)
+  {job_id}/kmeans_k{k}.joblib       (one k-means model per valid k)
 /timeline_cache/
   spans/{span_key}/.source.json            (hydrophone id, source identity, start/end timestamps, deterministic span key)
   spans/{span_key}/.audio_manifest.json    (optional persisted HLS segment manifest shared by compatible timeline consumers)

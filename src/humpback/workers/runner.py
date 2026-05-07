@@ -384,6 +384,23 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then event encoder jobs
+        eejob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_event_encoder_job
+
+            eejob = await claim_event_encoder_job(session)
+        if eejob:
+            logger.info(f"Event encoder job {eejob.id}")
+            from humpback.workers.event_encoder_worker import run_event_encoder_job
+
+            async with session_factory() as session:
+                await run_event_encoder_job(session, eejob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

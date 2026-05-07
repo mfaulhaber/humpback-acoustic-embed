@@ -66,6 +66,10 @@ const navItems: NavItem[] = [
         label: "Continuous Embedding",
         to: "/app/sequence-models/continuous-embedding",
       },
+      {
+        label: "Event Encoder",
+        to: "/app/sequence-models/event-encoder",
+      },
     ],
   },
   { label: "Admin", icon: Settings, to: "/app/admin" },

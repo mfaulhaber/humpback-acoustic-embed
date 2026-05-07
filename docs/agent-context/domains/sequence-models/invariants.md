@@ -1,6 +1,7 @@
 # Sequence Models Invariants
 
-- Continuous Embedding is the active Sequence Models runtime surface.
+- Continuous Embedding and Event Encoder are the active Sequence Models runtime
+  surfaces.
 - HMM, Masked Transformer, and motif-extraction runtime surfaces are retired.
 - One canonical Continuous Embedding row/output exists per `encoding_signature`.
 - Re-submitting an in-flight or complete signature reuses the existing row.
@@ -12,3 +13,13 @@
   context plus a segmentation CRNN model.
 - CRNN region source rejects effective event mode because the artifact is
   region-scoped rather than event-padded.
+- One canonical Event Encoder row/output exists per `tokenization_signature`.
+- Event Encoder reuses in-flight or complete signatures and resets failed or
+  canceled signatures to `queued`.
+- Event Encoder requires a completed Pass 2 segmentation job and a completed
+  matching `region_crnn` Continuous Embedding job.
+- Event Encoder raw mode reads immutable Pass 2 `events.parquet`; effective
+  mode reads `load_effective_events()` and includes correction revision identity
+  in the `tokenization_signature`.
+- Event Encoder recomputes event/chunk overlap from timestamps and never treats
+  CRNN `nearest_event_id` as authoritative.

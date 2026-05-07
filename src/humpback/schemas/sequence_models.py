@@ -1,4 +1,4 @@
-"""Pydantic schemas for retained Sequence Models / Continuous Embedding APIs."""
+"""Pydantic schemas for retained Sequence Models APIs."""
 
 from datetime import datetime
 from typing import Any, Literal, Optional
@@ -194,3 +194,195 @@ class ContinuousEmbeddingJobDetail(BaseModel):
     job: ContinuousEmbeddingJobOut
     manifest: Optional[ContinuousEmbeddingJobManifest] = None
     extra: Optional[dict[str, Any]] = None
+
+
+EventEncoderPoolName = Literal[
+    "mean_pool",
+    "top_k_pool",
+    "start_pool",
+    "middle_pool",
+    "end_pool",
+]
+
+
+def _default_event_encoder_pools() -> list[EventEncoderPoolName]:
+    return [
+        "mean_pool",
+        "top_k_pool",
+        "start_pool",
+        "middle_pool",
+        "end_pool",
+    ]
+
+
+class EventEncoderPoolingConfig(BaseModel):
+    """Pooling knobs for event-level CRNN chunk embeddings."""
+
+    enabled_pools: list[EventEncoderPoolName] = Field(
+        default_factory=_default_event_encoder_pools
+    )
+    top_k_fraction: float = 0.25
+    min_overlap_fraction: float = 0.25
+    min_chunks_per_event: int = 1
+
+    @field_validator("enabled_pools")
+    @classmethod
+    def _validate_enabled_pools(
+        cls, value: list[EventEncoderPoolName]
+    ) -> list[EventEncoderPoolName]:
+        if not value:
+            raise ValueError("enabled_pools must not be empty")
+        if len(set(value)) != len(value):
+            raise ValueError("enabled_pools must not contain duplicates")
+        return value
+
+    @field_validator("top_k_fraction")
+    @classmethod
+    def _validate_top_k_fraction(cls, value: float) -> float:
+        if value <= 0 or value > 1:
+            raise ValueError("top_k_fraction must be > 0 and <= 1")
+        return value
+
+    @field_validator("min_overlap_fraction")
+    @classmethod
+    def _validate_min_overlap_fraction(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("min_overlap_fraction must be between 0 and 1")
+        return value
+
+    @field_validator("min_chunks_per_event")
+    @classmethod
+    def _validate_min_chunks(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("min_chunks_per_event must be > 0")
+        return value
+
+
+class EventEncoderDescriptorConfig(BaseModel):
+    """Acoustic descriptor extraction config for event crops."""
+
+    target_sample_rate: int = 16000
+    n_fft: int = 1024
+    hop_length: int = 512
+    eps: float = 1e-12
+
+    @field_validator("target_sample_rate", "n_fft", "hop_length")
+    @classmethod
+    def _validate_positive_int(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("descriptor integer settings must be > 0")
+        return value
+
+    @field_validator("eps")
+    @classmethod
+    def _validate_eps(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("eps must be > 0")
+        return value
+
+
+class EventEncoderPreprocessingConfig(BaseModel):
+    """Preprocessing config for event vectors before k-means tokenization."""
+
+    l2_normalize_pools: bool = True
+    pca_dim: Literal[64, 128] = 128
+    embedding_weight: float = 1.0
+    descriptor_weight: float = 1.0
+
+    @field_validator("embedding_weight", "descriptor_weight")
+    @classmethod
+    def _validate_weight(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("feature weights must be >= 0")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_nonzero_weight(self) -> "EventEncoderPreprocessingConfig":
+        if self.embedding_weight == 0 and self.descriptor_weight == 0:
+            raise ValueError("at least one feature weight must be > 0")
+        return self
+
+
+class EventEncoderJobCreate(BaseModel):
+    """Request body for creating an Event Encoder tokenization job."""
+
+    event_segmentation_job_id: str
+    event_source_mode: Literal["raw", "effective"] = "raw"
+    continuous_embedding_job_id: str
+    tokenizer_version: str = "crnn-event-encoder-v1"
+    pooling: EventEncoderPoolingConfig = Field(
+        default_factory=EventEncoderPoolingConfig
+    )
+    descriptor: EventEncoderDescriptorConfig = Field(
+        default_factory=EventEncoderDescriptorConfig
+    )
+    preprocessing: EventEncoderPreprocessingConfig = Field(
+        default_factory=EventEncoderPreprocessingConfig
+    )
+    k_values: list[int] = Field(default_factory=lambda: [50, 100, 200])
+    random_seed: int = 0
+
+    @field_validator("event_segmentation_job_id", "continuous_embedding_job_id")
+    @classmethod
+    def _validate_non_empty_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("source job ids must not be empty")
+        return value
+
+    @field_validator("tokenizer_version")
+    @classmethod
+    def _validate_tokenizer_version(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("tokenizer_version must not be empty")
+        return value
+
+    @field_validator("k_values")
+    @classmethod
+    def _validate_k_values(cls, value: list[int]) -> list[int]:
+        if not value:
+            raise ValueError("k_values must not be empty")
+        if any(k <= 0 for k in value):
+            raise ValueError("k_values must all be > 0")
+        if len(set(value)) != len(value):
+            raise ValueError("k_values must be unique")
+        return sorted(value)
+
+
+class EventEncoderJobOut(BaseModel):
+    """Event Encoder job state returned by the API."""
+
+    id: str
+    status: str
+    event_segmentation_job_id: str
+    event_source_mode: str
+    continuous_embedding_job_id: str
+    continuous_embedding_signature: str
+    tokenizer_version: str
+    pooling_config_json: str
+    descriptor_config_json: str
+    preprocessing_config_json: str
+    k_values_json: str
+    random_seed: int
+    tokenization_signature: str
+    event_vector_dim: Optional[int] = None
+    total_events: Optional[int] = None
+    encoded_events: Optional[int] = None
+    skipped_events: Optional[int] = None
+    event_vectors_path: Optional[str] = None
+    event_tokens_path: Optional[str] = None
+    token_sequences_path: Optional[str] = None
+    manifest_path: Optional[str] = None
+    report_path: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EventEncoderJobDetail(BaseModel):
+    """Detail response combining the DB row with JSON sidecars."""
+
+    job: EventEncoderJobOut
+    manifest: Optional[dict[str, Any]] = None
+    report: Optional[dict[str, Any]] = None

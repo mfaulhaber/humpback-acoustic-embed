@@ -10,6 +10,7 @@ from humpback.models.processing import JobStatus
 
 __all__ = [
     "ContinuousEmbeddingJob",
+    "EventEncoderJob",
     "JobStatus",
 ]
 
@@ -51,3 +52,41 @@ class ContinuousEmbeddingJob(UUIDMixin, TimestampMixin, Base):
     projection_dim: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     total_regions: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     total_chunks: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+
+
+class EventEncoderJob(UUIDMixin, TimestampMixin, Base):
+    """Event-level CRNN tokenization job.
+
+    Consumes one completed Pass 2 segmentation job and one matching CRNN
+    Continuous Embedding job, then writes per-event vectors, k-means token
+    assignments, token sequences, and a report. The retained idempotency key is
+    ``tokenization_signature``.
+    """
+
+    __tablename__ = "event_encoder_jobs"
+    __table_args__ = (UniqueConstraint("tokenization_signature"),)
+
+    status: Mapped[str] = mapped_column(default=JobStatus.queued.value)
+    event_segmentation_job_id: Mapped[str]
+    event_source_mode: Mapped[str] = mapped_column(default="raw")
+    continuous_embedding_job_id: Mapped[str]
+    continuous_embedding_signature: Mapped[str] = mapped_column(Text)
+    tokenizer_version: Mapped[str] = mapped_column(
+        Text, default="crnn-event-encoder-v1"
+    )
+    pooling_config_json: Mapped[str] = mapped_column(Text)
+    descriptor_config_json: Mapped[str] = mapped_column(Text)
+    preprocessing_config_json: Mapped[str] = mapped_column(Text)
+    k_values_json: Mapped[str] = mapped_column(Text)
+    random_seed: Mapped[int] = mapped_column(Integer, default=0)
+    tokenization_signature: Mapped[str]
+    event_vector_dim: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    total_events: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    encoded_events: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    skipped_events: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    event_vectors_path: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    event_tokens_path: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    token_sequences_path: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    manifest_path: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    report_path: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)

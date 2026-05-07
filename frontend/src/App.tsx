@@ -22,6 +22,8 @@ import { WindowClassifyPage } from "@/components/call-parsing/WindowClassifyPage
 import { RegionDetectionTimeline } from "@/components/call-parsing/RegionDetectionTimeline";
 import { ContinuousEmbeddingJobsPage } from "@/components/sequence-models/ContinuousEmbeddingJobsPage";
 import { ContinuousEmbeddingDetailPage } from "@/components/sequence-models/ContinuousEmbeddingDetailPage";
+import { EventEncoderJobsPage } from "@/components/sequence-models/EventEncoderJobsPage";
+import { EventEncoderDetailPage } from "@/components/sequence-models/EventEncoderDetailPage";
 
 export default function App() {
   return (
@@ -52,6 +54,8 @@ export default function App() {
         <Route path="/app/sequence-models" element={<Navigate to="/app/sequence-models/continuous-embedding" replace />} />
         <Route path="/app/sequence-models/continuous-embedding/:jobId" element={<ContinuousEmbeddingDetailPage />} />
         <Route path="/app/sequence-models/continuous-embedding" element={<ContinuousEmbeddingJobsPage />} />
+        <Route path="/app/sequence-models/event-encoder/:jobId" element={<EventEncoderDetailPage />} />
+        <Route path="/app/sequence-models/event-encoder" element={<EventEncoderJobsPage />} />
         <Route path="/app/admin" element={<AdminTab />} />
         <Route path="*" element={<Navigate to="/app/call-parsing/detection" replace />} />
       </Routes>
