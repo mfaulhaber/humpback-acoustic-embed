@@ -1,6 +1,8 @@
 # Storage Layout
 
-> Read this when working on file paths, artifact storage, or storage-related configuration.
+> Agent startup context lives in `docs/agent-context/`. Read the relevant
+> domain capsule first. Use this file when working on file paths, artifact
+> storage, or storage-related configuration.
 
 ```
 /clusters/

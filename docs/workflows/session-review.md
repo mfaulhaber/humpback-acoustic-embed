@@ -18,7 +18,9 @@ Validation gate that must pass before `session-end` can proceed.
 3. **Completeness checks**
    - Missing tests for new logic?
    - Missing Alembic migration for schema changes?
-   - Missing doc updates per CLAUDE.md §3.6 doc-update matrix?
+   - Missing doc updates per CLAUDE.md documentation rules?
+   - Missing domain capsule updates under `docs/agent-context/domains/*/` for changed domain-local context?
+   - If a change intentionally does not require domain capsule updates, note why
 
 4. **Code review**
 
