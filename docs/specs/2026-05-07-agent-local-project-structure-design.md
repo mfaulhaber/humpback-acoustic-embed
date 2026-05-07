@@ -524,4 +524,3 @@ This rule is the key behavior change: global context becomes the exception.
   hook infer them from `docs/agent-context/test-map.md`?
 - Should the project add a small `scripts/test_related.py` helper, or keep
   targeted testing as documented commands only?
-
