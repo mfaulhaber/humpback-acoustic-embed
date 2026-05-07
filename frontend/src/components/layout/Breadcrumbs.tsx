@@ -42,6 +42,10 @@ const staticRoutes: Record<string, Crumb[]> = {
     { label: "Sequence Models", to: "/app/sequence-models" },
     { label: "Continuous Embedding" },
   ],
+  "/app/sequence-models/event-encoder": [
+    { label: "Sequence Models", to: "/app/sequence-models" },
+    { label: "Event Encoder" },
+  ],
   "/app/admin": [{ label: "Admin" }],
 };
 
@@ -60,6 +64,18 @@ export function Breadcrumbs() {
       {
         label: "Continuous Embedding",
         to: "/app/sequence-models/continuous-embedding",
+      },
+      { label: `Job ${jobId.slice(0, 8)}` },
+    ];
+  } else if (
+    jobId &&
+    pathname.startsWith("/app/sequence-models/event-encoder/")
+  ) {
+    crumbs = [
+      { label: "Sequence Models", to: "/app/sequence-models" },
+      {
+        label: "Event Encoder",
+        to: "/app/sequence-models/event-encoder",
       },
       { label: `Job ${jobId.slice(0, 8)}` },
     ];

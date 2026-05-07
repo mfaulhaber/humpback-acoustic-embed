@@ -7,6 +7,14 @@ from humpback.storage import (
     continuous_embedding_manifest_path,
     continuous_embedding_parquet_path,
     detection_embeddings_path,
+    event_encoder_dir,
+    event_encoder_kmeans_path,
+    event_encoder_manifest_path,
+    event_encoder_preprocess_path,
+    event_encoder_report_path,
+    event_encoder_sequences_path,
+    event_encoder_tokens_path,
+    event_encoder_vectors_path,
 )
 
 
@@ -39,3 +47,17 @@ def test_continuous_embedding_paths_under_root():
 
     manifest = continuous_embedding_manifest_path(root, job_id)
     assert manifest == d / "manifest.json"
+
+
+def test_event_encoder_paths_under_root():
+    root = Path("/tmp/storage")
+    job_id = "eej-1"
+    d = event_encoder_dir(root, job_id)
+    assert d == root / "event_encoders" / job_id
+    assert event_encoder_manifest_path(root, job_id) == d / "manifest.json"
+    assert event_encoder_report_path(root, job_id) == d / "report.json"
+    assert event_encoder_vectors_path(root, job_id) == d / "event_vectors.parquet"
+    assert event_encoder_tokens_path(root, job_id) == d / "event_tokens.parquet"
+    assert event_encoder_sequences_path(root, job_id) == d / "token_sequences.parquet"
+    assert event_encoder_preprocess_path(root, job_id) == d / "preprocess.joblib"
+    assert event_encoder_kmeans_path(root, job_id, 50) == d / "kmeans_k50.joblib"

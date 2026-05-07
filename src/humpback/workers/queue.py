@@ -283,7 +283,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count17:
         logger.warning(f"Recovered {count17} stale classifier feedback training job(s)")
 
-    from humpback.models.sequence_models import ContinuousEmbeddingJob
+    from humpback.models.sequence_models import ContinuousEmbeddingJob, EventEncoderJob
 
     result_cej = await session.execute(
         update(ContinuousEmbeddingJob)
@@ -300,6 +300,21 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count_cej:
         logger.warning(f"Recovered {count_cej} stale continuous embedding job(s)")
 
+    result_eej = await session.execute(
+        update(EventEncoderJob)
+        .where(
+            EventEncoderJob.status == JobStatus.running.value,
+            EventEncoderJob.updated_at < cutoff,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_eej = _rowcount(result_eej)
+    if count_eej:
+        logger.warning(f"Recovered {count_eej} stale event encoder job(s)")
+
     total = (
         count2
         + count3
@@ -315,6 +330,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count_stj
         + count17
         + count_cej
+        + count_eej
     )
     if total:
         await session.commit()
@@ -696,6 +712,23 @@ async def claim_continuous_embedding_job(session: AsyncSession):
             queued_value=JobStatus.queued.value,
             running_value=JobStatus.running.value,
             order_attr=ContinuousEmbeddingJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_event_encoder_job(session: AsyncSession):
+    from humpback.models.sequence_models import EventEncoderJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            EventEncoderJob,
+            status_attr=EventEncoderJob.status,
+            queued_value=JobStatus.queued.value,
+            running_value=JobStatus.running.value,
+            order_attr=EventEncoderJob.created_at,
         )
         if job is not None:
             return job
