@@ -40,6 +40,16 @@ const SEG_JOB = {
   completed_at: "2026-04-26T01:10:00Z",
 };
 
+const SEG_JOB_OTHER = {
+  ...SEG_JOB,
+  id: "seg-complete-2",
+  event_count: 8,
+  created_at: "2026-04-26T02:00:00Z",
+  updated_at: "2026-04-26T02:10:00Z",
+  started_at: "2026-04-26T02:00:01Z",
+  completed_at: "2026-04-26T02:10:00Z",
+};
+
 const CRNN_EMBEDDING_JOB = {
   id: "cej-crnn-complete-1",
   status: "complete",
@@ -70,6 +80,16 @@ const CRNN_EMBEDDING_JOB = {
   total_chunks: 128,
   created_at: "2026-04-27T00:00:00Z",
   updated_at: "2026-04-27T00:10:00Z",
+};
+
+const CRNN_EMBEDDING_JOB_OTHER = {
+  ...CRNN_EMBEDDING_JOB,
+  id: "cej-crnn-complete-2",
+  event_segmentation_job_id: SEG_JOB_OTHER.id,
+  encoding_signature: "crnn-embedding-sig-2",
+  total_chunks: 96,
+  created_at: "2026-04-27T02:00:00Z",
+  updated_at: "2026-04-27T02:10:00Z",
 };
 
 const QUEUED_JOB = {
@@ -185,6 +205,13 @@ const FAILED_DETAIL = { job: FAILED_JOB, manifest: null, report: null };
 
 interface MockState {
   jobs: typeof QUEUED_JOB[];
+  lastCreateBody?: CreatePayload;
+}
+
+interface CreatePayload {
+  preprocessing?: {
+    l2_normalize_pools?: boolean;
+  };
 }
 
 async function setupMocks(page: Page, state: MockState) {
@@ -192,7 +219,7 @@ async function setupMocks(page: Page, state: MockState) {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([SEG_JOB]),
+      body: JSON.stringify([SEG_JOB, SEG_JOB_OTHER]),
     }),
   );
 
@@ -204,14 +231,14 @@ async function setupMocks(page: Page, state: MockState) {
         return route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify([CRNN_EMBEDDING_JOB]),
+          body: JSON.stringify([CRNN_EMBEDDING_JOB, CRNN_EMBEDDING_JOB_OTHER]),
         });
       }
       return route.fulfill({ status: 405 });
     },
   );
 
-  await page.route("**/sequence-models/event-encoders**", (route) => {
+  await page.route("**/sequence-models/event-encoders**", async (route) => {
     const url = route.request().url();
     const method = route.request().method();
     const idMatch = url.match(/\/event-encoders\/([^/?#]+)/);
@@ -258,6 +285,8 @@ async function setupMocks(page: Page, state: MockState) {
     }
 
     if (method === "POST") {
+      state.lastCreateBody =
+        (await route.request().postDataJSON()) as CreatePayload;
       state.jobs = [QUEUED_JOB, ...state.jobs];
       return route.fulfill({
         status: 201,
@@ -268,6 +297,15 @@ async function setupMocks(page: Page, state: MockState) {
 
     return route.fulfill({ status: 405 });
   });
+}
+
+async function segmentationOptionValues(page: Page): Promise<string[]> {
+  return page
+    .getByTestId("eej-seg-job-select")
+    .locator("option")
+    .evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
 }
 
 test.describe("Sequence Models - Event Encoder", () => {
@@ -285,17 +323,53 @@ test.describe("Sequence Models - Event Encoder", () => {
     await setupMocks(page, state);
     await page.goto("/app/sequence-models/event-encoder");
 
-    await page.getByTestId("eej-seg-job-select").selectOption(SEG_JOB.id);
+    await expect(page.getByTestId("eej-continuous-job-select")).toBeEnabled();
     await page
       .getByTestId("eej-continuous-job-select")
       .selectOption(CRNN_EMBEDDING_JOB.id);
+    await expect(page.getByTestId("eej-seg-job-select")).toHaveValue(
+      SEG_JOB.id,
+    );
+    await page.getByTestId("eej-advanced-toggle").click();
+    await expect(page.getByTestId("eej-l2-normalize-pools")).toBeChecked();
+    await page.getByTestId("eej-l2-normalize-pools").click();
     await page.getByTestId("eej-create-submit").click();
+
+    expect(
+      state.lastCreateBody?.preprocessing?.l2_normalize_pools,
+    ).toBe(false);
 
     const queuedRow = page.locator("tr", {
       hasText: SEG_JOB.id.slice(0, 8),
     }).first();
     await expect(queuedRow).toBeVisible();
     await expect(queuedRow.getByText("queued")).toBeVisible();
+  });
+
+  test("create form filters segmentation choices by selected embedding", async ({
+    page,
+  }) => {
+    const state: MockState = { jobs: [] };
+    await setupMocks(page, state);
+    await page.goto("/app/sequence-models/event-encoder");
+
+    await expect(page.getByTestId("eej-seg-job-select")).toBeDisabled();
+    await page
+      .getByTestId("eej-continuous-job-select")
+      .selectOption(CRNN_EMBEDDING_JOB.id);
+    await expect(page.getByTestId("eej-seg-job-select")).toBeEnabled();
+    await expect(page.getByTestId("eej-seg-job-select")).toHaveValue(
+      SEG_JOB.id,
+    );
+    expect(await segmentationOptionValues(page)).toEqual(["", SEG_JOB.id]);
+
+    await page
+      .getByTestId("eej-continuous-job-select")
+      .selectOption(CRNN_EMBEDDING_JOB_OTHER.id);
+    await expect(page.getByTestId("eej-seg-job-select")).toHaveValue(
+      SEG_JOB_OTHER.id,
+    );
+    expect(await segmentationOptionValues(page)).toEqual(["", SEG_JOB_OTHER.id]);
   });
 
   test("complete detail page shows report stats", async ({ page }) => {

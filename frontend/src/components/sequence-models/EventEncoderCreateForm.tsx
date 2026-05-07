@@ -41,6 +41,7 @@ export function EventEncoderCreateForm() {
   );
   const [topKFraction, setTopKFraction] = useState(0.25);
   const [minOverlap, setMinOverlap] = useState(0.25);
+  const [l2NormalizePools, setL2NormalizePools] = useState(true);
   const [embeddingWeight, setEmbeddingWeight] = useState(1.0);
   const [descriptorWeight, setDescriptorWeight] = useState(1.0);
   const [randomSeed, setRandomSeed] = useState(0);
@@ -51,15 +52,29 @@ export function EventEncoderCreateForm() {
     [segJobs],
   );
 
-  const compatibleEmbeddings = useMemo(
+  const crnnEmbeddingJobs = useMemo(
     () =>
       continuousJobs.filter(
         (job) =>
           job.status === "complete" &&
-          continuousEmbeddingSourceKind(job) === "region_crnn" &&
-          (!segJobId || job.event_segmentation_job_id === segJobId),
+          continuousEmbeddingSourceKind(job) === "region_crnn",
       ),
-    [continuousJobs, segJobId],
+    [continuousJobs],
+  );
+
+  const selectedContinuousJob = useMemo(
+    () => crnnEmbeddingJobs.find((job) => job.id === continuousJobId) ?? null,
+    [crnnEmbeddingJobs, continuousJobId],
+  );
+
+  const compatibleSegJobs = useMemo(
+    () =>
+      selectedContinuousJob
+        ? completedSegJobs.filter(
+            (job) => job.id === selectedContinuousJob.event_segmentation_job_id,
+          )
+        : [],
+    [completedSegJobs, selectedContinuousJob],
   );
 
   const canSubmit =
@@ -69,6 +84,33 @@ export function EventEncoderCreateForm() {
     enabledPools.size > 0 &&
     !createMutation.isPending;
 
+  const selectSegmentationJob = (nextSegJobId: string) => {
+    if (
+      selectedContinuousJob &&
+      nextSegJobId &&
+      selectedContinuousJob.event_segmentation_job_id !== nextSegJobId
+    ) {
+      return;
+    }
+    setSegJobId(nextSegJobId);
+  };
+
+  const selectContinuousEmbeddingJob = (nextContinuousJobId: string) => {
+    setContinuousJobId(nextContinuousJobId);
+    const selectedJob = crnnEmbeddingJobs.find(
+      (job) => job.id === nextContinuousJobId,
+    );
+    const selectedSegJobId = selectedJob?.event_segmentation_job_id ?? "";
+    const matchingSegJob = completedSegJobs.find(
+      (job) => job.id === selectedSegJobId,
+    );
+    if (matchingSegJob) {
+      setSegJobId(selectedSegJobId);
+    } else {
+      setSegJobId("");
+    }
+  };
+
   const submit = () => {
     if (!canSubmit) return;
     setError(null);
@@ -77,6 +119,7 @@ export function EventEncoderCreateForm() {
       event_source_mode: eventSourceMode,
       continuous_embedding_job_id: continuousJobId,
       preprocessing: {
+        l2_normalize_pools: l2NormalizePools,
         pca_dim: pcaDim,
         embedding_weight: embeddingWeight,
         descriptor_weight: descriptorWeight,
@@ -103,44 +146,41 @@ export function EventEncoderCreateForm() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-sm font-medium block mb-1">
-              Segmentation Job
-            </label>
-            <select
-              data-testid="eej-seg-job-select"
-              className="w-full border rounded-md px-2 py-1 text-sm"
-              value={segJobId}
-              onChange={(e) => {
-                setSegJobId(e.target.value);
-                setContinuousJobId("");
-              }}
-            >
-              <option value="">- select a completed Pass-2 job -</option>
-              {completedSegJobs.map((job) => (
-                <option key={job.id} value={job.id}>
-                  {job.id.slice(0, 8)} - {job.event_count ?? 0} events
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1">
               CRNN Continuous Embedding
             </label>
             <select
               data-testid="eej-continuous-job-select"
               className="w-full border rounded-md px-2 py-1 text-sm"
               value={continuousJobId}
-              onChange={(e) => setContinuousJobId(e.target.value)}
-              disabled={!segJobId}
+              onChange={(e) => selectContinuousEmbeddingJob(e.target.value)}
             >
-              <option value="">
-                {segJobId
-                  ? "- select a matching CRNN embedding -"
-                  : "- pick a segmentation job first -"}
-              </option>
-              {compatibleEmbeddings.map((job) => (
+              <option value="">- select a CRNN embedding -</option>
+              {crnnEmbeddingJobs.map((job) => (
                 <option key={job.id} value={job.id}>
                   {job.id.slice(0, 8)} - {job.total_chunks ?? 0} chunks
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1">
+              Segmentation Job
+            </label>
+            <select
+              data-testid="eej-seg-job-select"
+              className="w-full border rounded-md px-2 py-1 text-sm"
+              value={segJobId}
+              onChange={(e) => selectSegmentationJob(e.target.value)}
+              disabled={!continuousJobId}
+            >
+              <option value="">
+                {continuousJobId
+                  ? "- select a compatible Pass-2 job -"
+                  : "- pick a CRNN embedding first -"}
+              </option>
+              {compatibleSegJobs.map((job) => (
+                <option key={job.id} value={job.id}>
+                  {job.id.slice(0, 8)} - {job.event_count ?? 0} events
                 </option>
               ))}
             </select>
@@ -200,10 +240,10 @@ export function EventEncoderCreateForm() {
           </div>
         </div>
 
-        {segJobId && compatibleEmbeddings.length === 0 ? (
+        {continuousJobId && compatibleSegJobs.length === 0 ? (
           <div className="rounded-md border px-3 py-2 text-sm text-slate-600">
-            No completed CRNN Continuous Embedding job matches this segmentation
-            job.
+            No completed Segmentation Job matches this CRNN Continuous
+            Embedding job.
           </div>
         ) : null}
 
@@ -239,6 +279,21 @@ export function EventEncoderCreateForm() {
                   </label>
                 ))}
               </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1">
+                Preprocessing
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  data-testid="eej-l2-normalize-pools"
+                  checked={l2NormalizePools}
+                  onCheckedChange={(checked) =>
+                    setL2NormalizePools(checked === true)
+                  }
+                />
+                L2-normalize embedding pools
+              </label>
             </div>
             <NumberField
               label="Top-k Fraction"
